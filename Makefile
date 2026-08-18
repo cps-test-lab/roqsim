@@ -24,7 +24,12 @@ export PYTEST_DISABLE_PLUGIN_AUTOLOAD ?= 1
 PYTEST     := $(PY) -m pytest
 RUFF       := $(PY) -m ruff
 SPHINX     := $(PY) -m sphinx
-export MUJOCO_GL ?= egl
+# MUJOCO_GL is deliberately NOT set here. `roqsim.gl.select_offscreen_gl` chooses it per MACHINE at
+# import time -- egl where /dev/dri/renderD128 exists, osmesa where it does not -- and an explicit
+# value is always honoured, so exporting one here overrode that decision for the whole suite with a
+# guess that is simply wrong on a CPU-only host. It also cost two CI fixes: a GPU-less runner needed
+# libosmesa6 installed anyway, and test_gl_boot had to stop inheriting the PYOPENGL_PLATFORM that
+# `import mujoco` derives from this variable. Set it in your own shell to override; do not put it back.
 # Blender binary used by external-resource conversions that need it (e.g. the Livox meshes). Override
 # with `make external-resources BLENDER=/path/to/blender` if it is not on PATH.
 export BLENDER ?= blender

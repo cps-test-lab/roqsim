@@ -47,7 +47,8 @@ except GLBackendError as err:
 def _run(code: str, **env) -> str:
     """Run ``code`` in a clean interpreter with ``env`` applied; ``None`` unsets a variable."""
     child = os.environ.copy()
-    # The Makefile exports MUJOCO_GL=egl for the suite, which is precisely the value under test.
+    # Unset it whatever the caller's shell says: the selection under test is what happens when nobody
+    # has chosen, and an inherited value would silently make every assertion here vacuous.
     child.pop("MUJOCO_GL", None)
     child.pop("ROQSIM_NO_GL_SELECT", None)
     # PYOPENGL_PLATFORM must go too, and for a reason only a GPU-less machine shows: `import mujoco`
