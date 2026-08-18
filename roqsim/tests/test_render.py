@@ -7,6 +7,8 @@ there is no usable offscreen backend.
 
 from __future__ import annotations
 
+import os
+
 import json
 
 import mujoco
@@ -173,6 +175,11 @@ def test_unknown_extension_is_refused(tmp_path):
         render.render_target("whatever.yaml", tmp_path / "out.tiff")
 
 
+@pytest.mark.skipif(
+    os.geteuid() == 0,
+    reason="root ignores the permission bits, so an unwritable directory cannot be constructed "
+    "(the ros CI job runs as root in a container; the check itself is exercised in the core job)",
+)
 def test_unwritable_output_directory_is_refused(tmp_path):
     locked = tmp_path / "locked"
     locked.mkdir()
