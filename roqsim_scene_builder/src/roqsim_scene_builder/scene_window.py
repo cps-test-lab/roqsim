@@ -46,6 +46,16 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# BEFORE `import mujoco` below, which binds MuJoCo's GL backend from MUJOCO_GL once and for all --
+# setting the variable afterwards is silently ineffective. roqsim's package __init__ makes this call
+# for every entry point that reaches mujoco *through* roqsim, but this module imports mujoco
+# directly, and isort sorts first-party `roqsim` below third-party `mujoco`, so the ordering has to
+# be stated rather than left to the import block. Without it this window binds glfw, has no
+# offscreen renderer, and dies in roqsim.rendering.check_gl_backend. See roqsim/gl.py.
+from roqsim.gl import select_offscreen_gl
+
+select_offscreen_gl()
+
 import mujoco
 import numpy as np
 

@@ -29,6 +29,13 @@ ignore = ["E501", "B027", "B008"]
 # statement between the two import blocks is the only way to express "this one first" that isort
 # will not quietly re-sort away. See roqsim/src/roqsim/gl.py for why the ordering is load-bearing.
 "roqsim/src/roqsim/__init__.py" = ["E402"]
+# E402 again, same reason and same shape: the scene-review window imports mujoco directly (not via
+# roqsim), so it has to select the backend itself before that import. isort would otherwise sort
+# first-party roqsim below third-party mujoco and re-break it.
+"roqsim_scene_builder/src/roqsim_scene_builder/scene_window.py" = ["E402"]
+# E402 once more: roqsim-coverage is an entry point whose submodules import mujoco at module scope,
+# so the coverage package selects the backend before them, above its own re-exports.
+"roqsim_sensors/src/roqsim_sensors/coverage/__init__.py" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = [

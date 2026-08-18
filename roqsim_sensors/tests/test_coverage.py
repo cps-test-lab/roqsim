@@ -85,14 +85,18 @@ def test_lidar_adapter_uses_plugin_defaults():
 
 
 def test_livox_adapter_uses_plugin_defaults():
-    fov = build_fov(None, None, PlacedSensor("livox_mid360", pos=[0, 0, 0], rpy=[0, 0, 0], config={}))
+    fov = build_fov(
+        None, None, PlacedSensor("livox_mid360", pos=[0, 0, 0], rpy=[0, 0, 0], config={})
+    )
     assert math.degrees(fov.v_fov[0]) == pytest.approx(-7.0, abs=1e-3)
     assert math.degrees(fov.v_fov[1]) == pytest.approx(52.0, abs=1e-3)
     assert fov.range_max == pytest.approx(40.0)
 
 
 def test_camera_far_is_not_physical():
-    fov = build_fov(None, None, PlacedSensor("oakd_camera", pos=[0, 0, 0], rpy=[0, 0, 0], config={}))
+    fov = build_fov(
+        None, None, PlacedSensor("oakd_camera", pos=[0, 0, 0], rpy=[0, 0, 0], config={})
+    )
     assert fov.range_is_physical is False
 
 
@@ -210,13 +214,17 @@ def test_build_report_schema_and_gaps():
     cam = build_fov(
         m,
         d,
-        PlacedSensor("camera", pos=[0, 0, 2.5], rpy=[0, math.pi / 2, 0], config={"fovy": 90, "far": 6}),
+        PlacedSensor(
+            "camera", pos=[0, 0, 2.5], rpy=[0, math.pi / 2, 0], config={"fovy": 90, "far": 6}
+        ),
     )
     from roqsim_sensors.coverage import sampling
 
     pts = sampling.room_volume_points(m, d, resolution=0.5, heights=(1.0,))
     res = coverage(m, d, [cam], pts)
-    rep = build_report(res, world="room", target={"metric": "fraction_covered", "k": 1, "value": 0.9})
+    rep = build_report(
+        res, world="room", target={"metric": "fraction_covered", "k": 1, "value": 0.9}
+    )
     assert set(rep) >= {"achieved", "target_met", "per_sensor_contribution", "uncovered_regions"}
     assert 0.0 <= rep["achieved"]["fraction_covered_k1"] <= 1.0
     assert rep["per_sensor_contribution"][0]["type"] == "camera"
@@ -229,9 +237,24 @@ def test_greedy_baseline_improves_coverage():
     m, d = _room()
     pts = sampling.room_volume_points(m, d, resolution=0.5, heights=(1.0,))
     candidates = [
-        {"type": "oakd_camera", "pos": [0, 0, 2.5], "rpy": [0, math.pi / 2, 0], "config": {"fovy": 110, "far": 6}},
-        {"type": "oakd_camera", "pos": [1.5, 1.5, 2.5], "rpy": [0, math.pi / 2, 0], "config": {"fovy": 110, "far": 6}},
-        {"type": "oakd_camera", "pos": [-1.5, -1.5, 2.5], "rpy": [0, math.pi / 2, 0], "config": {"fovy": 110, "far": 6}},
+        {
+            "type": "oakd_camera",
+            "pos": [0, 0, 2.5],
+            "rpy": [0, math.pi / 2, 0],
+            "config": {"fovy": 110, "far": 6},
+        },
+        {
+            "type": "oakd_camera",
+            "pos": [1.5, 1.5, 2.5],
+            "rpy": [0, math.pi / 2, 0],
+            "config": {"fovy": 110, "far": 6},
+        },
+        {
+            "type": "oakd_camera",
+            "pos": [-1.5, -1.5, 2.5],
+            "rpy": [0, math.pi / 2, 0],
+            "config": {"fovy": 110, "far": 6},
+        },
     ]
     chosen, result = greedy_baseline(m, d, candidates, pts, target_frac=0.6, max_sensors=3, k=1)
     assert 1 <= len(chosen) <= 3
@@ -246,14 +269,24 @@ def test_region_contains_polygon_and_zband():
 
     r = Region("box", polygon=[[0, 0], [2, 0], [2, 2], [0, 2]], z_min=0.5, z_max=1.5)
     pts = np.array([[1, 1, 1.0], [1, 1, 3.0], [3, 1, 1.0], [1, 1, 0.4]])
-    assert list(r.contains(pts)) == [True, False, False, False]  # inside xy+z, above band, outside xy, below band
+    assert list(r.contains(pts)) == [
+        True,
+        False,
+        False,
+        False,
+    ]  # inside xy+z, above band, outside xy, below band
 
 
 def test_load_regions_from_bbox_and_polygon():
     from roqsim_sensors.coverage.regions import load_regions
 
     regs = load_regions(
-        {"regions": [{"name": "a", "bbox": [0, 0, 2, 2]}, {"name": "b", "polygon": [[3, 3], [5, 3], [4, 5]]}]}
+        {
+            "regions": [
+                {"name": "a", "bbox": [0, 0, 2, 2]},
+                {"name": "b", "polygon": [[3, 3], [5, 3], [4, 5]]},
+            ]
+        }
     )
     assert [r.name for r in regs] == ["a", "b"]
     assert regs[0].contains(np.array([[1, 1, 0.0]]))[0]
@@ -359,3 +392,35 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
     with pytest.raises(ValueError, match="unknown palette"):
         viz.render_heatmap_2d(_synthetic_result(), str(tmp_path / "x.png"), palette="rainbow")
 
+
+# -- the CLI's two entry-point contracts -------------------------------------------------------------
+
+
+def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
+    """`roqsim-coverage` is its own entry point and never reaches mujoco through roqsim.
+
+    Its submodules `import mujoco` at module scope, and MUJOCO_GL is read once while that runs -- so
+    the coverage package has to select the backend itself. When it did not, the CLI bound glfw and
+    `--render 3d` had no offscreen renderer: dead on a headless node, and silently off the GPU
+    everywhere else. Checked in a subprocess with MUJOCO_GL unset, since the variable binds at first
+    import and the test session has already bound it.
+    """
+    import os
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "MUJOCO_GL"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import roqsim_sensors.coverage.cli\n"
+            "from roqsim.rendering import bound_gl_backend\n"
+            "print(bound_gl_backend())",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    assert proc.stdout.strip().splitlines()[-1] != "glfw"

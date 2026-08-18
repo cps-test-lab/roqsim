@@ -1,4 +1,4 @@
-"""Sensor-coverage estimation for rst worlds.
+"""Sensor-coverage estimation for roqsim worlds.
 
 Given a compiled MuJoCo world and a set of sensors with known fields of view, this subpackage answers
 *how much of the room and which objects are observed, by how many sensors (0..N)?* -- and provides the
@@ -23,6 +23,15 @@ the ``roqsim sensors coverage`` CLI (:mod:`~roqsim_sensors.coverage.cli`).
 """
 
 from __future__ import annotations
+
+# BEFORE the submodules below, which `import mujoco` at module level: MUJOCO_GL is read once, while
+# `import mujoco` runs, and this package is an entry point of its own (`roqsim-coverage`) that never
+# reaches mujoco through roqsim. Without this the CLI binds glfw, so `--render 3d` has no offscreen
+# renderer -- it dies on a headless node and silently skips the GPU everywhere else. See roqsim/gl.py.
+from roqsim.gl import select_offscreen_gl
+
+select_offscreen_gl()
+
 
 from .fov import FovKind, SensorFov, in_fov
 

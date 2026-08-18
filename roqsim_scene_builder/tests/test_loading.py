@@ -74,3 +74,35 @@ def test_render_mjcf(_egl_ok, tmp_path):
     )
     frame = _render_one(str(xml))
     assert frame.shape == (48, 64, 3)
+
+
+def test_scene_window_selects_the_gl_backend_before_importing_mujoco():
+    """Importing the window module must leave an OFFSCREEN backend bound, not glfw.
+
+    MUJOCO_GL is read once, while ``import mujoco`` runs. This module imports mujoco directly rather
+    than through roqsim, so it has to call ``select_offscreen_gl`` itself first -- and isort sorts
+    first-party ``roqsim`` *below* third-party ``mujoco``, so the ordering is one re-sort away from
+    breaking. When it broke, every review window died in ``check_gl_backend`` with "MuJoCo bound the
+    glfw (on-screen) GL backend", which names neither this module nor the ordering.
+
+    Run in a subprocess with MUJOCO_GL unset: the variable is bound at first import, so an in-process
+    check would only observe whatever the test session already bound.
+    """
+    import subprocess
+    import sys
+
+    env = {k: v for k, v in os.environ.items() if k != "MUJOCO_GL"}
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import roqsim_scene_builder.scene_window\n"
+            "from roqsim.rendering import bound_gl_backend\n"
+            "print(bound_gl_backend())",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+        check=True,
+    )
+    assert proc.stdout.strip().splitlines()[-1] != "glfw"
