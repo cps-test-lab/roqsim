@@ -14,6 +14,13 @@ PY         := $(VENV)/bin/python
 PIP        := $(VENV)/bin/pip
 # Invoke tools as modules: with a --system-site-packages venv, console scripts (pytest, ruff,
 # sphinx-build) may be satisfied from the system and have no wrapper in $(VENV)/bin.
+# Third-party pytest plugins are never wanted here, and with a sourced ROS they are actively harmful:
+# --system-site-packages makes ROS's launch_testing / launch_testing_ros entry points visible, and they
+# declare hooks with signatures modern pytest removed, so collection dies with PluginValidationError
+# before a single test runs. Nothing in this tree uses a plugin -- fixtures, monkeypatch, parametrize
+# and skipif are all core -- so autoload goes off rather than blocking each offender by name (the
+# first attempt did that and found a second plugin behind the first).
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD ?= 1
 PYTEST     := $(PY) -m pytest
 RUFF       := $(PY) -m ruff
 SPHINX     := $(PY) -m sphinx
