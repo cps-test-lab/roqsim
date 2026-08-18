@@ -119,22 +119,25 @@ test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when R
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, resolves assets)
-	@fail=""; n=0; \
+	@fail=""; skipped=""; n=0; log=$$(mktemp); \
 	if [ -n "$$ROS_DISTRO" ] && [ -f ros2_ws/install/setup.sh ]; then mute=""; note="as authored (ROS sourced)"; \
 	else mute="--no-communication"; note="with --no-communication (ROS not sourced)"; fi; \
-	for w in $(WORLDS); do \
-		n=$$((n+1)); printf '== %s\n' "$$w"; \
-		$(VENV)/bin/roqsim sim "$$w" --headless --pacing asap --steps $(SMOKE_STEPS) >/dev/null 2>&1 \
-			|| fail="$$fail $$w"; \
-	done; \
+	run() { \
+		n=$$((n+1)); printf '== %s\n' "$$1"; \
+		if $(VENV)/bin/roqsim sim "$$1" --headless --pacing asap --steps $(SMOKE_STEPS) $$2 >"$$log" 2>&1; then return 0; fi; \
+		miss=$$(sed -n "s/.*Error opening file '\([^']*\)'.*/\1/p" "$$log" | head -1); \
+		if [ -n "$$miss" ] && grep -qF "$$(basename $$miss)" .gitignore; then skipped="$$skipped $$1"; \
+		else fail="$$fail $$1"; fi; \
+	}; \
+	for w in $(WORLDS); do run "$$w" ""; done; \
 	echo "-- ros2_ws worlds $$note"; \
-	for w in $(ROS_WORLDS); do \
-		n=$$((n+1)); printf '== %s\n' "$$w"; \
-		$(VENV)/bin/roqsim sim "$$w" --headless --pacing asap --steps $(SMOKE_STEPS) $$mute >/dev/null 2>&1 \
-			|| fail="$$fail $$w"; \
-	done; \
+	for w in $(ROS_WORLDS); do run "$$w" "$$mute"; done; \
+	rm -f "$$log"; \
+	if [ -n "$$skipped" ]; then echo; \
+		echo "SKIPPED -- needs an asset that is generated, not committed (external/external_assets.yaml):"; \
+		for w in $$skipped; do echo "  $$w"; done; fi; \
 	if [ -n "$$fail" ]; then echo; echo "FAILED ($$n worlds run):"; for w in $$fail; do echo "  $$w"; done; exit 1; \
-	else echo; echo "all $$n worlds ran headless for $(SMOKE_STEPS) steps."; fi
+	else echo; echo "$$n worlds run headless for $(SMOKE_STEPS) steps; none failed."; fi
 
 .PHONY: check
 check:  ## Publication hygiene: no LFS, every asset folder attributed, no absolute paths
