@@ -396,6 +396,24 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
 # -- the CLI's two entry-point contracts -------------------------------------------------------------
 
 
+def test_load_world_accepts_a_world_yaml():
+    """`--world` must take a world YAML, not only a bare MJCF.
+
+    That branch imported `rst.config` / `rst.engine` / `rst.world` -- the package's name before it was
+    renamed to roqsim -- so every world YAML and package ref died with
+    `cannot load world ...: No module named 'rst'`, and only a raw .xml worked. The ImportError is
+    caught and re-raised as SystemExit, so the dead import read as "this world is unloadable" rather
+    than as a broken rename.
+    """
+    from pathlib import Path
+
+    from roqsim_sensors.coverage.cli import load_world
+
+    world = Path(__file__).parents[1] / "src/roqsim_sensors/worlds/all_sensors_demo.yaml"
+    model, data = load_world(str(world))
+    assert model.ngeom > 0 and data is not None
+
+
 def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
     """`roqsim-coverage` is its own entry point and never reaches mujoco through roqsim.
 

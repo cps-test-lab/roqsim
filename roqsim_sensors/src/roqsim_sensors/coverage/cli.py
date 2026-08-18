@@ -12,7 +12,7 @@ Subcommands:
 
 Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Example::
 
-    MUJOCO_GL=egl rst sensors coverage estimate \\
+    roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
 """
 
@@ -34,7 +34,7 @@ from .report import build_report
 
 
 def load_world(world: str):
-    """Compile ``world`` (an MJCF path, or a rst world YAML / package ref) -> (model, data)."""
+    """Compile ``world`` (an MJCF path, or an roqsim world YAML / package ref) -> (model, data)."""
     import mujoco
 
     p = Path(world)
@@ -44,12 +44,12 @@ def load_world(world: str):
         mujoco.mj_forward(model, data)
         return model, data
 
-    # A world YAML / package ref: build through the rst engine so plugins (floorplan, spawns)
+    # A world YAML / package ref: build through the roqsim engine so plugins (floorplan, spawns)
     # contribute their geometry, then read the compiled model/data back off the context.
     try:
-        from rst.config import load_config
-        from rst.engine import Engine
-        from rst.world import resolve_world_yaml_ref
+        from roqsim.config import load_config
+        from roqsim.engine import Engine
+        from roqsim.world import resolve_world_yaml_ref
     except ImportError as exc:  # pragma: no cover
         raise SystemExit(f"cannot load world {world!r}: {exc}") from exc
     # A `<package>:<world>` ref (the same form `extends:` accepts) -> resolve to its YAML path first;
@@ -296,7 +296,7 @@ def cmd_greedy(args) -> int:
 
 
 def _add_common_sampling(sp):
-    sp.add_argument("--world", required=True, help="MJCF path, world YAML, or rst world ref")
+    sp.add_argument("--world", required=True, help="MJCF path, world YAML, or roqsim world ref")
     sp.add_argument("--out", required=True, help="output directory")
     sp.add_argument("--sample", choices=("volume", "objects", "both"), default="both")
     sp.add_argument(

@@ -11,7 +11,7 @@ For each sensor and each sample point the test is three gates, cheapest first:
 Correctness notes:
 
 * The raycast ``geomgroup`` mask includes only geom groups 0-3, which keeps an absent entity
-  (:data:`rst.presence.ABSENT_GEOM_GROUP`, group 4) from occluding. It is **not** what keeps a sensor
+  (:data:`roqsim.presence.ABSENT_GEOM_GROUP`, group 4) from occluding. It is **not** what keeps a sensor
   model's FOV-visualisation mesh out: those live in group 2 (``spawn_sensor.FOV_GEOM_GROUP``, chosen
   because the MuJoCo 3.x offscreen renderer drops large group-4/5 geoms) and are excluded because
   their alpha is 0 -- ``mj_ray`` skips a geom exactly when its resolved alpha is 0, whatever the mask
