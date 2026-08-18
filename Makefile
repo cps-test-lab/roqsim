@@ -84,6 +84,13 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	# roqsim_sensors also gets its markers (fiducials) + coverage (matplotlib heatmap) extras; see
 	# EXTRAS_<pkg> above for why this is a lookup and not an inline conditional.
 	$(PIP) install $(foreach p,$(PKGS),-e "$(p)$(or $(EXTRAS_$(p)),$(EXTRAS_DEFAULT))")
+	# --ignore-installed for pytest, not tidiness: with --system-site-packages pip counts the SYSTEM
+	# pytest as satisfying `pytest>=7.0` from every package's [test] extra, so the runner is never
+	# installed here and whatever the host or base image ships is what runs. That is invisible until
+	# the host changes -- inside ros:jazzy its pytest collected 1 test instead of 1449 and `make test`
+	# exited 5 ("no tests collected") while the same commit passed everywhere else. The venv owns its
+	# own test runner.
+	$(PIP) install --ignore-installed pytest
 	$(PIP) install sphinx furo ruff
 	$(EXTERNAL) convert --resource spot_locomotion_policy  # fetch the NVIDIA Spot policy (external asset; fail-soft)
 	@echo

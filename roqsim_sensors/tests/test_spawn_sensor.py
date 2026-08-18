@@ -2,10 +2,35 @@
 
 from __future__ import annotations
 
+import pathlib
+
 import numpy as np
+import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+
+_MODELS = pathlib.Path(__file__).resolve().parent.parent / "src" / "roqsim_sensors" / "models"
+
+#: The mid360, zivid and robin_w1g meshes are DERIVED from vendor CAD whose redistribution terms are
+#: unclear, so they are generated locally by `make external-resources` and git-ignored -- and two of
+#: the three sources sit behind a product page that cannot be fetched at all. A clean checkout (CI
+#: included) therefore has the models' MJCF but not their meshes, and the engine fails at compile with
+#: "Error opening file 'meshes/mid360_body.obj'". Skipping is the honest outcome: the asset is absent
+#: by design, not broken. See external/external_assets.yaml and the package's *_MESH_LICENSE files.
+def _needs_external_mesh(model: str, mesh: str):
+    return pytest.mark.skipif(
+        not (_MODELS / model / "meshes" / mesh).is_file(),
+        reason=(
+            f"{model}: {mesh} is a generated external asset and is not committed "
+            f"(run `make external-resources RESOURCE=...` -- some sources are manual downloads)"
+        ),
+    )
+
+
+needs_mid360 = _needs_external_mesh("mid360", "mid360_body.obj")
+needs_zivid = _needs_external_mesh("zivid", "zivid_body.obj")
+needs_robin = _needs_external_mesh("robin_w1g", "robin_w1g_body.obj")
 
 
 def _world(**spawn_config):
@@ -72,6 +97,7 @@ def _robin_world(**spawn_config):
     return load_config_from_dict(cfg)
 
 
+@needs_mid360
 def test_no_fov_geom_without_show_fov():
     # The Mid-360 ships no baked _fov mesh; its sector is synthesised at build time, and only when
     # show_fov is set -- so a plain mount has no FOV geom at all (mirrors the camera path).
@@ -82,6 +108,7 @@ def test_no_fov_geom_without_show_fov():
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "mid360_fov") < 0
 
 
+@needs_mid360
 def test_show_fov_synthesises_the_lidar_sector():
     # show_fov synthesises the Mid-360's dome sector as a mesh geom named "<site>_fov" = "mid360_fov".
     engine = Engine(_mid360_world(show_fov=True, fov_alpha=0.2))
@@ -89,6 +116,7 @@ def test_show_fov_synthesises_the_lidar_sector():
     assert np.isclose(_fov_alpha(engine), 0.2)
 
 
+@needs_mid360
 def test_show_fov_default_alpha_maximises_overlap_contrast():
     # Default fov_alpha is ~0.25: the darkness step between single- and double-coverage under alpha
     # blending is largest near this value and vanishes at very low alpha.
@@ -97,6 +125,7 @@ def test_show_fov_default_alpha_maximises_overlap_contrast():
     assert np.isclose(_fov_alpha(engine), 0.25)
 
 
+@needs_mid360
 def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     import mujoco
 
@@ -110,6 +139,7 @@ def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     assert m.geom_group[gid] == 2  # FOV_GEOM_GROUP -- normally rendered (not the dropped 4/5)
 
 
+@needs_mid360
 def test_lidar_sector_vertex_count_matches_grid():
     # A closed sector shell is an inner + outer sheet over the (azimuth x elevation) grid: 2*na*ne.
     import math
@@ -122,6 +152,7 @@ def test_lidar_sector_vertex_count_matches_grid():
     assert _mesh_vertnum(engine, "mid360_fov") == 2 * na * ne
 
 
+@needs_mid360
 def test_lidar_sector_reaches_the_datasheet_range():
     # The outer shell sits at the manifest far (Mid-360: 40 m detection range), so the farthest
     # vertex from the mount is ~40 m -- the user asked for the true datasheet range, not a stub.
@@ -132,6 +163,7 @@ def test_lidar_sector_reaches_the_datasheet_range():
     assert np.isclose(np.linalg.norm(verts, axis=1).max(), 40.0, atol=0.5)
 
 
+@needs_robin
 def test_show_fov_synthesises_robin_w1g_forward_sector():
     # The Robin W1G is the other camera-less lidar: a bounded forward 120x70 sector, drawn to its 70 m
     # spec'd range. Same synthesis path, different manifest angles.
@@ -218,6 +250,7 @@ def test_synthesised_frustum_is_double_sided():
     assert n > 0 and n % 2 == 0
 
 
+@needs_mid360
 def test_lidar_sector_is_double_sided():
     # Same guard for the lidar dome: doubled faces so the coverage volume is visible from inside too.
     engine = Engine(_mid360_world(show_fov=True))
@@ -226,6 +259,7 @@ def test_lidar_sector_is_double_sided():
     assert n > 0 and n % 2 == 0
 
 
+@needs_zivid
 def test_camera_model_always_synthesises_occluded_frustum_not_envelope():
     # The zivid ships a bundled _fov envelope but also has a camera. Occlusion is unconditional, so the
     # plugin always synthesises an occlusion-clipped frustum from the camera and leaves the baked
@@ -281,6 +315,7 @@ def test_mount_pose_places_the_camera_in_the_world():
     assert np.allclose(forward, [0.0, -1.0, 0.0], atol=1e-6)
 
 
+@needs_zivid
 def test_standalone_camera_mounts_share_the_horizontal_look_convention():
     """All standalone camera mounts look +y (horizontal, toward a wall) with +z up at rpy [0,0,0].
 
@@ -389,6 +424,7 @@ def test_fov_occlusion_mesh_is_a_grid_not_a_hull(tmp_path):
     assert _mesh_vertnum(engine, "d435_color_fov") == 2 * 16 * 12  # near + far sheets, not an 8-vert hull
 
 
+@needs_mid360
 def test_camera_less_model_is_unaffected_by_unconditional_occlusion():
     # Occlusion is unconditional for cameras, but a camera-less model (mid360) has no pinhole to
     # raycast from -- it must fall through to its synthesised sector, not error.

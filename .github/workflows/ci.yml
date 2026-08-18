@@ -17,12 +17,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MuJoCo renders through EGL here (MUJOCO_GL=egl is exported by the Makefile): without these the
-      # offscreen context fails to bind and every render/smoke step dies in the same confusing way.
-      - name: Install GL libraries
+      # MuJoCo renders offscreen here. A GitHub runner has no /dev/dri/renderD128, so roqsim's own
+      # backend selection picks osmesa rather than egl -- hence libosmesa6, not just libegl1.
+      # ffmpeg is what `roqsim render --out x.webm` shells out to; without it the video tests fail
+      # with the code's own "ffmpeg is not on PATH" error, which is a missing runner dep, not a bug.
+      - name: Install GL libraries and ffmpeg
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6 ffmpeg
 
       - name: Create venv and install packages
         run: make venv
