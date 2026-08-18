@@ -39,6 +39,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+import yaml
 
 from . import logging_setup
 from .capture import CaptureError
@@ -145,7 +146,15 @@ def view_overrides(pairs: list[str] | None) -> dict:
             f"--view {bad[0]!r}: expected KEY=VALUE, e.g. --view azimuth=90. If that was meant to be "
             "the thing to render, put it before the flag: roqsim render <target> --view ..."
         )
-    return {"sim": {"view": overrides_from_dotlist(pairs)}}
+    view = overrides_from_dotlist(pairs)
+    if isinstance(lookat := view.get("lookat"), str) and "," in lookat:
+        # `lookat=1,2,0` is how a three-vector is naturally written on a command line, and it is the
+        # form this docstring and the world YAML's own `[0, 0.4, 0.9]` both suggest -- but YAML reads a
+        # bare comma list as one scalar string. Bracket it and re-read here, in the sugar layer, so the
+        # value reaching sim.view is the list it was meant to be; anything still malformed is the
+        # single sim.view validator's to reject.
+        view["lookat"] = yaml.safe_load(f"[{lookat}]")
+    return {"sim": {"view": view}}
 
 
 def is_mesh(target: str) -> bool:

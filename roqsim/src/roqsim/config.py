@@ -595,6 +595,37 @@ def overrides_from_dotlist(dotlist: list[str]) -> dict:
 #: a run-level switch that does not belong in a world, and is rejected rather than silently dropped.
 _VIEW_KEYS = frozenset({"lookat", "distance", "azimuth", "elevation", "track", "follow_heading"})
 
+#: ``sim.view``'s value shapes: how many numbers each numeric key carries. ``track`` is an entity or
+#: body name and ``follow_heading`` a flag, so they are checked on their own.
+_VIEW_NUMERIC_WIDTHS = {"lookat": 3, "distance": 1, "azimuth": 1, "elevation": 1}
+
+
+def _validate_view(view) -> None:
+    """Reject a malformed ``sim.view`` at load time, not frames later inside the camera.
+
+    The shape that motivated this is ``lookat: "1,2,0"`` -- a string where three numbers belong.
+    Nothing rejected it, so it travelled all the way to ``[float(v) for v in view["lookat"]]`` in
+    :func:`roqsim.viewer.apply_view`, which iterates the *characters* of the string and dies on
+    ``float('.')``: an error naming a decimal point, no key, and no file.
+    """
+    if view is None:
+        return
+    if not isinstance(view, dict):
+        raise PluginError("sim.view must be a mapping of camera keys -> values")
+    for key, width in _VIEW_NUMERIC_WIDTHS.items():
+        if (value := view.get(key)) is None:
+            continue
+        values = value if isinstance(value, (list, tuple)) else [value]
+        numbers = len(values) == width and all(
+            isinstance(v, (int, float)) and not isinstance(v, bool) for v in values
+        )
+        if not numbers:
+            want = f"{width} numbers, e.g. [1, 2, 0]" if width > 1 else "a number"
+            raise PluginError(f"sim.view.{key}: expected {want}, got {value!r}")
+    if (track := view.get("track")) is not None and not isinstance(track, str):
+        raise PluginError(f"sim.view.track: expected an entity or body name, got {track!r}")
+
+
 #: The complete ``sim.contact_override`` schema -- MuJoCo's three global contact overrides and their
 #: vector widths. Rejected rather than dropped, because a typo here is invisible: an ignored
 #: ``o_solref`` produces a model that compiles, runs, and quietly uses the untouched defaults.
@@ -645,6 +676,7 @@ def _from_dict(raw: dict, base_dir: Path) -> SimConfig:
             f"({', '.join(sorted(_VIEW_KEYS))}). The viewer's side panels are run-level switches: "
             "see 'roqsim --help'."
         )
+    _validate_view((raw.get("sim") or {}).get("view"))
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
     plugins = [
         parse_plugin_entry(entry, f"plugins[{i}]")

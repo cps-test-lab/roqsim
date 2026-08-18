@@ -84,3 +84,17 @@ def test_view_rejects_unknown_keys():
         load_config_from_dict({"sim": {"view": {"right_ui": True}}, "plugins": []})
     with pytest.raises(PluginError, match="unknown key\\(s\\) azimut"):
         load_config_from_dict({"sim": {"view": {"azimut": 90}}, "plugins": []})
+
+
+def test_view_rejects_malformed_values():
+    # A string where three numbers belong used to travel all the way to apply_view, which iterates
+    # the characters of `"1,2,0"` and fails with `could not convert string to float: '.'` -- naming
+    # a decimal point, no key and no file. Reject it here, where the key can be named.
+    with pytest.raises(PluginError, match="sim.view.lookat: expected 3 numbers"):
+        load_config_from_dict({"sim": {"view": {"lookat": "1,2,0"}}, "plugins": []})
+    with pytest.raises(PluginError, match="sim.view.lookat: expected 3 numbers"):
+        load_config_from_dict({"sim": {"view": {"lookat": [1, 2]}}, "plugins": []})
+    with pytest.raises(PluginError, match="sim.view.distance: expected a number"):
+        load_config_from_dict({"sim": {"view": {"distance": "near"}}, "plugins": []})
+    with pytest.raises(PluginError, match="sim.view.track: expected an entity or body name"):
+        load_config_from_dict({"sim": {"view": {"track": 3}}, "plugins": []})

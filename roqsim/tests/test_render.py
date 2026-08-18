@@ -7,9 +7,8 @@ there is no usable offscreen backend.
 
 from __future__ import annotations
 
-import os
-
 import json
+import os
 
 import mujoco
 import numpy as np
@@ -60,6 +59,14 @@ def test_view_is_partial():
 def test_view_parses_types_like_set_does():
     got = render.view_overrides(["lookat=[1, 2, 0]", "follow_heading=true"])["sim"]["view"]
     assert got == {"lookat": [1, 2, 0], "follow_heading": True}
+
+
+def test_view_accepts_a_comma_separated_lookat():
+    """`lookat=1,2,0` is how a three-vector is written on a command line, and it must reach sim.view
+    as three numbers. YAML reads a bare comma list as one scalar string, which the camera then
+    iterated character by character and died on `float('.')`."""
+    got = render.view_overrides(["lookat=2.5,1.0,0"])["sim"]["view"]
+    assert got == {"lookat": [2.5, 1.0, 0]}
 
 
 def test_view_unknown_key_names_the_frozen_set():
@@ -138,7 +145,9 @@ def test_meshes_take_the_mesh_branch(target):
     assert render.is_mesh(target)
 
 
-@pytest.mark.parametrize("target", ["w.yaml", "w.yml", "s.xml", "roqsim_assets:industrial_table", "table"])
+@pytest.mark.parametrize(
+    "target", ["w.yaml", "w.yml", "s.xml", "roqsim_assets:industrial_table", "table"]
+)
 def test_non_meshes_do_not(target):
     assert not render.is_mesh(target)
 
@@ -581,7 +590,9 @@ def test_progress_rewrites_one_line_on_a_tty(monkeypatch):
     progress.done()
     assert all(t.startswith("\r") for t in written), "every update must rewrite the same line"
     assert len(written) == 11  # ten ticks plus the clear
-    assert written[-1].strip() == "", "the line must be cleared so it cannot collide with later output"
+    assert written[-1].strip() == "", (
+        "the line must be cleared so it cannot collide with later output"
+    )
 
 
 def test_progress_survives_an_unknown_total(monkeypatch, caplog):
@@ -601,7 +612,7 @@ def test_frames_in_range_counts_the_samples(a_recording):
 
 
 def test_the_last_sample_default_is_announced(a_recording, tmp_path, caplog):
-    """"The last sample" is a choice the caller did not make, so it must not be silent."""
+    """ "The last sample" is a choice the caller did not make, so it must not be silent."""
     import logging as logging_mod
 
     _scene, npz = a_recording
