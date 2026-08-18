@@ -1,0 +1,38 @@
+# The Gazebo/Fuel "Depot" warehouse as a plain MuJoCo world (a baked MJCF). Loadable by roqsim OR any
+# MuJoCo tool:
+#   roqsim sim roqsim_scenes/src/roqsim_scenes/worlds/depot.yaml
+#   python -m mujoco.viewer --mjcf roqsim_scenes/src/roqsim_scenes/worlds/depot/depot.xml
+#
+# `sim.world` points at the baked scene (per-object meshes + a collidable ground plane + lighting +
+# textures). It is the SAME warehouse nav2's tb4_simulation_launch.py loads in Gazebo, ported from the
+# OpenRobotics "Depot" Fuel model (CC-BY-4.0; provenance pinned in
+# scenes/depot/assets.lock.json). ~30.6 x 15.6 m, floor at z ~ 0. As in Gazebo, the walls are visual
+# meshes (the lidar's rays hit them; the robot rolls on the ground plane) -- the model's only SDF
+# collision is the floor. There is no robot here; add spawn_robot below, or use the nav2 wiring in
+# roqsim_nav2_example:worlds/depot_nav2.yaml (`extends` this world and adds the robot + bridge + AMCL).
+#
+# Regenerate the MJCF (paths relative to the roqsim_scenes package root):
+#   roqsim scenes scene-to-mjcf --scene src/roqsim_scenes/scenes/depot/scene.json \
+#       --out src/roqsim_scenes/worlds/depot/depot.xml
+# Re-import from the Fuel model (re-fetches + re-pins per scenes/depot/assets.lock.json):
+#   roqsim scenes sdf-to-scene --world src/roqsim_scenes/scenes/depot/depot.sdf \
+#       --out-dir src/roqsim_scenes/scenes/depot --scene-name depot \
+#       --lock src/roqsim_scenes/scenes/depot/assets.lock.json
+
+sim:
+  name: Depot                  # model + viewer title ("Roqsim: Depot")
+  world: depot/depot.xml       # MJCF file (relative to this YAML), loaded as the base scene
+  pacing: realtime             # realtime | asap | {factor: N}
+  view:                        # initial free-camera framing (windowed runner only)
+    lookat: [4.0, 0.0, 1.0]
+    distance: 42.0
+    azimuth: 90.0
+    elevation: -45.0
+
+plugins:
+  # Ships OPEN (roofless): removes every geom whose geometry sits entirely above 2.6 m -- the roof,
+  # ceiling fans, hung fixtures and clerestory windows -- so overhead sensors and a top-down view see
+  # in. Walls, pillars and floor clutter (which span down into the room) stay. Set `enabled: true` for
+  # the roofed warehouse. Generic: the `ceiling` plugin (roqsim core) opens any world by height.
+  - ceiling: {above_z: 2.6, enabled: false}
+  # e.g. add a robot below: - spawn_robot: {model: turtlebot4, name: robot, pos: [-8.0, 0.0]}

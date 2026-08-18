@@ -1,0 +1,21 @@
+<mujoco model="floor">
+  <!--
+    Scene floor: a checker ground plane plus its material, kept regardless of the
+    chosen environment. The geom is named `floor` because that is the name the rest
+    of the substrate refers to a ground plane by. No robot model depends on the name
+    any more -- a caster that needs to be frictionless says so with `priority="1"` on
+    its own geom rather than pairing against `floor`, which silently did nothing in a
+    world that named its ground otherwise.
+    Default size is 6 x 6 m to match the empty_room environment.
+  -->
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1="0.2 0.3 0.4" rgb2="0.1 0.15 0.2"
+             width="512" height="512" mark="edge" markrgb="0.8 0.8 0.8"/>
+    <material name="floor_mat" texture="grid" texrepeat="12 12" reflectance="0.1"/>
+  </asset>
+
+  <worldbody>
+    <geom name="floor" type="plane" size="3 3 0.05" material="floor_mat"
+          friction="2.0 0.005 0.0001"/>
+  </worldbody>
+</mujoco>

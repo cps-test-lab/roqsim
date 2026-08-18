@@ -1,0 +1,21 @@
+<mujoco model="door_frame">
+  <!--
+    The door FRAME (jamb + lintel casing) extracted from the Sketchfab door unit (CC-BY oobexr, see
+    CREDITS.txt). Static trim that surrounds a door opening: the `door` plugin welds one at the
+    opening centre while the leaf (door / door_glass) hinges inside it. Origin is the opening CENTRE
+    (x=0), the casing normalised so its CLEAR opening is 0.9 x 2.0 m (matching the leaf), base at z=0;
+    the plugin rescales it (X width, Z height) to each opening. Visual-only (contype/conaffinity 0):
+    the wall the opening was cut into already provides collision, so the casing never narrows the
+    navigable doorway or snags a robot. Painted white to match the leaf.
+  -->
+  <compiler meshdir="meshes" texturedir="meshes"/>
+  <asset>
+    <mesh name="door_frame" file="door_frame.obj"/>
+    <material name="door_frame" rgba="0.92 0.92 0.90 1"/>
+  </asset>
+  <worldbody>
+    <body name="frame">
+      <geom type="mesh" mesh="door_frame" material="door_frame" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

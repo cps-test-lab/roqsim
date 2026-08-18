@@ -1,0 +1,486 @@
+<?xml version="1.0" ?>
+<mujoco model="tiago_pro">
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+  <default>
+    <default class="tiago_pro_visual">
+      <geom contype="0" conaffinity="0" group="2" density="0"/>
+    </default>
+    <default class="tiago_pro_collision">
+      <geom group="3" rgba="0.4 0.5 0.6 0.3" condim="3" contype="2" conaffinity="1"/>
+    </default>
+  </default>
+  <asset>
+    <mesh name="meshes_laser_sick_tim551" file="meshes_laser_sick_tim551.stl"/>
+    <mesh name="meshes_base_base_link" file="meshes_base_base_link.stl"/>
+    <mesh name="meshes_base_base_dock_link" file="meshes_base_base_dock_link.stl"/>
+    <mesh name="meshes_base_base_antenna_link" file="meshes_base_base_antenna_link.stl"/>
+    <mesh name="meshes_base_base_antenna_link_reflected" file="meshes_base_base_antenna_link_reflected.stl"/>
+    <mesh name="meshes_wheels_suspension_front_link" file="meshes_wheels_suspension_front_link.stl"/>
+    <mesh name="meshes_wheels_wheel_link" file="meshes_wheels_wheel_link.stl"/>
+    <mesh name="meshes_wheels_suspension_front_link_reflected" file="meshes_wheels_suspension_front_link_reflected.stl"/>
+    <mesh name="meshes_wheels_wheel_link_reflected" file="meshes_wheels_wheel_link_reflected.stl"/>
+    <mesh name="meshes_wheels_suspension_rear_link" file="meshes_wheels_suspension_rear_link.stl"/>
+    <mesh name="meshes_wheels_suspension_rear_link_reflected" file="meshes_wheels_suspension_rear_link_reflected.stl"/>
+    <mesh name="meshes_torso_torso_fixed" file="meshes_torso_torso_fixed.stl"/>
+    <mesh name="meshes_torso_torso_fixed_collision" file="meshes_torso_torso_fixed_collision.stl"/>
+    <mesh name="meshes_torso_torso_lift_link" file="meshes_torso_torso_lift_link.stl"/>
+    <mesh name="meshes_torso_torso_lift_link_collision" file="meshes_torso_torso_lift_link_collision.stl"/>
+    <mesh name="meshes_torso_laptop_tray_collision" file="meshes_torso_laptop_tray_collision.stl"/>
+    <mesh name="meshes_head_1_link" file="meshes_head_1_link.stl"/>
+    <mesh name="meshes_head_1_link_collision" file="meshes_head_1_link_collision.stl"/>
+    <mesh name="meshes_realsense_d435_cover_link" file="meshes_realsense_d435_cover_link.stl"/>
+    <mesh name="meshes_head_2_link" file="meshes_head_2_link.stl"/>
+    <mesh name="meshes_head_2_link_collision" file="meshes_head_2_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_1_link" file="meshes_arm_tiago_pro_arm_1_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_1_link_collision" file="meshes_arm_tiago_pro_arm_1_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_2_link" file="meshes_arm_tiago_pro_arm_2_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_2_link_collision" file="meshes_arm_tiago_pro_arm_2_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_3_link" file="meshes_arm_tiago_pro_arm_3_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_3_link_collision" file="meshes_arm_tiago_pro_arm_3_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_4_link" file="meshes_arm_tiago_pro_arm_4_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_arm_4_link_collision" file="meshes_arm_tiago_pro_arm_4_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_5_link" file="meshes_arm_tiago_pro_spherical_wrist_arm_5_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_5_link_collision" file="meshes_arm_tiago_pro_spherical_wrist_arm_5_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_6_link" file="meshes_arm_tiago_pro_spherical_wrist_arm_6_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_6_link_collision" file="meshes_arm_tiago_pro_spherical_wrist_arm_6_link_collision.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_7_link" file="meshes_arm_tiago_pro_spherical_wrist_arm_7_link.stl"/>
+    <mesh name="meshes_arm_tiago_pro_spherical_wrist_arm_7_link_collision" file="meshes_arm_tiago_pro_spherical_wrist_arm_7_link_collision.stl"/>
+    <mesh name="meshes_base_link_tc" file="meshes_base_link_tc.stl"/>
+    <mesh name="meshes_inner_finger" file="meshes_inner_finger.stl"/>
+    <mesh name="meshes_outer_finger" file="meshes_outer_finger.stl"/>
+    <mesh name="meshes_fingertip" file="meshes_fingertip.stl"/>
+  </asset>
+  <worldbody>
+    <body name="base_footprint">
+      <freejoint name="base_free"/>
+      <camera name="track" mode="track" pos="-2.8 -2.8 2.4" xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+      <body name="base_link" pos="0 0 0.0762">
+        <site name="lidar_front" pos="0.2751 -0.183 0.13244" euler="0 0 -0.7853981634" size="0.006" rgba="1 0 0 0.6"/>
+        <site name="lidar_rear" pos="-0.2751 0.183 0.13244" euler="0 0 2.3561944902" size="0.006" rgba="1 0 0 0.6"/>
+        <inertial pos="0.0026742 0.00027459 0.086363" quat="0.00180371 0.707337 -0.00172275 0.706872" mass="34.047" diaginertia="0.46036 0.299912 0.227768"/>
+        <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="meshes_base_base_link" class="tiago_pro_visual"/>
+        <geom size="0.3585 0.2485 0.04225" pos="0 0 0.18925" type="box" class="tiago_pro_collision"/>
+        <geom size="0.29 0.195 0.015" pos="0 0 0.132" type="box" class="tiago_pro_collision"/>
+        <geom size="0.3525 0.24 0.0835" pos="0 0 0.0335" type="box" class="tiago_pro_collision"/>
+        <body name="base_rear_laser_link" pos="-0.27512 0.18297 0.13244" quat="0 -0.382683 -0.92388 0">
+          <inertial pos="-0.02559 -0.00056 -0.05732" quat="0.00952961 0.665995 -0.011891 0.7458" mass="0.28922" diaginertia="5.87436e-05 3.37527e-05 2.58643e-05"/>
+          <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_laser_sick_tim551" class="tiago_pro_visual"/>
+          <geom size="0.01 0.005" type="cylinder" class="tiago_pro_collision"/>
+        </body>
+        <body name="base_front_laser_link" pos="0.27512 -0.18297 0.13244" quat="0 -0.92388 0.382683 0">
+          <inertial pos="-0.02559 -0.00056 -0.05732" quat="0.00952961 0.665995 -0.011891 0.7458" mass="0.28922" diaginertia="5.87436e-05 3.37527e-05 2.58643e-05"/>
+          <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_laser_sick_tim551" class="tiago_pro_visual"/>
+          <geom size="0.01 0.005" type="cylinder" class="tiago_pro_collision"/>
+        </body>
+        <body name="virtual_base_laser_link" pos="0 0 0.13244"/>
+        <body name="base_imu_link" pos="-0.287 0 0.092163" quat="0.707107 0 0 0.707107">
+          <site name="base_imu" size="0.01" rgba="0 0 0 0"/>
+        </body>
+        <body name="base_dock_link" pos="0.3535 0 0.0596">
+          <inertial pos="-0.0037082 0 0" mass="0.032242" diaginertia="2.1302e-05 1.2058e-05 1.0058e-05"/>
+          <geom type="mesh" rgba="0.25098 0.25098 0.25098 1" mesh="meshes_base_base_dock_link" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_base_base_dock_link" class="tiago_pro_collision"/>
+        </body>
+        <body name="base_antenna_right_link" pos="-0.2015 -0.13 0.2165">
+          <inertial pos="0.027807 -0.0085125 0.015138" quat="0.567056 0.569917 0.421558 0.419442" mass="0.02311" diaginertia="1.89426e-05 1.85425e-05 7.51656e-07"/>
+          <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="meshes_base_base_antenna_link" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_base_base_antenna_link" class="tiago_pro_collision"/>
+        </body>
+        <body name="base_antenna_left_link" pos="-0.2015 0.13 0.2165">
+          <inertial pos="0.027807 0.0085125 0.015138" quat="0.419442 0.421558 0.569917 0.567056" mass="0.02311" diaginertia="1.89426e-05 1.85425e-05 7.51656e-07"/>
+          <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="meshes_base_base_antenna_link_reflected" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_base_base_antenna_link_reflected" class="tiago_pro_collision"/>
+        </body>
+        <body name="suspension_front_right_link" pos="0.244 -0.1725 0" quat="0.707107 0 0 -0.707107">
+          <inertial pos="-0.058182 -0.0043908 -0.0057695" quat="0.669438 0.682778 -0.250254 0.151788" mass="1.2879" diaginertia="0.00162807 0.00157328 0.000581032"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="meshes_wheels_suspension_front_link" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_wheels_suspension_front_link" class="tiago_pro_collision"/>
+          <body name="wheel_front_right_link" pos="0.050675 0 0" quat="0.5 -0.5 -0.5 0.5">
+            <inertial pos="5.4922e-09 6.9775e-05 0.011144" quat="-0.0015583 0.707105 -0.0015583 0.707105" mass="0.70767" diaginertia="0.000401311 0.000355289 0.00035492"/>
+            <joint name="wheel_front_right_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-6 6" armature="0.05"/>
+            <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_wheels_wheel_link" class="tiago_pro_visual"/>
+            <geom size="0.0762 0.025" type="cylinder" class="tiago_pro_collision" name="wheel_front_right_tyre" friction="0.02 0.005 0.0001" priority="2" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="suspension_front_left_link" pos="0.244 0.1725 0" quat="0.707107 0 0 0.707107">
+          <inertial pos="-0.058182 0.0043908 -0.0057695" quat="0.682778 0.669438 -0.151788 0.250254" mass="1.2879" diaginertia="0.00162807 0.00157328 0.000581032"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="meshes_wheels_suspension_front_link_reflected" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_wheels_suspension_front_link_reflected" class="tiago_pro_collision"/>
+          <body name="wheel_front_left_link" pos="0.050675 0 0" quat="0.5 -0.5 0.5 -0.5">
+            <inertial pos="5.4922e-09 -6.9775e-05 -0.011144" quat="-0.0015583 0.707105 -0.0015583 0.707105" mass="0.70767" diaginertia="0.000401311 0.000355289 0.00035492"/>
+            <joint name="wheel_front_left_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-6 6" armature="0.05"/>
+            <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_wheels_wheel_link_reflected" class="tiago_pro_visual"/>
+            <geom size="0.0762 0.025" type="cylinder" class="tiago_pro_collision" name="wheel_front_left_tyre" friction="0.02 0.005 0.0001" priority="2" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="suspension_rear_right_link" pos="-0.244 -0.1725 0" quat="0.707107 0 0 -0.707107">
+          <inertial pos="-0.058182 0.0043908 -0.0057695" quat="0.682778 0.669438 -0.151788 0.250254" mass="1.2879" diaginertia="0.00162807 0.00157328 0.000581032"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="meshes_wheels_suspension_rear_link" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_wheels_suspension_rear_link" class="tiago_pro_collision"/>
+          <body name="wheel_rear_right_link" pos="0.050675 0 0" quat="0.5 -0.5 -0.5 0.5">
+            <inertial pos="-5.4922e-09 -6.9775e-05 0.011144" quat="0.0015583 0.707105 0.0015583 0.707105" mass="0.70767" diaginertia="0.000401311 0.000355289 0.00035492"/>
+            <joint name="wheel_rear_right_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-6 6" armature="0.05"/>
+            <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_wheels_wheel_link" class="tiago_pro_visual"/>
+            <geom size="0.0762 0.025" type="cylinder" class="tiago_pro_collision" name="wheel_rear_right_tyre" friction="0.02 0.005 0.0001" priority="2" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="suspension_rear_left_link" pos="-0.244 0.1725 0" quat="0.707107 0 0 0.707107">
+          <inertial pos="-0.058182 -0.0043908 -0.0057695" quat="0.669438 0.682778 -0.250254 0.151788" mass="1.2879" diaginertia="0.00162807 0.00157328 0.000581032"/>
+          <geom type="mesh" rgba="0.79216 0.81961 0.93333 1" mesh="meshes_wheels_suspension_rear_link_reflected" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_wheels_suspension_rear_link_reflected" class="tiago_pro_collision"/>
+          <body name="wheel_rear_left_link" pos="0.050675 0 0" quat="0.5 -0.5 0.5 -0.5">
+            <inertial pos="-5.4922e-09 6.9775e-05 -0.011144" quat="0.0015583 0.707105 0.0015583 0.707105" mass="0.70767" diaginertia="0.000401311 0.000355289 0.00035492"/>
+            <joint name="wheel_rear_left_joint" pos="0 0 0" axis="0 0 1" actuatorfrcrange="-6 6" armature="0.05"/>
+            <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_wheels_wheel_link_reflected" class="tiago_pro_visual"/>
+            <geom size="0.0762 0.025" type="cylinder" class="tiago_pro_collision" name="wheel_rear_left_tyre" friction="0.02 0.005 0.0001" priority="2" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="torso_base_link" pos="-0.0245 0 0.215">
+          <inertial pos="-0.0436245 -5.47055e-05 0.0277533" quat="0.0346063 0.680138 -0.0364033 0.731361" mass="1.00223" diaginertia="0.0122314 0.00691147 0.00657295"/>
+          <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_torso_torso_fixed" class="tiago_pro_visual"/>
+          <geom type="mesh" mesh="meshes_torso_torso_fixed_collision" class="tiago_pro_collision"/>
+          <body name="torso_lift_link" pos="0 0 0.5545">
+            <inertial pos="0 0 0" quat="0.704705 0.705193 0.0551905 -0.0552004" mass="3.24266" diaginertia="0.0295505 0.0289921 0.0170989"/>
+            <joint name="torso_lift_joint" pos="0 0 0" axis="0 0 1" type="slide" range="0 0.35" actuatorfrcrange="-2000 2000" damping="1000"/>
+            <geom type="mesh" rgba="0.894118 0.913725 0.929412 1" mesh="meshes_torso_torso_lift_link" class="tiago_pro_visual"/>
+            <geom type="mesh" mesh="meshes_torso_torso_lift_link_collision" class="tiago_pro_collision"/>
+            <geom pos="-0.226436 3.12797e-05 0.00524038" quat="0.707107 0 0 -0.707107" type="mesh" mesh="meshes_torso_laptop_tray_collision" class="tiago_pro_collision"/>
+            <body name="torso_head_link" pos="0 0 0.04">
+              <inertial pos="0 0 -0.00811522" quat="0 0.707107 0 0.707107" mass="0.19542" diaginertia="0.000881921 0.000498457 0.00043918"/>
+              <geom size="0.055 0.046 0.01085" pos="0 0 0.01085" type="box" rgba="0.298039 0.298039 0.298039 1" class="tiago_pro_visual"/>
+              <geom size="0.055 0.046 0.01085" pos="0 0 0.01085" type="box" class="tiago_pro_collision"/>
+              <body name="head_1_link">
+                <inertial pos="-0.0037459 -4.6685e-05 0.1055" quat="0.989566 0.00923768 0.143783 -0.00100727" mass="0.15566" diaginertia="0.00053891 0.000350222 0.000315288"/>
+                <joint name="head_1_joint" pos="0 0 0" axis="0 0 1" range="-1.309 1.309" actuatorfrcrange="-5.197 5.197" damping="0.5" frictionloss="1"/>
+                <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_head_1_link" class="tiago_pro_visual"/>
+                <geom type="mesh" mesh="meshes_head_1_link_collision" class="tiago_pro_collision"/>
+                <body name="head_2_link" pos="0.0425 0 0.10585" quat="0.707105 -0.707108 0 0">
+                  <inertial pos="0.01201 -0.10656 -0.00075" quat="0.974498 -0.00620242 -0.000860059 -0.224307" mass="1.32153" diaginertia="0.0112285 0.00820188 0.00626964"/>
+                  <joint name="head_2_joint" pos="0 0 0" axis="0 0 -1" range="-1.0472 0.34907" actuatorfrcrange="-2.77 2.77" damping="0.5" frictionloss="1"/>
+                  <geom type="mesh" rgba="1 1 1 1" mesh="meshes_realsense_d435_cover_link" class="tiago_pro_visual"/>
+                  <geom type="mesh" rgba="1 1 1 1" mesh="meshes_head_2_link" class="tiago_pro_visual"/>
+                  <geom type="mesh" mesh="meshes_head_2_link_collision" class="tiago_pro_collision"/>
+                  <body name="sellion_link" pos="0.04 -0.09205 0" quat="0.707105 0.707108 0 0">
+                    <body name="eye_right_link" pos="0 -0.1 0"/>
+                    <body name="eye_left_link" pos="0 0.1 0"/>
+                  </body>
+                  <body name="head_screen_link" pos="0.05584 -0.083935 0" quat="0.707105 0.707108 0 0">
+                    <geom size="0.08641 0.05412 0.0025" quat="0.5 0.5 0.5 0.5" type="box" rgba="0 0 0 1" class="tiago_pro_visual"/>
+                  </body>
+                  <body name="head_front_camera_bottom_screw_frame" pos="0.0416 -0.1555 0" quat="0.707105 0.707108 0 0">
+                    <body name="head_front_camera_link" pos="0.0106 0.0175 0.0125">
+                      <camera name="head_cam" xyaxes="0 -1 0 0 0 1" fovy="42.5" resolution="640 480"/>
+                      <inertial pos="0 0 0" quat="0.707107 0.707107 0 0" mass="0.072" diaginertia="0.00388124 0.00387926 0.00049894"/>
+                      <geom size="0.012525 0.045 0.0125" pos="0 -0.0175 0" type="box" class="tiago_pro_visual"/>
+                      <geom size="0.012525 0.045 0.0125" pos="0 -0.0175 0" type="box" class="tiago_pro_collision"/>
+                      <body name="head_front_camera_color_eye_frame" quat="0.499898 -0.5 0.500102 -0.5"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+            <body name="torso_arm_left_link" pos="0.0898413 0.159181 -0.0920547" quat="0.418942 -0.703916 0.492887 -0.293346"/>
+            <body name="torso_arm_right_link" pos="0.0898413 -0.159181 -0.0920547" quat="0.293346 -0.492887 0.703916 -0.418942"/>
+            <body name="arm_left_1_link" pos="0.08976 0.15918 -0.092008" quat="0.418942 -0.703926 0.492878 -0.293337">
+              <inertial pos="0.0043916 0.016184 0.15576" quat="0.995877 -0.0736287 -0.0165883 0.0503316" mass="1.1325" diaginertia="0.00255401 0.00238017 0.000938535"/>
+              <joint name="arm_left_1_joint" pos="0 0 0" axis="0 0 1" range="-0.523599 4.71239" actuatorfrcrange="-43 43" damping="1" frictionloss="1"/>
+              <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_1_link" class="tiago_pro_visual"/>
+              <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_1_link_collision" class="tiago_pro_collision"/>
+              <body name="arm_left_2_link" pos="0.03711 0.02 0.18" quat="0.5 -0.5 0.5 -0.5">
+                <inertial pos="0.01786 -0.11956 -0.032097" quat="0.372627 0.555033 -0.540311 0.51103" mass="0.9976" diaginertia="0.00163669 0.00151951 0.000828169"/>
+                <joint name="arm_left_2_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 1.13446" actuatorfrcrange="-43 43" damping="1" frictionloss="1"/>
+                <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_2_link" class="tiago_pro_visual"/>
+                <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_2_link_collision" class="tiago_pro_collision"/>
+                <body name="arm_left_3_link" pos="0.02 -0.17011 -0.03711" quat="0.707107 0.707107 0 0">
+                  <inertial pos="0.016184 -0.0043916 0.13565" quat="0.668601 0.0403336 0.0637931 0.739781" mass="1.0865" diaginertia="0.00255401 0.00238017 0.000938535"/>
+                  <joint name="arm_left_3_joint" pos="0 0 0" axis="0 0 1" range="-2.61799 2.61799" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                  <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_3_link" class="tiago_pro_visual"/>
+                  <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_3_link_collision" class="tiago_pro_collision"/>
+                  <body name="arm_left_4_link" pos="0.02 -0.03711 0.15989" quat="0.707107 0.707107 0 0">
+                    <inertial pos="-0.01786 0.11956 -0.032097" quat="0.540311 0.51103 -0.372627 0.555033" mass="0.9976" diaginertia="0.00163669 0.00151951 0.000828169"/>
+                    <joint name="arm_left_4_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 1.13446" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                    <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_4_link" class="tiago_pro_visual"/>
+                    <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_4_link_collision" class="tiago_pro_collision"/>
+                    <body name="arm_left_5_link" pos="-0.02 0.17011 -0.03711" quat="0.000563088 -0.000563088 0.707107 0.707107">
+                      <inertial pos="-6.6854e-07 -0.02662 0.067326" quat="0.700002 0.100215 -0.100256 0.69993" mass="0.34802" diaginertia="0.0015536 0.0014602 0.000311879"/>
+                      <joint name="arm_left_5_joint" pos="0 0 0" axis="0 0 1" range="-3.66519 1.5708" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                      <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_5_link" class="tiago_pro_visual"/>
+                      <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_5_link_collision" class="tiago_pro_collision"/>
+                      <body name="arm_left_6_link" pos="0 -0.0422 0.1654" quat="0.000563087 -0.000563089 -0.707108 0.707105">
+                        <inertial pos="0.031968 -0.0065097 -0.040676" quat="0.649326 0.620467 0.319918 0.301744" mass="1.378" diaginertia="0.00126531 0.0011909 0.00100069"/>
+                        <joint name="arm_left_6_joint" pos="0 0 0" axis="0 0 -1" range="-1.88496 3.00197" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                        <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_6_link" class="tiago_pro_visual"/>
+                        <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_6_link_collision" class="tiago_pro_collision"/>
+                        <body name="arm_left_7_link" pos="0.07 -0.0534 -0.0422" quat="0.707105 0.707108 0 0">
+                          <inertial pos="-0.0016034 0.001194 0.0075583" quat="-0.164907 0.689203 0.158959 0.687413" mass="0.1354" diaginertia="9.52773e-05 5.21632e-05 5.01325e-05"/>
+                          <joint name="arm_left_7_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 2.44346" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                          <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_7_link" class="tiago_pro_visual"/>
+                          <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_7_link_collision" class="tiago_pro_collision"/>
+                          <body name="arm_left_tool_link" pos="0 0 0.017">
+                            <body name="gripper_left_base_link">
+                              <inertial pos="-5.081e-05 6.06e-06 0.0433086" quat="0.999995 0.00046324 -0.00123092 -0.00302024" mass="0.596719" diaginertia="0.000642093 0.000607419 0.000378358"/>
+                              <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_base_link_tc" class="tiago_pro_visual"/>
+                              <geom type="mesh" mesh="meshes_base_link_tc" class="tiago_pro_collision"/>
+                              <body name="gripper_left_grasping_link" pos="0 0 0.157157" quat="0.707388 0 -0.706825 0">
+                                <inertial pos="0 0 0" mass="1e-09" diaginertia="1e-09 1e-09 1e-09"/>
+                              </body>
+                              <body name="gripper_left_base_finger_left_link" pos="0 -0.0288 0.07565" quat="0.499998 0.5 -0.500002 -0.5">
+                                <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                <geom size="0.001" rgba="0.752941 0.752941 0.752941 1" class="tiago_pro_visual"/>
+                                <geom size="0.001" class="tiago_pro_collision"/>
+                                <body name="gripper_left_screw_left_link" pos="-0.0178 0.0088 0">
+                                  <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                  <joint name="gripper_left_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.07" actuatorfrcrange="-10 10" damping="0.1" armature="0.005" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                </body>
+                                <body name="gripper_left_inner_finger_left_link" pos="-0.0148227 0.00453176 0">
+                                  <inertial pos="0 0.024759 0" quat="0.5 0.5 -0.5 0.5" mass="0.018619" diaginertia="4.9573e-06 4.8806e-06 2.5471e-07"/>
+                                  <joint name="gripper_left_inner_finger_left_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                  <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_inner_finger" class="tiago_pro_visual"/>
+                                  <geom type="mesh" mesh="meshes_inner_finger" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+                                  <body name="gripper_left_fingertip_left_link" pos="0 0.05 0">
+                                    <geom name="gripper_left_left_pad2" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013247 0.025821 -0.009375" quat="0.646203 -0.000304 0.000260 0.763166" friction="0.6 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <geom name="gripper_left_left_pad1" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013249 0.025836 0.009375" quat="0.646203 -0.000304 0.000260 0.763166" friction="0.7 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <inertial pos="-0.000864586 0.011929 -2.73244e-11" quat="0.704565 0.704565 0.0599056 0.0599056" mass="0.033503" diaginertia="3.69751e-06 2.84428e-06 1.65117e-06"/>
+                                    <joint name="gripper_left_fingertip_left_joint" pos="0 0 0" axis="0 0 1" range="-0.139644 0.747699" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                    <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_fingertip" class="tiago_pro_visual"/>
+                                    <geom type="mesh" mesh="meshes_fingertip" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001" contype="0" conaffinity="0"/>
+                                  </body>
+                                </body>
+                              </body>
+                              <body name="gripper_left_outer_finger_left_link" pos="0 -0.0288 0.07565" quat="0.499998 0.5 -0.500002 -0.5">
+                                <inertial pos="-0.00128298 0.0143975 0" quat="0.522876 0.476026 -0.522876 0.476026" mass="0.0159888" diaginertia="6.14973e-06 6.03691e-06 4.38203e-07"/>
+                                <joint name="gripper_left_outer_finger_left_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_outer_finger" class="tiago_pro_visual"/>
+                                <geom type="mesh" mesh="meshes_outer_finger" class="tiago_pro_collision"/>
+                              </body>
+                              <body name="gripper_left_base_finger_right_link" pos="0 0.0288 0.07565" quat="0.499998 0.5 0.500002 0.5">
+                                <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                <geom size="0.001" rgba="0.752941 0.752941 0.752941 1" class="tiago_pro_visual"/>
+                                <geom size="0.001" class="tiago_pro_collision"/>
+                                <body name="gripper_left_screw_right_link" pos="-0.0178 0.0088 0">
+                                  <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                  <joint name="gripper_left_finger_right_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.07" actuatorfrcrange="-10 10" armature="0.005" damping="0.1" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                </body>
+                                <body name="gripper_left_inner_finger_right_link" pos="-0.0148227 0.00453176 0">
+                                  <inertial pos="0 0.024759 0" quat="0.5 0.5 -0.5 0.5" mass="0.018619" diaginertia="4.9573e-06 4.8806e-06 2.5471e-07"/>
+                                  <joint name="gripper_left_inner_finger_right_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                  <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_inner_finger" class="tiago_pro_visual"/>
+                                  <geom type="mesh" mesh="meshes_inner_finger" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+                                  <body name="gripper_left_fingertip_right_link" pos="0 0.05 0">
+                                    <geom name="gripper_left_right_pad2" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013247 0.025821 0.009375" quat="-0.000257 0.763166 -0.646203 -0.000301" friction="0.6 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <geom name="gripper_left_right_pad1" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013249 0.025836 -0.009375" quat="-0.000257 0.763166 -0.646203 -0.000301" friction="0.7 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <inertial pos="-0.000864586 0.011929 -2.73244e-11" quat="0.704565 0.704565 0.0599056 0.0599056" mass="0.033503" diaginertia="3.69751e-06 2.84428e-06 1.65117e-06"/>
+                                    <joint name="gripper_left_fingertip_right_joint" pos="0 0 0" axis="0 0 1" range="-0.139644 0.747699" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                    <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_fingertip" class="tiago_pro_visual"/>
+                                    <geom type="mesh" mesh="meshes_fingertip" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001" contype="0" conaffinity="0"/>
+                                  </body>
+                                </body>
+                              </body>
+                              <body name="gripper_left_outer_finger_right_link" pos="0 0.0288 0.07565" quat="0.499998 0.5 0.500002 0.5">
+                                <inertial pos="-0.00128298 0.0143975 0" quat="0.522876 0.476026 -0.522876 0.476026" mass="0.0159888" diaginertia="6.14973e-06 6.03691e-06 4.38203e-07"/>
+                                <joint name="gripper_left_outer_finger_right_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_outer_finger" class="tiago_pro_visual"/>
+                                <geom type="mesh" mesh="meshes_outer_finger" class="tiago_pro_collision"/>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+            <body name="arm_right_1_link" pos="0.08976 -0.15918 -0.092008" quat="0.293338 -0.492879 0.703925 -0.418942">
+              <inertial pos="0.0043916 0.016184 0.15576" quat="0.995877 -0.0736287 -0.0165883 0.0503316" mass="1.1325" diaginertia="0.00255401 0.00238017 0.000938535"/>
+              <joint name="arm_right_1_joint" pos="0 0 0" axis="0 0 1" range="-4.71239 0.523599" actuatorfrcrange="-43 43" damping="1" frictionloss="1"/>
+              <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_1_link" class="tiago_pro_visual"/>
+              <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_1_link_collision" class="tiago_pro_collision"/>
+              <body name="arm_right_2_link" pos="0.03711 0.02 0.18" quat="0.5 -0.5 0.5 -0.5">
+                <inertial pos="0.01786 -0.11956 -0.032097" quat="0.372627 0.555033 -0.540311 0.51103" mass="0.9976" diaginertia="0.00163669 0.00151951 0.000828169"/>
+                <joint name="arm_right_2_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 1.13446" actuatorfrcrange="-43 43" damping="1" frictionloss="1"/>
+                <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_2_link" class="tiago_pro_visual"/>
+                <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_2_link_collision" class="tiago_pro_collision"/>
+                <body name="arm_right_3_link" pos="0.02 -0.17011 -0.03711" quat="0.707107 0.707107 0 0">
+                  <inertial pos="0.016184 -0.0043916 0.13565" quat="0.668601 0.0403336 0.0637931 0.739781" mass="1.0865" diaginertia="0.00255401 0.00238017 0.000938535"/>
+                  <joint name="arm_right_3_joint" pos="0 0 0" axis="0 0 1" range="-2.61799 2.61799" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                  <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_3_link" class="tiago_pro_visual"/>
+                  <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_3_link_collision" class="tiago_pro_collision"/>
+                  <body name="arm_right_4_link" pos="0.02 -0.03711 0.15989" quat="0.707107 0.707107 0 0">
+                    <inertial pos="-0.01786 0.11956 -0.032097" quat="0.540311 0.51103 -0.372627 0.555033" mass="0.9976" diaginertia="0.00163669 0.00151951 0.000828169"/>
+                    <joint name="arm_right_4_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 1.13446" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                    <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_arm_4_link" class="tiago_pro_visual"/>
+                    <geom type="mesh" mesh="meshes_arm_tiago_pro_arm_4_link_collision" class="tiago_pro_collision"/>
+                    <body name="arm_right_5_link" pos="-0.02 0.17011 -0.03711" quat="0.000563088 -0.000563088 0.707107 0.707107">
+                      <inertial pos="-6.6854e-07 -0.02662 0.067326" quat="0.700002 0.100215 -0.100256 0.69993" mass="0.34802" diaginertia="0.0015536 0.0014602 0.000311879"/>
+                      <joint name="arm_right_5_joint" pos="0 0 0" axis="0 0 1" range="-1.5708 3.66519" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                      <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_5_link" class="tiago_pro_visual"/>
+                      <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_5_link_collision" class="tiago_pro_collision"/>
+                      <body name="arm_right_6_link" pos="0 -0.0422 0.1654" quat="0.000563087 -0.000563089 -0.707108 0.707105">
+                        <inertial pos="0.031968 -0.0065097 -0.040676" quat="0.649326 0.620467 0.319918 0.301744" mass="1.378" diaginertia="0.00126531 0.0011909 0.00100069"/>
+                        <joint name="arm_right_6_joint" pos="0 0 0" axis="0 0 -1" range="-1.88496 3.00197" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                        <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_6_link" class="tiago_pro_visual"/>
+                        <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_6_link_collision" class="tiago_pro_collision"/>
+                        <body name="arm_right_7_link" pos="0.07 -0.0534 -0.0422" quat="0.707105 0.707108 0 0">
+                          <inertial pos="-0.0016034 0.001194 0.0075583" quat="-0.164907 0.689203 0.158959 0.687413" mass="0.1354" diaginertia="9.52773e-05 5.21632e-05 5.01325e-05"/>
+                          <joint name="arm_right_7_joint" pos="0 0 0" axis="0 0 1" range="-2.44346 2.44346" actuatorfrcrange="-26 26" damping="1" frictionloss="1"/>
+                          <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_7_link" class="tiago_pro_visual"/>
+                          <geom type="mesh" mesh="meshes_arm_tiago_pro_spherical_wrist_arm_7_link_collision" class="tiago_pro_collision"/>
+                          <body name="arm_right_tool_link" pos="0 0 0.017">
+                            <body name="gripper_right_base_link">
+                              <inertial pos="-5.081e-05 6.06e-06 0.0433086" quat="0.999995 0.00046324 -0.00123092 -0.00302024" mass="0.596719" diaginertia="0.000642093 0.000607419 0.000378358"/>
+                              <geom type="mesh" rgba="0.29804 0.29804 0.29804 1" mesh="meshes_base_link_tc" class="tiago_pro_visual"/>
+                              <geom type="mesh" mesh="meshes_base_link_tc" class="tiago_pro_collision"/>
+                              <body name="gripper_right_grasping_link" pos="0 0 0.157157" quat="0.707388 0 -0.706825 0">
+                                <inertial pos="0 0 0" mass="1e-09" diaginertia="1e-09 1e-09 1e-09"/>
+                              </body>
+                              <body name="gripper_right_base_finger_left_link" pos="0 -0.0288 0.07565" quat="0.499998 0.5 -0.500002 -0.5">
+                                <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                <geom size="0.001" rgba="0.752941 0.752941 0.752941 1" class="tiago_pro_visual"/>
+                                <geom size="0.001" class="tiago_pro_collision"/>
+                                <body name="gripper_right_screw_left_link" pos="-0.0178 0.0088 0">
+                                  <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                  <joint name="gripper_right_finger_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.07" actuatorfrcrange="-10 10" damping="0.1" armature="0.005" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                </body>
+                                <body name="gripper_right_inner_finger_left_link" pos="-0.0148227 0.00453176 0">
+                                  <inertial pos="0 0.024759 0" quat="0.5 0.5 -0.5 0.5" mass="0.018619" diaginertia="4.9573e-06 4.8806e-06 2.5471e-07"/>
+                                  <joint name="gripper_right_inner_finger_left_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                  <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_inner_finger" class="tiago_pro_visual"/>
+                                  <geom type="mesh" mesh="meshes_inner_finger" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+                                  <body name="gripper_right_fingertip_left_link" pos="0 0.05 0">
+                                    <geom name="gripper_right_left_pad2" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013247 0.025821 -0.009375" quat="0.646203 -0.000304 0.000260 0.763166" friction="0.6 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <geom name="gripper_right_left_pad1" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013249 0.025836 0.009375" quat="0.646203 -0.000304 0.000260 0.763166" friction="0.7 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <inertial pos="-0.000864586 0.011929 -2.73244e-11" quat="0.704565 0.704565 0.0599056 0.0599056" mass="0.033503" diaginertia="3.69751e-06 2.84428e-06 1.65117e-06"/>
+                                    <joint name="gripper_right_fingertip_left_joint" pos="0 0 0" axis="0 0 1" range="-0.139644 0.747699" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                    <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_fingertip" class="tiago_pro_visual"/>
+                                    <geom type="mesh" mesh="meshes_fingertip" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001" contype="0" conaffinity="0"/>
+                                  </body>
+                                </body>
+                              </body>
+                              <body name="gripper_right_outer_finger_left_link" pos="0 -0.0288 0.07565" quat="0.499998 0.5 -0.500002 -0.5">
+                                <inertial pos="-0.00128298 0.0143975 0" quat="0.522876 0.476026 -0.522876 0.476026" mass="0.0159888" diaginertia="6.14973e-06 6.03691e-06 4.38203e-07"/>
+                                <joint name="gripper_right_outer_finger_left_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_outer_finger" class="tiago_pro_visual"/>
+                                <geom type="mesh" mesh="meshes_outer_finger" class="tiago_pro_collision"/>
+                              </body>
+                              <body name="gripper_right_base_finger_right_link" pos="0 0.0288 0.07565" quat="0.499998 0.5 0.500002 0.5">
+                                <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                <geom size="0.001" rgba="0.752941 0.752941 0.752941 1" class="tiago_pro_visual"/>
+                                <geom size="0.001" class="tiago_pro_collision"/>
+                                <body name="gripper_right_screw_right_link" pos="-0.0178 0.0088 0">
+                                  <inertial pos="0 0 0" mass="0.02" diaginertia="7.46667e-07 7.46667e-07 1.6e-07"/>
+                                  <joint name="gripper_right_finger_right_joint" pos="0 0 0" axis="0 1 0" type="slide" range="0 0.07" actuatorfrcrange="-10 10" armature="0.005" damping="0.1" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                </body>
+                                <body name="gripper_right_inner_finger_right_link" pos="-0.0148227 0.00453176 0">
+                                  <inertial pos="0 0.024759 0" quat="0.5 0.5 -0.5 0.5" mass="0.018619" diaginertia="4.9573e-06 4.8806e-06 2.5471e-07"/>
+                                  <joint name="gripper_right_inner_finger_right_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                  <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_inner_finger" class="tiago_pro_visual"/>
+                                  <geom type="mesh" mesh="meshes_inner_finger" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001"/>
+                                  <body name="gripper_right_fingertip_right_link" pos="0 0.05 0">
+                                    <geom name="gripper_right_right_pad2" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013247 0.025821 0.009375" quat="-0.000257 0.763166 -0.646203 -0.000301" friction="0.6 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <geom name="gripper_right_right_pad1" type="box" mass="0" size="0.011 0.004 0.009375" pos="-0.013249 0.025836 -0.009375" quat="-0.000257 0.763166 -0.646203 -0.000301" friction="0.7 0.02 0.001" priority="1" condim="4" solimp="0.95 0.99 0.001" solref="0.004 1" group="3" contype="2" conaffinity="1" rgba="0.15 0.15 0.16 1"/>
+                                    <inertial pos="-0.000864586 0.011929 -2.73244e-11" quat="0.704565 0.704565 0.0599056 0.0599056" mass="0.033503" diaginertia="3.69751e-06 2.84428e-06 1.65117e-06"/>
+                                    <joint name="gripper_right_fingertip_right_joint" pos="0 0 0" axis="0 0 1" range="-0.139644 0.747699" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                    <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_fingertip" class="tiago_pro_visual"/>
+                                    <geom type="mesh" mesh="meshes_fingertip" class="tiago_pro_collision" friction="0.7 0.02 0.001" priority="3" condim="4" solref="0.004 1" solimp="0.95 0.99 0.001" contype="0" conaffinity="0"/>
+                                  </body>
+                                </body>
+                              </body>
+                              <body name="gripper_right_outer_finger_right_link" pos="0 0.0288 0.07565" quat="0.499998 0.5 0.500002 0.5">
+                                <inertial pos="-0.00128298 0.0143975 0" quat="0.522876 0.476026 -0.522876 0.476026" mass="0.0159888" diaginertia="6.14973e-06 6.03691e-06 4.38203e-07"/>
+                                <joint name="gripper_right_outer_finger_right_joint" pos="0 0 0" axis="0 0 1" range="-0.747699 0.139644" actuatorfrcrange="-0.1 0.1" armature="0.001" damping="0.01" solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+                                <geom type="mesh" rgba="0.752941 0.752941 0.752941 1" mesh="meshes_outer_finger" class="tiago_pro_visual"/>
+                                <geom type="mesh" mesh="meshes_outer_finger" class="tiago_pro_collision"/>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+        <body name="torso_fixed_column_link" pos="-0.028 0 0.205">
+          <geom size="0.09 0.1 0.275" pos="0 0 0.275" type="box" rgba="0.29804 0.29804 0.29804 1" class="tiago_pro_visual"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <velocity name="base_vx" joint="base_free" gear="1 0 0 0 0 0" kv="4000" ctrlrange="-1.0 1.0" forcerange="-800 800"/>
+    <velocity name="base_vy" joint="base_free" gear="0 1 0 0 0 0" kv="4000" ctrlrange="-1.0 1.0" forcerange="-800 800"/>
+    <velocity name="base_wz" joint="base_free" gear="0 0 0 0 0 1" kv="1200" ctrlrange="-2.09 2.09" forcerange="-400 400"/>
+    <velocity name="wheel_front_left_motor" joint="wheel_front_left_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
+    <velocity name="wheel_front_right_motor" joint="wheel_front_right_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
+    <velocity name="wheel_rear_left_motor" joint="wheel_rear_left_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
+    <velocity name="wheel_rear_right_motor" joint="wheel_rear_right_joint" kv="5" ctrlrange="-60 60" forcerange="-6 6"/>
+    <position name="torso_lift_pos" joint="torso_lift_joint" kp="60000" dampratio="1" forcerange="-2000 2000" inheritrange="1"/>
+    <position name="head_1_pos" joint="head_1_joint" kp="100" dampratio="1" forcerange="-5.197 5.197" inheritrange="1"/>
+    <position name="head_2_pos" joint="head_2_joint" kp="100" dampratio="1" forcerange="-2.77 2.77" inheritrange="1"/>
+    <position name="arm_left_1_pos" joint="arm_left_1_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
+    <position name="arm_left_2_pos" joint="arm_left_2_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
+    <position name="arm_left_3_pos" joint="arm_left_3_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_left_4_pos" joint="arm_left_4_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_left_5_pos" joint="arm_left_5_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_left_6_pos" joint="arm_left_6_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_left_7_pos" joint="arm_left_7_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_right_1_pos" joint="arm_right_1_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
+    <position name="arm_right_2_pos" joint="arm_right_2_joint" kp="2000" dampratio="1" forcerange="-43.0 43.0" inheritrange="1"/>
+    <position name="arm_right_3_pos" joint="arm_right_3_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_right_4_pos" joint="arm_right_4_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_right_5_pos" joint="arm_right_5_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_right_6_pos" joint="arm_right_6_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="arm_right_7_pos" joint="arm_right_7_joint" kp="900" dampratio="1" forcerange="-26.0 26.0" inheritrange="1"/>
+    <position name="gripper_left_finger_pos" joint="gripper_left_finger_joint" kp="300" dampratio="1" forcerange="-10.0 10.0" inheritrange="1"/>
+    <position name="gripper_right_finger_pos" joint="gripper_right_finger_joint" kp="300" dampratio="1" forcerange="-10.0 10.0" inheritrange="1"/>
+  </actuator>
+  <equality>
+    <joint joint1="gripper_left_inner_finger_left_joint" joint2="gripper_left_finger_joint" polycoef="0 -8.28 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="gripper_left_inner_finger_right_joint" joint2="gripper_left_finger_joint" polycoef="0 -8.28 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="gripper_left_finger_right_joint" joint2="gripper_left_finger_joint" polycoef="0 0.22 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="gripper_right_inner_finger_left_joint" joint2="gripper_right_finger_joint" polycoef="0 -8.28 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="gripper_right_inner_finger_right_joint" joint2="gripper_right_finger_joint" polycoef="0 -8.28 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="gripper_right_finger_right_joint" joint2="gripper_right_finger_joint" polycoef="0 0.22 0 0 0" solimp="0.95 0.99 0.001"/>
+    <connect body1="gripper_left_fingertip_left_link" body2="gripper_left_outer_finger_left_link" anchor="0.017 -0.0057 -0.004" solimp="0.95 0.99 0.001"/>
+    <connect body1="gripper_left_fingertip_right_link" body2="gripper_left_outer_finger_right_link" anchor="0.017 -0.0057 -0.004" solimp="0.95 0.99 0.001"/>
+    <connect body1="gripper_right_fingertip_left_link" body2="gripper_right_outer_finger_left_link" anchor="0.017 -0.0057 -0.004" solimp="0.95 0.99 0.001"/>
+    <connect body1="gripper_right_fingertip_right_link" body2="gripper_right_outer_finger_right_link" anchor="0.017 -0.0057 -0.004" solimp="0.95 0.99 0.001"/>
+  </equality>
+  <sensor>
+    <framepos name="base_pos" objtype="site" objname="base_imu"/>
+    <framequat name="base_quat" objtype="site" objname="base_imu"/>
+    <framelinvel name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel name="base_angvel" objtype="site" objname="base_imu"/>
+    <gyro name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc" site="base_imu"/>
+    <jointvel name="wheel_front_left_vel" joint="wheel_front_left_joint"/>
+    <jointvel name="wheel_front_right_vel" joint="wheel_front_right_joint"/>
+    <jointvel name="wheel_rear_left_vel" joint="wheel_rear_left_joint"/>
+    <jointvel name="wheel_rear_right_vel" joint="wheel_rear_right_joint"/>
+    <jointpos name="torso_lift_state" joint="torso_lift_joint"/>
+    <jointpos name="head_1_state" joint="head_1_joint"/>
+    <jointpos name="head_2_state" joint="head_2_joint"/>
+    <jointpos name="arm_left_1_state" joint="arm_left_1_joint"/>
+    <jointpos name="arm_left_2_state" joint="arm_left_2_joint"/>
+    <jointpos name="arm_left_3_state" joint="arm_left_3_joint"/>
+    <jointpos name="arm_left_4_state" joint="arm_left_4_joint"/>
+    <jointpos name="arm_left_5_state" joint="arm_left_5_joint"/>
+    <jointpos name="arm_left_6_state" joint="arm_left_6_joint"/>
+    <jointpos name="arm_left_7_state" joint="arm_left_7_joint"/>
+    <jointpos name="arm_right_1_state" joint="arm_right_1_joint"/>
+    <jointpos name="arm_right_2_state" joint="arm_right_2_joint"/>
+    <jointpos name="arm_right_3_state" joint="arm_right_3_joint"/>
+    <jointpos name="arm_right_4_state" joint="arm_right_4_joint"/>
+    <jointpos name="arm_right_5_state" joint="arm_right_5_joint"/>
+    <jointpos name="arm_right_6_state" joint="arm_right_6_joint"/>
+    <jointpos name="arm_right_7_state" joint="arm_right_7_joint"/>
+    <jointpos name="gripper_left_finger_state" joint="gripper_left_finger_joint"/>
+    <jointpos name="gripper_right_finger_state" joint="gripper_right_finger_joint"/>
+  </sensor>
+  <keyframe>
+    <key name="home" qpos="0 0 0 1 0 0 0 0.0 0.0 0.0 0.0 0.1 0.0 0.0 0.36 -1.83 0.47 -2.35 0.0 -1.2 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 -0.36 -1.83 -0.47 -2.35 0.0 -1.2 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0 0.0"/>
+  </keyframe>
+</mujoco>

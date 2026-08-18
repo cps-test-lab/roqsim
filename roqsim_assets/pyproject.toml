@@ -1,0 +1,90 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_assets"
+version = "0.1.0"
+description = "Shared, reusable assets for roqsim scenes: surface textures (roqsim_assets:<Name>), placeable props (spawn_model), and the belt `conveyor` plugin + model."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# The conveyor plugin drives a MuJoCo belt, so this package now carries a light runtime dependency on
+# the core simulator + mujoco (the texture/prop assets themselves remain code-free data).
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "click>=8.1",    # cli/__init__.py declares the `roqsim assets` group
+    "pillow>=9.0",   # cli/render_thumbnails.py writes the catalogue PNGs; cli/finalize_mujoco.py
+                     # transcodes a prop's JPEG/WebP source textures, which MuJoCo's loader cannot read
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# `sketchfab_helper` on the venv PATH: search redistributable + downloadable models and pull thumbnail
+# previews, in front of the tools/ import pipeline. Implementation in roqsim_assets.sketchfab;
+# tools/sketchfab_helper.py is a run-from-the-folder wrapper onto the same main().
+# The tools are subcommands of `roqsim` (see `roqsim assets --help`). sketchfab_helper predates that
+# tree and stays as an alias, because it is already written into notes and scripts.
+[project.scripts]
+sketchfab_helper = "roqsim_assets.sketchfab:main"
+
+[project.entry-points."roqsim.commands"]
+assets = "roqsim_assets.cli:assets"
+
+# The reusable belt conveyor: a velocity-driven MuJoCo belt an object rides via a friction pair, with
+# a live-controllable `speed` endpoint. Any world loads it by this name.
+[project.entry-points."roqsim.plugins"]
+box = "roqsim_assets.plugins.box:BoxPlugin"
+# The same geometry as a LIST, so "how many" is the length of one config value rather than
+# the number of plugin entries -- which is what makes an obstacle population a campaign factor.
+boxes = "roqsim_assets.plugins.boxes:BoxesPlugin"
+moving_box = "roqsim_assets.plugins.moving_box:MovingBoxPlugin"
+cylinder = "roqsim_assets.plugins.cylinder:CylinderPlugin"
+conveyor = "roqsim_assets.plugins.conveyor:ConveyorPlugin"
+# Carries a prop along a prescribed 2-D path. Distinct from `moving_box` (mocap) on purpose: a mocap
+# body has no velocity in MuJoCo's dynamics, so friction against it sees zero relative slip and it
+# cannot DRAG anything -- measured, a mocap plate slides 90 mm clean out from under a resting cube while
+# staying in contact. Mocap blocks; a force-driven joint carries. See the plugin docstring.
+prop_trajectory = "roqsim_assets.plugins.prop_trajectory:PropTrajectoryPlugin"
+shelf = "roqsim_assets.plugins.shelf:ShelfPlugin"
+# Foliage: the one prop class the library had none of. A palm crown is a thin, radially arranged,
+# self-occluding obstacle set -- a different planning problem from boxes and shelves.
+palm_tree = "roqsim_assets.plugins.palm_tree:PalmTreePlugin"
+door = "roqsim_assets.plugins.door:DoorPlugin"
+window = "roqsim_assets.plugins.window:WindowPlugin"
+workbench = "roqsim_assets.plugins.workbench:WorkbenchPlugin"
+# Ceiling fittings: what hangs under a soffit. All three sit above head height, so the core
+# `ceiling` plugin (roqsim) removes them together with the slab when a world opens its roof.
+ceiling_panels = "roqsim_assets.plugins.ceiling_panels:CeilingPanelsPlugin"
+duct = "roqsim_assets.plugins.duct:DuctPlugin"
+strip_light = "roqsim_assets.plugins.strip_light:StripLightPlugin"
+
+# Props + the conveyor model are a roqsim.models provider, so they resolve by short name
+# (resolve_model) and can be placed from a world YAML via the generic `spawn_model` plugin -- besides
+# being <include>d into a baked scene. The provider module (roqsim_assets.models) exposes MODELS_DIR.
+[project.entry-points."roqsim.models"]
+roqsim_assets = "roqsim_assets.models"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_assets = [
+    "assets/*/*.png",       # one Color PNG per texture folder
+    "assets/*/*.yaml",      # per-texture manifests (reflectance, physical_size)
+    "assets/*/CREDITS.txt", # per-folder licence + attribution
+    "models/*/*.xml",       # self-contained prop MJCF (resolved as a roqsim.models entry)
+    "models/*/*.obj",       # imported props (see tools/)
+    "models/*/*.mtl",
+    "models/*/*.png",
+    "models/*/*.jpg",
+    "models/*/meshes/*.obj", # some props (e.g. door) keep meshes in a meshes/ subfolder
+    "models/*/textures/*.png", # prop colour maps live in a textures/ subfolder
+    "models/*/CREDITS.txt",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

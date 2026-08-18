@@ -1,0 +1,36 @@
+<mujoco model="d415">
+  <!--
+    Intel RealSense D415: visual mesh + a colour camera, for a standalone mount (see the
+    `spawn_sensor` plugin) or as an eye-in-hand camera on a robot.
+
+    Mesh from the official realsense2_description package (d415.stl -> OBJ, decimated to ~13k tris).
+    Mesh-local axes: x = the ~99 mm long bar the lenses are arrayed across, y = height (~23 mm),
+    z = depth (~20 mm), with +z the lens face's outward normal.
+
+    Standalone-mount convention: the `mount` body is pre-rotated (quat below) so that at spawn_sensor
+    rpy [0,0,0] the sensor sits upright (mesh height -> world +z) and looks HORIZONTALLY along +y --
+    i.e. toward a wall, matching the d435 and zivid mounts. The quat maps mesh +z -> world +y and
+    mesh +y -> world +z, so `d415_color` (looking +z in mesh-local) looks +y in the mount frame.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="d415_mesh" file="d415.obj"/>
+    <material name="d415_body" rgba="0.75 0.75 0.77 1" specular="0.4" shininess="0.3"/>
+  </asset>
+
+  <worldbody>
+    <!-- quat reorients the mount so the lens looks along +y at rpy [0,0,0] (see header). -->
+    <body name="mount" quat="0 0 0.70710678 0.70710678">
+      <geom name="d415_visual" type="mesh" mesh="d415_mesh" material="d415_body"
+            contype="0" conaffinity="0"/>
+      <!-- Collision box wrapping the mesh (long axis x, ~99x23x20 mm); mesh sits behind the lens
+           face so the body is centred at z=-0.01. -->
+      <geom name="d415_collision" type="box" pos="0 0 -0.01" size="0.0495 0.0115 0.01" group="3"/>
+      <!-- Colour camera on the front (+z) lens face, looking outward (+z). fovy 42.5 deg = the D415
+           colour vertical FOV. -->
+      <camera name="d415_color" pos="0 0 0.005" xyaxes="-1 0 0 0 1 0"
+              fovy="42.5" resolution="640 480"/>
+    </body>
+  </worldbody>
+</mujoco>

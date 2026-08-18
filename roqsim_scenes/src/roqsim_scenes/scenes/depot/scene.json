@@ -1,0 +1,512 @@
+{
+  "name": "depot",
+  "source": "depot.sdf",
+  "unit_scale": 1.0,
+  "bounds_min": [
+    -15.3398,
+    -7.9348,
+    -0.0364
+  ],
+  "bounds_max": [
+    15.2602,
+    7.6653,
+    11.2127
+  ],
+  "objects": [
+    {
+      "name": "Depot_main_ROOF_visual_vis",
+      "mesh": "meshes/Depot_main_ROOF_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/ROOF_Albedo.png"
+    },
+    {
+      "name": "Depot_main_WALLS_visual_vis",
+      "mesh": "meshes/Depot_main_WALLS_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/WALLS_Albedo.png"
+    },
+    {
+      "name": "Depot_main_PILLERS_visual_vis",
+      "mesh": "meshes/Depot_main_PILLERS_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/PILLERS_Albedo.png"
+    },
+    {
+      "name": "Depot_main_FANS_visual_vis",
+      "mesh": "meshes/Depot_main_FANS_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_main_WINDOW_visual_vis",
+      "mesh": "meshes/Depot_main_WINDOW_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/Window_WINDOW_BaseColor.png"
+    },
+    {
+      "name": "Depot_main_INTERCOM_visual_vis",
+      "mesh": "meshes/Depot_main_INTERCOM_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/INTERCOM_Albedo.png"
+    },
+    {
+      "name": "Depot_main_FireAlarm_visual_vis",
+      "mesh": "meshes/Depot_main_FireAlarm_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/FireAlarm_Albedo.png"
+    },
+    {
+      "name": "Depot_main_FireAlarmPole_visual_vis",
+      "mesh": "meshes/Depot_main_FireAlarmPole_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/FireAlarmPole_Albedo.png"
+    },
+    {
+      "name": "Depot_main_Pipes_visual_vis",
+      "mesh": "meshes/Depot_main_Pipes_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/Pipes_Albedo.png"
+    },
+    {
+      "name": "Depot_main_STAIRS_visual_vis",
+      "mesh": "meshes/Depot_main_STAIRS_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/STAIRS_Albedo.png"
+    },
+    {
+      "name": "Depot_main_BOXSET_visual_vis",
+      "mesh": "meshes/Depot_main_BOXSET_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/BOXSET_Albedo.png"
+    },
+    {
+      "name": "Depot_main_FLOOR_visual_vis",
+      "mesh": "meshes/Depot_main_FLOOR_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/FLOOR_Albedo.png"
+    },
+    {
+      "name": "Depot_main_FanBack_visual_vis",
+      "mesh": "meshes/Depot_main_FanBack_visual_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/FanBack_FanBack_BaseColor.png"
+    },
+    {
+      "name": "Depot_main_crates_vis",
+      "mesh": "meshes/Depot_main_crates_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true,
+      "texture": "textures/Crates_Crates_BaseColor.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_000",
+      "mesh": "meshes/Depot_Fan1_visual_000.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_001",
+      "mesh": "meshes/Depot_Fan1_visual_001.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_002",
+      "mesh": "meshes/Depot_Fan1_visual_002.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_003",
+      "mesh": "meshes/Depot_Fan1_visual_003.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_004",
+      "mesh": "meshes/Depot_Fan1_visual_004.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_005",
+      "mesh": "meshes/Depot_Fan1_visual_005.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_006",
+      "mesh": "meshes/Depot_Fan1_visual_006.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_007",
+      "mesh": "meshes/Depot_Fan1_visual_007.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_008",
+      "mesh": "meshes/Depot_Fan1_visual_008.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_009",
+      "mesh": "meshes/Depot_Fan1_visual_009.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_010",
+      "mesh": "meshes/Depot_Fan1_visual_010.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan1_visual_011",
+      "mesh": "meshes/Depot_Fan1_visual_011.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_000",
+      "mesh": "meshes/Depot_Fan2_visual_000.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_001",
+      "mesh": "meshes/Depot_Fan2_visual_001.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_002",
+      "mesh": "meshes/Depot_Fan2_visual_002.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_003",
+      "mesh": "meshes/Depot_Fan2_visual_003.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_004",
+      "mesh": "meshes/Depot_Fan2_visual_004.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_005",
+      "mesh": "meshes/Depot_Fan2_visual_005.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_006",
+      "mesh": "meshes/Depot_Fan2_visual_006.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_007",
+      "mesh": "meshes/Depot_Fan2_visual_007.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_008",
+      "mesh": "meshes/Depot_Fan2_visual_008.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_009",
+      "mesh": "meshes/Depot_Fan2_visual_009.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_010",
+      "mesh": "meshes/Depot_Fan2_visual_010.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    },
+    {
+      "name": "Depot_Fan2_visual_011",
+      "mesh": "meshes/Depot_Fan2_visual_011.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": true,
+      "render": true,
+      "texture": "textures/FANS_Albedo.png"
+    }
+  ],
+  "ground_z": 0.0
+}

@@ -1,0 +1,8 @@
+humanoid_gantry -- mobile suspension gantry for hanging a small humanoid (G1 / Oli).
+
+Frame: original primitive geometry authored for roqsim (no third-party content).
+Licence: Apache-2.0, with the rest of this repository.
+
+Casters: referenced from the sibling `trolley_wheel` prop (no meshes copied here); see
+models/trolley_wheel/CREDITS.txt for its licence and attribution ("Hard Surface Study
+(Trolley Wheel)" by WizBeatrix, CC Attribution).

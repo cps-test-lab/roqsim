@@ -1,0 +1,32 @@
+Schunk PG+70 gripper description — provenance and licence
+=========================================================
+
+schunk_pg70.xml and meshes/schunk_pg70/pg70.stl are derived from the ROS 2 package
+`moveit_resources_prbt_pg70_support` (Debian: ros-jazzy-moveit-resources-prbt-pg70-support,
+version 2.12.4-1noble), which ships the Schunk PG+70 as the gripper of PILZ's PRBT manipulator.
+
+  upstream URDF : urdf/pg70/pg70.urdf.xacro   (macro `schunk_pg70`)
+  upstream mesh : meshes/pg70/pg70.stl        (copied verbatim, metres, 8046 triangles)
+  upstream SRDF : config/pg70.srdf.xacro      (used to cross-check the closed/open stances)
+  homepage      : http://moveit.ros.org
+
+Copyright (c) 2018 Pilz GmbH & Co. KG
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Apache-2.0 permits redistribution, so unlike the vendor-CAD-derived meshes handled by
+external/external_assets.yaml this mesh is committed directly rather than regenerated locally.
+
+"SCHUNK" and "PG+70" are trademarks of SCHUNK SE & Co. KG, which is not the author of this
+description and has not endorsed it. The geometry here is PILZ's model of the gripper, not
+SCHUNK's own CAD, which limits how closely it matches the real gripper.

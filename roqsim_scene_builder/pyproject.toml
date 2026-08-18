@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_scene_builder"
+version = "0.1.0"
+description = "Eyes on an roqsim scene, for an agent and for a human: an MCP server whose sketch_floorplan_by_human and review_scene_by_human tools open native windows and block until a person answers, and whose render_scene renders a world or a recorded moment headless."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# Loads and renders roqsim worlds/scenes/models, so it depends on the core engine + MuJoCo. The
+# native window uses tkinter (Python stdlib) and Pillow to blit frames -- deliberately no Qt.
+dependencies = [
+    "fastmcp>=3.4",
+    "click>=8.0",
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "pillow>=9.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+roqsim-scene-builder = "roqsim_scene_builder.cli:main"
+
+# The click group IS the command group: `roqsim builder serve|review-scene|sketch-floorplan` are the same
+# three commands `roqsim-scene-builder` exposes, declared once. Not wrapped in `roqsim.commands.tool()` --
+# that wraps a module's whole `main(argv)` as ONE leaf, so a click group behind it collapses into a
+# single mislabelled command (`roqsim builder serve` would have to be typed `roqsim builder serve serve`).
+[project.entry-points."roqsim.commands"]
+builder = "roqsim_scene_builder.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

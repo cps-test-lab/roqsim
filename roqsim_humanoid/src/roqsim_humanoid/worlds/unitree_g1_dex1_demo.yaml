@@ -1,0 +1,21 @@
+# Unitree G1 with Dex1 grippers, standing on the default empty floor.
+#
+# The bring-up world for the manipulation variant: spawns the robot and lets its manifest supply the
+# locomotion policy, the two arm controllers and the lidar. Standing is a zero cmd_vel -- there is no
+# test_cmd here, so the policy holds station while the arms are free to be driven.
+#
+# Hand-pose the arms with:
+#   roqsim sim roqsim_humanoid/src/roqsim_humanoid/worlds/unitree_g1_dex1_demo.yaml --manual-control
+# Note the sliders then command TORQUE for the 12 leg actuators (the policy is off under
+# --manual-control), so the robot folds -- expected, see docs/quickstart.rst.
+sim:
+  timestep: 0.002
+  pacing: realtime
+  view: {lookat: [0.0, 0.0, 0.8], distance: 3.0, azimuth: 130.0, elevation: -15.0}
+
+plugins:
+  - spawn_robot: {model: unitree_g1_dex1, name: robot, pos: [0, 0], yaw: 0.0}
+
+  # ROS 2 is opt-in, as everywhere: uncomment to get /joint_states, the two
+  # follow_joint_trajectory actions and the two gripper_cmd actions.
+  # - ros2_bridge: {}

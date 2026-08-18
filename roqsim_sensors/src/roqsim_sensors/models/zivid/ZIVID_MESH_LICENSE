@@ -1,0 +1,31 @@
+The visual meshes
+
+    roqsim_sensors/models/zivid/meshes/zivid_body.obj  (dark camera housing)
+    roqsim_sensors/models/zivid/meshes/zivid_fov.obj   (square FOV coverage frustum)
+
+are derived from Zivid's official Zivid 3 CAD model: the binary STL `Zivid 3.stl`
+(SolidWorks 2024 export, header 'stlbn Zivid 3', mm units, Z up) published by Zivid
+among the Zivid 3 product resources at https://www.zivid.com (CAD downloads, files/CAD/).
+A matching STEP file (`Zivid 3.step`, SwSTEP 2.0 / SolidWorks 2024, AP203) is published
+alongside it; the STL is used here because the housing is a single dark part with no CAD
+materials to split, so no STEP->tessellation step is needed.
+
+The body geometry is identical across the Zivid 3 product family; the XL250 variant's
+optical parameters (39 deg square FOV, 2.5 m focus distance, 250 mm baseline) come from the
+Zivid 3 XL250 datasheet, not the mesh. The FOV mesh is not from CAD -- Zivid ships no FOV
+solid -- it is a datasheet-authored square pyramid out to the 2.5 m focus distance
+(1750 x 1750 mm field of view at focus).
+
+Conversion pipeline (no housing geometry authored by hand):
+
+    STL -> OBJ    Blender: scaled mm -> m, centred on x=y=0 with the base dropped to z=0,
+                  decimated (~8k tris), exported axes 1:1 with Z up.
+    FOV  OBJ      Blender: authored square frustum (39 deg, apex at the optical origin,
+                  far plane at the 2.5 m focus distance).
+
+The underlying CAD geometry is Zivid AS's and its copyright remains with Zivid; it is
+redistributed here only as a decimated simulation asset for the Zivid 3 XL250 sensor
+model. Refer to Zivid's terms for the original CAD. If Zivid's terms do not permit
+redistribution of this derived mesh, remove these two .obj files and the mesh geoms in
+zivid.xml -- the `zivid` capture plugin does not need them (it renders from the
+`zivid_color` camera), and a primitive-only housing can stand in.

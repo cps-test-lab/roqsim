@@ -1,0 +1,13 @@
+Depot warehouse scene
+=====================
+
+Ported from the Open Robotics "Depot" model on Gazebo Fuel:
+  https://fuel.gazebosim.org/1.0/OpenRobotics/models/Depot  (version 6)
+
+Licence: Creative Commons Attribution 4.0 International (CC-BY-4.0)
+  http://creativecommons.org/licenses/by/4.0/
+Authors: Rafi Abdullah, Louise Poubel (Open Robotics)
+
+This is the same warehouse nav2's tb4_simulation_launch.py loads in Gazebo. The mesh + textures were
+tessellated/baked to MuJoCo by roqsim_scenes/tools/{sdf_to_scene,scene_to_mjcf}.py; exact provenance
+(URI, version, sha256) is pinned in assets.lock.json.

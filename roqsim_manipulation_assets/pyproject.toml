@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_manipulation_assets"
+version = "0.1.0"
+description = "Manipulator ASSETS for roqsim: arm and gripper models plus their meshes (UR10e, UR5e, Franka Panda, Kinova Gen3, OpenManipulator-X, Robotiq 2F-85, Schunk PG+70). Real robots only -- workpieces ship with the experiments that define them."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# The ASSET half of the old roqsim_manipulation. `roqsim_manipulation` kept the plugins (spawn_arm,
+# arm_controller, ...) and this package holds the geometry -- 115 MB of meshes.
+#
+# Why the split: every family package with an actuated limb needs `arm_controller` (a humanoid's arms,
+# a mobile manipulator's arm, a gantry). Almost none needs the arm MODELS. While the two lived in one
+# package, wanting the plugin meant installing every arm and gripper -- so `roqsim_humanoid`
+# and (via its composite robots) `roqsim_mobile` both dragged in geometry they never load. Naming follows
+# `roqsim_assets`, which is the same idea for scene props: geometry, no logic.
+#
+# It depends on `roqsim_manipulation` and not the reverse, because a model's MANIFEST names the plugins
+# intrinsic to it (`arm_controller` with that arm's joints, gains and gripper mapping). The plugins
+# know nothing about any particular model, which is what keeps this acyclic.
+dependencies = [
+    "roqsim",
+    "roqsim_manipulation",  # the manifests here declare arm_controller for their own arms
+    "mujoco>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# Bundled models, discoverable across packages via roqsim.models (`spawn_arm: {model: ur10e}`, or
+# package-qualified `roqsim_manipulation_assets:ur10e`). This entry point moved here from
+# roqsim_manipulation with the models it points at.
+[project.entry-points."roqsim.models"]
+roqsim_manipulation_assets = "roqsim_manipulation_assets.models"
+
+# Demo worlds, so `roqsim --world roqsim_manipulation_assets:ur10e_demo` resolves.
+[project.entry-points."roqsim.worlds"]
+roqsim_manipulation_assets = "roqsim_manipulation_assets"
+
+# No `roqsim.plugins` here: this package is geometry, and the plugins that act on it are in
+# `roqsim_manipulation`. A workpiece that needs a plugin to compose it is a workpiece, not a substrate
+# model, and ships with the experiment that defines it -- `pipe_weldment` and `peg_in_hole` both left
+# for that reason.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_manipulation_assets = [
+    # One folder per model (models/<name>/<name>.xml + its own meshes/), so a model's files are one
+    # glob prefix rather than four. Globs rather than an enumeration on purpose: with a list, a new
+    # port installs cleanly and then fails at RUN time inside a container, where the editable
+    # checkout is not there to paper over it.
+    "models/*/*.xml",
+    "models/*/*.manifest.yaml",
+    "models/*/meshes/*.obj",
+    "models/*/meshes/*.stl",
+    "models/*/meshes/*.STL",
+    "models/*/meshes/*.png",
+    # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
+    # licence is not redistributable.
+    "models/*/*LICENSE*",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

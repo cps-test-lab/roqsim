@@ -1,0 +1,38 @@
+<mujoco model="industrial_table">
+  <!--
+    Heavy industrial workbench: a 2.90 x 1.56 m top at z=0.76 on four 0.08 x 0.08 m legs. Split out
+    of the `conveyor` model (it was that model's `platform` body) so the
+    belt is a bare benchtop unit that can stand on ANY table -- this one, a `desk_diy`, an
+    `industrial_table`. The conveyor's own feet run from z=0.76 to 0.915, so a belt placed at the same
+    pos as this table (z=0) lands exactly on this top.
+
+    To reproduce the old bundled layout, spawn this at the belt model's local [-0.13, 0.6, 0]:
+
+      - spawn_model: {model: industrial_table, name: bench, prefix: bench_, pos: [-0.13, 0.6, 0]}
+      - conveyor:    {name: conveyor, pos: [0, 0, 0]}
+
+    Only the top collides -- it catches objects that fall off the belt, while the legs are visual
+    (contype/conaffinity 0) as in the source cell, so an arm or robot near the bench never snags one.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="industrial_table_top" rgba="0.45 0.47 0.50 1" specular="0.4" shininess="0.3"/>
+    <material name="industrial_table_frame" rgba="0.60 0.60 0.62 1" specular="0.4" shininess="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="industrial_table">
+      <geom name="industrial_table_top" type="box" size="1.45 0.78 0.02" pos="0 0 0.74"
+            material="industrial_table_top"/>
+      <geom name="industrial_table_leg_1" type="box" size="0.04 0.04 0.36" pos="1.41 0.74 0.36"
+            material="industrial_table_frame" contype="0" conaffinity="0"/>
+      <geom name="industrial_table_leg_2" type="box" size="0.04 0.04 0.36" pos="-1.41 0.74 0.36"
+            material="industrial_table_frame" contype="0" conaffinity="0"/>
+      <geom name="industrial_table_leg_3" type="box" size="0.04 0.04 0.36" pos="1.41 -0.74 0.36"
+            material="industrial_table_frame" contype="0" conaffinity="0"/>
+      <geom name="industrial_table_leg_4" type="box" size="0.04 0.04 0.36" pos="-1.41 -0.74 0.36"
+            material="industrial_table_frame" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,74 @@
+<mujoco model="humanoid_gantry">
+  <!--
+    Mobile suspension gantry for hanging a small humanoid (Unitree G1 ~1.3 m, LimX Oli ~1.45 m)
+    clear of the floor for bring-up/policy testing. Modelled after a shop-crane engine hoist
+    (see reference pp_3298720.webp): wheeled base + vertical mast + cantilever boom ending in a
+    fixed hang point over the base centre. The WINCH is intentionally omitted -- the hang point is
+    a static eyelet at ~1.9 m; a harness/strap to the robot is out of scope here.
+
+    The frame is deliberately simple (steel box tubing as primitive geoms). The four swivel casters
+    are the `trolley_wheel` prop, referenced HIERARCHICALLY by relative sibling path
+    (../trolley_wheel/...) instead of copying its meshes -- this resolves both standalone (MuJoCo
+    reads file= relative to meshdir="." = this dir) and through the spawn_model loader
+    (apply_assets searches the model's own dir, where the ../ path also resolves). Geometry facts
+    (top plate z=0.160, wheel trails +y) come from trolley_wheel.xml's header comment.
+
+    Load standalone or <include> it into a scene; place with `spawn_model` by short name. Origin is
+    at the base-footprint centre with the caster wheels on the floor (min z == 0), so a body pose of
+    (x y z) drops it exactly there. The hung robot goes at the boom tip, x=0 y=0 (base centroid).
+  -->
+  <compiler angle="radian" autolimits="true" meshdir="." texturedir="."/>
+
+  <asset>
+    <texture name="wheel_color" type="2d" file="../trolley_wheel/textures/wheel_baseColor.png"/>
+    <texture name="wheel_top_color" type="2d" file="../trolley_wheel/textures/top_part_baseColor.png"/>
+    <material name="wheel"     texture="wheel_color"/>
+    <material name="wheel_top" texture="wheel_top_color"/>
+    <material name="steel"     rgba="0.13 0.13 0.15 1" specular="0.5" shininess="0.4"/>
+    <material name="hook"      rgba="0.60 0.12 0.10 1" specular="0.4" shininess="0.3"/>
+    <mesh name="wheel"     file="../trolley_wheel/trolley_wheel_wheel.obj"/>
+    <mesh name="wheel_top" file="../trolley_wheel/trolley_wheel_top.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="humanoid_gantry">
+      <!-- Base frame: closed rectangle of steel tubing (0.84 x 0.84 m footprint) resting on the
+           four caster top plates (plate at z=0.160; rail centre-line at 0.185). Collidable. -->
+      <geom name="rail_left"  type="box" size="0.025 0.42 0.025"  pos=" 0.42  0     0.185" material="steel"/>
+      <geom name="rail_right" type="box" size="0.025 0.42 0.025"  pos="-0.42  0     0.185" material="steel"/>
+      <geom name="rail_back"  type="box" size="0.42  0.025 0.025" pos=" 0    -0.42  0.185" material="steel"/>
+      <geom name="rail_front" type="box" size="0.42  0.025 0.025" pos=" 0     0.42  0.185" material="steel"/>
+
+      <!-- Vertical mast at the back edge, rising to 2.05 m. Collidable (a swinging robot may touch it). -->
+      <geom name="mast" type="box" size="0.03 0.03 0.9325" pos="0 -0.42 1.1175" material="steel"/>
+
+      <!-- Cantilever boom: horizontal arm from the mast top forward to over the base centre (y=0),
+           top face at ~2.0 m. Collidable. -->
+      <geom name="boom" type="box" size="0.03 0.24 0.03" pos="0 -0.18 1.97" material="steel"/>
+
+      <!-- Diagonal tension brace from upper mast to the boom tip (decorative, echoes the reference).
+           Non-colliding thin strut. -->
+      <geom name="brace" type="capsule" fromto="0 -0.42 1.62  0 -0.02 1.94" size="0.012"
+            material="steel" contype="0" conaffinity="0"/>
+
+      <!-- Fixed hang point (eyelet) at the boom tip, over the base centroid. Where a robot harness
+           would clip; static (no winch). Non-colliding. -->
+      <geom name="hang_eyelet" type="cylinder" fromto="0 0 1.94  0 0 1.90" size="0.014"
+            material="hook" contype="0" conaffinity="0"/>
+      <geom name="hang_ring"   type="cylinder" fromto="-0.018 0 1.885  0.018 0 1.885" size="0.010"
+            material="hook" contype="0" conaffinity="0"/>
+
+      <!-- Four trolley_wheel swivel casters, wheel bottoms on the floor. Visual only. The wheel
+           trails toward local +y, so the front pair keeps yaw 0 (trailing forward) and the rear
+           pair is yawed 180 deg (trailing backward) -> every wheel points outward, visible. -->
+      <geom name="caster_fl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_fl_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos=" 0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_fr_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_fr_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos="-0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_bl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+      <geom name="caster_bl_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos=" 0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+      <geom name="caster_br_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+      <geom name="caster_br_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos="-0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

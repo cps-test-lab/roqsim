@@ -1,0 +1,8 @@
+FemaleVisitorWalk
+
+Source:  https://fuel.gazebosim.org/1.0/Luca/models/FemaleVisitorWalk (version 1)
+Licence: CC-BY 4.0 (http://creativecommons.org/licenses/by/4.0/)
+Author:  Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: Luca
+
+Imported with roqsim_walker/tools/import_actor.py: the skin (mesh, textures,
+skeleton, skin weights) is the source's; the locomotion clips are this package's.

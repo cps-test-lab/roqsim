@@ -1,0 +1,5 @@
+# Surface properties for this floor texture, read by the floorplan plugin.
+# reflectance: MuJoCo material reflectance (0..1); higher = more mirror-like floor.
+# physical_size: real-world size (m) the image spans, so it tiles at true scale.
+reflectance: 0.05     # light raw/unfinished concrete — matte
+physical_size: 2.4    # the image covers a ~2.4 m × 2.4 m area

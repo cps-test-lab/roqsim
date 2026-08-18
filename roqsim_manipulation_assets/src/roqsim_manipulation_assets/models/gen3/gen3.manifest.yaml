@@ -1,0 +1,15 @@
+# Default controller shipped with the Kinova Gen3 + Robotiq 2F-85 arm description.
+#
+# `spawn_arm: {model: gen3}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
+# spawn_arm `name`.
+plugins:
+  # The tendon `fingers_actuator` makes the gripper commandable: arm_controller exposes a
+  # GripperCommand action at <gripper_controller_name>/gripper_cmd and reports right_driver_joint as
+  # the gripper position (0 open .. 0.8 closed), mapped onto the actuator's 0..255 ctrl. Start open.
+  - arm_controller:
+      gripper_ctrl: 0.0
+      gripper_joint: robotiq_85_left_knuckle_joint
+      gripper_open: 0.0
+      gripper_close: 0.8

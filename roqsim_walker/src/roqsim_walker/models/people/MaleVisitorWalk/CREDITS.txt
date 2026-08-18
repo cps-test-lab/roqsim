@@ -1,0 +1,8 @@
+MaleVisitorWalk
+
+Source:  https://fuel.gazebosim.org/1.0/OpenRobotics/models/Male visitor (version 2)
+Licence: CC0 1.0 Universal (https://creativecommons.org/publicdomain/zero/1.0/)
+Author:  Wan Yi Seow <wanyi@openrobotics.org>; Fuel owner: OpenRobotics
+
+Imported with roqsim_walker/tools/import_actor.py: the skin (mesh, textures,
+skeleton, skin weights) is the source's; the locomotion clips are this package's.

@@ -1,0 +1,7 @@
+industrial_table -- a heavy industrial workbench (2.90 x 1.56 m top at z=0.76 on four legs), split
+out of the `conveyor` model so the benchtop conveyor can stand on any table.
+
+Hand-authored for roqsim, same as its sibling `conveyor`: MJCF primitives only, written by us. No
+third-party content.
+
+Licence: Apache-2.0, with the rest of this repository.

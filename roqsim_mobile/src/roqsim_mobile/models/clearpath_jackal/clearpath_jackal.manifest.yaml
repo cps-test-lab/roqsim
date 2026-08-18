@@ -1,0 +1,43 @@
+# Default controller + sensors shipped with the Clearpath Jackal robot description.
+#
+# `spawn_robot: {model: clearpath_jackal}` pulls these in automatically, so a world does not
+# re-declare the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin
+# for the same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
+# `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
+plugins:
+  # Skid-steer: all four wheels driven, left pair and right pair commanded together.
+  - diff_drive:
+      wheel_radius: 0.098            # jackal_description
+      wheel_separation: 0.37559      # track
+      # Kinematic limits. The paper (SIMPAR 2025) states NONE -- see spec gap g_kinematic_limits.
+      # 1.0 m/s is the gap's documented workaround (the Jackal's 2.0 m/s datasheet top speed is an
+      # outdoor figure, and the paper's own distance/time columns back-compute to ~0.44 m/s mean).
+      # Whatever Nav2 is given must equal these, or the model and the stack saturate differently.
+      max_linear_vel: 1.0
+      max_angular_vel: 1.0
+      wheel_accel_limit: 1.0
+      # Skid-steer ICR slip compensation, calibrated against THIS model's friction/mass/timestep.
+      # chi inflates the yaw term of the wheel command and is divided back out of odometry.
+      # Measured achieved/commanded yaw at chi=1.7: 0.92 / 0.98 / 1.02 / 1.02 at
+      # w = 0.3 / 0.5 / 0.8 / 1.0 rad/s. Re-measure if wheel friction, actuator kv/armature,
+      # mass or timestep change -- test_jackal_scene.py::test_b2_in_place_rotation asserts it.
+      slip_factor: 1.7
+      left_actuators:  [front_left_wheel_motor,  rear_left_wheel_motor]
+      right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
+      left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
+      right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
+  # Velodyne VLP-16, cast as a PLANAR scan at the sensor's own scan height. The paper names the
+  # sensor (page-3 Sec.III-A) but no intrinsics; these are the VLP-16 datasheet values, and the
+  # 0.3852 m scan height above ground comes from the vendor mount chain in the MJCF, not a guess.
+  # A planar cast is what the paper's 2D costmap would have received after pointcloud_to_laserscan
+  # -- see spec gaps g_lidar_params and g_scan_projection, and port log A5 for when a true 16-plane
+  # model would be needed instead.
+  - lidar:
+      site: lidar
+      rays: 1800                     # 360 deg / 0.2 deg azimuth resolution at 10 Hz (datasheet)
+      angle_min: 0.0
+      angle_max: 6.283185307         # 2*pi (full 360 deg)
+      range_min: 0.4                 # datasheet minimum return distance; see port log A3
+      max_range: 100.0               # datasheet; the costmap clips far below this
+      rate_hz: 10.0                  # datasheet default rotation rate
+      exclude_body: base_link

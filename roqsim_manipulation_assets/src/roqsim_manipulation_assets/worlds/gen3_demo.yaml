@@ -1,0 +1,26 @@
+# Kinova Gen3 + Robotiq 2F-85 on the floor — standalone demo world (roqsim_manipulation).
+#
+# Standalone: roqsim roqsim_manipulation/src/roqsim_manipulation/worlds/gen3_demo.yaml
+# A `test_target` drives the arm to a pose so the standalone scene shows motion.
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory + GripperCommand), add the ros2_bridge
+# plugin from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+plugins:
+  # arm_controller comes from the gen3 model manifest (models/gen3.manifest.yaml).
+  - spawn_arm:
+      model: gen3
+      name: gen3
+      prefix: "gen3_"
+      pos: [0.0, 0.0, 0.0]
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm). Gripper config is preserved.
+  - arm_controller:
+      arm: gen3
+      gripper_joint: robotiq_85_left_knuckle_joint
+      gripper_open: 0.0
+      gripper_close: 0.8
+      test_target: [0.0, 0.5, 3.14159, -2.0, 0.0, 0.7, 1.5708]

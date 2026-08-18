@@ -1,0 +1,7 @@
+conveyor -- a benchtop velocity-driven belt conveyor (invisible belt box on a slide joint, driven by
+the `conveyor` plugin; visible belt and rollers are decorative).
+
+Hand-authored for roqsim: MJCF primitives only, written by us. No third-party meshes, textures or
+code are included, and nothing here is derived from an external model.
+
+Licence: Apache-2.0, with the rest of this repository.

@@ -1,0 +1,8 @@
+# Trainer-only dependencies, installed into external/train/.venv-train and NEVER into the sim venv
+# (which is deliberately CPU-only torch -- see README.md). Pin before the first real run so a policy
+# can be reproduced; the versions below are a starting point, not a verified set.
+--extra-index-url https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+jax[cuda12]
+brax
+mujoco-mjx
+playground

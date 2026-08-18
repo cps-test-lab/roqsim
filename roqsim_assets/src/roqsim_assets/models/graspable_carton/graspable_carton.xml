@@ -1,0 +1,59 @@
+<mujoco model="graspable_carton">
+  <!-- A small upright carton, sized to be picked off a TABLE by a NARROW parallel gripper.
+
+       The sibling of `graspable_box`, and it exists because that one cannot serve this case. Two
+       independent constraints have to be met at once and a single asset cannot be scaled to meet
+       both:
+
+         * ACROSS THE JAWS the object must fit the gripper's aperture. `graspable_box` is 60 mm,
+           sized from the Unitree Dex1's measured 5.9..94.9 mm range. A PAL PRO gripper's pad inner
+           faces open to a measured 59.7 mm, so a 60 mm object has ~0 mm of clearance: it cannot be
+           brought down around it at all.
+         * IN HEIGHT the object must be tall enough that the gripper's own body clears the tabletop
+           while the finger PADS are alongside it. `spawn_model`'s `scale` is uniform, so shrinking
+           `graspable_box` enough to leave real clearance also shrinks its HEIGHT -- at scale 0.5 it is
+           25 mm tall, and then the gripper base bottoms out on the table with only ~9 mm of pad/object
+           overlap. Measured on the TIAGo Pro: pads at z 0.733..0.771 with the base resting at 0.716
+           on a 0.717 m table.
+
+       Hence a separate prop whose proportions are chosen rather than scaled: 24 mm across the jaws
+       and 90 mm tall, so the pads engage its middle with ~50 mm of clearance under the gripper. 40 mm
+       deep so it stands rather than topples, and light enough not to disturb a mobile base's balance.
+
+       A top-down grasp has to bring OPEN pads down either side of the object, so the usable placement
+       tolerance is (aperture - width)/2. At 24 mm in a 59.7 mm gripper that is ~18 mm per side, which a
+       drive-align-then-IK pipeline can hold; the same pipeline delivers ~10 mm of lateral error, so
+       the margin is real but not generous. If you scale this prop up, check that budget first.
+
+       Measure the aperture over the FINGERTIP pads only, and restricted to the depth the object
+       occupies. Taking min/max over the whole finger assembly gives 10.9 mm, because the four-bar
+       linkage bars converge near the palm -- nowhere the object ever reaches. That number is what made
+       an earlier version of this comment claim a 41 mm gripper.
+
+       Contact parameters are inherited verbatim from `graspable_box`, for the reasons its own
+       comment gives: a box primitive rather than a mesh (a convex hull's edge normals are what make
+       a pinched object squirt out of the pads); condim="4" for torsional friction, without which a
+       held object rotates out of the grasp about the grasp axis under its own weight; sliding
+       friction 1.2 for cardboard-on-rubber; and softened solimp/solref so the pads settle into a
+       few tenths of a millimetre instead of chattering at a 2 ms timestep.
+
+       Spawn it with `spawn_model: {model: graspable_carton, free: true, publish_tf: dynamic}` --
+       `free` adds the <freejoint/>, so this file declares none and the same prop can also be placed
+       as static scenery. See the tiago_pick example (robovast-examples) for a worked pick. -->
+  <default>
+    <geom condim="4" friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
+  </default>
+
+  <asset>
+    <material name="graspable_carton" rgba="0.72 0.55 0.36 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- 0.04 x 0.024 x 0.09 m, 0.2 kg. GRASP DIMENSION IS Y (24 mm). Mass sits on the geom so
+         `spawn_model`'s `mass:` override has a single value to rescale. -->
+    <body name="graspable_carton">
+      <geom name="graspable_carton" type="box" size="0.02 0.012 0.045" mass="0.2"
+            material="graspable_carton"/>
+    </body>
+  </worldbody>
+</mujoco>

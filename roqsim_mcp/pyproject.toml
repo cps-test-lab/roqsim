@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_mcp"
+version = "0.1.0"
+description = "Standalone MCP server exposing roqsim.introspection (the roqsim.plugins registry) as tools, for a client with no roqsim knowledge of its own."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "fastmcp",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[project.scripts]
+roqsim-mcp = "roqsim_mcp.mcp_server:main"
+
+# Registered into the shared roqsim.commands group, the same way every other family package
+# contributes a CLI group -- `roqsim mcp` simply does not appear in `roqsim --help` unless this
+# package is installed (commands.py's graceful-skip-on-missing-package behavior).
+[project.entry-points."roqsim.commands"]
+mcp = "roqsim_mcp.cli:mcp_group"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,74 @@
+plugins:
+  # Legs: the same 12 torque actuators and the same policy as unitree_g1. The leg chain and its
+  # actuator names are unchanged by the port, so this plugin drives them with no configuration.
+  # Standing is a zero cmd_vel; the policy was trained against the leg-only model whose upper body was
+  # one rigid mass, so arm motion and a carried payload reach it only as base disturbances. See
+  - g1_locomotion: {}
+
+  # Arms: one controller per side, each owning exactly its 7 arm joints and its own gripper. The
+  # `joints:` allowlist is load-bearing here, not cosmetic -- without it arm_controller's prefix scan
+  # claims all 29 joint actuators including the 12 leg motors and writes position targets into them,
+  # fighting g1_locomotion in the same pre_step. `gripper_actuator` is required for the same reason:
+  # with two tendon actuators on one entity, neither controller can infer which is its own.
+  - arm_controller:
+      controller_name: left_arm_controller
+      gripper_controller_name: left_gripper_controller
+      joints:
+        - left_shoulder_pitch_joint
+        - left_shoulder_roll_joint
+        - left_shoulder_yaw_joint
+        - left_elbow_joint
+        - left_wrist_roll_joint
+        - left_wrist_pitch_joint
+        - left_wrist_yaw_joint
+      gripper_actuator: left_dex1_gripper
+      gripper_joint: left_dex1_finger_joint_1
+      # MEASURED aperture, not inferred from the joint zero: the pads sit ~23 mm outboard of the
+      # coincident finger origins, so q=0 already stands 45.9 mm open and the whole gripping range is
+      # the negative half. aperture(q) = 45.9 mm + 2q -> 5.9 mm closed, 94.9 mm open. The tendon sums
+      # both fingers with coef -1 precisely so the ctrlrange low end is the open end, which is the end
+      # arm_controller maps `gripper_open` onto.
+      gripper_open: 0.0245
+      gripper_close: -0.02
+      topics:
+        # Merge with the legs' JointState so robot_state_publisher sees one complete robot. Each
+        # controller reports only its own joints, so the three publishers do not contradict.
+        joint_states: /joint_states
+
+  - arm_controller:
+      controller_name: right_arm_controller
+      gripper_controller_name: right_gripper_controller
+      joints:
+        - right_shoulder_pitch_joint
+        - right_shoulder_roll_joint
+        - right_shoulder_yaw_joint
+        - right_elbow_joint
+        - right_wrist_roll_joint
+        - right_wrist_pitch_joint
+        - right_wrist_yaw_joint
+      gripper_actuator: right_dex1_gripper
+      gripper_joint: right_dex1_finger_joint_1
+      gripper_open: 0.0245
+      gripper_close: 0.0
+      topics:
+        joint_states: /joint_states
+
+  # The waist. Its job here is to hold the torso still, which it would do anyway -- but it also has to
+  # be REPORTED. Without an owner the three waist joints appear in no /joint_states message at all, and
+  # robot_state_publisher then silently assumes zero for them. That happens to be true today, so the
+  # error is latent rather than active; it stops being true the moment the torso is driven or sags, and
+  # the arms hang off the torso these joints carry, so MoveIt would plan from a wrong shoulder pose.
+  # Giving it a controller also makes torso motion available to a planner later.
+  - arm_controller:
+      controller_name: waist_controller
+      joints:
+        - waist_yaw_joint
+        - waist_roll_joint
+        - waist_pitch_joint
+      topics:
+        joint_states: /joint_states
+
+  - lidar:
+      site: lidar
+      rays: 360
+      max_range: 12.0

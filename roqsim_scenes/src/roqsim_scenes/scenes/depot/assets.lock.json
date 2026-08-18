@@ -1,0 +1,19 @@
+{
+  "world": "depot.sdf",
+  "registry": "https://fuel.gazebosim.org",
+  "generated_at": "2026-07-26T11:56:04Z",
+  "note": "Pinned third-party assets. The world file referenced these by URI and contained no geometry of its own; this lock is what makes the port reproducible. Re-fetching without checking these hashes silently changes the experiment.",
+  "assets": [
+    {
+      "uri": "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Depot",
+      "owner": "OpenRobotics",
+      "name": "Depot",
+      "version": 6,
+      "sha256": "760ac4a94293a39aaf878243e927608bebdea006ea97e55d95264007548f07de",
+      "licence": "Creative Commons Attribution 4.0 International",
+      "licence_url": "http://creativecommons.org/licenses/by/4.0/",
+      "fetched_at": "2026-07-26T11:55:55Z",
+      "local": "OpenRobotics__Depot__v6"
+    }
+  ]
+}

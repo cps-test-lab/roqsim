@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_mobile_manipulation"
+version = "0.1.0"
+description = "Mobile-manipulator robot models for roqsim: composite platforms that are a mobile base plus an arm (Panda-on-Omron-LD-60 'Frankie', PAL TIAGo Pro)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# A mobile manipulator belongs to NEITHER of the two family packages it is made of, and this package
+# exists to say so. `roqsim_mobile` is wheeled bases; `roqsim_manipulation` is arms. A robot that is both was
+# previously kept in `roqsim_mobile`, which forced that package to declare `roqsim_manipulation` -- inverting
+# its own documented contract ("Depends on roqsim + roqsim_sensors. Add arms/manipulators as sibling
+# packages") and making anyone who wanted a TurtleBot install every arm, gripper and their meshes.
+#
+# Depending on both is correct HERE, because these robots genuinely are both, and it is not circular:
+# neither `roqsim_mobile` nor `roqsim_manipulation` depends on the other, or on this.
+#
+# `roqsim_assets` is deliberately NOT declared: nothing here imports it and no shipped model, manifest or
+# demo world names an `roqsim_assets:` prop or texture. A world that wants props depends on `roqsim_assets`
+# itself; a robot model does not drag the prop library into the wheel graph on its behalf.
+dependencies = [
+    "roqsim",
+    "roqsim_sensors",       # lidar
+    "roqsim_mobile",        # spawn_robot + diff_drive (Frankie) / omni_drive (TIAGo Pro)
+    "roqsim_manipulation",  # arm_controller -- the shared limb controller both platforms' arms use
+    "roqsim_manipulation_assets",  # Frankie borrows roqsim's own Panda meshes rather than shipping a copy
+    "mujoco>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# No plugins of its own, deliberately: both platforms are assembled from plugins that already exist
+# (spawn_robot, diff_drive, omni_drive, arm_controller, lidar). A composite robot needing a NEW plugin
+# would be a sign the composition mechanism is missing something -- see each port log's "substrate
+# extensions" table, which is what that claim is measured by.
+
+# Bundled models (frankie, tiago_pro), discoverable across packages via roqsim.models
+# (`spawn_robot: {model: frankie}`, or package-qualified `roqsim_mobile_manipulation:frankie`).
+[project.entry-points."roqsim.models"]
+roqsim_mobile_manipulation = "roqsim_mobile_manipulation.models"
+
+# Demo worlds, so `roqsim --world roqsim_mobile_manipulation:frankie_demo` resolves.
+[project.entry-points."roqsim.worlds"]
+roqsim_mobile_manipulation = "roqsim_mobile_manipulation"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_mobile_manipulation = [
+    # One folder per model (models/<name>/<name>.xml + its own meshes/), so a model's files are one
+    # glob prefix rather than four. Globs rather than an enumeration on purpose: with a list, a new
+    # model installs cleanly and then fails at RUN time with "Error opening file '<part>.obj'" only
+    # inside a container, where the editable checkout is not there to paper over it.
+    # tests/test_model_layout.py asserts every shipped file matches one of these.
+    "models/*/*.xml",
+    "models/*/*.manifest.yaml",
+    "models/*/meshes/*.obj",
+    "models/*/meshes/*.stl",
+    "models/*/meshes/*.STL",
+    "models/*/meshes/*.png",
+    # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
+    # licence is not redistributable.
+    "models/*/*LICENSE*",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

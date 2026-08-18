@@ -1,0 +1,190 @@
+# Default controllers + sensors shipped with the PAL Robotics TIAGo Pro description.
+#
+# `spawn_robot: {model: tiago_pro}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic drive/arm/sensor plugins. To override a default, declare the same plugin for the
+# same robot in the world (it wins, and its config merges over the manifest's); to opt out entirely,
+# set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
+# spawn name.
+#
+# The TIAGo Pro is a dual-arm wheeled mobile manipulator, so it carries FOUR controllers over
+# DISJOINT actuator sets, kept disjoint by each one's explicit `joints:` list:
+#
+#   omni_drive       -> the 3 planar base actuators + the 4 wheel servos   (roqsim_mobile)
+#   torso_head       -> torso_lift + head pan/tilt                        (roqsim_manipulation)
+#   arm_left/right   -> 7 arm joints + that side's gripper                (roqsim_manipulation)
+#
+# Without the `joints:` lists, arm_controller's prefix scan would claim every actuator under the
+# robot prefix -- including the base and the OTHER arm -- and the controllers would fight each other
+# for them (the robot then simply will not drive). The torso/head is an `arm_controller` too: it is
+# not an arm, but it wants exactly what that plugin provides (position hold + joint_states +
+# FollowJointTrajectory), so a family-specific plugin would be duplication. See
+#
+# Every limit below is PAL's own, from omni_base_controller_configuration/config/
+# mobile_base_controller.yaml and the source URDF <limit> tags -- not a substrate guess.
+
+plugins:
+  # ---------------------------------------------------------------------------------------------
+  # Base: HOLONOMIC. The OMNI base is a 4-wheel mecanum platform (PAL runs
+  # omni_drive_controller/OmniDriveController on it), so it strafes -- which is why it uses
+  # `omni_drive` and not `diff_drive`. The mecanum rollers are not modelled; the commanded twist is
+  # applied to the base free joint and the wheels are near-frictionless load carriers. That is a
+  # substrate approximation with real consequences (no wheel slip, hence no odometry drift) --
+  # see the port log's drive-model section before using this base for a traction or odometry study.
+  # ---------------------------------------------------------------------------------------------
+  - omni_drive:
+      base_joint: base_free
+      vx_actuator: base_vx
+      vy_actuator: base_vy
+      wz_actuator: base_wz
+      max_linear_vel: 1.0           # mobile_base_controller: linear.x max_velocity
+      max_lateral_vel: 1.0          # mobile_base_controller: linear.y max_velocity
+      # NOT SET, deliberately. PAL's mobile_base_controller.yaml also carries a `space:` block
+      # (xy 0.7, xz 0.5, yz 0.5, xyz 0.4 m/s) that limits COMBINED motion, and its four keys read as
+      # x/y/theta pairings rather than pure translation -- so whether `xy: 0.7` caps only diagonals or
+      # also a pure-x drive (which `linear.x` puts at 1.0) is ambiguous. The controller that resolves
+      # it, pal-robotics/omni_drive_controller, is not public, so the formula cannot be checked.
+      # Guessing it would silently change every achievable speed. Consequence: a diagonal here can
+      # reach 1.41 m/s where the real stack is slower. `omni_drive` supports
+      # `max_combined_linear_vel:` if you want the resultant capped; see the port log (A6).
+      max_angular_vel: 2.09         # mobile_base_controller: angular.z max_velocity (120 deg/s)
+      accel_limit: 1.0              # mobile_base_controller: linear max_acceleration
+      angular_accel_limit: 2.09     # mobile_base_controller: angular.z max_acceleration
+      # Mecanum geometry, from mobile_base_controller.yaml / base.urdf.xacro. Used only to spin the
+      # wheel servos so the visual and joint_states are right (see the plugin docstring).
+      wheel_radius: 0.0762
+      wheel_separation: 0.44715     # lateral track
+      axis_separation: 0.488        # longitudinal wheelbase
+      wheels: [wheel_front_left, wheel_front_right, wheel_rear_left, wheel_rear_right]
+      wheel_actuators: [wheel_front_left_motor, wheel_front_right_motor,
+                        wheel_rear_left_motor, wheel_rear_right_motor]
+
+  # ---------------------------------------------------------------------------------------------
+  # Torso lift + head pan/tilt. Declared before the arms so `joint_states` ordering is stable.
+  # ---------------------------------------------------------------------------------------------
+  - arm_controller:
+      joints: [torso_lift_joint, head_1_joint, head_2_joint]
+      controller_name: torso_head_controller
+      # The lift carries the whole ~28 kg upper body, so it MUST start at a declared height:
+      # spawn_robot sets only the base pose, and arm_controller would otherwise hold whatever qpos0
+      # left (0.0, the bottom stop). 0.1 m is PAL's own `home` motion (tiago_pro_bringup/config/
+      # motions/tiago_pro_motions_general_spherical-wrist.yaml, final waypoint).
+      rest:
+        torso_lift_joint: 0.1
+        head_1_joint: 0.0
+        head_2_joint: 0.0
+    name: torso_head_controller
+
+  # ---------------------------------------------------------------------------------------------
+  # Left arm (7-DOF PAL SEA arm, spherical wrist) + PAL PRO gripper.
+  #
+  # The gripper's master joint is `gripper_left_finger_joint` (prismatic, 0..0.07 m); its 7 URDF
+  # <mimic> followers are MJCF joint equalities in the model, so commanding the master closes the
+  # whole linkage. `gripper_actuator` names its POSITION actuator, which arm_controller then holds
+  # as an auxiliary actuator and exposes as a GripperCommand action.
+  #
+  # Aperture, measured on the model between the FINGERTIP PAD inner faces (the port log has the full
+  # travel -> aperture table and the two ways of measuring it wrong): travel 0.070 = 59.7 mm (fully
+  # open), 0.030 = 29.5 mm, 0.000 = 5.0 mm. Usable object width is therefore <~ 55 mm. Command a travel
+  # just inside the object's width for a force-limited squeeze (capped at the URDF's 10 N) -- that is
+  # what holds it; commanding 0 asks for the whole remaining overshoot at full force.
+  #
+  # `gripper_open: 0.0` / `gripper_close: 0.07` look inverted and are not. arm_controller maps a
+  # commanded gripper position onto the actuator ctrlrange as
+  # ctrl = lo + (pos - gripper_open)/(gripper_close - gripper_open) * (hi - lo), i.e. it assumes the
+  # ctrlrange runs open -> closed. This gripper's runs the other way (ctrl 0 = pads together,
+  # ctrl 0.07 = open), so these two values are what make the map the IDENTITY -- which is what keeps
+  # a commanded position and the position `gripper_joint` reports back mean the same number. Setting
+  # them the intuitive way round inverts the gripper: commanding "open" closes it.
+  # ---------------------------------------------------------------------------------------------
+  - arm_controller:
+      joints: [arm_left_1_joint, arm_left_2_joint, arm_left_3_joint, arm_left_4_joint,
+               arm_left_5_joint, arm_left_6_joint, arm_left_7_joint]
+      controller_name: arm_left_controller
+      gripper_controller_name: gripper_left_controller
+      gripper_actuator: gripper_left_finger_pos
+      gripper_joint: gripper_left_finger_joint
+      gripper_open: 0.0             # see the note above: these make the command->ctrl map identity
+      gripper_close: 0.07
+      gripper_ctrl: 0.07            # raw ctrl held until commanded = fully open. Must be set: the
+                                    # plugin's 255.0 default is a Robotiq tendon value.
+      # PAL's `home` motion, final waypoint. Not optional: at qpos0 both arms stick straight out
+      # forward, which is neither a neutral pose nor a safe one to spawn inside a world.
+      rest:
+        arm_left_1_joint: 0.36
+        arm_left_2_joint: -1.83
+        arm_left_3_joint: 0.47
+        arm_left_4_joint: -2.35
+        arm_left_5_joint: 0.0
+        arm_left_6_joint: -1.2
+        arm_left_7_joint: 0.0
+    name: arm_left_controller
+
+  # ---------------------------------------------------------------------------------------------
+  # Right arm + PAL PRO gripper. Mirrored `rest`; joints 1/3 flip sign (see the URDF's joint_reflect).
+  # ---------------------------------------------------------------------------------------------
+  - arm_controller:
+      joints: [arm_right_1_joint, arm_right_2_joint, arm_right_3_joint, arm_right_4_joint,
+               arm_right_5_joint, arm_right_6_joint, arm_right_7_joint]
+      controller_name: arm_right_controller
+      gripper_controller_name: gripper_right_controller
+      gripper_actuator: gripper_right_finger_pos
+      gripper_joint: gripper_right_finger_joint
+      gripper_open: 0.0
+      gripper_close: 0.07
+      gripper_ctrl: 0.07
+      rest:
+        arm_right_1_joint: -0.36
+        arm_right_2_joint: -1.83
+        arm_right_3_joint: -0.47
+        arm_right_4_joint: -2.35
+        arm_right_5_joint: 0.0
+        arm_right_6_joint: -1.2
+        arm_right_7_joint: 0.0
+    name: arm_right_controller
+
+  # ---------------------------------------------------------------------------------------------
+  # Two SICK TIM571 planar lidars, front-right and rear-left corners. Every parameter is PAL's own
+  # (pal_urdf_utils/urdf/laser/sick_tim571_laser.gazebo.xacro + omni_base_description's
+  # base_sensors.urdf.xacro): 818 samples per 270 deg, min_angle offset +1 deg upstream "to avoid a
+  # ghost obstacle" -> 815 rays over [-134, +135] deg; range 0.05..25 m; Gaussian range noise
+  # sigma = 0.01 m; 10 Hz. Each 270 deg fan covers its own diagonal, and the two together give the
+  # full 360 deg the base needs to navigate.
+  #
+  # `frame_id` is left at the plugin default (the site the rays are cast from) rather than set to the
+  # source's `base_*_laser_link`: those links are mounted z-down, while the sites are upright, so
+  # naming the scan after them would publish a TF that disagrees with the scan's own handedness.
+  # `exclude_body: base_link` is required -- base_link's top collision box spans the 0.209 m scan
+  # plane, so without it every scan would be blocked by the robot's own chassis.
+  #
+  # The two scans MUST get distinct topics: both instances declare an endpoint called `scan`, so on
+  # the default name they would publish over each other. `scan_front_raw` / `scan_rear_raw` are PAL's
+  # own topic names (base_sensors.urdf.xacro `ros_topic`), so matching them is exactly what the
+  # absolute `topics:` hardwire is for. Consequence to know: an absolute topic ignores the spawn's
+  # `namespace`, so a multi-robot world would have both robots' scans land on the same two topics --
+  # re-point them per robot there (the substrate has no relative-rename mechanism).
+  # ---------------------------------------------------------------------------------------------
+  - lidar:
+      site: lidar_front
+      rays: 815
+      angle_min: -2.3387411977      # -134 deg
+      angle_max: 2.3561944902       # +135 deg
+      range_min: 0.05
+      max_range: 25.0
+      rate_hz: 10.0
+      range_stddev: 0.01
+      exclude_body: base_link
+      topics: {scan: /scan_front_raw}
+    name: lidar_front
+
+  - lidar:
+      site: lidar_rear
+      rays: 815
+      angle_min: -2.3387411977
+      angle_max: 2.3561944902
+      range_min: 0.05
+      max_range: 25.0
+      rate_hz: 10.0
+      range_stddev: 0.01
+      exclude_body: base_link
+      topics: {scan: /scan_rear_raw}
+    name: lidar_rear

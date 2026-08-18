@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_humanoid"
+version = "0.1.0"
+description = "Humanoid plugins and assets for roqsim (Unitree G1 + LimX Oli + RL locomotion)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "roqsim_sensors",
+    "roqsim_mobile",   # spawn_robot + diff_drive: G2's mobile base
+    "roqsim_manipulation",  # arm_controller: unitree_g1_dex1's arms + Dex1 grippers
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "torch>=2.0",            # g1_locomotion TorchScript policy
+    "onnxruntime>=1.16",     # oli_locomotion ONNX walk policy
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# Humanoid controller plugins, registered into the shared roqsim.plugins group. lidar comes from
+# roqsim_sensors (a dependency above) -- unitree_g1's manifest pulls it in by name.
+[project.entry-points."roqsim.plugins"]
+g1_locomotion = "roqsim_humanoid.plugins.g1_locomotion:G1LocomotionPlugin"
+oli_locomotion = "roqsim_humanoid.plugins.oli_locomotion:OliLocomotionPlugin"
+agibot_g2_controller = "roqsim_humanoid.plugins.agibot_g2_controller:AgibotG2ControllerPlugin"
+
+# Bundled robot models (unitree_g1, oli), discoverable across packages via roqsim.models.
+[project.entry-points."roqsim.models"]
+roqsim_humanoid = "roqsim_humanoid.models"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_humanoid = [
+    "models/*.xml",
+    "models/*.manifest.yaml",
+    "models/meshes/*.STL",
+    "models/meshes/agibot_g2/*.obj",
+    "models/meshes/agibot_g2/*.STL",
+    "models/meshes/oli/*.STL",
+    "models/meshes/unitree_g1_dex1/*.STL",
+    "models/meshes/unitree_g1_dex1/*.stl",
+    "models/LICENSE.*",
+    "policy/*.pt",
+    "policy/*.yaml",
+    "policy/LICENSE.*",
+    "policy/oli/*.onnx",
+    "policy/g1_stand/*.pt",
+    "policy/g1_stand/*.yaml",
+    "policy/oli/*.yaml",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

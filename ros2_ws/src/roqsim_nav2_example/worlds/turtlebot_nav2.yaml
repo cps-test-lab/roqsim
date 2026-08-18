@@ -1,0 +1,24 @@
+# TurtleBot 4 world for the nav2 example.
+#
+# spawn_robot pulls in the turtlebot4 robot description (its diff_drive + lidar), so this world only
+# places the robot and wires transport. The ros2_bridge publishes clock/odom/tf(odom->base_link)/
+# scan/joint_states, and -- because the lidar declares its mount frame -- the static
+# base_link->rplidar_link TF, so the launch file needs no robot_state_publisher / URDF chain. A
+# static map->odom identity transform (in the launch file) stands in for localization.
+
+sim:
+  pacing: realtime
+
+plugins:
+  # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml).
+  - spawn_robot:
+      model: turtlebot4
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # The bridge reads the robot's declared endpoints from ctx.interface and publishes
+  # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->rplidar_link TF.
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}

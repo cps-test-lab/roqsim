@@ -1,0 +1,60 @@
+# Deploy config for the Boston Dynamics Spot flat-terrain locomotion policy.
+#
+# Transcribed from NVIDIA's Isaac `Isaac-Velocity-Flat-Spot-v0` env (the `spot_env.yaml` shipped
+# next to `spot_policy.pt`) + the open-source `isaacsim.robot.policy.examples` Spot class, so the
+# spot_locomotion plugin feeds the pretrained policy exactly the observation/action convention it was
+# trained on. Read from these numbers -- not guessed. See THIRD_PARTY.md for provenance.
+
+# --- joint / action convention -------------------------------------------------------------------
+# Isaac orders the articulation DOFs breadth-first (all hip-x, then all hip-y, then all knees), NOT
+# per-leg like the Menagerie MJCF. The policy's observation and action vectors are indexed by THIS
+# order; spot_locomotion maps each name to its MuJoCo joint/actuator, so the MJCF ordering is
+# reconciled by name. Do not reorder.
+#   naming: <fl|fr|hl|hr>_<hx|hy|kn>  (hx=hip abduction, hy=hip flexion, kn=knee)
+joint_order:
+  - fl_hx
+  - fr_hx
+  - hl_hx
+  - hr_hx
+  - fl_hy
+  - fr_hy
+  - hl_hy
+  - hr_hy
+  - fl_kn
+  - fr_kn
+  - hl_kn
+  - hr_kn
+
+# Isaac init_state.joint_pos (regex-expanded), in joint_order. Action targets are relative to this:
+#   motor_target = default_angles + action * action_scale   (JointPositionAction, use_default_offset)
+default_angles: [0.1, -0.1, 0.1, -0.1, 0.9, 0.9, 1.1, 1.1, -1.5, -1.5, -1.5, -1.5]
+
+action_scale: 0.2       # Isaac actions.joint_pos.scale
+num_actions: 12
+num_obs: 48             # base_lin_vel(3)+base_ang_vel(3)+proj_grav(3)+cmd(3)+jpos(12)+jvel(12)+act(12)
+
+# --- observation scales ---------------------------------------------------------------------------
+# Isaac's flat-Spot obs terms all have `scale: null` (i.e. 1.0) -- no scaling on any term, unlike the
+# G1 config. Kept explicit (and plugin-overridable) so the convention is visible.
+lin_vel_scale: 1.0
+ang_vel_scale: 1.0
+dof_pos_scale: 1.0
+dof_vel_scale: 1.0
+cmd_scale: [1.0, 1.0, 1.0]
+
+# --- PD gains (reference) -------------------------------------------------------------------------
+# Isaac trained with stiffness=60, damping=1.5 (DelayedPDActuator). These are baked into the MJCF
+# position actuators (`<position kp="60" kv="1.5">` in spot.xml), which close the PD loop in MuJoCo;
+# the plugin only writes position targets. Recorded here for provenance.
+kp: 60.0
+kv: 1.5
+
+# --- timing ---------------------------------------------------------------------------------------
+# Isaac sim.dt=0.002, decimation=10 -> policy at 50 Hz. The world must set sim.timestep: 0.002.
+simulation_dt: 0.002
+control_decimation: 10
+
+# --- command ranges (Isaac commands.base_velocity.ranges; reference for clamps) -------------------
+# lin_vel_x: [-2, 3]  lin_vel_y: [-1, 1]  ang_vel_z: [-2, 2]
+# spot_locomotion clamps to its own (nav-friendly, config-overridable) max_* defaults within these.
+cmd_init: [0.5, 0.0, 0.0]

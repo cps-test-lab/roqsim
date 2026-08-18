@@ -1,0 +1,53 @@
+<mujoco model="robin_w1g">
+  <!--
+    Seyond Robin W1G solid-state 3D lidar: a standalone mount (visual mesh + a `robin_w1g` scan site)
+    for the `spawn_sensor` plugin -- not attached to any robot's own MJCF. Unlike the 360deg-dome
+    Mid-360, the W1G is a forward-facing automotive lidar with a bounded rectangular FoV
+    (120deg horizontal x 70deg vertical); the `seyond_robin_w1g` capture plugin casts that forward
+    grid and emits a point cloud.
+
+    Mesh derived from Seyond's own Robin W1G STEP CAD (Creo export, mm) via Open CASCADE tessellation
+    (cascadio) + Blender: the ~29 m CAD context solid dropped, the housing reframed CAD->sim, scaled
+    mm->m, decimated to ~8k tris, base dropped to z=0, housing centred on x=y=0, axes 1:1 with Z up.
+    See ROBIN_W1G_MESH_LICENSE for provenance and the CAD->sim reframe.
+
+    Body-local axes: +x = the optical boresight (the window faces +x; the housing is a wedge whose top
+    slopes down toward the rear connector at -x), +z = up. At spawn_sensor rpy [0,0,0] the sensor
+    looks horizontally along +x toward a wall. The `robin_w1g` site sits just inside the front window
+    (x=0.058) at mid-height -- the laser's optical origin, where the capture plugin casts its rays
+    from. The datasheet FoV is specified about this horizontal optical axis; the housing's window is
+    near-vertical, so the boresight is taken as horizontal +x. See robin_w1g.manifest.yaml for the
+    auto-attached capture plugin.
+
+    Dimensions: 85 (H) x 104.8 (W) x 106.7 (D) mm (datasheet; the CAD adds a ~18 mm rear connector,
+    so the reframed x-extent is ~0.125 m).
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="robin_w1g_body_mesh" file="robin_w1g_body.obj"/>
+    <material name="robin_w1g_body" rgba="0.10 0.10 0.12 1" specular="0.3" shininess="0.4"/>
+    <material name="robin_w1g_window" rgba="0.05 0.05 0.09 1" specular="0.8" shininess="0.85"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <geom name="robin_w1g_body" type="mesh" mesh="robin_w1g_body_mesh" material="robin_w1g_body"
+            contype="0" conaffinity="0"/>
+      <!-- Dark glass window across the front (+x) face; the mesh carries no separate window material.
+           A thin plate over the optical aperture. Cosmetic -- non-colliding. -->
+      <geom name="robin_w1g_window" type="box" pos="0.062 0 0.043" size="0.001 0.040 0.033"
+            material="robin_w1g_window" contype="0" conaffinity="0"/>
+      <!-- Cheap box collision over the 104.8 (y) x 85 (z) x ~107 (x) mm housing (the rear connector
+           stub is left out); the visual mesh above carries the real wedge shape. Mirrors the
+           d435/mid360/zivid mounts' box collision. -->
+      <geom name="robin_w1g_collision" type="box" pos="0.0 0 0.0425" size="0.0535 0.0525 0.0425"
+            group="3"/>
+      <!-- No baked FOV geom: `spawn_sensor: {show_fov: true}` synthesises the coverage volume as a
+           translucent angular SECTOR -- a bounded, forward-facing 120deg x 70deg wedge opening along
+           +x -- from the datasheet angles in robin_w1g.manifest.yaml, using the same ray convention
+           the `seyond_robin_w1g` capture plugin casts with. The site below is the sector's origin. -->
+      <site name="robin_w1g" pos="0.058 0 0.043" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

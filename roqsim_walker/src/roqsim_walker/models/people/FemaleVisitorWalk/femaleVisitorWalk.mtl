@@ -1,0 +1,9 @@
+# Material table for the imported actor. roqsim_walker resolves textures from the
+# *.walker.json, NOT from this file -- but trimesh needs the .mtl present to split the
+# OBJ into per-material groups and key them by name (skin.add_skin matches on that).
+
+newmtl FemaleVisitor-material
+Ka 1.000000 1.000000 1.000000
+Kd 0.800000 0.800000 0.800000
+d 1.000000
+illum 2

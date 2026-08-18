@@ -1,0 +1,29 @@
+<mujoco model="door_glass">
+  <!--
+    A glass door leaf: a single uniform translucent pane (no stile/border, so it reads as glass, not
+    a paneled door skinned in glass), a chrome hinge rail down the hinge edge that connects the pane
+    to the frame, and the chrome handle on the latch side. Same hinge-edge origin convention as
+    door.xml (hinge at x=0, leaf along +X, base z=0, 0.9 x 2.0 m) so the `door` plugin hangs and
+    rescales it identically, inside the static `door_frame`. Used where a door should be see-through
+    (e.g. between a large room and a shelf room). The pane still collides (a robot
+    cannot drive through it). CC-BY oobexr for the door unit the handle belongs to -- see CREDITS.txt.
+
+    The hinge rail is a primitive box (not a mesh), so it is not auto-rescaled with the pane -- fine
+    at the authored 0.9 x 2.0 m; give a very different opening its own leaf model if that matters.
+  -->
+  <compiler meshdir="meshes" texturedir="meshes"/>
+  <asset>
+    <mesh name="door_pane" file="door_pane.obj"/>
+    <mesh name="door_handle" file="door_handle.obj"/>
+    <material name="door_glass" rgba="0.55 0.72 0.80 0.35" specular="0.8" shininess="0.9"/>
+    <material name="door_chrome" rgba="0.55 0.56 0.58 1" specular="0.6" shininess="0.6"/>
+  </asset>
+  <worldbody>
+    <body name="leaf">
+      <geom type="mesh" mesh="door_pane" material="door_glass"/>
+      <!-- hinge-side rail: a slim chrome mullion at the hinge edge, connecting the pane to the frame -->
+      <geom type="box" size="0.02 0.025 1.0" pos="0.02 0.0 1.0" material="door_chrome"/>
+      <geom type="mesh" mesh="door_handle" material="door_chrome" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

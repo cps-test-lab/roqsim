@@ -1,0 +1,126 @@
+# syntax=docker/dockerfile:1
+#
+# roqsim-ros (full) — ROS 2 Jazzy + nav2 + full MoveIt2 + rviz2, with ALL roqsim_* packages
+# (incl. quadruped/humanoid + CPU-only torch) and a colcon-built ros2_ws (bridge, nav2 example,
+# walker_ros).
+#
+# The roqsim_* pip packages are installed into the ROS *system* interpreter (via
+# --break-system-packages) so nodes launched with /usr/bin/python3 can import them — this mirrors the
+# Makefile's `python3 -m venv --system-site-packages` reasoning.
+#
+# Layers are ordered stable -> volatile so a source edit only rebuilds the tail: apt (system + ROS),
+# then torch, then third-party pip deps, then our sources, then colcon.
+
+ARG ROS_DISTRO=jazzy
+
+FROM ros:${ROS_DISTRO}-ros-base
+SHELL ["/bin/bash", "-xo", "pipefail", "-c"]
+ARG ROS_DISTRO
+
+WORKDIR /ws
+
+# 1) System + ROS deps. Full MoveIt2 metapackage, nav2, ros2_control stack, rviz2 (GUI), the
+#    simulation_interfaces the bridge needs, plus GL libs for headless MuJoCo. BOTH offscreen
+#    backends: egl needs a DRI render device and a CPU-only node has none, so the choice belongs to
+#    the node (roqsim.gl.select_offscreen_gl) and the image must be able to satisfy either answer.
+# hadolint ignore=DL3008
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        python3-pip \
+        python3-colcon-common-extensions \
+        libegl1 \
+        libgl1 \
+        libgl1-mesa-dri \
+        libosmesa6 \
+        libglib2.0-0 \
+        libgomp1 \
+        tini \
+        ros-${ROS_DISTRO}-navigation2 \
+        ros-${ROS_DISTRO}-nav2-bringup \
+        ros-${ROS_DISTRO}-nav2-minimal-tb4-description \
+        ros-${ROS_DISTRO}-nav2-simple-commander \
+        ros-${ROS_DISTRO}-simulation-interfaces \
+        ros-${ROS_DISTRO}-vision-msgs \
+        ros-${ROS_DISTRO}-moveit \
+        ros-${ROS_DISTRO}-ros2-control \
+        ros-${ROS_DISTRO}-ros2-controllers \
+        ros-${ROS_DISTRO}-controller-manager \
+        ros-${ROS_DISTRO}-joint-trajectory-controller \
+        ros-${ROS_DISTRO}-gripper-controllers \
+        ros-${ROS_DISTRO}-rviz2 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Pin numpy to the version ROS/apt already provides so pip never tries to replace the debian-managed
+# numpy (which has no RECORD and can't be uninstalled) or upgrade it to a numpy-2 ABI that would break
+# rclpy/nav2. PIP_CONSTRAINT makes every pip install below honour this automatically.
+RUN NUMPY_VER=$(python3 -c 'import numpy; print(numpy.__version__)') && \
+    echo "numpy==${NUMPY_VER}" > /etc/pip-constraints.txt && \
+    cat /etc/pip-constraints.txt
+ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
+
+# 2) Stable layer: CPU-only PyTorch (no multi-GB CUDA wheels), as the Makefile does before the
+#    torch-dependent editable installs.
+RUN pip install --no-cache-dir --break-system-packages \
+        torch --index-url https://download.pytorch.org/whl/cpu
+
+# 3) Stable layer: third-party runtime deps (mirrors the sub-package pyproject deps; scipy gives the
+#    walker its KD-tree fast path).
+RUN pip install --no-cache-dir --break-system-packages \
+        "mujoco>=3.0" \
+        "numpy>=1.24" \
+        "pyyaml>=6.0" \
+        "pillow>=9.0" \
+        "lxml>=4.0" \
+        "py_trees>=2.2" \
+        "trimesh>=3.20" \
+        "opencv-python-headless>=4.6" \
+        "scipy>=1.10"
+
+# 4) Volatile layer: all roqsim_* sources -> install with deps already present (--no-deps). Core
+#    first, then dependents. The Spot policy fetch is fail-soft (needs network; image still builds
+#    offline).
+COPY roqsim              ./roqsim
+COPY roqsim_assets       ./roqsim_assets
+COPY roqsim_sensors      ./roqsim_sensors
+COPY roqsim_mobile       ./roqsim_mobile
+COPY roqsim_manipulation ./roqsim_manipulation
+# The arm/gripper MODELS, and the robots that are a base AND an arm (frankie, tiago_pro). Both were
+# missing here while the published image carried them, so this file did not rebuild the image it
+# names: a rebuild would have dropped the tiago_pro model and broken every campaign that spawns it.
+COPY roqsim_manipulation_assets   ./roqsim_manipulation_assets
+COPY roqsim_mobile_manipulation   ./roqsim_mobile_manipulation
+COPY roqsim_scenes       ./roqsim_scenes
+COPY roqsim_walker       ./roqsim_walker
+COPY roqsim_webctrl          ./roqsim_webctrl
+COPY roqsim_quadruped    ./roqsim_quadruped
+COPY roqsim_humanoid     ./roqsim_humanoid
+RUN pip install --no-cache-dir --break-system-packages --no-deps \
+        ./roqsim \
+        ./roqsim_assets \
+        ./roqsim_sensors \
+        ./roqsim_mobile \
+        ./roqsim_manipulation \
+        ./roqsim_manipulation_assets \
+        ./roqsim_mobile_manipulation \
+        ./roqsim_scenes \
+        ./roqsim_walker \
+        ./roqsim_webctrl \
+        ./roqsim_quadruped \
+        ./roqsim_humanoid && \
+    python3 -m roqsim_quadruped.policy.fetch_policy || true
+
+# 5) Volatile layer: colcon-build the ROS 2 workspace (bridge + nav2 example + walker_ros).
+COPY ros2_ws/src ./ros2_ws/src
+RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    cd ros2_ws && \
+    colcon build --event-handlers console_direct+
+
+# 6) Runtime env + entrypoint that sources ROS and the built workspace.
+# MUJOCO_GL is deliberately NOT set: an explicit value always wins over roqsim's own selection, so
+# baking egl here would hand a CPU-only node a backend it cannot initialise and no way to fall back.
+ENV PYTHONUNBUFFERED=1
+COPY container/files/entrypoint-ros.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/entrypoint.sh"]
+CMD ["bash"]

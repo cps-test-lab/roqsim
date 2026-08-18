@@ -1,0 +1,27 @@
+The visual mesh roqsim_sensors/models/d455/meshes/d455.obj is converted (binary STL -> OBJ, scaled
+mm -> m and decimated to ~6k triangles for real-time rendering) from d455.stl in:
+
+    https://github.com/IntelRealSense/realsense-ros
+    (realsense2_description/meshes/d455.stl)
+
+That repository (and this mesh) is licensed Apache License 2.0:
+
+    Copyright 2023 RealSense, Inc.
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+    except in compliance with the License. You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software distributed under the
+    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+    either express or implied. See the License for the specific language governing permissions
+    and limitations under the License.
+
+The STL is exported in its native frame (identity axes: x = the ~124 mm long bar the sensors are
+arrayed across, y = height ~29 mm, z = depth ~26 mm with the front glass at z=0 and +z the lens
+outward normal), which already matches the d435/d415 mesh convention -- no reorientation was applied.
+
+The `d455_color` camera offset baked into roqsim_sensors/models/d455/d455.xml is derived from the same
+repository's realsense2_description/urdf/_d455.urdf.xacro (the color-optical-frame transform, mapped
+from the URDF link frame into this mesh-local frame), not measured off the mesh directly.

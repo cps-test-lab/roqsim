@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<sdf version="1.6" xmlns:experimental="http://sdformat.org/schemas/experimental">
+  <world name="depot">
+    <include>
+      <uri>https://fuel.gazebosim.org/1.0/OpenRobotics/models/Depot</uri>
+      <experimental:params>
+        <visual element_id="Fan1::visual" action="remove"/>
+        <visual element_id="Fan2::visual" action="remove"/>
+        <visual element_id="main::ROOF_visual" action="remove"/>
+        <visual element_id="main::FANS_visual" action="remove"/>
+      </experimental:params>
+    </include>
+  </world>
+</sdf>

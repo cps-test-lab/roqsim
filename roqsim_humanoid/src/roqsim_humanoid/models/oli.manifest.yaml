@@ -1,0 +1,30 @@
+# Default controller + sensors shipped with the LimX Oli (HU_D04_01) robot description.
+#
+# `spawn_robot: {model: oli}` pulls these in automatically (via SpawnRobotPlugin.expand ->
+# expand_manifest), so a world does not re-declare the robot's intrinsic locomotion/sensors. To
+# override a default, declare the same plugin for the same robot in the world; to opt out entirely,
+# set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
+# spawn_robot `name`.
+#
+# The world MUST set `sim.timestep: 0.001` -- oli_locomotion's PD loop / decimation are tuned for a
+# 1000 Hz step / 100 Hz policy (see worlds/*oli*.yaml), exactly as the vendor deploy code runs.
+#
+# lidar comes from roqsim_sensors (a dependency of this package) -- borrowed by name so the Oli
+# publishes /scan for nav2 exactly like the turtlebot/G1 do. The two depth cameras are the Oli's
+# real head + chest RealSense D435s; rendered RGB-D via the generic oakd_camera depth renderer (the
+# substrate's RealSense plugins are colour-only), each on its own namespace
+# so their topics don't collide.
+plugins:
+  - oli_locomotion: {}                             # ONNX whole-body walk policy + PD; config bundled
+  - lidar:
+      site: lidar
+      rays: 360
+      max_range: 12.0
+  - oakd_camera:
+      camera: head_camera
+      namespace: head_camera
+      frame_id: head_camera_optical_frame
+  - oakd_camera:
+      camera: chest_camera
+      namespace: chest_camera
+      frame_id: chest_camera_optical_frame

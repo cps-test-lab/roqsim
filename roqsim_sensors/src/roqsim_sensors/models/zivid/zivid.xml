@@ -1,0 +1,80 @@
+<mujoco model="zivid">
+  <!--
+    Zivid 3 XL250 industrial structured-light 3D camera: a standalone mount (visual mesh + a colour
+    camera + a `zivid` optical site) for the `spawn_sensor` plugin -- not attached to any robot's own
+    MJCF. Outputs a colour image + depth (the `zivid` capture plugin), standing in for the sensor's
+    coloured point cloud.
+
+    Mesh derived from Zivid's own Zivid 3 STL (SolidWorks export, mm) via Blender: scaled mm->m,
+    decimated to ~8k tris, base dropped to z=0, housing centred on x=y=0, axes 1:1 with Z up. See
+    ZIVID_MESH_LICENSE for provenance.
+
+    Mount-local optical axes: +y = the view direction, +z = up (the standalone-mount convention -- at
+    spawn_sensor rpy [0,0,0] the sensor looks horizontally toward a wall, matching d435/d415). The two
+    optical modules sit 250 mm apart (datasheet baseline); the imaging camera `zivid_color` is at the
+    +x module (x=+0.125), the projector at the -x module. `zivid_color` looks along +y with a 39 deg
+    square FOV.
+
+    Housing vs optics are decoupled on purpose. The camera, FOV envelope, glass strip, lens windows
+    and site are the OPTICS -- fixed at the optical origin on the +y front. The grey housing SHELL
+    (`zivid_body` + collision) lives in its own `housing` body that is pitched -90 deg about x and
+    shifted back along -y, so the mesh's grille/optics face turns to look along +y and the body sits
+    BEHIND the optical origin (the FOV emerges from the front glass, not from inside the shell). Posing
+    the shell never moves the optics. Resolution is 480x480: the sensor is square
+    (2816x2816, native modes 704/1408/2816), but MuJoCo's default offscreen framebuffer is 640x480
+    and does not enlarge when this mount is attached into a world, so we render a downscaled square
+    that fits. A world that needs more can raise `<visual><global offwidth/offheight>` on the world
+    itself and override `width`/`height` in plugin config. See zivid.manifest.yaml for the
+    auto-attached capture plugin.
+
+    Dimensions: 336 x 70 x 133 mm, matching the datasheet (336 x 133 x 70 mm, w x h x d).
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="zivid_body_mesh" file="zivid_body.obj"/>
+    <mesh name="zivid_fov_mesh" file="zivid_fov.obj"/>
+    <material name="zivid_body" rgba="0.12 0.12 0.13 1" specular="0.3" shininess="0.3"/>
+    <material name="zivid_glass" rgba="0.09 0.10 0.16 1" specular="0.7" shininess="0.8"/>
+    <material name="zivid_lens" rgba="0.03 0.03 0.05 1" specular="0.9" shininess="0.9"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <!-- Grey housing SHELL only. It is pitched (quat) so the grille/optics face turns from the
+           mesh's +z toward the optical +y direction, and shifted back (pos) so the shell sits BEHIND
+           the optical origin -- the FOV emerges from the front glass, not from inside the body. The
+           optics (camera, FOV, glass, lens windows, site) are NOT in this body: they stay fixed at
+           the optical origin no matter how the shell is posed (they must not be glued to the shell). -->
+      <body name="housing" pos="0 -0.102 0" quat="0.70710678 -0.70710678 0 0">
+        <geom name="zivid_body" type="mesh" mesh="zivid_body_mesh" material="zivid_body"
+              contype="0" conaffinity="0"/>
+        <!-- Cheap box collision over the 336 x 70 x 133 mm housing (connector stub left out); the
+             visual mesh carries the real shape. Mirrors the d435/mid360 mounts' box collision. -->
+        <geom name="zivid_collision" type="box" pos="0 0 0.066" size="0.168 0.035 0.066" group="3"/>
+      </body>
+      <!-- Dark glass strip across the front (the mesh has no separate material for it): a thin plate
+           over the optical band. Part of the OPTICS -- fixed at the optical origin. -->
+      <geom name="zivid_glass" type="box" pos="0 0.0335 0.011" size="0.135 0.0015 0.020"
+            material="zivid_glass" contype="0" conaffinity="0"/>
+      <!-- The two optical windows, 250 mm apart: +x = imaging camera, -x = projector. Short cylinders
+           along +y (the optical axis). Part of the OPTICS -- fixed at the optical origin. -->
+      <geom name="zivid_lens_cam" type="cylinder" pos="0.125 0.0345 0.011" quat="0.7071 -0.7071 0 0"
+            size="0.026 0.001" material="zivid_lens" contype="0" conaffinity="0"/>
+      <geom name="zivid_lens_proj" type="cylinder" pos="-0.125 0.0345 0.011" quat="0.7071 -0.7071 0 0"
+            size="0.026 0.001" material="zivid_lens" contype="0" conaffinity="0"/>
+      <!-- FOV coverage envelope: a 39 deg square frustum out to the 2.5 m focus distance (datasheet),
+           placed at and aligned with the imaging camera's optical origin. Non-colliding; shipped
+           hidden (alpha 0). `spawn_sensor: {show_fov: true}` reveals it (sets the alpha) -- FOV geoms
+           are recognised by the `_fov` name suffix. No material, so the plugin controls alpha via the
+           geom rgba. NOTE: group 2, not the group-3 collision layer, and deliberately not group 4/5:
+           the MuJoCo 3.x offscreen renderer drops large group-4 geoms once a scene has several geoms,
+           so a mast-mounted FOV would silently vanish in any real world. -->
+      <geom name="zivid_fov" type="mesh" mesh="zivid_fov_mesh" pos="0.125 0.030 0.011" group="2"
+            contype="0" conaffinity="0" rgba="0.25 0.55 1.0 0.0"/>
+      <camera name="zivid_color" pos="0.125 0.030 0.011" xyaxes="1 0 0 0 0 1"
+              fovy="39" resolution="480 480"/>
+      <site name="zivid" pos="0.125 0.030 0.011" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

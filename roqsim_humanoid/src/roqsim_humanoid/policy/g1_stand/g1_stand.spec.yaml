@@ -1,0 +1,82 @@
+# Unitree G1 -- actively balanced STANDING, while MoveIt moves the arms.
+#
+# Use with:  g1_locomotion: {robot: robot, policy: g1_stand, station_keeping: true}
+#
+# Why this policy exists, in one line: the bundled walk policy (`motion.pt`) cannot stand still. Its
+# observation carries a cycling gait phase, so a zero command means "walk at zero speed" -- measured at
+# 27 foot-lifts / 10 s, exactly the 0.8 s gait period. Freezing that phase makes it fall (89 lifts,
+# pelvis at 0.155 m); so does a pure PD hold on the default stance (pelvis 0.171 m). A real stand needs
+# an active balance controller, which is what this is.
+#
+# Trained with MuJoCo Playground (Apache-2.0); the weights are ours, not vendored. Reproduce with
+# `make train-g1-stand` -- see external/train/README.md for the pinned commit and the reward settings.
+name: g1_stand
+checkpoint: stand.pt
+
+joints:
+  # Exactly the twelve leg motors, in the same policy order as the walk policy. This plugin owns these
+  # and nothing else -- the arms stay MoveIt's, which is the whole point of a lower-body stand policy.
+  actuated:
+    - left_hip_pitch_joint
+    - left_hip_roll_joint
+    - left_hip_yaw_joint
+    - left_knee_joint
+    - left_ankle_pitch_joint
+    - left_ankle_roll_joint
+    - right_hip_pitch_joint
+    - right_hip_roll_joint
+    - right_hip_yaw_joint
+    - right_knee_joint
+    - right_ankle_pitch_joint
+    - right_ankle_roll_joint
+  # Observed but never commanded. Arm joint encoders are measurable on the real robot and the substrate
+  # already publishes them, so letting the policy see the arms lets it ANTICIPATE the CoM shift instead
+  # of only reacting to the resulting tilt. This is the single biggest lever for coping with a reach.
+  observed:
+    - left_shoulder_pitch_joint
+    - left_shoulder_roll_joint
+    - left_shoulder_yaw_joint
+    - left_elbow_joint
+    - left_wrist_roll_joint
+    - left_wrist_pitch_joint
+    - left_wrist_yaw_joint
+    - right_shoulder_pitch_joint
+    - right_shoulder_roll_joint
+    - right_shoulder_yaw_joint
+    - right_elbow_joint
+    - right_wrist_roll_joint
+    - right_wrist_pitch_joint
+    - right_wrist_yaw_joint
+
+control:
+  # Identical to policy/g1.yaml, deliberately: the deployed PD loop must be the one the policy trained
+  # against, so the training env is configured from these same numbers rather than the reverse.
+  decimation: 10
+  action_scale: 0.25
+  default_angles: [-0.1, 0.0, 0.0, 0.3, -0.2, 0.0, -0.1, 0.0, 0.0, 0.3, -0.2, 0.0]
+  kp: [100, 100, 100, 150, 40, 40, 100, 100, 100, 150, 40, 40]
+  kd: [2, 2, 2, 4, 2, 2, 2, 2, 2, 4, 2, 2]
+
+# 73 dims = 3 + 3 + 3 + 12 + 12 + 12 + 14 + 14. The walk layout, minus the gait phase, plus arm state.
+observation:
+  - {term: base_ang_vel, scale: 0.25}
+  - {term: projected_gravity}
+  - {term: command, scale: [2.0, 2.0, 0.25]}
+  - {term: actuated_pos_rel_default, scale: 1.0}
+  - {term: actuated_vel, scale: 0.05}
+  - {term: prev_action}
+  - {term: observed_pos}
+  - {term: observed_vel, scale: 0.05}
+  # NO gait_phase term, and that omission is the point: the cycling phase is precisely what keeps the
+  # walk policy stepping at zero command.
+
+# What the policy was TRAINED for. Outside this it does not fail, it just balances worse -- which is
+# why the range is recorded machine-readably instead of only in a port log nobody reads before editing
+# a world YAML.
+envelope:
+  payload_kg: [0.0, 1.0]
+  payload_frame: left_grasp
+  note: >-
+    Table-height grasping only (TCP z 0.75-1.20 m, x 0.25-0.50 m, y 0.00-0.30 m left); the legs never
+    crouch. Payload up to 1 kg in the LEFT hand. Outside that -- a floor or shelf pick, a right-hand or
+    two-handed carry, commanded torso motion, or walking while loaded -- needs retraining.

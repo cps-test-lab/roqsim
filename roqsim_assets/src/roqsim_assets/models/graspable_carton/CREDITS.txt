@@ -1,0 +1,7 @@
+graspable_carton -- a small upright carton, sized to be picked off a table by a narrow parallel
+gripper; the sibling of `graspable_box`.
+
+Original primitive geometry authored for roqsim (no third-party content). No meshes: the model is
+MJCF primitives, so there is nothing here but our own geometry and inertial tuning.
+
+Licence: Apache-2.0, with the rest of this repository.

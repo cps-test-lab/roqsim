@@ -1,0 +1,39 @@
+# A walker driven through poses over ROS 2 -- the nav-through-poses demo world.
+#
+#   ros2 launch roqsim_walker_ros walker_nav.launch.py
+#
+# then, in another sourced shell:
+#
+#   ros2 action send_goal /navigate_through_poses nav2_msgs/action/NavigateThroughPoses \
+#     "{poses: [{header: {frame_id: map}, pose: {position: {x: 2.0, y: 0.0}}},
+#               {header: {frame_id: map}, pose: {position: {x: 0.0, y: 2.0}}}]}" --feedback
+#
+# The walker leaves its patrol, walks the goal poses, then resumes patrolling. Drop `waypoints:` to
+# make it goal-driven only (it stands at `pos` until commanded).
+#
+# To have the walker yield to a robot, add a `spawn_robot` plugin and set `avoidance: true`
+# (needs the extra: pip install -e 'roqsim_walker[avoidance]').
+
+sim:
+  pacing: realtime
+
+plugins:
+  - walker:
+      walker: MaleVisitorWalk
+      name: pedestrian
+      speed: 1.2
+      loop: true
+      arrival_radius: 0.25
+      avoidance: false
+      action_name: navigate_through_poses   # served at /navigate_through_poses
+      waypoints:
+        - [-2.0, -2.0]
+        - [ 2.0, -2.0, [2, 4]]
+        - [ 2.0,  2.0]
+        - [-2.0,  2.0, [1, 3]]
+
+  # Reads the walker's declared endpoints from ctx.interface. The goal endpoint carries an `action`
+  # hint, so the bridge serves it as an ActionServer using the handler this package registers.
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}

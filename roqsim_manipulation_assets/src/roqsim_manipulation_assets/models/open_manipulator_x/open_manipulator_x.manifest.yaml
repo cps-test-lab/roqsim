@@ -1,0 +1,18 @@
+# Default plugins shipped with the OpenMANIPULATOR-X arm description.
+#
+# `spawn_arm: {model: open_manipulator_x}` pulls this in automatically, so a world does not
+# re-declare the arm's controller. To override, declare arm_controller for the same arm in the world
+# (it wins); to opt out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is
+# filled in from the spawn_arm `name`.
+plugins:
+  # No gripper keys: the two fingers are welded geometry in the MJCF (no joint, no actuator), so
+  # there is nothing for arm_controller to expose a GripperCommand action for. See the port log.
+  - arm_controller: {}
+
+  # The eye-in-hand RealSense D435i is NOT in this manifest, even though the model ships the
+  # `d435_color` camera it renders from. Same line the ur5e draws for its force-torque sensor: the
+  # arm's contribution is the mount (a camera element at the vendor's own mount pose); whether a run
+  # renders from it, at what rate, and whether it reprojects to a point cloud are properties of the
+  # experiment. A world that wants it adds:
+  #
+  #     realsense_d435: {arm: omx, depth: true, points: true}

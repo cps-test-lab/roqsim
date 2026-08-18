@@ -1,0 +1,42 @@
+<mujoco model="mid360">
+  <!--
+    Livox Mid-360 3D lidar: a standalone mount (visual mesh + a `mid360` scan site) for the
+    `spawn_sensor` plugin -- not attached to any robot's own MJCF.
+
+    Meshes derived from Livox's own Mid-360 STEP assembly (Creo/PTC export, mm units) via Open CASCADE
+    tessellation (cascadio) + Blender decimation, split into the grey housing (`mid360_body`, incl. the
+    M12 connector) and the laser dome window (`mid360_dome`); axes 1:1 with Z up, base dropped to z=0,
+    housing centred on x=y=0. See MID360_MESH_LICENSE for provenance.
+
+    Body-local axes: z = up (the dome FoV opens upward and around), the M12 connector points +x. The
+    `mid360` site sits at the dome's centre of curvature (z=0.0386 m) -- the laser's optical origin --
+    where the `livox_mid360` capture plugin casts its rays from. See mid360.manifest.yaml for the
+    auto-attached capture plugin.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="mid360_body_mesh" file="mid360_body.obj"/>
+    <mesh name="mid360_dome_mesh" file="mid360_dome.obj"/>
+    <material name="mid360_body" rgba="0.82 0.82 0.84 1" specular="0.4" shininess="0.3"/>
+    <material name="mid360_window" rgba="0.06 0.05 0.28 1" specular="0.7" shininess="0.7"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <geom name="mid360_body" type="mesh" mesh="mid360_body_mesh" material="mid360_body"
+            contype="0" conaffinity="0"/>
+      <geom name="mid360_dome" type="mesh" mesh="mid360_dome_mesh" material="mid360_window"
+            contype="0" conaffinity="0"/>
+      <!-- Cheap box collision over the 65 x 65 x 60 mm housing (the connector stub is left out); the
+           visual meshes above carry the real shape. Mirrors the d435 mount's box-collision approach. -->
+      <geom name="mid360_collision" type="box" pos="0 0 0.030" size="0.0325 0.0325 0.030"
+            group="3"/>
+      <!-- No baked FOV geom: `spawn_sensor: {show_fov: true}` synthesises the coverage volume as a
+           translucent angular SECTOR (a full 360deg dome, elevation -7deg..+52deg) from the datasheet
+           angles in mid360.manifest.yaml, using the same ray convention the `livox_mid360` capture
+           plugin casts with. Nothing to draw here -- the site below is the sector's origin. -->
+      <site name="mid360" pos="0 0 0.0386" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

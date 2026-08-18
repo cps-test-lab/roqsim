@@ -1,0 +1,14 @@
+roqsim brand artwork -- original work authored for roqsim, licensed Apache-2.0 with the rest of
+this repository. No third-party content.
+
+  roqsim-horizontal-github.png       967 x 206    README header
+  roqsim-transparent.png            1536 x 1024   docs sidebar logo (html_logo)
+  roqsim-social-preview-1280x640.png 1280 x 640   GitHub repo social preview (uploaded via
+                                                  Settings > General > Social preview; the file is
+                                                  kept here so the source of that image is tracked)
+  favicon.ico                        256 x 256    docs favicon (html_favicon)
+  roqsim-favicon.png                 512 x 512    PNG favicon variant
+
+These are presentation assets: they are NOT packaged into the wheel. The one image loaded at runtime
+is roqsim/src/roqsim/assets/splash.jpg (the viewer's loading overlay, see roqsim/splash.py) and it
+stays in the package on purpose.

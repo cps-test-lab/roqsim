@@ -1,0 +1,29 @@
+<mujoco model="door">
+  <!--
+    A single door LEAF (white panel + chrome handle) extracted from the Sketchfab "white and black
+    wooden door low poly" unit (CC-BY oobexr; see CREDITS.txt). This file is only the swinging leaf;
+    the static jamb/lintel casing is the separate `door_frame` model, which the `door` plugin welds
+    around the opening while this leaf hinges inside it.
+
+    Non-standard origin: the leaf's hinge (fixed) vertical edge sits at x=0, the leaf runs along +X
+    to the far (handle) edge at x=0.9, thickness along Y, base at z=0, height 2.0 m. This is the
+    convention the `door` plugin (roqsim_assets.plugins.door) expects so it can hang the leaf on a
+    hinge with no per-model offset and rescale it (X width, Z height) to each opening. It is therefore
+    NOT footprint-centred like a spawn_model prop -- `roqsim assets inspect-prop`'s origin check will flag that by
+    design. The panel carries collision; the handle is decorative (contype/conaffinity 0) so a robot
+    never snags on it.
+  -->
+  <compiler meshdir="meshes" texturedir="meshes"/>
+  <asset>
+    <mesh name="door_panel" file="door_panel.obj"/>
+    <mesh name="door_handle" file="door_handle.obj"/>
+    <material name="door_panel" rgba="0.90 0.90 0.88 1"/>
+    <material name="door_handle" rgba="0.55 0.56 0.58 1" specular="0.6" shininess="0.6"/>
+  </asset>
+  <worldbody>
+    <body name="leaf">
+      <geom type="mesh" mesh="door_panel" material="door_panel"/>
+      <geom type="mesh" mesh="door_handle" material="door_handle" contype="0" conaffinity="0"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,92 @@
+# External assets: fetched + converted on demand, NOT committed.
+#
+# Some upstream CAD/mesh sources have unclear redistribution terms, so instead of committing derived
+# files we regenerate them locally from their sources. The runner (external/external_resources.py, driven
+# by the `external-*` Makefile targets) fetches each source, runs its conversion into the target
+# paths, and keeps .gitignore in sync so neither the sources nor the generated outputs are tracked.
+#
+# Schema (one block per resource; list items at column 0 so `add-external-resource` can append):
+#   name:         unique id
+#   description:  one line
+#   license:      provenance / redistribution note (why it is generated, not committed)
+#   sources:      inputs to fetch; each: {url, path, [manual: true], [sha256]}
+#                 - manual: true  -> cannot be auto-downloaded (behind a portal / login); the runner
+#                                    errors with instructions if the file is not already at `path`.
+#                 - otherwise `url` is fetched to `path` (verified against sha256 if given).
+#   convert:      {script, [pip_deps: [...]], [needs_blender: true]}  -- omit for download-only assets.
+#                 script is run with the tool venv's python:
+#                   <script> --sources <path...> --targets <path...> [--blender <path>]
+#   targets:      generated files the conversion must produce (checked afterwards; git-ignored).
+#
+# All paths are relative to the roqsim directory (where the Makefile runs).
+
+resources:
+- name: livox_mid360_meshes
+  description: Livox Mid-360 visual meshes (housing, laser dome)
+  license: >-
+    Derived from Livox's official Mid-360 STEP CAD (copyright Livox Technology, Creo export by
+    dale.chen). Redistribution of the derived meshes is not clearly permitted, so they are generated
+    locally and git-ignored rather than committed. See
+    roqsim_sensors/src/roqsim_sensors/models/mid360/MID360_MESH_LICENSE.
+  sources:
+  - url: https://www.livoxtech.com/mid-360
+    manual: true
+    path: external/sources/livox/mid-360-asm.stp
+  convert:
+    script: external/convert/livox_mid360_convert.py
+    pip_deps: [cascadio]
+    needs_blender: true
+  targets:
+  - roqsim_sensors/src/roqsim_sensors/models/mid360/meshes/mid360_body.obj
+  - roqsim_sensors/src/roqsim_sensors/models/mid360/meshes/mid360_dome.obj
+
+- name: spot_locomotion_policy
+  description: Boston Dynamics Spot flat-terrain locomotion policy (NVIDIA Isaac, pretrained)
+  license: >-
+    spot_policy.pt / spot_env.yaml are under the NVIDIA asset license -- local/internal R&D use only,
+    not modifiable or redistributable. Downloadable anonymously from NVIDIA's public Isaac asset
+    bucket; fetched locally, never committed. See roqsim_quadruped/THIRD_PARTY.md.
+  optional: true            # fail-soft: only needed to actually RUN Spot, so a network error is a
+                            # warning (skipped), never a hard failure of `make venv` / offline builds.
+  # Download-only: no conversion, so each target is just its downloaded source.
+  sources:
+  - url: https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Samples/Policies/Spot_Policies/spot_policy.pt
+    path: roqsim_quadruped/src/roqsim_quadruped/policy/spot_policy.pt
+  - url: https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Samples/Policies/Spot_Policies/spot_env.yaml
+    path: roqsim_quadruped/src/roqsim_quadruped/policy/spot_env.yaml
+  targets:
+  - roqsim_quadruped/src/roqsim_quadruped/policy/spot_policy.pt
+  - roqsim_quadruped/src/roqsim_quadruped/policy/spot_env.yaml
+- name: zivid_xl250_meshes
+  description: Zivid 3 XL250 visual meshes (dark camera housing + square FOV coverage frustum)
+  license: Derived from Zivid's official Zivid 3 STL CAD (SolidWorks export, copyright Zivid AS). Redistribution
+    of the derived meshes is not clearly permitted, so they are generated locally and git-ignored rather
+    than committed. The FOV mesh is authored from the XL250 datasheet (Zivid ships no FOV solid). See
+    roqsim_sensors/src/roqsim_sensors/models/zivid/ZIVID_MESH_LICENSE.
+  sources:
+  - url: https://www.zivid.com/hubfs/files/CAD/Zivid%203.stl?hsLang=en
+    path: external/sources/zivid/zivid3.stl
+  convert:
+    script: external/convert/zivid_convert.py
+    needs_blender: true
+  targets:
+  - roqsim_sensors/src/roqsim_sensors/models/zivid/meshes/zivid_body.obj
+  - roqsim_sensors/src/roqsim_sensors/models/zivid/meshes/zivid_fov.obj
+
+- name: seyond_robin_w1g_meshes
+  description: Seyond Robin W1G visual mesh (dark wedge housing)
+  license: >-
+    Derived from Seyond's official Robin W1G STEP CAD (Creo/PTC export, copyright Seyond Inc.;
+    header FILE_NAME 'S-900-000084_A_ENCLOSURE2024121_ASM', 2024-12-19). Redistribution of the
+    derived meshes is not clearly permitted, so they are generated locally and git-ignored rather
+    than committed. See roqsim_sensors/src/roqsim_sensors/models/robin_w1g/ROBIN_W1G_MESH_LICENSE.
+  sources:
+  - url: https://www.seyond.com/product/robin-w1g/
+    manual: true
+    path: external/sources/seyond/robin-w1g.stp
+  convert:
+    script: external/convert/robin_w1g_convert.py
+    pip_deps: [cascadio]
+    needs_blender: true
+  targets:
+  - roqsim_sensors/src/roqsim_sensors/models/robin_w1g/meshes/robin_w1g_body.obj

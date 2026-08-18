@@ -1,0 +1,80 @@
+# The roqsim substrate's OpenSCENARIO vocabulary: what a scenario can ask a running roqsim simulation, and
+# what it can break in one. `import osc.roqsim`.
+#
+# Every action here works in BOTH shapes -- a stepped in-process run (scenario-execution's own runner
+# with `--simulation`, RoboVAST's `mode: base`) and a ROS run (the simulator in its own container,
+# reached over simulation_interfaces). The transport is chosen from what the runner offers, not
+# declared here, so a scenario moves between the two unedited. None of them can run under `remote()`:
+# a remote server is handed no simulation and no node.
+
+import osc.types  # pose_3d, for entity_teleport
+
+# How a displacement is reduced to one number.
+#
+# `distance` and `planar` are MAGNITUDES (planar ignores z, which is what a driving robot wants).
+# `x`/`y`/`z` are SIGNED, and the sign of `threshold` is what says which way -- `threshold: 0.05,
+# mode: z` means risen 5 cm, `threshold: -0.05` means fallen 5 cm. Read that twice before writing
+# `mode: z` expecting |dz|; a campaign sweeping [-0.05, 0.05] on an axis mode is sweeping two
+# different QUESTIONS, not two levels of one factor.
+enum displacement_mode: [ distance, planar, x, y, z ]
+
+# How a list of entities is quantified. `all` because that is how the rest of the vocabulary reads a
+# list (`wait_for_topics(topics: [...])` waits for all of them); `any` is a genuinely different
+# instrument -- "did anything on this table get knocked over".
+enum entity_quantifier: [ all, any ]
+
+action entity_moved:
+    # Succeed once the named entities have been DISPLACED from where they were when this action
+    # started. Net displacement, NOT path length: an entity that goes out and comes back has moved
+    # zero. (`osc.ros`'s odometry_distance_traveled integrates a path instead, and reports a larger
+    # number on any curve.) The baseline is taken on this action's first tick, so "since when" is the
+    # point in the scenario where it sits.
+    #
+    # Over ROS the pose is a service round-trip, so a crossing is resolved at the tick period rather
+    # than at the physics step; a dwell shorter than one tick means "the first tick past it" either way.
+    entities: list of string                          # roqsim entity names -- the world's `name:`, not a
+                                                      # body or a TF frame. One object is a 1-element
+                                                      # list; OSC has no union type.
+    threshold: float                                  # metres. SIGNED for x/y/z (see displacement_mode)
+    mode: displacement_mode = displacement_mode!distance
+    dwell: float = 0.0                                # seconds of SIM time the condition must hold,
+                                                      # continuously. 0 = fire on the crossing.
+    require: entity_quantifier = entity_quantifier!all
+
+action entity_rotated:
+    # As entity_moved, for orientation: the geodesic angle between the entity's current orientation
+    # and the one it had when this action started -- the single rotation that takes one to the other,
+    # whatever axis it is about. A separate action so that `angle` names its own unit; sharing
+    # entity_moved's `threshold` would make one parameter mean metres or radians depending on a
+    # sibling argument.
+    entities: list of string
+    angle: float                                      # radians, magnitude, 0 < angle <= pi
+    dwell: float = 0.0
+    require: entity_quantifier = entity_quantifier!all
+
+action entity_teleport:
+    # Place a free-jointed entity at `pose` and zero its velocity, matching a fresh spawn. The
+    # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's
+    # randomly generated start pose) rather than per CONFIGURATION -- nothing before compile knows a
+    # value drawn once per repetition, and the substrate does not recompile mid-run. Only yaw is
+    # applied; a nonzero roll or pitch in `pose.orientation` is refused (see the action's docstring).
+    #
+    # Fails the trial when the write does not land (Result != RESULT_OK, or the entity has no free
+    # joint) -- a teleport that did not happen must not leave a row whose recorded start_pose the
+    # robot's body never reached.
+    entity: string                                    # roqsim entity name -- the world's `name:`, not
+                                                      # a body or a TF frame
+    pose: pose_3d
+
+action set_model_override:
+    # Apply (or restore) a world's `model_override` instance: the runtime physical fault. The WORLD
+    # owns where the fault acts and how bad it is (`field:`, `select:`, `to:`); this owns only WHEN,
+    # which is the experiment's independent variable. Restoring is the same action with
+    # `active: false`, so a transient fault is two calls with a `wait` between them.
+    #
+    # Fails the trial when the plugin reports the write changed nothing -- a run whose fault silently
+    # did not happen must not leave a row claiming it did. `untested` (nothing was touching the
+    # selected geoms) is not that, and neither is a restore.
+    instance: string                                  # the world's instance, by its `name:`
+    active: bool = true                               # true = apply the configured target, false = nominal
+    require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'

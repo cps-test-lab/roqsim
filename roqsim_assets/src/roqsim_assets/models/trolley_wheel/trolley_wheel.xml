@@ -1,0 +1,23 @@
+<mujoco model="trolley_wheel">
+  <!-- Heavy-duty swivel trolley caster (wheel + top mounting bracket). Split into two meshes so
+       MuJoCo can bind both baseColor maps (one material per mesh); both share the source frame, so
+       each geom at pos 0 lands in place (same convention as free_chipboard_shelf).
+       Geometry facts for reusers: overall 0.113 x 0.145 x 0.160 m, footprint centred, wheel bottom
+       on the floor (z=0); top mounting plate at z=0.160; wheel dia 0.124 m, axle along x, and the
+       wheel trails toward +y off the swivel axis. Source scale baked (0.0625) via reduce_mesh. -->
+  <compiler meshdir="." texturedir="."/>
+  <asset>
+    <texture name="trolley_wheel_wheel_color" type="2d" file="textures/wheel_baseColor.png"/>
+    <texture name="trolley_wheel_top_color"   type="2d" file="textures/top_part_baseColor.png"/>
+    <material name="trolley_wheel_wheel" texture="trolley_wheel_wheel_color"/>
+    <material name="trolley_wheel_top"   texture="trolley_wheel_top_color"/>
+    <mesh name="trolley_wheel_wheel" file="trolley_wheel_wheel.obj"/>
+    <mesh name="trolley_wheel_top"   file="trolley_wheel_top.obj"/>
+  </asset>
+  <worldbody>
+    <body name="trolley_wheel">
+      <geom type="mesh" mesh="trolley_wheel_wheel" material="trolley_wheel_wheel"/>
+      <geom type="mesh" mesh="trolley_wheel_top"   material="trolley_wheel_top"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -1,0 +1,5 @@
+# Surface properties for this wall texture, read by scene/floor plugins.
+# reflectance: MuJoCo material reflectance (0..1); higher = more mirror-like.
+# physical_size: real-world size (m) the image spans, so it tiles at true scale.
+reflectance: 0.05     # matte plaster
+physical_size: 5.0    # the image covers a ~2 m × 2 m area (adjust to the Poly Haven "Dimensions")

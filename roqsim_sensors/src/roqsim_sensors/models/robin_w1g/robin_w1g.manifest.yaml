@@ -1,0 +1,27 @@
+# Default capture plugin shipped with the robin_w1g mount.
+#
+# `spawn_sensor: {model: robin_w1g}` pulls this in automatically, so a world does not re-declare the
+# capture plugin. To override, declare seyond_robin_w1g for the same mount in the world (it wins); to
+# opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
+# spawn_sensor `name`. `exclude_body: mount` skips the sensor's own housing (a standalone mount has no
+# chassis); `frame_id: seyond_lidar` matches Seyond's own ROS driver.
+#
+plugins:
+  - seyond_robin_w1g:
+      site: robin_w1g
+      frame_id: seyond_lidar
+      exclude_body: mount
+
+# Field of view for `spawn_sensor: {show_fov: true}`. The W1G is camera-less, so there is no `<camera>`
+# to synthesise a frustum from and (since the baked CAD envelope was dropped) no bundled `_fov` mesh to
+# reveal; instead spawn_sensor synthesises a translucent angular SECTOR -- here a bounded, forward-facing
+# 120deg x 70deg wedge (not a 360deg dome like the Mid-360). The angular band mirrors the
+# `seyond_robin_w1g` capture plugin's own FoV defaults; `near`/`far` are the shell's inner/outer radii.
+# A world may override the drawn radii per placement via `fov_near`/`fov_range`.
+fov:
+  near: 0.1             # blind zone (m)
+  far: 70.0            # spec'd detection range (POD>90% @ 10% reflectivity); 150 m maximum
+  h_min: -1.047197551   # -60 deg
+  h_max: 1.047197551    # +60 deg (120 deg total, bounded band with inclusive endpoints)
+  v_min: -0.610865238   # -35 deg
+  v_max: 0.610865238    # +35 deg (70 deg total)

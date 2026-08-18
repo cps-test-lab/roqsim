@@ -1,0 +1,32 @@
+# Boston Dynamics Spot world for the nav2 example.
+#
+# spawn_robot pulls in the spot robot description (its spot_locomotion controller + lidar), so this
+# world only places the robot and wires transport. The ros2_bridge publishes clock/odom/
+# tf(odom->base_link)/scan/joint_states, and -- because the lidar declares its mount frame -- the
+# static base_link->lidar TF, so the launch file needs no robot_state_publisher / URDF chain.
+# A static map->odom identity transform (in the launch file) stands in for localization.
+#
+# timestep 0.002 (500 Hz): Isaac trains the Spot flat-terrain policy at a 500 Hz sim / 50 Hz policy
+# (decimation 10), so spot_locomotion needs this step.
+#
+# Requires the (not-committed) NVIDIA Spot policy: run `python -m roqsim_quadruped.policy.fetch_policy`
+# (also wired into `make venv`) or set SPOT_POLICY_PATH before launching.
+
+sim:
+  world: empty_room   # the walled empty_room (10 m) matches maps/empty_room.yaml (physical walls the lidar sees)
+  timestep: 0.002
+  pacing: realtime
+
+plugins:
+  # spot_locomotion + lidar come from the spot model manifest (models/spot.manifest.yaml).
+  - spawn_robot:
+      model: spot
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # The bridge reads the robot's declared endpoints from ctx.interface and publishes
+  # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->lidar TF.
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}

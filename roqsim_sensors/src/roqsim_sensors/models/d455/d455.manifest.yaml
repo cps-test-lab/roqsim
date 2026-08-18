@@ -1,0 +1,15 @@
+# Default capture plugin shipped with the d455 mount.
+#
+# `spawn_sensor: {model: d455}` pulls this in automatically, so a world does not re-declare the
+# capture plugin. To override, declare realsense_d455 for the same mount in the world (it wins);
+# to opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
+# spawn_sensor `name`.
+plugins:
+  - realsense_d455:
+      camera: d455_color
+
+# Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to (RealSense D455 min depth;
+# far is a display range -- a camera has no physical far). Matches the coverage catalog's D455 entry.
+fov:
+  near: 0.6
+  far: 6.0

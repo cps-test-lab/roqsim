@@ -1,0 +1,28 @@
+# LimX Oli in an empty room — standalone demo world (roqsim_humanoid).
+#
+# Watch it walk:   roqsim sim roqsim_humanoid/src/roqsim_humanoid/worlds/oli_demo.yaml
+# Inspect by hand: roqsim sim .../oli_demo.yaml --manual-control   (the policy yields the joints;
+#                  a torque-actuated humanoid with the policy off simply folds — expected)
+#
+# oli_locomotion + lidar + the two depth cameras come from the oli model manifest
+# (models/oli.manifest.yaml). A `test_cmd` drives the robot forward so the standalone scene shows
+# motion. For ROS 2 / nav2, add a ros2_bridge and drive /cmd_vel (see roqsim_ros_bridge).
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+  timestep: 0.001       # REQUIRED for oli_locomotion: 1000 Hz PD / 100 Hz policy (the trained cadence)
+
+plugins:
+  - spawn_robot:
+      model: oli
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # Override the manifest's oli_locomotion only to add test_cmd: with no ROS to send /cmd_vel, this
+  # scripted [vx, vy, w] walks the robot forward so the standalone scene shows motion.
+  - oli_locomotion:
+      robot: robot
+      test_cmd: [0.3, 0.0, 0.0]   # remove once the ros2_bridge drives /cmd_vel
+
+  # - ros2_bridge: {}   # one bridge serves every declared endpoint (cmd_vel/odom/joint_states/scan/cameras)

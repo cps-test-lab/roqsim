@@ -1,0 +1,201 @@
+<mujoco model="clearpath_jackal">
+  <!--
+    Clearpath Jackal (J100, 4-wheel skid-steer) for MuJoCo.
+
+    Geometry, masses and inertias are taken verbatim from Clearpath's `jackal_description`
+    (BSD-3, see clearpath_jackal_LICENSE), all expressed relative to the `base_link` frame so a
+    ROS 2 bridge can publish TF directly:
+        chassis collision box 0.420 x 0.310 x 0.184 m, mass 16.523 kg (full inertia tensor);
+        wheel radius 0.098 m, width 0.040 m, mass 0.477 kg (x4);
+        track 0.37559 m, wheelbase 0.262 m; base_link rest height 0.0635 m (= r - 0.0345 offset).
+    Total mass 18.431 kg.
+
+    Collision hull = chassis box + two fender slabs + four wheel cylinders. The fenders are
+    VISUAL-ONLY in the vendor URDF, but they are the robot's outermost surface (the pair spans
+    0.5106 x 0.430 m, i.e. the datasheet hull) and this model is used for an experiment whose only
+    failure criterion is contact -- a robot that can drive its fenders through a box would score
+    collisions wrong. So they collide here, and the Nav2 footprint is set to the same hull. This is
+    the one deliberate departure from the vendor collision geometry; see the port log.
+
+    Drive: TRUE 4-wheel skid-steer -- all four wheels driven, left pair and right pair commanded
+    together. In-place rotation comes from the wheels scrubbing laterally, so wheel<->floor friction
+    is set by explicit contact pairs (MuJoCo max-combines friction and scene floors are usually
+    high-friction). The residual yaw deficit is corrected by the diff_drive `slip_factor`; see the
+    manifest and the port log for its calibration.
+
+    Meshes are the vendor's binary STL in metres, installed and bound-checked by
+    external/convert/convert_jackal_meshes.py. They are visual-only geoms (group 2, no contacts).
+  -->
+
+  <compiler meshdir="meshes"/>
+
+  <asset>
+    <material name="jackal_yellow" rgba="0.80 0.80 0.00 1"/>
+    <material name="jackal_black"  rgba="0.15 0.15 0.15 1"/>
+    <material name="jackal_dark"   rgba="0.20 0.20 0.20 1"/>
+    <material name="jackal_grey"   rgba="0.40 0.40 0.40 1"/>
+    <material name="jackal_white"  rgba="0.90 0.90 0.90 1"/>
+
+    <mesh name="jackal_base"   file="jackal-base.stl"/>
+    <mesh name="jackal_fender" file="jackal-fender.stl"/>
+    <mesh name="jackal_wheel"  file="jackal-wheel.stl"/>
+  </asset>
+
+  <default>
+    <default class="jackal_wheel">
+      <!-- Collision cylinder: radius 0.098, half-width 0.020. quat rotates the cylinder's local +z
+           onto base_link Y (the spin axis). Friction is overridden per wheel by the explicit floor
+           pairs below; condim=3 = tangential slide only. -->
+      <geom type="cylinder" size="0.098 0.020" quat="0.707107 0.707107 0 0"
+            material="jackal_black" condim="3" friction="0.5 0.005 0.0001"/>
+    </default>
+    <default class="jackal_visual">
+      <!-- Visual-only: no contacts. Do NOT set density=0 (a zero-density mesh geom renders as its
+           bounding sphere); base_link's explicit <inertial> overrides geom-derived mass anyway. -->
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+    <default class="jackal_collision">
+      <geom group="3" condim="3" friction="0.4 0.005 0.0001" material="jackal_grey"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- base_link: URDF root (base_link_joint to chassis_link is identity, so the two coincide).
+         freejoint makes the robot mobile; spawns just above rest height and settles on the wheels. -->
+    <body name="base_link" pos="0 0 0.07">
+      <freejoint name="base_free"/>
+      <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
+
+      <!-- Spectator camera that tracks the robot (constant world-frame offset, level horizon). -->
+      <camera name="track" mode="track" pos="-1.8 -1.8 1.3" xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+
+      <!-- Chassis inertia: mass + full inertia tensor + COM offset, from jackal_description.
+           MuJoCo fullinertia order is (ixx iyy izz ixy ixz iyz). -->
+      <inertial pos="0.012 0.002 0.067" mass="16.523"
+                fullinertia="0.3136 0.3922 0.4485 -0.0008 0.0164 -0.0009"/>
+
+      <!-- Chassis collision box (URDF chassis_link collision, origin z = chassis_height/2). -->
+      <geom class="jackal_collision" name="base_collision" type="box"
+            size="0.210 0.155 0.092" pos="0 0 0.092"/>
+
+      <!-- Fender collision slabs (see header). Each spans x 0..0.2553 and y +-0.215, z 0.0975..0.1497
+           in base_link, from the fender mesh's own bounds. They overlap the wheel cylinders, which is
+           harmless: MuJoCo excludes parent<->child body contacts. -->
+      <geom class="jackal_collision" name="front_fender_collision" type="box"
+            size="0.12765 0.215 0.0261" pos="0.12765 0 0.1236"/>
+      <geom class="jackal_collision" name="rear_fender_collision" type="box"
+            size="0.12765 0.215 0.0261" pos="-0.12765 0 0.1236"/>
+
+      <!-- Visual meshes (no contacts), placed with the URDF link transforms relative to base_link.
+           chassis: URDF origin xyz="0 0 -0.0655" rpy="pi/2 0 pi/2" -> quat (0.5 0.5 0.5 0.5).
+           rear fender: URDF joint rpy="0 0 pi"                     -> quat (0 0 0 1). -->
+      <geom class="jackal_visual" mesh="jackal_base"   material="jackal_dark"
+            pos="0 0 -0.0655" quat="0.5 0.5 0.5 0.5"/>
+      <geom class="jackal_visual" mesh="jackal_fender" material="jackal_yellow"/>
+      <geom class="jackal_visual" mesh="jackal_fender" material="jackal_yellow" quat="0 0 0 1"/>
+
+      <!-- Velodyne VLP-16 on the vendor's default mount: mid_mount (chassis top, z=0.184) + the
+           0.1 m four-leg tower + a 2 mm plate, then the VLP-16 whose laser frame sits 0.0377 m above
+           its own base. Scan plane = 0.184 + 0.1 + 0.0377 = 0.3217 m above base_link, i.e. 0.3852 m
+           above ground. That chain is the vendor's, not an assumption: jackal_description
+           accessories/vlp16_mount.urdf.xacro (tower default 1, height 0.1) + velodyne_description
+           VLP-16.urdf.xacro (laser origin z=0.0377). See spec gap g_lidar_mounting_pose.
+           The `lidar` plugin reads the `lidar` site as a PLANAR scanner at that height -- which is
+           what the paper's 2D costmap would have seen (spec gap g_scan_projection). -->
+      <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos=" 0.05  0.05 0.234" material="jackal_white"/>
+      <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos=" 0.05 -0.05 0.234" material="jackal_white"/>
+      <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos="-0.05  0.05 0.234" material="jackal_white"/>
+      <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos="-0.05 -0.05 0.234" material="jackal_white"/>
+      <geom class="jackal_visual" type="box"      size="0.05 0.05 0.001" pos="0 0 0.283" material="jackal_black"/>
+      <geom class="jackal_visual" type="cylinder" size="0.0516 0.03585" pos="0 0 0.31985" material="jackal_dark"/>
+      <site name="lidar" pos="0 0 0.3217" size="0.006" rgba="1 0 0 0.6"/>
+
+      <!-- Front-left wheel. Wheel bodies sit at (+-wheelbase/2, +-track/2, wheel_vertical_offset).
+           `armature` is the drivetrain's reflected rotor inertia (rotor inertia x gear ratio^2), a
+           real physical term the URDF omits. It is load-bearing here, not decoration: the bare wheel
+           spin inertia is only 0.0024 kg.m^2, so a velocity servo stiff enough to overcome scrub
+           has a time constant far below dt and rings. See the port log's A1. -->
+      <body name="front_left_wheel" pos="0.131 0.187795 0.0345">
+        <joint name="front_left_wheel_joint" type="hinge" axis="0 1 0" armature="0.02" frictionloss="0.15"/>
+        <inertial pos="0 0 0" mass="0.477" diaginertia="0.0013 0.0024 0.0013"/>
+        <geom class="jackal_wheel" name="front_left_wheel_geom"/>
+        <geom class="jackal_visual" mesh="jackal_wheel" quat="0.707107 0.707107 0 0"/>
+      </body>
+      <!-- Front-right wheel -->
+      <body name="front_right_wheel" pos="0.131 -0.187795 0.0345">
+        <joint name="front_right_wheel_joint" type="hinge" axis="0 1 0" armature="0.02" frictionloss="0.15"/>
+        <inertial pos="0 0 0" mass="0.477" diaginertia="0.0013 0.0024 0.0013"/>
+        <geom class="jackal_wheel" name="front_right_wheel_geom"/>
+        <geom class="jackal_visual" mesh="jackal_wheel" quat="0.707107 0.707107 0 0"/>
+      </body>
+      <!-- Rear-left wheel -->
+      <body name="rear_left_wheel" pos="-0.131 0.187795 0.0345">
+        <joint name="rear_left_wheel_joint" type="hinge" axis="0 1 0" armature="0.02" frictionloss="0.15"/>
+        <inertial pos="0 0 0" mass="0.477" diaginertia="0.0013 0.0024 0.0013"/>
+        <geom class="jackal_wheel" name="rear_left_wheel_geom"/>
+        <geom class="jackal_visual" mesh="jackal_wheel" quat="0.707107 0.707107 0 0"/>
+      </body>
+      <!-- Rear-right wheel -->
+      <body name="rear_right_wheel" pos="-0.131 -0.187795 0.0345">
+        <joint name="rear_right_wheel_joint" type="hinge" axis="0 1 0" armature="0.02" frictionloss="0.15"/>
+        <inertial pos="0 0 0" mass="0.477" diaginertia="0.0013 0.0024 0.0013"/>
+        <geom class="jackal_wheel" name="rear_right_wheel_geom"/>
+        <geom class="jackal_visual" mesh="jackal_wheel" quat="0.707107 0.707107 0 0"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- Wheel<->floor contacts. The vendor's Gazebo tags declare mu1 = mu2 = 0.5 for the Jackal
+         wheels (jackal_description/urdf/jackal.urdf.xacro), so this is the vendor's coefficient, not
+         a tuned one -- unlike the husky, whose 1.0 was ours. Softened (solref) for stable stepping
+         at dt = 2 ms. friction = [slide1, slide2, spin, roll1, roll2]. -->
+    <pair geom1="front_left_wheel_geom"  geom2="floor" condim="3" solref="0.02 1" friction="0.5 0.5 0.005 0.0001 0.0001"/>
+    <pair geom1="front_right_wheel_geom" geom2="floor" condim="3" solref="0.02 1" friction="0.5 0.5 0.005 0.0001 0.0001"/>
+    <pair geom1="rear_left_wheel_geom"   geom2="floor" condim="3" solref="0.02 1" friction="0.5 0.5 0.005 0.0001 0.0001"/>
+    <pair geom1="rear_right_wheel_geom"  geom2="floor" condim="3" solref="0.02 1" friction="0.5 0.5 0.005 0.0001 0.0001"/>
+  </contact>
+
+  <actuator>
+    <!-- Velocity-servo wheel drives (ctrl = target wheel angular velocity, rad/s). All four driven;
+         the diff_drive plugin commands the left pair and right pair together.
+         ctrlrange: 1.0 m/s / 0.098 m = 10.2 rad/s straight, plus the slip-inflated yaw term
+         (1.0 rad/s * 0.1878 m * chi / 0.098 m = 3.3 at chi=1.7); +-25 leaves ample headroom.
+         forcerange +-5 N.m: sized from the platform, not from headroom. The Jackal's 20 kg payload
+         on its rated 30% grade needs ~2.6 N.m per wheel, and in-place scrub costs ~2 N.m. An
+         oversized cap is not free here -- at the bare wheel inertia it lets one step change wheel
+         speed by 25 rad/s, which is how the first attempt at this model tore itself apart.
+         frictionloss 0.15 N.m (gearbox stiction): a velocity servo makes no torque at zero error,
+         so some is needed against creep, but every extra N.m is subtracted from yaw authority. -->
+    <velocity name="front_left_wheel_motor"  joint="front_left_wheel_joint"  kv="15" ctrlrange="-25 25" forcerange="-5 5"/>
+    <velocity name="front_right_wheel_motor" joint="front_right_wheel_joint" kv="15" ctrlrange="-25 25" forcerange="-5 5"/>
+    <velocity name="rear_left_wheel_motor"   joint="rear_left_wheel_joint"   kv="15" ctrlrange="-25 25" forcerange="-5 5"/>
+    <velocity name="rear_right_wheel_motor"  joint="rear_right_wheel_joint"  kv="15" ctrlrange="-25 25" forcerange="-5 5"/>
+  </actuator>
+
+  <sensor>
+    <!-- Ground-truth base pose/velocity (odom + debug) -->
+    <framepos     name="base_pos"    objtype="site" objname="base_imu"/>
+    <framequat    name="base_quat"   objtype="site" objname="base_imu"/>
+    <framelinvel  name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel  name="base_angvel" objtype="site" objname="base_imu"/>
+    <!-- IMU at base (the URDF's imu_link is at chassis_link origin, i.e. base_link). -->
+    <velocimeter   name="imu_vel"  site="base_imu"/>
+    <gyro          name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc"  site="base_imu"/>
+    <!-- Wheel encoders (all four) -->
+    <jointpos name="front_left_wheel_pos"  joint="front_left_wheel_joint"/>
+    <jointpos name="front_right_wheel_pos" joint="front_right_wheel_joint"/>
+    <jointpos name="rear_left_wheel_pos"   joint="rear_left_wheel_joint"/>
+    <jointpos name="rear_right_wheel_pos"  joint="rear_right_wheel_joint"/>
+    <jointvel name="front_left_wheel_vel"  joint="front_left_wheel_joint"/>
+    <jointvel name="front_right_wheel_vel" joint="front_right_wheel_joint"/>
+    <jointvel name="rear_left_wheel_vel"   joint="rear_left_wheel_joint"/>
+    <jointvel name="rear_right_wheel_vel"  joint="rear_right_wheel_joint"/>
+  </sensor>
+
+  <keyframe>
+    <!-- Canonical home: base at rest height (r - wheel_vertical_offset), wheels zeroed. -->
+    <key name="home" qpos="0 0 0.0635 1 0 0 0  0 0 0 0"/>
+  </keyframe>
+</mujoco>

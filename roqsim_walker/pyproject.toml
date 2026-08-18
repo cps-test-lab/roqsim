@@ -1,0 +1,69 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_walker"
+version = "0.1.0"
+description = "Kinematic pedestrian walkers for roqsim (CARLA characters, A* + behaviour tree navigation)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "py_trees>=2.2",   # the navigate / stuck-recovery behaviour tree
+    "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)
+    # trimesh soft-imports scipy and re-raises the wrapped ImportError the first time the grouped
+    # OBJ path touches it, so scipy is a hard dependency of our skinning use. >=1.13 is the first
+    # numpy-2-compatible line -- and having it in the venv shadows a numpy-1-built system scipy
+    # that otherwise leaks in through --system-site-packages. It also gives skin.py its KD-tree
+    # fast path (formerly the 'fast' extra).
+    "scipy>=1.13",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+# ORCA local collision avoidance (`avoidance: true` in a world). Built from source (Cython), so it
+# is opt-in: without it walkers follow their planned path without yielding to the robot or peers.
+#
+# This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
+# publishes no wheel, so the alternatives were vendoring the Cython source or having no ORCA at all.
+# Two consequences a downstream consumer has to plan for, because pip does not warn about either:
+# PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
+# with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
+# air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
+# degrades to planned paths without local avoidance and logs why, it does not fail.
+avoidance = ["rvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
+# `roqsim walker import-actor` only: reads a rigged COLLADA actor to author a new blueprint offline. Not
+# needed to *run* a walker, so it stays out of the runtime deps.
+import = ["pycollada>=0.7"]
+
+[project.entry-points."roqsim.plugins"]
+walker = "roqsim_walker.plugins.walker:WalkerPlugin"
+
+# Bundled walker blueprints (people/<Walker>/) + locomotion clips (anims/<set>/).
+[project.entry-points."roqsim.models"]
+roqsim_walker = "roqsim_walker.models"
+
+[project.entry-points."roqsim.commands"]
+walker = "roqsim_walker.cli:walker"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_walker = [
+    "models/people/*/*.obj",
+    "models/people/*/*.mtl",   # required: trimesh reads it to key OBJ groups by CARLA material name
+    "models/people/*/*.json",
+    "models/people/*/*.npz",
+    "models/people/*/*.png",
+    "models/people/*/CREDITS.txt",   # the asset's licence + attribution travels with it
+    "models/anims/*/*.npz",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

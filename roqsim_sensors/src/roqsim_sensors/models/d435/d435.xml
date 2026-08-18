@@ -1,0 +1,49 @@
+<mujoco model="d435">
+  <!--
+    Intel RealSense D435: visual mesh + a colour camera, for a standalone mount (see the
+    `spawn_sensor` plugin) -- not attached to any robot's own MJCF.
+
+    Mesh ported from the official realsense-ros description (COLLADA -> OBJ, parts joined and
+    decimated to ~4k tris):
+    https://github.com/IntelRealSense/realsense-ros/tree/ros2-master/realsense2_description
+    See D435_MESH_LICENSE for the upstream license.
+
+    Body-local axes match the mesh as exported: x = the ~90mm long face the lenses are arrayed
+    across, y = height (~26mm), z = depth (~26mm, the lens face's outward normal) -- the mesh
+    origin sits at the front glass, off-centre in z (body extends from z=0 to z=-0.0257, i.e.
+    "backward"). `d435_color`'s pose/orientation is not measured off the mesh directly; it's
+    carried over from the same repo's _d435.urdf.xacro (mesh-to-link and colour-optical-frame
+    transforms), converted into this local frame -- see D435_MESH_LICENSE.
+
+    Standalone-mount convention: the `mount` body is pre-rotated (quat below) so that at
+    spawn_sensor rpy [0,0,0] the sensor sits upright (mesh height -> world +z) and looks
+    HORIZONTALLY along +y -- i.e. toward a wall, matching the d415 and zivid mounts. The mesh's own
+    lens normal is +z in mesh-local; the quat maps mesh +z -> world +y and mesh +y -> world +z, so
+    `d435_color` (looking +z in mesh-local) ends up looking +y in the mount frame. Yaw in the
+    spawn_sensor rpy then aims it at any wall.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="d435_mesh" file="d435.obj"/>
+    <material name="d435_body" rgba="0.75 0.75 0.77 1" specular="0.4" shininess="0.3"/>
+    <material name="d435_glass" rgba="0.05 0.05 0.05 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <!-- quat reorients the mount so the lens looks along +y at rpy [0,0,0] (see header). -->
+    <body name="mount" quat="0 0 0.70710678 0.70710678">
+      <geom name="d435_visual" type="mesh" mesh="d435_mesh" material="d435_body"
+            contype="0" conaffinity="0"/>
+      <!-- Front glass/lens strip: the mesh has no separate material for it (joined + decimated
+           into one part), so a thin black plate stands in, laid just proud of the mesh's own
+           front face (z=0) to avoid z-fighting. -->
+      <geom name="d435_front" type="box" pos="0 0 0.0004" size="0.038 0.0085 0.0004"
+            material="d435_glass" contype="0" conaffinity="0"/>
+      <geom name="d435_collision" type="box" pos="0 0 -0.01285" size="0.04536 0.01314 0.01286"
+            group="3"/>
+      <camera name="d435_color" pos="0.0325 0 -0.0043" xyaxes="-1 0 0 0 1 0"
+              fovy="42.5" resolution="640 480"/>
+    </body>
+  </worldbody>
+</mujoco>

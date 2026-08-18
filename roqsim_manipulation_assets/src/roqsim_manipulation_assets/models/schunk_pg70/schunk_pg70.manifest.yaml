@@ -1,0 +1,20 @@
+# Gripper half of the arm_controller config, shipped with the Schunk PG+70 description.
+#
+# An END-EFFECTOR manifest (see robotiq_2f85.manifest.yaml for the mechanism): `spawn_arm:
+# {end_effector: {model: schunk_pg70}}` merges these keys into the arm's own arm_controller, so the
+# two grippers are interchangeable by one line of world YAML.
+plugins:
+  - arm_controller:
+      # The PG+70's ctrl is a target TENDON LENGTH in metres, not a 0..255 command like the Robotiq's
+      # -- and its low end is the open end (the tendon's coefficients are negative for exactly that
+      # reason). Start open.
+      gripper_ctrl: -0.0301
+      # Prismatic jaw, so the "gripper position" arm_controller reports is a displacement in METRES,
+      # not an angle. Name matches PILZ's URDF joint (minus its `${name}_` prefix).
+      gripper_joint: finger_left_joint
+      # The URDF's stroke exactly, kept rather than widened to the PG+70 datasheet's 70 mm so that
+      # MoveIt's joint limits and MuJoCo's agree. MEASURED aperture between the jaw inner faces:
+      # 61.2 mm at q=0.0301, 0 mm at q=-0.001. Note this is NARROWER than the 2F-85's 85 mm, so a
+      # world that swaps to this gripper may have to shrink its payload -- see the port log.
+      gripper_open: 0.0301
+      gripper_close: -0.001

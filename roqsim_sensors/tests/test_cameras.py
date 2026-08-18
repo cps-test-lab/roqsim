@@ -1,0 +1,267 @@
+"""Camera plugin checks: intrinsics math, capture shapes/dtypes, and subscriber-gated rendering."""
+
+from __future__ import annotations
+
+import math
+
+import mujoco
+import numpy as np
+import pytest
+from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin
+
+from roqsim.config import load_config_from_dict
+from roqsim.context import SimContext
+from roqsim.engine import Engine
+from roqsim.plugin import Plugin
+
+
+class _CameraScene(Plugin):
+    """A lit box in front of a single MuJoCo camera named ``cam``."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_PLANE, size=[5, 5, 0.1], rgba=[0.3, 0.3, 0.3, 1]
+        )
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[2, 0, 0.5],
+            size=[0.3, 0.3, 0.3],
+            rgba=[0.8, 0.1, 0.1, 1],
+        )
+        spec.worldbody.add_camera(
+            name="cam", pos=[0, 0, 0.5], xyaxes=[0, 1, 0, 0, 0, 1], fovy=45, resolution=[64, 48]
+        )
+
+
+def _world(plugin_ref: str, **config):
+    cfg = {
+        "sim": {},
+        "plugins": [
+            {f"{__name__}:_CameraScene": {}},
+            {plugin_ref: {"camera": "cam", **config}},
+        ],
+    }
+    return load_config_from_dict(cfg)
+
+
+def _endpoint(engine: Engine, name: str):
+    return next((e for e in engine.ctx.interface.all() if e.name == name), None)
+
+
+# -- intrinsics -----------------------------------------------------------------------------
+
+
+def test_intrinsics_from_model_matches_pinhole_formula():
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam" fovy="60" resolution="64 48"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    intr = intrinsics_from_model(m, 0)
+    expected_f = 48 / (2.0 * math.tan(math.radians(60) / 2.0))
+    assert intr.width == 64 and intr.height == 48
+    assert math.isclose(intr.fx, expected_f) and intr.fx == intr.fy
+    assert intr.cx == 32.0 and intr.cy == 24.0
+
+
+def test_intrinsics_from_model_falls_back_when_resolution_unset():
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    intr = intrinsics_from_model(m, 0, default_width=320, default_height=240)
+    assert intr.width == 320 and intr.height == 240
+
+
+# -- capture (real mujoco.Renderer, needs a GL backend e.g. MUJOCO_GL=egl) ------------------
+
+
+def test_oakd_camera_captures_rgb_and_depth():
+    engine = Engine(_world("roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"))
+    engine.setup()
+    engine.reset()
+    engine.step()
+    rgb = _endpoint(engine, "image").read()
+    depth = _endpoint(engine, "depth").read()
+    info = _endpoint(engine, "camera_info").read()
+    assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8
+    assert rgb.max() > 0  # not a black frame -- the box/plane actually rendered
+    assert depth.shape == (48, 64) and depth.dtype == np.float32
+    assert np.isfinite(depth).any()  # the plane is within clip range
+    assert info.width == 64 and info.height == 48 and info.fx == info.fy
+
+
+def test_zivid_captures_rgb_and_depth_with_working_range_defaults():
+    engine = Engine(_world("roqsim_sensors.plugins.zivid:ZividPlugin"))
+    engine.setup()
+    engine.reset()
+    engine.step()
+    rgb = _endpoint(engine, "image").read()
+    depth = _endpoint(engine, "depth").read()
+    info = _endpoint(engine, "camera_info").read()
+    assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8 and rgb.max() > 0
+    assert depth.shape == (48, 64) and depth.dtype == np.float32
+    # The scene box sits 2 m in front of the camera -- inside the XL250's 1.3-5 m working range.
+    assert np.isfinite(depth).any()
+    assert info.width == 64 and info.height == 48
+
+
+def test_zivid_applies_datasheet_working_range_and_depth_topic():
+    from roqsim_sensors.plugins.zivid import ZividPlugin
+
+    p = ZividPlugin({"camera": "cam"})
+    assert (p.clip_near, p.clip_far) == (1.3, 5.0)  # XL250 recommended-to-extended working range
+    assert ZividPlugin({"camera": "cam", "clip_near": 0.5}).clip_near == 0.5  # world can override
+
+
+D435 = "roqsim_sensors.plugins.realsense_d435:RealsenseD435Plugin"
+
+
+def _stepped(plugin_ref: str, **config):
+    engine = Engine(_world(plugin_ref, **config))
+    engine.setup()
+    engine.reset()
+    engine.step()
+    return engine
+
+
+def test_realsense_d435_publishes_colour_only_by_default():
+    engine = _stepped(D435)
+    rgb = _endpoint(engine, "image").read()
+    assert rgb.shape == (48, 64, 3) and rgb.dtype == np.uint8 and rgb.max() > 0
+    assert _endpoint(engine, "camera_info") is not None
+    # Depth and the cloud are opt-in: a 640x480 cloud is up to 307k points per capture, so a world
+    # that did not ask for one must not pay for it.
+    assert _endpoint(engine, "depth") is None
+    assert _endpoint(engine, "points") is None
+
+
+def test_realsense_d435_depth_is_opt_in_and_uses_realsense_topics():
+    engine = _stepped(D435, depth=True)
+    ep = _endpoint(engine, "depth")
+    depth = ep.read()
+    assert depth.shape == (48, 64) and depth.dtype == np.float32
+    assert np.isfinite(depth).any()  # the box at 2 m is inside the D435's 0.28-3.0 m range
+    ros = ep.backend["ros2"]
+    assert ros["topic"] == "camera/depth/image_rect_raw"
+    assert ros["frame_id"] == "camera_depth_optical_frame"
+    assert ros["encoding"] == "32FC1"
+    assert _endpoint(engine, "points") is None  # depth alone does not imply the cloud
+
+
+def test_realsense_d435_working_range_defaults_to_the_datasheet():
+    from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin as D
+
+    p = D({"camera": "cam"})
+    # Not the OAK-D's 0.3-100 m: clip_far is what decides whether the wall behind the subject lands
+    # in an occupancy map as an obstacle.
+    assert (p.clip_near, p.clip_far) == (0.28, 3.0)
+    assert D({"camera": "cam", "clip_far": 6.0}).clip_far == 6.0
+
+
+def test_realsense_d435_points_imply_depth_and_reproject_into_the_optical_frame():
+    engine = _stepped(D435, points=True)
+    assert _endpoint(engine, "depth") is not None, "`points` implies `depth`"
+    ep = _endpoint(engine, "points")
+    cloud = ep.read()
+    assert ep.backend["ros2"]["topic"] == "camera/depth/color/points"
+    assert cloud.points.dtype == np.float32 and cloud.points.shape[1] == 3
+    assert 0 < len(cloud.points) <= 64 * 48
+    assert np.isfinite(cloud.points).all()  # "no return" pixels are dropped, not sentinel-valued
+
+    # Geometry check against the fixture: the camera sits 0.5 m above the ground plane and looks
+    # horizontally, so every return in frame is a floor point -- and a floor point is 0.5 m BELOW the
+    # camera whatever its distance. In the ROS optical frame (x right, y DOWN, z forward) that fixes
+    # the whole cloud to y ~ +0.5: the sign pins the convention (a flipped y would put the floor
+    # overhead) and the magnitude pins the reprojection scale at every depth, not just one.
+    assert np.allclose(cloud.points[:, 1], 0.5, atol=0.05)
+    # z is the distance along the view direction: the nearest visible floor point is where the bottom
+    # of a 45 deg vertical FOV meets the ground, 0.5 / tan(22.5 deg), and nothing past clip_far
+    # survives (the plane runs on well beyond 3 m).
+    assert cloud.points[:, 2].min() == pytest.approx(0.5 / math.tan(math.radians(22.5)), abs=0.05)
+    assert cloud.points[:, 2].max() <= 3.0
+    # The cloud is exactly the depth image's valid pixels -- one is the other reprojected.
+    assert len(cloud.points) == int(np.isfinite(_endpoint(engine, "depth").read()).sum())
+
+
+def test_d455_model_fov_matches_datasheet():
+    """The bundled d455 model must reproduce the D455f colour FOV (87 deg H x 62 deg V).
+
+    MuJoCo stores only fovy (vertical); the horizontal FOV falls out of fovy + the resolution
+    aspect, so this locks BOTH: fovy == 62 and the derived horizontal FOV ~= 87 deg."""
+    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455", "name": "d455"}}]}
+    engine = Engine(load_config_from_dict(cfg))
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "d455_color")
+    fovy = float(m.cam_fovy[cid])
+    w, h = (int(v) for v in m.cam_resolution[cid])
+    fovx = math.degrees(2.0 * math.atan((w / h) * math.tan(math.radians(fovy) / 2.0)))
+    assert fovy == 62.0
+    assert abs(fovx - 87.0) < 1.5  # datasheet colour horizontal FOV, from the 1.6 aspect
+
+
+# -- subscriber-gated rendering (unit-level; no ctx/render needed) --------------------------
+
+
+class _FakeEndpoint:
+    def __init__(self, has_subscribers=None):
+        self.has_subscribers = has_subscribers
+
+
+class _FakeCtx:
+    def __init__(self, sim_time: float):
+        self.sim_time = sim_time
+
+
+def test_due_gates_on_rate_and_has_subscribers():
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})  # period = 0.1s
+    plugin._last_capture = 0.0
+    plugin._image_ep = _FakeEndpoint(has_subscribers=None)
+    assert plugin._due(_FakeCtx(0.05)) is False  # too soon
+    assert plugin._due(_FakeCtx(0.2)) is True  # due, subscriber count unknown -> assume yes
+
+    plugin._image_ep.has_subscribers = lambda: False
+    assert plugin._due(_FakeCtx(0.2)) is False  # due but nobody's listening -> skip
+
+    plugin._image_ep.has_subscribers = lambda: True
+    assert plugin._due(_FakeCtx(0.2)) is True
+
+
+def test_due_gates_on_every_endpoint_the_render_feeds_not_just_colour():
+    """A depth-only or cloud-only consumer must keep the renderer running.
+
+    This is a regression: gating on ``image`` alone starved exactly the consumer that never subscribes
+    to colour -- MoveIt's octomap updater takes the point cloud -- and the symptom was not an error
+    but an empty world, published forever at the configured rate.
+    """
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._last_capture = 0.0
+    plugin._image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    assert plugin._due(_FakeCtx(0.2)) is False  # colour only, unsubscribed -> nothing to render for
+
+    depth_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    points_ep = _FakeEndpoint(has_subscribers=lambda: True)
+    plugin._extra_outputs = [depth_ep, points_ep]
+    assert plugin._due(_FakeCtx(0.2)) is True  # cloud subscriber alone justifies the render
+
+    points_ep.has_subscribers = lambda: False
+    depth_ep.has_subscribers = lambda: True
+    assert plugin._due(_FakeCtx(0.2)) is True  # so does a depth subscriber alone
+
+    depth_ep.has_subscribers = lambda: False
+    assert plugin._due(_FakeCtx(0.2)) is False  # nobody on any render-fed endpoint -> skip
+
+
+def test_camera_info_is_not_a_render_gate():
+    # Checked on a configured plugin, so the gate list is the one the real endpoints produce: every
+    # output fed by the render pass gates it, and camera_info -- which needs no render, and which an
+    # rviz panel subscribes to on its own -- does not.
+    engine = _stepped(D435, depth=True, points=True)
+    plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
+    gated = {ep.name for ep in plugin._gate_endpoints()}
+    assert gated == {"image", "depth", "points"}
+    assert _endpoint(engine, "camera_info") is not None  # registered, just not a gate

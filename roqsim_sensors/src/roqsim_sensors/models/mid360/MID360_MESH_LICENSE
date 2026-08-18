@@ -1,0 +1,30 @@
+The visual meshes
+
+    roqsim_sensors/models/mid360/meshes/mid360_body.obj  (grey housing + M12 connector)
+    roqsim_sensors/models/mid360/meshes/mid360_dome.obj  (laser dome window)
+
+are derived from Livox's own Mid-360 CAD model: the official STEP assembly
+`mid-360-asm.stp` (ISO-10303-21, Creo/PTC export; header FILE_NAME 'MID-360_4_ASM',
+2023-01-06, author dale.chen) for the housing/dome -- published by Livox Technology among
+the Mid-360 product resources at https://www.livoxtech.com/mid-360 .
+
+The sensor's FOV is NOT a mesh here: `spawn_sensor` synthesises it at build time as a
+translucent angular sector (a 360deg dome, elevation -7deg..+52deg) from the datasheet
+angles in mid360.manifest.yaml, so no FOV geometry is derived from or redistributed with
+the CAD.
+
+Conversion pipeline (no geometry authored by hand):
+
+    STEP -> OBJ    Open CASCADE tessellation via `cascadio`
+                   (tol_linear=0.1 mm, tol_angular=0.5 rad)
+    OBJ  -> OBJ    Blender: joined, split by CAD material into dome (Livox 'mat_2') and
+                   the rest, scaled mm -> m, base dropped to z=0 (housing centred on
+                   x=y=0), decimated (body ~6.5k tris, dome ~0.9k tris), exported axes
+                   1:1 with Z up.
+
+The underlying CAD geometry is Livox Technology's and its copyright remains with Livox;
+it is redistributed here only as a decimated simulation asset for the Mid-360 sensor
+model. Refer to Livox's terms for the original CAD. If Livox's terms do not permit
+redistribution of this derived mesh, remove these .obj files and the mesh geoms in
+mid360.xml -- the `livox_mid360` capture plugin does not need them (it casts from the
+`mid360` site), and a primitive-only housing can stand in.

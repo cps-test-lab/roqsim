@@ -1,0 +1,111 @@
+roqsim
+Copyright 2026 Frederik Pasch
+
+This product includes software developed for the roqsim project, licensed under the Apache License,
+Version 2.0. See the LICENSE file for the full text.
+
+================================================================================
+Third-party assets
+================================================================================
+
+roqsim's own code is Apache-2.0. The repository additionally VENDORS third-party robot descriptions,
+meshes, textures, characters and scenes, each of which keeps its own license. Some of those licenses
+(notably CC-BY-4.0) make ATTRIBUTION A CONDITION OF REDISTRIBUTION: if you redistribute this
+repository, a package built from it, or the assets on their own, the corresponding notices must
+travel with them.
+
+The authoritative, per-asset records are:
+
+  * a THIRD_PARTY.md in each package that vendors third-party content
+        roqsim_assets/THIRD_PARTY.md
+        roqsim_humanoid/THIRD_PARTY.md
+        roqsim_quadruped/THIRD_PARTY.md
+        roqsim_scenes/THIRD_PARTY.md
+        roqsim_walker/THIRD_PARTY.md
+  * a CREDITS.txt beside each individual asset (source URL, license, required attribution)
+  * a license file beside each vendored robot model (e.g. models/ur10e/UR10e_LICENSE)
+
+This file is a summary of those records, not a replacement for them.
+
+--------------------------------------------------------------------------------
+Where the public/private line falls
+--------------------------------------------------------------------------------
+
+Vendored robot descriptions under BSD-3-Clause / Apache-2.0 / MPL-2.0 are redistributable and
+re-fetchable from public upstreams, so they are shipped here. Curated artwork whose upstream is
+gated behind an account or an API token is not shipped, even when its license would allow it.
+
+--------------------------------------------------------------------------------
+BSD 3-Clause
+--------------------------------------------------------------------------------
+  Boston Dynamics Spot model      (c) 2021 Clearpath Robotics Inc., via MuJoCo Menagerie
+  Unitree G1 (12-DoF + policy)    (c) 2016-2023 HangZhou YuShu TECHNOLOGY CO.,LTD.
+  Unitree G1 29-DoF w/ Dex1       (c) 2016-2022 HangZhou YuShu TECHNOLOGY CO.,LTD.
+  UR10e, UR5e, Robotiq 2F-85      (c) 2018 ROS-Industrial Consortium / (c) 2013 ROS-Industrial
+  Clearpath Jackal                (c) 2021 Clearpath Robotics Inc.
+  Clearpath Husky A200            (c) 2015 Clearpath Robotics, Paul Bovbel
+
+--------------------------------------------------------------------------------
+Apache License 2.0
+--------------------------------------------------------------------------------
+  LimX Oli (HU_D04_01) + policy   (c) LimX Dynamics Technology Co., Ltd.
+  Franka Panda                    via MuJoCo Menagerie
+  OpenManipulator-X               (c) ROBOTIS
+  TurtleBot 3 Waffle, TurtleBot 4 (c) ROBOTIS / Clearpath Robotics
+  PAL Tiago Pro                   (c) PAL Robotics S.L.
+  Schunk PG+70                    (c) 2018 Pilz GmbH & Co. KG
+  Intel RealSense D415/D435/D455 meshes
+
+--------------------------------------------------------------------------------
+Mozilla Public License 2.0  --  file-level copyleft; these notices must be retained
+--------------------------------------------------------------------------------
+  AgiBot Genie G2 robot model and meshes    (c) AgiBot (agibot.com), via genie_sim
+
+--------------------------------------------------------------------------------
+MIT
+--------------------------------------------------------------------------------
+  Frankie mobile manipulator description
+
+--------------------------------------------------------------------------------
+CC0 1.0 Universal  --  public domain, no attribution required
+--------------------------------------------------------------------------------
+  Surface textures from ambientCG (https://ambientcg.com) and
+  Poly Haven (https://polyhaven.com)
+
+--------------------------------------------------------------------------------
+CC-BY 4.0  --  ATTRIBUTION REQUIRED ON REDISTRIBUTION
+--------------------------------------------------------------------------------
+  Depot warehouse scene
+      Gazebo Fuel, CC-BY-4.0. See roqsim_scenes/src/roqsim_scenes/scenes/depot/CREDITS.txt
+
+  Pedestrian locomotion clips (models/anims/)
+      Derived from CARLA Simulator (https://carla.org), CC-BY-4.0.
+      Assets taken from the CARLA content repository:
+          https://bitbucket.org/carla-simulator/carla-content/src/master/
+      Copyright: Computer Vision Center (CVC) at the Universitat Autonoma de Barcelona (UAB).
+      Cite: "CARLA: An Open Urban Driving Simulator", Dosovitskiy et al., CoRL 2017.
+      These clips are our retargeted derivative works, so the CC-BY obligation travels with them:
+      anything shipping models/anims/ ships CARLA attribution too.
+
+  FemaleVisitorWalk character
+      Gazebo Fuel, CC-BY-4.0, author Wan Yi Seow (Open Robotics).
+
+  MaleVisitorWalk character is CC0 1.0 (Open Robotics) and requires no attribution.
+
+--------------------------------------------------------------------------------
+NVIDIA asset license  --  NOT redistributed
+--------------------------------------------------------------------------------
+  The Boston Dynamics Spot locomotion policy (spot_policy.pt, spot_env.yaml) is under NVIDIA's
+  asset license: local/internal R&D use only, not modifiable or redistributable. It is therefore
+  NOT committed to this repository; it is downloaded on demand. See roqsim_quadruped/THIRD_PARTY.md.
+
+--------------------------------------------------------------------------------
+Excluded by policy
+--------------------------------------------------------------------------------
+  No asset under a non-commercial (CC-*-NC) or no-derivatives (CC-*-ND) license is included.
+
+--------------------------------------------------------------------------------
+roqsim brand artwork
+--------------------------------------------------------------------------------
+  The logos, favicon and splash image (docs/_static/, roqsim/src/roqsim/assets/splash.jpg) are
+  original work authored for roqsim and are covered by this repository's Apache-2.0 license.

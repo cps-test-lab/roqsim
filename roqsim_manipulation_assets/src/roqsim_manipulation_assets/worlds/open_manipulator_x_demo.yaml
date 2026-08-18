@@ -1,0 +1,43 @@
+# Robotis OpenMANIPULATOR-X on a bench — standalone demo world.
+#
+# Standalone: roqsim sim roqsim_manipulation_assets:open_manipulator_x_demo
+# A `test_target` drives the arm to a pose so the scene shows motion.
+#
+# For ROS 2 / MoveIt 2, add the `ros2_bridge` plugin from the roqsim_ros_bridge package: the arm's
+# manifest already brings `arm_controller`, which serves /joint_states and the
+# arm_controller/follow_joint_trajectory action that ROBOTIS's own
+# open_manipulator_moveit_config expects — so an unmodified vendor MoveIt config drives this arm.
+# The eye-in-hand RealSense publishes a depth cloud an octomap can be built from; see
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+plugins:
+  # arm_controller comes from the model manifest (models/open_manipulator_x.manifest.yaml).
+  # The arm is a 0.6 kg desktop unit, so it goes on a bench rather than the floor.
+  - box:
+      name: bench
+      pos: [0.0, 0.0, 0.365]
+      size: [0.60, 0.45, 0.73]
+      color: [0.93, 0.93, 0.95, 1.0]
+
+  - spawn_arm:
+      model: open_manipulator_x
+      name: omx
+      prefix: "omx_"
+      pos: [0.0, 0.0, 0.73]
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm).
+  - arm_controller:
+      arm: omx
+      test_target: [0.6, 0.3, -0.4, 0.9]
+
+  # The eye-in-hand RealSense D435i the model ships a mount for. Off by default in the manifest (a
+  # camera is an experiment's choice, not the arm's); switched on here so the demo shows the whole
+  # sensor path. `points: true` adds the reprojected PointCloud2 an octomap consumer wants.
+  - realsense_d435:
+      arm: omx
+      camera: d435_color
+      points: true
+      rate_hz: 10.0

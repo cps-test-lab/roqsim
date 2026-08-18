@@ -1,0 +1,60 @@
+# Default controllers shipped with the Frankie mobile manipulator (Panda on an Omron LD-60 base).
+#
+# `spawn_robot: {model: frankie}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic drive/arm controllers. To override a default, declare the same plugin for the same
+# robot in the world (it wins, and its config merges over the manifest's); to opt out entirely, set
+# `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the spawn name.
+#
+# Frankie is a wheeled mobile manipulator, so it needs TWO controllers over DISJOINT actuator sets:
+# `diff_drive` (roqsim_mobile) owns the two wheel velocity servos, `arm_controller` (roqsim_manipulation)
+# owns the seven Panda position servos plus the Franka Hand tendon. The `joints:` list is what keeps
+# them disjoint -- without it arm_controller's prefix scan would also grab the wheel motors and
+# position-hold them, fighting diff_drive for the wheels (the robot then simply will not drive).
+
+# The Panda meshes are borrowed from roqsim_manipulation rather than copied: the model reuses the exact
+# Menagerie-derived, per-material split meshes the `panda` model already ships (architecture.rst §4).
+# Only the Omron base mesh is this package's own, in meshes/frankie/.
+assets: [roqsim_manipulation_assets]
+
+plugins:
+  # Base: a TRUE two-wheel differential drive with passive casters -- not a skid-steer. It therefore
+  # needs no `slip_factor` calibration (the husky and G2 both do, because their fixed side-by-side
+  # wheels must scrub sideways to yaw; a diff-drive's do not). slip_factor is left at its 1.0 default
+  # and the drive tests assert the ideal kinematics directly.
+  - diff_drive:
+      wheel_radius: 0.0625          # substrate assumption -- the source URDF models the base as a
+                                    # virtual yaw+prismatic joint pair with no wheels at all
+      wheel_separation: 0.36        # track; inside the 0.47 m body width
+      max_linear_vel: 0.5           # the LD-60 platform's own limit is 0.4 m/s; 0.5 leaves headroom
+                                    # for studies that drive the base past its rated speed. Override
+                                    # it in the world if a run must stay inside the hardware limit.
+      max_angular_vel: 1.0
+      wheel_accel_limit: 2.0        # rad/s^2 ramp on the wheel command
+      left_actuator: left_wheel_motor
+      right_actuator: right_wheel_motor
+      left_joint: left_wheel_joint
+      right_joint: right_wheel_joint
+  # Arm: explicit `joints:` ownership (see above). velocity_commands is ON because this robot exists
+  # for a reactive architecture whose QP resolves to joint velocities -- that is the whole point of the
+  # platform. Position commands still work; the two paths are mutually exclusive per tick.
+  - arm_controller:
+      joints: [joint1, joint2, joint3, joint4, joint5, joint6, joint7]
+      gripper_actuator: actuator8   # the Franka Hand tendon; not inferable under explicit ownership
+      gripper_joint: finger_joint1  # reported gripper position
+      gripper_open: 0.0
+      gripper_close: 0.04           # Franka Hand: 0..0.04 m per finger
+      velocity_commands: true       # joint-velocity input (rad/s), integrated into the held target
+      stream_commands: true         # also keep the high-rate position-stream path available
+      # Rest stance = `qr`, the ready pose the Robotics Toolbox Frankie model ships (see the port log
+      # for the source). Declaring it is NOT optional here: spawn_robot sets only the base pose,
+      # so without a stance the arm falls back to qpos0 (all joints zero) -- a pose where the stock
+      # Panda's link5 and hand collision geoms overlap by 0.030 m. `rest` seeds the spawn qpos AND the
+      # held target, and is re-seated on reset so repeated trials start identically.
+      rest:
+        joint1: 0.0
+        joint2: -0.3
+        joint3: 0.0
+        joint4: -2.2
+        joint5: 0.0
+        joint6: 2.0
+        joint7: 0.7853981633974483

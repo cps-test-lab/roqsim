@@ -1,0 +1,31 @@
+The visual mesh
+
+    roqsim_sensors/models/robin_w1g/meshes/robin_w1g_body.obj  (dark wedge housing + rear connector)
+
+is derived from Seyond's own Robin W1G CAD model: the official STEP assembly
+`robin-w1g.stp` (ISO-10303-21, Creo/PTC export; header FILE_NAME
+'S-900-000084_A_ENCLOSURE2024121_ASM', 2024-12-19, PTC Creo Parametric) -- published
+by Seyond Inc. among the Robin W1G product resources at
+https://www.seyond.com/product/robin-w1g/ . Only the ~0.1 m sensor housing is kept; the
+CAD's ~29 m context/aiming solid (Open CASCADE material `mat_10`) is dropped.
+
+The sensor's FOV is NOT a mesh here: `spawn_sensor` synthesises it at build time as a
+translucent, bounded 120deg (H) x 70deg (V) angular sector from the datasheet angles in
+robin_w1g.manifest.yaml, so no FOV geometry is derived from or redistributed with the CAD.
+
+Conversion pipeline (no geometry authored by hand):
+
+    STEP -> OBJ    Open CASCADE tessellation via `cascadio`
+                   (tol_linear=0.1 mm, tol_angular=0.5 rad)
+    OBJ  -> OBJ    Blender: split by CAD material, the ~29 m context solid dropped, the
+                   housing joined, reframed CAD->sim (sim_x=-cad_z, sim_y=-cad_x,
+                   sim_z=+cad_y so the window faces +x and height is +z), scaled mm -> m,
+                   base dropped to z=0 (housing centred on x=y=0), decimated (~8k tris),
+                   exported axes 1:1 with Z up.
+
+The underlying CAD geometry is Seyond Inc.'s and its copyright remains with Seyond; it is
+redistributed here only as a decimated simulation asset for the Robin W1G sensor model.
+Refer to Seyond's terms for the original CAD. If Seyond's terms do not permit
+redistribution of this derived mesh, remove this .obj file and the mesh geom in
+robin_w1g.xml -- the `seyond_robin_w1g` capture plugin does not need it (it casts from
+the `robin_w1g` site), and a primitive-only housing can stand in.

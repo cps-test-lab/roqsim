@@ -1,0 +1,139 @@
+<mujoco model="schunk_pg70">
+  <!-- Schunk PG+70 two-finger parallel gripper, standalone and attachable to any arm flange.
+
+       Ported from PILZ's `moveit_resources_prbt_pg70_support` URDF, which is the only packaged ROS 2
+       description of a SCHUNK gripper (see SCHUNK_PG70_LICENSE, Apache-2.0, and it). It is the second interchangeable
+       end-effector for `spawn_arm`'s `end_effector:` alongside robotiq_2f85 -- same frame convention,
+       same single-DOF tendon interface, so swapping grippers is one line of world YAML.
+
+       FRAME CONVENTION: root body `palm_link` at the origin, fingers extending along +z. That is
+       already the URDF's own palm frame (its fingers sit at z=0.0789), and it matches the tool-flange
+       convention MuJoCo Menagerie uses for arm `attachment_site`s, so no rotation is needed on attach.
+
+       ONE DOF THROUGH A TENDON, not two joints. The two jaws are slide joints, but the `split` tendon
+       sums them and `finger_actuator` drives the tendon -- a non-joint transmission, which is exactly
+       what makes `arm_controller` expose this as a GripperCommand action instead of as two more arm
+       joints (see _arm.py `prefixed_actuators`). This mirrors robotiq_2f85's `split` tendon, so the
+       plugin needed no change to gain a second gripper.
+
+       The tendon coefficients are NEGATIVE (-0.5 each), which looks arbitrary and is not: tendon
+       length is then -jaw-opening, so the LOW end of ctrlrange is the open end -- the end
+       `arm_controller` maps `gripper_open` onto. With +0.5 the mapping inverts and a GripperCommand to
+       open closes the jaws instead. The same trick is used by the G1 Dex1's tendon (coef -1).
+
+       APERTURE (measured, see the port log): 61.2 mm open (ctrl -0.0301) down to 0 mm (ctrl 0.001).
+       That is the URDF's stroke, NOT the PG+70 datasheet's 70 mm -- PILZ caps each jaw at 30.1 mm.
+       The vendor kinematics are kept exactly rather than widened to the datasheet, so MoveIt's joint
+       limits and MuJoCo's agree; the consequence is that this gripper takes a narrower payload than
+       the 2F-85 (85 mm), which is why the pg70 world scales the parcel down instead.
+
+       No <option>/<keyframe>: physics options come from the world on attach, and the pose is owned by
+       spawn_arm / arm_controller. -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <default>
+    <!-- Gripper-scoped class names: this model is attached INTO an arm's spec, and with an empty
+         end-effector prefix a class called `visual` would collide with the arm's own. -->
+    <default class="pg70">
+      <default class="pg70_visual">
+        <geom type="mesh" contype="0" conaffinity="0" group="2" material="pg70_metal"/>
+      </default>
+      <default class="pg70_collision">
+        <geom group="3"/>
+      </default>
+      <!-- The jaws. `priority="1"` makes this geom's friction win over whatever it grips, so the
+           grasp does not depend on the parcel's own coefficient; the soft solimp/solref let the jaw
+           settle into a few tenths of a millimetre instead of chattering at a 2 ms timestep (the
+           same reasoning as robotiq_2f85's pad boxes). Friction 1.0 stands for a rubber-faced jaw:
+           the PG+70 ships without fingers and the URDF's bare boxes are PILZ's own, so the surface
+           is an application choice either way -- see the port log. -->
+      <default class="pg70_jaw">
+        <geom type="box" size="0.015 0.005 0.005" friction="1.0 0.005 0.0001" condim="4"
+          priority="1" solimp="0.95 0.99 0.001" solref="0.004 1" rgba="0.15 0.15 0.15 1"/>
+      </default>
+      <!-- Slide joints in metres. `range` is the URDF's exactly. damping/armature are ours (the URDF
+           has neither) and they are load-bearing, not decoration: a 50 g jaw on a stiff position
+           servo is what sets the stability limit, roughly kp < armature/dt^2. At the armature the
+           URDF implies (~0) and dt=0.002 the servo went into a two-step limit cycle -- 3.6 mm of
+           ripple, and the jaw parked 12 mm off its commanded stop, on BOTH Euler and implicitfast.
+           armature 0.02 with kp 5000 leaves ~5x margin and tracks both stops to 0.000 mm. Re-measure
+           these together if either changes; see the port log. -->
+      <default class="pg70_finger">
+        <joint type="slide" range="-0.001 0.0301" armature="0.02" damping="2.0"
+          solimplimit="0.95 0.99 0.001" solreflimit="0.005 1"/>
+      </default>
+    </default>
+  </default>
+
+  <asset>
+    <material name="pg70_metal" rgba="0.68 0.69 0.71 1" specular="0.5" shininess="0.4"/>
+    <mesh name="pg70_body" file="pg70.stl"/>
+  </asset>
+
+  <worldbody>
+    <body name="palm_link" childclass="pg70">
+      <!-- Mass is NOT the URDF's. It carries 1 kg on the palm and 1 kg on EACH finger (3 kg total,
+           with placeholder 0.01 diagonal inertias) -- clearly unset defaults rather than data, and a
+           1 kg jaw on a position servo makes the gripper dominate the arm's dynamics. Datasheet
+           PG+70 mass is 1.4 kg; split 1.3 kg palm + 0.05 kg per jaw. See the port log. -->
+      <inertial pos="0 0 0.0315" mass="1.3" diaginertia="0.0015 0.0011 0.0013"/>
+      <geom class="pg70_visual" mesh="pg70_body"/>
+      <!-- The URDF's collision primitive: a box, not the mesh. It is the mesh's AABB inflated ~2 mm
+           (measured mesh extent 0.080 x 0.112 x 0.078 spanning z -0.007..0.071), and a box is both
+           cheaper and safer than a convex hull next to a grasped object. -->
+      <geom class="pg70_collision" type="box" size="0.041 0.057 0.040" pos="0 0 0.03145"/>
+      <!-- Grasp centre on the approach axis, at the jaw plane. A driver reaches this site's pose so
+           nothing downstream hardcodes a finger offset. -->
+      <site name="pinch" pos="0 0 0.0789" type="sphere" size="0.005" group="5" rgba="0.9 0.9 0.9 1"/>
+
+      <!-- Left jaw: URDF origin (0, 0.0055, 0.0789), axis +y. Positive q opens. -->
+      <body name="finger_left_link" pos="0 0.0055 0.0789">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="2e-06 5e-06 5e-06"/>
+        <joint name="finger_left_joint" class="pg70_finger" axis="0 1 0"/>
+        <geom class="pg70_jaw" name="finger_left_pad"/>
+      </body>
+
+      <!-- Right jaw: URDF origin (0, -0.0055, 0.0789), axis -y, so positive q opens this one too.
+           The URDF couples it to the left with <mimic multiplier="1">; MuJoCo's equivalent is the
+           equality/joint below. -->
+      <body name="finger_right_link" pos="0 -0.0055 0.0789">
+        <inertial pos="0 0 0" mass="0.05" diaginertia="2e-06 5e-06 5e-06"/>
+        <joint name="finger_right_joint" class="pg70_finger" axis="0 -1 0"/>
+        <geom class="pg70_jaw" name="finger_right_pad"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- The jaws start 1 mm apart at q=0 and may cross at the -0.001 limit; without this they
+         collide with each other and with the palm they slide against. -->
+    <exclude body1="palm_link" body2="finger_left_link"/>
+    <exclude body1="palm_link" body2="finger_right_link"/>
+    <exclude body1="finger_left_link" body2="finger_right_link"/>
+  </contact>
+
+  <tendon>
+    <!-- Negative coefficients so tendon length is -opening: see the header. -->
+    <fixed name="split">
+      <joint joint="finger_left_joint" coef="-0.5"/>
+      <joint joint="finger_right_joint" coef="-0.5"/>
+    </fixed>
+  </tendon>
+
+  <equality>
+    <!-- The URDF's mimic: right jaw follows the left 1:1, so the gripper is truly one DOF. -->
+    <joint joint1="finger_right_joint" joint2="finger_left_joint" polycoef="0 1 0 0 0"
+      solimp="0.95 0.99 0.001" solref="0.005 1"/>
+  </equality>
+
+  <actuator>
+    <!-- The gripper's single DOF: ctrl is a target tendon length in metres, -0.0301 (open) .. 0.001
+         (closed). kp/kv are MEASURED against the jaw armature above, not guessed (kp 30000 was
+         unstable; see the port log for the sweep). forcerange is the datasheet grip force -- note it
+         is the TENDON force, and the tendon's 0.5 coefficients halve it at each jaw, so 200 N here is
+         ~100 N per jaw. Commanding closed against a held 45 mm parcel leaves ~23 mm of servo error,
+         so the grip saturates the force limit rather than relying on gain. -->
+    <position name="finger_actuator" tendon="split" kp="5000" kv="50"
+      ctrlrange="-0.0301 0.001" forcerange="-200 200"/>
+  </actuator>
+</mujoco>

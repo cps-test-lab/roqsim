@@ -1,0 +1,173 @@
+<mujoco model="turtlebot4">
+  <!--
+    TurtleBot 4 (standard) for MuJoCo.
+
+    Physics/collision is built from primitives at the exact dimensions taken
+    from nav2_minimal_tb4_description (create3 base):
+        body radius 0.164 m, wheel radius 0.03575 m, wheel width 0.015 m,
+        wheel separation 0.233 m, caster radius 0.01 m.
+    Converted .dae->.obj meshes are layered on top as visual-only geoms
+    (group 2, no contacts), positioned with the URDF link transforms.
+
+    All geometry is expressed relative to the `base_link` body, matching the
+    URDF root frame, so a future ROS 2 bridge can publish TF directly.
+  -->
+
+  <compiler meshdir="meshes"/>
+
+  <asset>
+    <material name="tb4_white" rgba="0.93 0.93 0.93 1"/>
+    <material name="tb4_black" rgba="0.05 0.05 0.05 1"/>
+    <material name="tb4_dark"  rgba="0.15 0.15 0.17 1"/>
+    <material name="tb4_grey"  rgba="0.4 0.4 0.42 1"/>
+
+    <mesh name="shell"              file="shell.obj"/>
+    <mesh name="body_visual"        file="body_visual.obj"/>
+    <mesh name="bumper_visual"      file="bumper_visual.obj"/>
+    <mesh name="tower_standoff"     file="tower_standoff.obj"/>
+    <mesh name="tower_sensor_plate" file="tower_sensor_plate.obj"/>
+    <mesh name="rplidar"            file="rplidar.obj"/>
+  </asset>
+
+  <default>
+    <default class="tb4_wheel">
+      <geom type="cylinder" size="0.03575 0.0075" quat="0.707107 0.707107 0 0"
+            mass="0.2" material="tb4_dark" friction="2.0 0.005 0.0001"/>
+    </default>
+    <default class="tb4_visual">
+      <!-- Visual-only: no contacts. NOTE: do NOT set density="0" here -- a
+           zero-density mesh geom makes MuJoCo render it as its bounding sphere.
+           base_link's explicit <inertial> overrides geom mass, so the default
+           density is harmless to the dynamics. -->
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- base_link: the create3 root frame; freejoint makes the robot mobile.
+         Starts a little above the floor and settles onto wheels + caster. -->
+    <body name="base_link" pos="0 0 0.03">
+      <freejoint name="base_free"/>
+      <site name="base_imu" pos="0 0 0.0642" size="0.01" rgba="0 0 0 0"/>
+
+      <!-- Spectator camera that follows the robot. mode="track" keeps a constant
+           world-frame offset from base_link with a level (non-rotating) horizon,
+           so the robot stays centred as it drives. Parented here (not in the
+           scene worldbody) so it tracks the robot, not the whole-scene COM. -->
+      <camera name="track" mode="track" pos="-1.2 -1.2 1.0"
+              xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+
+      <!-- Chassis collision + inertia (create3 body cylinder) -->
+      <geom name="body_collision" type="cylinder" size="0.164 0.03" pos="0 0 0.0492"
+            material="tb4_grey" group="3" friction="0.4 0.005 0.0001"/>
+      <inertial pos="0.0228 0 0.0742" mass="2.3"
+                diaginertia="0.02 0.02 0.03"/>
+
+      <!-- Visual meshes (no contacts). pos/quat are the URDF link transforms
+           relative to base_link (see tools/place_meshes.py). MuJoCo reorients
+           each mesh internally (mesh_pos/mesh_quat), so the URDF origin applies
+           directly. The class sets type="mesh" -- without it the geoms inherit
+           the default type="sphere" and render as bounding spheres. -->
+      <geom class="tb4_visual" mesh="body_visual" material="tb4_dark" pos="0 0 0.0392" quat="0.70711 0 0 0.70711"/>
+      <geom class="tb4_visual" mesh="bumper_visual" material="tb4_dark" pos="0 0 0.0392" quat="1 0 0 0"/>
+      <geom class="tb4_visual" mesh="shell" material="tb4_black" pos="0 0 0.0942" quat="0.5 0.5 0.5 0.5"/>
+      <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="0.03063 0.11431 0.24177" quat="0.70711 0 0.70711 0"/>
+      <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="0.03063 -0.11431 0.24177" quat="0.70711 0 0.70711 0"/>
+      <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="-0.07607 0.09066 0.24177" quat="0.70711 0 0.70711 0"/>
+      <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="-0.07607 -0.09066 0.24177" quat="0.70711 0 0.70711 0"/>
+      <geom class="tb4_visual" mesh="tower_sensor_plate" material="tb4_black" pos="0 0 0.34677" quat="1 0 0 0"/>
+      <geom class="tb4_visual" mesh="rplidar" material="tb4_black" pos="-0.04 0 0.192915" quat="0.70711 0 0 0.70711"/>
+
+      <!-- Lidar scan origin (RPLIDAR), used by the Python ray-cast lidar. The
+           90 deg yaw matches the URDF rplidar_link frame (and the visual mesh
+           above), so ray angle 0 points along rplidar_link +x: the LaserScan the
+           bridge publishes in that frame is then geometrically correct in TF. -->
+      <site name="lidar" pos="-0.04 0 0.192915" quat="0.70711 0 0 0.70711"
+            size="0.005" rgba="1 0 0 0.6"/>
+
+      <!-- OAK-D Pro RGB-D camera (nav2_minimal_tb4_description/sensors/oakd.urdf.xacro):
+           mounted on the camera bracket on the tower, facing forward (+x). The
+           body cylinder is the only collision geom, so the camera body is a
+           visual-only box at the URDF collision dimensions (a future build can
+           swap in a converted oakd_pro.dae mesh). pos = the chained URDF link
+           transforms shell->bracket->oakd, relative to base_link. -->
+      <geom class="tb4_visual" type="box" size="0.01125 0.0485 0.015"
+            pos="-0.0706 0 0.23853" material="tb4_dark"/>
+      <!-- RGB-D optical frame, read by the roqsim_sensors `oakd_camera` plugin.
+           A MuJoCo camera looks down its -z with +y up, so xyaxes aims -z along
+           base +x (forward) and +y along base +z (up). fovy=56.84 deg is the
+           URDF horizontal_fov (1.25 rad) re-expressed vertically at 320x240. -->
+      <camera name="oakd_rgb" pos="-0.0596 0 0.24353" xyaxes="0 -1 0 0 0 1"
+              fovy="56.84" resolution="320 240"/>
+      <!-- OAK-D body + stereo-pair frames (baseline 0.075 m) for a future TF /
+           stereo bridge; not consumed by the physics. -->
+      <site name="oakd"       pos="-0.0596 0       0.24353" size="0.005" rgba="0 0 0 0"/>
+      <site name="oakd_left"  pos="-0.0596 0.0375  0.24353" size="0.005" rgba="0 0 0 0"/>
+      <site name="oakd_right" pos="-0.0596 -0.0375 0.24353" size="0.005" rgba="0 0 0 0"/>
+
+      <!-- Front bumper contact zone (create3 bumper). The reference bumper has
+           5 zones but only the front-centre is functional; this box wraps the
+           front arc of the body collision cylinder so a wall hit registers as a
+           touch force. Site must be a box/ellipsoid for a <touch> sensor. -->
+      <site name="bump_front_center" type="box" pos="0.175 0 0.05"
+            size="0.06 0.13 0.04" rgba="1 0.5 0 0"/>
+
+      <!-- Wheels. `armature` is reflected drivetrain inertia (a geared motor's rotor inertia x
+           ratio^2) and it is load-bearing here, not a tuning knob: the bare wheel spin inertia is
+           1.28e-4 kg*m^2, so the kv=2.0 velocity servo ran at kv*dt/I = 31 at the 2 ms campaign step
+           -- far past what the integrator can follow. The model diverged (NaN in QACC at t = 0.036 s)
+           and the robot was flung across the floor at 4.5 m/s on a 0.2 m/s command. 0.01 brings that
+           to 0.39 and the drive tests to the datasheet. Same failure the Jackal port hit, same fix;
+           `test_a4_wheel_servo_is_stable_at_dt` asserts the ratio so it cannot come back. -->
+      <body name="left_wheel" pos="0 0.1165 0.0402">
+        <joint name="left_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
+        <geom class="tb4_wheel"/>
+      </body>
+      <body name="right_wheel" pos="0 -0.1165 0.0402">
+        <joint name="right_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
+        <geom class="tb4_wheel"/>
+      </body>
+
+      <!-- Front ball caster. `priority="1"` is what makes it a REAL caster: MuJoCo
+           combines two geoms' contact parameters by taking max(condim) and
+           max(friction), so `condim="1"` alone loses to any ordinary floor
+           (condim 3, friction ~1-2) and the caster drags. A higher priority makes
+           THESE parameters win outright, in any scene.
+           This replaced an explicit <pair> against a geom named `floor`: that
+           worked, but only in worlds using that name -- elsewhere MuJoCo silently
+           dropped the pair (compiles fine, npair 0) and the robot drove on a
+           high-friction ball. The sibling turtlebot3_waffle port measured what that
+           costs: 13.3 N of tangential drag per caster at 0.2 m/s, a 22% speed and
+           48% yaw deficit. Both models now use the one mechanism. -->
+      <geom name="caster" type="sphere" size="0.01" pos="0.125 0 0.0139"
+            material="tb4_grey" priority="1" condim="1"
+            friction="0.0001 0.0001 0.0001" solref="0.02 1" solimp="0.95 0.99 0.001"/>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Velocity-servo wheel drives. ctrl = target wheel angular velocity. -->
+    <velocity name="left_wheel_motor"  joint="left_wheel_joint"  kv="2.0" ctrlrange="-30 30"/>
+    <velocity name="right_wheel_motor" joint="right_wheel_joint" kv="2.0" ctrlrange="-30 30"/>
+  </actuator>
+
+  <sensor>
+    <!-- Ground-truth base pose/velocity (odom + debug) -->
+    <framepos     name="base_pos"  objtype="site" objname="base_imu"/>
+    <framequat    name="base_quat" objtype="site" objname="base_imu"/>
+    <framelinvel  name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel  name="base_angvel" objtype="site" objname="base_imu"/>
+    <!-- IMU at base -->
+    <velocimeter  name="imu_vel"  site="base_imu"/>
+    <gyro         name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc" site="base_imu"/>
+    <!-- Wheel encoders (for encoder-based odometry) -->
+    <jointpos name="left_wheel_pos"  joint="left_wheel_joint"/>
+    <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
+    <jointvel name="left_wheel_vel"  joint="left_wheel_joint"/>
+    <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
+    <!-- Front bumper: sum of base_link contact normal forces inside the
+         bump_front_center zone, so a wall hit on the body cylinder registers. -->
+    <touch name="bumper" site="bump_front_center"/>
+  </sensor>
+</mujoco>

@@ -1,0 +1,79 @@
+<mujoco model="conveyor">
+  <!--
+    Belt conveyor, hand-authored for roqsim. The belt is an
+    invisible box on a slide joint (`belt_x`); the conveyor plugin forces its velocity every
+    step and objects ride it purely through the explicit `belt_package` friction pair. The
+    visible belt + rollers are decorative (the rollers are spun by the plugin to match).
+
+    This is a BENCHTOP unit, not a floor-standing one: its feet run from z=0.76 to 0.915, so it
+    needs a ~0.76 m table under it. The table it used to bundle now lives beside it as the standalone
+    `industrial_table` prop (spawn it at this model's local [-0.13, 0.6, 0] for the source layout);
+    any other ~0.76 m top works too -- `desk_diy` is 0.758.
+
+    Coordinates match the source cell: belt centred at (x=0, y=0.6), belt surface at z=0.97,
+    roller centres at x=+/-1.221. Attach at pos [0,0,0] to reproduce the original layout.
+
+    These dimensions are the BASE geometry (2.442 m x 0.58 m belt). When the conveyor plugin is
+    given `length:`/`width:` it rescales this loaded spec in ConveyorPlugin._resize() before attach
+    (belt/slab/rollers/rails recomputed exactly; the feet move proportionally). Height-class
+    numbers here (z, roller radius, slab overhang, rail thickness) stay fixed -- edit them here.
+    The separate table does NOT rescale with the belt (it is a plain spawn_model prop), so a
+    heavily resized belt may want a different table.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <material name="belt"     rgba="0.12 0.12 0.13 1" specular="0.3" shininess="0.2"/>
+    <material name="frame"    rgba="0.60 0.60 0.62 1" specular="0.4" shininess="0.3"/>
+    <material name="pkg"      rgba="0.85 0.40 0.20 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- Conveyor static parts: feet, visible belt, side rails, and the end rollers
+         (roller_a drive at -x, roller_b idler at +x; spun about y by the plugin). -->
+    <body name="conveyor_frame" pos="0 0.6 0">
+      <geom name="conv_leg_1" type="box" size="0.03 0.03 0.0775" pos="1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="conv_leg_2" type="box" size="0.03 0.03 0.0775" pos="-1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="conv_leg_3" type="box" size="0.03 0.03 0.0775" pos="1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="conv_leg_4" type="box" size="0.03 0.03 0.0775" pos="-1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="belt_visual" type="box" size="1.221 0.29 0.0275" pos="0 0 0.9425" material="belt" contype="0" conaffinity="0"/>
+      <geom name="rail_near" type="box" size="1.221 0.006 0.03" pos="0 -0.296 0.9425" material="frame" contype="0" conaffinity="0"/>
+      <geom name="rail_far"  type="box" size="1.221 0.006 0.03" pos="0  0.296 0.9425" material="frame" contype="0" conaffinity="0"/>
+      <body name="roller_a" pos="-1.221 0 0.9425">
+        <joint name="roller_a_spin" type="hinge" axis="0 -1 0"/>
+        <geom name="roller_a_geom" type="cylinder" size="0.0275 0.29" quat="1 1 0 0" material="belt"
+              friction="1.0 0.005 0.0001"/>
+      </body>
+      <body name="roller_b" pos="1.221 0 0.9425">
+        <joint name="roller_b_spin" type="hinge" axis="0 -1 0"/>
+        <geom name="roller_b_geom" type="cylinder" size="0.0275 0.29" quat="1 1 0 0" material="belt"
+              friction="1.0 0.005 0.0001"/>
+      </body>
+    </body>
+
+    <!-- Moving, invisible drive slab. contype/conaffinity 0: it interacts ONLY with the
+         package via the explicit belt_package <pair> below; everything else passes through. -->
+    <body name="belt" pos="0 0.6 0.9425">
+      <joint name="belt_x" type="slide" axis="-1 0 0" limited="false" damping="0"/>
+      <inertial pos="0 0 0" mass="10.0" diaginertia="1.0 1.0 1.0"/>
+      <geom name="belt_surface" type="box" size="1.25 0.29 0.0275" group="3"
+            contype="0" conaffinity="0" friction="1.0 0.005 0.0001"/>
+    </body>
+
+    <!-- Free-floating package on the belt (0.1 x 0.05 x 0.05 m, 1 kg); pose set on reset. -->
+    <body name="package" pos="1.0 0.6 0.996">
+      <freejoint name="package_free"/>
+      <geom name="package_geom" type="box" size="0.05 0.025 0.025" material="pkg"
+            mass="1.0" friction="1.0 0.005 0.0001"/>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- Tunable belt<->package sliding friction: [tan1 tan2 torsional roll1 roll2]. -->
+    <pair name="belt_package" geom1="belt_surface" geom2="package_geom"
+          friction="0.6 0.6 0.005 0.0001 0.0001"/>
+    <!-- Both the slab and rollers are velocity-forced; don't let them collide as the slab wraps. -->
+    <exclude body1="belt" body2="roller_a"/>
+    <exclude body1="belt" body2="roller_b"/>
+  </contact>
+</mujoco>

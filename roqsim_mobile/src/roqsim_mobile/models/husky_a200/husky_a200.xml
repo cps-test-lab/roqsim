@@ -1,0 +1,168 @@
+<mujoco model="husky_a200">
+  <!--
+    Clearpath Husky A200 (skid-steer) for MuJoCo.
+
+    Geometry, masses and inertias are taken verbatim from Clearpath's `husky_description`
+    (BSD-3, see husky_a200_LICENSE), all expressed relative to the `base_link` frame so a ROS 2
+    bridge can publish TF directly:
+        base collision box 1.0074 x 0.5709 x 0.2675 m, mass 33.455 kg (full inertia tensor);
+        wheel radius 0.17775 m, width 0.1143 m, mass 2.637 kg;
+        track (L wheel sep) 0.5708 m, wheelbase 0.512 m; base_link rest height 0.14493 m.
+
+    Drive: TRUE 4-wheel skid-steer -- all four wheels are driven (no casters). Left wheels
+    (front+rear) and right wheels are commanded together; in-place rotation is produced by the
+    wheels scrubbing laterally against the floor, so wheel<->floor friction is set by explicit
+    contact pairs (below) rather than the geom defaults (MuJoCo max-combines friction, and the
+    scene floor is high-friction). This reproduces the Husky's real oscillation/effort signature,
+    which the paper's n_osc / J_u metrics are sensitive to.
+
+    Converted .dae->.obj meshes (tools/convert_husky_meshes.py) are visual-only geoms (group 2,
+    no contacts); all collision geometry is primitives (base box + 4 wheel cylinders).
+  -->
+
+  <compiler meshdir="meshes"/>
+
+  <asset>
+    <material name="husky_yellow" rgba="0.86 0.72 0.02 1"/>
+    <material name="husky_black"  rgba="0.05 0.05 0.05 1"/>
+    <material name="husky_dark"   rgba="0.15 0.15 0.17 1"/>
+    <material name="husky_grey"   rgba="0.4 0.4 0.42 1"/>
+
+    <mesh name="husky_base"      file="husky_base.obj"/>
+    <mesh name="husky_wheel"     file="husky_wheel.obj"/>
+    <mesh name="husky_top_plate" file="husky_top_plate.obj"/>
+    <mesh name="husky_bumper"    file="husky_bumper.obj"/>
+  </asset>
+
+  <default>
+    <default class="husky_wheel">
+      <!-- Collision cylinder: radius 0.17775, half-width 0.05715. quat rotates the cylinder's
+           local +z onto +y so the axle is along base_link Y (the wheel spin axis). Friction is
+           overridden per wheel by the explicit floor pairs; condim=3 = tangential slide only. -->
+      <geom type="cylinder" size="0.17775 0.05715" quat="0.707107 0.707107 0 0"
+            material="husky_black" condim="3" friction="1.0 0.005 0.0001"/>
+    </default>
+    <default class="husky_visual">
+      <!-- Visual-only: no contacts. Do NOT set density=0 (a zero-density mesh geom renders as its
+           bounding sphere); base_link's explicit <inertial> overrides geom-derived mass anyway. -->
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <!-- base_link: URDF root. freejoint makes the robot mobile; spawns just above rest height
+         (0.14493 m) and settles onto the four wheels. -->
+    <body name="base_link" pos="0 0 0.15">
+      <freejoint name="base_free"/>
+      <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
+
+      <!-- Spectator camera that tracks the robot (constant world-frame offset, level horizon). -->
+      <camera name="track" mode="track" pos="-2.2 -2.2 1.8" xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+
+      <!-- Chassis inertia: mass + full inertia tensor + COM offset from husky_description. -->
+      <inertial pos="-0.08748 -0.00085 0.09947" mass="33.455"
+                fullinertia="0.6022 1.7386 2.0296 -0.02364 -0.1197 -0.001544"/>
+
+      <!-- Chassis collision box (URDF base_link collision, origin z=0.12498). -->
+      <geom name="base_collision" type="box" size="0.5037 0.28545 0.13375" pos="0 0 0.12498"
+            material="husky_grey" group="3" friction="0.4 0.005 0.0001"/>
+
+      <!-- Visual meshes (no contacts), placed with the URDF link transforms relative to base_link. -->
+      <geom class="husky_visual" mesh="husky_base"      material="husky_black"  pos="0 0 0"/>
+      <geom class="husky_visual" mesh="husky_top_plate" material="husky_dark"   pos="0 0 0"/>
+      <geom class="husky_visual" mesh="husky_bumper"    material="husky_dark"   pos="0.48 0 0.091"/>
+      <geom class="husky_visual" mesh="husky_bumper"    material="husky_dark"   pos="-0.48 0 0.091" quat="0 0 0 1"/>
+
+      <!-- 2D LiDAR (lidar2d_0). Source description has no lidar; per the paper's DWB-RPP-MPPI repo
+           the scan is 360 deg / 0.25 deg / 30 Hz (repo README; confirmed live at commit 53f054c).
+           Mounted on the Clearpath husky_description default top-plate mount, centered on base_link,
+           scan plane 0.51 m above ground = 0.36507 above base_link -- the value fixed by the spec's
+           g_lidar_mounting_pose workaround. Small visual riser + puck below it. The 10 m max range
+           is a documented assumption (repo does not state it); see port log. -->
+      <geom class="husky_visual" type="cylinder" size="0.02 0.11" pos="0 0 0.245" material="husky_grey"/>
+      <geom class="husky_visual" type="cylinder" size="0.045 0.03" pos="0 0 0.36507" material="husky_black"/>
+      <site name="lidar" pos="0 0 0.36507" size="0.006" rgba="1 0 0 0.6"/>
+
+      <!-- Front-left wheel -->
+      <body name="front_left_wheel" pos="0.256 0.2854 0.03282">
+        <joint name="front_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="2.0"/>
+        <inertial pos="0 0 0" mass="2.637" diaginertia="0.02467 0.04411 0.02467"/>
+        <geom class="husky_wheel" name="front_left_wheel_geom"/>
+        <geom class="husky_visual" mesh="husky_wheel"/>
+      </body>
+      <!-- Front-right wheel -->
+      <body name="front_right_wheel" pos="0.256 -0.2854 0.03282">
+        <joint name="front_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="2.0"/>
+        <inertial pos="0 0 0" mass="2.637" diaginertia="0.02467 0.04411 0.02467"/>
+        <geom class="husky_wheel" name="front_right_wheel_geom"/>
+        <geom class="husky_visual" mesh="husky_wheel"/>
+      </body>
+      <!-- Rear-left wheel -->
+      <body name="rear_left_wheel" pos="-0.256 0.2854 0.03282">
+        <joint name="rear_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="2.0"/>
+        <inertial pos="0 0 0" mass="2.637" diaginertia="0.02467 0.04411 0.02467"/>
+        <geom class="husky_wheel" name="rear_left_wheel_geom"/>
+        <geom class="husky_visual" mesh="husky_wheel"/>
+      </body>
+      <!-- Rear-right wheel -->
+      <body name="rear_right_wheel" pos="-0.256 -0.2854 0.03282">
+        <joint name="rear_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="2.0"/>
+        <inertial pos="0 0 0" mass="2.637" diaginertia="0.02467 0.04411 0.02467"/>
+        <geom class="husky_wheel" name="rear_right_wheel_geom"/>
+        <geom class="husky_visual" mesh="husky_wheel"/>
+      </body>
+    </body>
+  </worldbody>
+
+  <contact>
+    <!-- Wheel<->floor contacts: isotropic friction 1.0 (good straight-line traction and slope hold),
+         slightly softened (solref) for stable stepping at dt=2 ms. A skid-steer scrubs mostly
+         laterally when turning, so MuJoCo point-contact yaw is a small fraction of the commanded
+         rate; the diff_drive `slip_factor` (calibrated 3.0) restores navigable, odom-consistent yaw.
+         See port log. friction = [slide1, slide2, spin, roll1, roll2]. -->
+    <pair geom1="front_left_wheel_geom"  geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
+    <pair geom1="front_right_wheel_geom" geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
+    <pair geom1="rear_left_wheel_geom"   geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
+    <pair geom1="rear_right_wheel_geom"  geom2="floor" condim="3" solref="0.02 1" friction="1.0 1.0 0.005 0.0001 0.0001"/>
+  </contact>
+
+  <actuator>
+    <!-- Velocity-servo wheel drives (ctrl = target wheel angular velocity, rad/s). All four driven;
+         the diff_drive plugin commands the left pair and right pair together. forcerange caps wheel
+         torque (~120 N.m) for stable contact. ctrlrange +-20 covers max_vel 1.0 m/s plus the
+         slip_factor-inflated yaw term (~12 rad/s worst case) with headroom. kv=20 tracks the
+         44 kg base without the contact blow-up (or the chaotic in-place rotation) that higher
+         gains caused. Wheel joints carry frictionloss=2.0 N.m (gearbox stiction): a velocity servo
+         makes no torque at zero error, so without it the robot creeps down a grade. -->
+    <velocity name="front_left_wheel_motor"  joint="front_left_wheel_joint"  kv="40" ctrlrange="-20 20" forcerange="-120 120"/>
+    <velocity name="front_right_wheel_motor" joint="front_right_wheel_joint" kv="40" ctrlrange="-20 20" forcerange="-120 120"/>
+    <velocity name="rear_left_wheel_motor"   joint="rear_left_wheel_joint"   kv="40" ctrlrange="-20 20" forcerange="-120 120"/>
+    <velocity name="rear_right_wheel_motor"  joint="rear_right_wheel_joint"  kv="40" ctrlrange="-20 20" forcerange="-120 120"/>
+  </actuator>
+
+  <sensor>
+    <!-- Ground-truth base pose/velocity (odom + debug) -->
+    <framepos     name="base_pos"    objtype="site" objname="base_imu"/>
+    <framequat    name="base_quat"   objtype="site" objname="base_imu"/>
+    <framelinvel  name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel  name="base_angvel" objtype="site" objname="base_imu"/>
+    <!-- IMU at base -->
+    <velocimeter   name="imu_vel"  site="base_imu"/>
+    <gyro          name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc"  site="base_imu"/>
+    <!-- Wheel encoders (all four) -->
+    <jointpos name="front_left_wheel_pos"  joint="front_left_wheel_joint"/>
+    <jointpos name="front_right_wheel_pos" joint="front_right_wheel_joint"/>
+    <jointpos name="rear_left_wheel_pos"   joint="rear_left_wheel_joint"/>
+    <jointpos name="rear_right_wheel_pos"  joint="rear_right_wheel_joint"/>
+    <jointvel name="front_left_wheel_vel"  joint="front_left_wheel_joint"/>
+    <jointvel name="front_right_wheel_vel" joint="front_right_wheel_joint"/>
+    <jointvel name="rear_left_wheel_vel"   joint="rear_left_wheel_joint"/>
+    <jointvel name="rear_right_wheel_vel"  joint="rear_right_wheel_joint"/>
+  </sensor>
+
+  <keyframe>
+    <!-- Canonical home: base at rest height, wheels zeroed. -->
+    <key name="home" qpos="0 0 0.14493 1 0 0 0  0 0 0 0"/>
+  </keyframe>
+</mujoco>

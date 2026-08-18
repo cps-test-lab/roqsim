@@ -1,0 +1,23 @@
+# UR10e manipulator on the floor — standalone demo world (roqsim_manipulation).
+#
+# Standalone: roqsim roqsim_manipulation/src/roqsim_manipulation/worlds/ur10e_demo.yaml
+# A `test_target` drives the arm to a pose so the standalone scene shows motion.
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory), add the ros2_bridge plugin
+# from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+plugins:
+  # arm_controller comes from the ur10e model manifest (models/ur10e.manifest.yaml).
+  - spawn_arm:
+      model: ur10e
+      name: ur10e
+      prefix: "ur10e_"
+      pos: [0.0, 0.0, 0.0]
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm).
+  - arm_controller:
+      arm: ur10e
+      test_target: [0.0, -1.0, 1.2, -1.6, -1.57, 0.0]

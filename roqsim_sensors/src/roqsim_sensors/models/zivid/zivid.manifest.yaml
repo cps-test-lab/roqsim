@@ -1,0 +1,16 @@
+# Default capture plugin shipped with the zivid mount.
+#
+# `spawn_sensor: {model: zivid}` pulls this in automatically, so a world does not re-declare the
+# capture plugin. To override, declare zivid for the same mount in the world (it wins); to opt out,
+# set spawn_sensor config `default_plugins: false`. `robot` is filled in from the spawn_sensor
+# `name`. `camera: zivid_color` is the imaging sensor placed on the +x optical module.
+plugins:
+  - zivid:
+      camera: zivid_color
+
+# Valid working range (m) the `spawn_sensor` show_fov cone is drawn to. Matches the zivid capture
+# plugin's clip_near/clip_far (Zivid 3 XL250 datasheet working distance). near>0 => show_fov draws a
+# truncated cone synthesised from the camera instead of revealing the baked envelope.
+fov:
+  near: 1.3
+  far: 5.0

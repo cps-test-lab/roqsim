@@ -1,0 +1,5 @@
+# Surface properties for this floor texture, read by the floorplan plugin.
+# reflectance: MuJoCo material reflectance (0..1); higher = more mirror-like floor.
+# physical_size: real-world size (m) the image spans, so it tiles at true scale.
+reflectance: 0.15     # varnished wood — semi-gloss
+physical_size: 1.8    # the image covers a 1.8 m × 1.8 m area

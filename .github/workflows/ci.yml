@@ -1,0 +1,63 @@
+name: ci
+
+# Two jobs on purpose. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` --
+# every check is a make target, so a contributor reproduces CI exactly with one command and the two
+# cannot drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
+# separate so a formatting mistake does not wait behind a robot driving to a goal.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  core:
+    name: core (lint, tests, smoke, docs)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # MuJoCo renders through EGL here (MUJOCO_GL=egl is exported by the Makefile): without these the
+      # offscreen context fails to bind and every render/smoke step dies in the same confusing way.
+      - name: Install GL libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6
+
+      - name: Create venv and install packages
+        run: make venv
+
+      # lint + test + smoke + check + doc. `make test` skips the ros2_ws suite when ROS is not
+      # sourced, which is exactly right here -- the `ros` job below owns that half.
+      - name: make ci
+        run: make ci
+
+  ros:
+    name: ros (bridge + nav2 integration)
+    runs-on: ubuntu-latest
+    container:
+      image: ros:jazzy
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            python3-venv python3-pip python3-colcon-common-extensions \
+            libegl1 libgl1 \
+            ros-jazzy-navigation2 ros-jazzy-nav2-bringup \
+            ros-jazzy-nav2-minimal-tb4-description \
+            ros-jazzy-nav2-simple-commander \
+            ros-jazzy-simulation-interfaces
+
+      - name: Create venv and install packages
+        run: make venv
+
+      # With ROS sourced, `make test` additionally builds ros2_ws and runs its suites, including the
+      # headless nav2 goal test. That conditional lives in the Makefile, not here.
+      - name: make test (with ROS sourced)
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          make test

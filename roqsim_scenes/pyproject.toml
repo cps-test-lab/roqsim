@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_scenes"
+version = "0.1.0"
+description = "MuJoCo scene worlds imported from CAD, USD or Gazebo SDF, baked to plain MJCF."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# No runtime plugin: the pipeline (src/roqsim_scenes/cli/) bakes scenes to plain MJCF. roqsim_assets
+# provides the shared textures the baker references; mujoco/pyyaml are used by cli/scene_to_mjcf.py.
+dependencies = [
+    "roqsim",          # cli/scene_to_mjcf.py uses roqsim.textures; cli/__init__.py the `roqsim` command tree
+    "roqsim_assets",
+    "mujoco>=3.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24",        # every geometry stage; the same floor as the rest of the substrate
+    "click>=8.1",         # cli/__init__.py declares the `roqsim scenes` group
+    "requests>=2.25",     # cli/fuel_fetch.py talks to the Fuel REST API
+    "pillow>=9.0",        # cli/sdf_to_scene.py re-encodes JPEG source textures to PNG for MuJoCo
+    "lxml>=4.0",          # cli/sdf_to_scene.py + scene_mesh_io.py parse SDF/Collada
+    # 1.11, not 1.13: the only scipy API used anywhere here is `scipy.spatial.ConvexHull` (one local
+    # import in cli/sdf_to_scene.py), stable since scipy 0.x. The floor matters because the ROS base
+    # image ships DEBIAN-packaged scipy 1.11.4, which has no RECORD file and pip therefore cannot
+    # uninstall -- so a floor above 1.11 makes pip try to replace it and kills any campaign image build
+    # with "Cannot uninstall SciPy 1.11.4, RECORD file not found". Keep this floor at the API actually
+    # needed, not at the newest release.
+    "scipy>=1.11",        # cli/sdf_to_scene.py hulls each collision part to check it against the
+                          # mesh it stands in for. Not optional: skipping that check is how a closed
+                          # shell imports as solid, so the import must fail without scipy, not pass.
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+# Only the two PNG renderers need these: rendering a real architectural drawing (blocks, arcs,
+# hatches, dimensions, text) is far more than the wall reader below has to understand, so the
+# heavy CAD library stays optional rather than becoming a dependency of every scene import
+# (ezdxf: roqsim-cad-to-png; matplotlib: both PNG tools).
+preview = ["ezdxf>=1.1", "matplotlib>=3.5"]
+
+# Floorplan entry points.
+#   roqsim-dxf-to-floorplan  DXF -> floorplan sketch JSON, the input to the scene-builder sketch
+#                         window and `roqsim scenes floorplan-to-world`. Dependency-free reader.
+#   roqsim-cad-to-png        DWG/DXF -> PNG preview, to see which layers carry the walls before
+#                         converting. Needs the `preview` extra.
+#   roqsim-floorplan-to-png  floorplan / scene / world -> PNG plan view with a metre scale bar, to
+#                         see the layout a floorplan describes. Needs the `preview` extra.
+# The tools are subcommands of `roqsim` (see `roqsim scenes --help`). These three names predate that tree
+# and stay as aliases, because they are already written into other people's scripts.
+[project.scripts]
+roqsim-dxf-to-floorplan = "roqsim_scenes.dxf_to_floorplan:main"
+roqsim-cad-to-png = "roqsim_scenes.cad_to_png:main"
+roqsim-floorplan-to-png = "roqsim_scenes.floorplan_to_png:main"
+
+[project.entry-points."roqsim.commands"]
+scenes = "roqsim_scenes.cli:scenes"
+
+# Register as a `roqsim.worlds` provider so worlds resolve `sim.world: roqsim_scenes:<world>`
+# (e.g. `roqsim_scenes:depot`) — mirrors the `roqsim.models` provider mechanism.
+[project.entry-points."roqsim.worlds"]
+roqsim_scenes = "roqsim_scenes"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_scenes = [
+    # The look a generated floorplan bakes with, when neither the scene nor the caller supplies one.
+    # It ships with the code that reads it: floorplan_to_world resolves it beside its own module.
+    "cli/floorplan.scene.yaml",
+    "scenes/*/scene.json",
+    "scenes/*/scene.yaml",
+    "scenes/*/meshes/*.obj",
+    "scenes/*/textures/*.png",   # scenes imported with their own textures (e.g. the Depot warehouse)
+    "scenes/*/*.sdf",            # the source world wrapper, for a reproducible re-bake
+    "scenes/*/assets.lock.json", # pinned third-party provenance (Fuel URI + sha256 + licence)
+    "scenes/*/CREDITS.txt",      # the attribution that licence requires -- it must travel with the
+                                 # meshes, so it ships in the wheel, not only in the checkout
+
+    "worlds/*.yaml",
+    "worlds/*/*.xml",
+    "worlds/*/assets/*.obj",
+    "worlds/*/assets/*.png",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

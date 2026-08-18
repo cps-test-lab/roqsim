@@ -1,0 +1,8 @@
+# Default controller shipped with the panda arm description.
+#
+# `spawn_arm: {model: panda}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
+# spawn_arm `name`.
+plugins:
+  - arm_controller: {}   # gripper_ctrl and the home target keep the plugin/model defaults

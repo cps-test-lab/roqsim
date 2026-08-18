@@ -1,0 +1,48 @@
+# Frankie (Panda + Omron LD-60) on a bare floor — standalone demo world (roqsim_mobile_manipulation).
+#
+# Watch it drive:  roqsim sim roqsim_mobile_manipulation:frankie_demo
+# Pose by hand:    roqsim sim roqsim_mobile_manipulation:frankie_demo --manual-control   (viewer sliders own
+#                  every actuator: drive the wheels, move each arm joint, open/close the Franka Hand)
+#
+# `diff_drive` (two wheel velocity servos) and `arm_controller` (seven Panda position servos + the hand
+# tendon, with the joint-velocity path enabled) both come from the model manifest
+# (models/frankie/frankie.manifest.yaml). A `test_cmd` drives a gentle arc so the scene shows motion.
+#
+# A ground geom named `floor` is required, not decoration: frankie.xml declares explicit <contact>
+# pairs against it (frictionless ball casters, husky-style wheel contacts), so the robot drops through
+# the void without one. The default `empty_room` world provides exactly that, so `sim.world` is left
+# unset here. Its floor friction (2.0) is irrelevant to this robot: the wheel pairs pin friction to 1.0
+# and the caster pairs are condim=1, so neither inherits the scene's value.
+
+sim:
+  pacing: realtime         # realtime | asap | {factor: N}
+  # 0.5 ms, not the 2 ms default. The stock panda's PD servos ring at 2 ms and inject end-effector
+  # acceleration noise of ~0.94 m/s^2 at rest (measured; see the port log, A1) -- larger than most
+  # published smoothness signals, so anything measuring arm acceleration or effort needs this step.
+  # Harmless for a demo, and it is the step the port was verified at, so the demo shows the real
+  # dynamics rather than a cheaper approximation of them.
+  timestep: 0.0005
+  view:
+    lookat: [0.5, 0.0, 0.5]
+    distance: 4.0
+    azimuth: 130.0
+    elevation: -20.0
+
+plugins:
+  - spawn_robot:
+      model: frankie
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this
+  # scripted [v, w] drives a gentle arc. Unlike the husky and the G2 this base is a true diff-drive, so
+  # it also rotates in place cleanly — try [0.0, 0.6].
+  - diff_drive:
+      robot: robot
+      test_cmd: [0.25, 0.15]   # remove once a ros2_bridge drives /cmd_vel
+
+  # For ROS 2 (colcon package roqsim_ros_bridge): one bridge reads every declared endpoint from
+  # ctx.interface — cmd_vel/odom/joint_states/joint_command/joint_velocity/gripper_cmd — with no
+  # per-topic config needed.
+  # - ros2_bridge: {}

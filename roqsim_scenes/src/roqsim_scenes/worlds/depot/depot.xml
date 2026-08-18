@@ -1,0 +1,119 @@
+<mujoco model="Depot">
+  <compiler angle="radian" meshdir="assets/" texturedir="assets/"/>
+
+  <visual>
+    <headlight ambient="0.3 0.3 0.3"/>
+  </visual>
+
+  <asset>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_0" file="ROOF_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_1" file="WALLS_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_2" file="PILLERS_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_3" file="FANS_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_4" file="Window_WINDOW_BaseColor.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_5" file="INTERCOM_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_6" file="FireAlarm_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_7" file="FireAlarmPole_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_8" file="Pipes_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_9" file="STAIRS_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_10" file="BOXSET_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_11" file="FLOOR_Albedo.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_12" file="FanBack_FanBack_BaseColor.png"/>
+    <texture type="2d" colorspace="linear" name="scene_tex_src_13" file="Crates_Crates_BaseColor.png"/>
+    <material name="scene_mat_src_0" texture="scene_tex_src_0"/>
+    <material name="scene_mat_src_1" texture="scene_tex_src_1"/>
+    <material name="scene_mat_src_2" texture="scene_tex_src_2"/>
+    <material name="scene_mat_src_3" texture="scene_tex_src_3"/>
+    <material name="scene_mat_src_4" texture="scene_tex_src_4"/>
+    <material name="scene_mat_src_5" texture="scene_tex_src_5"/>
+    <material name="scene_mat_src_6" texture="scene_tex_src_6"/>
+    <material name="scene_mat_src_7" texture="scene_tex_src_7"/>
+    <material name="scene_mat_src_8" texture="scene_tex_src_8"/>
+    <material name="scene_mat_src_9" texture="scene_tex_src_9"/>
+    <material name="scene_mat_src_10" texture="scene_tex_src_10"/>
+    <material name="scene_mat_src_11" texture="scene_tex_src_11"/>
+    <material name="scene_mat_src_12" texture="scene_tex_src_12"/>
+    <material name="scene_mat_src_13" texture="scene_tex_src_13"/>
+    <mesh name="scene_Depot_main_ROOF_visual_vis" content_type="model/obj" file="Depot_main_ROOF_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_WALLS_visual_vis" content_type="model/obj" file="Depot_main_WALLS_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_PILLERS_visual_vis" content_type="model/obj" file="Depot_main_PILLERS_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_FANS_visual_vis" content_type="model/obj" file="Depot_main_FANS_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_WINDOW_visual_vis" content_type="model/obj" file="Depot_main_WINDOW_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_INTERCOM_visual_vis" content_type="model/obj" file="Depot_main_INTERCOM_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_FireAlarm_visual_vis" content_type="model/obj" file="Depot_main_FireAlarm_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_FireAlarmPole_visual_vis" content_type="model/obj" file="Depot_main_FireAlarmPole_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_Pipes_visual_vis" content_type="model/obj" file="Depot_main_Pipes_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_STAIRS_visual_vis" content_type="model/obj" file="Depot_main_STAIRS_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_BOXSET_visual_vis" content_type="model/obj" file="Depot_main_BOXSET_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_FLOOR_visual_vis" content_type="model/obj" file="Depot_main_FLOOR_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_FanBack_visual_vis" content_type="model/obj" file="Depot_main_FanBack_visual_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_main_crates_vis" content_type="model/obj" file="Depot_main_crates_vis.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_000" content_type="model/obj" file="Depot_Fan1_visual_000.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_001" content_type="model/obj" file="Depot_Fan1_visual_001.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_002" content_type="model/obj" file="Depot_Fan1_visual_002.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_003" content_type="model/obj" file="Depot_Fan1_visual_003.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_004" content_type="model/obj" file="Depot_Fan1_visual_004.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_005" content_type="model/obj" file="Depot_Fan1_visual_005.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_006" content_type="model/obj" file="Depot_Fan1_visual_006.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_007" content_type="model/obj" file="Depot_Fan1_visual_007.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_008" content_type="model/obj" file="Depot_Fan1_visual_008.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_009" content_type="model/obj" file="Depot_Fan1_visual_009.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_010" content_type="model/obj" file="Depot_Fan1_visual_010.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan1_visual_011" content_type="model/obj" file="Depot_Fan1_visual_011.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_000" content_type="model/obj" file="Depot_Fan2_visual_000.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_001" content_type="model/obj" file="Depot_Fan2_visual_001.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_002" content_type="model/obj" file="Depot_Fan2_visual_002.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_003" content_type="model/obj" file="Depot_Fan2_visual_003.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_004" content_type="model/obj" file="Depot_Fan2_visual_004.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_005" content_type="model/obj" file="Depot_Fan2_visual_005.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_006" content_type="model/obj" file="Depot_Fan2_visual_006.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_007" content_type="model/obj" file="Depot_Fan2_visual_007.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_008" content_type="model/obj" file="Depot_Fan2_visual_008.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_009" content_type="model/obj" file="Depot_Fan2_visual_009.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_010" content_type="model/obj" file="Depot_Fan2_visual_010.obj" inertia="shell"/>
+    <mesh name="scene_Depot_Fan2_visual_011" content_type="model/obj" file="Depot_Fan2_visual_011.obj" inertia="shell"/>
+  </asset>
+
+  <worldbody>
+    <geom name="scene_Depot_main_ROOF_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_0" mesh="scene_Depot_main_ROOF_visual_vis"/>
+    <geom name="scene_Depot_main_WALLS_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_1" mesh="scene_Depot_main_WALLS_visual_vis"/>
+    <geom name="scene_Depot_main_PILLERS_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_2" mesh="scene_Depot_main_PILLERS_visual_vis"/>
+    <geom name="scene_Depot_main_FANS_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_3" mesh="scene_Depot_main_FANS_visual_vis"/>
+    <geom name="scene_Depot_main_WINDOW_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_4" mesh="scene_Depot_main_WINDOW_visual_vis"/>
+    <geom name="scene_Depot_main_INTERCOM_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_5" mesh="scene_Depot_main_INTERCOM_visual_vis"/>
+    <geom name="scene_Depot_main_FireAlarm_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_6" mesh="scene_Depot_main_FireAlarm_visual_vis"/>
+    <geom name="scene_Depot_main_FireAlarmPole_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_7" mesh="scene_Depot_main_FireAlarmPole_visual_vis"/>
+    <geom name="scene_Depot_main_Pipes_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_8" mesh="scene_Depot_main_Pipes_visual_vis"/>
+    <geom name="scene_Depot_main_STAIRS_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_9" mesh="scene_Depot_main_STAIRS_visual_vis"/>
+    <geom name="scene_Depot_main_BOXSET_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_10" mesh="scene_Depot_main_BOXSET_visual_vis"/>
+    <geom name="scene_Depot_main_FLOOR_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_11" mesh="scene_Depot_main_FLOOR_visual_vis"/>
+    <geom name="scene_Depot_main_FanBack_visual_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_12" mesh="scene_Depot_main_FanBack_visual_vis"/>
+    <geom name="scene_Depot_main_crates_vis" type="mesh" contype="0" conaffinity="0" material="scene_mat_src_13" mesh="scene_Depot_main_crates_vis"/>
+    <geom name="scene_Depot_Fan1_visual_000" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_000"/>
+    <geom name="scene_Depot_Fan1_visual_001" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_001"/>
+    <geom name="scene_Depot_Fan1_visual_002" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_002"/>
+    <geom name="scene_Depot_Fan1_visual_003" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_003"/>
+    <geom name="scene_Depot_Fan1_visual_004" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_004"/>
+    <geom name="scene_Depot_Fan1_visual_005" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_005"/>
+    <geom name="scene_Depot_Fan1_visual_006" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_006"/>
+    <geom name="scene_Depot_Fan1_visual_007" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_007"/>
+    <geom name="scene_Depot_Fan1_visual_008" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_008"/>
+    <geom name="scene_Depot_Fan1_visual_009" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_009"/>
+    <geom name="scene_Depot_Fan1_visual_010" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_010"/>
+    <geom name="scene_Depot_Fan1_visual_011" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan1_visual_011"/>
+    <geom name="scene_Depot_Fan2_visual_000" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_000"/>
+    <geom name="scene_Depot_Fan2_visual_001" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_001"/>
+    <geom name="scene_Depot_Fan2_visual_002" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_002"/>
+    <geom name="scene_Depot_Fan2_visual_003" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_003"/>
+    <geom name="scene_Depot_Fan2_visual_004" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_004"/>
+    <geom name="scene_Depot_Fan2_visual_005" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_005"/>
+    <geom name="scene_Depot_Fan2_visual_006" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_006"/>
+    <geom name="scene_Depot_Fan2_visual_007" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_007"/>
+    <geom name="scene_Depot_Fan2_visual_008" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_008"/>
+    <geom name="scene_Depot_Fan2_visual_009" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_009"/>
+    <geom name="scene_Depot_Fan2_visual_010" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_010"/>
+    <geom name="scene_Depot_Fan2_visual_011" type="mesh" material="scene_mat_src_3" mesh="scene_Depot_Fan2_visual_011"/>
+    <geom name="floor" size="15.3 7.80005 0.05" pos="-0.0398 -0.13475 0" type="plane" group="3" friction="2" rgba="0 0 0 0"/>
+    <light pos="-0.0398 -0.13475 3.9636" dir="0 0 -1" cutoff="90" exponent="0" diffuse="0.4 0.4 0.4"/>
+  </worldbody>
+</mujoco>

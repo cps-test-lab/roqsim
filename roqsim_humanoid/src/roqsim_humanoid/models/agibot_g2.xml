@@ -1,0 +1,575 @@
+<?xml version="1.0" ?>
+<mujoco model="agibot_g2">
+  <compiler angle="radian" meshdir="meshes/agibot_g2" autolimits="true"/>
+  <default>
+    <default class="g2_visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="2" material="g2_light"/>
+    </default>
+    <default class="g2_collision">
+      <geom group="3" rgba="0.4 0.5 0.6 0.3" condim="3" contype="2" conaffinity="1"/>
+    </default>
+  </default>
+  <asset>
+    <mesh name="g2_body_link1" content_type="model/obj" file="g2_body_link1.obj"/>
+    <mesh name="g2_convex_body_link2" content_type="model/stl" file="g2_convex_body_link2.STL"/>
+    <mesh name="g2_body_link3" content_type="model/obj" file="g2_body_link3.obj"/>
+    <mesh name="g2_convex_body_link3" content_type="model/stl" file="g2_convex_body_link3.STL"/>
+    <mesh name="g2_convex_body_link4_1" content_type="model/stl" file="g2_convex_body_link4_1.STL"/>
+    <mesh name="g2_convex_body_link4_2" content_type="model/stl" file="g2_convex_body_link4_2.STL"/>
+    <mesh name="g2_convex_body_link4_3" content_type="model/stl" file="g2_convex_body_link4_3.STL"/>
+    <mesh name="g2_convex_body_link5" content_type="model/stl" file="g2_convex_body_link5.STL"/>
+    <mesh name="g2_head_link1" content_type="model/obj" file="g2_head_link1.obj"/>
+    <mesh name="g2_head_link2" content_type="model/obj" file="g2_head_link2.obj"/>
+    <mesh name="g2_convex_head_link3" content_type="model/stl" file="g2_convex_head_link3.STL"/>
+    <mesh name="g2_chassis_lwheel_front_link1" content_type="model/obj" file="g2_chassis_lwheel_front_link1.obj"/>
+    <mesh name="g2_chassis_lwheel_front_link2" content_type="model/obj" file="g2_chassis_lwheel_front_link2.obj"/>
+    <mesh name="g2_chassis_rwheel_front_link1" content_type="model/obj" file="g2_chassis_rwheel_front_link1.obj"/>
+    <mesh name="g2_chassis_rwheel_front_link2" content_type="model/obj" file="g2_chassis_rwheel_front_link2.obj"/>
+    <mesh name="g2_chassis_rwheel_rear_link1" content_type="model/obj" file="g2_chassis_rwheel_rear_link1.obj"/>
+    <mesh name="g2_chassis_rwheel_rear_link2" content_type="model/obj" file="g2_chassis_rwheel_rear_link2.obj"/>
+    <mesh name="g2_chassis_lwheel_rear_link1" content_type="model/obj" file="g2_chassis_lwheel_rear_link1.obj"/>
+    <mesh name="g2_chassis_lwheel_rear_link2" content_type="model/obj" file="g2_chassis_lwheel_rear_link2.obj"/>
+    <mesh name="arm_crs_arm_link1" content_type="model/obj" file="arm_crs_arm_link1.obj"/>
+    <mesh name="arm_crs_arm_link2" content_type="model/obj" file="arm_crs_arm_link2.obj"/>
+    <mesh name="arm_crs_arm_link3" content_type="model/obj" file="arm_crs_arm_link3.obj"/>
+    <mesh name="arm_crs_arm_link4" content_type="model/obj" file="arm_crs_arm_link4.obj"/>
+    <mesh name="arm_crs_arm_link5" content_type="model/obj" file="arm_crs_arm_link5.obj"/>
+    <mesh name="arm_crs_arm_link6" content_type="model/obj" file="arm_crs_arm_link6.obj"/>
+    <mesh name="arm_crs_arm_link7" content_type="model/obj" file="arm_crs_arm_link7.obj"/>
+    <mesh name="gripper_omnipicker_camera_link" content_type="model/obj" file="gripper_omnipicker_camera_link.obj"/>
+    <mesh name="gripper_omnipicker_convex_camera_link" content_type="model/stl" file="gripper_omnipicker_convex_camera_link.STL"/>
+    <mesh name="gripper_omnipicker_convex_base_link" content_type="model/stl" file="gripper_omnipicker_convex_base_link.STL"/>
+    <mesh name="gripper_omnipicker_convex_inner_link1" content_type="model/stl" file="gripper_omnipicker_convex_inner_link1.STL"/>
+    <mesh name="gripper_omnipicker_convex_inner_link3" content_type="model/stl" file="gripper_omnipicker_convex_inner_link3.STL"/>
+    <mesh name="gripper_omnipicker_convex_inner_link4" content_type="model/stl" file="gripper_omnipicker_convex_inner_link4.STL"/>
+    <mesh name="gripper_omnipicker_convex_inner_link2" content_type="model/stl" file="gripper_omnipicker_convex_inner_link2.STL"/>
+    <mesh name="gripper_omnipicker_convex_outer_link1" content_type="model/stl" file="gripper_omnipicker_convex_outer_link1.STL"/>
+    <mesh name="gripper_omnipicker_convex_outer_link3" content_type="model/stl" file="gripper_omnipicker_convex_outer_link3.STL"/>
+    <mesh name="gripper_omnipicker_convex_outer_link4" content_type="model/stl" file="gripper_omnipicker_convex_outer_link4.STL"/>
+    <mesh name="gripper_omnipicker_convex_outer_link2" content_type="model/stl" file="gripper_omnipicker_convex_outer_link2.STL"/>
+    <material name="g2_light" rgba="0.85 0.86 0.88 1"/>
+    <material name="g2_dark" rgba="0.15 0.16 0.18 1"/>
+    <material name="g2_black" rgba="0.05 0.05 0.05 1"/>
+    <mesh name="g2_base_link_m0" file="g2_base_link_m0.obj"/>
+    <material name="mat_000000" rgba="0.0000 0.0000 0.0000 1"/>
+    <mesh name="g2_base_link_m1" file="g2_base_link_m1.obj"/>
+    <material name="mat_c3c3c3" rgba="0.7660 0.7660 0.7660 1"/>
+    <mesh name="g2_base_link_m2" file="g2_base_link_m2.obj"/>
+    <material name="mat_fa6e00" rgba="0.9800 0.4300 0.0000 1"/>
+    <mesh name="g2_body_link2_m0" file="g2_body_link2_m0.obj"/>
+    <mesh name="g2_body_link2_m1" file="g2_body_link2_m1.obj"/>
+    <mesh name="g2_body_link4_m0" file="g2_body_link4_m0.obj"/>
+    <mesh name="g2_body_link4_m1" file="g2_body_link4_m1.obj"/>
+    <mesh name="g2_body_link5_m0" file="g2_body_link5_m0.obj"/>
+    <mesh name="g2_body_link5_m1" file="g2_body_link5_m1.obj"/>
+    <mesh name="g2_body_link5_m2" file="g2_body_link5_m2.obj"/>
+    <mesh name="gripper_omnipicker_base_link_m0" file="gripper_omnipicker_base_link_m0.obj"/>
+    <material name="mat_474643" rgba="0.2778 0.2744 0.2632 1"/>
+    <mesh name="gripper_omnipicker_base_link_m1" file="gripper_omnipicker_base_link_m1.obj"/>
+    <material name="mat_707070" rgba="0.4408 0.4408 0.4408 1"/>
+    <mesh name="gripper_omnipicker_base_link_m2" file="gripper_omnipicker_base_link_m2.obj"/>
+    <material name="mat_171717" rgba="0.0921 0.0921 0.0921 1"/>
+    <mesh name="gripper_omnipicker_base_link_m3" file="gripper_omnipicker_base_link_m3.obj"/>
+    <material name="mat_0a0a0a" rgba="0.0395 0.0395 0.0395 1"/>
+    <mesh name="gripper_omnipicker_inner_link1_m0" file="gripper_omnipicker_inner_link1_m0.obj"/>
+    <mesh name="gripper_omnipicker_inner_link1_m1" file="gripper_omnipicker_inner_link1_m1.obj"/>
+    <mesh name="gripper_omnipicker_inner_link1_m2" file="gripper_omnipicker_inner_link1_m2.obj"/>
+    <mesh name="gripper_omnipicker_inner_link3_m0" file="gripper_omnipicker_inner_link3_m0.obj"/>
+    <mesh name="gripper_omnipicker_inner_link3_m1" file="gripper_omnipicker_inner_link3_m1.obj"/>
+    <mesh name="gripper_omnipicker_inner_link4_m0" file="gripper_omnipicker_inner_link4_m0.obj"/>
+    <mesh name="gripper_omnipicker_inner_link4_m1" file="gripper_omnipicker_inner_link4_m1.obj"/>
+    <mesh name="gripper_omnipicker_inner_link4_m2" file="gripper_omnipicker_inner_link4_m2.obj"/>
+    <mesh name="gripper_omnipicker_inner_link2_m0" file="gripper_omnipicker_inner_link2_m0.obj"/>
+    <mesh name="gripper_omnipicker_inner_link2_m1" file="gripper_omnipicker_inner_link2_m1.obj"/>
+    <mesh name="gripper_omnipicker_outer_link1_m0" file="gripper_omnipicker_outer_link1_m0.obj"/>
+    <mesh name="gripper_omnipicker_outer_link1_m1" file="gripper_omnipicker_outer_link1_m1.obj"/>
+    <mesh name="gripper_omnipicker_outer_link1_m2" file="gripper_omnipicker_outer_link1_m2.obj"/>
+    <mesh name="gripper_omnipicker_outer_link3_m0" file="gripper_omnipicker_outer_link3_m0.obj"/>
+    <mesh name="gripper_omnipicker_outer_link3_m1" file="gripper_omnipicker_outer_link3_m1.obj"/>
+    <mesh name="gripper_omnipicker_outer_link4_m0" file="gripper_omnipicker_outer_link4_m0.obj"/>
+    <mesh name="gripper_omnipicker_outer_link4_m1" file="gripper_omnipicker_outer_link4_m1.obj"/>
+    <mesh name="gripper_omnipicker_outer_link4_m2" file="gripper_omnipicker_outer_link4_m2.obj"/>
+    <mesh name="gripper_omnipicker_outer_link2_m0" file="gripper_omnipicker_outer_link2_m0.obj"/>
+    <mesh name="gripper_omnipicker_outer_link2_m1" file="gripper_omnipicker_outer_link2_m1.obj"/>
+    <mesh name="g2_head_link3_m0" file="g2_head_link3_m0.obj"/>
+    <mesh name="g2_head_link3_m1" file="g2_head_link3_m1.obj"/>
+  </asset>
+  <worldbody>
+    <body name="base_link">
+      <!-- mobile base: free joint + odom/imu frame -->
+      <freejoint name="base_free"/>
+      <site name="base_imu" pos="0 0 0.1" size="0.01" rgba="0 0 0 0"/>
+      <!-- ASSUMPTION: 2D nav lidar; source has none. Mount = chassis front, 0.30 m. -->
+      <site name="lidar" pos="0.24 0 0.30" size="0.006" rgba="1 0 0 0.6"/>
+      <camera name="track" mode="track" pos="-2.4 -2.4 2.0" xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+      <geom name="chassis_box" type="box" size="0.28 0.20 0.08" pos="0 0 0.10" class="g2_collision" friction="0.4 0.01 0.001"/>
+      <geom name="caster_fl" type="sphere" size="0.03" pos="0.3 0.22 -0.005" class="g2_collision" friction="0.02 0.005 0.0001" rgba="0.2 0.2 0.2 1"/>
+      <geom name="caster_fr" type="sphere" size="0.03" pos="0.3 -0.22 -0.005" class="g2_collision" friction="0.02 0.005 0.0001" rgba="0.2 0.2 0.2 1"/>
+      <geom name="caster_rl" type="sphere" size="0.03" pos="-0.3 0.22 -0.005" class="g2_collision" friction="0.02 0.005 0.0001" rgba="0.2 0.2 0.2 1"/>
+      <geom name="caster_rr" type="sphere" size="0.03" pos="-0.3 -0.22 -0.005" class="g2_collision" friction="0.02 0.005 0.0001" rgba="0.2 0.2 0.2 1"/>
+      <inertial pos="0 0 0.15" quat="0 0.707107 0 0.707107" mass="80" diaginertia="5.29894 3.50892 3.11997"/>
+      <geom type="mesh" mesh="g2_base_link_m0" class="g2_visual" material="mat_000000"/>
+      <geom type="mesh" mesh="g2_base_link_m1" class="g2_visual" material="mat_c3c3c3"/>
+      <geom type="mesh" mesh="g2_base_link_m2" class="g2_visual" material="mat_fa6e00"/>
+      <body name="body_link1" pos="0.102 0 0.144">
+        <inertial pos="0 0 0.175562" mass="10" diaginertia="0.259378 0.244269 0.0390951"/>
+        <joint name="idx01_body_joint1" pos="0 0 0" axis="0 1 0" range="-1.0822 0.0001" actuatorfrcrange="-50 50" damping="300.0"/>
+        <geom type="mesh" mesh="g2_body_link1" class="g2_visual" material="mat_000000"/>
+        <geom name="Cylinder" size="0.089146 0.0766955" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision"/>
+        <geom name="Cylinder.001" size="0.089146 0.0766955" pos="0 0 0.36" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision"/>
+        <geom name="Cube" size="0.042797 0.088309 0.175644" pos="-0.024457 0 0.18" type="box" class="g2_collision"/>
+        <geom name="Cube.001" size="0.0562935 0.013531 0.120414" pos="-0.009824 0.075429 0.180136" type="box" class="g2_collision"/>
+        <geom name="Cube.002" size="0.0562935 0.013531 0.120414" pos="-0.009824 -0.075429 0.180136" type="box" class="g2_collision"/>
+        <body name="body_link2" pos="0 0 0.36">
+          <inertial pos="0 0 0.185408" mass="12.4" diaginertia="0.360854 0.252113 0.147625"/>
+          <joint name="idx02_body_joint2" pos="0 0 0" axis="0 1 0" range="-0.0001 2.653" actuatorfrcrange="-50 50" damping="300.0"/>
+          <geom type="mesh" mesh="g2_body_link2_m0" class="g2_visual" material="mat_c3c3c3"/>
+          <geom type="mesh" mesh="g2_body_link2_m1" class="g2_visual" material="mat_000000"/>
+          <geom name="body_link2_convex_0" type="mesh" mesh="g2_convex_body_link2" class="g2_collision"/>
+          <body name="body_link3" pos="0 0 0.38">
+            <inertial pos="0 0 0" quat="0.5 0.5 -0.5 0.5" mass="7.3" diaginertia="0.0340642 0.0295826 0.0276827"/>
+            <joint name="idx03_body_joint3" pos="0 0 0" axis="0 1 0" range="-1.907 1.039" actuatorfrcrange="-50 50" damping="300.0"/>
+            <geom type="mesh" mesh="g2_body_link3" class="g2_visual" material="mat_000000"/>
+            <geom name="body_link3_convex_0" type="mesh" mesh="g2_convex_body_link3" class="g2_collision"/>
+            <body name="body_link4">
+              <inertial pos="-0.0714498 0 0.0300405" quat="0 0.707107 0 0.707107" mass="6.25" diaginertia="0.0780649 0.0780649 0.0780649"/>
+              <joint name="idx04_body_joint4" pos="0 0 0" axis="1 0 0" range="-0.4364 0.4364" actuatorfrcrange="-50 50" damping="300.0"/>
+              <geom type="mesh" mesh="g2_body_link4_m0" class="g2_visual" material="mat_c3c3c3"/>
+              <geom type="mesh" mesh="g2_body_link4_m1" class="g2_visual" material="mat_000000"/>
+              <geom name="body_link4_convex_1" type="mesh" mesh="g2_convex_body_link4_1" class="g2_collision"/>
+              <geom name="body_link4_convex_2" type="mesh" mesh="g2_convex_body_link4_2" class="g2_collision"/>
+              <geom name="body_link4_convex_3" type="mesh" mesh="g2_convex_body_link4_3" class="g2_collision"/>
+              <body name="body_link5" pos="0 0 0.149">
+                <inertial pos="-0.0244424 0 0.136945" mass="7.9" diaginertia="0.249907 0.235349 0.0715655"/>
+                <joint name="idx05_body_joint5" pos="0 0 0" axis="0 0 1" range="-3.0456 3.0456" actuatorfrcrange="-50 50" damping="300.0"/>
+                <geom type="mesh" mesh="g2_body_link5_m0" class="g2_visual" material="mat_c3c3c3"/>
+                <geom type="mesh" mesh="g2_body_link5_m1" class="g2_visual" material="mat_000000"/>
+                <geom type="mesh" mesh="g2_body_link5_m2" class="g2_visual" material="mat_fa6e00"/>
+                <geom name="body_link5_convex_0" type="mesh" mesh="g2_convex_body_link5" class="g2_collision"/>
+                <body name="arm_base_link" pos="0 0 0.3085" quat="0.707107 -0.707107 0 0">
+                  <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06"/>
+                  <body name="arm_l_link1" pos="0 0 0.069">
+                    <inertial pos="1.875e-05 0.006003 0.1438" mass="2.0926" diaginertia="0.00524521 0.00455565 0.00237986"/>
+                    <joint name="idx21_arm_l_joint1" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-108 108" frictionloss="1" damping="10.0"/>
+                    <geom name="default_visual" type="mesh" mesh="arm_crs_arm_link1" class="g2_visual" material="mat_000000"/>
+                    <geom name="arm_l_link1_coarse_0" size="0.0630031" pos="-0.000495911 0 0.178532" class="g2_collision"/>
+                    <geom name="arm_l_link1_coarse_1" size="0.063101" pos="-0.00906754 -0.00452661 0.121429" class="g2_collision"/>
+                    <body name="arm_l_link2" pos="0 0 0.1745" quat="0.707105 0.707108 0 0">
+                      <inertial pos="-7.03e-06 0.05542 0.010995" quat="0.5 0.5 -0.5 0.5" mass="1.9432" diaginertia="0.00958569 0.00778924 0.00428622"/>
+                      <joint name="idx22_arm_l_joint2" pos="0 0 0" axis="0 0 1" range="-2.0595 2.0595" actuatorfrcrange="-108 108" frictionloss="1" damping="10.0"/>
+                      <geom type="mesh" mesh="arm_crs_arm_link2" class="g2_visual" material="mat_c3c3c3"/>
+                      <geom name="arm_l_link2_coarse_0" size="0.0749826" pos="-0.00497437 0.00695419 -0.013385" class="g2_collision"/>
+                      <geom name="arm_l_link2_coarse_1" size="0.0749834" pos="-0.00450134 0.00721741 0.0133584" class="g2_collision"/>
+                      <geom name="arm_l_link2_coarse_2" size="0.0616553" pos="0.00102234 0.10947 0.00125504" class="g2_collision"/>
+                      <body name="arm_l_link3" quat="0.707105 -0.707108 0 0">
+                        <inertial pos="0.0087411 0.0019043 0.23487" mass="1.6913" diaginertia="0.00610928 0.0057534 0.00165978"/>
+                        <joint name="idx23_arm_l_joint3" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                        <geom type="mesh" mesh="arm_crs_arm_link3" class="g2_visual" material="mat_c3c3c3"/>
+                        <geom name="arm_l_link3_coarse_0" size="0.0660352" pos="0.000732422 -0.00011957 0.195026" class="g2_collision"/>
+                        <geom name="arm_l_link3_coarse_1" size="0.0616288" pos="0.0148926 -0.00160574 0.284405" class="g2_collision"/>
+                        <body name="arm_l_link4" pos="0.018 0 0.287" quat="0.707105 0.707108 0 0">
+                          <inertial pos="-0.0086935 0.045984 0.011135" quat="0.5 0.5 -0.5 0.5" mass="1.5332" diaginertia="0.0054013 0.00422288 0.00279916"/>
+                          <joint name="idx24_arm_l_joint4" pos="0 0 0" axis="0 0 1" range="-2.4959 1.0123" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                          <geom type="mesh" mesh="arm_crs_arm_link4" class="g2_visual" material="mat_c3c3c3"/>
+                          <geom name="arm_l_link4_coarse_0" size="0.0699134" pos="-0.00317383 0.00458936 -0.0118336" class="g2_collision"/>
+                          <geom name="arm_l_link4_coarse_1" size="0.0690759" pos="-0.00482178 0.00458936 0.0118151" class="g2_collision"/>
+                          <geom name="arm_l_link4_coarse_2" size="0.0545313" pos="-0.0123291 0.0924999 0.00394058" class="g2_collision"/>
+                          <body name="arm_l_link5" pos="-0.018 0 0" quat="0.707105 -0.707108 0 0">
+                            <inertial pos="-0.00036467 0.0001479 0.19902" mass="2.0095" diaginertia="0.0060028 0.00530075 0.00255015"/>
+                            <joint name="idx25_arm_l_joint5" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                            <geom type="mesh" mesh="arm_crs_arm_link5" class="g2_visual" material="mat_c3c3c3"/>
+                            <geom name="arm_l_link5_coarse_0" size="0.052102" pos="0.00146484 0.0244125 0.217129" class="g2_collision"/>
+                            <geom name="arm_l_link5_coarse_1" size="0.05214" pos="-0.00158691 -0.0244813 0.217918" class="g2_collision"/>
+                            <geom name="arm_l_link5_coarse_2" size="0.052102" pos="0.00146484 0.0284125 0.287129" class="g2_collision"/>
+                            <geom name="arm_l_link5_coarse_3" size="0.05214" pos="-0.00158691 -0.0284813 0.289178" class="g2_collision"/>
+                            <geom name="arm_l_link5_coarse_4" size="0.0544705" pos="-0.000976563 0.00317946 0.156815" class="g2_collision"/>
+                            <body name="arm_l_link6" pos="0 0 0.314" quat="0.707105 0.707108 0 0">
+                              <inertial pos="-0.004911 0.00027206 -8.14e-05" mass="0.67002" diaginertia="0.000502625 0.000452202 0.00042586"/>
+                              <joint name="idx26_arm_l_joint6" pos="0 0 0" axis="0 0 1" range="-1.0123 1.0123" actuatorfrcrange="-18 18" frictionloss="0.2" damping="10.0"/>
+                              <geom type="mesh" mesh="arm_crs_arm_link6" class="g2_visual" material="mat_000000"/>
+                              <geom name="arm_l_link6_coarse_0" size="0.0523497" class="g2_collision"/>
+                              <body name="arm_l_link7" quat="0.499998 0.5 0.500002 0.5">
+                                <inertial pos="0.0451337 4.672e-05 0.00607482" quat="0.5 0.5 0.5 0.5" mass="0.31657" diaginertia="0.000847986 0.000640472 0.000422024"/>
+                                <joint name="idx27_arm_l_joint7" pos="0 0 0" axis="0 0 1" range="-1.5359 1.5359" actuatorfrcrange="-18 18" frictionloss="0.2" damping="10.0"/>
+                                <geom type="mesh" mesh="arm_crs_arm_link7" class="g2_visual" material="mat_000000"/>
+                                <geom name="arm_l_link7_coarse_0" size="0.04458" pos="0.0591483 0 0" class="g2_collision"/>
+                                <geom name="arm_l_link7_coarse_1" size="0.04458" pos="0 0 0.02" class="g2_collision"/>
+                                <geom name="arm_l_link7_coarse_2" size="0.04458" pos="0 0 -0.02" class="g2_collision"/>
+                                <body name="arm_l_end_link" pos="0.095 0 0" quat="-2.59734e-06 0.707105 2.59735e-06 0.707108">
+                                  <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06"/>
+                                  <body name="gripper_l_camera_link" quat="0.707107 0 0 0.707107">
+                                    <inertial pos="0.012045 0.074409 0.04124" quat="0 0.707107 0 0.707107" mass="0.22805" diaginertia="0.00315368 0.00287705 0.000351349"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_camera_link" class="g2_visual" material="mat_c3c3c3"/>
+                                    <geom name="gripper_l_camera_link_convex_0" type="mesh" mesh="gripper_omnipicker_convex_camera_link" class="g2_collision"/>
+                                  </body>
+                                  <body name="gripper_l_base_link" pos="0 0 0.0051" quat="0.707107 0 0 0.707107">
+                                    <inertial pos="-0.00013356 1.5301e-05 0.03322" mass="0.23588" diaginertia="0.000237595 0.00020119 0.000140512"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m0" class="g2_visual" material="mat_474643"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m1" class="g2_visual" material="mat_707070"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m2" class="g2_visual" material="mat_171717"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m3" class="g2_visual" material="mat_0a0a0a"/>
+                                    <geom name="gripper_l_base_link_convex_0" type="mesh" mesh="gripper_omnipicker_convex_base_link" class="g2_collision"/>
+                                    <body name="gripper_l_inner_link1" pos="0 -0.0195 0.0565" quat="0.707092 -0.00464826 -0.707092 -0.00464826">
+                                      <inertial pos="0.0094685 0.0068806 6.5437e-05" quat="0.5 0.5 -0.5 0.5" mass="0.025428" diaginertia="1.0471e-05 9.17208e-06 3.8334e-06"/>
+                                      <joint name="idx31_gripper_l_inner_joint1" pos="0 0 0" axis="0 0 1" range="-0.785398 0" actuatorfrcrange="-10 10" damping="0.5"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m1" class="g2_visual" material="mat_707070"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m2" class="g2_visual" material="mat_171717"/>
+                                      <geom name="gripper_l_inner_link1_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link1" class="g2_collision"/>
+                                      <body name="gripper_l_inner_link3" pos="0.030852 -0.018551 0" quat="0 1 0 0">
+                                        <inertial pos="0.0088027 -0.007035 1.6424e-05" quat="0.5 0.5 0.5 0.5" mass="0.0040132" diaginertia="3.84239e-07 3.61856e-07 7.91304e-08"/>
+                                        <joint name="idx32_gripper_l_inner_joint3" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_inner_link3_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_inner_link3_m1" class="g2_visual" material="mat_707070"/>
+                                        <geom name="gripper_l_inner_link3_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link3" class="g2_collision"/>
+                                        <body name="gripper_l_inner_link4" pos="0.018118 -0.01574 0">
+                                          <inertial pos="0.012508 -0.0079729 9.4339e-05" quat="0.5 0.5 0.5 0.5" mass="0.018029" diaginertia="4.22802e-06 3.98173e-06 1.34445e-06"/>
+                                          <joint name="idx33_gripper_l_inner_joint4" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m1" class="g2_visual" material="mat_707070"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m2" class="g2_visual" material="mat_474643"/>
+                                          <geom name="gripper_l_inner_link4_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link4" class="g2_collision"/>
+                                          <body name="gripper_l_inner_link2" pos="0 -0.01 0">
+                                            <inertial pos="0.014869 -0.0036066 0.00029307" quat="0.5 0.5 0.5 0.5" mass="0.022591" diaginertia="2.98054e-05 2.54035e-05 4.81132e-06"/>
+                                            <joint name="idx39_gripper_l_inner_joint0" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_inner_link2_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_inner_link2_m1" class="g2_visual" material="mat_707070"/>
+                                            <geom name="gripper_l_inner_link2_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link2" class="g2_collision"/>
+                                          </body>
+                                        </body>
+                                      </body>
+                                    </body>
+                                    <body name="gripper_l_outer_link1" pos="0 0.0195 0.0565" quat="0.707092 -0.00464826 -0.707092 -0.00464826">
+                                      <inertial pos="0.0095051 -0.0068479 6.8268e-05" quat="0.5 0.5 -0.5 0.5" mass="0.025428" diaginertia="1.04131e-05 9.14703e-06 3.8019e-06"/>
+                                      <joint name="idx41_gripper_l_outer_joint1" pos="0 0 0" axis="0 0 1" range="0 0.785398" actuatorfrcrange="-10 10" damping="0.5"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m1" class="g2_visual" material="mat_707070"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m2" class="g2_visual" material="mat_171717"/>
+                                      <geom name="gripper_l_outer_link1_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link1" class="g2_collision"/>
+                                      <body name="gripper_l_outer_link3" pos="0.030852 0.018551 0" quat="0 1 0 0">
+                                        <inertial pos="0.0088027 0.007035 -1.6424e-05" quat="0.5 0.5 0.5 0.5" mass="0.0040132" diaginertia="3.84239e-07 3.61856e-07 7.91304e-08"/>
+                                        <joint name="idx42_gripper_l_outer_joint3" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_outer_link3_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_outer_link3_m1" class="g2_visual" material="mat_707070"/>
+                                        <geom name="gripper_l_outer_link3_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link3" class="g2_collision"/>
+                                        <body name="gripper_l_outer_link4" pos="0.018118 0.01574 0">
+                                          <inertial pos="0.016206 0.0094593 4.7668e-05" mass="0.035835" diaginertia="1.72785e-05 1.14805e-05 5.89724e-06"/>
+                                          <joint name="idx43_gripper_l_outer_joint4" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m1" class="g2_visual" material="mat_707070"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m2" class="g2_visual" material="mat_474643"/>
+                                          <geom name="gripper_l_outer_link4_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link4" class="g2_collision"/>
+                                          <body name="gripper_l_outer_link2" pos="0 0.01 0">
+                                            <inertial pos="0.016268 0.0040555 0.00030323" quat="0.5 0.5 0.5 0.5" mass="0.025142" diaginertia="3.55715e-05 2.94437e-05 6.69628e-06"/>
+                                            <joint name="idx49_gripper_l_outer_joint0" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_outer_link2_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_outer_link2_m1" class="g2_visual" material="mat_707070"/>
+                                            <geom name="gripper_l_outer_link2_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link2" class="g2_collision"/>
+                                          </body>
+                                        </body>
+                                      </body>
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                  <body name="arm_r_link1" pos="0 0 -0.069" quat="0 1 0 0">
+                    <inertial pos="1.875e-05 0.006003 0.1438" mass="2.0926" diaginertia="0.00524521 0.00455565 0.00237986"/>
+                    <joint name="idx61_arm_r_joint1" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-108 108" frictionloss="1" damping="10.0"/>
+                    <geom type="mesh" mesh="arm_crs_arm_link1" class="g2_visual" material="mat_000000"/>
+                    <geom name="arm_r_link1_coarse_0" size="0.0630031" pos="-0.000495911 0 0.178532" class="g2_collision"/>
+                    <geom name="arm_r_link1_coarse_1" size="0.063101" pos="-0.00906754 -0.00452661 0.121429" class="g2_collision"/>
+                    <body name="arm_r_link2" pos="0 0 0.1745" quat="0.707107 0.707107 0 0">
+                      <inertial pos="-7.03e-06 0.05542 0.010995" quat="0.5 0.5 -0.5 0.5" mass="1.9432" diaginertia="0.00958569 0.00778924 0.00428622"/>
+                      <joint name="idx62_arm_r_joint2" pos="0 0 0" axis="0 0 1" range="-2.0595 2.0595" actuatorfrcrange="-108 108" frictionloss="1" damping="10.0"/>
+                      <geom type="mesh" mesh="arm_crs_arm_link2" class="g2_visual" material="mat_c3c3c3"/>
+                      <geom name="arm_r_link2_coarse_0" size="0.0749826" pos="-0.00497437 0.00695419 -0.013385" class="g2_collision"/>
+                      <geom name="arm_r_link2_coarse_1" size="0.0749834" pos="-0.00450134 0.00721741 0.0133584" class="g2_collision"/>
+                      <geom name="arm_r_link2_coarse_2" size="0.0616553" pos="0.00102234 0.10947 0.00125504" class="g2_collision"/>
+                      <body name="arm_r_link3" quat="0.707107 -0.707107 0 0">
+                        <inertial pos="0.0087411 0.0019043 0.23487" mass="1.6913" diaginertia="0.00610928 0.0057534 0.00165978"/>
+                        <joint name="idx63_arm_r_joint3" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                        <geom type="mesh" mesh="arm_crs_arm_link3" class="g2_visual" material="mat_c3c3c3"/>
+                        <geom name="arm_r_link3_coarse_0" size="0.0660352" pos="0.000732422 -0.00011957 0.195026" class="g2_collision"/>
+                        <geom name="arm_r_link3_coarse_1" size="0.0616288" pos="0.0148926 -0.00160574 0.284405" class="g2_collision"/>
+                        <body name="arm_r_link4" pos="0.018 0 0.287" quat="0.707107 0.707107 0 0">
+                          <inertial pos="-0.0086935 0.045984 0.011135" quat="0.5 0.5 -0.5 0.5" mass="1.5332" diaginertia="0.0054013 0.00422288 0.00279916"/>
+                          <joint name="idx64_arm_r_joint4" pos="0 0 0" axis="0 0 1" range="-2.4959 1.0123" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                          <geom type="mesh" mesh="arm_crs_arm_link4" class="g2_visual" material="mat_c3c3c3"/>
+                          <geom name="arm_r_link4_coarse_0" size="0.0699134" pos="-0.00317383 0.00458936 -0.0118336" class="g2_collision"/>
+                          <geom name="arm_r_link4_coarse_1" size="0.0690759" pos="-0.00482178 0.00458936 0.0118151" class="g2_collision"/>
+                          <geom name="arm_r_link4_coarse_2" size="0.0545313" pos="-0.0123291 0.0924999 0.00394058" class="g2_collision"/>
+                          <body name="arm_r_link5" pos="-0.018 0 0" quat="0.707107 -0.707107 0 0">
+                            <inertial pos="0.00036663 -0.00041429 0.198891" mass="1.9854" diaginertia="0.00592806 0.00523648 0.00251751"/>
+                            <joint name="idx65_arm_r_joint5" pos="0 0 0" axis="0 0 1" range="-3.0718 3.0718" actuatorfrcrange="-35 35" frictionloss="0.5" damping="10.0"/>
+                            <geom type="mesh" mesh="arm_crs_arm_link5" class="g2_visual" material="mat_c3c3c3"/>
+                            <geom name="arm_r_link5_coarse_0" size="0.052102" pos="0.00146484 0.0244125 0.217129" class="g2_collision"/>
+                            <geom name="arm_r_link5_coarse_1" size="0.05214" pos="-0.00158691 -0.0244813 0.217918" class="g2_collision"/>
+                            <geom name="arm_r_link5_coarse_2" size="0.052102" pos="0.00146484 0.0284125 0.287129" class="g2_collision"/>
+                            <geom name="arm_r_link5_coarse_3" size="0.05214" pos="-0.00158691 -0.0284813 0.289178" class="g2_collision"/>
+                            <geom name="arm_r_link5_coarse_4" size="0.0544705" pos="-0.000976563 0.00317946 0.156815" class="g2_collision"/>
+                            <body name="arm_r_link6" pos="0 0 0.314" quat="0.707107 0.707107 0 0">
+                              <inertial pos="-0.00458177 -0.00027029 9.098e-05" mass="0.645948" diaginertia="0.000484494 0.00043524 0.000409886"/>
+                              <joint name="idx66_arm_r_joint6" pos="0 0 0" axis="0 0 1" range="-1.0123 1.0123" actuatorfrcrange="-18 18" frictionloss="0.2" damping="10.0"/>
+                              <geom type="mesh" mesh="arm_crs_arm_link6" class="g2_visual" material="mat_000000"/>
+                              <geom name="arm_r_link6_coarse_0" size="0.0523497" class="g2_collision"/>
+                              <body name="arm_r_link7" quat="0.5 0.5 0.5 0.5">
+                                <inertial pos="0.0451337 4.672e-05 0.00607482" quat="0.5 0.5 0.5 0.5" mass="0.31658" diaginertia="0.000848013 0.000640492 0.000422037"/>
+                                <joint name="idx67_arm_r_joint7" pos="0 0 0" axis="0 0 1" range="-1.5359 1.5359" actuatorfrcrange="-18 18" frictionloss="0.2" damping="10.0"/>
+                                <geom type="mesh" mesh="arm_crs_arm_link7" class="g2_visual" material="mat_000000"/>
+                                <geom name="arm_r_link7_coarse_0" size="0.04458" pos="0.0591483 0 0" class="g2_collision"/>
+                                <geom name="arm_r_link7_coarse_1" size="0.04458" pos="0 0 0.02" class="g2_collision"/>
+                                <geom name="arm_r_link7_coarse_2" size="0.04458" pos="0 0 -0.02" class="g2_collision"/>
+                                <body name="arm_r_end_link" pos="0.095 0 0" quat="0 0.707107 0 0.707107">
+                                  <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06"/>
+                                  <body name="gripper_r_camera_link" quat="0.707107 0 0 -0.707107">
+                                    <inertial pos="0.012045 0.074409 0.04124" quat="0 0.707107 0 0.707107" mass="0.22805" diaginertia="0.00315368 0.00287705 0.000351349"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_camera_link" class="g2_visual" material="mat_c3c3c3"/>
+                                    <geom name="gripper_r_camera_link_convex_0" type="mesh" mesh="gripper_omnipicker_convex_camera_link" class="g2_collision"/>
+                                  </body>
+                                  <body name="gripper_r_base_link" pos="0 0 0.0051" quat="0.707107 0 0 0.707107">
+                                    <inertial pos="-0.00013356 1.5301e-05 0.03322" mass="0.23588" diaginertia="0.000237595 0.00020119 0.000140512"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m0" class="g2_visual" material="mat_474643"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m1" class="g2_visual" material="mat_707070"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m2" class="g2_visual" material="mat_171717"/>
+                                    <geom type="mesh" mesh="gripper_omnipicker_base_link_m3" class="g2_visual" material="mat_0a0a0a"/>
+                                    <geom name="gripper_r_base_link_convex_0" type="mesh" mesh="gripper_omnipicker_convex_base_link" class="g2_collision"/>
+                                    <body name="gripper_r_inner_link1" pos="0 -0.0195 0.0565" quat="0.707092 -0.00464826 -0.707092 -0.00464826">
+                                      <inertial pos="0.0094685 0.0068806 6.5437e-05" quat="0.5 0.5 -0.5 0.5" mass="0.025428" diaginertia="1.0471e-05 9.17208e-06 3.8334e-06"/>
+                                      <joint name="idx71_gripper_r_inner_joint1" pos="0 0 0" axis="0 0 1" range="-0.785398 0" actuatorfrcrange="-10 10" damping="0.5"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m1" class="g2_visual" material="mat_707070"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_inner_link1_m2" class="g2_visual" material="mat_171717"/>
+                                      <geom name="gripper_r_inner_link1_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link1" class="g2_collision"/>
+                                      <body name="gripper_r_inner_link3" pos="0.030852 -0.018551 0" quat="0 1 0 0">
+                                        <inertial pos="0.0088027 -0.007035 1.6424e-05" quat="0.5 0.5 0.5 0.5" mass="0.0040132" diaginertia="3.84239e-07 3.61856e-07 7.91304e-08"/>
+                                        <joint name="idx72_gripper_r_inner_joint3" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_inner_link3_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_inner_link3_m1" class="g2_visual" material="mat_707070"/>
+                                        <geom name="gripper_r_inner_link3_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link3" class="g2_collision"/>
+                                        <body name="gripper_r_inner_link4" pos="0.018118 -0.01574 0">
+                                          <inertial pos="0.012508 -0.0079729 9.4339e-05" quat="0.5 0.5 0.5 0.5" mass="0.018029" diaginertia="4.22802e-06 3.98173e-06 1.34445e-06"/>
+                                          <joint name="idx73_gripper_r_inner_joint4" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m1" class="g2_visual" material="mat_707070"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_inner_link4_m2" class="g2_visual" material="mat_474643"/>
+                                          <geom name="gripper_r_inner_link4_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link4" class="g2_collision"/>
+                                          <body name="gripper_r_inner_link2" pos="0 -0.01 0">
+                                            <inertial pos="0.014869 -0.0036066 0.00029307" quat="0.5 0.5 0.5 0.5" mass="0.022591" diaginertia="2.98054e-05 2.54035e-05 4.81132e-06"/>
+                                            <joint name="idx79_gripper_r_inner_joint0" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_inner_link2_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_inner_link2_m1" class="g2_visual" material="mat_707070"/>
+                                            <geom name="gripper_r_inner_link2_convex_0" type="mesh" mesh="gripper_omnipicker_convex_inner_link2" class="g2_collision"/>
+                                          </body>
+                                        </body>
+                                      </body>
+                                    </body>
+                                    <body name="gripper_r_outer_link1" pos="0 0.0195 0.0565" quat="0.707092 -0.00464826 -0.707092 -0.00464826">
+                                      <inertial pos="0.0095051 -0.0068479 6.8268e-05" quat="0.5 0.5 -0.5 0.5" mass="0.025428" diaginertia="1.04131e-05 9.14703e-06 3.8019e-06"/>
+                                      <joint name="idx81_gripper_r_outer_joint1" pos="0 0 0" axis="0 0 1" range="0 0.785398" actuatorfrcrange="-10 10" damping="0.5"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m1" class="g2_visual" material="mat_707070"/>
+                                      <geom type="mesh" mesh="gripper_omnipicker_outer_link1_m2" class="g2_visual" material="mat_171717"/>
+                                      <geom name="gripper_r_outer_link1_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link1" class="g2_collision"/>
+                                      <body name="gripper_r_outer_link3" pos="0.030852 0.018551 0" quat="0 1 0 0">
+                                        <inertial pos="0.0088027 0.007035 -1.6424e-05" quat="0.5 0.5 0.5 0.5" mass="0.0040132" diaginertia="3.84239e-07 3.61856e-07 7.91304e-08"/>
+                                        <joint name="idx82_gripper_r_outer_joint3" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_outer_link3_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                        <geom type="mesh" mesh="gripper_omnipicker_outer_link3_m1" class="g2_visual" material="mat_707070"/>
+                                        <geom name="gripper_r_outer_link3_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link3" class="g2_collision"/>
+                                        <body name="gripper_r_outer_link4" pos="0.018118 0.01574 0">
+                                          <inertial pos="0.016206 0.0094593 4.7668e-05" mass="0.035835" diaginertia="1.72785e-05 1.14805e-05 5.89724e-06"/>
+                                          <joint name="idx83_gripper_r_outer_joint4" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m1" class="g2_visual" material="mat_707070"/>
+                                          <geom type="mesh" mesh="gripper_omnipicker_outer_link4_m2" class="g2_visual" material="mat_474643"/>
+                                          <geom name="gripper_r_outer_link4_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link4" class="g2_collision"/>
+                                          <body name="gripper_r_outer_link2" pos="0 0.01 0">
+                                            <inertial pos="0.016268 0.0040555 0.00030323" quat="0.5 0.5 0.5 0.5" mass="0.025142" diaginertia="3.55715e-05 2.94437e-05 6.69628e-06"/>
+                                            <joint name="idx89_gripper_r_outer_joint0" pos="0 0 0" axis="0 0 1" range="-2 2" actuatorfrcrange="-10 10" damping="0.5"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_outer_link2_m0" class="g2_visual" material="mat_0a0a0a"/>
+                                            <geom type="mesh" mesh="gripper_omnipicker_outer_link2_m1" class="g2_visual" material="mat_707070"/>
+                                            <geom name="gripper_r_outer_link2_convex_0" type="mesh" mesh="gripper_omnipicker_convex_outer_link2" class="g2_collision"/>
+                                          </body>
+                                        </body>
+                                      </body>
+                                    </body>
+                                  </body>
+                                </body>
+                              </body>
+                            </body>
+                          </body>
+                        </body>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+                <body name="head_base_link" pos="-0.013 0 0.496">
+                  <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06"/>
+                </body>
+                <body name="head_link1" pos="-0.013 0 0.496">
+                  <inertial pos="0 0 -0.0288855" mass="0.245638" diaginertia="0.000600158 0.000600158 0.000600158"/>
+                  <joint name="idx11_head_joint1" pos="0 0 0" axis="0 0 1" range="-0.781 0.781" actuatorfrcrange="-50 50" damping="3.0"/>
+                  <geom type="mesh" mesh="g2_head_link1" class="g2_visual" material="mat_000000"/>
+                  <body name="head_link2" pos="0.03335 0 0.07">
+                    <inertial pos="-0.0363591 0 0" quat="0.5 0.5 0.5 0.5" mass="0.0944987" diaginertia="5.3548e-05 5.04287e-05 3.51098e-05"/>
+                    <joint name="idx12_head_joint2" pos="0 0 0" axis="1 0 0" range="-0.151 0.151" actuatorfrcrange="-50 50" damping="3.0"/>
+                    <geom type="mesh" mesh="g2_head_link2" class="g2_visual" material="mat_000000"/>
+                    <body name="head_link3" pos="-0.03035 0 0">
+                      <camera name="head_cam" pos="0.06 0 0.05" xyaxes="0 -1 0 0 0 1" fovy="58"/>
+                      <inertial pos="-0.00327293 0 0.0163618" mass="2.5" diaginertia="0.0175895 0.0142253 0.0106342"/>
+                      <joint name="idx13_head_joint3" pos="0 0 0" axis="0 1 0" range="-0.0181 0.5231" actuatorfrcrange="-50 50" damping="3.0"/>
+                      <geom type="mesh" mesh="g2_head_link3_m0" class="g2_visual" material="mat_000000"/>
+                      <geom type="mesh" mesh="g2_head_link3_m1" class="g2_visual" material="mat_fa6e00"/>
+                      <geom name="head_link3_convex_0" type="mesh" mesh="g2_convex_head_link3" class="g2_collision"/>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+      <body name="chassis_link">
+        <inertial pos="0 0 0" mass="0.001" diaginertia="1e-06 1e-06 1e-06"/>
+        <body name="chassis_lwheel_front_link1" pos="0.23 0.218 0.16675">
+          <inertial pos="4.8347e-05 -0.021386 -0.055149" mass="0.59301" diaginertia="0.00116226 0.00109456 0.000271251"/>
+          <geom type="mesh" mesh="g2_chassis_lwheel_front_link1" class="g2_visual" material="mat_000000"/>
+          <body name="chassis_lwheel_front_link2" pos="0 -5e-05 -0.13675">
+            <inertial pos="-2.3442e-06 -0.0013086 1.0892e-05" quat="0.5 0.5 0.5 0.5" mass="3.6283" diaginertia="0.00828771 0.00571362 0.00538079"/>
+            <joint name="idx112_chassis_lwheel_front_joint2" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-8 8"/>
+            <geom type="mesh" mesh="g2_chassis_lwheel_front_link2" class="g2_visual" material="mat_000000"/>
+            <geom name="chassis_lwheel_front_link2_tyre" size="0.07 0.02" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision" condim="3" friction="0.5 0.01 0.001" priority="2" contype="2" conaffinity="1" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="chassis_rwheel_front_link1" pos="0.23 -0.218 0.16675">
+          <inertial pos="-4.8347e-05 0.021386 -0.055149" mass="0.59301" diaginertia="0.00116226 0.00109456 0.000271251"/>
+          <geom type="mesh" mesh="g2_chassis_rwheel_front_link1" class="g2_visual" material="mat_000000"/>
+          <body name="chassis_rwheel_front_link2" pos="0 5e-05 -0.13675">
+            <inertial pos="2.3442e-06 0.0013086 1.0892e-05" quat="0.5 0.5 0.5 0.5" mass="3.6283" diaginertia="0.00828771 0.00571362 0.00538079"/>
+            <joint name="idx132_chassis_rwheel_front_joint2" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-8 8"/>
+            <geom type="mesh" mesh="g2_chassis_rwheel_front_link2" class="g2_visual" material="mat_000000"/>
+            <geom name="chassis_rwheel_front_link2_tyre" size="0.07 0.02" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision" condim="3" friction="0.5 0.01 0.001" priority="2" contype="2" conaffinity="1" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="chassis_rwheel_rear_link1" pos="-0.23 -0.218 0.16675">
+          <inertial pos="-4.8347e-05 0.021386 -0.055149" mass="0.59301" diaginertia="0.00116226 0.00109456 0.000271251"/>
+          <geom type="mesh" mesh="g2_chassis_rwheel_rear_link1" class="g2_visual" material="mat_000000"/>
+          <body name="chassis_rwheel_rear_link2" pos="0 5e-05 -0.13675">
+            <inertial pos="2.3442e-06 0.0013086 1.0892e-05" quat="0.5 0.5 0.5 0.5" mass="3.6283" diaginertia="0.00828771 0.00571362 0.00538079"/>
+            <joint name="idx142_chassis_rwheel_rear_joint2" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-8 8"/>
+            <geom type="mesh" mesh="g2_chassis_rwheel_rear_link2" class="g2_visual" material="mat_000000"/>
+            <geom name="chassis_rwheel_rear_link2_tyre" size="0.07 0.02" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision" condim="3" friction="0.5 0.01 0.001" priority="2" contype="2" conaffinity="1" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+        <body name="chassis_lwheel_rear_link1" pos="-0.23 0.218 0.16675">
+          <inertial pos="4.8347e-05 -0.021386 -0.055149" mass="0.59301" diaginertia="0.00116226 0.00109456 0.000271251"/>
+          <geom type="mesh" mesh="g2_chassis_lwheel_rear_link1" class="g2_visual" material="mat_000000"/>
+          <body name="chassis_lwheel_rear_link2" pos="0 -5e-05 -0.13675">
+            <inertial pos="-2.3442e-06 -0.0013086 1.0892e-05" quat="0.5 0.5 0.5 0.5" mass="3.6283" diaginertia="0.00828771 0.00571362 0.00538079"/>
+            <joint name="idx122_chassis_lwheel_rear_joint2" pos="0 0 0" axis="0 1 0" actuatorfrcrange="-8 8"/>
+            <geom type="mesh" mesh="g2_chassis_lwheel_rear_link2" class="g2_visual" material="mat_000000"/>
+            <geom name="chassis_lwheel_rear_link2_tyre" size="0.07 0.02" quat="0.707107 0.707107 0 0" type="cylinder" class="g2_collision" condim="3" friction="0.5 0.01 0.001" priority="2" contype="2" conaffinity="1" rgba="0.05 0.05 0.05 1"/>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <!-- wheel velocity servos (diff-drive: left pair / right pair together) -->
+    <velocity name="m_112_chassis_lwheel_front_joint2" joint="idx112_chassis_lwheel_front_joint2" kv="30" ctrlrange="-40 40" forcerange="-60 60"/>
+    <velocity name="m_132_chassis_rwheel_front_joint2" joint="idx132_chassis_rwheel_front_joint2" kv="30" ctrlrange="-40 40" forcerange="-60 60"/>
+    <velocity name="m_142_chassis_rwheel_rear_joint2" joint="idx142_chassis_rwheel_rear_joint2" kv="30" ctrlrange="-40 40" forcerange="-60 60"/>
+    <velocity name="m_122_chassis_lwheel_rear_joint2" joint="idx122_chassis_lwheel_rear_joint2" kv="30" ctrlrange="-40 40" forcerange="-60 60"/>
+    <!-- torso / head / arms / gripper position servos -->
+    <position name="p_01_body_joint1" joint="idx01_body_joint1" kp="8000" forcerange="-300 300" inheritrange="1"/>
+    <position name="p_02_body_joint2" joint="idx02_body_joint2" kp="8000" forcerange="-300 300" inheritrange="1"/>
+    <position name="p_03_body_joint3" joint="idx03_body_joint3" kp="8000" forcerange="-300 300" inheritrange="1"/>
+    <position name="p_04_body_joint4" joint="idx04_body_joint4" kp="8000" forcerange="-300 300" inheritrange="1"/>
+    <position name="p_05_body_joint5" joint="idx05_body_joint5" kp="8000" forcerange="-300 300" inheritrange="1"/>
+    <position name="p_11_head_joint1" joint="idx11_head_joint1" kp="200" forcerange="-50 50" inheritrange="1"/>
+    <position name="p_12_head_joint2" joint="idx12_head_joint2" kp="200" forcerange="-50 50" inheritrange="1"/>
+    <position name="p_13_head_joint3" joint="idx13_head_joint3" kp="200" forcerange="-50 50" inheritrange="1"/>
+    <position name="p_21_arm_l_joint1" joint="idx21_arm_l_joint1" kp="800" forcerange="-108 108" inheritrange="1"/>
+    <position name="p_22_arm_l_joint2" joint="idx22_arm_l_joint2" kp="800" forcerange="-108 108" inheritrange="1"/>
+    <position name="p_23_arm_l_joint3" joint="idx23_arm_l_joint3" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_24_arm_l_joint4" joint="idx24_arm_l_joint4" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_25_arm_l_joint5" joint="idx25_arm_l_joint5" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_26_arm_l_joint6" joint="idx26_arm_l_joint6" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_27_arm_l_joint7" joint="idx27_arm_l_joint7" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_61_arm_r_joint1" joint="idx61_arm_r_joint1" kp="800" forcerange="-108 108" inheritrange="1"/>
+    <position name="p_62_arm_r_joint2" joint="idx62_arm_r_joint2" kp="800" forcerange="-108 108" inheritrange="1"/>
+    <position name="p_63_arm_r_joint3" joint="idx63_arm_r_joint3" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_64_arm_r_joint4" joint="idx64_arm_r_joint4" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_65_arm_r_joint5" joint="idx65_arm_r_joint5" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_66_arm_r_joint6" joint="idx66_arm_r_joint6" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_67_arm_r_joint7" joint="idx67_arm_r_joint7" kp="800" forcerange="-35 35" inheritrange="1"/>
+    <position name="p_31_gripper_l_inner_joint1" joint="idx31_gripper_l_inner_joint1" kp="50" forcerange="-10 10" inheritrange="1"/>
+    <position name="p_71_gripper_r_inner_joint1" joint="idx71_gripper_r_inner_joint1" kp="50" forcerange="-10 10" inheritrange="1"/>
+  </actuator>
+  <equality>
+    <joint joint1="idx32_gripper_l_inner_joint3" joint2="idx31_gripper_l_inner_joint1" polycoef="0 0.1 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx33_gripper_l_inner_joint4" joint2="idx31_gripper_l_inner_joint1" polycoef="0 0.25 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx39_gripper_l_inner_joint0" joint2="idx31_gripper_l_inner_joint1" polycoef="0 -0.7 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx41_gripper_l_outer_joint1" joint2="idx31_gripper_l_inner_joint1" polycoef="0 -1.0 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx42_gripper_l_outer_joint3" joint2="idx31_gripper_l_inner_joint1" polycoef="0 0.1 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx43_gripper_l_outer_joint4" joint2="idx31_gripper_l_inner_joint1" polycoef="0 -0.25 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx49_gripper_l_outer_joint0" joint2="idx31_gripper_l_inner_joint1" polycoef="0 0.7 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx72_gripper_r_inner_joint3" joint2="idx71_gripper_r_inner_joint1" polycoef="0 0.1 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx73_gripper_r_inner_joint4" joint2="idx71_gripper_r_inner_joint1" polycoef="0 0.25 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx79_gripper_r_inner_joint0" joint2="idx71_gripper_r_inner_joint1" polycoef="0 -0.7 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx81_gripper_r_outer_joint1" joint2="idx71_gripper_r_inner_joint1" polycoef="0 -1.0 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx82_gripper_r_outer_joint3" joint2="idx71_gripper_r_inner_joint1" polycoef="0 0.1 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx83_gripper_r_outer_joint4" joint2="idx71_gripper_r_inner_joint1" polycoef="0 -0.25 0 0 0" solimp="0.95 0.99 0.001"/>
+    <joint joint1="idx89_gripper_r_outer_joint0" joint2="idx71_gripper_r_inner_joint1" polycoef="0 0.7 0 0 0" solimp="0.95 0.99 0.001"/>
+  </equality>
+  <sensor>
+    <framepos name="base_pos" objtype="site" objname="base_imu"/>
+    <framequat name="base_quat" objtype="site" objname="base_imu"/>
+    <framelinvel name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel name="base_angvel" objtype="site" objname="base_imu"/>
+    <gyro name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc" site="base_imu"/>
+    <jointvel name="vel_112_chassis_lwheel_front_joint2" joint="idx112_chassis_lwheel_front_joint2"/>
+    <jointvel name="vel_132_chassis_rwheel_front_joint2" joint="idx132_chassis_rwheel_front_joint2"/>
+    <jointvel name="vel_142_chassis_rwheel_rear_joint2" joint="idx142_chassis_rwheel_rear_joint2"/>
+    <jointvel name="vel_122_chassis_lwheel_rear_joint2" joint="idx122_chassis_lwheel_rear_joint2"/>
+    <jointpos name="pos_01_body_joint1" joint="idx01_body_joint1"/>
+    <jointpos name="pos_02_body_joint2" joint="idx02_body_joint2"/>
+    <jointpos name="pos_03_body_joint3" joint="idx03_body_joint3"/>
+    <jointpos name="pos_04_body_joint4" joint="idx04_body_joint4"/>
+    <jointpos name="pos_05_body_joint5" joint="idx05_body_joint5"/>
+    <jointpos name="pos_11_head_joint1" joint="idx11_head_joint1"/>
+    <jointpos name="pos_12_head_joint2" joint="idx12_head_joint2"/>
+    <jointpos name="pos_13_head_joint3" joint="idx13_head_joint3"/>
+    <jointpos name="pos_21_arm_l_joint1" joint="idx21_arm_l_joint1"/>
+    <jointpos name="pos_22_arm_l_joint2" joint="idx22_arm_l_joint2"/>
+    <jointpos name="pos_23_arm_l_joint3" joint="idx23_arm_l_joint3"/>
+    <jointpos name="pos_24_arm_l_joint4" joint="idx24_arm_l_joint4"/>
+    <jointpos name="pos_25_arm_l_joint5" joint="idx25_arm_l_joint5"/>
+    <jointpos name="pos_26_arm_l_joint6" joint="idx26_arm_l_joint6"/>
+    <jointpos name="pos_27_arm_l_joint7" joint="idx27_arm_l_joint7"/>
+    <jointpos name="pos_61_arm_r_joint1" joint="idx61_arm_r_joint1"/>
+    <jointpos name="pos_62_arm_r_joint2" joint="idx62_arm_r_joint2"/>
+    <jointpos name="pos_63_arm_r_joint3" joint="idx63_arm_r_joint3"/>
+    <jointpos name="pos_64_arm_r_joint4" joint="idx64_arm_r_joint4"/>
+    <jointpos name="pos_65_arm_r_joint5" joint="idx65_arm_r_joint5"/>
+    <jointpos name="pos_66_arm_r_joint6" joint="idx66_arm_r_joint6"/>
+    <jointpos name="pos_67_arm_r_joint7" joint="idx67_arm_r_joint7"/>
+    <jointpos name="pos_31_gripper_l_inner_joint1" joint="idx31_gripper_l_inner_joint1"/>
+    <jointpos name="pos_71_gripper_r_inner_joint1" joint="idx71_gripper_r_inner_joint1"/>
+  </sensor>
+  <keyframe>
+    <!-- Arms hanging straight down beside the torso (shoulder roll/swing, elbow straight: left
+         idx21/22 = +1.7/-1.6, right idx61/62 = -1.7/-1.6; elbows idx24/64 = 0; all else 0). This
+         keyframe only serves standalone loads (bare mj_resetDataKeyframe / MuJoCo viewer) --
+         spawn_robot strips it on attach, where the pose is instead applied by agibot_g2_controller's
+         `rest` stance (kept equal to these values so both paths agree). -->
+    <key name="home" qpos="0 0 0.041 1 0 0 0 0 0 0 0 0 1.7 -1.6 0 0 0 0 0 0 0 0 0 0 0 0 0 -1.7 -1.6 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0"/>
+  </keyframe>
+</mujoco>

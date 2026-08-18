@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_webctrl"
+version = "0.1.0"
+description = "robotics-site-ops (rso_web) integration for roqsim: the reusable sim-control plugin web.yaml fragment."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_webctrl = ["web/*.web.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>roqsim_walker_ros</name>
+  <version>0.1.0</version>
+  <description>
+    ROS 2 goal interface for roqsim walkers. Registers a nav2 NavigateThroughPoses
+    action handler into the roqsim_ros_bridge handler registry (via the
+    roqsim_ros_bridge.extensions entry point), so a pedestrian can be commanded
+    through a list of poses. The core bridge stays nav2-free; roqsim_walker stays
+    ROS-free.
+  </description>
+  <maintainer email="frederik.pasch@h-ka.de">Frederik Pasch</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>roqsim_ros_bridge</exec_depend>
+
+  <!-- roqsim and roqsim_walker are plain pip packages (not ROS packages);
+       install them into the same environment (pip install -e .). They are
+       intentionally not ROS deps. -->
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

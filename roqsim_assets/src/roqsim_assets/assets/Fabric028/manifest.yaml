@@ -1,0 +1,5 @@
+# Surface properties for this floor texture, read by the floorplan/scene plugins.
+# reflectance: MuJoCo material reflectance (0..1); higher = more mirror-like floor.
+# physical_size: real-world size (m) the image spans, so it tiles at true scale.
+reflectance: 0.02     # textile carpet — matte, essentially no specular
+physical_size: 1.2    # ambientCG lists no dimensions for this scan; 1.2 m reads as ~50 cm carpet tiles

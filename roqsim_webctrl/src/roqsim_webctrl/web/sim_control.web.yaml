@@ -1,0 +1,18 @@
+# Reusable rso_web fragment: the sim-control plugin. Drop this `plugins:` entry into a scene's
+# web.yaml to get a bottom-right music-player-style transport (play/pause, step, step-many, reset) with a
+# live /clock readout and real-time factor. It drives the standard simulation_interfaces services
+# (set_simulation_state / step_simulation / reset_simulation / get_simulation_state) that
+# roqsim_ros_bridge already exposes, so it works with any roqsim scene -- nothing here is
+# scene-specific.
+#
+# `namespace` is optional: set it if the services are namespaced (e.g. per-robot "/r1"); leave empty
+# for the default global services.
+# `steps` is how many physics steps one Step click runs (StepSimulation.steps; default 1).
+# `manySteps` is how many physics steps the Step-many click runs (default steps * 10).
+# `clockTopic` is the sim-time topic for the readout (default "/clock"; a global topic, not namespaced).
+plugins:
+  - id: sim-control
+    placement: bottom-right
+    namespace: ""
+    steps: 10
+    manySteps: 200

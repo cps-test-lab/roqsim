@@ -1,0 +1,52 @@
+# Three walkers sharing a room -- the standalone (ROS-free) walker demo. A visitor patrols the
+# perimeter square while the two Open-RMF actors shuttle across the middle.
+#
+#   roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
+#
+# The default `empty_room` world is a walled room, so each walker rasterizes its perimeter walls into
+# an occupancy grid and plans around them with A* (the patrol waypoints sit well inside the walls, so
+# the routes are unobstructed). A truly open world (e.g. a wall-less MJCF via `sim.world`) skips the
+# grid and the walkers follow straight-line legs.
+#
+# Multiple `walker` plugins share one controller (one ORCA simulation sees them all). The shuttles
+# cross in the centre; with `avoidance: false` (default) they pass through each other. Flip it to
+# `avoidance: true` (needs the extra: pip install -e 'roqsim_walker[avoidance]') and they yield.
+
+sim:
+  pacing: realtime
+
+plugins:
+  - walker:
+      walker: MaleVisitorWalk
+      name: pedestrian
+      speed: 1.2
+      loop: true
+      arrival_radius: 0.25
+      avoidance: false
+      waypoints:
+        - [-2.0, -2.0]
+        - [ 2.0, -2.0, [2, 4]]   # stand idle here for 2-4 s
+        - [ 2.0,  2.0]
+        - [-2.0,  2.0, [1, 3]]
+
+  - walker:
+      walker: FemaleVisitorWalk    # Open-RMF actor (CC-BY 4.0); T-posed but +X-facing (flip: false)
+      name: visitor_f
+      speed: 1.0
+      loop: true
+      arrival_radius: 0.25
+      avoidance: false
+      waypoints:
+        - [-1.5,  0.0]
+        - [ 1.5,  0.0, [1, 3]]     # shuttle east-west across the middle
+
+  - walker:
+      walker: MaleVisitorWalk      # Open-RMF actor (CC0)
+      name: visitor_m
+      speed: 1.4
+      loop: true
+      arrival_radius: 0.25
+      avoidance: false
+      waypoints:
+        - [ 0.0, -1.5]
+        - [ 0.0,  1.5, [1, 3]]     # shuttle north-south, crossing the female's path

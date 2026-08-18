@@ -1,0 +1,27 @@
+The visual mesh roqsim_sensors/models/d415/meshes/d415.obj is converted (STL -> OBJ, decimated to
+~12.7k triangles for real-time rendering, shipped in metres) from d415.stl in:
+
+    https://github.com/IntelRealSense/realsense-ros
+    (realsense2_description/meshes/d415.stl)
+
+That repository (and this mesh) is licensed Apache License 2.0:
+
+    Copyright 2023 RealSense, Inc.
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+    except in compliance with the License. You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software distributed under the
+    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+    either express or implied. See the License for the specific language governing permissions
+    and limitations under the License.
+
+The mesh keeps the source's native frame -- x = the ~99 mm long bar the lenses are arrayed across,
+y = height ~23 mm, z = depth ~20 mm with +z the lens face's outward normal -- the same convention as
+the d435 and d455 meshes, so no reorientation was applied.
+
+The `d415_color` camera pose baked into roqsim_sensors/models/d415/d415.xml is placed on the front lens
+face in that mesh-local frame; its `fovy` is the D415 colour vertical FOV from the datasheet, not a
+value measured off the mesh.

@@ -1,0 +1,16 @@
+# Default controller + sensors shipped with the unitree_g1 robot description.
+#
+# `spawn_robot: {model: unitree_g1}` pulls these in automatically (via SpawnRobotPlugin.expand ->
+# expand_manifest), so a world does not re-declare the robot's intrinsic locomotion/sensors. To
+# override a default, declare the same plugin for the same robot in the world; to opt out entirely,
+# set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
+# spawn_robot `name`.
+#
+# lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so the
+# G1 publishes /scan for nav2 exactly like the turtlebot does.
+plugins:
+  - g1_locomotion: {}                              # RL walking policy + PD; gains/config bundled
+  - lidar:
+      site: lidar
+      rays: 360
+      max_range: 12.0

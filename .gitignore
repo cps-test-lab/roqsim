@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+**/.env
+
+# Virtual environment
+.venv/
+
+# Docs build
+build/
+
+# colcon
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+install/
+log/
+
+MUJOCO_LOG.TXT
+
+# Upstream trees fetched by external/convert/sources.py -- whole pinned git clones (hundreds of MB for
+# unitree_ros). Nothing under external/sources/ is ever tracked: only the DERIVED model + meshes are,
+# with provenance in the owning package's THIRD_PARTY.md. The managed block below lists individual
+# manual-download files under the same directory; this covers the fetched trees as a whole.
+external/sources/
+
+# BEGIN external-resources (managed by external/external_resources.py -- do not edit)
+external/.venv-tools/
+external/sources/livox/mid-360-asm.stp
+roqsim_sensors/src/roqsim_sensors/models/mid360/meshes/mid360_body.obj
+roqsim_sensors/src/roqsim_sensors/models/mid360/meshes/mid360_dome.obj
+roqsim_quadruped/src/roqsim_quadruped/policy/spot_policy.pt
+roqsim_quadruped/src/roqsim_quadruped/policy/spot_env.yaml
+external/sources/zivid/zivid3.stl
+roqsim_sensors/src/roqsim_sensors/models/zivid/meshes/zivid_body.obj
+roqsim_sensors/src/roqsim_sensors/models/zivid/meshes/zivid_fov.obj
+external/sources/seyond/robin-w1g.stp
+roqsim_sensors/src/roqsim_sensors/models/robin_w1g/meshes/robin_w1g_body.obj
+# END external-resources
+
+# roqsim_scenes 'depot' scene: the tessellated source meshes + textures (~43 MB) are regenerable from
+# the pinned Fuel model (scenes/depot/assets.lock.json) via tools/sdf_to_scene.py. Only the baked
+# world under worlds/depot/ is committed (the runtime package data); scene.json + assets.lock.json +
+# depot.sdf + CREDITS.txt stay tracked as the port's provenance + re-bake recipe.
+roqsim_scenes/src/roqsim_scenes/scenes/depot/meshes/
+roqsim_scenes/src/roqsim_scenes/scenes/depot/textures/
+
+# `roqsim sensors coverage` / the sensor_coverage_probe plugin write their report here by default
+# (report.json + the 2D/3D figures). Anchored: roqsim_sensors/src/roqsim_sensors/coverage/ is source.
+/coverage/

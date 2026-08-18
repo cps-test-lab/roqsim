@@ -1,0 +1,165 @@
+<mujoco model="turtlebot3_waffle">
+  <!--
+    ROBOTIS TurtleBot3 Waffle (differential drive) for MuJoCo.
+
+    Ported to reconstruct Hussain et al., *Navigating the Maze Environment in ROS-2*, ICRAI 2024,
+    whose `robot.platform` is turtlebot3_waffle.
+
+    Geometry, masses and inertias come from ROBOTIS's own MuJoCo model
+    (robotis_mujoco_menagerie/robotis_tb3 @ d8344c0, Apache-2.0 -- see turtlebot3_waffle_LICENSE),
+    cross-checked against turtlebot3_description:
+        wheel radius 0.033 m, width 0.0184 m, track (wheel separation) 0.288 m;
+        chassis plate 0.272 x 0.276 m; datasheet hull 0.281 x 0.306 m -- the 0.306 m width is the
+        WHEELS (2 x 0.144 + tire width), not the plate;
+        base mass 1.8 kg + 2 x 0.0285 kg wheels = 1.857 kg total;
+        two rear ball casters (r 0.005 m) at x = -0.177, y = +/-0.064.
+
+    FRAME. Everything is relative to `base_link` as turtlebot3_description defines it, which sits
+    **0.010 m above the ground** (the URDF's base_footprint -> base_link offset). The vendor MJCF is
+    authored in the base_footprint frame instead, so every child pose here is the vendor's minus
+    0.010 m in z: wheels at z = 0.023 (URDF wheel_left_joint), casters at -0.005, chassis mesh at 0.
+    That makes the lidar site land on the URDF's base_scan frame (-0.064, 0, 0.122), i.e. a scan
+    plane 0.132 m above the floor, and lets a ROS 2 bridge publish TF without a fudge factor.
+
+    COLLISION is authored as primitives (chassis box + wheel cylinders + caster spheres); the vendor
+    collides its 325k-triangle chassis mesh, which is both slow and needless. The meshes here are
+    visual-only (group 2, no contacts), decimated by
+    external/convert/convert_turtlebot3_meshes.py.
+
+    DRIVE is a true 2-wheel differential drive with passive casters, so -- unlike husky_a200 and
+    clearpath_jackal -- there is **no skid-steer scrub and no `slip_factor` calibration**: the wheels
+    roll where they point. Actuator ctrlrange +/-7.88 rad/s is the vendor's, and it is exactly the
+    platform's rated 0.26 m/s at r = 0.033 m; 2 * 0.26 / 0.288 = 1.806 rad/s matches the datasheet's
+    1.82 rad/s rated yaw rate. The model therefore saturates where the real robot does.
+  -->
+
+  <compiler meshdir="meshes"/>
+
+  <asset>
+    <material name="tb3_black" rgba="0.1 0.1 0.1 1"/>
+    <material name="tb3_grey"  rgba="0.3 0.3 0.3 1"/>
+
+    <mesh name="tb3_waffle_base" file="waffle_base.obj"/>
+    <mesh name="tb3_left_tire"   file="left_tire.obj"/>
+    <mesh name="tb3_right_tire"  file="right_tire.obj"/>
+    <mesh name="tb3_lds"         file="lds.obj"/>
+  </asset>
+
+  <default>
+    <default class="tb3_wheel">
+      <!-- Contact cylinder at the tire's measured radius/width, axle along the wheel body's +y
+           (the hinge axis), which is what the quat rotates the cylinder's local +z onto. -->
+      <geom type="cylinder" size="0.033 0.0092" quat="0.707107 0.707107 0 0"
+            material="tb3_black" friction="1.5 0.005 0.0001" group="3"/>
+    </default>
+    <default class="tb3_visual">
+      <!-- Visual-only: no contacts. Do NOT add density="0" -- MuJoCo renders a zero-density mesh
+           geom as its bounding sphere; the explicit <inertial> below owns the dynamics anyway. -->
+      <geom type="mesh" contype="0" conaffinity="0" group="2"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base_link" pos="0 0 0.012">
+      <freejoint name="base_free"/>
+      <site name="base_imu" pos="0 0 0.05" size="0.01" rgba="0 0 0 0"/>
+
+      <!-- Spectator camera that follows the robot (constant world-frame offset, level horizon). -->
+      <camera name="track" mode="track" pos="-1.0 -1.0 0.8"
+              xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
+
+      <!-- Chassis collision + inertia. The box spans the plate in x/y and clears the floor by
+           0.015 m so the robot rides on wheels and casters, never on the hull. Inertia is the
+           vendor's (base_footprint z 0.06 -> base_link 0.05). -->
+      <geom name="tb3_body_collision" type="box" size="0.136 0.138 0.050"
+            pos="-0.0616 0 0.055" material="tb3_grey" group="3" friction="0.4 0.005 0.0001"/>
+      <inertial pos="-0.064 0 0.05" mass="1.8" diaginertia="0.01 0.01 0.008"/>
+
+      <!-- Visual meshes at the URDF link transforms relative to base_link. -->
+      <geom class="tb3_visual" mesh="tb3_waffle_base" material="tb3_black" pos="-0.064 0 0"/>
+      <geom class="tb3_visual" mesh="tb3_lds" material="tb3_black" pos="-0.049 0 0.1155"/>
+      <!-- Front sensor/camera mount (vendor's small box; visual only here). -->
+      <geom class="tb3_visual" type="box" size="0.0075 0.015 0.0135" pos="0.078 0 0.097"
+            material="tb3_grey"/>
+
+      <!-- LDS-01 scan origin = turtlebot3_description's base_scan frame. rpy is identity there, so
+           ray angle 0 points along base_link +x (forward) and the LaserScan the bridge publishes in
+           `base_scan` is geometrically correct in TF. -->
+      <site name="lidar" pos="-0.064 0 0.122" size="0.005" rgba="1 0 0 0.6"/>
+
+      <body name="left_wheel" pos="0 0.144 0.023">
+        <joint name="left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.1" armature="0.01"/>
+        <inertial pos="0 0 0" mass="0.0285" diaginertia="2.07126e-05 1.11924e-05 1.11756e-05"/>
+        <geom name="left_wheel_geom" class="tb3_wheel"/>
+        <geom class="tb3_visual" mesh="tb3_left_tire" material="tb3_black"/>
+      </body>
+      <body name="right_wheel" pos="0 -0.144 0.023">
+        <joint name="right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.1" armature="0.01"/>
+        <inertial pos="0 0 0" mass="0.0285" diaginertia="2.07126e-05 1.11924e-05 1.11756e-05"/>
+        <geom name="right_wheel_geom" class="tb3_wheel"/>
+        <geom class="tb3_visual" mesh="tb3_right_tire" material="tb3_black"/>
+      </body>
+
+      <!-- Rear ball casters. `priority="1"` is what makes them REAL casters: MuJoCo combines two
+           geoms' contact parameters by taking max(condim) and max(friction), so `condim="1"` alone
+           loses to any ordinary floor (condim 3, friction ~1-2) and the caster drags. Measured with
+           condim alone: 13.3 N of tangential force per caster while driving at 0.2 m/s, a 22% speed
+           deficit and a 48% yaw deficit -- i.e. the robot was being braked by its own casters.
+           A higher priority makes THESE parameters win outright, in any scene, without depending on
+           the floor geom's name -- unlike an explicit <pair geom2="floor">, which MuJoCo silently
+           drops in a world that names its ground otherwise (turtlebot4 shipped that way until this
+           port measured the cost, and now uses this mechanism too).
+           Vendor poses, shifted to base_link; each sphere touches the floor at rest height. -->
+      <geom name="tb3_caster_left" type="sphere" size="0.005" pos="-0.177 0.064 -0.005"
+            material="tb3_grey" priority="1" condim="1" friction="0.0001 0.0001 0.0001"
+            solref="0.02 1" solimp="0.95 0.99 0.001" group="3"/>
+      <geom name="tb3_caster_right" type="sphere" size="0.005" pos="-0.177 -0.064 -0.005"
+            material="tb3_grey" priority="1" condim="1" friction="0.0001 0.0001 0.0001"
+            solref="0.02 1" solimp="0.95 0.99 0.001" group="3"/>
+    </body>
+  </worldbody>
+
+  <contact>
+    <exclude body1="base_link" body2="left_wheel"/>
+    <exclude body1="base_link" body2="right_wheel"/>
+  </contact>
+
+  <actuator>
+    <!-- Velocity-servo wheel drives; ctrl = target wheel angular velocity [rad/s].
+         ctrlrange is the vendor's (= 0.26 m/s rated top speed at r = 0.033).
+         kv is RAISED from the vendor's 0.1 to 6.0. A velocity servo's steady-state error is
+         (load torque)/kv, and the joints carry 0.1 N*m of frictionloss (gearbox stiction, which the
+         model needs so the robot does not creep). Measured achieved/commanded, straight line and
+         in-place yaw: kv 0.1 -> 0.87; kv 2.0 -> 0.934-0.950; kv 6.0 -> 0.958-0.963. kv*dt/I stays at
+         1.2 (test A4 requires < 2.0), so the servo is still integrable at the 2 ms campaign step.
+         The residual ~2% is wheel slip in the soft contact, not servo error (the wheels turn at
+         0.998 of command); it makes the encoder odometry over-count by ~2%, which is what a real
+         wheeled robot does and what AMCL exists to correct.
+         Asserted by test_b1_straight_line / test_b2_in_place_rotation. -->
+    <velocity name="left_wheel_motor"  joint="left_wheel_joint"  kv="6.0" ctrlrange="-7.88 7.88" ctrllimited="true"/>
+    <velocity name="right_wheel_motor" joint="right_wheel_joint" kv="6.0" ctrlrange="-7.88 7.88" ctrllimited="true"/>
+  </actuator>
+
+  <sensor>
+    <!-- Ground-truth base pose/velocity (odom reference + debug) -->
+    <framepos      name="base_pos"    objtype="site" objname="base_imu"/>
+    <framequat     name="base_quat"   objtype="site" objname="base_imu"/>
+    <framelinvel   name="base_linvel" objtype="site" objname="base_imu"/>
+    <frameangvel   name="base_angvel" objtype="site" objname="base_imu"/>
+    <!-- IMU at the base (the Waffle carries one on the OpenCR board) -->
+    <velocimeter   name="imu_vel"  site="base_imu"/>
+    <gyro          name="imu_gyro" site="base_imu"/>
+    <accelerometer name="imu_acc"  site="base_imu"/>
+    <!-- Wheel encoders (encoder-based odometry) -->
+    <jointpos name="left_wheel_pos"  joint="left_wheel_joint"/>
+    <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
+    <jointvel name="left_wheel_vel"  joint="left_wheel_joint"/>
+    <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
+  </sensor>
+
+  <keyframe>
+    <!-- Canonical home: base_link at its rest height (0.010 m = wheel radius 0.033 minus the
+         0.023 m wheel offset above base_link), wheels zeroed. -->
+    <key name="home" qpos="0 0 0.010 1 0 0 0  0 0"/>
+  </keyframe>
+</mujoco>

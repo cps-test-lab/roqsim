@@ -1,0 +1,53 @@
+<mujoco model="d455">
+  <!--
+    Intel RealSense D455: visual mesh + a colour camera, for a standalone mount (see the
+    `spawn_sensor` plugin) or as an eye-in-hand camera on a robot.
+
+    Mesh from the official realsense2_description package (d455.stl -> OBJ, scaled mm->m, decimated to
+    ~6k tris); see D455_MESH_LICENSE. Mesh-local axes (kept 1:1 from the STL, matching the d435/d415
+    convention): x = the ~124 mm long bar the sensors are arrayed across, y = height (~29 mm),
+    z = depth (~26 mm), with the front glass at z=0 and +z the lens face's outward normal (the body
+    extends backward to z=-0.026).
+
+    Standalone-mount convention: the `mount` body is pre-rotated (quat below) so that at spawn_sensor
+    rpy [0,0,0] the sensor sits upright (mesh height -> world +z) and looks HORIZONTALLY along +y --
+    i.e. toward a wall, matching the d435/d415 and zivid mounts. The quat maps mesh +z -> world +y and
+    mesh +y -> world +z, so `d455_color` (looking +z in mesh-local) ends up looking +y in the mount
+    frame. Yaw in the spawn_sensor rpy then aims it at any wall.
+
+    FOV: `d455_color`'s fovy is the D455 colour VERTICAL FOV (62 deg, per the D455f datasheet
+    https://www.realsenseai.com/products/d455f/). The 640x400 resolution (native 1280x800 colour
+    aspect 1.6, downscaled to fit MuJoCo's default 640x480 offscreen buffer) makes MuJoCo derive a
+    horizontal FOV of ~87.7 deg from that aspect -- matching the datasheet's 87 deg colour horizontal
+    FOV. So both axes of the modelled frustum match the real sensor. (Depth FOV is wider, 87x58; this
+    model, like d435/d415, renders the colour stream only.)
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="d455_mesh" file="d455.obj"/>
+    <material name="d455_body" rgba="0.75 0.75 0.77 1" specular="0.4" shininess="0.3"/>
+    <material name="d455_glass" rgba="0.05 0.05 0.05 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <!-- quat reorients the mount so the lens looks along +y at rpy [0,0,0] (see header). -->
+    <body name="mount" quat="0 0 0.70710678 0.70710678">
+      <geom name="d455_visual" type="mesh" mesh="d455_mesh" material="d455_body"
+            contype="0" conaffinity="0"/>
+      <!-- Front glass strip: the decimated mesh has no separate material for the front window, so a
+           thin black plate stands in, laid just proud of the mesh's front face (z=0) to avoid
+           z-fighting. -->
+      <geom name="d455_front" type="box" pos="0 0 0.0003" size="0.055 0.0105 0.0004"
+            material="d455_glass" contype="0" conaffinity="0"/>
+      <!-- Collision box wrapping the mesh (long axis x, ~124x29x26 mm; centred behind the front
+           glass). Sizes/offset derived from _d455.urdf.xacro's collision box, mapped into this
+           mesh-local frame. -->
+      <geom name="d455_collision" type="box" pos="0 0 -0.0131" size="0.062 0.0145 0.013" group="3"/>
+      <!-- Colour camera between the 95 mm-baseline stereo pair, looking outward (+z in mesh-local).
+           pos is the colour-optical frame from _d455.urdf.xacro mapped into this frame. -->
+      <camera name="d455_color" pos="-0.0115 0 -0.00465" xyaxes="-1 0 0 0 1 0"
+              fovy="62" resolution="640 400"/>
+    </body>
+  </worldbody>
+</mujoco>

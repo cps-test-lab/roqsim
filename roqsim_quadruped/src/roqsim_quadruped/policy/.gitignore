@@ -1,0 +1,6 @@
+# The pretrained Spot policy weights + their env config are NVIDIA-asset-licensed: downloadable
+# anonymously but NOT redistributable, so they are fetched locally (fetch_policy.py) and never
+# committed. spot.yaml (our own transcribed deploy config) IS committed.
+spot_policy.pt
+spot_env.yaml
+agent.yaml

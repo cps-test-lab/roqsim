@@ -1,0 +1,24 @@
+# Gripper half of the arm_controller config, shipped with the Robotiq 2F-85 description.
+#
+# An END-EFFECTOR manifest, not an arm's: `spawn_arm: {end_effector: {model: robotiq_2f85}}` merges
+# these keys into the arm_controller that the ARM's own manifest already declares, so a world pairs a
+# bare arm with a gripper without restating either one's controller parameters. A world entry for the
+# same arm_controller still wins per key.
+#
+# Nothing here names an arm: which arm carries the gripper is the world's choice, and spawn_arm fills
+# `arm:` in from its own `name`.
+plugins:
+  # The tendon `fingers_actuator` is what makes this a gripper rather than two more arm joints (a
+  # non-joint transmission lands in arm_controller's `aux_acts`). It is exposed as a GripperCommand
+  # action at <gripper_controller_name>/gripper_cmd.
+  - arm_controller:
+      # ctrl 0 = open, so the gripper starts open and a plan can approach an object.
+      gripper_ctrl: 0.0
+      # The joint whose angle IS the reported gripper position. This name is the one in
+      # ros-jazzy-robotiq-description, so MoveIt's gripper joint and MuJoCo's are the same string.
+      gripper_joint: robotiq_85_left_knuckle_joint
+      # Datasheet stroke, confirmed by measurement on this model: q=0 -> 85.2 mm between the pad
+      # inner faces (rated 85 mm), q=0.8 -> 0.4 mm. arm_controller maps this span onto the
+      # actuator's 0..255 ctrlrange, so a GripperCommand position is in gripper-joint radians.
+      gripper_open: 0.0
+      gripper_close: 0.8

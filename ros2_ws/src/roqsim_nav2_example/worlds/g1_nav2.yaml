@@ -1,0 +1,28 @@
+# Unitree G1 world for the nav2 example.
+#
+# spawn_robot pulls in the unitree_g1 robot description (its g1_locomotion controller + lidar), so
+# this world only places the robot and wires transport. The ros2_bridge publishes clock/odom/
+# tf(odom->base_link)/scan/joint_states, and -- because the lidar declares its mount frame -- the
+# static base_link->lidar TF, so the launch file needs no robot_state_publisher / URDF chain.
+# A static map->odom identity transform (in the launch file) stands in for localization.
+#
+# timestep 0.002 (500 Hz): the G1 locomotion policy's PD loop is tuned for this step.
+
+sim:
+  world: empty_room   # the walled empty_room (10 m) matches maps/empty_room.yaml (physical walls the lidar sees)
+  timestep: 0.002
+  pacing: realtime
+
+plugins:
+  # g1_locomotion + lidar come from the unitree_g1 model manifest (models/unitree_g1.manifest.yaml).
+  - spawn_robot:
+      model: unitree_g1
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # The bridge reads the robot's declared endpoints from ctx.interface and publishes
+  # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->lidar TF.
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}

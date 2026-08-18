@@ -1,0 +1,70 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_sensors"
+version = "0.1.0"
+description = "Generic (robot-family-agnostic) sensor plugins for roqsim (2D lidar, Livox Mid-360 3D lidar, Seyond Robin W1G solid-state lidar, OAK-D, RealSense D435/D415/D455, Zivid 3 XL250)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0", "opencv-python>=4.6"]
+markers = ["opencv-python>=4.6"]  # fiducial_marker: ArUco/AprilTag image generation
+coverage = ["matplotlib>=3.8"]  # coverage 2D heatmap; the 3D render uses mujoco + numpy only
+
+[project.scripts]
+# Legacy alias of `roqsim sensors coverage` (the documented entry point, registered below). Kept because
+# the bare name is already written into notes and run scripts -- same reason roqsim keeps `roqsim-export-*`.
+roqsim-coverage = "roqsim_sensors.coverage.cli:main"
+
+# Sensor plugins, registered into the shared roqsim.plugins group.
+[project.entry-points."roqsim.plugins"]
+lidar = "roqsim_sensors.plugins.lidar:LidarPlugin"
+livox_mid360 = "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin"
+seyond_robin_w1g = "roqsim_sensors.plugins.seyond_robin_w1g:SeyondRobinW1GPlugin"
+oakd_camera = "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"
+realsense_d435 = "roqsim_sensors.plugins.realsense_d435:RealsenseD435Plugin"
+realsense_d415 = "roqsim_sensors.plugins.realsense_d415:RealsenseD415Plugin"
+realsense_d455 = "roqsim_sensors.plugins.realsense_d455:RealsenseD455Plugin"
+zivid = "roqsim_sensors.plugins.zivid:ZividPlugin"
+spawn_sensor = "roqsim_sensors.plugins.spawn_sensor:SpawnSensorPlugin"
+fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
+sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
+ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
+object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
+force_torque = "roqsim_sensors.plugins.force_torque:ForceTorquePlugin"
+
+# Bundled sensor models (e.g. d435), discoverable across packages via roqsim.models.
+[project.entry-points."roqsim.models"]
+roqsim_sensors = "roqsim_sensors.models"
+
+[project.entry-points."roqsim.commands"]
+sensors = "roqsim_sensors.commands:sensors"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+# One folder per model (models/<name>/...), so every entry is a per-model glob rather than one entry
+# per sensor: with an enumeration a new sensor installs cleanly and then fails at RUN time inside a
+# campaign container -- MuJoCo does not error on an unresolvable mesh, it compiles the model with the
+# reference as given, so the device silently loses its geometry. tests/test_sensor_model_layout.py asserts these
+# globs cover every shipped file.
+roqsim_sensors = [
+    "models/*/*.xml",
+    "models/*/*.manifest.yaml",
+    "models/*/*_LICENSE",
+    "models/*/meshes/*",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

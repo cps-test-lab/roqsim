@@ -1,0 +1,46 @@
+<mujoco model="graspable_box">
+  <!-- A small parcel sized and tuned to be picked up by a parallel gripper.
+
+       The substrate's first prop meant to be grasped. Every other prop in roqsim_assets is welded
+       scenery, and the only free body was the conveyor's package, which rides a belt rather than
+       being held. Spawn it with `spawn_model: {model: graspable_box, free: true, publish_tf: dynamic}`
+       -- `free` adds the <freejoint/>, so this file deliberately declares none and the same prop can
+       still be placed as static scenery.
+
+       Grasp dimension is Y, 0.06 m across the jaws. Sized from the MEASURED aperture range of the
+       Unitree Dex1, 5.9 mm to 94.9 mm: 60 mm sits mid-range, so the jaws have travel on both sides of
+       contact. A 40 mm box was tried first and is a trap -- only 6 mm inside the closed limit, so the
+       position servo has almost no room, and any overshoot on closing extrudes the box sideways out of
+       the pads instead of gripping it.
+
+       Contact parameters are chosen for holding, not for looking right:
+         * A box primitive, not a mesh. MuJoCo collides meshes by convex hull, and a hull's face
+           normals near an edge are what make a pinched object squirt out; an exact box does not have
+           that problem, and needs no hull computation.
+         * condim="4" adds torsional friction about the contact normal. With condim=3 a box held by two
+           flat pads is free to spin about the grasp axis under its own weight -- the grasp holds and
+           the parcel rotates out of it anyway.
+         * friction sliding 1.2 is high for a cardboard-on-rubber pair, which is what the Dex1's pads
+           are; the torsional/rolling terms follow the conveyor package's values.
+         * solimp/solref soften the contact slightly (0.9 0.95 0.001 / 0.005 1) so the fingers settle
+           into a few tenths of a millimetre of penetration instead of chattering against a rigid face.
+           A perfectly stiff pinch at 0.002 s timestep bounces.
+       See the port log beside the pick world for the grasp measurements these were tuned against. -->
+  <default>
+    <geom condim="4" friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
+  </default>
+
+  <asset>
+    <material name="graspable_box" rgba="0.76 0.60 0.42 1"/>
+  </asset>
+
+  <worldbody>
+    <!-- 0.08 x 0.06 x 0.05 m, 0.5 kg. Mass is on the geom so `spawn_model`'s `mass:` override has a
+         single value to scale, and light enough that carrying it does not upset a humanoid's balance
+         policy (see the G1 port log, A5). -->
+    <body name="graspable_box">
+      <geom name="graspable_box" type="box" size="0.04 0.03 0.025" mass="0.5"
+            material="graspable_box"/>
+    </body>
+  </worldbody>
+</mujoco>

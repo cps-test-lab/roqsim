@@ -1,0 +1,47 @@
+# Default controllers + sensors shipped with the AgiBot G2 robot description.
+#
+# `spawn_robot: {model: agibot_g2}` pulls these in automatically (via SpawnRobotPlugin.expand ->
+# expand_manifest), so a world does not re-declare the robot's intrinsic drive/controllers/sensors.
+# Each entry's `robot` is filled in from the spawn_robot `name`. To override a default, declare the
+# same plugin for the same robot in the world; to opt out entirely, set `spawn_robot`
+# `default_plugins: false`.
+#
+# G2 is a wheeled dual-arm mobile manipulator. The base is driven by the generic `diff_drive`
+# (from roqsim_mobile) as a planar skid-steer approximation of the real 4-wheel swerve chassis
+# (the swerve steer joints are welded straight in the MJCF); `agibot_g2_controller` holds the torso/
+# head/arm/gripper position joints; `lidar` comes from roqsim_sensors.
+plugins:
+  # Base: planar diff-drive over the four wheel roll actuators (left pair / right pair together).
+  # Limits are a documented assumption (G2 is a slow indoor manipulator; the source gives no base
+  # kinematic limits). slip_factor compensates MuJoCo skid-steer scrub -- calibrated, see port log.
+  - diff_drive:
+      wheel_radius: 0.07             # wheel collision cylinder radius (source URDF)
+      wheel_separation: 0.436        # track = 2 * 0.218 m (source URDF)
+      max_linear_vel: 0.5            # assumption: slow indoor mobile manipulator
+      max_angular_vel: 0.6           # assumption; in-place yaw is scrub-limited (see port log)
+      wheel_accel_limit: 8.0         # rad/s^2-ish ramp; low values never reach the turn command
+      slip_factor: 6.0               # skid-steer ICR slip compensation; calibrated (see port log)
+      left_actuators:  [m_112_chassis_lwheel_front_joint2, m_122_chassis_lwheel_rear_joint2]
+      right_actuators: [m_132_chassis_rwheel_front_joint2, m_142_chassis_rwheel_rear_joint2]
+      left_joints:  [idx112_chassis_lwheel_front_joint2, idx122_chassis_lwheel_rear_joint2]
+      right_joints: [idx132_chassis_rwheel_front_joint2, idx142_chassis_rwheel_rear_joint2]
+  # Upper body: hold torso(5) + head(3) + arms(2x7) + gripper masters(2) position servos, publish
+  # joint_states, accept joint_command. The gripper followers track the master via MJCF equalities.
+  # `rest` is the spawn+hold stance: bare qpos0 is a T-pose (arms straight out to the sides), so the
+  # arms are hung straight down beside the torso -- shoulder roll (joint1) + swing (joint2), elbow
+  # (joint4) left straight, mirrored L/R. Matches the model's `home` keyframe.
+  # Override per-world to change it.
+  - agibot_g2_controller:
+      rest:
+        idx21_arm_l_joint1: 1.7
+        idx22_arm_l_joint2: -1.6
+        idx24_arm_l_joint4: 0.0
+        idx61_arm_r_joint1: -1.7
+        idx62_arm_r_joint2: -1.6
+        idx64_arm_r_joint4: 0.0
+  # 2D nav lidar. The source has no lidar; site pose is a documented assumption (chassis front,
+  # 0.30 m) -- see port log. Publishes /scan for nav2 exactly like the G1 / turtlebot.
+  - lidar:
+      site: lidar
+      rays: 360
+      max_range: 12.0

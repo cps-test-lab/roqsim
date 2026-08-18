@@ -1,0 +1,38 @@
+# Default controller + sensors shipped with the TurtleBot3 Waffle robot description.
+#
+# `spawn_robot: {model: turtlebot3_waffle}` pulls these in automatically, so a world does not
+# re-declare the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin
+# for the same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
+# `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
+plugins:
+  # True 2-wheel differential drive with passive rear casters -- no skid-steer scrub, hence NO
+  # `slip_factor` (contrast husky_a200 / clearpath_jackal, which need one). Geometry from
+  # turtlebot3_description and the vendor MJCF; limits are the ROBOTIS Waffle datasheet values, which
+  # the model's own actuator ctrlrange (+/-7.88 rad/s) already enforces -- stack and model saturate
+  # together.
+  - diff_drive:
+      wheel_radius: 0.033            # tire mesh radius, = turtlebot3_description
+      wheel_separation: 0.288        # track = 2 * 0.144
+      max_linear_vel: 0.26           # ROBOTIS Waffle datasheet rated top speed
+      max_angular_vel: 1.82          # ROBOTIS Waffle datasheet rated top yaw rate
+      wheel_accel_limit: 1.0         # assumption: no acceleration limit is published for the
+                                     # platform, and hussain_maze_ros2_2024 states none either
+                                     # (spec gap g_robot_limits). Whatever Nav2 is given must match.
+      left_actuator: left_wheel_motor
+      right_actuator: right_wheel_motor
+      left_joint: left_wheel_joint
+      right_joint: right_wheel_joint
+  # LDS-01, the stock Waffle scanner, as a planar 2D scan at the URDF base_scan frame (0.132 m above
+  # the floor). The paper names only "its Lidar sensor" (spec gap g_lidar_params), so these are the
+  # platform's own published values: 360 deg, 1 deg resolution -> 360 rays, 5 Hz, 0.12-3.5 m.
+  - lidar:
+      site: lidar
+      frame_id: base_scan            # the name turtlebot3_description gives this frame; without it
+                                     # the scan would be stamped `lidar` (the site name)
+      rays: 360                      # 360 deg / 1 deg
+      angle_min: 0.0
+      angle_max: 6.283185307         # 2*pi (full 360 deg)
+      range_min: 0.12                # LDS-01 minimum range
+      max_range: 3.5                 # LDS-01 maximum range
+      rate_hz: 5.0                   # LDS-01 scan rate
+      exclude_body: base_link

@@ -1,0 +1,38 @@
+# Default controller + sensors shipped with the Husky A200 robot description.
+#
+# `spawn_robot: {model: husky_a200}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors. To override a default, declare the same plugin for the same
+# robot in the world (it wins); to opt out entirely, set `spawn_robot` config `default_plugins: false`.
+# Each entry's `robot` is filled in from the spawn_robot `name`.
+plugins:
+  # Skid-steer: all four wheels driven, left pair and right pair commanded together. Kinematic limits
+  # match the paper's DWB-RPP-MPPI Nav2 config (max_vel_x 1.0 m/s, max_vel_theta 1.0 rad/s,
+  # acc_lim 1.0), so the model saturates where the stack does.
+  - diff_drive:
+      wheel_radius: 0.17775          # husky_description
+      wheel_separation: 0.5708       # track width (2 * 0.2854)
+      max_linear_vel: 1.0            # DWB-RPP-MPPI configs: max_vel_x / vx_max
+      max_angular_vel: 1.0           # DWB-RPP-MPPI configs: max_vel_theta / wz_max
+      wheel_accel_limit: 1.0         # DWB-RPP-MPPI configs: acc_lim_x
+      # Skid-steer ICR slip compensation, calibrated against this model's wheel friction/contacts:
+      # without it the base yaws at ~15% of commanded (lateral scrub) and a planner cannot rotate.
+      # chi=3.0 -> achieved/commanded yaw 0.83/0.92/1.01/1.04 at w = 0.3/0.5/0.8/1.0 rad/s.
+      # Re-measure if wheel friction, actuator kv, mass or timestep change. See the port log.
+      slip_factor: 3.0
+      left_actuators:  [front_left_wheel_motor,  rear_left_wheel_motor]
+      right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
+      left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
+      right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
+  # 2D planar LiDAR (lidar2d_0). Source description has no lidar; params from the paper's code repo
+  # (360 deg, 0.25 deg resolution -> 1440 rays, 30 Hz). Mount height (scan plane 0.51 m above ground =
+  # 0.14493 base_link rest height + 0.36507 mount, matching the MJCF and port-log C1) and 10 m max
+  # range are documented assumptions (Hokuyo-family sensor on a top-plate bracket); see the port log.
+  - lidar:
+      site: lidar
+      rays: 1440                     # 360 deg / 0.25 deg
+      angle_min: 0.0
+      angle_max: 6.283185307         # 2*pi (full 360 deg)
+      range_min: 0.1
+      max_range: 10.0                # assumption; costmap clips to 2.5/3.0 m anyway
+      rate_hz: 30.0                  # code repo: 30 Hz
+      exclude_body: base_link

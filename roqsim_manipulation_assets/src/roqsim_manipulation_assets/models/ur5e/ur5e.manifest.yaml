@@ -1,0 +1,12 @@
+# Default controller shipped with the ur5e arm description.
+#
+# `spawn_arm: {model: ur5e}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
+# spawn_arm `name`.
+#
+# The FT sensor is deliberately NOT in this manifest. A model manifest carries what the robot always
+# has; whether a run measures the wrench, in which frame, and with how much noise are properties of
+# the experiment. The arm ships the `fts_site` to measure at -- a world adds `force_torque`.
+plugins:
+  - arm_controller: {}   # the home target keeps the plugin/model defaults

@@ -1,0 +1,6 @@
+graspable_box -- a small parcel sized and tuned to be picked up by a parallel gripper.
+
+Original primitive geometry authored for roqsim (no third-party content). No meshes: the model is
+MJCF primitives, so there is nothing here but our own geometry and inertial tuning.
+
+Licence: Apache-2.0, with the rest of this repository.

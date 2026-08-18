@@ -1,0 +1,56 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_manipulation"
+version = "0.1.0"
+description = "Manipulator PLUGINS for roqsim: spawn_arm, arm_controller, cartesian_admittance. Ships no geometry and no experiment logic; arm and gripper models live in roqsim_manipulation_assets."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+# The plugins are model-agnostic; testing them is not. Every test here spawns a REAL arm (`ur10e`), so
+# the asset package is a test-only dependency. It depends back on `roqsim_manipulation`, making this extra
+# a cycle -- confined to the extra, since the runtime graph above stays a tree, and pip resolves it.
+# The alternative, synthesising a throwaway arm MJCF in the fixtures, would test the plugins against a
+# model no world ever uses, which is the bug class these tests exist to catch.
+#
+# Note what is NOT here: `roqsim_mobile`. Mounting an arm on a wheeled base is tested in
+# `roqsim_mobile_manipulation`, the package that may depend on both families. A test that needs a base
+# does not belong to the arm plugins even when the plugin under test is theirs.
+test = ["pytest>=7.0", "roqsim_manipulation_assets"]
+
+# Manipulator plugins, registered into the shared roqsim.plugins group.
+[project.entry-points."roqsim.plugins"]
+spawn_arm = "roqsim_manipulation.plugins.spawn_arm:SpawnArmPlugin"
+arm_controller = "roqsim_manipulation.plugins.arm_controller:ArmControllerPlugin"
+cartesian_admittance = "roqsim_manipulation.plugins.cartesian_admittance:CartesianAdmittancePlugin"
+
+# No roqsim.models / roqsim.worlds providers and NO package-data: this package is code only, and installing
+# it costs kilobytes.
+#
+# Three things that were here are not any more, and the line they were on the wrong side of is the
+# same one each time -- an experiment's WHAT, not the substrate's HOW:
+#
+#   peg_in_hole         a bored block with a swept clearance -> a downstream experiment (with 7.7 MB of
+#                       meshes it had put under a `models/` tree that held no models)
+#   insertion_task      one paper's trial protocol. Its own defaults gave it away: approach_height
+#                       0.081 and max_wrench 20.0 are that paper's constants, not anybody's -> that
+#                       experiment, loaded by path beside its world
+#   pick_place_metrics  a scoring rule for one pick trial -> tiago_pick, which owned its only world
+#
+# What is left is arm-agnostic mechanism: mount an arm, hold a joint vector, close a Cartesian loop.
+# The test for a new plugin here is whether a SECOND arm experiment would use it unchanged.
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

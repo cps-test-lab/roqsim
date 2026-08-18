@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_quadruped"
+version = "0.1.0"
+description = "Quadruped plugins and assets for roqsim (Boston Dynamics Spot + RL locomotion controller)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "roqsim_sensors",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+    "torch>=2.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# Quadruped controller plugins, registered into the shared roqsim.plugins group. lidar comes from
+# roqsim_sensors (a dependency above) -- spot's manifest pulls it in by name.
+[project.entry-points."roqsim.plugins"]
+spot_locomotion = "roqsim_quadruped.plugins.spot_locomotion:SpotLocomotionPlugin"
+
+# Bundled robot models (spot), discoverable across packages via roqsim.models.
+[project.entry-points."roqsim.models"]
+roqsim_quadruped = "roqsim_quadruped.models"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_quadruped = [
+    "models/*.xml",
+    "models/*.manifest.yaml",
+    "models/meshes/*.obj",
+    "models/LICENSE.*",
+    "policy/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

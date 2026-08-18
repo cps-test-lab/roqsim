@@ -1,0 +1,79 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_mobile"
+version = "0.1.0"
+description = "Wheeled-base plugins and models for roqsim (floorplan, diff-drive, omni-drive)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# Wheeled BASES only. A robot that is also an arm (frankie, tiago_pro) lives in the sibling package
+# `roqsim_mobile_manipulation`, which is the one that may depend on both this and `roqsim_manipulation`.
+#
+# `roqsim_manipulation` was briefly declared here, because those two composite models' manifests declare
+# `arm_controller`. It was honest about a real runtime need but wrong about layering: it inverted this
+# package's own contract (bases do not require arms), made anyone who wanted a TurtleBot install every
+# arm and gripper, turned the sibling family packages into a dependency mesh, and reordered the wheel
+# install graph for deployments -- which broke a campaign image build with
+# `No matching distribution found for roqsim_manipulation`. Moving the two robots fixed the cause.
+#
+# `roqsim_assets` is deliberately NOT declared either, for the same reason one layer up: nothing here
+# imports it and no shipped model, world or MJCF names an `roqsim_assets:` asset. `floorplan` resolves a
+# texture through `roqsim.textures.resolve_texture`, which takes an explicit `<package>:<name>` and never
+# searches sibling packages -- so a world that wants `roqsim_assets:Concrete030` depends on `roqsim_assets`
+# itself, and a plain TurtleBot does not drag the prop library into the wheel graph to get there.
+dependencies = [
+    "roqsim",
+    "roqsim_sensors",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# Mobile-robot plugins, registered into the shared roqsim.plugins group. lidar/oakd_camera come
+# from roqsim_sensors (a dependency above) -- turtlebot4's manifest pulls them in by name.
+[project.entry-points."roqsim.plugins"]
+floorplan = "roqsim_mobile.plugins.floorplan:FloorplanPlugin"
+spawn_robot = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"
+diff_drive = "roqsim_mobile.plugins.diff_drive:DiffDrivePlugin"
+omni_drive = "roqsim_mobile.plugins.omni_drive:OmniDrivePlugin"
+
+# Bundled robot models (e.g. turtlebot4), discoverable across packages via roqsim.models.
+[project.entry-points."roqsim.models"]
+roqsim_mobile = "roqsim_mobile.models"
+
+# Demo worlds, so `roqsim sim roqsim_mobile:husky_ros2` resolves and another world can build on one with
+# `extends: roqsim_mobile:husky_ros2` -- mirrors the roqsim.models provider mechanism. Without this the
+# worlds are reachable only by their path inside the installed package, which is not an interface.
+[project.entry-points."roqsim.worlds"]
+roqsim_mobile = "roqsim_mobile"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_mobile = [
+    # One folder per model (models/<name>/<name>.xml + its own meshes/), so a model's files are one
+    # glob prefix rather than four. Globs rather than an enumeration on purpose: with a list, a new
+    # port installs cleanly and then fails at RUN time with "Error opening file '<part>.obj'" only
+    # inside a container, where the editable checkout is not there to paper over it. That is exactly
+    # how this was found — clearpath_jackal's meshes were unpackaged. tests/test_model_layout.py asserts
+    # every shipped file matches one of these.
+    "models/*/*.xml",
+    "models/*/*.manifest.yaml",
+    "models/*/meshes/*.obj",
+    "models/*/meshes/*.stl",
+    "models/*/meshes/*.STL",
+    "models/*/meshes/*.png",
+    # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
+    # licence is not redistributable.
+    "models/*/*LICENSE*",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

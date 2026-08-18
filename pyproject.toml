@@ -1,0 +1,43 @@
+# Root config for developer tooling only (ruff). The installable packages are roqsim/ and
+# roqsim_mobile/, each with its own pyproject.toml. This file is NOT a Python package.
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+# external/sources holds pinned upstream checkouts fetched by external/convert/sources.py -- linting
+# third-party code we do not own only produces noise (and one of them ships a Jupyter notebook).
+extend-exclude = [
+    ".venv",
+    "build",
+    "ros2_ws/build",
+    "ros2_ws/install",
+    "ros2_ws/log",
+    "external/sources",
+]
+
+[tool.ruff.lint]
+# pycodestyle errors/warnings, pyflakes, isort, pyupgrade, bugbear.
+select = ["E", "F", "I", "UP", "B"]
+# E501 line length: the formatter handles code width; only long prose/comments would trip it.
+# B027: scenario_adapter's ABC fallback intentionally mirrors SimulationInterface's no-op defaults.
+# B008: false positives on default-arg calls we use deliberately.
+ignore = ["E501", "B027", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+# E402 (import not at top of file): roqsim's package __init__ must select MuJoCo's offscreen GL
+# backend BEFORE its re-exports reach `import mujoco`, which binds that backend permanently. A
+# statement between the two import blocks is the only way to express "this one first" that isort
+# will not quietly re-sort away. See roqsim/src/roqsim/gl.py for why the ordering is load-bearing.
+"roqsim/src/roqsim/__init__.py" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "roqsim",
+    "roqsim_assets",
+    "roqsim_scenes",
+    "roqsim_mobile",
+    "roqsim_ros_bridge",
+    "roqsim_walker",
+    "roqsim_walker_ros",
+    "scenario_execution_roqsim",
+]

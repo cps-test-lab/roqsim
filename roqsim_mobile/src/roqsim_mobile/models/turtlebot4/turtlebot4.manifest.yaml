@@ -1,0 +1,20 @@
+# Default controller + sensors shipped with the turtlebot4 robot description.
+#
+# `spawn_robot: {model: turtlebot4}` pulls these in automatically, so a world does not re-declare
+# the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin for the
+# same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
+# `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
+plugins:
+  - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
+  - lidar:
+      site: lidar
+      frame_id: rplidar_link                       # the name the TurtleBot 4's own URDF gives this
+                                                   # frame; the site's 90 deg yaw is aligned to it
+                                                   # (see turtlebot4.xml). Without this the scan
+                                                   # would be stamped `lidar` (the site name), the
+                                                   # plugin's default.
+      rays: 360
+      max_range: 12.0
+  - oakd_camera:                                 # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
+      camera: oakd_rgb                           # skips rendering when nobody subscribes (see
+                                                 # Endpoint.has_subscribers in roqsim core).

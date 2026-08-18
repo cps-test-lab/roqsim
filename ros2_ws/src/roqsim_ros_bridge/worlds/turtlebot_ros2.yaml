@@ -1,0 +1,26 @@
+# TurtleBot 4 + ROS 2 bridge — the Milestone 1 use case (driven via /cmd_vel, nav2-ready).
+#
+#   ros2 run roqsim_ros roqsim_bridge --world <this file>
+#   # then, in another sourced shell:
+#   ros2 topic echo /odom        ros2 topic echo /scan
+#   ros2 topic pub /cmd_vel geometry_msgs/Twist '{linear: {x: 0.2}, angular: {z: 0.3}}'
+
+sim:
+  pacing: realtime
+
+plugins:
+  # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml);
+  # driven via /cmd_vel, so no test_cmd override here.
+  - spawn_robot:
+      model: turtlebot4
+      name: robot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+
+  # The bridge reads the robot's declared endpoints (cmd_vel in; odom+tf, scan, joint_states out)
+  # from ctx.interface -- topics/types/frames/rates are declared on the robot, not configured here.
+  # Single robot => bare topics (/cmd_vel, /odom, ...). For a second robot add another ros2_bridge
+  # with `namespace: robot2`, which serves that robot and prefixes its topics/frames (/robot2/...).
+  - ros2_bridge: {}
+
+  - sim_interfaces: {}
