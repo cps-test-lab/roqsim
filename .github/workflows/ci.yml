@@ -42,12 +42,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Same GL and ffmpeg deps as the core job, and for the same reasons: no /dev/dri/renderD128 on a
+      # runner so the offscreen backend resolves to osmesa, and `roqsim render --out x.webm` shells out
+      # to ffmpeg. Having given them to one job and not the other is what left 9 tests failing here
+      # after the collection fix, on a commit whose core job was already green.
       - name: Install dependencies
         run: |
           apt-get update
           apt-get install -y --no-install-recommends \
             python3-venv python3-pip python3-colcon-common-extensions \
-            libegl1 libgl1 \
+            libegl1 libgl1 libosmesa6 ffmpeg \
             ros-jazzy-navigation2 ros-jazzy-nav2-bringup \
             ros-jazzy-nav2-minimal-tb4-description \
             ros-jazzy-nav2-simple-commander \
