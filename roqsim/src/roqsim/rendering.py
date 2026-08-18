@@ -12,6 +12,7 @@ from must not be mutated by another thread meanwhile.
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 
@@ -19,6 +20,8 @@ import mujoco
 import numpy as np
 
 from .presence import ABSENT_GEOM_GROUP
+
+_logger = logging.getLogger(__name__)
 
 #: Keys that walk a free camera, as lowercase names (the tkinter ``keysym`` / GLFW letter).
 WALK_KEYS = frozenset("wasdqe")
@@ -329,8 +332,31 @@ def bound_gl_backend() -> str:
     return "" if ctx is None else getattr(ctx, "__module__", "").rsplit(".", 1)[-1]
 
 
+def bound_gl_device() -> str:
+    """The GL renderer string of the *current* context, e.g. ``NVIDIA RTX A2000 12GB``.
+
+    The backend name alone cannot answer "did this use the GPU". ``egl`` is what a machine with
+    any working hardware GL stack reports, and which device it then binds is decided by the
+    glvnd ICD ordering rather than by anything visible here -- on a hybrid laptop whose only
+    ``renderD128`` is the integrated chip, EGL still binds the discrete NVIDIA card. So the
+    device string is the answer and the backend is not.
+
+    Requires a current context, so it is only meaningful once a renderer exists. Returns ``""``
+    if it cannot be read: this feeds a log line and must never be the reason a render fails.
+    """
+    try:
+        from OpenGL import GL
+
+        renderer = GL.glGetString(GL.GL_RENDERER)
+        if not renderer:
+            return ""
+        return bytes(renderer).decode("utf-8", "replace")
+    except Exception:  # noqa: BLE001 - diagnostics must not break rendering
+        return ""
+
+
 def check_gl_backend() -> None:
-    """Refuse to build a renderer on a glfw backend nobody asked for.
+    """Refuse to build a renderer on a backend that cannot render what was asked for.
 
     MuJoCo picks glfw when ``MUJOCO_GL`` was unset *at import time* -- an empty value is not an
     error there, it is a choice -- and on a headless machine the first ``mujoco.Renderer`` then
@@ -341,7 +367,25 @@ def check_gl_backend() -> None:
     trusting it is how this failed in the first place (a container image sets ``DISPLAY=:0`` with
     no X server behind it). An explicit ``MUJOCO_GL=glfw`` is honoured -- someone who asked for the
     on-screen backend gets it, and gets MuJoCo's own error if it does not work.
+
+    Also refuses the reverse mistake: software rendering *fallen back to* on a machine that was
+    handed a GPU (see :func:`roqsim.gl.gpu_without_render_node`). Unlike the glfw case that one
+    does not crash -- it produces correct frames, twenty times slower, and reports success --
+    which is why it has to be refused rather than left to announce itself.
     """
+    from .gl import chosen_backend, gpu_without_render_node
+
+    # Only a fallback is second-guessed. `MUJOCO_GL=osmesa` asked for by hand means someone wants
+    # software rendering on this machine, and that is as legitimate as an explicit glfw.
+    if chosen_backend() == "osmesa" and gpu_without_render_node():
+        raise GLBackendError(
+            "This process was given an NVIDIA GPU but no DRI render node, so it fell back to "
+            "software rendering (osmesa) and would produce correct frames many times slower.\n"
+            "  /dev/nvidiactl exists, /dev/dri/renderD128 does not -- the signature of a "
+            "container started without the 'graphics' driver capability.\n"
+            "  - Set NVIDIA_DRIVER_CAPABILITIES to include 'graphics' (or use 'all'), or\n"
+            "  - set MUJOCO_GL=osmesa explicitly if software rendering is what you want here."
+        )
     if bound_gl_backend() != "glfw" or os.environ.get("MUJOCO_GL", "").lower().strip() == "glfw":
         return
     raise GLBackendError(
@@ -351,6 +395,28 @@ def check_gl_backend() -> None:
         "before it was set.\n"
         "  - Import roqsim before mujoco (roqsim selects a backend for this machine on import), or\n"
         "  - set MUJOCO_GL=egl (a render device) or MUJOCO_GL=osmesa (CPU only) in the environment."
+    )
+
+
+#: Set once the GL line has been logged. Per process, not per renderer: a camera world builds
+#: one renderer per camera and the answer cannot differ between them.
+_gl_logged = False
+
+
+def _log_gl_once() -> None:
+    """Log the backend *and* the device it bound, once, at INFO.
+
+    This is the line that answers "did this run use the GPU", and it is worth a log entry
+    because the alternative -- inferring it from wall-clock afterwards -- is how a mis-bound
+    backend went unnoticed across every campaign this substrate had run.
+    """
+    global _gl_logged
+    if _gl_logged:
+        return
+    _gl_logged = True
+    device = bound_gl_device()
+    _logger.info(
+        "offscreen GL: %s%s", bound_gl_backend() or "unknown", f" -- {device}" if device else ""
     )
 
 
@@ -386,6 +452,7 @@ class FrameRenderer:
         self.width = int(width)
         self.height = int(height)
         self._renderer = mujoco.Renderer(model, self.height, self.width)
+        _log_gl_once()
         self._vopt = mujoco.MjvOption()
         # An absent entity is not in the picture either. Its geoms already have zero alpha, but
         # excluding the group is what makes absence one decision rather than several that could

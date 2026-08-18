@@ -129,3 +129,128 @@ def test_an_explicit_glfw_request_is_not_second_guessed():
         MUJOCO_GL="glfw",
     )
     assert out == "allowed"
+
+
+# -- a GPU handed over without the capability that makes it usable ------------------
+#
+# The NVIDIA container runtime gates the GL half of the driver behind the `graphics`
+# capability and defaults to `compute,utility`. A container given a GPU without asking for
+# `graphics` therefore has /dev/nvidia* but no /dev/dri, and this module -- correctly --
+# observes no render node and picks software rendering. Nothing errors; the job is just
+# many times slower while reporting success. These tests pin the two halves of the answer:
+# the *observation* is warned about wherever it is made, and the *refusal* happens where
+# something actually renders.
+
+
+def _fake_devices(monkeypatch, *, nvidiactl, render_node):
+    """Point gl.py's two probes at a scripted answer, without touching /dev."""
+    from roqsim import gl
+
+    present = set()
+    if nvidiactl:
+        present.add(gl._NVIDIA_CONTROL)
+    if render_node:
+        present.add(gl._RENDER_NODE)
+    monkeypatch.setattr(gl.os.path, "exists", lambda path: path in present)
+
+
+def test_a_gpu_without_a_render_node_is_recognised(monkeypatch):
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=False)
+    assert gl.gpu_without_render_node() is True
+
+
+def test_the_ordinary_shapes_are_not_mistaken_for_it(monkeypatch):
+    """It must be inert everywhere a GPU was not handed over half-configured: a CPU-only
+    node, and any machine whose render node is present. Otherwise it is not safe to refuse
+    on."""
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=False)  # CI, gcp-c4
+    assert gl.gpu_without_render_node() is False
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=True)  # a working GPU node
+    assert gl.gpu_without_render_node() is False
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=True)  # laptop, no nvidiactl
+    assert gl.gpu_without_render_node() is False
+
+
+def test_selecting_osmesa_next_to_a_gpu_warns(monkeypatch, caplog):
+    import logging
+
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=False)
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.delenv(gl._OPT_OUT, raising=False)
+    with caplog.at_level(logging.WARNING, logger="roqsim.gl"):
+        assert gl.select_offscreen_gl() == "osmesa"
+    assert "graphics" in caplog.text, "the warning must name the capability to set"
+
+
+def test_plain_osmesa_selection_is_silent(monkeypatch, caplog):
+    """A CPU-only machine is not a misconfiguration and must not be nagged."""
+    import logging
+
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=False)
+    monkeypatch.delenv("MUJOCO_GL", raising=False)
+    monkeypatch.delenv(gl._OPT_OUT, raising=False)
+    with caplog.at_level(logging.WARNING, logger="roqsim.gl"):
+        assert gl.select_offscreen_gl() == "osmesa"
+    assert caplog.text == ""
+
+
+def test_the_renderer_refuses_a_fallback_next_to_a_gpu(monkeypatch):
+    """Where the glfw case aborts loudly inside MjrContext, this one renders correctly and
+    slowly -- so it has to be refused rather than left to announce itself."""
+    from roqsim import gl, rendering
+
+    monkeypatch.setattr(gl, "_chosen", "osmesa")
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=False)
+    with pytest.raises(rendering.GLBackendError) as excinfo:
+        rendering.check_gl_backend()
+    message = str(excinfo.value)
+    assert "graphics" in message
+    assert "MUJOCO_GL=osmesa" in message, "the message must name the way to opt in deliberately"
+
+
+def test_an_explicit_osmesa_request_is_honoured(monkeypatch):
+    """Asked for by hand, software rendering is a choice -- exactly as an explicit glfw is.
+    `_chosen` is None when select_offscreen_gl deferred to a value already set, which is the
+    only way the two can be told apart afterwards."""
+    from roqsim import gl, rendering
+
+    monkeypatch.setattr(gl, "_chosen", None)
+    monkeypatch.setenv("MUJOCO_GL", "osmesa")
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=False)
+    rendering.check_gl_backend()  # must not raise
+
+
+def test_the_gl_device_is_reported_next_to_the_backend():
+    """`egl` alone cannot answer "did this use the GPU": it is what any machine with a working
+    hardware GL stack reports, and which device it binds is the ICD's decision. So the device
+    string is the load-bearing half of the log line."""
+    out = _run(
+        "import roqsim, mujoco;"
+        "from roqsim.rendering import FrameRenderer, bound_gl_backend, bound_gl_device;"
+        "m = mujoco.MjModel.from_xml_string("
+        '\'<mujoco><worldbody><geom type="box" size=".3 .3 .3"/></worldbody></mujoco>\');'
+        # Bound to a name deliberately: an unreferenced FrameRenderer is collected
+        # immediately, and its __del__ frees the EGL context -- after which there is no
+        # current context left to ask which device it was on.
+        "fr = FrameRenderer(m, 32, 32);"
+        "print('BACKEND', bound_gl_backend());"
+        "print('DEVICE', bound_gl_device())"
+    )
+    reported = {}
+    for line in out.splitlines():
+        key, _, value = line.partition(" ")
+        if key in ("BACKEND", "DEVICE"):
+            reported[key] = value.strip()
+    backend, device = reported.get("BACKEND", ""), reported.get("DEVICE", "")
+    assert backend in ("egl", "osmesa"), backend
+    # A hardware backend must be able to say which device; software rendering names llvmpipe
+    # or similar. Either way the string is non-empty, which is what makes the log worth having.
+    assert device, "a live context reported no GL_RENDERER"
