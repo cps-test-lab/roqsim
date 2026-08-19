@@ -9,7 +9,9 @@ module owns those shared parts so neither window re-implements them:
 * the dark palette and the per-number marker colours (:func:`color_for`, :func:`rgba_hex`),
 * :func:`renumber`, the 1..N contiguous renumbering both point models use after a delete,
 * :func:`build_point_rows`, :func:`build_comment_box`, :func:`build_button_row` -- the right-panel
-  widgets, driven by whatever items the window holds.
+  widgets, driven by whatever items the window holds,
+* :func:`build_scrollable`, the panel's one scrolling region -- what keeps a long ``message`` from
+  pushing the submit buttons out of the window.
 
 Everything here is either pure (theme/colours/renumber, tested headless) or a thin tkinter widget
 factory; the window-specific left canvas, picking, and result assembly stay in each window module.
@@ -168,6 +170,77 @@ def enable_edit_shortcuts(root) -> None:
     for seq in ("<Control-a>", "<Control-A>"):
         root.bind_class("Entry", seq, _entry_select_all)
         root.bind_class("Text", seq, _text_select_all)
+
+
+def build_scrollable(tk, parent, *, padx: int = 12, pady: tuple[int, int] = (6, 0)):
+    """The panel's scrolling region, filling whatever space is left; returns ``(inner, sync)``.
+
+    Pack the **footer first**, ``side="bottom"``, and call this after: Tk's packer hands out parcels
+    in packing order, so a footer that is packed last gets whatever cavity the content above it did
+    not eat -- which is nothing, once a caller passes a long enough ``message``. That is how the
+    submit buttons went missing. With the footer's parcel already claimed, everything variable (the
+    title, the message, the tool row, the item rows) goes in ``inner`` and scrolls instead of pushing.
+
+    ``sync`` re-measures: call it after adding or removing rows programmatically, since a change made
+    outside the geometry manager's own resize path produces no ``<Configure>``. The scrollbar is only
+    mapped while the content actually overflows, so a short panel looks exactly as it did before.
+
+    The wheel is bound on ``bind_all`` between ``<Enter>`` and ``<Leave>`` of the region rather than
+    on the canvas: the pointer is almost always over a row's frame/label/entry, not the canvas, and a
+    per-widget binding misses every one of them. Binding only while the pointer is inside the region
+    is what leaves the wheel over the drawing canvas free to keep zooming.
+    """
+    wrap = tk.Frame(parent, bg=PANEL)
+    wrap.pack(side="top", fill="both", expand=True, padx=padx, pady=pady)
+    bar = tk.Scrollbar(
+        wrap,
+        orient="vertical",
+        bg="#3a3a3a",
+        troughcolor=PANEL,
+        activebackground="#555555",
+        relief="flat",
+        bd=0,
+        highlightthickness=0,
+        width=10,
+    )
+    canvas = tk.Canvas(wrap, bg=PANEL, highlightthickness=0, yscrollcommand=bar.set)
+    bar.config(command=canvas.yview)
+    canvas.pack(side="left", fill="both", expand=True)
+    inner = tk.Frame(canvas, bg=PANEL)
+    window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def sync(_event=None) -> None:
+        canvas.configure(scrollregion=canvas.bbox("all"))
+        # Match the inner frame to the viewport, or a `fill="x"` child would size to its own request
+        # and the wrapped labels would never learn how wide they are allowed to be.
+        canvas.itemconfigure(window, width=canvas.winfo_width())
+        overflow = inner.winfo_reqheight() > canvas.winfo_height()
+        if overflow and not bar.winfo_ismapped():
+            # before the canvas, so it reserves the right edge -- the canvas's expand would else eat it
+            bar.pack(side="right", fill="y", before=canvas)
+        elif not overflow and bar.winfo_ismapped():
+            bar.pack_forget()
+
+    inner.bind("<Configure>", sync)
+    canvas.bind("<Configure>", sync)
+
+    def _wheel(event):
+        if inner.winfo_reqheight() <= canvas.winfo_height():
+            return  # nothing to scroll; leave the event alone
+        down = getattr(event, "num", 0) == 5 or getattr(event, "delta", 0) < 0
+        canvas.yview_scroll(1 if down else -1, "units")
+
+    def _grab(_event):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.bind_all(seq, _wheel)
+
+    def _release(_event):
+        for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
+            canvas.unbind_all(seq)
+
+    wrap.bind("<Enter>", _grab)
+    wrap.bind("<Leave>", _release)
+    return inner, sync
 
 
 def build_comment_box(tk, parent, height: int = 5, label: str = "Comment"):

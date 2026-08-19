@@ -75,6 +75,7 @@ from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in
     build_button_row,
     build_comment_box,
     build_point_rows,
+    build_scrollable,
     color_for,
     enable_edit_shortcuts,
     renumber,
@@ -517,46 +518,12 @@ class _ReviewApp:
         panel.grid(row=0, column=1, sticky="ns", padx=(0, 8), pady=8)
         panel.grid_propagate(False)
 
-        # title (larger font) + message head the panel; both wrap at 296 px = the 320-wide panel's
-        # comment-box width (padx 12 each side), so they line up with the Comment box below.
-        if title:
-            tk.Label(
-                panel,
-                text=title,
-                bg=PANEL,
-                fg=FG,
-                wraplength=296,
-                justify="left",
-                anchor="w",
-                font=("TkDefaultFont", 15, "bold"),
-            ).pack(fill="x", padx=12, pady=(12, 2 if message else 6))
-        if message:
-            tk.Label(
-                panel,
-                text=message,
-                bg=PANEL,
-                fg=FG,
-                wraplength=296,
-                justify="left",
-                anchor="w",
-                font=("TkDefaultFont", 11),
-            ).pack(fill="x", padx=12, pady=((2 if title else 12), 6))
-
-        self._build_edit_row(panel)
-
-        self.dot_frame = tk.Frame(panel, bg=PANEL)
-        self.dot_frame.pack(fill="x", padx=12, pady=4)
-
-        # Moved props are listed here like the comment dots -- rebuilt (and its header hidden when
-        # empty) by _rebuild_move_rows; each row's ✕ resets that prop to where it started. The frame
-        # keeps its slot above the comment box; only the header is packed/unpacked.
-        self.move_header = tk.Label(
-            panel, text="Moved Objects", bg=PANEL, fg=MUTED, anchor="w", font=("TkDefaultFont", 9)
-        )
-        self.move_frame = tk.Frame(panel, bg=PANEL)
-        self.move_frame.pack(fill="x", padx=12)
-
-        self.comment = build_comment_box(tk, panel)
+        # Footer FIRST, pinned to the bottom, so Pass/Fail are reachable however long the caller's
+        # message is and however many dots are dropped. Tk hands out parcels in packing order: packed
+        # last, as this was, the buttons got whatever cavity the text above had not already eaten.
+        footer = tk.Frame(panel, bg=PANEL)
+        footer.pack(side="bottom", fill="x")
+        self.comment = build_comment_box(tk, footer)
         # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes,
         # like the media-review windows; Shift+Enter keeps the textarea's newline. Pass/Fail stay on
         # their buttons.
@@ -564,12 +531,49 @@ class _ReviewApp:
 
         build_button_row(
             tk,
-            panel,
+            footer,
             [
                 ("✗ Fail", lambda: self._submit("fail"), FAIL_BG),
                 ("✓ Pass", lambda: self._submit("pass"), PASS_BG),
             ],
         )
+
+        # Everything above the footer scrolls as one region.
+        inner, self._sync_panel = build_scrollable(tk, panel, padx=0)
+
+        # title (larger font) + message head the panel; both wrap to their real width, which the
+        # scroll region narrows by the scrollbar when one appears.
+        if title:
+            self._panel_text(
+                inner, title, ("TkDefaultFont", 15, "bold"), pady=(12, 2 if message else 6)
+            )
+        if message:
+            self._panel_text(inner, message, ("TkDefaultFont", 11), pady=((2 if title else 12), 6))
+
+        self._build_edit_row(inner)
+
+        self.dot_frame = tk.Frame(inner, bg=PANEL)
+        self.dot_frame.pack(fill="x", padx=12, pady=4)
+
+        # Moved props are listed here like the comment dots -- rebuilt (and its header hidden when
+        # empty) by _rebuild_move_rows; each row's ✕ resets that prop to where it started. The frame
+        # keeps its slot above the comment box; only the header is packed/unpacked.
+        self.move_header = tk.Label(
+            inner, text="Moved Objects", bg=PANEL, fg=MUTED, anchor="w", font=("TkDefaultFont", 9)
+        )
+        self.move_frame = tk.Frame(inner, bg=PANEL)
+        self.move_frame.pack(fill="x", padx=12)
+
+    def _panel_text(self, panel, text: str, font, pady) -> None:
+        """A left-aligned panel label that wraps to its own width, as the other windows' panels do.
+
+        ``wraplength`` tracks the label's real width rather than a constant, because inside the scroll
+        region that width drops by the scrollbar the moment the content overflows."""
+        lbl = self.tk.Label(
+            panel, text=text, bg=PANEL, fg=FG, justify="left", anchor="w", font=font
+        )
+        lbl.pack(fill="x", padx=12, pady=pady)
+        lbl.bind("<Configure>", lambda e: e.widget.config(wraplength=e.width))
 
     def _build_edit_row(self, panel) -> None:
         """The Move-Objects toggle and the ↶/↷ undo-redo buttons in one narrow row -- same button style
@@ -1083,9 +1087,20 @@ class _ReviewApp:
         self._build_movable()
         self._rerender()
 
+    def _resync_panel(self) -> None:
+        """Re-measure the scroll region after rows were added or removed in code.
+
+        Packing a row inside the scrolled frame produces no ``<Configure>`` on the canvas, so without
+        this the scrollbar would not appear until something else resized the window. ``after_idle``
+        because the new rows have no geometry yet at the moment the caller returns."""
+        sync = getattr(self, "_sync_panel", None)
+        if sync is not None:
+            self.dot_frame.after_idle(sync)
+
     # -- dot rows --
     def _rebuild_dot_rows(self) -> None:
         build_point_rows(self.tk, self.dot_frame, self.dots.dots, self._delete_dot)
+        self._resync_panel()
 
     def _delete_dot(self, dot_id: int) -> None:
         self.dots.delete(dot_id)
@@ -1109,6 +1124,7 @@ class _ReviewApp:
             self.move_header.pack(fill="x", padx=12, pady=(6, 0), before=self.move_frame)
         else:
             self.move_header.pack_forget()
+        self._resync_panel()
 
     def _reset_move(self, move_id: int) -> None:
         """The ✕ on a row: restore that prop's original ``spawn_model`` config and rebuild, then drop

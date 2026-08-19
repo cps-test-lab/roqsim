@@ -53,6 +53,7 @@ from roqsim_scene_builder.annotate_ui import (
     SEND_BG,
     build_comment_box,
     build_point_rows,
+    build_scrollable,
     color_for,
     enable_edit_shortcuts,
     renumber,
@@ -893,16 +894,8 @@ class _SketchApp:
         panel.grid(row=0, column=1, sticky="nsew", padx=(0, 8), pady=8)
         panel.grid_propagate(False)  # hold the 1/3 column width; clip content rather than grow
 
-        if title:
-            self._panel_text(
-                panel, title, ("TkDefaultFont", 15, "bold"), pady=(12, 2 if message else 6)
-            )
-        if message:
-            self._panel_text(panel, message, ("TkDefaultFont", 10), pady=((2 if title else 12), 6))
-
-        self._build_tool_row(panel)
-
         # Fixed footer (packed to the bottom, always visible): description, comment, status, Send.
+        # Packed FIRST so it claims its parcel before anything variable above it can eat the cavity.
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         # Persistent scene description (object-placement intent) -- seeded from the model and sent
@@ -932,75 +925,32 @@ class _SketchApp:
             font=("TkDefaultFont", 11, "bold"),
         ).pack(fill="x", padx=8, pady=10, ipady=self._BTN_IPADY)
 
-        # Scrollable middle: the rooms/walls/doors/markers lists fill the space between the tool row
-        # and the footer, and scroll when they overflow.
-        inner = self._scrollable(panel)
+        # Everything above the footer scrolls as one region: the title and message (which the caller
+        # sizes, and which used to push the tool row and lists down), the tool row, and the lists.
+        inner, self._sync_panel = build_scrollable(tk, panel, padx=0)
+
+        if title:
+            self._panel_text(
+                inner, title, ("TkDefaultFont", 15, "bold"), pady=(12, 2 if message else 6)
+            )
+        if message:
+            self._panel_text(inner, message, ("TkDefaultFont", 10), pady=((2 if title else 12), 6))
+
+        self._build_tool_row(inner)
+
         for title, attr in (
             ("Rooms", "room_frame"),
             ("Walls", "line_frame"),
             ("Doors", "door_frame"),
             ("Markers", "marker_frame"),
         ):
-            tk.Label(inner, text=title, bg=PANEL, fg=MUTED, anchor="w").pack(fill="x", pady=(8, 0))
+            tk.Label(inner, text=title, bg=PANEL, fg=MUTED, anchor="w").pack(
+                fill="x", padx=12, pady=(8, 0)
+            )
             frame = tk.Frame(inner, bg=PANEL)
-            frame.pack(fill="x")
+            frame.pack(fill="x", padx=12)
             setattr(self, attr, frame)
         self._rebuild_rows()
-
-    def _scrollable(self, panel):
-        """A vertically scrollable frame (returns the inner frame) filling the space above the footer."""
-        tk = self.tk
-        wrap = tk.Frame(panel, bg=PANEL)
-        wrap.pack(side="top", fill="both", expand=True, padx=12, pady=(6, 0))
-        sb = tk.Scrollbar(
-            wrap,
-            orient="vertical",
-            bg="#3a3a3a",
-            troughcolor=PANEL,
-            activebackground="#555555",
-            relief="flat",
-            bd=0,
-            highlightthickness=0,
-            width=10,
-        )
-        cv = tk.Canvas(wrap, bg=PANEL, highlightthickness=0, yscrollcommand=sb.set)
-        sb.config(command=cv.yview)
-        cv.pack(side="left", fill="both", expand=True)
-        inner = tk.Frame(cv, bg=PANEL)
-        win = cv.create_window((0, 0), window=inner, anchor="nw")
-
-        def _sync() -> None:  # scrollregion + show the scrollbar only when the list overflows
-            cv.configure(scrollregion=cv.bbox("all"))
-            overflow = inner.winfo_reqheight() > cv.winfo_height()
-            if overflow and not sb.winfo_ismapped():
-                # pack before the canvas so it reserves the right edge (cv's expand would else eat it)
-                sb.pack(side="right", fill="y", before=cv)
-            elif not overflow and sb.winfo_ismapped():
-                sb.pack_forget()
-
-        inner.bind("<Configure>", lambda e: _sync())
-        cv.bind("<Configure>", lambda e: (cv.itemconfigure(win, width=e.width), _sync()))
-
-        def _wheel(e):
-            if inner.winfo_reqheight() <= cv.winfo_height():  # nothing to scroll
-                return
-            cv.yview_scroll(
-                1 if getattr(e, "num", 0) == 5 or getattr(e, "delta", 0) < 0 else -1, "units"
-            )
-
-        # Bind on enter/leave so the wheel scrolls anywhere over the list, including its row widgets
-        # (a per-widget bind would miss the frames/labels/entries the pointer actually sits on).
-        def _grab(_):
-            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                cv.bind_all(seq, _wheel)
-
-        def _release(_):
-            for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
-                cv.unbind_all(seq)
-
-        wrap.bind("<Enter>", _grab)
-        wrap.bind("<Leave>", _release)
-        return inner
 
     def _build_tool_row(self, panel) -> None:
         # Exactly one mode at a time (default draw); ↶/↷ undo/redo the last edit -- all one row,
@@ -1578,6 +1528,11 @@ class _SketchApp:
         self._marker_entries = build_point_rows(
             self.tk, self.marker_frame, self.model.markers, self._delete_marker
         )
+        # Rows packed in code produce no <Configure> on the scroll canvas, so re-measure explicitly
+        # or the scrollbar would not appear until something else resized the window.
+        sync = getattr(self, "_sync_panel", None)
+        if sync is not None:
+            self.marker_frame.after_idle(sync)
 
     def _rebuild_room_rows(self) -> None:
         # A colour chip with the id + a plain (background-less) name entry on the first line, then a
