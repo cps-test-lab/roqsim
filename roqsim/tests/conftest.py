@@ -1,37 +1,16 @@
-"""Shared test fixtures and helper plugins for the roqsim plugin-mechanism tests."""
+"""Shared test fixtures for the roqsim plugin-mechanism tests.
+
+The ``RecordingPlugin`` helper they clear lives in :mod:`recording_plugin`, not here -- see that
+module for why a shared test double must not be addressed as ``conftest:...``.
+"""
 
 from __future__ import annotations
 
 import pytest
+from recording_plugin import RecordingPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.plugin import Plugin
-
-
-class RecordingPlugin(Plugin):
-    """Appends ``(name, hook)`` to a shared list on every hook, to assert ordering."""
-
-    #: class-level shared log so ordering across multiple plugin instances is observable
-    LOG: list[tuple] = []
-
-    def build(self, spec, ctx):
-        self.LOG.append((self.name, "build"))
-
-    def configure(self, ctx):
-        self.LOG.append((self.name, "configure"))
-
-    def on_reset(self, ctx):
-        self.LOG.append((self.name, "on_reset"))
-
-    def pre_step(self, ctx):
-        self.LOG.append((self.name, "pre_step"))
-
-    def post_step(self, ctx):
-        self.LOG.append((self.name, "post_step"))
-
-    def shutdown(self, ctx):
-        self.LOG.append((self.name, "shutdown"))
 
 
 @pytest.fixture(autouse=True)

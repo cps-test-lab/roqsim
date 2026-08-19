@@ -9,8 +9,7 @@ something a run's results can keep and a person can replay from.
 import pytest
 import yaml
 
-from roqsim.config import (apply_overrides, deep_merge, overrides_from_dotlist,
-                        overrides_from_files)
+from roqsim.config import apply_overrides, deep_merge, overrides_from_dotlist, overrides_from_files
 from roqsim.plugin import PluginError
 
 

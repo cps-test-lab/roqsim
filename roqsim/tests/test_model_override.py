@@ -16,7 +16,12 @@ import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
-from roqsim.plugins.model_override import MJMINMU, ModelOverridePlugin, field_catalog, refusal_reasons
+from roqsim.plugins.model_override import (
+    MJMINMU,
+    ModelOverridePlugin,
+    field_catalog,
+    refusal_reasons,
+)
 
 # A crate resting on a ramp, plus a slider driven by a position servo.
 #

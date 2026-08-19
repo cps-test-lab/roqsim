@@ -8,7 +8,6 @@ stamped form exists for the other case, where roqsim is one producer in an aggre
 line without a timestamp cannot be ordered against anything else.
 """
 
-import logging
 import subprocess
 import sys
 

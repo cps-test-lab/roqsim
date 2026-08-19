@@ -9,8 +9,7 @@ therefore added at load time, by whoever deploys the run.
 
 import pytest
 
-from roqsim.config import (drop_transport_plugins, entry_ref, load_config,
-                        with_transport)
+from roqsim.config import drop_transport_plugins, entry_ref, load_config, with_transport
 
 
 def _refs(raw):

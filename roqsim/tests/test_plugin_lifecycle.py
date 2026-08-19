@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import pytest
-from conftest import RecordingPlugin
+from recording_plugin import RecordingPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 
-REF = "conftest:RecordingPlugin"
+REF = "recording_plugin:RecordingPlugin"
 
 
 def test_full_lifecycle_order():
