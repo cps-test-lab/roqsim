@@ -35,6 +35,11 @@ plugins:
       pos: [0.0, 0.0, 0.5]
       show_fov: true          # synthesise the Mid-360's translucent 360° dome FOV sector
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
+      fov_range: 6.0           # override the manifest far (40 m) to fit this room, as the cameras do
+                               # below: the walls clip the dome sideways, but the room is open above
+                               # them, so the un-clamped reach would escape over the top and stretch
+                               # the model's bounding box to ~160 m — which is what the default camera
+                               # frames, leaving the 10 m room a few dark pixels in an empty render.
 
   # 2D lidar plugin, sharing the Mid-360 mount's `mid360` site — a robot-free way to exercise it
   # (normally it rides a mobile base). Publishes a separate `scan` (LaserScan) from the same origin.
@@ -109,6 +114,8 @@ plugins:
       rpy: [0.0, 0.0, -2.35619]   # yaw -135° so the +x boresight points from this corner to the centre
       show_fov: true
       fov_alpha: 0.25
+      fov_range: 6.0             # as for the Mid-360 above: the datasheet far is 200 m, which indoors
+                                 # only inflates the scene's bounding box
 
   # --- Fiducial targets so the cameras have something decodable to render ------------------------
   # Free-standing AprilTags facing the two cameras (markers face +z by default; rpy tips them upright).
