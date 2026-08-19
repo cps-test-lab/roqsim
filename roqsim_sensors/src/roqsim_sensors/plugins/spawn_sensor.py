@@ -52,15 +52,16 @@ RealSense or Zivid) always synthesises its frustum from that camera, even when i
 one. A camera-less lidar (Mid-360, Robin W1G) draws a synthesised angular **sector** (see below), whose
 ~0.1 m near cutoff is negligible.
 
-**Occlusion (always on for cameras).** A synthesised camera frustum is never drawn as an idealised cone
-that passes through walls: it is always clipped into a *visibility volume* that stops at world geometry.
-A ``fov_rays`` grid is cast from the camera against the world built so far, each ray clamped at its first
-hit, and the drawn mesh spans those hit points (a non-convex ``userface`` mesh). This applies only to
-synthesised camera frustums -- a bundled envelope is a baked mesh and a camera-less lidar has no pinhole
-to raycast from, so those paths draw un-clipped. The clip is a **static build-time snapshot**: it
-raycasts geom groups 0/1/3 of the partial world, so list scene/floorplan plugins *before* the sensors
-(a sensor built before the walls would see none); dynamic bodies (robots) occlude at their spawn pose;
-the volume never updates at runtime. Costs one extra world compile per camera sensor at build time.
+**Occlusion (always on for anything synthesised).** A synthesised FOV volume is never drawn as an
+idealised cone that passes through walls: it is always clipped into a *visibility volume* that stops at
+world geometry. A ray grid is cast from the sensor against the world built so far, each ray clamped at
+its first hit, and the drawn mesh spans those hit points (a non-convex ``userface`` mesh). This covers
+camera frustums (a ``fov_rays`` grid from the pinhole) and lidar sectors alike (the sector's own
+azimuth x elevation grid from the scan site). Only a **bundled** ``_fov`` envelope draws un-clipped --
+it is a baked mesh and not re-cuttable. The clip is a **static build-time snapshot**: it raycasts geom
+groups 0/1/3 of the partial world, so list scene/floorplan plugins *before* the sensors (a sensor built
+before the walls would see none); dynamic bodies (robots) occlude at their spawn pose; the volume never
+updates at runtime. Costs one extra world compile per synthesising sensor at build time.
 
 **Overlap reads as darkness.** The cones are translucent and MuJoCo alpha-blends them, so where several
 sensors' cones overlap the region accumulates more layers and renders darker -- a visual cue for "how
@@ -233,7 +234,7 @@ def _lidar_sector_mesh(
     v_min: float,
     v_max: float,
     near: float,
-    far: float,
+    far,
     na: int,
     ne: int,
     wraps: bool,
@@ -243,14 +244,22 @@ def _lidar_sector_mesh(
     The closed solid between radius ``near`` and ``far`` within the azimuth band ``[h_min, h_max]``
     and elevation band ``[v_min, v_max]``: an inner shell (at ``max(near, _FOV_EPS)``) and an outer
     shell (at ``far``) on the :func:`_lidar_sector_dirs` grid, joined by elevation end caps and, for a
-    bounded azimuth, two azimuth side caps. A wrapping 360deg dome closes on itself (cells connect the
+    bounded azimuth, two azimuth side caps. ``far`` is either one radius or, when the sector is
+    clipped against the world, a per-ray array of them in the grid's row-major order -- floored like
+    :func:`_visibility_mesh` does so a fully blocked ray leaves a thin cell rather than a
+    zero-volume one MuJoCo would refuse to compile. A wrapping 360deg dome closes on itself (cells connect the
     last azimuth column back to the first, no seam) and has no side caps. Faces are wound
     outward-consistent (the caller adds reverse-wound twins via :func:`_double_sided` so the solid also
     renders from inside); explicit faces because the sector is non-convex, so the convex-hull path (a
     camera frustum) would fill in the dome."""
     dirs = _lidar_sector_dirs(h_min, h_max, v_min, v_max, na, ne, wraps)  # (ne*na, 3)
     near_eff = max(near, _FOV_EPS)
-    verts = np.vstack([near_eff * dirs, far * dirs])  # inner sheet, then outer sheet
+    outer = np.clip(
+        np.broadcast_to(np.asarray(far, dtype=np.float64), (dirs.shape[0],)),
+        near_eff + _FOV_EPS,
+        None,
+    )
+    verts = np.vstack([near_eff * dirs, outer[:, None] * dirs])  # inner sheet, then outer sheet
     o = ne * na  # outer-sheet vertex offset
     ncol = na if wraps else na - 1  # azimuth cells (wrap closes the ring)
     faces: list[list[int]] = []
@@ -471,17 +480,19 @@ class SpawnSensorPlugin(Plugin):
         camera, clipped against ``world_spec`` (the world built so far) into a *visibility volume* that
         stops at walls and objects -- occlusion is unconditional, not a per-placement opt-in.
 
-        A camera-less model cannot be clipped -- a bundled ``_fov`` envelope mesh is baked and not
-        re-cuttable, and a lidar has no pinhole to raycast from -- so it falls back to revealing its
-        bundled ``_fov`` envelope (if it ships one) or, for a lidar that does not (Mid-360, Robin W1G),
-        synthesising the azimuth x elevation **sector** from the manifest's angular ``fov:`` band. Both
-        are drawn un-clipped; ``near``/``far`` still set their radii.
+        A camera-less model falls back to revealing its bundled ``_fov`` envelope (if it ships one) or,
+        for a lidar that does not (Mid-360, Robin W1G), synthesising the azimuth x elevation **sector**
+        from the manifest's angular ``fov:`` band -- and that sector is clipped against ``world_spec``
+        too, casting its own direction grid from the scan site. Only the bundled envelope draws
+        un-clipped, being a baked mesh; ``near``/``far`` still set the radii the clip works within.
 
         Raises only when there is nothing at all to show, so ``show_fov: true`` never silently does
         nothing."""
         if self._add_camera_frustums(child, asset, near, far, world_spec=world_spec) > 0:
             return
-        revealed = self._reveal_fov(child) or self._add_lidar_sectors(child, asset, near, far)
+        revealed = self._reveal_fov(child) or self._add_lidar_sectors(
+            child, asset, near, far, world_spec=world_spec
+        )
         if revealed == 0:
             raise RuntimeError(
                 f"spawn_sensor: show_fov is set but model {self.config['model']!r} ships no FOV geom "
@@ -572,7 +583,9 @@ class SpawnSensorPlugin(Plugin):
             added += 1
         return added
 
-    def _add_lidar_sectors(self, child: mujoco.MjSpec, asset, near: float, far: float) -> int:
+    def _add_lidar_sectors(
+        self, child: mujoco.MjSpec, asset, near: float, far: float, *, world_spec
+    ) -> int:
         """Synthesise a translucent angular-sector FOV volume for a lidar. Returns how many (0 or 1).
 
         A lidar's field of view is an azimuth x elevation band between ``range_min`` and ``range_max``,
@@ -583,6 +596,15 @@ class SpawnSensorPlugin(Plugin):
         direction convention the capture plugin casts with, so the drawn volume coincides with the
         rays. ``near``/``far`` are the shell's inner/outer radii (the manifest's ``fov: {near, far}``).
 
+        Clipped against ``world_spec`` exactly as a camera frustum is: the sector's own direction grid
+        is cast from the scan site and each ray clamped at its first hit, so the drawn volume stops at
+        walls instead of passing through them. A lidar was long exempted here for having "no pinhole to
+        raycast from", but :func:`_lidar_sector_dirs` *is* an origin plus a direction grid -- the same
+        two things :meth:`_add_camera_frustums` casts with. Un-clipped, a long-range lidar drew its
+        full physical reach through the building: the Robin W1G's 200 m cone and the Mid-360's 40 m
+        dome bounded an otherwise 10 m room, and MuJoCo's model-derived default camera framed *that*,
+        so every render of such a world came out as a few dark pixels in an empty frame.
+
         Returns 0 when the manifest declares no angular band (the model is not a lidar), so the caller
         falls through to the 'nothing to show' error rather than this silently doing nothing."""
         meta = _manifest_fov(asset)
@@ -592,9 +614,20 @@ class SpawnSensorPlugin(Plugin):
         v_min, v_max = float(meta["v_min"]), float(meta["v_max"])
         wraps = (h_max - h_min) >= _TWO_PI - 1e-9
         na, ne = _sector_grid(h_min, h_max, v_min, v_max)
-        verts_site, faces = _lidar_sector_mesh(h_min, h_max, v_min, v_max, near, far, na, ne, wraps)
 
         site = self._lidar_site(child)
+        radii = self._clipped_sector_radii(
+            child,
+            asset,
+            site,
+            _lidar_sector_dirs(h_min, h_max, v_min, v_max, na, ne, wraps),
+            far,
+            world_spec=world_spec,
+        )
+        verts_site, faces = _lidar_sector_mesh(
+            h_min, h_max, v_min, v_max, near, radii, na, ne, wraps
+        )
+
         rot = np.zeros(9)
         mujoco.mju_quat2Mat(rot, np.asarray(site.quat, dtype=np.float64))
         verts_body = verts_site @ rot.reshape(3, 3).T + np.asarray(site.pos, dtype=np.float64)
@@ -616,6 +649,39 @@ class SpawnSensorPlugin(Plugin):
         geom.group = FOV_GEOM_GROUP
         geom.rgba = [*_FRUSTUM_RGB, self.fov_alpha]
         return 1
+
+    def _clipped_sector_radii(
+        self, child, asset, site, dirs_site: np.ndarray, far: float, *, world_spec
+    ):
+        """Per-ray outer radii for the sector: each of ``dirs_site`` clamped at its first world hit.
+
+        The site's pose is read off a throwaway compile of the model rather than its spec ``pos``/
+        ``quat``, for the reason :meth:`_add_camera_frustums` does the same for a camera: those are
+        stated relative to the site's parent body, and a mount is free to nest one. ``site_xpos``/
+        ``site_xmat`` are already resolved into the child-root frame, which the attach transform then
+        carries to world."""
+        probe = mujoco.MjSpec.from_file(str(asset.path))
+        apply_assets(probe, asset)
+        pm = probe.compile()
+        pd = mujoco.MjData(pm)
+        mujoco.mj_forward(pm, pd)  # populate site_xpos/site_xmat (child-root frame)
+        sid = mujoco.mj_name2id(pm, mujoco.mjtObj.mjOBJ_SITE, site.name)
+        if (
+            sid < 0
+        ):  # the site exists in the spec but not the compiled probe -- nothing to cast from
+            return far
+        wm, wd = _compile_world_snapshot(
+            world_spec, plugin=self.name or "spawn_sensor", model=self.config["model"]
+        )
+        r_mount = np.zeros(9)  # world <- child-root: the attach frame's rotation
+        mujoco.mju_quat2Mat(r_mount, np.asarray(self.quat, dtype=np.float64))
+        r_mount = r_mount.reshape(3, 3)
+        origin_w = r_mount @ pd.site_xpos[sid] + np.asarray(self.pos, dtype=np.float64)
+        r_site_w = r_mount @ pd.site_xmat[sid].reshape(3, 3)  # world <- site
+        dist = _raycast_depths(wm, wd, origin_w, dirs_site @ r_site_w.T, cutoff=far)
+        # cutoff is a culling hint rather than a clamp, and a miss is -1; both mean "no closer than
+        # far" (see the identical handling in _add_camera_frustums).
+        return np.minimum(np.where(dist >= 0.0, dist, np.inf), far)
 
     def _lidar_site(self, child: mujoco.MjSpec):
         """The scan site the sector is centred on: the model's sole site (the ray origin).

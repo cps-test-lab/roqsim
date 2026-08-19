@@ -12,6 +12,7 @@ from roqsim.engine import Engine
 
 _MODELS = pathlib.Path(__file__).resolve().parent.parent / "src" / "roqsim_sensors" / "models"
 
+
 #: The mid360, zivid and robin_w1g meshes are DERIVED from vendor CAD whose redistribution terms are
 #: unclear, so they are generated locally by `make external-resources` and git-ignored -- and two of
 #: the three sources sit behind a product page that cannot be fetched at all. A clean checkout (CI
@@ -194,7 +195,9 @@ def test_manifest_fov_angles_match_capture_plugin_defaults():
     for plugin_cls, model in ((LivoxMid360Plugin, "mid360"), (SeyondRobinW1GPlugin, "robin_w1g")):
         p = plugin_cls()
         asset = resolve_model(model)
-        fov = yaml.safe_load((asset.path.parent / f"{asset.path.stem}.manifest.yaml").read_text())["fov"]
+        fov = yaml.safe_load((asset.path.parent / f"{asset.path.stem}.manifest.yaml").read_text())[
+            "fov"
+        ]
         assert math.isclose(fov["h_min"], p.h_fov_min, abs_tol=1e-6), model
         assert math.isclose(fov["h_max"], p.h_fov_max, abs_tol=1e-6), model
         assert math.isclose(fov["v_min"], p.v_fov_min, abs_tol=1e-6), model
@@ -271,14 +274,24 @@ def test_camera_model_always_synthesises_occluded_frustum_not_envelope():
         cfg = {
             "sim": {},
             "plugins": [
-                {"spawn_sensor": {"model": "zivid", "name": "zivid", "show_fov": True, "fov_alpha": 0.2, **extra}}
+                {
+                    "spawn_sensor": {
+                        "model": "zivid",
+                        "name": "zivid",
+                        "show_fov": True,
+                        "fov_alpha": 0.2,
+                        **extra,
+                    }
+                }
             ],
         }
         engine = Engine(load_config_from_dict(cfg))
         engine.setup()
         m = engine.ctx.model
         synth = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "zivid_color_fov")
-        assert synth >= 0 and np.isclose(m.geom_rgba[synth][3], 0.2), extra  # synthesised frustum drawn
+        assert synth >= 0 and np.isclose(m.geom_rgba[synth][3], 0.2), (
+            extra
+        )  # synthesised frustum drawn
         baked = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "zivid_fov")
         assert baked >= 0 and m.geom_rgba[baked][3] == 0.0, extra  # bundled envelope left hidden
 
@@ -287,7 +300,10 @@ def test_fov_near_beyond_range_is_rejected():
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
     plugin = SpawnSensorPlugin()
-    assert any("fov_near" in e for e in plugin.validate_config({"model": "d435", "fov_near": 2.0, "fov_range": 1.5}))
+    assert any(
+        "fov_near" in e
+        for e in plugin.validate_config({"model": "d435", "fov_near": 2.0, "fov_range": 1.5})
+    )
     assert any("fov_near" in e for e in plugin.validate_config({"model": "d435", "fov_near": -0.1}))
 
 
@@ -298,7 +314,10 @@ def test_fov_near_without_show_fov_is_inert():
     base.setup()
     withn = Engine(_world(fov_near=0.5))
     withn.setup()
-    assert (base.ctx.model.ngeom, base.ctx.model.nmesh) == (withn.ctx.model.ngeom, withn.ctx.model.nmesh)
+    assert (base.ctx.model.ngeom, base.ctx.model.nmesh) == (
+        withn.ctx.model.ngeom,
+        withn.ctx.model.nmesh,
+    )
 
 
 def test_mount_pose_places_the_camera_in_the_world():
@@ -421,7 +440,9 @@ def test_fov_occlusion_open_space_reaches_far(tmp_path):
 def test_fov_occlusion_mesh_is_a_grid_not_a_hull(tmp_path):
     engine = _occlusion_engine(tmp_path, wall=True)
     engine.setup()
-    assert _mesh_vertnum(engine, "d435_color_fov") == 2 * 16 * 12  # near + far sheets, not an 8-vert hull
+    assert (
+        _mesh_vertnum(engine, "d435_color_fov") == 2 * 16 * 12
+    )  # near + far sheets, not an 8-vert hull
 
 
 @needs_mid360
@@ -438,12 +459,54 @@ def test_fov_occlusion_near_zero_compiles(tmp_path):
     engine.setup()
     engine.reset()
     verts = _world_fov_verts(engine, "d435_color_fov")
-    assert np.isclose(verts[:, 1].min(), _cam_world_y(engine), atol=5e-3)  # epsilon apex at the camera
+    assert np.isclose(
+        verts[:, 1].min(), _cam_world_y(engine), atol=5e-3
+    )  # epsilon apex at the camera
 
 
 def test_fov_rays_config_validation():
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
     plugin = SpawnSensorPlugin()
-    assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [1, 4]}))
+    assert any(
+        "fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [1, 4]})
+    )
     assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
+
+
+def test_lidar_sector_is_clipped_by_the_walls():
+    """A synthesised lidar sector must stop at world geometry, like a camera frustum already did.
+
+    It used to draw its full physical reach straight through the building. That is wrong on its own
+    terms -- the volume claims to show what the sensor sees -- and it wrecked every render of such a
+    world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bounded an otherwise 10 m room, so
+    MuJoCo's model-derived default camera framed a ~160 m box and the room came out as a few dark
+    pixels.
+
+    Asserted below the wall tops, where the default empty_room actually encloses the sensor. The room
+    is open above them, so the upper dome legitimately escapes to the full range -- checked here too,
+    because clipping everything to the walls would be the opposite bug.
+    """
+    import mujoco
+
+    far = 30.0  # >> the 10 m room, so an unclipped sector is unmistakable
+    engine = Engine(_mid360_world(show_fov=True, fov_range=far))
+    engine.setup()
+    engine.reset()
+    m, d = engine.ctx.model, engine.ctx.data
+
+    gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "mid360_fov")
+    assert gid >= 0
+    mesh = m.geom_dataid[gid]
+    adr, num = m.mesh_vertadr[mesh], m.mesh_vertnum[mesh]
+    # World-space vertices: MuJoCo recentres a mesh's local verts, and geom_xpos carries that offset,
+    # so the two must be combined -- the local coordinates alone are not radii from the sensor.
+    verts = d.geom_xpos[gid] + m.mesh_vert[adr : adr + num] @ d.geom_xmat[gid].reshape(3, 3).T
+
+    wall_top, wall_inner = 1.9, 5.05
+    enclosed = verts[verts[:, 2] < wall_top]
+    assert len(enclosed) > 0
+    assert np.abs(enclosed[:, :2]).max() <= wall_inner, "the sector passes through the walls"
+    assert np.abs(verts[:, :2]).max() > 2 * wall_inner, (
+        "the sector should still escape over the walls"
+    )
