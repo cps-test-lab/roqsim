@@ -233,8 +233,16 @@ Recording costs the run almost nothing, which is why nothing is drawn while the 
 indistinguishable from not recording; 500 fps — every single step on a ``0.002`` timestep — costs about
 5.5%. A *rendered* frame, by contrast, is 2–6 ms depending on how much of the world is in shot (it is
 scene-geometry bound, so resolution barely matters), against ~0.001 ms for a state sample: three orders
-of magnitude, which is the whole reason the picture is made afterwards. The rate is otherwise a *disk*
-decision: at 25 fps a mobile manipulator's recording is about 0.25 MB per simulated minute.
+of magnitude, which is the whole reason the picture is made afterwards.
+
+It costs the run almost no *memory* either, which is why an hour-long recording is a disk question and
+not a "will this fit" one: each sample is written to a ``<recording>.npz.part`` stream as it is taken,
+and ``close()`` packs that stream into the archive and removes it. Measured against holding the run in
+memory, the loop cost is the same to within noise. The rate is otherwise a *disk* decision: at 25 fps a
+mobile manipulator produces about 0.25 MB of samples per simulated minute, and the archive deflates that
+by a factor that depends on the world — 70% of raw for a bare mobile robot, 11% for a world of
+pedestrians — because a state vector repeats: most of a world stands still, so most of a record is the
+record before it.
 
 The file is a plain ``.npz``, so anything with numpy can read it — ``np.load("run.npz")`` gives a JSON
 ``meta`` member and a structured ``samples`` member with **both clocks** per sample: ``t`` is simulated
@@ -320,7 +328,9 @@ URDF and SRDF.
 A run stopped any of the normal ways writes its recording on the way out: closing the viewer window, one
 Ctrl+C, or a **SIGTERM** — which is how a *supervised* run ends, whether that is ``docker stop``, a
 container teardown, a Kubernetes eviction or a campaign timeout. Only ``SIGKILL`` loses it: an ``.npz``
-writes its index at the end, so there is nothing to read.
+writes its index at the end, so there is nothing to read. Such a run leaves its ``<recording>.npz.part``
+sample stream behind, buffered up to whatever the kill interrupted; nothing reads it, and the archive's
+*absence* remains the signal that the run did not end on purpose.
 
 The recording is written before the capture is derived from it, so a problem with the browser artifact
 costs you the numbers as well.

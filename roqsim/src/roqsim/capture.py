@@ -14,8 +14,12 @@ The rate is mostly a **disk** decision. Measured end-to-end (30 s of sim, ``--pa
 time *is* the loop cost): the default 25 fps is indistinguishable from not recording, and 500 fps --
 every single step at ``dt=0.002``, the worst case there is -- costs about **5.5%**. The underlying
 ``mj_getState`` is a ~0.001 ms memcpy; at 500 Hz what shows up instead is per-sample Python and numpy
-overhead (~20 us: the float32 cast, the append, the binding call). So lower the rate because the file is
-large, and know that only an every-step rate is measurable at all.
+overhead (~20 us: the float32 cast, the copy into the write buffer, the binding call). So lower the rate
+because the file is large, and know that only an every-step rate is measurable at all.
+
+A sample goes **straight to disk** (see :class:`_SampleStream`), which is a memory decision and not a
+speed one: measured against holding the run in lists, the loop cost is the same to within noise at both
+25 and 500 fps, while the footprint stops growing with the run's length.
 
 For scale, the thing this design keeps *out* of the loop: one rendered frame is 2-6 ms depending on how
 much of the world is in shot (scene-geometry bound, so resolution barely matters). That is three orders
@@ -28,6 +32,7 @@ import json
 import logging
 import os
 import time
+import zipfile
 from dataclasses import dataclass
 from fractions import Fraction
 from importlib import metadata
@@ -35,6 +40,7 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+from numpy.lib import format as npy_format
 
 from .kinematics import body_twist
 
@@ -289,6 +295,20 @@ SIM_POSE_FILENAME = "sim_poses.csv"
 #: Camera-track width: type, fixedcamid, trackbodyid, lookat(3), distance, azimuth, elevation.
 CAMERA_WIDTH = 9
 
+#: Suffix of the live sample stream, appended to the recording's own name (``run.npz`` ->
+#: ``run.npz.part``). Beside the recording and not in a temp directory: a container's ``/tmp`` is
+#: often a tmpfs, so the one place a file written to spare RAM must not live is RAM. The name is
+#: deliberately clear of ``.csv`` and ``.jsonl`` (a campaign turns those into data tables, and a stem
+#: collision there is a hard error) and of :data:`CLOCK_MAP_SUFFIX`, which is globbed for.
+STREAM_SUFFIX = ".part"
+
+#: Write buffer for that stream, sized from both ends. Big enough that several records always fit --
+#: Python's 8 kB default cannot hold two of a mobile manipulator's, so it degenerates into a write per
+#: sample and measures 30% slower -- and small enough that what a SIGKILL throws away is seconds of a
+#: run rather than minutes: a megabyte of a small world's records is a *seven minute* recording that
+#: would have been lost entire. Measured identical in cost to a megabyte.
+_STREAM_BUFFER = 1 << 16
+
 _PROVENANCE_PACKAGES = ("roqsim", "mujoco", "numpy")
 
 
@@ -341,6 +361,160 @@ def package_versions() -> dict:
     return out
 
 
+def _npz_path(path: str | Path) -> Path:
+    """The recording's path, carrying the ``.npz`` numpy used to append behind our backs.
+
+    The archive is written here by name now, so the suffix has to be settled up front: what
+    :meth:`StateRecorder.close` returns, what the clock record is named after, and what the sample
+    stream is named after all have to agree with what lands on disk. ``np.savez`` appending it for us
+    meant ``--record out`` wrote ``out.npz`` while ``close()`` handed back ``out``, a path that does
+    not exist -- and ``roqsim health`` already assumed the normalised name when it looked for the
+    archive belonging to a clock record.
+    """
+    path = Path(path)
+    return path if path.suffix == ".npz" else path.with_name(path.name + ".npz")
+
+
+class _SampleStream:
+    """The samples on disk while the run is still going -- the recording's live half.
+
+    A raw stream of fixed-width records, appended as each is taken and packed into the ``.npz`` at
+    the end. Accumulating them in RAM instead cost memory linear in the run's *length*, peaking at
+    about twice the file size in the moment the whole run was materialised for the write. That memory
+    is anonymous, so a container under pressure can reclaim none of it: a long run either fit or was
+    OOM-killed. Streamed, the footprint is flat and what pages remain are file-backed and evictable.
+
+    Measured on 40 000 samples of a pedestrian world (58 MB of records): the loop's footprint stopped
+    growing entirely where the lists had added 61 MB to it, and peak RSS across the whole recording
+    fell from 409 MB to 309 MB -- the remainder being the mapping and the archive's own write pages,
+    which are file-backed and so are the kernel's to reclaim rather than the run's to hold.
+
+    **Deliberately not flushed per sample.** The two CSVs beside it are, because they exist for
+    readers *outside* the process -- a health check tailing a live run. This file has one reader, and
+    it is :meth:`finish`. A run killed with SIGKILL still loses its recording, exactly as before: an
+    ``.npz`` writes its index at the end, so there was never anything to read. What buffering buys is
+    one ``write(2)`` per :data:`_STREAM_BUFFER` rather than one per sample.
+
+    A write failure **is** fatal here, unlike the two CSVs. This is the primary artifact, and a
+    recording quietly missing the samples that would not fit is indistinguishable from a shorter run.
+    """
+
+    def __init__(self, path: Path, dtype: np.dtype) -> None:
+        self.path = path
+        self.dtype = dtype
+        self.count = 0
+        #: The record to fill before each :meth:`append` -- one array, refilled in place all run. The
+        #: stream owns it rather than taking one per call so that its *bytes* can be taken once, below:
+        #: building that memoryview per sample costs as much again as the write itself.
+        self.record = np.zeros(1, dtype=dtype)
+        self._bytes = self.record.data
+        self._file = None
+        self._final: np.ndarray | None = None
+
+    def append(self) -> None:
+        """Append :attr:`record` as it currently stands.
+
+        Opened lazily on the first record, like the clock and pose records, so a recorder that never
+        samples leaves no file for an existence check to trip over.
+        """
+        try:
+            if self._file is None:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                self._file = open(  # pylint: disable=consider-using-with
+                    self.path, "wb", buffering=_STREAM_BUFFER
+                )
+            # The record's own bytes, so a sample is a memcpy into the write buffer and nothing more.
+            self._file.write(self._bytes)
+        except OSError as err:
+            raise RecordingError(
+                f"{self.path}: the recording's samples could not be written ({err}). Unlike the "
+                "clock and pose records this is the recording itself, so the run stops here rather "
+                "than continuing toward an archive that would silently be missing samples."
+            ) from err
+        self.count += 1
+
+    def _map(self) -> np.ndarray | None:
+        """Map what is on disk, read-only. The *file* decides the length, not :attr:`count`.
+
+        A record torn in half by a kill mid-write is dropped rather than read as a sample of zeros.
+        """
+        n = self.path.stat().st_size // self.dtype.itemsize
+        if n == 0:
+            return None
+        return np.memmap(self.path, dtype=self.dtype, mode="r", shape=(n,))
+
+    def mapped(self) -> np.ndarray | None:
+        """Every record written so far. Valid both before and after :meth:`finish`.
+
+        Both, because the two drivers disagree on order: ``roqsim sim`` closes the recording and then
+        derives the run capture from it, while the scenario adapter derives first and closes last. So
+        this either hands back the mapping :meth:`finish` kept or flushes and maps the live file.
+        """
+        if self._final is not None:
+            return self._final
+        if self._file is None:
+            return None
+        self._file.flush()
+        return self._map()
+
+    def finish(self) -> np.ndarray | None:
+        """Close the stream and hand back everything in it. The file is gone when this returns.
+
+        The mapping deliberately outlives the file's *name*: POSIX keeps the inode alive until the
+        last reference to it is dropped, which is what ``tempfile.TemporaryFile`` is built on. That is
+        what lets ``replay()`` still work after ``close()`` while leaving no temporary file in the run
+        directory for a campaign to collect as an artifact.
+
+        Do not "tidy" this into a later unlink. Deferring it to the driver means the first call site
+        that forgets -- the scenario adapter tears a recorder down on a mid-run world rebuild, where
+        no driver ``finally`` is watching -- leaves a temp file in a *successful* run's output list.
+        Idempotent: every caller is a ``finally``.
+        """
+        if self._file is not None:
+            try:
+                self._file.close()
+            finally:
+                self._file = None
+        # The gate is :attr:`count`, not the file's existence: a stream left behind by an *earlier*
+        # run that was killed sits at exactly this path, and a run that ends before its first sample
+        # would otherwise pack that run's samples into this run's archive, under this run's
+        # provenance. It is left alone instead, to be truncated by the next run that does record.
+        if self._final is None and self.count:
+            self._final = self._map()
+            try:
+                self.path.unlink()
+            except OSError as err:  # a filesystem that will not unlink a mapped file
+                log.debug("recording: %s could not be removed (%s)", self.path, err)
+        return self._final
+
+
+def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
+    """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
+
+    **Deflated at level 1**, which is the setting ``np.savez_compressed`` cannot express. The reason
+    to compress at all is not the float mantissas -- those really are incompressible noise, and
+    float32 has already dropped the worst of them -- it is that a state vector *repeats*: most of a
+    world stands still, so most of each record is the previous record. How much that is worth
+    therefore depends on the world, and on real recordings from this substrate it ranges from **70%**
+    of raw (a bare mobile robot, where nearly every number in the vector moves) to **11%** (a world of
+    pedestrians, whose seventeen mocap bodies apiece are mostly holding position). Level 1 gets the
+    same ratio as level 6 at roughly twice its throughput, which is worth having in a teardown that a
+    campaign's timeout may be about to escalate to SIGKILL.
+
+    Written a member at a time rather than through ``np.savez`` for two reasons: the level is ours to
+    pick, and *samples* may be a memmap, which ``write_array`` streams through in 16 MB chunks
+    instead of materialising. The layout is the ``.npz`` format exactly as :mod:`numpy.lib.format`
+    documents it -- one ``<key>.npy`` member per array -- so every existing reader is unaffected.
+    """
+    meta = np.array(json.dumps(provenance))
+    with zipfile.ZipFile(
+        path, "w", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=1
+    ) as archive:
+        for name, array in (("meta.npy", meta), ("samples.npy", samples)):
+            with archive.open(name, "w", force_zip64=True) as member:
+                npy_format.write_array(member, array, allow_pickle=False)
+
+
 class StateRecorder:
     """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
 
@@ -349,17 +523,24 @@ class StateRecorder:
     a driver and ``sample``\\ d from the loop the driver already runs: no lifecycle hooks, nothing
     injected into a parsed world, and no second route through the world YAML.
 
-    Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a list
-    append. Everything expensive -- rebuilding the world, rendering, encoding -- happens afterwards, from
-    the file (see :mod:`roqsim.recording`).
+    Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a copy
+    into a write buffer. Everything expensive -- rebuilding the world, rendering, encoding -- happens
+    afterwards, from the file (see :mod:`roqsim.recording`).
 
-    Written once at :meth:`close`. Every stop that must work reaches it through the driver's existing
-    ``finally``: closing the viewer window drops ``viewer.is_running()``, and Ctrl+C **or a supervisor's
-    SIGTERM** is caught by ``_graceful_stop``, which sets ``QUITTING`` rather than raising. SIGTERM
-    matters as much as Ctrl+C here, because it is how a supervised run ends -- a container teardown, a
-    ``docker stop``, an eviction, a campaign timeout -- and its default action would kill the process
-    with no ``finally`` at all. Only **SIGKILL** still loses the recording, since an ``.npz`` is a zip
-    whose index is written at the end; that is the accepted trade for a standard container.
+    **The samples live on disk, not in RAM**: each is appended to a :class:`_SampleStream` beside the
+    target as it is taken, and :meth:`close` packs that stream into the archive. So the run's memory
+    footprint does not grow with its length, which is what makes an hour-long recording a disk
+    decision rather than a memory one.
+
+    The archive itself is still written once, at :meth:`close`. Every stop that must work reaches it
+    through the driver's existing ``finally``: closing the viewer window drops ``viewer.is_running()``,
+    and Ctrl+C **or a supervisor's SIGTERM** is caught by ``_graceful_stop``, which sets ``QUITTING``
+    rather than raising. SIGTERM matters as much as Ctrl+C here, because it is how a supervised run ends
+    -- a container teardown, a ``docker stop``, an eviction, a campaign timeout -- and its default action
+    would kill the process with no ``finally`` at all. Only **SIGKILL** still loses the recording, since
+    an ``.npz`` is a zip whose index is written at the end; that is the accepted trade for a standard
+    container, and it is why the stream is buffered rather than flushed per sample. Such a run leaves
+    its ``.part`` stream behind, which nothing reads: the archive's *absence* is the signal.
     """
 
     def __init__(
@@ -374,17 +555,27 @@ class StateRecorder:
         sim_poses: bool = False,
         logger: logging.Logger | None = None,
     ) -> None:
-        self.path = Path(path)
+        self.path = _npz_path(path)
         self.rate = rate
         self.log = logger or log
         self._model = ctx.model
         self._size = mujoco.mj_stateSize(ctx.model, STATE_SPEC)
         self._buf = np.empty(self._size)  # mj_getState needs float64; samples are cast on append
-        self._states: list[np.ndarray] = []
-        self._times: list[float] = []
-        self._walls: list[float] = []
-        self._cams: list[np.ndarray] = []
-        self._camera = camera
+        # The record layout is decided here rather than at close: by then there is nothing left in
+        # memory to infer it from.
+        self._stream = _SampleStream(
+            self.path.with_name(self.path.name + STREAM_SUFFIX),
+            record_dtype(self._size, camera),
+        )
+        # Views onto the record's fields, taken once. Naming a field of a structured array builds a
+        # new view every time, which measured as much again as the write it feeds; through these, a
+        # sample is cheaper than the list append this replaced.
+        record = self._stream.record
+        self._t, self._w, self._s = record["t"], record["w"], record["s"]
+        self._cam = record["cam"] if camera else None
+        # Span endpoints, kept because the closing log line reports them and nothing else remembers.
+        self._first_t = self._last_t = 0.0
+        self._first_w = self._last_w = 0.0
         self._next_due = 0.0
         self._closed = False
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
@@ -392,11 +583,12 @@ class StateRecorder:
         # factor its own rather than the session's.
         self._origin = time.perf_counter()
         self._wall_start_epoch = time.time()
-        # The clock record, streamed and flushed per sample. The .npz is written once, at close(),
+        # The clock record, streamed and flushed *per sample*. The .npz is written once, at close(),
         # so a run killed by a timeout leaves none at all -- and that is exactly the run whose log
         # somebody needs to place in time. This file survives, because every line is already on
-        # disk when the process dies. Opened lazily on the first sample so a recorder that never
-        # samples leaves no empty file for an existence check to trip over.
+        # disk when the process dies; the sample stream is buffered instead, since it exists only to
+        # be packed at close and nobody tails it. Opened lazily on the first sample so a recorder
+        # that never samples leaves no empty file for an existence check to trip over.
         self._clock_path = Path(str(self.path).removesuffix(".npz") + CLOCK_MAP_SUFFIX)
         self._clock_file = None
         # The pose record, streamed on the same terms and for the same reasons. Off unless a driver
@@ -442,7 +634,7 @@ class StateRecorder:
 
     @property
     def frames(self) -> int:
-        return len(self._times)
+        return self._stream.count
 
     def sample(self, ctx, cam=None) -> bool:
         """Take a sample if one is due. Cheap enough to call every step; returns whether it did.
@@ -466,13 +658,18 @@ class StateRecorder:
         # step's bookkeeping around it finished.
         wall = time.perf_counter() - self._origin
         mujoco.mj_getState(ctx.model, ctx.data, self._buf, STATE_SPEC)
-        self._states.append(self._buf.astype(np.float32))
-        self._times.append(float(now))
-        self._walls.append(wall)
+        self._t[0] = now
+        self._w[0] = wall
+        # float64 -> float32 happens in the assignment, which is why there is no per-sample astype.
+        self._s[0] = self._buf
+        if self._cam is not None:
+            self._cam[0] = _camera_row(cam)
+        self._stream.append()
+        if self._stream.count == 1:
+            self._first_t, self._first_w = float(now), wall
+        self._last_t, self._last_w = float(now), wall
         self._write_clock_sample(wall, float(now))
         self._write_sim_pose_sample(ctx, wall, float(now))
-        if self._camera:
-            self._cams.append(_camera_row(cam))
         return True
 
     def _write_clock_sample(self, wall: float, sim: float) -> None:
@@ -558,13 +755,21 @@ class StateRecorder:
         derive something from the run (a browser run capture, say) without paying seconds for a
         rebuild it does not need. The state layout stays known in exactly one module either way.
 
+        Reads the samples back through the stream's mapping rather than from memory, so it costs the
+        run no RAM and works either side of :meth:`close` -- the two drivers disagree on which comes
+        first (see :meth:`_SampleStream.mapped`).
+
         **Destructive and terminal**: it overwrites ``ctx.data`` sample by sample, so it belongs after
         the loop is done. One ``MjData`` is re-posed throughout, so a consumer that keeps values must
         copy them.
         """
+        samples = self._stream.mapped()
+        if samples is None:
+            return
         buf = np.empty(self._size)
-        for t, state in zip(self._times, self._states, strict=True):
-            buf[:] = state
+        for record in samples:
+            t = float(record["t"])
+            buf[:] = record["s"]
             mujoco.mj_setState(ctx.model, ctx.data, buf, STATE_SPEC)
             # xpos/xquat/site_xpos are derived, never stored -- this is what makes them available.
             mujoco.mj_forward(ctx.model, ctx.data)
@@ -586,7 +791,8 @@ class StateRecorder:
                 except OSError:
                     pass
                 setattr(self, attr, None)
-        if not self._times:
+        samples = self._stream.finish()
+        if samples is None:
             # Nothing sampled: say so rather than leaving an empty file that passes an existence check.
             self.log.warning(
                 "recording: no samples taken, so %s was not written. The run ended before the first "
@@ -597,24 +803,14 @@ class StateRecorder:
             )
             return None
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        samples = _pack(
-            self._times, self._walls, self._states, self._cams if self._camera else None
-        )
-        # Plain savez, never savez_compressed: float mantissas of smooth signals are incompressible
-        # noise in the low bits (measured: 4% on float64), and float32 has already removed those bits.
-        # It would cost real CPU inside the run for nothing.
-        np.savez(
-            self.path,
-            meta=np.array(json.dumps(self._provenance)),
-            samples=samples,
-        )
-        sim_span = self._times[-1] - self._times[0]
-        wall_span = self._walls[-1] - self._walls[0]
+        _write_archive(self.path, self._provenance, samples)
+        sim_span = self._last_t - self._first_t
+        wall_span = self._last_w - self._first_w
         self.log.info(
             # Wall gets two decimals where sim gets one: a fast `--pacing asap` run finishes in
             # hundredths of a second, and "in 0.0 s wall" would report a real measurement as nothing.
             "recording: %d samples at %s fps (%.1f s of sim time in %.2f s wall, %s) -> %s",
-            len(self._times),
+            self._stream.count,
             float(self.rate.fps),
             sim_span,
             wall_span,
@@ -653,16 +849,6 @@ def record_dtype(state_size: int, camera: bool) -> np.dtype:
     if camera:
         fields.append(("cam", "<f4", (CAMERA_WIDTH,)))
     return np.dtype(fields)
-
-
-def _pack(times, walls, states, cams) -> np.ndarray:
-    out = np.empty(len(times), dtype=record_dtype(len(states[0]), cams is not None))
-    out["t"] = times
-    out["w"] = walls
-    out["s"] = np.asarray(states, dtype=np.float32)
-    if cams is not None:
-        out["cam"] = np.asarray(cams, dtype=np.float32)
-    return out
 
 
 def _camera_row(cam) -> np.ndarray:

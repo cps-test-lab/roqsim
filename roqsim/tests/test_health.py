@@ -116,6 +116,9 @@ def test_the_records_are_readable_while_the_recorder_is_still_open(tmp_path):
     assert len(clock.read_text().splitlines()) >= 6, "rows must be flushed, not buffered to close()"
     assert "thing" in poses.read_text()
     assert not (tmp_path / "run.npz").exists(), "the npz is written at close(); that is why we tail"
+    # The samples stream to disk too, but *buffered* -- so it is not tailable and health must not
+    # learn to read it. Its presence without an .npz beside it means a run that never closed.
+    assert (tmp_path / "run.npz.part").exists()
 
 
 # -- the tailer ------------------------------------------------------------------------------------

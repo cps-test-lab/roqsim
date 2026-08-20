@@ -354,6 +354,14 @@ def test_takes_are_numbered_so_a_second_never_overwrites_the_first(tmp_path):
     written = takes.close()
     assert [p.name for p in written] == ["run.npz", "run-2.npz"]
     assert all(p.exists() for p in written)
+    # Each take streams its samples to its own file and packs them away when it stops, so a session
+    # of takes leaves the archives and nothing else.
+    assert sorted(p.name for p in tmp_path.iterdir()) == [
+        "run-2.clock_map.csv",
+        "run-2.npz",
+        "run.clock_map.csv",
+        "run.npz",
+    ]
 
 
 def test_toggle_alternates(tmp_path):

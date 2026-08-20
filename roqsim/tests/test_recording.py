@@ -20,6 +20,7 @@ import pytest
 from roqsim.capture import (
     STATE_FIELDS,
     STATE_SPEC,
+    STREAM_SUFFIX,
     CaptureRate,
     StateRecorder,
     camera_from_row,
@@ -265,26 +266,29 @@ def test_a_reset_restarts_the_schedule_but_not_the_wall_clock(tmp_path, moving):
     for _ in range(200):
         mujoco.mj_step(model, data)
         rec.sample(ctx)
-    before = rec._walls[-1]
+    before = rec._last_w
     rec.on_reset()
     for _ in range(200):
         mujoco.mj_step(model, data)
         rec.sample(ctx)
-    assert rec._walls[-1] > before, "the wall clock kept running across the reset"
+    assert rec._last_w > before, "the wall clock kept running across the reset"
 
 
-def test_the_archive_is_uncompressed(tmp_path, moving):
-    """A regression to savez_compressed must fail a test, not just a review.
+def test_the_archive_is_deflated(tmp_path, moving):
+    """Compressed, and a regression to a stored archive must fail a test rather than a review.
 
-    It buys ~4% on float mantissas of smooth signals (which are incompressible noise in the low bits,
-    and float32 has already removed those bits) for real CPU spent inside the run.
+    Not for the float mantissas -- those are incompressible noise in the low bits, and float32 has
+    already dropped the worst of them -- but because a state vector *repeats*: most of a world stands
+    still, so most of each record is the previous record. Measured on real recordings from this
+    substrate that is 70% of raw for a bare mobile robot and 11% for a world of pedestrians, and it is
+    paid for once at close rather than inside the loop.
     """
     import zipfile
 
     model, data = moving
     _record(tmp_path, model, data)
     with zipfile.ZipFile(tmp_path / "run.npz") as zf:
-        assert all(i.compress_type == zipfile.ZIP_STORED for i in zf.infolist())
+        assert all(i.compress_type == zipfile.ZIP_DEFLATED for i in zf.infolist())
 
 
 def test_a_state_survives_the_float32_round_trip(tmp_path, moving):
@@ -314,6 +318,7 @@ def test_nothing_sampled_writes_nothing_and_says_so(tmp_path, moving, caplog):
     with caplog.at_level(logging.WARNING):
         assert rec.close() is None
     assert not (tmp_path / "run.npz").exists()
+    assert list(tmp_path.iterdir()) == [], "the sample stream opens on the first sample, not before"
     assert "no samples" in caplog.text
 
 
@@ -323,6 +328,95 @@ def test_close_is_idempotent(tmp_path, moving):
     rec, first = _record(tmp_path, model, data)
     assert first is not None
     assert rec.close() is None
+
+
+def test_the_sample_stream_is_packed_away_at_close(tmp_path, moving):
+    """The samples live on disk during the run, so close() must leave no trace of that.
+
+    A campaign lists every file under a run directory as one of its outputs, so a temporary left
+    behind is a temporary published.
+    """
+    model, data = moving
+    rec, path = _record(tmp_path, model, data)
+    stream = tmp_path / ("run.npz" + STREAM_SUFFIX)
+    assert not stream.exists(), "the stream is unlinked once it is packed"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run.clock_map.csv", "run.npz"]
+    assert rec.frames > 0, "the sample count survives the stream it was counting"
+
+
+def test_a_stream_left_by_an_earlier_run_is_not_adopted(tmp_path, moving):
+    """A killed run leaves its stream at exactly the path the next run's recorder would use.
+
+    So a run that ends before its first sample must not pack the *previous* run's samples into its
+    own archive, under its own provenance -- which is what keying the pack off the file's existence
+    rather than off having written it would do.
+    """
+    model, data = moving
+    _record(tmp_path, model, data)  # a complete earlier run
+    stale = tmp_path / ("run.npz" + STREAM_SUFFIX)
+    stale.write_bytes(b"\x00" * (record_dtype(mujoco.mj_stateSize(model, STATE_SPEC), False).itemsize * 3))
+    (tmp_path / "run.npz").unlink()
+
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", snap_fps(25, model.opt.timestep), world="w")
+    assert rec.close() is None, "no samples of its own means no archive"
+    assert not (tmp_path / "run.npz").exists()
+    assert stale.exists(), "somebody else's stream is left where it was, not consumed"
+
+
+def test_the_samples_are_on_disk_while_the_run_is_still_going(tmp_path, moving):
+    """The point of the whole arrangement: the run's memory does not grow with its length."""
+    model, data = moving
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", snap_fps(25, model.opt.timestep), world="w")
+    stream = tmp_path / ("run.npz" + STREAM_SUFFIX)
+    for _ in range(600):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    assert stream.exists(), "samples are written as they are taken"
+    assert not (tmp_path / "run.npz").exists(), "the archive still appears only at close()"
+    rec.close()
+
+
+def test_replay_before_close_sees_the_samples_taken_so_far(tmp_path, moving):
+    """The scenario adapter derives its run capture *before* closing, off the buffered stream.
+
+    So the stream has to be flushed and mapped on demand, not only once it is finished -- otherwise a
+    campaign's capture would silently hold whatever happened to have left the write buffer.
+    """
+    model, data = moving
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", snap_fps(25, model.opt.timestep), world="w")
+    for _ in range(600):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    assert len(list(rec.replay(ctx))) == rec.frames
+    rec.close()
+
+
+def test_replay_after_close_still_works(tmp_path, moving):
+    """``roqsim sim`` closes first and derives afterwards, which is why the mapping outlives the file."""
+    model, data = moving
+    ctx = _Ctx(model, data)
+    rec, path = _record(tmp_path, model, data)
+    assert path is not None
+    replayed = [t for t, _ in rec.replay(ctx)]
+    assert len(replayed) == rec.frames
+    assert replayed == sorted(replayed)
+
+
+def test_a_recording_path_without_the_suffix_is_still_found_where_it_says(tmp_path, moving):
+    """np.savez used to append the .npz behind our backs, leaving close() returning a missing path."""
+    model, data = moving
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(ctx, tmp_path / "out", snap_fps(25, model.opt.timestep), world="w")
+    for _ in range(600):
+        mujoco.mj_step(model, data)
+        rec.sample(ctx)
+    written = rec.close()
+    assert written == tmp_path / "out.npz"
+    assert written.exists()
+    assert open_recording(written).meta["world"] == "w"
 
 
 def test_the_sample_rate_is_in_simulated_seconds(tmp_path, moving):

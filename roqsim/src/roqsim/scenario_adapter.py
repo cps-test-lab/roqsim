@@ -362,7 +362,10 @@ class MujocoSim(_Base):
         Called before the engine is torn down, because the capture is derived against the **live**
         model: no world rebuild, and no GL backend, since nothing is rendered. Both artifacts land only
         on a clean stop -- an ``.npz`` writes its zip index at close, so a hard kill (SIGKILL, a
-        campaign's per-run timeout) leaves neither.
+        campaign's per-run timeout) leaves neither. What such a run *does* leave in its output
+        directory is the recorder's ``run.npz.part``: the samples were streamed there as they were
+        taken, and close is what packs them. Nothing reads it, and the archive's absence stays the
+        signal that the run did not end on purpose.
 
         The capture is reported-never-fatal: a run whose results are otherwise good must not fail
         because a viewer artifact could not be written.
