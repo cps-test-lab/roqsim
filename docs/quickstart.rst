@@ -325,6 +325,57 @@ writes its index at the end, so there is nothing to read.
 The recording is written before the capture is derived from it, so a problem with the browser artifact
 costs you the numbers as well.
 
+Checking a run is healthy
+-------------------------
+
+Three things can go wrong with a run and raise no error anywhere: the simulation never starts
+stepping, it steps far slower than realtime, or a robot stands still for the whole trial. The process
+is up, the log is quiet and the exit status is 0, and the run produced nothing worth analysing.
+``roqsim health`` is the check for exactly those three, and nothing else — everything else a run can
+get wrong already reports itself.
+
+.. code-block:: bash
+
+   roqsim health <run-dir> --robot base_link           # judge the record as it stands
+   roqsim health <run-dir> --robot base_link --watch   # follow a live run until something is wrong
+
+It is a **separate process that reads the two records above**, and it changes nothing about a run. A
+check that lived inside the simulator would share the simulator's failure modes, and one that spoke
+over the ROS bridge could not diagnose a broken bridge; this reads files, so it can also say something
+true about a run that is wedged or already dead. The clock map answers checks 2 and 3, and
+``sim_poses.csv`` answers check 1.
+
+===  =========================================================  =======
+#    check                                                      level
+===  =========================================================  =======
+1    every watched robot moves ≥ 1 cm per 60 s of sim time      warn
+2    sim time starts advancing within 60 s                      error
+3    sim time advances ≥ 5 s per 60 s of wall time (0.083x)     error
+===  =========================================================  =======
+
+Check 1 is only a warning because a robot standing still is often correct — waiting on a pedestrian, a
+perception-only run, a manipulator-only phase — and a channel that interrupts healthy runs is one
+nobody reads. Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an
+error-level finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point:
+a backgrounded command's output is invisible until it exits.
+
+**It reads root-body names, not robots.** ``sim_poses.csv`` names every free-standing body and does not
+say which of them is a robot, so check 1 watches what ``--robot`` names and reports as *skipped*
+otherwise — and warns when a name never appears at all, rather than passing a robot it never looked at.
+
+**The precondition.** Both records exist only while a run is recording, so a run without
+``ROQSIM_RECORD`` (and ``ROQSIM_SIM_POSES`` for check 1) cannot be checked. That is reported and exits
+``2``; it never reads as health.
+
+**Silence means different things live and after the fact**, which is why the two modes differ. Both
+records are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
+the only evidence of a stall is that nothing arrives. ``--watch`` is watching a run it expects to
+continue, so that gap counts against it — and it stops without complaint when the ``.npz`` appears,
+since that file is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
+check has no such premise: it judges the span the record covers, because what happened after the last
+row is not in the file. Without that split, every finished run would be reported as a stall a minute
+after it ended.
+
 Getting numbers out of a run
 ----------------------------
 
@@ -375,6 +426,7 @@ can re-aim without editing the world; the keys are exactly the ones ``sim.view``
 .. code-block:: bash
 
    roqsim render world.yaml --out top.png --view elevation=-85 distance=45
+   roqsim render world.yaml --out eye.png --view lookat=-3.2,-1.3,1.9 azimuth=200
    roqsim render world.yaml --out robot.png --focus robot      # find an unblocked angle for me
    roqsim render indoor.yaml --out room.png --no-ceiling       # see into a roofed world
    roqsim render world.yaml --out shot.png --size 1920x1080 --show
@@ -386,6 +438,9 @@ Rendering needs an offscreen GL backend, which ``import roqsim`` already selecte
 override it with ``MUJOCO_GL=egl`` (GPU) or ``MUJOCO_GL=osmesa`` (CPU). If mujoco was somehow
 imported before roqsim — the one case that selection cannot reach — ``roqsim render`` says exactly
 that rather than failing obscurely.
+
+A vector value takes either spelling — ``lookat=-3.2,-1.3,1.9`` or ``lookat="-3.2 -1.3 1.9"``, MJCF's
+— so a pose can be pasted back in whichever form you have it.
 
 The command prints one line of JSON describing what it rendered, including the camera it used — in the
 same vocabulary ``--view`` takes, so you can copy it back to reproduce a shot exactly.

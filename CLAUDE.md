@@ -9,6 +9,10 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   `spawn_model`, `ceiling`, `contact_monitor` and `model_override` plugins; state recording and
   `roqsim render` are driver-level, in `capture.py` / `recording.py` / `render.py`, not plugins). Sources in
   `roqsim/src/roqsim/`, tests in `roqsim/tests/`. Depends on no sibling — keep it that way.
+  `health.py` (`roqsim health`) is not even driver-level: it is a **reader**, a separate process that
+  tails the two CSVs `capture.py` streams and touches nothing in a run. Keep it that way too — a
+  health check that ran inside the simulator would share the simulator's failure modes, and one that
+  went through a transport bridge could not diagnose a broken bridge.
 - `roqsim_sensors/` — generic (robot-family-agnostic) sensor plugins + assets: `lidar`,
   `oakd_camera` (RGB-D), `realsense_d435` (RGB + opt-in depth/`PointCloud2`),
   `realsense_d415`/`realsense_d455` (RGB only), `force_torque` (six-axis wrench at a site — the one

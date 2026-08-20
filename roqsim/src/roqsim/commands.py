@@ -255,6 +255,7 @@ cli.add_command(tool("roqsim.runner", "sim"))
 cli.add_command(tool("roqsim.render", "render"))
 cli.add_command(tool("roqsim.state", "state"))
 cli.add_command(tool("roqsim.introspection", "plugins"))
+cli.add_command(tool("roqsim.health", "health"))
 
 
 @cli.group("export")
