@@ -24,6 +24,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from fastmcp.tools import ToolResult
+
 from roqsim_scene_builder.targets import require_existing
 
 #: Offscreen backend for the subprocess when the host has no display. ``egl`` is the GPU path and the
@@ -57,7 +59,7 @@ def render_scene(
     camera: str = "",
     no_ceiling: bool = False,
     inline: bool = False,
-) -> dict:
+) -> dict | ToolResult:
     """Render a world, model or recorded moment to a PNG and return where it is.
 
     Use this to *see* a scene: whether a ported world looks right, where a robot ended up, what a run
@@ -79,7 +81,7 @@ def render_scene(
         view: camera overrides, as ``KEY=VALUE`` strings using the world's own ``sim.view`` vocabulary
             (``lookat``, ``distance``, ``azimuth``, ``elevation``, ``track``, ``follow_heading``). Each
             key given replaces just that one, so ``["elevation=-85"]`` looks down without disturbing the
-            rest.
+            rest. A vector is written comma- or space-separated: ``["lookat=-3.2 -1.3 1.9"]``.
         focus: an entity or body to frame on, searching for a viewpoint with a clear line of sight --
             which is what you want indoors, where a wall is usually between the default camera and the
             thing you care about.
@@ -92,7 +94,8 @@ def render_scene(
     Returns:
         ``{"path", "width", "height", "camera", "nbody", "ngeom"}``, plus ``{"sim_time",
         "sample_index", "requested_at", "at_error"}` when rendering from a recording. With
-        ``inline=True`` the image is returned alongside that record.
+        ``inline=True`` the same record comes back as the result's structured content, with the image
+        itself alongside it as an image block.
 
     Raises:
         FileNotFoundError: if ``target`` or ``state`` names a file that does not exist.
@@ -141,9 +144,17 @@ def render_scene(
         return record
     from fastmcp.utilities.types import Image
 
-    return {**record, "image": Image(path=record["path"])}
+    # An image has to be its own content block, so the inline case returns the result explicitly rather
+    # than putting the Image in the dict: a dict holding one is serialized like any other value, so the
+    # picture arrived as the repr of a Python object *and* the record lost its structured form (an Image
+    # is not JSON-serializable, so the whole dict was dropped from structuredContent while the tool still
+    # advertised an output schema -- the client then rejected the call it had just made succeed).
+    return ToolResult(content=[Image(path=record["path"])], structured_content=record)
 
 
 def register(mcp) -> None:
     """Register this module's tools on the FastMCP server."""
-    mcp.tool()(render_scene)
+    # The output schema is stated rather than inferred: the inline branch returns a ToolResult, which
+    # tells FastMCP nothing about the record's shape, and a client that validates would otherwise lose
+    # the promise that a render always answers with an object.
+    mcp.tool(output_schema={"type": "object", "additionalProperties": True})(render_scene)

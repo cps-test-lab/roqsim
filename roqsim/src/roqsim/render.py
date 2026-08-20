@@ -39,7 +39,6 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-import yaml
 
 from . import logging_setup
 from .capture import CaptureError
@@ -121,8 +120,38 @@ def parse_size(text: str) -> tuple[int, int]:
     return width + (width & 1), height + (height & 1)
 
 
+def _is_number(token: str) -> bool:
+    """True when ``token`` is a bare number, which in a ``--view`` list can only be a vector element."""
+    try:
+        float(token)
+    except ValueError:
+        return False
+    return True
+
+
+def _rejoin_split_vectors(pairs: list[str]) -> list[str]:
+    """Fold a bare number back onto the pair before it: ``["lookat=-3.2", "-1.3", "1.9"]`` -> one pair.
+
+    ``--view lookat=-3.2 -1.3 1.9`` is a natural way to write a three-vector, and the shell hands it to
+    argparse as three tokens (the negative ones arrive at all only because argparse lets number-shaped
+    tokens be values rather than flags). A bare *non*-number token is left alone, so it still reaches the
+    KEY=VALUE error below -- that one is the greedy-nargs-ate-the-target case, a different mistake with a
+    different fix.
+    """
+    joined: list[str] = []
+    for token in pairs:
+        if joined and "=" not in token and _is_number(token):
+            joined[-1] += f" {token}"
+        else:
+            joined.append(token)
+    return joined
+
+
 def view_overrides(pairs: list[str] | None) -> dict:
     """Turn ``["azimuth=90", "lookat=1,2,0"]`` into ``{"sim": {"view": {...}}}``.
+
+    A vector value may be written comma-separated (``lookat=1,2,0``) or space-separated (MJCF's
+    spelling, ``lookat="1 2 0"``, split by the shell or not); both end up as three numbers.
 
     Deliberately sugar over the same override path ``--set`` uses, so ``sim.view`` has exactly one
     validator and one vocabulary: unknown keys are rejected by :func:`roqsim.config.load_config` with the
@@ -132,6 +161,7 @@ def view_overrides(pairs: list[str] | None) -> dict:
     """
     if not pairs:
         return {}
+    pairs = _rejoin_split_vectors(pairs)
     unknown = sorted({p.split("=", 1)[0].strip() for p in pairs if "=" in p} - set(_VIEW_KEYS))
     if unknown:
         raise RenderError(
@@ -147,13 +177,15 @@ def view_overrides(pairs: list[str] | None) -> dict:
             "the thing to render, put it before the flag: roqsim render <target> --view ..."
         )
     view = overrides_from_dotlist(pairs)
-    if isinstance(lookat := view.get("lookat"), str) and "," in lookat:
-        # `lookat=1,2,0` is how a three-vector is naturally written on a command line, and it is the
-        # form this docstring and the world YAML's own `[0, 0.4, 0.9]` both suggest -- but YAML reads a
-        # bare comma list as one scalar string. Bracket it and re-read here, in the sugar layer, so the
-        # value reaching sim.view is the list it was meant to be; anything still malformed is the
-        # single sim.view validator's to reject.
-        view["lookat"] = yaml.safe_load(f"[{lookat}]")
+    if isinstance(lookat := view.get("lookat"), str):
+        # A three-vector arrives written either way: `lookat=1,2,0` is how it goes on a command line and
+        # what the world YAML's own `[0, 0.4, 0.9]` suggests, while `lookat="-3.2 -1.3 1.9"` is MJCF's
+        # spelling and the one a caller reaches for after reading a pose off a previous render. YAML
+        # reads both as a single scalar string, so both are re-read as numbers here, in the sugar layer,
+        # and the value arriving at sim.view is the list it was meant to be. Anything still malformed is
+        # left alone for the single sim.view validator to reject, which quotes the text as it was typed.
+        with contextlib.suppress(ValueError):
+            view["lookat"] = [float(n) for n in lookat.strip(" []").replace(",", " ").split()]
     return {"sim": {"view": view}}
 
 
@@ -821,8 +853,8 @@ def main(argv: list | None = None) -> int:
         action="extend",
         nargs="+",
         metavar="KEY=VALUE",
-        help="override the world's sim.view, key by key: lookat, distance, azimuth, elevation, "
-        "track, follow_heading",
+        help="override the world's sim.view, key by key: lookat (three numbers, comma- or "
+        "space-separated), distance, azimuth, elevation, track, follow_heading",
     )
     parser.add_argument(
         "--focus",

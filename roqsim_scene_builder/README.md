@@ -67,9 +67,10 @@ sketch_floorplan_by_human(message="", initial=None, timeout_s=None, title="") ->
 render_scene(target="", state="", at=None, out="", size="960x540", view=None, focus="",
              camera="", no_ceiling=False, inline=False) -> dict
     # state/at: a moment from an `roqsim sim --record` recording, in simulated seconds (nearest sample)
+    # view: KEY=VALUE camera overrides; a vector is comma- or space-separated, "lookat=-3.2 -1.3 1.9"
     -> {"path", "width", "height", "camera", "nbody", "ngeom"}
        # + {"sim_time", "sample_index", "requested_at", "at_error"} when rendering from a recording
-       # + {"image"} with inline=True
+       # with inline=True the same record is the result's structured content, image alongside as a block
 ```
 
 Each `*_by_human` tool runs its window as a **subprocess** (tkinter owns the main thread), so it never

@@ -15,7 +15,7 @@ import numpy as np
 import pytest
 
 from roqsim import render
-from roqsim.config import _VIEW_KEYS
+from roqsim.config import _VIEW_KEYS, load_config_from_dict
 from roqsim.plugin import PluginError
 
 # -- --size --------------------------------------------------------------------------------------
@@ -67,6 +67,26 @@ def test_view_accepts_a_comma_separated_lookat():
     iterated character by character and died on `float('.')`."""
     got = render.view_overrides(["lookat=2.5,1.0,0"])["sim"]["view"]
     assert got == {"lookat": [2.5, 1.0, 0]}
+
+
+def test_view_accepts_a_space_separated_lookat():
+    """MJCF spells a three-vector `-3.2 -1.3 1.9`, so a caller quoting one -- or pasting a pose back out
+    of a render's own camera record -- must not be told it is not three numbers."""
+    got = render.view_overrides(["lookat=-3.2 -1.3 1.9"])["sim"]["view"]
+    assert got == {"lookat": [-3.2, -1.3, 1.9]}
+
+
+def test_view_rejoins_a_lookat_the_shell_split():
+    """Unquoted, `--view lookat=-3.2 -1.3 1.9` arrives as three tokens; they are one value."""
+    got = render.view_overrides(["lookat=-3.2", "-1.3", "1.9", "distance=2"])["sim"]["view"]
+    assert got == {"lookat": [-3.2, -1.3, 1.9], "distance": 2}
+
+
+def test_view_leaves_a_malformed_lookat_to_the_one_validator():
+    """Not parseable as numbers -> untouched, so sim.view's validator rejects it quoting what was typed."""
+    assert render.view_overrides(["lookat=a b c"])["sim"]["view"] == {"lookat": "a b c"}
+    with pytest.raises(PluginError, match="sim.view.lookat: expected 3 numbers"):
+        load_config_from_dict({"sim": {"view": {"lookat": "a b c"}}, "plugins": []})
 
 
 def test_view_unknown_key_names_the_frozen_set():

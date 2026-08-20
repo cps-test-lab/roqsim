@@ -254,8 +254,9 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
   caller sees it landed a few milliseconds off rather than assuming it did not. Omit ``at`` for the
   last sample.
 * **view** / **focus** / **camera** — ``KEY=VALUE`` overrides in the world's own ``sim.view``
-  vocabulary; an entity to frame on, searching for a clear line of sight (what you want indoors); or
-  a fixed MJCF ``<camera>`` to look through. ``camera`` owns its pose, so it excludes the other two.
+  vocabulary (a vector value is comma- or space-separated: ``["lookat=-3.2 -1.3 1.9"]``); an entity to
+  frame on, searching for a clear line of sight (what you want indoors); or a fixed MJCF ``<camera>``
+  to look through. ``camera`` owns its pose, so it excludes the other two.
 * **no_ceiling** — drop a roofed world's ceiling to look into it from above.
 * **out** / **size** / **inline** — where to write the PNG (default a temp file), ``WxH``, and
   whether to return the image itself.
@@ -266,7 +267,8 @@ Returns ``{"path", "width", "height", "camera", "nbody", "ngeom"}``, plus ``{"si
 **It returns a path, not an image, by default** — and that is the point. An agent reads the returned
 path with its own file-reading tool, so the image's tokens (roughly ``w*h/750``: ~700 for 960x540,
 ~310 for 640x360) are paid only if it actually looks. Pass ``inline=True`` when the picture should
-appear in the conversation itself; the default costs about forty tokens.
+appear in the conversation itself -- it comes back as an image content block beside the same record,
+which stays the result's structured content; the default costs about forty tokens.
 
 CLI: this is ``roqsim render`` — the tool shells out to it rather than importing it (see *Internals*),
 so every flag above is that command's own.

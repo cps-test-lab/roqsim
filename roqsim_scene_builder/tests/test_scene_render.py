@@ -52,9 +52,28 @@ def test_a_path_is_returned_not_an_image_by_default(fake_rst, tmp_path, world):
     assert Path(record["path"]).exists()
 
 
-def test_inline_returns_the_image_too(fake_rst, tmp_path, world):
-    record = scene_render.render_scene(world, out=str(tmp_path / "x.png"), inline=True)
-    assert "image" in record and record["path"]
+def test_inline_returns_the_image_as_its_own_content_block(fake_rst, tmp_path, world):
+    """An Image inside the returned dict is not an image: it is serialized like any other value, so the
+    picture reached the caller as an object repr. It has to be a content block of its own."""
+    result = scene_render.render_scene(world, out=str(tmp_path / "x.png"), inline=True)
+    assert [block.type for block in result.content] == ["image"]
+    assert result.structured_content["path"] == str(tmp_path / "x.png")
+
+
+def test_inline_keeps_the_record_structured(fake_rst, tmp_path, world):
+    """Through the real tool wrapper, because that is where it broke: an Image is not JSON-serializable,
+    so a dict holding one lost its structured content while the tool still advertised an output schema,
+    and the client rejected a render that had in fact succeeded."""
+    import asyncio
+
+    from fastmcp.tools import FunctionTool
+
+    tool = FunctionTool.from_function(scene_render.render_scene)
+    result = asyncio.run(
+        tool.run({"target": world, "out": str(tmp_path / "x.png"), "inline": True})
+    )
+    assert [block.type for block in result.content] == ["image"]
+    assert result.structured_content["width"] == 960
 
 
 def test_flags_are_forwarded(fake_rst, tmp_path, world):
