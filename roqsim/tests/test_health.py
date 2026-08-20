@@ -15,6 +15,7 @@ change to the simulation runtime to guarantee that it can -- so the guarantees i
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -341,6 +342,7 @@ def test_splitter_leaves_a_monotonic_stream_alone():
 
 
 def write_run(tmp_path: Path, clock_rows: list[str], pose_rows: list[str] | None = None) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "run.clock_map.csv").write_text(CLOCK_HEADER + "".join(clock_rows))
     if pose_rows is not None:
         (tmp_path / "sim_poses.csv").write_text(POSE_HEADER + "".join(pose_rows))
@@ -495,3 +497,23 @@ def test_state_names_no_kind(tmp_path, capsys):
     health.main([str(tmp_path), "--json"])
     state = json.loads(capsys.readouterr().out)["state"]
     assert "kind" not in state["entities"][0]
+
+
+def test_a_run_is_found_one_level_below_the_directory_given(tmp_path, capsys):
+    """A supervisor can name an output root without knowing which run inside it is current --
+    on a packed job it cannot know. Newest-by-mtime is the right answer there, and the pose
+    record has to come from beside the clock record rather than from the argument, or the reply
+    mixes one run's clock with nothing's poses."""
+    now = time.time()
+    old_run, new_run = tmp_path / "cfgA" / "0", tmp_path / "cfgA" / "1"
+    write_run(old_run, [clock_line(now - 600 + t, float(t)) for t in range(0, 60)],
+              [pose_line(float(t), "base", 0.0) for t in range(0, 60)])
+    write_run(new_run, [clock_line(now - 60 + t, float(t)) for t in range(0, 60)],
+              [pose_line(float(t), "base", t * 0.5) for t in range(0, 60)])
+    os.utime(new_run / "run.clock_map.csv", (now, now))
+    os.utime(old_run / "run.clock_map.csv", (now - 600, now - 600))
+
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    state = json.loads(capsys.readouterr().out)["state"]
+    # The newest run, and its own poses -- 29.5 is the last sample of the moving robot.
+    assert state["entities"][0]["position"] == [29.5, 0.0, 0.0]

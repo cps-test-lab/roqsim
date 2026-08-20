@@ -237,9 +237,25 @@ class Tail:
 
 
 def find_clock_record(run_dir: Path) -> Path | None:
-    """The run's clock record. Named after the recording, so it is found by suffix, newest first."""
-    found = sorted(run_dir.glob("*" + CLOCK_MAP_SUFFIX), key=lambda p: p.stat().st_mtime)
-    return found[-1] if found else None
+    """The run's clock record. Named after the recording, so it is found by suffix, newest first.
+
+    Looks in *run_dir* first, then one and two levels below it, stopping at the first depth that
+    holds one. A caller does not always know which run is current: a supervisor may hold several
+    runs under one output root and be able to name the root but not the run inside it.
+    Newest-by-mtime is exactly the right answer there -- the record still being written is the run
+    still going -- so searching saves the caller from guessing, and guessing wrong means reporting
+    on a run that already ended.
+
+    Two levels is the bound because that is the depth of the layout (``<root>/<config>/<run>``),
+    not an arbitrary limit: a full walk over a campaign's output would cost far more than the
+    question is worth. Shallowest-first so a caller that *did* name the run exactly is answered
+    from it rather than from a sibling that happens to be newer.
+    """
+    for pattern in ("*", "*/*", "*/*/*"):
+        found = list(run_dir.glob(pattern + CLOCK_MAP_SUFFIX))
+        if found:
+            return max(found, key=lambda p: p.stat().st_mtime)
+    return None
 
 
 class FileSource:
@@ -782,7 +798,12 @@ def resolve_paths(args) -> tuple[Path | None, Path | None, str | None]:
     # can be after the clock record, and a watcher that started early would otherwise decide for
     # the whole run that poses were never recorded. Tail tolerates a path that is not there yet, so
     # whether poses arrived is answered at the end, from what actually turned up.
-    return find_clock_record(run_dir), run_dir / SIM_POSE_FILENAME, None
+    #
+    # Taken from beside the clock record rather than from *run_dir*: the two records are written
+    # together, and ``find_clock_record`` may have found the run one level down. Deriving it from
+    # the argument instead would read the clock of one run and the poses of nothing.
+    clock = find_clock_record(run_dir)
+    return clock, (clock.parent if clock else run_dir) / SIM_POSE_FILENAME, None
 
 
 def _await_clock(run_dir: Path, deadline: float, poll: float) -> Path | None:
