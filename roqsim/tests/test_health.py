@@ -14,6 +14,7 @@ change to the simulation runtime to guarantee that it can -- so the guarantees i
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -418,3 +419,76 @@ def test_cli_json_carries_the_findings(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["exit"] == health.EXIT_FINDING
     assert payload["findings"][0]["check"] == "sim-time-rate"
+
+
+# -- the state block: where everything is, alongside what is wrong ---------------------------------
+
+
+def test_json_reports_the_last_pose_and_clock(tmp_path, capsys):
+    """A caller asking "is anything wrong" almost always wants "and where is it" next, and both
+    come from records already open -- so one read answers both rather than two."""
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        # Interleaved, as the recorder writes it: one row per root body per sample.
+        [line for t in range(0, 120)
+         for line in (pose_line(float(t), "base", t * 0.5),
+                      pose_line(float(t), "crate", 3.0))],
+    )
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    state = json.loads(capsys.readouterr().out)["state"]
+    assert state["sim_ts"] == 119.0
+    assert state["rate"] == 1.0                      # one sim second per wall second
+    names = [e["name"] for e in state["entities"]]
+    assert names == ["base", "crate"]                # every root body, not just the watched one
+    base = state["entities"][0]
+    assert base["position"] == [59.5, 0.0, 0.0]      # the *last* sample, not the first
+    assert base["orientation"] == [0.0, 0.0, 0.0, 1.0]
+    assert "twist_linear" in base
+
+
+def test_state_rate_is_measured_within_one_series(tmp_path, capsys):
+    """The reset hazard again, this time for the reported rate rather than the verdict: a window
+    spanning a reset sees a healthy minute as no progress, and reporting 0.0x would be a lie about
+    a fine run."""
+    now = time.time()
+    rows = [clock_line(now - 120 + t, float(t)) for t in range(0, 60)]
+    rows += [clock_line(now - 60 + t, float(t)) for t in range(0, 60)]   # sim time restarts
+    write_run(tmp_path, rows)
+    health.main([str(tmp_path), "--json"])
+    state = json.loads(capsys.readouterr().out)["state"]
+    assert state["sim_ts"] == 59.0                   # the new series, not the old one
+    assert state["rate"] == 1.0
+
+
+def test_state_drops_bodies_from_before_a_reset(tmp_path, capsys):
+    """A re-posed world must not be described with positions from before it: a stale answer
+    presented as a current one is worse than no answer."""
+    now = time.time()
+    poses = [pose_line(float(t), "gone", 1.0) for t in range(0, 30)]
+    poses += [pose_line(float(t), "here", 2.0) for t in range(0, 30)]   # sim time restarts: a reset
+    write_run(tmp_path, [clock_line(now - 60 + t, float(t)) for t in range(0, 60)], poses)
+    health.main([str(tmp_path), "--json"])
+    state = json.loads(capsys.readouterr().out)["state"]
+    assert [e["name"] for e in state["entities"]] == ["here"]
+
+
+def test_state_is_absent_when_there_is_nothing_to_report(tmp_path, capsys):
+    """Empty rather than zeros: "no records" and "everything at the origin" are different answers
+    and must not render the same."""
+    write_run(tmp_path, [])
+    health.main([str(tmp_path), "--json"])
+    assert json.loads(capsys.readouterr().out)["state"] == {}
+
+
+def test_state_names_no_kind(tmp_path, capsys):
+    """The pose record names root bodies without saying which are robots. Inventing the
+    distinction here would be a guess presented as a fact -- it belongs to whoever holds the
+    entity registry."""
+    now = time.time()
+    write_run(tmp_path, [clock_line(now - 10 + t, float(t)) for t in range(0, 10)],
+              [pose_line(float(t), "base", 0.0) for t in range(0, 10)])
+    health.main([str(tmp_path), "--json"])
+    state = json.loads(capsys.readouterr().out)["state"]
+    assert "kind" not in state["entities"][0]

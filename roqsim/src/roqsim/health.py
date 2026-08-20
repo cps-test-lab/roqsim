@@ -52,6 +52,16 @@ there is reason to think it is still alive**:
 Either way a message states what was *observed* -- how long since the last row, and where -- and
 never asserts a cause.
 
+Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every root body and
+the clock, with the sim-to-wall rate. It is here rather than in a command of its own because both
+answers come from the same two records in the same read, and a caller asking "is anything wrong"
+almost always wants "and where is it" next. A *latest-value* answer, not an interpolation to the
+instant of the call -- these records are sampled, and the newest sample is what they honestly hold.
+
+Deliberately not in it: the scenario's behaviour tree. That lives in a different record, needs a fold
+over the whole file rather than a tail read, and belongs to whoever owns it -- while this command has
+to stay cheap enough to poll.
+
 Exit status: ``0`` nothing wrong (warnings are still printed), ``5`` an error-level finding, ``2``
 the checks could not run at all. Exiting on a finding is how a backgrounded invocation reports one:
 its output is invisible until it exits.
@@ -126,9 +136,22 @@ class ClockRow:
 
 @dataclass(frozen=True)
 class PoseRow:
+    """One body at one sample.
+
+    Check 1 needs only ``pos``, so the rest carry defaults and existing callers are
+    unaffected -- they are here because the record already holds them and a caller asking
+    "where is everything" wants the pose it was written with, not a truncation of it. The
+    twist comes from the solver rather than from differencing positions, which is the point
+    of the record: a difference is only as good as the interval it is divided by.
+    """
+
     sim_ts: float
     frame: str
     pos: tuple[float, float, float]
+    wall_ts: float | None = None
+    quat: tuple[float, float, float, float] | None = None  # x, y, z, w -- as the record orders it
+    twist_linear: tuple[float, float, float] | None = None
+    twist_angular: tuple[float, float, float] | None = None
 
 
 # -- reading the records --------------------------------------------------------------------------
@@ -254,11 +277,16 @@ class FileSource:
                     PoseRow(
                         float(row["timestamp"]),
                         row["frame"],
-                        (
-                            float(row["position.x"]),
-                            float(row["position.y"]),
-                            float(row["position.z"]),
+                        _triple(row, "position"),
+                        wall_ts=float(row["wall_time"]),
+                        quat=(
+                            float(row["orientation.x"]),
+                            float(row["orientation.y"]),
+                            float(row["orientation.z"]),
+                            float(row["orientation.w"]),
                         ),
+                        twist_linear=_triple(row, "twist.linear"),
+                        twist_angular=_triple(row, "twist.angular"),
                     )
                 )
             except (KeyError, ValueError):
@@ -272,6 +300,11 @@ class FileSource:
     def close(self) -> None:
         for _, tail in self.tails():
             tail.close()
+
+
+def _triple(row: dict, prefix: str) -> tuple[float, float, float]:
+    """``position`` -> ``(position.x, position.y, position.z)`` as floats."""
+    return (float(row[f"{prefix}.x"]), float(row[f"{prefix}.y"]), float(row[f"{prefix}.z"]))
 
 
 class SeriesSplitter:
@@ -548,6 +581,11 @@ class Report:
     findings: list[Finding] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Where everything was at the newest sample read -- see :meth:`Monitor.state`. Reported
+    #: alongside the findings because a caller asking "is anything wrong" almost always wants
+    #: "and where is it" next, and both come from the records already open. Empty when the
+    #: records held nothing to report.
+    state: dict = field(default_factory=dict)
 
     @property
     def failed(self) -> bool:
@@ -561,6 +599,7 @@ class Report:
                 ],
                 "skipped": self.skipped,
                 "notes": self.notes,
+                "state": self.state,
                 "exit": EXIT_FINDING if self.failed else EXIT_OK,
             },
             indent=2,
@@ -581,6 +620,13 @@ class Monitor:
         self._pose_series = SeriesSplitter()
         self._latest_row: float | None = None
         self.pose_rows = 0
+        #: First and last clock row of the *current* series, for the sim-to-wall rate. Bounded
+        #: to one series because a reset restarts sim time while wall time keeps climbing, so a
+        #: window spanning one would report a healthy run as making no progress.
+        self._clock_window: tuple[ClockRow, ClockRow] | None = None
+        #: Newest row per body. Cleared at a reset: a re-posed world must not be described with
+        #: positions from before it, which would be a stale answer presented as a current one.
+        self._latest_pose: dict[str, PoseRow] = {}
         if not robots:
             self.report.skipped.append(
                 "check 1 (robot-motion): no --robot given, so there is nothing to watch. "
@@ -609,13 +655,72 @@ class Monitor:
             self._latest_row = clock_rows[-1].wall_ts
         pose_rows = self.source.poses()
         self.pose_rows += len(pose_rows)
-        pairs = (
-            (self.clock_checks, self._clock_series.split(clock_rows)),
-            ([self.motion], self._pose_series.split(pose_rows)),
-        )
+        # Split once and share: the splitters are stateful, so calling them twice would consume
+        # the boundary and leave the second caller measuring across a reset.
+        clock_series = self._clock_series.split(clock_rows)
+        pose_series = self._pose_series.split(pose_rows)
+        self._track_state(clock_series, pose_series)
+        pairs = ((self.clock_checks, clock_series), ([self.motion], pose_series))
         for checks, series in pairs:
             for check in checks:
                 self._guard(check, lambda c=check, s=series: self._feed(c, s))
+
+    def _track_state(self, clock_series: list[list], pose_series: list[list]) -> None:
+        """Remember the newest clock window and the newest row per body, for :meth:`state`.
+
+        Reads the same already-split series the checks are fed, so the reset boundary is
+        honoured identically -- and cheaply: this is a couple of assignments per row, on records
+        that are being parsed anyway.
+        """
+        for index, rows in enumerate(clock_series):
+            if index:  # a reset: the rate is only meaningful within one series
+                self._clock_window = None
+            for row in rows:
+                first = self._clock_window[0] if self._clock_window else row
+                self._clock_window = (first, row)
+        for index, rows in enumerate(pose_series):
+            if index:
+                self._latest_pose.clear()
+            for row in rows:
+                self._latest_pose[row.frame] = row
+
+    def state(self) -> dict:
+        """Where everything was at the newest sample, and how fast sim time is running.
+
+        A *latest-value* answer, which is what a caller asking "where is everything now" wants
+        and all these records can honestly give: they are sampled, so this is the most recent
+        sample and not an interpolation to the instant of the call.
+
+        ``rate`` is sim seconds per wall second over the current series -- the same quantity
+        check 3 judges, reported rather than judged, so a caller can see 0.05x without having to
+        infer it from a finding. Absent when the window is too short to divide.
+
+        Deliberately no ``kind``: the pose record names root bodies without saying which are
+        robots, and inventing the distinction here would be a guess presented as a fact.
+        """
+        out: dict = {}
+        if self._clock_window is not None:
+            first, last = self._clock_window
+            out["sim_ts"] = round(last.sim_ts, 6)
+            out["wall_ts"] = round(last.wall_ts, 6)
+            wall_span = last.wall_ts - first.wall_ts
+            if wall_span > 0:
+                out["rate"] = round((last.sim_ts - first.sim_ts) / wall_span, 4)
+        if self._latest_pose:
+            out["entities"] = [
+                {
+                    "name": name,
+                    "sim_ts": round(row.sim_ts, 6),
+                    "position": [round(v, 6) for v in row.pos],
+                    **({"orientation": [round(v, 6) for v in row.quat]} if row.quat else {}),
+                    **({"twist_linear": [round(v, 6) for v in row.twist_linear]}
+                       if row.twist_linear else {}),
+                    **({"twist_angular": [round(v, 6) for v in row.twist_angular]}
+                       if row.twist_angular else {}),
+                }
+                for name, row in sorted(self._latest_pose.items())
+            ]
+        return out
 
     @staticmethod
     def _feed(check, series: list[list]) -> None:
@@ -783,6 +888,7 @@ def main(argv: list | None = None) -> int:
         source.close()
 
     report = monitor.report
+    report.state = monitor.state()
     report.notes.append(f"clock record: {clock_path}")
     if monitor.pose_rows:
         report.notes.append(f"pose record: {poses_path}")
@@ -808,6 +914,13 @@ def main(argv: list | None = None) -> int:
     else:
         for note in report.skipped:
             print(f"skip  {note}")
+        if report.state:
+            # One line, because the text mode is for a person watching and the detail belongs in
+            # --json. Enough to see a wedged clock without asking a second question.
+            rate = report.state.get("rate")
+            print(f"state sim {report.state.get('sim_ts', '?')}s"
+                  + (f" at {rate}x" if rate is not None else "")
+                  + f", {len(report.state.get('entities', []))} bodies")
         if not report.findings:
             print("ok    nothing wrong observed")
     return EXIT_FINDING if report.failed else EXIT_OK
