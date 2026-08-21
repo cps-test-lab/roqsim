@@ -265,3 +265,24 @@ def test_camera_info_is_not_a_render_gate():
     gated = {ep.name for ep in plugin._gate_endpoints()}
     assert gated == {"image", "depth", "points"}
     assert _endpoint(engine, "camera_info") is not None  # registered, just not a gate
+    assert _endpoint(engine, "depth_camera_info") is not None
+
+
+# -- depth intrinsics ----------------------------------------------------------------------------
+def test_depth_camera_info_follows_realsense_ros_naming_and_only_exists_with_depth():
+    """A consumer that rectifies or reprojects depth subscribes to the DEPTH info topic; given only
+    the colour one it waits forever. Eager and un-gated on purpose: it needs no render, so a lone
+    info subscriber must not switch the renderer on."""
+    engine = _stepped(D435, depth=True)
+    ep = _endpoint(engine, "depth_camera_info")
+    assert ep.backend["ros2"]["topic"] == "camera/depth/camera_info"
+    assert ep.backend["ros2"]["frame_id"] == "camera_depth_optical_frame"
+    plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
+    assert ep not in plugin._gate_endpoints()
+    # Off by default, because depth itself is.
+    assert _endpoint(_stepped(D435), "depth_camera_info") is None
+
+
+def test_depth_camera_info_topic_can_be_hardwired():
+    engine = _stepped(D435, depth=True, topics={"depth_camera_info": "/cam/depth/info"})
+    assert _endpoint(engine, "depth_camera_info").backend["ros2"]["topic"] == "/cam/depth/info"
