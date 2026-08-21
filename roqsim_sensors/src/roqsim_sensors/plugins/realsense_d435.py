@@ -98,6 +98,7 @@ class RealsenseD435Plugin(OakDCameraPlugin):
             namespace=ns,
             read=lambda: self._depth,
             rate_hz=self.rate_hz,
+            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
             backend={
                 "ros2": {
                     "type": "sensor_msgs.msg.Image",
@@ -145,6 +146,7 @@ class RealsenseD435Plugin(OakDCameraPlugin):
             namespace=ns,
             read=lambda: self._cloud,
             rate_hz=self.rate_hz,
+            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
             backend={
                 "ros2": {
                     "type": "sensor_msgs.msg.PointCloud2",

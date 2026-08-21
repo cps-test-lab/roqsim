@@ -153,6 +153,9 @@ class CameraPlugin(Plugin):
             namespace=ns,
             read=lambda: self._rgb,
             rate_hz=self.rate_hz,
+            # A full raw frame is the most expensive thing this plugin can put on the wire (2.8 MB at
+            # 1280x720), so it is not serialised while nothing is listening.
+            lazy=True,
             backend={
                 "ros2": {
                     "type": "sensor_msgs.msg.Image",

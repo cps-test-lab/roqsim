@@ -2,8 +2,9 @@
 
 A concrete bridge (ROS 2, zenoh, zmq, ...) subclasses :class:`BridgeBase`, sets ``BACKEND`` to its
 key, and implements the small set of backend hooks below. Everything else -- discovering endpoints,
-rate-gating, the per-tick publish loop, and marshalling inbound data onto the physics thread -- lives
-here and is shared across backends.
+rate-gating, skipping endpoints that opted out of publishing to nobody (``Endpoint.lazy``), the
+per-tick publish loop, and marshalling inbound data onto the physics thread -- lives here and is
+shared across backends.
 
 The bridge reads :class:`roqsim.context.Endpoint`s registered by the robot's plugins; it never
 imports the robot package or hardcodes topic/stream names. Backend particulars (message type, topic,
@@ -136,11 +137,29 @@ class BridgeBase(Plugin):
         t = ctx.sim_time
         stamp = self._now(t)
         for out in self._outputs:
-            if out.gate.due(t):
-                payload = out.endpoint.read()
-                if payload is not None:
-                    self._publish(out.handle, payload, stamp)
+            if not out.gate.due(t):
+                continue
+            if self._skip_unsubscribed(out.endpoint):
+                continue
+            payload = out.endpoint.read()
+            if payload is not None:
+                self._publish(out.handle, payload, stamp)
         self._tick(ctx, t, stamp)
+
+    @staticmethod
+    def _skip_unsubscribed(ep: Endpoint) -> bool:
+        """Whether to skip an opted-in (``lazy``) endpoint because nothing is listening.
+
+        Opt-in rather than applied to every output, because a publish can carry more than its own
+        message: :meth:`_publish` may derive TF from an odometry payload, so a lazy ``odom`` would
+        silently stop broadcasting ``odom -> base_link`` whenever nothing subscribed to the topic.
+        Cheap payloads (scan, joint_states) gain nothing from the check either.
+
+        ``has_subscribers is None`` = no introspection available (no transport wired it, or a backend
+        that cannot tell) => publish, the same "assume yes" convention producers use for the
+        render-side check.
+        """
+        return ep.lazy and ep.has_subscribers is not None and not ep.has_subscribers()
 
     def shutdown(self, ctx: SimContext) -> None:
         self._teardown(ctx)

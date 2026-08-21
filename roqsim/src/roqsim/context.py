@@ -138,6 +138,15 @@ class Endpoint:
     work when it returns ``False``. Left as ``None`` (the default) when no transport is loaded, or
     when the active one doesn't support the introspection -- producers must treat that as "assume
     yes" so the endpoint stays live by default.
+
+    ``lazy`` opts THIS endpoint out of publishing while ``has_subscribers`` reports nobody listening,
+    so an expensive payload is never even read. It is per-endpoint on purpose, and distinct from the
+    render-side check above: a producer whose one render feeds several endpoints must render when
+    *any* of them has a consumer, but must only pay each endpoint's own serialisation cost (a JPEG
+    encode, a megabyte of raw pixels) when *that* endpoint has one. Left ``False`` by default because
+    it is wrong for anything whose publish has a side effect beyond the message -- a bridge deriving
+    TF from an odometry endpoint would stop broadcasting the transform whenever nothing happened to
+    subscribe to ``/odom`` -- and because it buys nothing for a cheap payload.
     """
 
     name: str
@@ -149,6 +158,7 @@ class Endpoint:
     rate_hz: float = 0.0
     backend: dict[str, dict] = field(default_factory=dict)
     has_subscribers: Callable[[], bool] | None = None
+    lazy: bool = False
 
 
 class InterfaceRegistry:
