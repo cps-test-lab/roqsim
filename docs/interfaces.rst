@@ -223,6 +223,17 @@ decides whether overriding *this* side of a contact does anything at all.
 
 Both halves come from one build when both flags are given: compiling the world is the expensive part.
 
+``--override FILE`` applies an override tree first, the same file ``roqsim sim --override`` takes.
+It is what makes the build-fed halves answer about the world a *run* would load rather than the one
+the file declares: which entities a world compiles depends on its plugins' config, so a caller whose
+obstacles come from its own overrides sees none of them without it::
+
+   roqsim scenes describe world/secorolab_nav2.yaml --entities --override run.overrides.yaml
+   {..., "entities": ["obstacle_0", "robot"], "errors": null}
+
+A plugin key the world does not have is still refused, exactly as ``apply_overrides`` refuses it when
+a run loads -- which is the expensive mistake this command exists to catch first.
+
 That build has **no transport in it**, and ``dropped_transport`` names what went::
 
    roqsim scenes describe worlds/depot_ros.yaml --entities

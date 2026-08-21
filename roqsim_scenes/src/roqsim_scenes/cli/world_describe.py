@@ -31,6 +31,16 @@ the model: which entities exist is settled at compile time (roqsim never recompi
 caller checking that a scenario only drives entities the world actually has pays for it; one
 resolving paths does not.
 
+**Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
+the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
+halves: which entities a world compiles depends on its plugins' config, so a campaign whose
+obstacles come from its own overrides compiles them only with those overrides applied. Without
+the flag this command answers about the world the FILE declares, which is a different world than
+the run's -- and a caller comparing a scenario's entity names against that answer reads a working
+campaign as a broken one. A plugin key the world does not have is still refused here, as
+``apply_overrides`` refuses it at load time, which is the cheap mistake this command exists to
+catch before an image pull.
+
 **Overridable model values.** ``overridable.fields`` is the allowlist of model values the
 ``model_override`` plugin can change while a run is in progress, each with what it does and the way it
 can silently do nothing. It costs nothing and is always present: ``mjModel``'s field set is a property
@@ -72,6 +82,8 @@ import sys
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
+
+import yaml
 
 from roqsim.config import drop_transport, entry_ref, load_config, world_sources
 from roqsim.world import resolve_world_yaml_ref
@@ -300,6 +312,14 @@ def main(argv=None) -> int:
         "with their current values (builds the model)",
     )
     parser.add_argument(
+        "--override",
+        metavar="FILE",
+        default="",
+        help="YAML file of overrides to apply before describing, exactly as `roqsim sim "
+        "--override` takes them (the answer is then about the world a run with those "
+        "overrides would load)",
+    )
+    parser.add_argument(
         "--body-tree",
         metavar="GLOB",
         default="",
@@ -326,8 +346,24 @@ def main(argv=None) -> int:
         return 1
 
     world = Path(target).resolve()
+    overrides = None
+    if args.override:
+        # A caller holding overrides is asking about the world its RUN will load, not about the
+        # file: the entities a campaign's own obstacle placement compiles in exist only once its
+        # overrides are applied, so describing the base world answered a different question than
+        # the one asked -- and a caller comparing entity names against that answer concluded a
+        # working campaign was broken.
+        if not Path(args.override).exists():
+            print(f"overrides file {args.override!r} does not exist", file=sys.stderr)
+            return 1
+        try:
+            with open(args.override, encoding="utf-8") as handle:
+                overrides = yaml.safe_load(handle) or {}
+        except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
+            print(f"cannot read overrides {args.override}: {err}", file=sys.stderr)
+            return 1
     try:
-        config = load_config(world)
+        config = load_config(world, overrides)
     except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
         print(f"cannot load world {world}: {err}", file=sys.stderr)
         return 1

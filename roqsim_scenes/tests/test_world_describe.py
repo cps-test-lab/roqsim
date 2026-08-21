@@ -273,6 +273,46 @@ def test_the_dropped_bridge_is_still_a_reported_plugin(capsys, ros_world):
     assert keys == ["box_a", "ros2_bridge", "sim_interfaces"]
 
 
+def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
+    """Otherwise the answer is about the file, not about the world a run would load.
+
+    Which entities exist depends on a plugin's config, so a caller whose obstacles come from its
+    own overrides sees none of them unless they are applied first.
+    """
+    world = tmp_path / "base.yaml"
+    world.write_text("plugins:\n- boxes: {name: obstacle, instances: []}\n")
+    overrides = tmp_path / "ov.yaml"
+    overrides.write_text(
+        "plugins:\n"
+        "  boxes:\n"
+        "    instances:\n"
+        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n")
+
+    plain = _describe(capsys, str(world), "--entities")
+    assert "obstacle_0" not in (plain["entities"] or [])
+
+    with_overrides = _describe(capsys, str(world), "--entities", "--override", str(overrides))
+    assert "obstacle_0" in with_overrides["entities"]
+
+
+def test_an_overrides_file_that_is_not_there_is_named(capsys, tmp_path):
+    """Describing the base world instead would answer a question nobody asked."""
+    world = tmp_path / "w.yaml"
+    world.write_text("plugins: []\n")
+    assert world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")]) == 1
+    assert "does not exist" in capsys.readouterr().err
+
+
+def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
+    """The cheap mistake this command exists to catch, and applying overrides must not hide it."""
+    world = tmp_path / "w.yaml"
+    world.write_text("plugins:\n- boxes: {instances: []}\n")
+    overrides = tmp_path / "ov.yaml"
+    overrides.write_text("plugins:\n  boxesTYPO:\n    instances: []\n")
+    assert world_describe.main([str(world), "--override", str(overrides)]) == 1
+    assert "matches no plugin" in capsys.readouterr().err
+
+
 def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
     """The regression guard on which drop helper this uses.
 
