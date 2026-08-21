@@ -292,6 +292,15 @@ SIM_POSE_FIELDS = (
 #: observable, so it is named for that and nothing else.
 SIM_POSE_FILENAME = "sim_poses.csv"
 
+#: Roster of what the pose record's rows *are*, written beside it. The record names root bodies and
+#: cannot say which of them is a robot, which is a distinction only the entity registry holds -- so a
+#: consumer asking "did the robots move" would otherwise have to be handed the names per world, and a
+#: check that must be configured per world is one that is absent from the run that needed it.
+#:
+#: Written from the registry rather than derived from the model: ``kind`` is declared by whoever
+#: spawned the entity, and no amount of looking at bodies recovers it.
+ENTITIES_FILENAME = "entities.json"
+
 #: Camera-track width: type, fixedcamid, trackbodyid, lookat(3), distance, azimuth, elevation.
 CAMERA_WIDTH = 9
 
@@ -596,6 +605,13 @@ class StateRecorder:
         self._pose_path = (self.path.parent / SIM_POSE_FILENAME) if sim_poses else None
         self._pose_file = None
         self._pose_bodies = _root_bodies(ctx.model) if sim_poses else []
+        # The roster that says what those rows are. Held as a live reference to the registry, not a
+        # copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
+        # construction would describe a world the trial has since left.
+        self._registry = getattr(ctx, "entities", None) if sim_poses else None
+        self._entities_path = (self.path.parent / ENTITIES_FILENAME) if sim_poses else None
+        #: Last roster written, so the file is rewritten when it changes and not once per sample.
+        self._entities_sig: tuple | None = None
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
@@ -738,6 +754,43 @@ class StateRecorder:
         except OSError as err:
             self.log.debug("recording: pose record not written (%s)", err)
             self._pose_file = None
+        self._write_entities()
+
+    def _write_entities(self) -> None:
+        """Keep :data:`ENTITIES_FILENAME` matching the registry, rewriting it only on a change.
+
+        On the pose path because it exists for the pose record's reader, and rewritten on a change
+        because a run can spawn, remove or hide an entity -- a roster written once at the first
+        sample would describe the world the trial started in rather than the one it is in.
+
+        The comparison is over the whole roster including ``present``, which costs an iteration of a
+        registry holding tens of entities against a sample that has already copied the entire
+        physics state and formatted a row per body. Best-effort for the same reason the clock record
+        is: a run whose roster could not be written is still a run, and a recorder that raises here
+        would end it.
+        """
+        if self._registry is None or self._entities_path is None:
+            return
+        try:
+            roster = [
+                {"name": e.name, "kind": e.kind, "body": e.body, "present": bool(e.present)}
+                for e in self._registry.all()
+            ]
+        except Exception as err:  # noqa: BLE001 - a driver with no usable registry, not a failure
+            self.log.debug("recording: entity roster not read (%s)", err)
+            self._registry = None
+            return
+        signature = tuple((e["name"], e["kind"], e["body"], e["present"]) for e in roster)
+        if signature == self._entities_sig:
+            return
+        try:
+            self._entities_path.parent.mkdir(parents=True, exist_ok=True)
+            self._entities_path.write_text(json.dumps({"entities": roster}) + "\n",
+                                           encoding="utf-8")
+        except OSError as err:
+            self.log.debug("recording: entity roster not written (%s)", err)
+            return
+        self._entities_sig = signature
 
     def on_reset(self) -> None:
         """Start the schedule over. A rebuilt or reset world is a new series, not a continuation.

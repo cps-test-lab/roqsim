@@ -517,3 +517,235 @@ def test_a_run_is_found_one_level_below_the_directory_given(tmp_path, capsys):
     state = json.loads(capsys.readouterr().out)["state"]
     # The newest run, and its own poses -- 29.5 is the last sample of the moving robot.
     assert state["entities"][0]["position"] == [29.5, 0.0, 0.0]
+
+
+
+def test_tail_reads_a_re_created_file_from_the_start(tmp_path):
+    """The recorder re-creates a record after an `OSError` -- mode "w", fresh header -- so a reader
+    following a byte offset would sit past EOF forever and let a check conclude the run had gone
+    silent. That is a false ERROR manufactured by a transient disk hiccup, which is why the tailer
+    handles it and not the checks.
+
+    Asserted rather than trusted: this is one of two hazards whose handling exists only as a method
+    name, and a name is not a guarantee.
+    """
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(t, float(t)) for t in range(1, 5)))
+    tail = health.Tail(path)
+    assert len(tail.rows()) == 4
+
+    # Shorter than where the reader stands, with its own header: a new file at the same path. Short
+    # is the documented trigger, and it is the real shape of one -- the writer reopens in mode "w"
+    # and starts again from a header, so a re-created record is far shorter than a mid-run position.
+    path.write_text(CLOCK_HEADER + clock_line(9.0, 9.0))
+    rows = tail.rows()
+
+    assert [r["sim_ts"] for r in rows] == ["9.000000"], "a re-created record must be re-read"
+    assert tail.restarts == 1, "and the reader must say the series it measured is not the whole run"
+    assert "sim_ts" in rows[0], "the fresh header must be consumed as a header, not as a row"
+
+
+def test_a_re_creation_is_reported_rather_than_hidden(tmp_path, capsys):
+    """The gap it leaves is real -- rows were lost -- so the report says so rather than presenting a
+    partial series as a whole one. Driven through the CLI, because the note is only useful if it
+    survives to the document a caller reads."""
+    now = time.time()
+    write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
+    clock = tmp_path / "run.clock_map.csv"
+    real_sleep = time.sleep
+
+    def shrink_between_polls(seconds):
+        # The writer's own recovery path: reopen in mode "w", fresh header. Done between two of the
+        # watcher's reads, which is exactly when a run does it.
+        clock.write_text(CLOCK_HEADER + clock_line(now, 120.0))
+        real_sleep(seconds)
+
+    health.time.sleep = shrink_between_polls
+    try:
+        assert health.main([str(tmp_path), "--watch", "--poll", "0.01", "--for", "0.05",
+                            "--json"]) == health.EXIT_OK
+    finally:
+        health.time.sleep = real_sleep
+    notes = " ".join(json.loads(capsys.readouterr().out)["notes"])
+    assert "re-created" in notes, "a series that is not the whole run must say so"
+
+# -- the roster: which of those bodies is a robot ---------------------------------------------------
+
+
+def write_roster(run_dir: Path, entities: list[dict]) -> Path:
+    path = run_dir / health.ENTITIES_FILENAME
+    path.write_text(json.dumps({"entities": entities}) + "\n")
+    return path
+
+
+def test_the_roster_name_matches_the_writer():
+    """Duplicated like the other two filenames, and pinned for the same reason."""
+    from roqsim import capture
+
+    assert health.ENTITIES_FILENAME == capture.ENTITIES_FILENAME
+
+
+def test_check_1_watches_the_robots_the_roster_names(tmp_path, capsys):
+    """The point of the roster: the same command works on every world, with no --robot to forget.
+
+    A static prop in the same record must not be watched -- watching every root body would fire
+    check 1 on the furniture, which is the reason this file exists rather than a list of names.
+    """
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        [line for t in range(0, 120)
+         for line in (pose_line(float(t), "base", 0.0), pose_line(float(t), "shelf", 3.0))],
+    )
+    write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
+                            {"name": "shelf", "kind": "object", "body": "shelf"}])
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK  # check 1 warns, never errors
+    payload = json.loads(capsys.readouterr().out)
+    motion = [f for f in payload["findings"] if f["check"] == "robot-motion"]
+    assert len(motion) == 1, "the standing robot is a finding; the standing shelf is not"
+    assert "'base'" in motion[0]["detail"]
+    assert not payload["skipped"], "check 1 ran, so nothing should be reported as skipped"
+
+
+def test_an_absent_robot_is_not_watched(tmp_path, capsys):
+    """Its body is still in the model, so the recorder still writes rows for it -- and a robot the
+    trial has not brought in yet is standing still entirely correctly."""
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
+    )
+    write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base", "present": False}])
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert not [f for f in payload["findings"] if f["check"] == "robot-motion"]
+    assert any("check 1" in s for s in payload["skipped"]), "nothing watched must say so"
+
+
+def test_robot_overrides_the_roster(tmp_path, capsys):
+    """--robot stays useful: a run with no roster, and watching something not called a robot."""
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        [pose_line(float(t), "shelf", 3.0) for t in range(0, 120)],
+    )
+    write_roster(tmp_path, [{"name": "shelf", "kind": "object", "body": "shelf"}])
+    assert health.main([str(tmp_path), "--robot", "shelf", "--json"]) == health.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert [f for f in payload["findings"] if f["check"] == "robot-motion"]
+
+
+def test_a_missing_roster_says_so_rather_than_naming_a_flag(tmp_path, capsys):
+    """The skip has to be actionable: which of the two reasons applies decides what to do."""
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
+    )
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    skipped = " ".join(payload["skipped"])
+    assert health.ENTITIES_FILENAME in skipped and "check 1" in skipped
+
+
+def test_the_state_block_carries_kind_from_the_roster(tmp_path, capsys):
+    """What the pose record cannot say: whether the thing that has not moved is a robot."""
+    now = time.time()
+    write_run(
+        tmp_path,
+        [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
+        [line for t in range(0, 120)
+         for line in (pose_line(float(t), "base", t * 0.5), pose_line(float(t), "shelf", 3.0))],
+    )
+    write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
+                            {"name": "shelf", "kind": "object", "body": "shelf"}])
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    kinds = {e["name"]: e.get("kind")
+             for e in json.loads(capsys.readouterr().out)["state"]["entities"]}
+    assert kinds == {"base": "robot", "shelf": "object"}
+
+
+def test_a_malformed_roster_is_a_reason_and_not_a_crash(tmp_path, capsys):
+    now = time.time()
+    write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
+    (tmp_path / health.ENTITIES_FILENAME).write_text("{not json")
+    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert any("check 1" in s for s in payload["skipped"])
+
+
+def test_the_recorder_writes_the_roster_and_follows_a_change(tmp_path):
+    """Asserted against the writer, since the file only helps if it is there and stays true.
+
+    A roster written once at the first sample would describe the world the trial started in; a run
+    that spawns an obstacle mid-trial is the normal case, not the exotic one.
+    """
+    mujoco = pytest.importorskip("mujoco")
+    from roqsim.capture import ENTITIES_FILENAME, StateRecorder, snap_fps
+    from roqsim.context import Entity, EntityRegistry
+
+    model = mujoco.MjModel.from_xml_string(
+        "<mujoco><worldbody><body name='base'><freejoint/><geom size='0.1'/></body>"
+        "<body name='box' pos='2 0 0'><freejoint/><geom size='0.1'/></body></worldbody></mujoco>"
+    )
+
+    class Ctx:
+        pass
+
+    ctx = Ctx()
+    ctx.model = model
+    ctx.data = mujoco.MjData(model)
+    ctx.sim_time = 0.0
+    ctx.seed = 0
+    ctx.entities = EntityRegistry()
+    ctx.entities.add(Entity(name="robot", kind="robot", body="base"))
+
+    rate = snap_fps(1 / model.opt.timestep, model.opt.timestep)
+    recorder = StateRecorder(ctx, tmp_path / "run.npz", rate, sim_poses=True)
+
+    def step():
+        mujoco.mj_step(model, ctx.data)
+        ctx.sim_time = float(ctx.data.time)
+        recorder.sample(ctx)
+
+    step()
+    roster = json.loads((tmp_path / ENTITIES_FILENAME).read_text())["entities"]
+    assert [(e["name"], e["kind"], e["body"]) for e in roster] == [("robot", "robot", "base")]
+
+    ctx.entities.add(Entity(name="obstacle", kind="object", body="box"))
+    step()
+    names = [e["name"] for e in json.loads((tmp_path / ENTITIES_FILENAME).read_text())["entities"]]
+    assert names == ["robot", "obstacle"], "a spawn mid-run must show up in the roster"
+
+
+def test_the_recorder_needs_no_registry(tmp_path):
+    """A driver that keeps no registry still records; the roster is simply absent, which the
+    reader reports as a reason. Nothing about the recording depends on it."""
+    mujoco = pytest.importorskip("mujoco")
+    from roqsim.capture import ENTITIES_FILENAME, StateRecorder, snap_fps
+
+    model = mujoco.MjModel.from_xml_string(
+        "<mujoco><worldbody><body name='base'><freejoint/>"
+        "<geom size='0.1'/></body></worldbody></mujoco>"
+    )
+
+    class Ctx:
+        pass
+
+    ctx = Ctx()
+    ctx.model = model
+    ctx.data = mujoco.MjData(model)
+    ctx.sim_time = 0.0
+    ctx.seed = 0
+
+    recorder = StateRecorder(ctx, tmp_path / "run.npz", rate=snap_fps(10.0, model.opt.timestep),
+                             sim_poses=True)
+    mujoco.mj_step(model, ctx.data)
+    ctx.sim_time = float(ctx.data.time)
+    recorder.sample(ctx)
+    assert (tmp_path / "sim_poses.csv").exists()
+    assert not (tmp_path / ENTITIES_FILENAME).exists()

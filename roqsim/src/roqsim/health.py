@@ -90,6 +90,7 @@ EXIT_FINDING = 5
 #: agree, so the duplication cannot drift -- which is the only thing wrong with duplicating it.
 CLOCK_MAP_SUFFIX = ".clock_map.csv"
 SIM_POSE_FILENAME = "sim_poses.csv"
+ENTITIES_FILENAME = "entities.json"
 
 #: Check 1: a robot that moves less than this in :data:`MOTION_WINDOW_S` of sim time is standing still.
 MOTION_M = 0.01
@@ -625,7 +626,8 @@ class Report:
 class Monitor:
     """The three checks over one source, polled until something is wrong or the caller stops."""
 
-    def __init__(self, source: FileSource, robots: list[str], origin: float) -> None:
+    def __init__(self, source: FileSource, robots: list[str], origin: float,
+                 no_robots: str = "") -> None:
         self.source = source
         self.origin = origin
         self.report = Report()
@@ -644,9 +646,13 @@ class Monitor:
         #: positions from before it, which would be a stale answer presented as a current one.
         self._latest_pose: dict[str, PoseRow] = {}
         if not robots:
+            # Why, not just that: "nothing to watch" is a different situation depending on whether
+            # the roster was missing, held no robots, or was overridden with nothing -- and a
+            # skipped check whose reason is unstated is one nobody can act on.
             self.report.skipped.append(
-                "check 1 (robot-motion): no --robot given, so there is nothing to watch. "
-                f"{SIM_POSE_FILENAME} names root bodies; it does not say which are robots."
+                "check 1 (robot-motion): nothing to watch. "
+                + (no_robots or f"{SIM_POSE_FILENAME} names root bodies; it does not say which "
+                                f"are robots, and no {ENTITIES_FILENAME} said either.")
             )
 
     @property
@@ -711,8 +717,10 @@ class Monitor:
         check 3 judges, reported rather than judged, so a caller can see 0.05x without having to
         infer it from a finding. Absent when the window is too short to divide.
 
-        Deliberately no ``kind``: the pose record names root bodies without saying which are
-        robots, and inventing the distinction here would be a guess presented as a fact.
+        ``kind`` is added by the caller from the recorder's roster when there is one (see
+        :func:`read_roster`), and left off otherwise. Never guessed here: the pose record names root
+        bodies without saying which are robots, and inferring the distinction from a name would be a
+        guess presented as a fact.
         """
         out: dict = {}
         if self._clock_window is not None:
@@ -806,6 +814,50 @@ def resolve_paths(args) -> tuple[Path | None, Path | None, str | None]:
     return clock, (clock.parent if clock else run_dir) / SIM_POSE_FILENAME, None
 
 
+def read_roster(directory: Path) -> tuple[dict, str | None]:
+    """``{frame: (entity name, kind, present)}`` from the recorder's roster, or why there is none.
+
+    The roster is what turns check 1 from a per-world configuration job into something that runs
+    unattended: the pose record names root bodies, and only the entity registry knows which of them
+    is a robot. See ``capture.ENTITIES_FILENAME``.
+
+    Keyed by the *body* name, because that is what the pose record's ``frame`` column holds; an
+    entity with no body of its own is keyed by its own name, which is what a driver that registers
+    one without a body would then report. Absence is a reason and never an exception: a run that
+    predates the roster, or one whose recorder could not write it, is a run this still checks what
+    it can.
+    """
+    path = directory / ENTITIES_FILENAME
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}, f"no {ENTITIES_FILENAME} beside the pose record"
+    except (OSError, ValueError) as err:
+        return {}, f"{path} could not be read ({err})"
+    out = {}
+    for entry in document.get("entities") or []:
+        if not isinstance(entry, dict) or not entry.get("name"):
+            continue
+        frame = entry.get("body") or entry["name"]
+        out[str(frame)] = (str(entry["name"]), str(entry.get("kind") or ""),
+                           bool(entry.get("present", True)))
+    if not out:
+        return {}, f"{path} names no entities"
+    return out, None
+
+
+def robots_in(roster: dict) -> list[str]:
+    """The frames check 1 should watch: the robots that are currently there.
+
+    An **absent** entity is excluded deliberately. Its body stays in the compiled model, so the
+    recorder still writes a row for it every sample -- and a robot the trial has not brought in yet
+    is standing still entirely correctly. Watching it would make check 1 fire on a world doing
+    exactly what it was told to.
+    """
+    return sorted(frame for frame, (_name, kind, present) in roster.items()
+                  if kind == "robot" and present)
+
+
 def _await_clock(run_dir: Path, deadline: float, poll: float) -> Path | None:
     """Wait for a clock record to appear, for a run started at about the same time as this check."""
     while True:
@@ -878,7 +930,18 @@ def main(argv: list | None = None) -> int:
         return EXIT_BAD_ARGS
 
     source = FileSource(clock_path, poses_path)
-    monitor = Monitor(source, args.robot, origin)
+    # The roster answers "which of these bodies is a robot" so nobody has to pass the names per
+    # world -- which is what makes check 1 safe to run unattended, from a command that is the same
+    # for every campaign. ``--robot`` stays, as an override for a run with no roster and for
+    # watching something the registry does not call a robot.
+    roster, roster_error = read_roster(poses_path.parent if poses_path else Path(args.run_dir))
+    robots, no_robots = args.robot, ""
+    if not robots:
+        robots = robots_in(roster)
+        if not robots:
+            no_robots = (roster_error or f"{ENTITIES_FILENAME} lists no robot that is present") \
+                + ", and no --robot was given"
+    monitor = Monitor(source, robots, origin, no_robots=no_robots)
     recording = recording_of(clock_path)
     deadline = origin + args.duration if (args.watch and args.duration > 0) else None
     try:
@@ -910,10 +973,18 @@ def main(argv: list | None = None) -> int:
 
     report = monitor.report
     report.state = monitor.state()
+    # ``kind`` comes from the roster and from nowhere else. The pose record cannot carry it -- a
+    # body name does not say whether it is a robot, a prop or a walker -- and it is what lets a
+    # reader of this document tell "the robot has not moved" from "the furniture has not moved"
+    # without knowing the world.
+    for entity in report.state.get("entities") or []:
+        known = roster.get(entity.get("name"))
+        if known:
+            entity["kind"] = known[1]
     report.notes.append(f"clock record: {clock_path}")
     if monitor.pose_rows:
         report.notes.append(f"pose record: {poses_path}")
-    elif args.robot:
+    elif robots:
         # Answered from what arrived rather than from a path test at startup, because the pose
         # record is created at the first sample and a watcher can be running before then.
         report.skipped.append(

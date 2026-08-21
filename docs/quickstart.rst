@@ -295,6 +295,12 @@ poses off a *transport* is dividing by arrival times — quantised by whatever g
 by delivery — so a constant speed comes out alternating. And a **stepped** run publishes nothing at
 all, so this is the only pose series it has.
 
+Beside it goes ``entities.json``, a one-line roster of what those rows *are* — each entity's name,
+``kind``, ``body`` and whether it is currently ``present``, from the registry. The pose record cannot
+carry ``kind``: a body name does not say whether it is a robot, a prop or a walker, and nothing
+recovers that from the model. It is rewritten whenever the roster changes, so a trial that spawns an
+obstacle mid-run is described by it rather than by the world it started in.
+
 ``timestamp`` is exact simulated seconds. One convention worth knowing: ``mj_step`` integrates ``qpos``
 and leaves ``xpos`` holding the pose from *before* that integration, so a row is a coherent snapshot of
 ``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the
@@ -346,8 +352,9 @@ get wrong already reports itself.
 
 .. code-block:: bash
 
-   roqsim health <run-dir> --robot base_link           # judge the record as it stands
-   roqsim health <run-dir> --robot base_link --watch   # follow a live run until something is wrong
+   roqsim health <run-dir>                             # judge the record as it stands
+   roqsim health <run-dir> --watch                     # follow a live run until something is wrong
+   roqsim health <run-dir> --json                      # one document: findings, skips, and state
 
 It is a **separate process that reads the two records above**, and it changes nothing about a run. A
 check that lived inside the simulator would share the simulator's failure modes, and one that spoke
@@ -369,13 +376,34 @@ nobody reads. Exit status is ``0`` when nothing is wrong (warnings are still pri
 error-level finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point:
 a backgrounded command's output is invisible until it exits.
 
-**It reads root-body names, not robots.** ``sim_poses.csv`` names every free-standing body and does not
-say which of them is a robot, so check 1 watches what ``--robot`` names and reports as *skipped*
-otherwise — and warns when a name never appears at all, rather than passing a robot it never looked at.
+**Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
+free-standing body and cannot say which is which, so the recorder writes ``entities.json`` beside it
+from the entity registry — name, ``kind``, ``body``, ``present`` — and check 1 watches the entities of
+kind ``robot`` that are currently there. That is what makes one command correct for every world:
+a check whose names have to be passed per world is a check that is absent from the run that needed
+it. ``--robot`` remains as an **override**, for a run with no roster and for watching something the
+registry does not call a robot.
+
+An **absent** entity is deliberately not watched: its body stays in the compiled model, so the
+recorder still writes rows for it, and a robot the trial has not brought in yet is standing still
+entirely correctly. With no roster and no ``--robot``, check 1 reports itself *skipped* and says
+which of the two reasons applies — and it warns about a named robot that never appears in the record,
+rather than passing one it never looked at.
+
+The same roster is what lets ``--json``'s ``state`` block carry a ``kind`` per entity, which the pose
+record cannot: "the robot has not moved" and "the furniture has not moved" are different readings of
+the same row.
 
 **The precondition.** Both records exist only while a run is recording, so a run without
 ``ROQSIM_RECORD`` (and ``ROQSIM_SIM_POSES`` for check 1) cannot be checked. That is reported and exits
 ``2``; it never reads as health.
+
+**Who runs it, in a campaign.** RoboVAST executes this command itself, in the running container, on a
+bounded interval while somebody is watching the campaign — and reads ``--json``: the ``findings``, and
+``level`` in particular, are the contract it acts on. An ``error``-level finding ends its campaign
+waiter. So the exit code and the document are a public interface, and ``check`` slugs are names other
+software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
+into a run's output by this: it is read on demand and answered.
 
 **Silence means different things live and after the fact**, which is why the two modes differ. Both
 records are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
