@@ -1,5 +1,9 @@
 """Compress a rendered frame to bytes: pixels in, bytes out.
 
+Colour goes out as JPEG/PNG (:func:`encode`) and depth as ``compressedDepth`` (:func:`encode_depth`),
+whose codec lives in :mod:`roqsim_ros_bridge.rvl`; this module owns the framing that turns either into
+the bytes a ``CompressedImage`` carries.
+
 Deliberately free of ROS imports so it is testable without a sourced ROS, and so the ROS-facing
 concerns stay in :mod:`roqsim_ros_bridge.registry` -- which encoding string maps to which wire format,
 and what ``CompressedImage.format`` should say. This module knows only about arrays.
@@ -21,9 +25,12 @@ property of the installed Pillow version rather than of this code.
 from __future__ import annotations
 
 import io
+import struct
 
 import numpy as np
 from PIL import Image
+
+from . import rvl
 
 #: Wire format -> Pillow writer name. The keys are what an endpoint's ``format`` hint may ask for.
 _PILLOW_FORMAT = {"jpeg": "JPEG", "png": "PNG"}
@@ -72,3 +79,47 @@ def encode(array: np.ndarray, *, fmt: str = "jpeg", quality: int = DEFAULT_JPEG_
     else:
         Image.fromarray(array).save(buf, pillow_format)
     return buf.getvalue()
+
+
+#: ``compressed_depth_image_transport``'s ``ConfigHeader``: an int32 format enum (``INV_DEPTH`` = 0,
+#: which the reference writes for every stream) and two float32 quantisation parameters. Those are
+#: read back only for a 32FC1 source, so zeros here -- the reference leaves them *uninitialised* on
+#: the 16-bit path, which is why a byte comparison against it can only start after this header.
+_CONFIG_HEADER = struct.pack("<iff", 0, 0.0, 0.0)
+
+#: The reference encoder's own ``depth_max`` default. It zeroes everything beyond this *before*
+#: compressing, so a stream from here matches a driver's for the same pixels; a camera whose range
+#: reaches past it must not offer the compressed topic (the sensor plugin refuses that config).
+DEFAULT_DEPTH_MAX_M = 10.0
+
+
+def encode_depth(
+    array: np.ndarray, *, fmt: str = "rvl", depth_max_m: float = DEFAULT_DEPTH_MAX_M
+) -> bytes:
+    """Frame a uint16 millimetre depth image as ``compressedDepth`` payload bytes.
+
+    Layout, from ``compressed_depth_image_transport``'s ``codec.cpp``: the 12-byte ``ConfigHeader``,
+    then ``uint32`` columns and rows, then the codec's own stream. ``msg.format`` (the registry's
+    job) is what tells a subscriber which codec produced it.
+
+    Only ``rvl`` is offered. The other ``compressedDepth`` codec is PNG over an inverse-depth
+    *quantisation* of 32FC1 metres -- lossy, and a different pipeline; a caller that wants depth
+    compressed publishes it as 16UC1 millimetres, which is what the hardware does anyway.
+    """
+    if fmt != "rvl":
+        raise ValueError(f"unsupported compressed-depth format {fmt!r}; expected 'rvl'")
+    if array.dtype != np.uint16:
+        raise TypeError(
+            f"compressedDepth needs 16-bit millimetre depth, got dtype {array.dtype}. A float32 "
+            f"metre frame is carried as 32FC1 raw, or converted by the sensor (depth_encoding)."
+        )
+    if array.ndim != 2:
+        raise ValueError(f"expected (H, W), got {array.shape}")
+    rows, cols = array.shape
+    limit = int(depth_max_m * 1000.0)
+    if array.max(initial=0) > limit:
+        # The reference's max-depth filter, mirrored so the bytes agree with a driver's. Reaching it
+        # means the raw and compressed topics of one camera would disagree, which the sensor plugin
+        # rejects at load time -- so this is a backstop, not a routine path.
+        array = np.where(array > limit, np.uint16(0), array)
+    return _CONFIG_HEADER + struct.pack("<II", cols, rows) + rvl.compress(array)

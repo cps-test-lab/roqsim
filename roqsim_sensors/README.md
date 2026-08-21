@@ -37,9 +37,7 @@ stack written against a hardware driver finds the topic it expects. Both come of
 ROS bridge owns the codec; no camera plugin imports one) and both skip the *publish* as well as the
 render when unsubscribed, so the second stream costs nothing until something asks for it. Hence
 on by default: `compressed: false` opts out, `jpeg_quality` (default 95, `image_transport`'s own)
-sets the quality. Depth is **not** offered compressed — `image_transport` carries it as the distinct
-`compressedDepth` format, which is not implemented; asking for it fails loudly rather than shipping a
-wrong frame.
+sets the quality. `compressed: false` opts out of the compressed companions of both streams.
 
 Depth goes out as **float32 metres** (`32FC1`, `inf` for "no return") by default, which is lossless in
 the unit the renderer produces. `depth_encoding: 16UC1` publishes **millimetres with 0 for invalid**
@@ -48,6 +46,16 @@ written against hardware sees the format it expects, at half the bytes. It quant
 and cannot reach past 65.535 m, so `clip_far` is checked against that ceiling at load time rather than
 saturating (an OAK-D's 100 m default therefore has to come down to opt in). A point cloud is
 unaffected either way: it reprojects the float metres, whatever the depth topic advertises.
+
+A `16UC1` camera also offers `<depth topic>/compressedDepth` — `image_transport`'s depth transport,
+RVL-coded (lossless, about 5:1) — so a driver-shaped consumer finds that topic too. It is absent under
+`32FC1` because the codec is 16-bit, which is the format's constraint rather than a policy: asking for
+the topic anyway is an error, not a silent no-op. Its encoder drops returns past 10 m
+(`image_transport`'s own `depth_max` default, mirrored so the bytes match a driver's), so a camera
+that sees further has to lower `clip_far` or switch the companion off rather than publish two depth
+topics that disagree. The encode is not cheap — 35 ms for a 1280×720 frame against JPEG colour's
+2.9 ms, since RVL has no C library behind it — but like the colour companion it is skipped entirely
+while nothing subscribes.
 
 ### Conventions for standalone sensor models
 

@@ -6,10 +6,18 @@ of the registry: these run in a plain venv.
 
 from __future__ import annotations
 
+import struct
+
 import numpy as np
 import pytest
 
-from roqsim_ros_bridge.image_codec import DEFAULT_JPEG_QUALITY, encode
+from roqsim_ros_bridge import rvl
+from roqsim_ros_bridge.image_codec import (
+    DEFAULT_DEPTH_MAX_M,
+    DEFAULT_JPEG_QUALITY,
+    encode,
+    encode_depth,
+)
 
 
 def frame(h=120, w=160):
@@ -94,3 +102,47 @@ def test_unknown_format_is_refused_loudly():
 def test_wrong_channel_count_is_refused_loudly():
     with pytest.raises(ValueError, match=r"\(H, W\)"):
         encode(np.zeros((8, 8, 4), np.uint8))
+
+
+# -- compressedDepth -----------------------------------------------------------------------------
+def depth_frame(h=16, w=24):
+    """Millimetre depth with a no-return band, as a 16UC1 camera publishes it."""
+    y, x = np.mgrid[0:h, 0:w]
+    frame = (600 + 40 * x + 3 * y).astype(np.uint16)
+    frame[y > 0.75 * h] = 0
+    return frame
+
+
+def test_compressed_depth_frames_the_stream_the_way_the_reference_reads_it():
+    """A 12-byte ConfigHeader, then uint32 columns and rows, then the codec's stream -- the layout
+    `compressed_depth_image_transport`'s decoder parses (it reads the dimensions at bytes 12..20 and
+    hands everything after them to the codec)."""
+    frame = depth_frame()
+    data = encode_depth(frame)
+    assert len(data) == 20 + len(rvl.compress(frame))
+    assert struct.unpack_from("<iff", data, 0) == (0, 0.0, 0.0)  # INV_DEPTH, unused quantisation
+    assert struct.unpack_from("<II", data, 12) == (frame.shape[1], frame.shape[0])
+    assert np.array_equal(rvl.decompress(data[20:], frame.size), frame.reshape(-1))
+
+
+def test_compressed_depth_mirrors_the_encoder_s_max_depth_filter():
+    """image_transport's encoder zeroes returns past its `depth_max` before compressing. We do the
+    same, so the bytes match a driver's for the same pixels -- a camera whose range reaches past it
+    is refused at load time by the sensor plugin, so this is a backstop."""
+    frame = np.array([[1000, 20000], [DEFAULT_DEPTH_MAX_M * 1000, 0]], np.uint16)
+    decoded = rvl.decompress(encode_depth(frame)[20:], frame.size)
+    assert decoded.tolist() == [1000, 0, int(DEFAULT_DEPTH_MAX_M * 1000), 0]
+
+
+def test_compressed_depth_refuses_a_frame_that_is_not_16_bit_depth():
+    with pytest.raises(TypeError, match="16-bit"):
+        encode_depth(np.zeros((4, 4), np.float32))
+    with pytest.raises(TypeError, match="16-bit"):
+        encode_depth(np.zeros((4, 4, 3), np.uint8))
+
+
+def test_the_other_compressed_depth_codec_is_named_rather_than_guessed():
+    """PNG over an inverse-depth quantisation of 32FC1 is the format's other half, and lossy; saying
+    so beats writing an rvl stream under a png label."""
+    with pytest.raises(ValueError, match="expected 'rvl'"):
+        encode_depth(depth_frame(), fmt="png")

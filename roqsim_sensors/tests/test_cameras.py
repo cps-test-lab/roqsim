@@ -433,3 +433,67 @@ def test_d455_carries_the_depth_encoding_option_too():
     plugin = RealsenseD455Plugin({"depth": True, "depth_encoding": "16UC1"})
     assert plugin.depth_encoding == "16UC1"
     assert plugin.validate_config(plugin.config) == []  # its 6 m range fits
+
+
+# -- the compressed depth companion --------------------------------------------------------------
+def test_compressed_depth_is_offered_for_16uc1_on_the_transport_s_own_topic():
+    """`<depth topic>/compressedDepth`, which is the transport a RealSense driver advertises -- and
+    the same payload as the raw topic, so the plugin owns no codec."""
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1")
+    raw, compressed = _endpoint(engine, "depth"), _endpoint(engine, "depth_compressed")
+    assert compressed is not None
+    hints, raw_hints = compressed.backend["ros2"], raw.backend["ros2"]
+    assert hints["type"] == "sensor_msgs.msg.CompressedImage"
+    assert hints["topic"] == raw_hints["topic"] + "/compressedDepth"
+    assert (hints["encoding"], hints["format"]) == ("16UC1", "rvl")
+    assert hints["frame_id"] == raw_hints["frame_id"]
+    assert compressed.read() is raw.read()  # one array, two wire formats
+    assert compressed.lazy is True
+
+
+def test_compressed_depth_follows_a_hardwired_depth_topic():
+    """A world matching the rig's topic names gets the rig's compressed topic without naming it."""
+    engine = _stepped(
+        D435,
+        depth=True,
+        depth_encoding="16UC1",
+        topics={"depth": "/camera_1/camera_1/depth/image_rect_raw"},
+    )
+    assert (
+        _endpoint(engine, "depth_compressed").backend["ros2"]["topic"]
+        == "/camera_1/camera_1/depth/image_rect_raw/compressedDepth"
+    )
+
+
+def test_no_compressed_depth_under_float_metres_or_with_compression_off():
+    """RVL is 16-bit: under 32FC1 the topic cannot exist, and `compressed: false` opts out of the
+    compressed companions of both streams."""
+    assert _endpoint(_stepped(D435, depth=True), "depth_compressed") is None
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1", compressed=False)
+    assert _endpoint(engine, "depth_compressed") is None
+    assert _endpoint(engine, "image_compressed") is None
+    assert _endpoint(engine, "depth") is not None
+
+
+def test_a_compressed_depth_subscriber_alone_justifies_the_render():
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1")
+    plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
+    assert "depth_compressed" in {ep.name for ep in plugin._gate_endpoints()}
+
+
+def test_asking_for_a_compressed_depth_topic_that_cannot_exist_is_an_error():
+    plugin = RealsenseD435Plugin({})
+    errors = plugin.validate_config({"topics": {"depth_compressed": "/somewhere"}})
+    assert any("depth_compressed" in e and "16UC1" in e for e in errors)
+
+
+def test_a_range_past_the_codec_s_own_limit_refuses_the_pair_rather_than_disagreeing():
+    """compressedDepth's encoder drops returns past 10 m, so a camera that sees further would
+    publish a raw and a compressed depth topic that disagree beyond it."""
+    plugin = RealsenseD435Plugin({})
+    errors = plugin.validate_config({"depth_encoding": "16UC1", "clip_far": 30.0})
+    assert any("compressedDepth" in e and "compressed: false" in e for e in errors)
+    assert (
+        plugin.validate_config({"depth_encoding": "16UC1", "clip_far": 30.0, "compressed": False})
+        == []
+    )

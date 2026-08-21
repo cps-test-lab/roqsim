@@ -406,7 +406,7 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   nobody wants). Default ``False``, because a publish can carry more than its message — a bridge
   deriving TF from an odometry payload would stop broadcasting the transform whenever nothing
   subscribed to ``/odom`` — and because it buys nothing for a cheap payload. Set on the camera plugins'
-  ``image``, ``image_compressed``, ``depth`` and ``points``.
+  ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points``.
 
 Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. For a
 second robot add another with ``namespace: robot2``: it serves that robot's endpoints and prefixes

@@ -18,8 +18,10 @@
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
-  <!-- CompressedImage encoding (roqsim_ros_bridge.image_codec); also a roqsim core dep. -->
+  <!-- CompressedImage encoding: Pillow for colour, numpy for the RVL depth codec
+       (roqsim_ros_bridge.image_codec / .rvl). Both are roqsim core deps too. -->
   <exec_depend>python3-pil</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
   <exec_depend>rosgraph_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
