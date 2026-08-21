@@ -54,32 +54,50 @@ def test_compressed_depth_names_the_transport_image_transport_expects():
     parse. A consumer picks the codec out of it, so our own spelling would decode as nothing."""
     frame = np.arange(1, 17, dtype=np.uint16).reshape(4, 4) * 100
     msg = CompressedImage()
-    fill_compressed_image(msg, frame, STAMP, {"encoding": "16UC1", "format": "rvl"})
-    assert msg.format == "16UC1; compressedDepth rvl"
+    fill_compressed_image(msg, frame, STAMP, {"encoding": "16UC1"})
+    assert msg.format == "16UC1; compressedDepth png"  # image_transport's own default codec
     assert bytes(msg.data) == encode_depth(frame)
 
+    rvl_msg = CompressedImage()
+    fill_compressed_image(rvl_msg, frame, STAMP, {"encoding": "16UC1", "format": "rvl"})
+    assert rvl_msg.format == "16UC1; compressedDepth rvl"
+    assert bytes(rvl_msg.data) == encode_depth(frame, fmt="rvl")
 
-def test_colour_and_depth_are_told_apart_by_the_codec_not_the_message_type():
-    """Both are CompressedImage, and converters are keyed on the type -- so the `format` hint is
-    what decides, and each half refuses the other's encoding by name."""
+
+def test_the_encoding_picks_the_pipeline_not_the_codec_name():
+    """Colour and depth are both CompressedImage, and `png` names a codec on each side -- so the
+    ENCODING decides which pipeline runs, and each side refuses the other's codec by name."""
     colour = CompressedImage()
     fill_compressed_image(colour, np.zeros((4, 4, 3), np.uint8), STAMP, {"encoding": "rgb8"})
     assert colour.format == "rgb8; jpeg compressed bgr8"
 
-    with pytest.raises(TypeError, match="16-bit only"):  # colour pixels, depth codec
-        fill_compressed_image(
-            CompressedImage(),
-            np.zeros((4, 4, 3), np.uint8),
-            STAMP,
-            {"encoding": "rgb8", "format": "rvl"},
-        )
-    with pytest.raises(TypeError, match="compressedDepth"):  # depth pixels, colour codec
-        fill_compressed_image(
-            CompressedImage(),
-            np.zeros((4, 4), np.uint16),
-            STAMP,
+    # The same `format: png` on either encoding: a colour PNG, or a compressedDepth PNG.
+    as_colour, as_depth = CompressedImage(), CompressedImage()
+    fill_compressed_image(
+        as_colour, np.zeros((4, 4, 3), np.uint8), STAMP, {"encoding": "rgb8", "format": "png"}
+    )
+    fill_compressed_image(
+        as_depth, np.zeros((4, 4), np.uint16), STAMP, {"encoding": "16UC1", "format": "png"}
+    )
+    assert as_colour.format == "rgb8; png compressed bgr8"
+    assert as_depth.format == "16UC1; compressedDepth png"
+    assert bytes(as_colour.data) != bytes(as_depth.data)  # different pipelines, not one shared PNG
+
+    for hints, expected in (
+        ({"encoding": "rgb8", "format": "rvl"}, "'jpeg', 'png'"),  # colour pixels, depth-only codec
+        (
             {"encoding": "16UC1", "format": "jpeg"},
-        )
+            "'png', 'rvl'",
+        ),  # depth pixels, colour-only codec
+    ):
+        with pytest.raises(ValueError) as raised:
+            payload = (
+                np.zeros((4, 4, 3), np.uint8)
+                if hints["encoding"] == "rgb8"
+                else np.zeros((4, 4), np.uint16)
+            )
+            fill_compressed_image(CompressedImage(), payload, STAMP, hints)
+        assert expected in str(raised.value).replace('"', "'")
 
 
 def test_float_depth_is_pointed_at_the_encoding_that_can_carry_it():

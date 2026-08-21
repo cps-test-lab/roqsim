@@ -482,10 +482,19 @@ def test_compressed_depth_is_offered_for_16uc1_on_the_transport_s_own_topic():
     hints, raw_hints = compressed.backend["ros2"], raw.backend["ros2"]
     assert hints["type"] == "sensor_msgs.msg.CompressedImage"
     assert hints["topic"] == raw_hints["topic"] + "/compressedDepth"
-    assert (hints["encoding"], hints["format"]) == ("16UC1", "rvl")
+    assert (hints["encoding"], hints["format"]) == ("16UC1", "png")
     assert hints["frame_id"] == raw_hints["frame_id"]
     assert compressed.read() is raw.read()  # one array, two wire formats
     assert compressed.lazy is True
+
+
+def test_the_depth_codec_is_a_world_s_choice_between_two_lossless_ones():
+    """`png` is the default because it is both smaller and faster on rendered depth; `rvl` is what a
+    driver configured for speed emits, so it is the option for a bag that must match one."""
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1", depth_codec="rvl")
+    assert _endpoint(engine, "depth_compressed").backend["ros2"]["format"] == "rvl"
+    errors = RealsenseD435Plugin({}).validate_config({"depth_codec": "zstd"})
+    assert any("depth_codec" in e and "png" in e for e in errors)
 
 
 def test_compressed_depth_follows_a_hardwired_depth_topic():

@@ -93,21 +93,45 @@ _CONFIG_HEADER = struct.pack("<iff", 0, 0.0, 0.0)
 DEFAULT_DEPTH_MAX_M = 10.0
 
 
+#: PNG's compression level for depth. Chosen by measurement, not by image_transport's own default of
+#: 9: on a 1280x720 z-buffer frame level 1 costs 19 ms for 45 kB, level 3 costs 86 ms for 43 kB, and
+#: level 9 costs a second. The decoder does not care which was used -- the level is purely the
+#: encoder's trade, and this one runs on the physics thread.
+DEFAULT_PNG_LEVEL = 1
+
+#: The codecs `compressedDepth` defines for a 16-bit stream, and what each is for. PNG is
+#: image_transport's own default and wins on both axes for rendered depth (a z-buffer has no sensor
+#: noise, so a row filter predicts it almost exactly); RVL is what a driver configured for speed
+#: emits, and roqsim writes it for byte-level parity with such a stream.
+DEPTH_CODECS = ("png", "rvl")
+
+
 def encode_depth(
-    array: np.ndarray, *, fmt: str = "rvl", depth_max_m: float = DEFAULT_DEPTH_MAX_M
+    array: np.ndarray,
+    *,
+    fmt: str = "png",
+    png_level: int = DEFAULT_PNG_LEVEL,
+    depth_max_m: float = DEFAULT_DEPTH_MAX_M,
 ) -> bytes:
     """Frame a uint16 millimetre depth image as ``compressedDepth`` payload bytes.
 
     Layout, from ``compressed_depth_image_transport``'s ``codec.cpp``: the 12-byte ``ConfigHeader``,
-    then ``uint32`` columns and rows, then the codec's own stream. ``msg.format`` (the registry's
-    job) is what tells a subscriber which codec produced it.
+    then the codec's own bytes -- for ``rvl`` prefixed with ``uint32`` columns and rows, which PNG
+    carries itself. ``msg.format`` (the registry's job) is what tells a subscriber which codec ran.
 
-    Only ``rvl`` is offered. The other ``compressedDepth`` codec is PNG over an inverse-depth
-    *quantisation* of 32FC1 metres -- lossy, and a different pipeline; a caller that wants depth
-    compressed publishes it as 16UC1 millimetres, which is what the hardware does anyway.
+    Both codecs here are LOSSLESS, so which one a bag carries changes its size and nothing else.
+    The lossy half of ``compressedDepth`` is the 32FC1 path -- an inverse-depth *quantisation* into
+    16 bits, which roqsim does not implement: a caller that wants depth compressed publishes it as
+    16UC1 millimetres, which is what the hardware does anyway.
+
+    Measured at 1280x720 on rendered depth: PNG 19 ms for 45 kB, RVL 42 ms for 370 kB, against
+    1.84 MB raw. RVL is the slower one here only because it is numpy against PNG's zlib in C -- the
+    reference C implementation of RVL does the same frame in 2 ms.
     """
-    if fmt != "rvl":
-        raise ValueError(f"unsupported compressed-depth format {fmt!r}; expected 'rvl'")
+    if fmt not in DEPTH_CODECS:
+        raise ValueError(
+            f"unsupported compressed-depth format {fmt!r}; expected one of {list(DEPTH_CODECS)}"
+        )
     if array.dtype != np.uint16:
         raise TypeError(
             f"compressedDepth needs 16-bit millimetre depth, got dtype {array.dtype}. A float32 "
@@ -115,11 +139,19 @@ def encode_depth(
         )
     if array.ndim != 2:
         raise ValueError(f"expected (H, W), got {array.shape}")
-    rows, cols = array.shape
     limit = int(depth_max_m * 1000.0)
     if array.max(initial=0) > limit:
         # The reference's max-depth filter, mirrored so the bytes agree with a driver's. Reaching it
         # means the raw and compressed topics of one camera would disagree, which the sensor plugin
         # rejects at load time -- so this is a backstop, not a routine path.
         array = np.where(array > limit, np.uint16(0), array)
-    return _CONFIG_HEADER + struct.pack("<II", cols, rows) + rvl.compress(array)
+    if fmt == "rvl":
+        rows, cols = array.shape
+        return _CONFIG_HEADER + struct.pack("<II", cols, rows) + rvl.compress(array)
+    buffer = io.BytesIO()
+    # "I;16" is Pillow's 16-bit greyscale mode; PNG stores those samples big-endian, and the result
+    # reads back through `cv::imdecode(..., IMREAD_UNCHANGED)` -- the decoder's own call -- as the
+    # same uint16 pixels. There is a test for that, because a byte-order slip here is invisible until
+    # something reads the depth as metres.
+    Image.fromarray(array, mode="I;16").save(buffer, "PNG", compress_level=int(png_level))
+    return _CONFIG_HEADER + buffer.getvalue()

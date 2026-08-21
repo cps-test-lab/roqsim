@@ -342,10 +342,6 @@ def fill_image(msg, payload, stamp: Time, hints: dict) -> None:
 # inventing our own spelling would break every one of them.
 _COMPRESSED_WIRE = {"rgb8": "bgr8", "bgr8": "bgr8", "mono8": "mono8"}
 
-#: Depth does not go out as a compressed *colour* image at all: image_transport carries it as
-#: `compressedDepth`, its own format string and its own framing. These are the codecs that means.
-_DEPTH_CODECS = ("rvl",)
-
 
 @converter("sensor_msgs.msg.CompressedImage")
 def fill_compressed_image(msg, payload, stamp: Time, hints: dict) -> None:
@@ -354,53 +350,43 @@ def fill_compressed_image(msg, payload, stamp: Time, hints: dict) -> None:
     # codec of its own.
     #
     # Colour and depth share the message type and nothing else -- different codecs, framing and
-    # format strings -- so this dispatches on the codec rather than growing one function with a
-    # branch. The `format` hint is what picks: `jpeg`/`png` colour, `rvl` depth.
+    # format strings -- so this dispatches rather than growing one function with a branch. The
+    # ENCODING decides, not the codec: `png` names a colour codec and a depth codec, and they are
+    # different pipelines producing different bytes.
     encoding = hints.get("encoding", "rgb8")
-    fmt = hints.get("format", "jpeg")
     msg.header.stamp = stamp
     msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
-    if fmt in _DEPTH_CODECS:
-        _fill_compressed_depth(msg, payload, encoding, fmt)
+    if encoding in _COMPRESSED_WIRE:
+        _fill_compressed_colour(msg, payload, encoding, hints.get("format", "jpeg"), hints)
     else:
-        _fill_compressed_colour(msg, payload, encoding, fmt, hints)
+        _fill_compressed_depth(msg, payload, encoding, hints)
 
 
 def _fill_compressed_colour(msg, payload, encoding: str, fmt: str, hints: dict) -> None:
-    wire = _COMPRESSED_WIRE.get(encoding)
-    if wire is None:
-        # A depth encoding is the likely arrival here, and it is not a quality setting away from
-        # working: image_transport carries depth as `compressedDepth`, a different format with its own
-        # header and codec. Say so rather than emit a wrong-but-decodable frame.
-        extra = (
-            f" Depth is carried as compressedDepth -- ask for it with format: "
-            f"{_DEPTH_CODECS[0]!r}, and publish the depth as 16UC1."
-            if encoding in _IMAGE_ENCODING_BYTES
-            else ""
-        )
-        raise TypeError(
-            f"cannot compress encoding {encoding!r} as {fmt!r}; expected one of "
-            f"{sorted(_COMPRESSED_WIRE)}.{extra}"
-        )
+    wire = _COMPRESSED_WIRE[encoding]
     msg.format = f"{encoding}; {fmt} compressed {wire}"
     msg.data = image_codec.encode(
         payload, fmt=fmt, quality=hints.get("quality", image_codec.DEFAULT_JPEG_QUALITY)
     )
 
 
-def _fill_compressed_depth(msg, payload, encoding: str, fmt: str) -> None:
+def _fill_compressed_depth(msg, payload, encoding: str, hints: dict) -> None:
     if encoding != "16UC1":
-        # RVL codes 16-bit values; there is no lossless reading of float metres for it. The other
-        # compressedDepth codec quantises 32FC1 into 16 bits and PNGs that -- lossy, and not
-        # implemented here -- so the answer is to publish the depth stream as 16UC1 millimetres,
-        # which is what the hardware does in the first place.
+        # Everything that is not a colour encoding lands here, so the message names both routes.
+        # 32FC1 is the interesting case: the reference carries it through an inverse-depth
+        # QUANTISATION into 16 bits before PNG -- lossy, a different pipeline, and not implemented --
+        # so the answer is to publish depth as 16UC1 millimetres, which is what hardware does anyway.
         raise TypeError(
-            f"cannot compress encoding {encoding!r} with {fmt!r}: compressedDepth's rvl codec is "
-            "16-bit only. Publish the depth as 16UC1 (the device's own format), or leave it raw."
+            f"cannot compress encoding {encoding!r}: colour compresses as one of "
+            f"{sorted(_COMPRESSED_WIRE)}, and compressedDepth's codecs are 16-bit only. Publish the "
+            "depth as 16UC1 (the device's own format), or leave it raw."
         )
+    fmt = hints.get("format", "png")
     # image_transport's own spelling for this transport: "<source encoding>; compressedDepth <codec>".
     msg.format = f"{encoding}; compressedDepth {fmt}"
-    msg.data = image_codec.encode_depth(payload, fmt=fmt)
+    msg.data = image_codec.encode_depth(
+        payload, fmt=fmt, png_level=hints.get("png_level", image_codec.DEFAULT_PNG_LEVEL)
+    )
 
 
 @converter("sensor_msgs.msg.CameraInfo")

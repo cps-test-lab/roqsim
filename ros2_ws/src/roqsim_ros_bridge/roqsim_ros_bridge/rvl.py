@@ -21,13 +21,15 @@ have a zero count of 0, and the last pair a nonzero count of 0.
 *Nibbles.* Each symbol is a variable-length sequence of nibbles, 3 payload bits each, low bits first,
 with bit ``0x8`` set on every nibble but the last: 7 costs one nibble, 8 costs two.
 
-**What it costs, measured.** 35 ms for a 1280x720 frame and 7.7 ms for 848x480 (a RealSense's own
-depth profile), both compressing about 5:1 -- 370 kB against 1.84 MB raw. That is an order above the
-JPEG colour path's 2.9 ms, because there is no C library for RVL: this is numpy doing per-nibble work
-that the reference does in a tight C loop, and the encode runs on the physics thread. A camera pair
-publishing 1280x720 depth at 5 Hz therefore spends about a third of a second per simulated second in
-here, so the endpoint is `lazy` (nothing subscribed, nothing encoded) and a world that records the
-compressed stream at full resolution should expect to pay for it.
+**What it costs, measured, and why it is not the default.** 42 ms for a 1280x720 frame and 13 ms for
+848x480 (a RealSense's own depth profile), compressing about 5:1 -- 370 kB against 1.84 MB raw. The
+reference C implementation does the same frame in 2 ms: this is numpy doing per-nibble work that a
+tight C loop was written for, and the encode runs on the physics thread. Meanwhile 16-bit PNG -- the
+other codec ``compressedDepth`` defines, and the one Pillow does in C -- takes 19 ms for 45 kB on the
+same frame, because a rendered z-buffer carries no sensor noise for a row filter to trip on. So PNG is
+what a camera offers by default and this is the codec to ask for when a bag must match a driver
+configured for speed, byte for byte. Either way the endpoint is ``lazy``: nothing subscribed, nothing
+encoded.
 
 *Words.* Nibbles are packed **most-significant first** into 32-bit words (``word <<= 4; word |=
 nibble``) and each full word is written in native byte order -- so on a little-endian machine the first

@@ -53,15 +53,21 @@ that topic, and given only the colour stream's it waits forever. Both carry the 
 one MuJoCo camera renders both streams; real hardware images depth through separate optics, which a
 one-camera plugin cannot reproduce.
 
-A `16UC1` camera also offers `<depth topic>/compressedDepth` — `image_transport`'s depth transport,
-RVL-coded (lossless, about 5:1) — so a driver-shaped consumer finds that topic too. It is absent under
-`32FC1` because the codec is 16-bit, which is the format's constraint rather than a policy: asking for
-the topic anyway is an error, not a silent no-op. Its encoder drops returns past 10 m
-(`image_transport`'s own `depth_max` default, mirrored so the bytes match a driver's), so a camera
-that sees further has to lower `clip_far` or switch the companion off rather than publish two depth
-topics that disagree. The encode is not cheap — 35 ms for a 1280×720 frame against JPEG colour's
-2.9 ms, since RVL has no C library behind it — but like the colour companion it is skipped entirely
-while nothing subscribes.
+A `16UC1` camera also offers `<depth topic>/compressedDepth`, `image_transport`'s depth transport, so
+a driver-shaped consumer finds that topic too. `depth_codec` picks the codec, and both are lossless —
+the choice is size and time, not fidelity:
+
+| codec | 1280×720 frame | why |
+| --- | --- | --- |
+| `png` (default) | 19 ms → 45 kB | `image_transport`'s own default. A rendered z-buffer has no sensor noise, so PNG's row filter predicts it almost exactly — smaller *and* faster here. |
+| `rvl` | 42 ms → 370 kB | What a driver configured for speed emits, so this is the option when a bag has to match one byte for byte. Slower only because it is numpy against PNG's zlib in C. |
+
+It is absent under `32FC1` because both codecs are 16-bit, which is the format's constraint rather
+than a policy: asking for the topic anyway is an error, not a silent no-op. The encoder drops returns
+past 10 m (`image_transport`'s own `depth_max` default, mirrored so the bytes match a driver's), so a
+camera that sees further has to lower `clip_far` or switch the companion off rather than publish two
+depth topics that disagree. Like the colour companion, it is skipped entirely while nothing
+subscribes.
 
 ### Conventions for standalone sensor models
 

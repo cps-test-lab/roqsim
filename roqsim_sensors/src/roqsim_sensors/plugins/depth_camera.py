@@ -25,11 +25,14 @@ quantises to a millimetre and cannot represent a range beyond 65.535 m, so ``cli
 against that ceiling rather than silently saturating -- a clamp to 65535 would read as a surface
 65.5 m away, which is a measurement, not an error.
 
-**The compressed companion.** A ``16UC1`` camera also offers ``<depth topic>/compressedDepth`` (RVL,
-lossless, roughly a fifth of the raw bytes), the transport a RealSense driver advertises for depth --
-so ``compressed: false`` is the opt-out for both streams, colour and depth. It is absent under
-``32FC1`` because the codec is 16-bit: that is the format's constraint, not a policy, and asking for
-the topic anyway is an error rather than a silent no-op. Its encoder drops returns past 10 m
+**The compressed companion.** A ``16UC1`` camera also offers ``<depth topic>/compressedDepth``, the
+transport a RealSense driver advertises for depth -- so ``compressed: false`` is the opt-out for both
+streams, colour and depth. It is absent under ``32FC1`` because both codecs are 16-bit: that is the
+format's constraint, not a policy, and asking for the topic anyway is an error rather than a silent
+no-op. ``depth_codec`` picks between ``png`` (the default, and ``image_transport``'s own: 19 ms and
+45 kB for a 1280x720 rendered frame) and ``rvl`` (42 ms, 370 kB, and what a driver configured for
+speed emits -- the option when a bag has to match such a stream byte for byte). Both are lossless, so
+the choice costs nothing but time and space. Its encoder drops returns past 10 m
 (``image_transport``'s ``depth_max`` default, which we mirror so the bytes match a driver's), so a
 camera that sees further must lower ``clip_far`` or switch the companion off rather than publish two
 depth topics that disagree.
@@ -52,8 +55,13 @@ MAX_16UC1_RANGE_M = 65.535
 #: two agree by both citing image_transport, not by sharing a symbol.
 COMPRESSED_DEPTH_MAX_M = 10.0
 
-#: The codec `compressedDepth` uses for 16-bit depth, and the only one roqsim writes.
-DEPTH_CODEC = "rvl"
+#: The `compressedDepth` codecs, and the default. Both are lossless, so the choice is size and time:
+#: on rendered depth (a z-buffer, no sensor noise, which a PNG row filter predicts almost exactly)
+#: `png` measured 19 ms and 45 kB against `rvl`'s 42 ms and 370 kB at 1280x720. `rvl` is what a driver
+#: configured for speed puts on the wire, so it is the option for byte-level parity with such a
+#: stream -- its cost here is numpy against PNG's zlib in C, not the algorithm's.
+DEPTH_CODECS = ("png", "rvl")
+DEFAULT_DEPTH_CODEC = "png"
 
 
 class DepthCameraPlugin(CameraPlugin):
@@ -65,6 +73,7 @@ class DepthCameraPlugin(CameraPlugin):
         self.clip_near = float(self.config.get("clip_near", 0.3))
         self.clip_far = float(self.config.get("clip_far", 100.0))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))
+        self.depth_codec = str(self.config.get("depth_codec", DEFAULT_DEPTH_CODEC))
         self._depth: np.ndarray | None = None
         self._depth_ep: Endpoint | None = None
         self._depth_compressed_ep: Endpoint | None = None
@@ -95,6 +104,9 @@ class DepthCameraPlugin(CameraPlugin):
                 f"'clip_far' must be <= {MAX_16UC1_RANGE_M} m with depth_encoding: 16UC1 "
                 "(uint16 millimetres saturate there) -- lower it, or publish 32FC1"
             )
+        codec = str(config.get("depth_codec", self.depth_codec))
+        if codec not in DEPTH_CODECS:
+            errors.append(f"'depth_codec' must be one of {', '.join(DEPTH_CODECS)}, got {codec!r}")
         compressed = bool(config.get("compressed", True))
         if encoding == "16UC1" and compressed:
             # compressedDepth's encoder zeroes returns past its depth_max, so a camera that sees
@@ -192,7 +204,7 @@ class DepthCameraPlugin(CameraPlugin):
                         or f"{topic}/compressedDepth",
                         "frame_id": frame_id,
                         "encoding": self.depth_encoding,
-                        "format": DEPTH_CODEC,
+                        "format": self.depth_codec,
                     }
                 },
             )
