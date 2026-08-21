@@ -350,3 +350,86 @@ def test_jpeg_quality_is_validated():
     for bad in (0, 101):
         assert any("jpeg_quality" in e for e in plugin.validate_config({"jpeg_quality": bad})), bad
     assert plugin.validate_config({"jpeg_quality": 95}) == []
+
+
+# -- depth encoding ------------------------------------------------------------------------------
+def test_depth_is_float_metres_by_default():
+    """32FC1 is lossless in the unit the renderer produces, so it stays the default: a world that
+    says nothing must not change what it publishes."""
+    engine = _stepped(D435, depth=True)
+    ep = _endpoint(engine, "depth")
+    assert ep.backend["ros2"]["encoding"] == "32FC1"
+    assert ep.read().dtype == np.float32
+
+
+def test_depth_encoding_16uc1_publishes_uint16_millimetres_with_zero_for_no_return():
+    """What a real RealSense driver puts on `depth/image_rect_raw`: millimetres, 0 for invalid."""
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1")
+    ep = _endpoint(engine, "depth")
+    assert ep.backend["ros2"]["encoding"] == "16UC1"
+    depth = ep.read()
+    assert depth.shape == (48, 64) and depth.dtype == np.uint16
+
+    # The same geometry the cloud test pins, in the other unit: the camera is 0.5 m above the floor
+    # with a 45 deg vertical FOV, so the nearest visible floor point is 0.5 / tan(22.5 deg) away.
+    valid = depth[depth > 0]
+    assert valid.min() == pytest.approx(1000 * 0.5 / math.tan(math.radians(22.5)), abs=50)
+    assert valid.max() <= 3000  # the D435's clip_far, in millimetres
+    # The plane runs on well past clip_far, so there ARE unseen pixels -- and they read 0, the
+    # device's marker for "no return", not a clamp to 65535 (which would be a surface 65.5 m away).
+    assert (depth == 0).any()
+
+
+def test_16uc1_rounds_rather_than_truncates():
+    """A plain cast biases every reading down by up to a millimetre, systematically."""
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1")
+    plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
+    metres, millimetres = plugin._depth, _endpoint(engine, "depth").read()
+    seen = np.isfinite(metres)
+    assert np.array_equal(millimetres[seen], np.rint(metres[seen] * 1000.0).astype(np.uint16))
+
+
+def test_the_cloud_stays_in_metres_when_depth_is_published_in_millimetres():
+    """Two consumers, two units, one buffer: the reprojection reads the float metres regardless of
+    what the depth topic advertises."""
+    engine = _stepped(D435, points=True, depth_encoding="16UC1")
+    cloud = _endpoint(engine, "points").read()
+    assert cloud.points.dtype == np.float32
+    assert cloud.points[:, 2].min() == pytest.approx(0.5 / math.tan(math.radians(22.5)), abs=0.05)
+    assert _endpoint(engine, "depth").read().dtype == np.uint16
+
+
+def test_the_encoded_frame_is_converted_once_per_capture():
+    """Both depth topics read the same frame, so the conversion is cached until the next capture --
+    and a new capture must not keep serving the old frame's copy."""
+    engine = _stepped(D435, depth=True, depth_encoding="16UC1")
+    plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
+    ep = _endpoint(engine, "depth")
+    assert ep.read() is ep.read()
+    plugin._capture_extra(engine.ctx, plugin._frames.raw)
+    assert plugin._depth_wire is None
+
+
+def test_depth_encoding_is_validated():
+    plugin = RealsenseD435Plugin({})
+    errors = plugin.validate_config({"depth_encoding": "mono16"})
+    assert any("depth_encoding" in e and "32FC1" in e for e in errors)
+    assert plugin.validate_config({"depth_encoding": "16UC1"}) == []  # D435 clips at 3 m
+
+
+def test_16uc1_refuses_a_range_uint16_millimetres_cannot_carry():
+    """The OAK-D's own 100 m default is the case: millimetres end at 65.535 m, and saturating there
+    would publish a wall 65.5 m away rather than an error."""
+    from roqsim_sensors.plugins.oakd_camera import OakDCameraPlugin
+
+    errors = OakDCameraPlugin({}).validate_config({"depth_encoding": "16UC1"})
+    assert any("clip_far" in e and "65.535" in e for e in errors)
+    assert OakDCameraPlugin({}).validate_config({"depth_encoding": "16UC1", "clip_far": 10.0}) == []
+
+
+def test_d455_carries_the_depth_encoding_option_too():
+    from roqsim_sensors.plugins.realsense_d455 import RealsenseD455Plugin
+
+    plugin = RealsenseD455Plugin({"depth": True, "depth_encoding": "16UC1"})
+    assert plugin.depth_encoding == "16UC1"
+    assert plugin.validate_config(plugin.config) == []  # its 6 m range fits

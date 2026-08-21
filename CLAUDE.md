@@ -14,11 +14,11 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   health check that ran inside the simulator would share the simulator's failure modes, and one that
   went through a transport bridge could not diagnose a broken bridge.
 - `roqsim_sensors/` — generic (robot-family-agnostic) sensor plugins + assets: `lidar`,
-  `oakd_camera` (RGB-D), `realsense_d435` (RGB + opt-in depth/`PointCloud2`),
-  `realsense_d415`/`realsense_d455` (RGB only), `force_torque` (six-axis wrench at a site — the one
-  contact-force observable), `fiducial_marker` (ArUco/AprilTag, OpenCV-generated; optional `markers`
-  extra). Models are one folder per device (`models/<name>/<name>.xml` + its own `meshes/`).
-  Depends on `roqsim`.
+  `oakd_camera` (RGB-D), `realsense_d435`/`realsense_d455` (RGB + opt-in depth/`PointCloud2`; depth
+  in `32FC1` metres or `16UC1` millimetres), `realsense_d415` (RGB only), `force_torque` (six-axis
+  wrench at a site — the one contact-force observable), `fiducial_marker` (ArUco/AprilTag,
+  OpenCV-generated; optional `markers` extra). Models are one folder per device
+  (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
   wheeled base models, demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,

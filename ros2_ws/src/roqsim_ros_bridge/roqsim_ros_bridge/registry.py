@@ -307,6 +307,24 @@ _IMAGE_ENCODING_BYTES = {"rgb8": 3, "mono8": 1, "16UC1": 2, "32FC1": 4}
 def fill_image(msg, payload, stamp: Time, hints: dict) -> None:
     # payload: a raw (H, W[, C]) numpy array (uint8 rgb8, or float32 32FC1 depth, ...).
     encoding = hints.get("encoding", "rgb8")
+    try:
+        stride = _IMAGE_ENCODING_BYTES[encoding]
+    except KeyError:
+        raise ValueError(
+            f"unsupported image encoding {encoding!r}; expected one of "
+            f"{sorted(_IMAGE_ENCODING_BYTES)}"
+        ) from None
+    # The encoding and the array's dtype are chosen independently -- by the producer's hint and by
+    # its render code -- and a mismatch is not a visible failure: `step` would be right for the
+    # encoding while `data` holds a different number of bytes, so the far end decodes a garbled or
+    # truncated image and nothing says why. Depth is where this bites (float32 metres under a 16UC1
+    # hint, or the reverse), so it fails on the first publish instead.
+    per_pixel = payload.itemsize * (payload.shape[2] if payload.ndim > 2 else 1)
+    if per_pixel != stride:
+        raise ValueError(
+            f"encoding {encoding!r} needs {stride} bytes per pixel, but the payload has "
+            f"{per_pixel} (dtype {payload.dtype}, shape {payload.shape})"
+        )
     height, width = payload.shape[:2]
     msg.header.stamp = stamp
     msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
@@ -314,7 +332,7 @@ def fill_image(msg, payload, stamp: Time, hints: dict) -> None:
     msg.width = width
     msg.encoding = encoding
     msg.is_bigendian = 0
-    msg.step = width * _IMAGE_ENCODING_BYTES[encoding]
+    msg.step = width * stride
     msg.data = payload.tobytes()
 
 

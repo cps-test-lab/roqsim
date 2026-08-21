@@ -17,8 +17,9 @@ a consumer that reprojects). Defaults follow the datasheet:
 Topic/frame naming approximates the ``zivid-ros`` driver (``color/...``, ``depth/...``,
 ``zivid_optical_frame``); the exact driver names (e.g. ``color/image_color``, ``points/xyzrgba``) can
 be set via the ``topics:`` override (see ``camera_common.CameraPlugin``). Config: see
-``oakd_camera`` / ``camera_common.CameraPlugin`` (``robot``, ``camera``, ``width``/``height``,
-``fovy``, ``rate_hz``, ``frame_id``, ``clip_near``, ``clip_far``).
+``camera_common.CameraPlugin`` (``robot``, ``camera``, ``width``/``height``, ``fovy``,
+``rate_hz``, ``frame_id``) and ``depth_camera.DepthCameraPlugin`` (``clip_near``, ``clip_far``,
+``depth_encoding``).
 
 References:
 
@@ -28,10 +29,10 @@ References:
 
 from __future__ import annotations
 
-from roqsim.context import Endpoint, SimContext
+from roqsim.context import SimContext
 
 from .camera_common import join_topic
-from .oakd_camera import OakDCameraPlugin
+from .depth_camera import DepthCameraPlugin
 
 #: Colour image/CameraInfo sit under `color/`; depth under its own `depth/` (as in zivid-ros), so
 #: the two share no prefix -- the base class's single DEFAULT_TOPIC_PREFIX cannot express that, hence
@@ -39,7 +40,7 @@ from .oakd_camera import OakDCameraPlugin
 DEPTH_PREFIX = "depth"
 
 
-class ZividPlugin(OakDCameraPlugin):
+class ZividPlugin(DepthCameraPlugin):
     DEFAULT_CAMERA = "zivid_color"
     DEFAULT_FRAME_ID = "zivid_optical_frame"
     DEFAULT_TOPIC_PREFIX = "color"
@@ -56,23 +57,10 @@ class ZividPlugin(OakDCameraPlugin):
         super().__init__(cfg, name=name)
 
     def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
-        # Same depth endpoint as the OAK-D, but published under `depth/image_raw` (Zivid's own
-        # namespace) rather than under the colour prefix.
-        self._depth_ep = Endpoint(
-            name="depth",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._depth,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_raw"),
-                    "frame_id": self.frame_id,
-                    "encoding": "32FC1",
-                }
-            },
+        # `depth/image_raw` -- Zivid's own namespace, not under the colour prefix.
+        self._add_depth_endpoints(
+            ctx,
+            ns,
+            self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_raw"),
+            self.frame_id,
         )
-        ctx.interface.add(self._depth_ep)

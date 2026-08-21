@@ -34,6 +34,7 @@ Config (also inherits ``camera_common.CameraPlugin``'s own fields, undocumented 
       clip_near: 0.28     # m; the D435's minimum-Z. Outside [clip_near, clip_far] reads "no return"
       clip_far: 3.0       # m; the datasheet's usable range at default settings
       depth_frame_id: camera_depth_optical_frame
+      depth_encoding: 32FC1  # or 16UC1 -- millimetres, 0 for invalid, as realsense-ros publishes it
 
 References:
 
@@ -55,7 +56,7 @@ import numpy as np
 from roqsim.context import Endpoint, SimContext
 
 from .camera_common import join_topic
-from .oakd_camera import OakDCameraPlugin
+from .depth_camera import DepthCameraPlugin
 from .payloads import PointCloud
 
 #: realsense-ros publishes depth and the coloured cloud under `depth/`, and colour under `color/`,
@@ -63,7 +64,7 @@ from .payloads import PointCloud
 DEPTH_PREFIX = "camera/depth"
 
 
-class RealsenseD435Plugin(OakDCameraPlugin):
+class RealsenseD435Plugin(DepthCameraPlugin):
     DEFAULT_CAMERA = "d435_color"
     DEFAULT_FRAME_ID = "camera_color_optical_frame"
     DEFAULT_TOPIC_PREFIX = "camera/color"
@@ -91,26 +92,12 @@ class RealsenseD435Plugin(OakDCameraPlugin):
     def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
         if not self.depth:
             return
-        self._depth_ep = Endpoint(
-            name="depth",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._depth,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": self.topic_override("depth")
-                    or join_topic(DEPTH_PREFIX, "image_rect_raw"),
-                    "frame_id": self.depth_frame_id,
-                    "encoding": "32FC1",
-                }
-            },
+        self._add_depth_endpoints(
+            ctx,
+            ns,
+            self.topic_override("depth") or join_topic(DEPTH_PREFIX, "image_rect_raw"),
+            self.depth_frame_id,
         )
-        ctx.interface.add(self._depth_ep)
-        self._extra_outputs.append(self._depth_ep)
 
         # realsense-ros publishes intrinsics for the depth stream as well, and a consumer that
         # rectifies or reprojects depth subscribes to THAT one -- given only color/camera_info it

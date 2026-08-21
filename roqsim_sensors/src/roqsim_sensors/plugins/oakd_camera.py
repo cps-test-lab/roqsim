@@ -5,25 +5,29 @@ TurtleBot 4 ``rgbd_camera`` topic (a ``sensor_msgs/Image`` colour + depth pair w
 intrinsics). Bundled as a default TurtleBot 4 sensor (see ``turtlebot4.manifest.yaml`` in
 ``roqsim_mobile``), reading resolution/FOV from the model's ``oakd_rgb`` camera.
 
-Config (in addition to ``camera_common.CameraPlugin``'s)::
+Config (in addition to ``camera_common.CameraPlugin``'s, and ``depth_camera.DepthCameraPlugin``'s
+``clip_near``/``clip_far``/``depth_encoding``)::
 
     oakd_camera:
       robot: robot
       camera: oakd_rgb
       clip_near: 0.3      # m; depth outside [clip_near, clip_far] reads as "no return" (inf)
       clip_far: 100.0     # m
+
+On ``depth_encoding: 16UC1``: this camera's default 100 m ``clip_far`` is further than uint16
+millimetres reach, so opting in means also lowering the range to the depth the world actually needs --
+which the plugin says at load time rather than saturating at 65.5 m.
 """
 
 from __future__ import annotations
 
-import numpy as np
+from roqsim.context import SimContext
 
-from roqsim.context import Endpoint, SimContext
+from .camera_common import join_topic
+from .depth_camera import DepthCameraPlugin
 
-from .camera_common import CameraPlugin, join_topic
 
-
-class OakDCameraPlugin(CameraPlugin):
+class OakDCameraPlugin(DepthCameraPlugin):
     DEFAULT_CAMERA = "oakd_rgb"
     DEFAULT_FRAME_ID = "oakd_rgb_camera_optical_frame"
     DEFAULT_TOPIC_PREFIX = "rgbd_camera"
@@ -31,48 +35,11 @@ class OakDCameraPlugin(CameraPlugin):
     DEFAULT_WIDTH = 320
     DEFAULT_HEIGHT = 240
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.clip_near = float(self.config.get("clip_near", 0.3))
-        self.clip_far = float(self.config.get("clip_far", 100.0))
-        self._depth: np.ndarray | None = None
-        self._depth_ep: Endpoint | None = None
-
-    def validate_config(self, config: dict) -> list[str]:
-        errors = super().validate_config(config)
-        if float(config.get("clip_near", 0.3)) < 0:
-            errors.append("'clip_near' must be >= 0")
-        if float(config.get("clip_far", 100.0)) <= float(config.get("clip_near", 0.3)):
-            errors.append("'clip_far' must be > 'clip_near'")
-        return errors
-
     def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
-        self._depth_ep = Endpoint(
-            name="depth",
-            direction="out",
-            owner=self.robot,
-            namespace=ns,
-            read=lambda: self._depth,
-            rate_hz=self.rate_hz,
-            lazy=True,  # as expensive to serialise as the colour frame; see camera_common's `image`
-            backend={
-                "ros2": {
-                    "type": "sensor_msgs.msg.Image",
-                    "topic": self.topic_override("depth")
-                    or join_topic(self.DEFAULT_TOPIC_PREFIX, "depth/image_raw"),
-                    "frame_id": self.frame_id,
-                    "encoding": "32FC1",
-                }
-            },
+        self._add_depth_endpoints(
+            ctx,
+            ns,
+            self.topic_override("depth")
+            or join_topic(self.DEFAULT_TOPIC_PREFIX, "depth/image_raw"),
+            self.frame_id,
         )
-        ctx.interface.add(self._depth_ep)
-        # Gate the renderer on depth too: a consumer wanting only depth must still get frames.
-        self._extra_outputs.append(self._depth_ep)
-
-    def _capture_extra(self, ctx: SimContext, renderer) -> None:
-        renderer.enable_depth_rendering()
-        renderer.update_scene(ctx.data, camera=self._cam_id)
-        depth = renderer.render().astype(np.float32)
-        renderer.disable_depth_rendering()
-        depth[(depth < self.clip_near) | (depth > self.clip_far)] = np.inf
-        self._depth = depth
