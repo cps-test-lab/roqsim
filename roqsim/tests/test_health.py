@@ -295,11 +295,53 @@ def test_motion_check_waits_for_a_second_sample_before_calling_a_robot_absent():
 
 
 def test_a_run_shorter_than_the_window_says_check_1_was_inconclusive():
-    """Reporting nothing wrong would overstate what was checked."""
+    """Reporting nothing wrong would overstate what was checked.
+
+    The message states the FACT and not what it means: whether a short record is a skip or merely
+    an early one is the caller's to decide -- see the two CLI tests below -- and the same sentence
+    has to serve both."""
     check = health.RobotMoves(["base"], distance=0.01, window=60.0)
     check.update([health.PoseRow(float(t), "base", (0.0, 0.0, 0.0)) for t in range(0, 20)])
     assert check.findings(now=0.0, origin=0.0) == [], "20 s cannot prove a 60 s stall"
-    assert "no verdict was possible" in check.inconclusive()
+    assert "19 s of sim time, less than the 60 s" in check.inconclusive()
+    assert "no verdict" not in check.inconclusive(), \
+        "that conclusion belongs to a closed record, and this method cannot tell"
+
+
+def _short_run(tmp_path):
+    """A run whose record is well under the motion window, with the robot named."""
+    now = time.time()
+    return write_run(
+        tmp_path,
+        [clock_line(now - 20 + t, float(t)) for t in range(0, 20)],
+        [pose_line(float(t), "base", 0.0) for t in range(0, 20)],
+    )
+
+
+def test_a_short_record_that_is_still_growing_is_a_note_and_not_a_skip(tmp_path, capsys):
+    """An early run has not skipped anything -- it will have a verdict shortly. Reported as a
+    *skip* it says nobody is checking the robot's motion, which sends a reader (or an agent
+    reading this document) looking for the reason four seconds into a healthy run."""
+    _short_run(tmp_path)
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+
+    assert report["skipped"] == [], "an early run has skipped nothing"
+    assert any("less than the 60 s" in note for note in report["notes"])
+    assert any("still accumulating" in note for note in report["notes"])
+
+
+def test_a_short_record_that_has_CLOSED_is_a_skip(tmp_path, capsys):
+    """Once the recorder has written its archive the record is final, so a window that never
+    arrived never will: check 1 is genuinely skipped and saying so is the honest answer."""
+    run = _short_run(tmp_path)
+    # The one unambiguous end-of-run marker these files carry (see recording_of).
+    (run / "run.npz").write_bytes(b"")
+
+    assert health.main([str(run), "--robot", "base", "--json"]) == health.EXIT_OK
+    report = json.loads(capsys.readouterr().out)
+
+    assert any("no verdict was possible" in skip for skip in report["skipped"])
 
 
 def test_a_long_enough_run_reaches_a_verdict():

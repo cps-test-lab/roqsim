@@ -542,11 +542,17 @@ class RobotMoves:
         return out
 
     def inconclusive(self) -> str | None:
-        """Why check 1 could not reach a verdict, when it could not. ``None`` when it could.
+        """Why check 1 has no verdict, when it has none. ``None`` when it has one.
 
-        A run shorter than the motion window cannot produce a stall, so reporting nothing wrong
+        A record shorter than the motion window cannot produce a stall, so reporting nothing wrong
         would overstate what was checked -- the same reason a robot nobody named is reported as
         skipped rather than passed.
+
+        Deliberately phrased for **both** of the situations that produce it, because the caller
+        routes it and they are not the same news: a closed record that never covered the window has
+        skipped the check for good, while one still being written is simply early and will have a
+        verdict shortly. Saying "no verdict was possible" served the first and misled the second --
+        four seconds into a healthy run it reads as a gap in the checking rather than as the clock.
         """
         if not self.robots or self._span is None:
             return None
@@ -554,8 +560,8 @@ class RobotMoves:
         if span >= self.window:
             return None
         return (
-            f"check 1 (robot-motion): the run covers {span:.0f} s of sim time, less than the "
-            f"{self.window:.0f} s a robot must be still for, so no verdict was possible"
+            f"check 1 (robot-motion): the record covers {span:.0f} s of sim time, less than the "
+            f"{self.window:.0f} s a robot must be still for"
         )
 
     def _missing(self) -> list[Finding]:
@@ -993,7 +999,14 @@ def main(argv: list | None = None) -> int:
         )
     short = monitor.motion.inconclusive()
     if short:
-        report.skipped.append(short)
+        # A skip only once the record is CLOSED and the window never arrived. While it is still
+        # being written the check is armed and merely early, which is a note: a reader -- or an
+        # agent -- handed it as a skip treats an ordinary young run as one whose motion nobody is
+        # checking, and goes looking for the reason.
+        if recording.exists():
+            report.skipped.append(short + ", so no verdict was possible")
+        else:
+            report.notes.append(short + "; still accumulating")
     for label, tail in source.tails():
         if tail.restarts:
             # Worth reporting: the writer re-created the file, so the series the checks measured is
