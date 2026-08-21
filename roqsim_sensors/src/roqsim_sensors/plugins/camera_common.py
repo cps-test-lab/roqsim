@@ -82,6 +82,18 @@ def join_topic(*parts: str) -> str:
     return "/".join(p for p in parts if p)
 
 
+def sibling_topic(topic: str, name: str) -> str:
+    """The topic called ``name`` in ``topic``'s own namespace.
+
+    ROS's convention for a ``camera_info`` beside its image, and the reason this is not
+    :func:`join_topic` on the split parts: that drops empty parts, which turns an ABSOLUTE topic
+    (``/cam/depth/image_raw``, as a world hardwires to match a driver) into a relative one that the
+    bridge then puts under the robot's namespace.
+    """
+    namespace, slash, _ = topic.rpartition("/")
+    return f"{namespace}{slash}{name}" if slash else name
+
+
 class CameraPlugin(Plugin):
     """Base for a ``post_step`` RGB(-D) camera rendered from a named MuJoCo ``<camera>``.
 

@@ -14,7 +14,8 @@ a consumer that reprojects). Defaults follow the datasheet:
 * Depth clipped to the recommended-to-extended working range (``clip_near`` 1.3 m, ``clip_far`` 5 m);
   returns outside it read as "no return" (inf), mirroring the sensor's operating distance.
 
-Topic/frame naming approximates the ``zivid-ros`` driver (``color/...``, ``depth/...``,
+Topic/frame naming approximates the ``zivid-ros`` driver (``color/...``, ``depth/...``, each
+stream with its own ``camera_info``,
 ``zivid_optical_frame``); the exact driver names (e.g. ``color/image_color``, ``points/xyzrgba``) can
 be set via the ``topics:`` override (see ``camera_common.CameraPlugin``). Config: see
 ``camera_common.CameraPlugin`` (``robot``, ``camera``, ``width``/``height``, ``fovy``,

@@ -99,31 +99,6 @@ class RealsenseD435Plugin(DepthCameraPlugin):
             self.depth_frame_id,
         )
 
-        # realsense-ros publishes intrinsics for the depth stream as well, and a consumer that
-        # rectifies or reprojects depth subscribes to THAT one -- given only color/camera_info it
-        # waits forever. The payload is the same `self._intr` here because both streams come off one
-        # MuJoCo camera: on real hardware colour and depth are different optics with different
-        # intrinsics, and this plugin cannot pretend otherwise (see the FOV note in the docstring).
-        # NOT in `_gate_endpoints`, for the same reason colour's info is not: it needs no render.
-        ctx.interface.add(
-            Endpoint(
-                name="depth_camera_info",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._intr,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CameraInfo",
-                        "topic": self.topic_override("depth_camera_info")
-                        or join_topic(DEPTH_PREFIX, "camera_info"),
-                        "frame_id": self.depth_frame_id,
-                    }
-                },
-            )
-        )
-
         if not self.points:
             return
         self._points_ep = Endpoint(

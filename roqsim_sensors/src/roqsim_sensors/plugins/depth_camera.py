@@ -41,7 +41,7 @@ import numpy as np
 
 from roqsim.context import Endpoint, SimContext
 
-from .camera_common import CameraPlugin
+from .camera_common import CameraPlugin, sibling_topic
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -142,6 +142,36 @@ class DepthCameraPlugin(CameraPlugin):
         ctx.interface.add(self._depth_ep)
         # Gate the renderer on depth too: a consumer wanting only depth must still get frames.
         self._extra_outputs.append(self._depth_ep)
+
+        # A depth stream needs its OWN intrinsics: a consumer that rectifies or reprojects depth
+        # subscribes to the info topic beside the depth image, and given only the colour stream's it
+        # waits forever. `camera_info` is a sibling of its image in the same namespace (ROS's own
+        # convention, and what realsense-ros, zivid-ros and a Gazebo rgbd_camera all publish), so the
+        # topic is derived from the resolved depth topic rather than spelled out per device -- a world
+        # that hardwires the depth topic to match a driver gets the matching info topic with it.
+        #
+        # The payload is the colour intrinsics, because both streams come off ONE MuJoCo camera: real
+        # hardware images depth through different optics with different intrinsics, and a plugin
+        # rendering one camera cannot pretend otherwise. NOT in `_gate_endpoints`, and not lazy, for
+        # the same reasons the colour info is neither: it needs no render and costs six floats.
+        ctx.interface.add(
+            Endpoint(
+                name="depth_camera_info",
+                direction="out",
+                owner=self.robot,
+                namespace=ns,
+                read=lambda: self._intr,
+                rate_hz=self.rate_hz,
+                backend={
+                    "ros2": {
+                        "type": "sensor_msgs.msg.CameraInfo",
+                        "topic": self.topic_override("depth_camera_info")
+                        or sibling_topic(topic, "camera_info"),
+                        "frame_id": frame_id,
+                    }
+                },
+            )
+        )
         if self.compressed and self.depth_encoding == "16UC1":
             # `<depth topic>/compressedDepth`, image_transport's convention, derived from the topic
             # resolved above -- so a world that hardwires the depth topic to match a driver gets the

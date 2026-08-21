@@ -289,6 +289,43 @@ def test_depth_camera_info_topic_can_be_hardwired():
     assert _endpoint(engine, "depth_camera_info").backend["ros2"]["topic"] == "/cam/depth/info"
 
 
+def test_every_depth_camera_publishes_its_depth_intrinsics():
+    """The argument is the stream's, not the RealSense's: any camera publishing depth owes a consumer
+    the intrinsics beside it. `camera_info` is a sibling of its image in ROS, so each device's own
+    topic layout produces the right name -- which is also what realsense-ros, zivid-ros and a Gazebo
+    rgbd_camera publish."""
+    for ref, depth_topic, info_topic in (
+        (
+            "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin",
+            "rgbd_camera/depth/image_raw",
+            "rgbd_camera/depth/camera_info",
+        ),
+        ("roqsim_sensors.plugins.zivid:ZividPlugin", "depth/image_raw", "depth/camera_info"),
+    ):
+        engine = _stepped(ref)
+        assert _endpoint(engine, "depth").backend["ros2"]["topic"] == depth_topic, ref
+        info = _endpoint(engine, "depth_camera_info")
+        assert info is not None, ref
+        assert info.backend["ros2"]["topic"] == info_topic, ref
+        # The same frame as the depth image it describes, and the same payload as the colour info:
+        # one MuJoCo camera renders both streams, so there is only one set of intrinsics to give.
+        assert (
+            info.backend["ros2"]["frame_id"]
+            == _endpoint(engine, "depth").backend["ros2"]["frame_id"]
+        )
+        assert info.read() is _endpoint(engine, "camera_info").read()
+
+
+def test_depth_camera_info_follows_a_hardwired_depth_topic():
+    """Derived from the resolved depth topic, so a world matching a driver's names gets the matching
+    info topic without naming it twice -- the same rule the compressed companion follows."""
+    engine = _stepped(D435, depth=True, topics={"depth": "/camera_1/camera_1/depth/image_rect_raw"})
+    assert (
+        _endpoint(engine, "depth_camera_info").backend["ros2"]["topic"]
+        == "/camera_1/camera_1/depth/camera_info"
+    )
+
+
 # -- compressed colour ---------------------------------------------------------------------------
 def test_compressed_endpoint_is_offered_by_default_on_the_conventional_topic():
     """``<image topic>/compressed``, which is what makes a driver-shaped consumer find it."""
