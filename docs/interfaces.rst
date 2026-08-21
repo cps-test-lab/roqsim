@@ -402,11 +402,11 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
 * ``lazy`` — opt this endpoint out of *publishing* while ``has_subscribers`` reports nobody listening,
   so its payload is never even read. Distinct from the check above, and both are needed: the producer's
   own check is an OR over every endpoint one render feeds (one depth subscriber justifies the whole GL
-  pass), while ``lazy`` is per-endpoint (a consumer of one stream must not make the producer pay for
-  another's serialisation). Default ``False``, because a publish can carry more than its message — a
-  bridge deriving TF from an odometry payload would stop broadcasting the transform whenever nothing
-  subscribed to ``/odom`` — and because it buys nothing for a cheap payload. Set on the camera
-  plugins' ``image``, ``depth`` and ``points``.
+  pass), while ``lazy`` is per-endpoint (a raw-image subscriber must not make the camera pay for a JPEG
+  nobody wants). Default ``False``, because a publish can carry more than its message — a bridge
+  deriving TF from an odometry payload would stop broadcasting the transform whenever nothing
+  subscribed to ``/odom`` — and because it buys nothing for a cheap payload. Set on the camera plugins'
+  ``image``, ``image_compressed``, ``depth`` and ``points``.
 
 Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. For a
 second robot add another with ``namespace: robot2``: it serves that robot's endpoints and prefixes

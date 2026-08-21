@@ -263,7 +263,7 @@ def test_camera_info_is_not_a_render_gate():
     engine = _stepped(D435, depth=True, points=True)
     plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
     gated = {ep.name for ep in plugin._gate_endpoints()}
-    assert gated == {"image", "depth", "points"}
+    assert gated == {"image", "image_compressed", "depth", "points"}
     assert _endpoint(engine, "camera_info") is not None  # registered, just not a gate
     assert _endpoint(engine, "depth_camera_info") is not None
 
@@ -277,6 +277,7 @@ def test_depth_camera_info_follows_realsense_ros_naming_and_only_exists_with_dep
     ep = _endpoint(engine, "depth_camera_info")
     assert ep.backend["ros2"]["topic"] == "camera/depth/camera_info"
     assert ep.backend["ros2"]["frame_id"] == "camera_depth_optical_frame"
+    assert ep.lazy is False
     plugin = next(p for p in engine.plugins if isinstance(p, RealsenseD435Plugin))
     assert ep not in plugin._gate_endpoints()
     # Off by default, because depth itself is.
@@ -286,3 +287,66 @@ def test_depth_camera_info_follows_realsense_ros_naming_and_only_exists_with_dep
 def test_depth_camera_info_topic_can_be_hardwired():
     engine = _stepped(D435, depth=True, topics={"depth_camera_info": "/cam/depth/info"})
     assert _endpoint(engine, "depth_camera_info").backend["ros2"]["topic"] == "/cam/depth/info"
+
+
+# -- compressed colour ---------------------------------------------------------------------------
+def test_compressed_endpoint_is_offered_by_default_on_the_conventional_topic():
+    """``<image topic>/compressed``, which is what makes a driver-shaped consumer find it."""
+    engine = _stepped(D435)
+    image = _endpoint(engine, "image")
+    compressed = _endpoint(engine, "image_compressed")
+    assert compressed is not None
+    hints, image_hints = compressed.backend["ros2"], image.backend["ros2"]
+    assert hints["type"] == "sensor_msgs.msg.CompressedImage"
+    assert hints["topic"] == image_hints["topic"] + "/compressed"
+    assert (hints["format"], hints["quality"], hints["encoding"]) == ("jpeg", 95, "rgb8")
+    # Same frame as the raw stream: it is the same pixels, so a consumer that time-syncs on one and
+    # projects with the other must not see two frame ids.
+    assert hints["frame_id"] == image_hints["frame_id"]
+
+
+def test_compressed_topic_follows_a_hardwired_image_topic():
+    """The point of deriving from the *resolved* topic: a world matching an external driver's names
+    gets the matching compressed topic without naming it twice."""
+    engine = _stepped(D435, topics={"image": "/camera_1/camera_1/color/image_raw"})
+    compressed = _endpoint(engine, "image_compressed")
+    assert compressed.backend["ros2"]["topic"] == "/camera_1/camera_1/color/image_raw/compressed"
+
+
+def test_compressed_topic_can_be_hardwired_on_its_own():
+    engine = _stepped(D435, topics={"image_compressed": "/elsewhere/compressed"})
+    assert _endpoint(engine, "image_compressed").backend["ros2"]["topic"] == "/elsewhere/compressed"
+
+
+def test_compressed_can_be_switched_off():
+    engine = _stepped(D435, compressed=False)
+    assert _endpoint(engine, "image_compressed") is None
+    assert _endpoint(engine, "image") is not None
+
+
+def test_a_compressed_subscriber_alone_justifies_the_render():
+    """The tb4-shaped consumer: it subscribes to compressed and never to raw. Gating on `image`
+    alone would hand it an endless stream of nothing -- the same failure as the point-cloud case."""
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._last_capture = 0.0
+    plugin._image_ep = _FakeEndpoint(has_subscribers=lambda: False)
+    plugin._compressed_ep = _FakeEndpoint(has_subscribers=lambda: True)
+    assert plugin._due(_FakeCtx(0.2)) is True
+
+    plugin._compressed_ep.has_subscribers = lambda: False
+    assert plugin._due(_FakeCtx(0.2)) is False
+
+
+def test_expensive_endpoints_are_lazy_and_cheap_ones_are_not():
+    engine = _stepped(D435, depth=True, points=True)
+    for name in ("image", "image_compressed", "depth", "points"):
+        assert _endpoint(engine, name).lazy is True, name
+    for name in ("camera_info", "depth_camera_info"):
+        assert _endpoint(engine, name).lazy is False, name
+
+
+def test_jpeg_quality_is_validated():
+    plugin = RealsenseD435Plugin({})
+    for bad in (0, 101):
+        assert any("jpeg_quality" in e for e in plugin.validate_config({"jpeg_quality": bad})), bad
+    assert plugin.validate_config({"jpeg_quality": 95}) == []

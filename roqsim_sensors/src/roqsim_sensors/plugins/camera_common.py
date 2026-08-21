@@ -7,10 +7,17 @@ Both ``oakd_camera`` and ``realsense_d435`` render from a named MuJoCo ``<camera
   ``fovy`` (falling back to plugin config, then a per-sensor default), so the camera's optics are
   described once, in the model, not duplicated into plugin config.
 * :class:`CameraPlugin` -- resolves the camera, owns a lazily-created ``mujoco.Renderer``, throttles
-  capture to ``rate_hz``, skips rendering when the ``image`` endpoint reports no subscribers (see
-  ``roqsim.context.Endpoint.has_subscribers``), and registers the two endpoints. Subclasses set
+  capture to ``rate_hz``, skips rendering when no endpoint the render feeds reports a subscriber (see
+  ``roqsim.context.Endpoint.has_subscribers``), and registers the endpoints. Subclasses set
   class-level defaults and may override ``_configure_extra``/``_capture_extra`` to add more outputs
   (e.g. depth).
+
+Colour is published in both wire formats a real driver offers: a raw ``sensor_msgs/Image`` and a
+``sensor_msgs/CompressedImage`` on ``<image topic>/compressed`` (``image_transport``'s convention).
+Both read the *same* array -- the bridge's converter owns the codec, so nothing here imports one --
+and both are ``lazy``, so an unsubscribed stream costs neither a render nor an encode. That is what
+makes offering the second stream by default free: ``compressed: false`` opts out, ``jpeg_quality``
+sets the quality.
 """
 
 from __future__ import annotations
@@ -24,6 +31,12 @@ import numpy as np
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
 from roqsim.rendering import FrameRenderer
+
+# image_transport's own default, and what real camera drivers ship with. Stated here rather than
+# imported from the bridge: a sensor package must not depend on a transport backend (the endpoint
+# names its ROS type as a string for the same reason), so the two defaults agree by both citing
+# image_transport, not by sharing a symbol.
+DEFAULT_JPEG_QUALITY = 95
 
 
 @dataclass
@@ -83,9 +96,12 @@ class CameraPlugin(Plugin):
           fovy: null             # override the MJCF's fovy (degrees)
           rate_hz: <DEFAULT_RATE_HZ>
           frame_id: <DEFAULT_FRAME_ID>
+          compressed: true       # also publish <image topic>/compressed (CompressedImage)
+          jpeg_quality: 95       # image_transport's default; only read when compressed is on
           topics: {}             # optional: hardwire absolute topics, e.g.
                                  #   {image: /camera/color/image_raw, camera_info: /camera/color/camera_info}
                                  # (overrides namespace+default; see Plugin.topic_override)
+                                 # `image_compressed` follows `image` unless hardwired itself.
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
@@ -106,6 +122,10 @@ class CameraPlugin(Plugin):
         self.camera = self.config.get("camera", self.DEFAULT_CAMERA)
         self.rate_hz = float(self.config.get("rate_hz", self.DEFAULT_RATE_HZ))
         self.frame_id = self.config.get("frame_id", self.DEFAULT_FRAME_ID)
+        # A compressed companion to `image`, on by default: real camera drivers advertise both, and an
+        # idle publisher costs nothing here because the endpoint is lazy (see configure()).
+        self.compressed = bool(self.config.get("compressed", True))
+        self.jpeg_quality = int(self.config.get("jpeg_quality", DEFAULT_JPEG_QUALITY))
         self._width_cfg = self.config.get("width")
         self._height_cfg = self.config.get("height")
         self._fovy_cfg = self.config.get("fovy")
@@ -115,6 +135,7 @@ class CameraPlugin(Plugin):
         self._rgb: np.ndarray | None = None
         self._last_capture = float("-inf")
         self._image_ep: Endpoint | None = None
+        self._compressed_ep: Endpoint | None = None
         # Output endpoints a subclass adds that are fed by the SAME render pass (depth, point cloud).
         # They gate the renderer alongside `image` -- see _gate_endpoints().
         self._extra_outputs: list[Endpoint] = []
@@ -126,6 +147,8 @@ class CameraPlugin(Plugin):
         for key in ("width", "height"):
             if config.get(key) is not None and int(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
+        if not 1 <= int(config.get("jpeg_quality", DEFAULT_JPEG_QUALITY)) <= 100:
+            errors.append("'jpeg_quality' must be between 1 and 100")
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -146,6 +169,11 @@ class CameraPlugin(Plugin):
             default_height=self.DEFAULT_HEIGHT,
         )
 
+        # Resolved once: the compressed topic is derived from it, so a world that hardwires
+        # `topics: {image: ...}` to match an external driver gets the matching `/compressed` for free.
+        image_topic = self.topic_override("image") or join_topic(
+            self.DEFAULT_TOPIC_PREFIX, "image_raw"
+        )
         self._image_ep = Endpoint(
             name="image",
             direction="out",
@@ -159,14 +187,40 @@ class CameraPlugin(Plugin):
             backend={
                 "ros2": {
                     "type": "sensor_msgs.msg.Image",
-                    "topic": self.topic_override("image")
-                    or join_topic(self.DEFAULT_TOPIC_PREFIX, "image_raw"),
+                    "topic": image_topic,
                     "frame_id": self.frame_id,
                     "encoding": "rgb8",
                 }
             },
         )
         ctx.interface.add(self._image_ep)
+        if self.compressed:
+            # Same neutral payload as `image` -- one array, two wire formats. The bridge's converter
+            # owns the codec, so this plugin never imports one, and `lazy` means the encode is paid
+            # only while something subscribes to THIS topic (a raw-image consumer must not trigger it).
+            self._compressed_ep = Endpoint(
+                name="image_compressed",
+                direction="out",
+                owner=self.robot,
+                namespace=ns,
+                read=lambda: self._rgb,
+                rate_hz=self.rate_hz,
+                lazy=True,
+                backend={
+                    "ros2": {
+                        "type": "sensor_msgs.msg.CompressedImage",
+                        # `<image topic>/compressed` is image_transport's convention, which is what
+                        # makes an unmodified driver-shaped consumer find it.
+                        "topic": self.topic_override("image_compressed")
+                        or join_topic(image_topic, "compressed"),
+                        "frame_id": self.frame_id,
+                        "encoding": "rgb8",
+                        "format": "jpeg",
+                        "quality": self.jpeg_quality,
+                    }
+                },
+            )
+            ctx.interface.add(self._compressed_ep)
         ctx.interface.add(
             Endpoint(
                 name="camera_info",
@@ -202,7 +256,11 @@ class CameraPlugin(Plugin):
         ``camera_info`` is deliberately NOT here: it needs no render, so a lone info subscriber (an
         rviz panel, say) must not switch the renderer on.
         """
-        return [ep for ep in (self._image_ep, *self._extra_outputs) if ep is not None]
+        return [
+            ep
+            for ep in (self._image_ep, self._compressed_ep, *self._extra_outputs)
+            if ep is not None
+        ]
 
     def _due(self, ctx: SimContext) -> bool:
         if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz:

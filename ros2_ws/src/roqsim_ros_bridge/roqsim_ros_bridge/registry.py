@@ -27,6 +27,8 @@ from typing import Any
 from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
+from . import image_codec
+
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
 # type-string -> decode(msg) -> neutral payload             (inbound)
@@ -314,6 +316,43 @@ def fill_image(msg, payload, stamp: Time, hints: dict) -> None:
     msg.is_bigendian = 0
     msg.step = width * _IMAGE_ENCODING_BYTES[encoding]
     msg.data = payload.tobytes()
+
+
+# Compressed colour follows image_transport's convention for ``CompressedImage.format``:
+# "<source encoding>; <codec> compressed <encoding of the decoded result>". The mapping is THEIRS, not
+# ours -- consumers (cv_bridge, `image_transport republish`, rqt_image_view) read this string, so
+# inventing our own spelling would break every one of them.
+_COMPRESSED_WIRE = {"rgb8": "bgr8", "bgr8": "bgr8", "mono8": "mono8"}
+
+
+@converter("sensor_msgs.msg.CompressedImage")
+def fill_compressed_image(msg, payload, stamp: Time, hints: dict) -> None:
+    # payload: the SAME raw (H, W[, C]) uint8 array `fill_image` publishes. One neutral payload, two
+    # wire formats -- a producer offers both by declaring a second endpoint and nothing else, and
+    # needs no codec of its own.
+    encoding = hints.get("encoding", "rgb8")
+    fmt = hints.get("format", "jpeg")
+    wire = _COMPRESSED_WIRE.get(encoding)
+    if wire is None:
+        # A depth encoding is the likely arrival here, and it is not a quality setting away from
+        # working: image_transport carries depth as `compressedDepth`, a different format with its own
+        # header, which roqsim does not implement. Say so rather than emit a wrong-but-decodable frame.
+        extra = (
+            " Depth is carried as compressedDepth (a distinct format, not implemented here), not as"
+            " CompressedImage."
+            if encoding in _IMAGE_ENCODING_BYTES
+            else ""
+        )
+        raise TypeError(
+            f"cannot compress encoding {encoding!r}; expected one of "
+            f"{sorted(_COMPRESSED_WIRE)}.{extra}"
+        )
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
+    msg.format = f"{encoding}; {fmt} compressed {wire}"
+    msg.data = image_codec.encode(
+        payload, fmt=fmt, quality=hints.get("quality", image_codec.DEFAULT_JPEG_QUALITY)
+    )
 
 
 @converter("sensor_msgs.msg.CameraInfo")

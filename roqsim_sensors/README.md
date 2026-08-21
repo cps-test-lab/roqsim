@@ -26,10 +26,20 @@ package rather than `roqsim_mobile`/`roqsim_manipulation`. ROS-free; ROS couplin
 Every camera plugin reads its resolution/FOV from the named MuJoCo `<camera>` element (`resolution`,
 `fovy`) rather than duplicating them in plugin config, and skips the (expensive) render while a
 transport reports zero subscribers — gated on **every** output endpoint fed by that render pass
-(`image` *and* a subclass's `depth`/`points`), not on `image` alone, so a consumer that wants only
-depth still gets frames. `camera_info` is deliberately not a gate: it needs no render, so a lone info
-subscriber must not switch the renderer on. When subscriber counts aren't knowable (no bridge loaded)
-the render is always on.
+(`image`, `image_compressed`, *and* a subclass's `depth`/`points`), not on `image` alone, so a consumer
+that wants only depth, or only the compressed stream, still gets frames. `camera_info` is deliberately
+not a gate: it needs no render, so a lone info subscriber must not switch the renderer on. When
+subscriber counts aren't knowable (no bridge loaded) the render is always on.
+
+Colour goes out in both formats a real driver offers: raw `sensor_msgs/Image` and
+`sensor_msgs/CompressedImage` on `<image topic>/compressed`, `image_transport`'s convention — so a
+stack written against a hardware driver finds the topic it expects. Both come off the same array (the
+ROS bridge owns the codec; no camera plugin imports one) and both skip the *publish* as well as the
+render when unsubscribed, so the second stream costs nothing until something asks for it. Hence
+on by default: `compressed: false` opts out, `jpeg_quality` (default 95, `image_transport`'s own)
+sets the quality. Depth is **not** offered compressed — `image_transport` carries it as the distinct
+`compressedDepth` format, which is not implemented; asking for it fails loudly rather than shipping a
+wrong frame.
 
 ### Conventions for standalone sensor models
 

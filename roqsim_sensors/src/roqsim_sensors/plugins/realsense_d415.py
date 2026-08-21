@@ -11,7 +11,8 @@ plugin/model so a robot that carries a real D415 is faithful. The bundled
 it standalone with ``spawn_sensor``.
 
 Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
-``fovy``, ``rate_hz``, ``frame_id``). Defaults below match the D415's 640x480@30fps colour profile.
+``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``). Defaults below match the
+D415's 640x480@30fps colour profile.
 """
 
 from __future__ import annotations
