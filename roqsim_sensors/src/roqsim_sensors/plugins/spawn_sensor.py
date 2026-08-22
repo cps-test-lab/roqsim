@@ -89,6 +89,7 @@ import mujoco
 import numpy as np
 import yaml
 
+from roqsim import raycast
 from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
@@ -319,30 +320,21 @@ def _compile_world_snapshot(world_spec, *, plugin: str, model: str):
 def _raycast_depths(
     wm, wd, origin_w: np.ndarray, unit_dirs_w: np.ndarray, cutoff: float
 ) -> np.ndarray:
-    """Euclidean hit distance along each world-frame ray (-1 = miss). Mirrors the lidar/coverage calls.
+    """Euclidean hit distance along each world-frame ray (-1 = miss). Same seam as lidar/coverage.
 
     Occluders are :data:`_OCCLUDER_GROUPS`; ``flg_static=1`` so walls occlude; ``bodyexclude=-1`` (the
     sensor's own housing is not in the snapshot -- it is attached after this build step)."""
-    n = unit_dirs_w.shape[0]
     geomgroup = np.zeros(6, dtype=np.uint8)
     geomgroup[list(_OCCLUDER_GROUPS)] = 1
-    geomid = np.full(n, -1, dtype=np.int32)
-    dist = np.full(n, -1.0, dtype=np.float64)
-    mujoco.mj_multiRay(
+    return raycast.cast(
         wm,
         wd,
-        np.ascontiguousarray(origin_w, dtype=np.float64),
-        np.ascontiguousarray(unit_dirs_w.reshape(-1), dtype=np.float64),
-        geomgroup,
-        1,  # flg_static
-        -1,  # bodyexclude
-        geomid,
-        dist,
-        None,  # normal
-        n,
-        cutoff,
-    )
-    return dist
+        origin_w,
+        unit_dirs_w,
+        cutoff=cutoff,
+        geomgroup=geomgroup,
+        flg_static=True,
+    ).dist
 
 
 def _manifest_fov(asset) -> dict:

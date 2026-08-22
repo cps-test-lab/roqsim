@@ -19,6 +19,7 @@ import os
 import mujoco
 import numpy as np
 
+from . import raycast
 from .presence import ABSENT_GEOM_GROUP
 
 _logger = logging.getLogger(__name__)
@@ -230,32 +231,28 @@ def _line_of_sight_clear(
     """True if nothing occludes the straight path from ``eye`` to the target sphere's near surface.
 
     Casts a single ray ``eye -> center`` (the same predicate the coverage engine uses): the path is
-    clear iff nothing is hit (``raydist < 0``) or the first hit is at/behind the sphere's near
-    surface (``raydist >= dist - radius - eps``) -- i.e. the first thing the ray meets is the object
-    itself, not a wall in front of it.
+    clear iff nothing is hit (``dist < 0``) or the first hit is at/behind the sphere's near surface
+    (``dist >= dist - radius - eps``) -- i.e. the first thing the ray meets is the object itself, not
+    a wall in front of it.
+
+    Through :func:`roqsim.raycast.cast`, so an *absent* entity does not occlude -- which is what you
+    want when framing a camera on something: a body nothing can see should not push the view to
+    another angle. Before the seam existed this passed ``geomgroup=None`` and an absent obstacle
+    steered the framing.
     """
     delta = np.asarray(center, dtype=np.float64) - np.asarray(eye, dtype=np.float64)
     dist = float(np.linalg.norm(delta))
     if dist <= eps:
         return True
-    direction = np.ascontiguousarray(delta / dist)
-    geomid = np.full(1, -1, dtype=np.int32)
-    raydist = np.full(1, -1.0, dtype=np.float64)
-    mujoco.mj_multiRay(
+    hits = raycast.cast(
         model,
         data,
-        np.ascontiguousarray(eye, dtype=np.float64),
-        direction,
-        None,  # geomgroup mask: all groups
-        1,  # flg_static: walls/floor are static, must occlude
-        -1,  # bodyexclude: none
-        geomid,
-        raydist,
-        None,
-        1,  # nray
-        dist + 1.0,  # cutoff (culling hint)
+        eye,
+        delta / dist,
+        cutoff=dist + 1.0,  # culling hint
+        flg_static=True,  # walls/floor are static, must occlude
     )
-    rd = float(raydist[0])
+    rd = float(hits.dist[0])
     return rd < 0.0 or rd >= dist - radius - eps
 
 

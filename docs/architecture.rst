@@ -439,7 +439,41 @@ Instead, each sensor owns its noise as plain config:
 -  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to finite ranges (0 = off); ``dropout_percent`` randomly drops that percentage of points per scan to a "no return" (``inf``). Determinism: seeded from the run's ``--seed`` through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, sim_time, sensor name)``. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. Before this, ``ctx.rng`` was read by the sensors but never set by anything, so noisy runs were not reproducible at all. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar.py``.
+When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the range window and the noise so the devices cannot drift apart on them. They had: the 3D lidars were missing the ``max_range`` clamp and the presence mask, both of which are now applied once, for everyone.
+
+**One raycast seam: ``roqsim.raycast``.** :func:`roqsim.raycast.cast` is the only ``mj_multiRay``
+caller in the tree — the lidar base, the coverage engine and sampler, ``spawn_sensor``'s build-time
+occlusion probe, ``roqsim.rendering``'s line-of-sight test and ``roqsim_assets``' ``moving_box`` all
+go through it. Three things live there because they must be decided once:
+
+-  **The visibility mask is the default.** ``mj_multiRay``'s ``geomgroup=None`` means *every* group,
+   including :data:`roqsim.presence.ABSENT_GEOM_GROUP`, so a caller who omits the mask sees entities
+   that have been made absent. Every raycaster except the 2D lidar used to omit it. Making the mask
+   the default turns "forgot the mask" into an explicit ``geomgroup=None``.
+-  **It is single-threaded on purpose, and that is measured.** Splitting a batch across threads looks
+   free — rays are independent, ``mj_multiRay`` releases the GIL, and the output is bit-identical
+   (1.5x at 360 rays, 3.1x at 20160). It is not: ``mj_multiRay`` **allocates from ``mjData``'s
+   stack** (96 bytes, whatever the ray count), and that stack is one bump pointer in the shared
+   ``mjData``. Hammering one ``mjData`` with 8 threads × 40000 casts, a sampler saw ``pstack`` peak
+   at 2112 bytes and return **1632 instead of 0** — MuJoCo guarantees a function restores ``pstack``,
+   and concurrency breaks it. The leak is monotonic, so a long trial walks toward stack exhaustion;
+   the observed failure while developing this was a core dump. Every one of those 320000 casts
+   returned the *right answer*, which is the point: the race corrupts an allocator invariant, not the
+   output, so it survives any amount of parity testing and then crashes in a campaign. MuJoCo's own
+   guidance is one ``mjData`` per thread and the ray functions are not exempt. If 3D-lidar throughput
+   ever becomes binding, the route is a pool of per-worker ``mjData`` clones with geom poses copied
+   in — which needs the ``mjData`` fields the ray path reads pinned down and kept pinned across
+   MuJoCo upgrades. A project, not a flag.
+-  **No GPU backend.** No available GPU raycaster expresses what roqsim needs. MJWarp's ``mjw.ray`` /
+   ``mjw.rays`` documents no ``geomgroup``, no ``bodyexclude`` and no ``flg_static``, and a returned
+   nearest-hit cannot be post-filtered into the right answer — rejecting a hit does not reveal what
+   is behind it, so an absent obstacle would read as "no return" rather than "the wall behind it".
+   Honouring exclusion on a GPU means keeping excluded geometry out of the BVH, i.e. per-sensor BVHs
+   refitted on every presence change. Measured against a 2D-lidar campaign the payoff is ~0: the
+   simulator there is paced ``realtime`` with 30-40x headroom, and raycasting is ~2% of one core
+   against a container that is mostly ROS transport. Cameras are unaffected either way — they
+   rasterize through ``mujoco.Renderer`` on the GPU already, and their depth is that render's
+   z-buffer, not a raycast.
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
 

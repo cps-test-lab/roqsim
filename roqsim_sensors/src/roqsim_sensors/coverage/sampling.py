@@ -24,6 +24,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from roqsim import raycast
+
 # Geoms whose name contains one of these are treated as structure, not "objects", for surface sampling.
 _STRUCTURE_SUBSTRINGS = ("floor", "ground", "wall", "ceiling", "roof")
 
@@ -160,36 +162,31 @@ def _classify_points(
     max_dist: float,
     geomgroup: np.ndarray,
 ) -> np.ndarray:
-    """Boolean mask: which points are enclosed (inside the building) and not embedded in a geom."""
-    keep = np.zeros(len(points), dtype=bool)
-    geomid = np.full(6, -1, dtype=np.int32)
-    dist = np.full(6, -1.0, dtype=np.float64)
-    normal = np.zeros(6 * 3, dtype=np.float64)
-    dirs = np.ascontiguousarray(_AXES6.reshape(-1))
-    for i, p in enumerate(points):
-        mujoco.mj_multiRay(
-            model,
-            data,
-            np.ascontiguousarray(p),
-            dirs,
-            geomgroup,
-            1,
-            -1,
-            geomid,
-            dist,
-            normal,
-            6,
-            max_dist,
-        )
-        hit = dist >= 0.0
-        enclosed = bool(hit[_HORIZONTAL].all())
-        if not enclosed:
-            continue
-        nrm = normal.reshape(6, 3)
-        backface = hit & (np.einsum("ij,ij->i", nrm, _AXES6) > 0.0)
-        embedded = int(backface.sum()) >= 4
-        keep[i] = not embedded
-    return keep
+    """Boolean mask: which points are enclosed (inside the building) and not embedded in a geom.
+
+    One :func:`roqsim.raycast.cast_many` for the whole grid rather than a call per point. Not a single
+    batch -- ``mj_multiRay`` casts from one origin, and here every point *is* an origin -- but the
+    calls are independent, so the seam threads them and the classification below vectorises over all
+    points at once instead of once per point.
+    """
+    hits = raycast.cast_many(
+        model,
+        data,
+        points,
+        _AXES6,
+        cutoff=max_dist,
+        geomgroup=geomgroup,
+        flg_static=True,
+        normals=True,
+    )
+    hit = hits.dist >= 0.0  # (P, 6)
+    # Enclosed: every horizontal axis meets something, i.e. the point is inside the building.
+    enclosed = hit[:, _HORIZONTAL].all(axis=1)
+    # Embedded: a hit whose normal points the same way as the ray is a backface, so the point is
+    # inside that geom rather than in free space beside it. Four of six is the majority test.
+    facing = np.einsum("pij,ij->pi", hits.normal, _AXES6) > 0.0
+    embedded = (hit & facing).sum(axis=1) >= 4
+    return enclosed & ~embedded
 
 
 def room_volume_points(

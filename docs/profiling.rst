@@ -114,7 +114,8 @@ not the committed file)::
    awk "{c=\$NF; \$NF=\"\"; print c\"\t\"\$0}" spy.raw | sort -rn | head -25
 
 Read the folded stacks by **leaf frame**: ``engine.py:step`` at the ``mj_step`` line is physics;
-``clock.py:wait`` is the pacer sleeping; ``lidar.py post_step`` is the raycast; frames under
+``clock.py:wait`` is the pacer sleeping; ``raycast.py:cast`` is the raycast, whichever sensor called
+it (the frame above says which); frames under
 ``bridge.py post_step`` → ``_publish`` → ``rclpy .../publish`` are **publishing on the physics
 thread**. If the ROS executor spin thread never appears, it is near-idle (the sim mostly publishes;
 subscribers like nav2 rarely send back), so it is **not** competing for CPU.

@@ -485,7 +485,7 @@ def test_c2_lidar_reads_a_known_wall(built):
         p.configure(ctx)
         p.on_reset(ctx)
         p.post_step(ctx)
-        scan = p._scan
+        scan = p.latest
         assert scan is not None, f"{cfg['site']} produced no scan"
         assert len(scan.ranges) == 815, "ray count does not match the TIM571's 818/270 deg"
         assert scan.range_max == 25.0 and scan.range_min == 0.05

@@ -4,8 +4,8 @@ For each sensor and each sample point the test is three gates, cheapest first:
 
 1. **range** -- ``range_min <= ||p - origin|| <= range_max`` (pure numpy).
 2. **angular FOV** -- :func:`~.fov.in_fov` in the sensor frame (pure numpy).
-3. **line of sight** -- one batched ``mj_multiRay`` per sensor over the points that passed 1+2, using
-   the same call pattern as the lidar plugins. A point is visible iff the nearest occluder is beyond it
+3. **line of sight** -- one batched :func:`roqsim.raycast.cast` per sensor over the points that passed
+   1+2, the same seam the lidar plugins use. A point is visible iff the nearest occluder is beyond it
    (or there is none).
 
 Correctness notes:
@@ -29,6 +29,8 @@ from dataclasses import dataclass, field
 
 import mujoco
 import numpy as np
+
+from roqsim import raycast
 
 from .fov import SensorFov, in_fov
 
@@ -100,28 +102,21 @@ def coverage(
             continue
 
         dist_to = dist[idx]
-        dirs = np.ascontiguousarray((delta[idx] / dist_to[:, None]).reshape(-1))
-        geomid = np.full(idx.size, -1, dtype=np.int32)
-        raydist = np.full(idx.size, -1.0, dtype=np.float64)
-        cutoff = float(dist_to.max()) + 1.0
-        mujoco.mj_multiRay(
+        dirs = delta[idx] / dist_to[:, None]
+        hits = raycast.cast(
             model,
             data,
-            np.ascontiguousarray(fov.origin),
+            fov.origin,
             dirs,
-            geomgroup,
-            1,  # flg_static: static geometry (walls, furniture) occludes
+            cutoff=float(dist_to.max()) + 1.0,
+            geomgroup=geomgroup,
+            flg_static=True,  # static geometry (walls, furniture) occludes
             # The sensor's own mount, which its origin sits inside -- see SensorFov.body_exclude.
-            fov.body_exclude,
-            geomid,
-            raydist,
-            None,
-            idx.size,
-            cutoff,
+            bodyexclude=fov.body_exclude,
         )
-        # Visible: nothing hit before the target (raydist < 0), or the nearest hit is at/behind it.
-        visible = (raydist < 0.0) | (raydist >= dist_to - eps)
-        by_sensor[idx, s] = visible
+        # Visible: nothing hit before the target (dist < 0), or the nearest hit is at/behind it.
+        raydist = hits.dist
+        by_sensor[idx, s] = (raydist < 0.0) | (raydist >= dist_to - eps)
 
     counts = by_sensor.sum(axis=1).astype(int)
     return CoverageResult(

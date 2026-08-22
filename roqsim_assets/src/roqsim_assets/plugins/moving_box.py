@@ -61,12 +61,17 @@ import random
 import mujoco
 import numpy as np
 
+from roqsim import raycast
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
 
 _GREY_RGBA = [0.86, 0.86, 0.83, 1.0]  # pale warehouse carton, as `box`
 _ROOT_BODY = "moving_box"
 _DEFAULT_TURN_DEG = (60.0, 300.0)
+
+
+#: Effectively "no culling", matching the `mj_ray` this plugin used to call.
+_NO_CUTOFF = 1e6
 
 
 class MovingBoxPlugin(Plugin):
@@ -370,19 +375,26 @@ class MovingBoxPlugin(Plugin):
 
         Casting from the box's centre at its own mid-height means the mover sees whatever the model
         contains — baked walls, other props, the robot — with no map file and no configured wall
-        list. `geomgroup=None` includes every group; the mover's own geoms are excluded by id.
+        list. The mover's own geoms are excluded by id.
+
+        Through `roqsim.raycast.cast`, so an entity that has been made *absent* is not an obstacle:
+        a prop nothing can collide with should not make the mover turn. This was the last raycaster
+        in the tree that passed `geomgroup=None` and saw absent entities.
         """
         direction = np.array([math.cos(self._heading), math.sin(self._heading), 0.0])
         origin = np.array([xy[0], xy[1], self.pos[2]])
-        geomid = np.zeros(1, dtype=np.int32)
         # Half the diagonal, so the corner leading the way is what has to fit, not the centre.
         half = 0.5 * math.hypot(self.size[0], self.size[1])
-        dist = mujoco.mj_ray(ctx.model, ctx.data, origin, direction, None, 1, -1, geomid)
+        # Deliberately generous: `cutoff` culls geoms beyond it, and `mj_ray` (which this replaced)
+        # has no cutoff at all, so a large value keeps the predicate identical rather than making
+        # the answer depend on a culling distance.
+        hits = raycast.cast(ctx.model, ctx.data, origin, direction, cutoff=_NO_CUTOFF)
+        dist = float(hits.dist[0])
         if dist < 0:
             return True
-        if int(geomid[0]) in self._geom_ids:
+        if int(hits.geomid[0]) in self._geom_ids:
             return True
-        return float(dist) > clearance + half
+        return dist > clearance + half
 
     @staticmethod
     def _in_bounds(bounds, xy: np.ndarray) -> bool:

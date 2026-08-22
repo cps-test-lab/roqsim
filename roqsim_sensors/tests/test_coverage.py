@@ -442,3 +442,78 @@ def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
         check=True,
     )
     assert proc.stdout.strip().splitlines()[-1] != "glfw"
+
+
+# -- the sampler's free-space classification -------------------------------------------------------
+#
+# `_classify_points` used to cast six axis rays per point and classify that point inside the loop.
+# It now casts through `raycast.cast_many` and classifies every point at once with numpy. The
+# vectorised form (an einsum over (P, 6, 3) normals) is where a transcription error would hide, so
+# this pins it against the per-point logic it replaced.
+
+_CLASSIFY_XML = """
+<mujoco><worldbody>
+  <light pos="0 0 5"/>
+  <geom name="floor" type="plane" size="12 12 .1"/>
+  <geom name="wall_px" type="box" pos="8 0 1.5" size=".1 8 1.5"/>
+  <geom name="wall_nx" type="box" pos="-8 0 1.5" size=".1 8 1.5"/>
+  <geom name="wall_py" type="box" pos="0 8 1.5" size="8 .1 1.5"/>
+  <geom name="wall_ny" type="box" pos="0 -8 1.5" size="8 .1 1.5"/>
+  <geom name="pillar" type="box" pos="2 2 1" size=".6 .6 1"/>
+  <geom name="crate" type="box" pos="-3 1 .5" size=".8 .8 .5"/>
+</worldbody></mujoco>
+"""
+
+
+def _classify_reference(model, data, points, *, max_dist, geomgroup):
+    """The pre-change implementation: one ``mj_multiRay`` per point, classified per point."""
+    from roqsim_sensors.coverage.sampling import _AXES6, _HORIZONTAL
+
+    keep = np.zeros(len(points), dtype=bool)
+    geomid = np.full(6, -1, dtype=np.int32)
+    dist = np.full(6, -1.0, dtype=np.float64)
+    normal = np.zeros(6 * 3, dtype=np.float64)
+    dirs = np.ascontiguousarray(_AXES6.reshape(-1))
+    for i, p in enumerate(points):
+        mujoco.mj_multiRay(
+            model,
+            data,
+            np.ascontiguousarray(p),
+            dirs,
+            geomgroup,
+            1,
+            -1,
+            geomid,
+            dist,
+            normal,
+            6,
+            max_dist,
+        )
+        hit = dist >= 0.0
+        if not bool(hit[_HORIZONTAL].all()):
+            continue
+        backface = hit & (np.einsum("ij,ij->i", normal.reshape(6, 3), _AXES6) > 0.0)
+        keep[i] = int(backface.sum()) < 4
+    return keep
+
+
+def test_batched_classification_matches_the_per_point_loop():
+    from roqsim_sensors.coverage.sampling import _classify_points, world_bounds
+
+    model = mujoco.MjModel.from_xml_string(_CLASSIFY_XML)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+
+    lo, hi = world_bounds(model, data)
+    geomgroup = np.array([1, 1, 1, 1, 0, 1], dtype=np.uint8)
+    max_dist = float(np.linalg.norm(hi - lo)) + 1.0
+    xs = np.arange(lo[0], hi[0] + 0.5, 0.5)
+    ys = np.arange(lo[1], hi[1] + 0.5, 0.5)
+    gx, gy = np.meshgrid(xs, ys, indexing="ij")
+    points = np.column_stack([gx.ravel(), gy.ravel(), np.full(gx.size, 1.0)])
+
+    got = _classify_points(model, data, points, max_dist=max_dist, geomgroup=geomgroup)
+    want = _classify_reference(model, data, points, max_dist=max_dist, geomgroup=geomgroup)
+    assert np.array_equal(got, want)
+    # Guard against the pair agreeing because both classified nothing.
+    assert 0 < int(want.sum()) < len(points)

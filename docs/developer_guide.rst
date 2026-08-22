@@ -130,13 +130,17 @@ many?" (user docs: :doc:`coverage`). Design worth knowing when extending it:
   there; the sensor plugins are never edited. This is the extension seam — keep every other coverage
   module dependent on ``SensorFov`` alone.
 * **Engine.** ``coverage/engine.py`` gates each point range → angular FOV (numpy) → line of sight
-  (one batched ``mj_multiRay`` per sensor, the lidar-plugin pattern). The raycast ``geomgroup`` mask
-  **excludes group 4**, so an absent entity cannot occlude. A model's FOV-visualisation mesh is kept
+  (one batched :func:`roqsim.raycast.cast` per sensor — the same seam every raycaster in the tree
+  uses). The raycast ``geomgroup`` mask **excludes group 4**, so an absent entity cannot occlude;
+  that is the seam's default, so it holds without each call site remembering it. A model's FOV-visualisation mesh is kept
   out by a different axis — it is alpha 0, and ``mj_ray`` skips a geom exactly when its resolved alpha
   is 0, whatever the mask says (its group is 2, not 4/5). Masking by group is still required, because
   raycasts hit *visible* geometry regardless of contact flags.
 * **Sampling** (``coverage/sampling.py``) is model-based (works for any world source) and uses only
-  numpy + MuJoCo raycasts — **no scipy/trimesh** (they are broken under numpy 2 in the system venv, and
+  numpy + MuJoCo raycasts (via ``raycast.cast_many``: ``mj_multiRay`` casts from *one* origin, so six
+  axis rays from each of P grid points is irreducibly P calls — what the helper buys is the flat
+  buffers, so the classification vectorises over all points at once instead of per point) — **no
+  scipy/trimesh** (they are broken under numpy 2 in the system venv, and
   the layer must not depend on them). Free-space classification is deliberately conservative (drops are
   safe: they only make coverage look worse).
 * **Two front doors, one core:** the ``sensor_coverage_probe`` plugin (world-YAML toggle,

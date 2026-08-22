@@ -27,10 +27,10 @@ runtime-mutable, so nothing recompiles:
     zeroed, so nothing collides with it. Raycasts ignore these, so this alone would leave an "absent"
     obstacle perfectly visible to a navigation stack.
 ``geom_group``
-    moved to :data:`ABSENT_GEOM_GROUP`, which the renderer excludes and which every raycast mask
-    *should* -- see the caveat under :func:`visible_geomgroup_mask`. This is the axis a **viewer**
-    answers to, and it is the one that survives an entity whose material makes the alpha trick
-    inapplicable.
+    moved to :data:`ABSENT_GEOM_GROUP`, which the renderer excludes and which every raycast
+    excludes too -- :func:`roqsim.raycast.cast` masks it by default, so a caster has to opt *in* to
+    seeing absent geometry. This is the axis a **viewer** answers to, and it is the one that
+    survives an entity whose material makes the alpha trick inapplicable.
 
 The originals are saved on the entity, so returning is exact rather than a guess at what the
 world declared.
@@ -151,13 +151,17 @@ def visible_geomgroup_mask(include_absent: bool = False):
     Raycasting sensors pass this instead of ``None``. ``None`` means "every group", which is
     why an absent entity was still a lidar return before this existed.
 
-    .. warning::
+    Every raycaster in the tree now gets it *by default*, because they all go through
+    :func:`roqsim.raycast.cast` and that is the default there -- so passing "every group, absent
+    entities included" takes an explicit ``geomgroup=None``. It used to be the other way round: the
+    2D ``lidar`` passed this mask and the 3D lidars, ``roqsim.rendering``'s line-of-sight probe and
+    ``roqsim_assets``' ``moving_box`` all passed ``None``, so an absent entity was still a return for
+    them.
 
-       **Not every raycaster in the tree passes it.** The 2D ``lidar`` plugin does; the 3D lidars
-       (``livox_mid360``, and ``seyond_robin_w1g`` which inherits from it) pass ``None``, as do
-       ``roqsim.rendering``'s line-of-sight probe and ``roqsim_assets``' ``moving_box``. For those, an
-       absent entity is still a return. The alpha zeroing in :func:`set_present` is what actually
-       protects them today, which is why that is the first field it writes and not a backstop.
+    The alpha zeroing in :func:`set_present` remains the first field written rather than a backstop,
+    and the two are complementary rather than redundant: alpha covers a caller that legitimately
+    asks for every group, while the group mask covers the case alpha cannot reach -- a geom whose
+    *material* supplies an opaque colour, where zeroing the geom's own ``rgba`` hides nothing.
     """
     import numpy as np
 

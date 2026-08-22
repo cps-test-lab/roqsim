@@ -316,11 +316,10 @@ def test_c2_lidar_sees_a_box_of_known_size():
     lidar = LidarPlugin(dict(cfg))
     lidar.configure(ctx)
     lidar.post_step(ctx)
-    scan = (
-        ctx.interface.get("scan", owner="robot").read()
-        if hasattr(ctx.interface, "get")
-        else lidar._scan
-    )
+    # `lidar.latest` rather than a private buffer: `InterfaceRegistry` has no `get`, so the old
+    # `hasattr(ctx.interface, "get")` branch was dead and this always reached into `lidar._scan`,
+    # which moved when the lidar plugins were folded onto `lidar_common`.
+    scan = lidar.latest
     assert scan is not None
     assert len(scan.ranges) == 1440  # 360 deg / 0.25 deg, from the paper's code repo
     # Ray at angle 0 points along +x -> the wall's near face at 3.0 - 0.1 = 2.9 m.
