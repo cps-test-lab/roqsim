@@ -56,13 +56,20 @@ def blender_exe(path: str = "blender") -> str | None:
 
 def _parse(argv: list[str]) -> argparse.Namespace:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("input", help="source mesh (.gltf/.glb/.obj/.fbx/.stl)")
+    ap.add_argument("input", help="source mesh (.gltf/.glb/.obj/.fbx/.stl/.dae)")
     ap.add_argument("output", help="output .obj path")
     ap.add_argument(
         "--target-faces", type=int, default=20000, help="triangle budget (default 20000)"
     )
     ap.add_argument(
         "--scale", type=float, default=1.0, help="uniform scale to metres (default 1.0)"
+    )
+    ap.add_argument(
+        "--no-materials",
+        action="store_true",
+        help="omit the .mtl and its reference. MuJoCo ignores OBJ materials, so for a mesh whose "
+        "colours are declared in the MJCF the sidecar is dead weight and its mtllib line is a "
+        "dangling reference. Leave it off for props, whose textures finalize-mujoco consumes",
     )
     ap.add_argument(
         "--blender",
@@ -87,6 +94,8 @@ def _run_outside_blender(args: argparse.Namespace) -> None:
         "--scale",
         str(args.scale),
     ]
+    if args.no_materials:
+        passthrough.append("--no-materials")
     cmd = [exe, "--background", "--python", __file__, "--", *passthrough]
     print("+", " ".join(cmd))
     raise SystemExit(subprocess.run(cmd).returncode)
@@ -102,6 +111,12 @@ def _import(path: str) -> None:
         bpy.ops.import_scene.fbx(filepath=path)
     elif ext == "stl":
         bpy.ops.wm.stl_import(filepath=path)
+    elif ext == "dae":
+        # Collada, which is what ROS description packages ship. Note this importer HONOURS the file's
+        # <up_axis>, unlike external/convert/dae2obj.py, which loads vertices verbatim because for the
+        # arm meshes that tag is vestigial and obeying it wrecks them. So the two paths agree only on
+        # Z_UP files -- check a converted mesh's bounding box against the source before trusting it.
+        bpy.ops.wm.collada_import(filepath=path)
     else:
         sys.exit(f"unsupported input extension: .{ext}")
 
@@ -143,7 +158,7 @@ def _run_in_blender(args: argparse.Namespace) -> None:
         filepath=args.output,
         export_selected_objects=True,
         apply_modifiers=True,  # bakes the Decimate + scale
-        export_materials=True,
+        export_materials=not args.no_materials,
         export_triangulated_mesh=True,
         forward_axis="Y",
         up_axis="Z",  # MuJoCo is Z-up
