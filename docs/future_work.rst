@@ -94,3 +94,29 @@ makes lazy reads inherently single-compute for **any** multi-consumer topology, 
 in one place (the bridge), and lets every producer keep a plain ``read()`` with no caching logic of
 its own. Small change local to ``context.Endpoint`` / ``BridgeBase``; the alternative (each producer
 re-adding its own cache) is exactly the eager-``post_step`` coupling this pattern removed.
+Exporting a model as CAD geometry (STEP)
+----------------------------------------
+
+**Context.** ``roqsim export mesh`` covers the consumers that want triangles: a pose estimator matches
+against them, and a CAD tool imports them as a mesh body. What it cannot give a CAD tool is a *solid*
+with analytic faces. A tessellated wheel arrives as a few hundred planar facets, so it cannot be
+dimensioned, offset or mated against; and because shipped visual meshes are not always watertight, the
+``mesh -> solid`` conversion may need a repair pass before it even gets that far. ``--groups 3`` (the
+collision envelope, which *is* primitives) is today's answer and is a good one for designing a mount,
+but it is the simplified shape rather than the real one.
+
+**Gap.** ISO 10303 (STEP) is the interchange format that carries exact geometry and an assembly tree
+with names and colours. Nothing here can write it. The one Open CASCADE touchpoint in the tree
+(``external/convert``) reads STEP and tessellates it -- the opposite direction.
+
+**Two routes, both real.** A hand-written part-21 writer needs no dependency and is well-defined work
+(faceted shells from mesh geoms with shared vertex/edge topology, plus exact ``CYLINDRICAL_SURFACE`` /
+``PLANE`` / ``SPHERICAL_SURFACE`` solids for the primitives, and an assembly node per body so
+repeated geometry is instanced rather than copied) but it is on the order of a thousand lines, and the
+degenerate cases -- a sphere's poles, a cylinder's seam edge -- are where third-party importers
+disagree. Alternatively an optional extra on an OpenCascade binding buys exact primitives, sewing,
+assembly/colour support and a reader to verify the output against, at the cost of a ~68 MB wheel that
+must stay out of the container image.
+
+**Either way the geom walk, the frame composition and the primitive tessellation in
+``roqsim/export_mesh.py`` are the input**, so this is an added writer rather than a second exporter.

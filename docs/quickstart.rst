@@ -341,6 +341,81 @@ sample stream behind, buffered up to whatever the kill interrupted; nothing read
 The recording is written before the capture is derived from it, so a problem with the browser artifact
 costs you the numbers as well.
 
+Exporting a model as one mesh
+-----------------------------
+
+``export web``, ``export urdf`` and ``export srdf`` all keep a model as a body tree, because their
+consumers animate or plan it. A second class of consumer wants the opposite -- one rigid mesh and
+nothing else. A model-based 6D pose estimator takes a single mesh and returns the pose *of that mesh's
+frame*; a CAD tool imports one body and knows nothing about joints:
+
+.. code-block:: bash
+
+   roqsim export mesh --model turtlebot4 --out robot.obj --sidecar robot.json
+   roqsim export mesh --model turtlebot4 --out robot.3mf --units mm     # for CAD
+   roqsim export mesh --world w.yaml --prefix ur10e_ --out arm.ply      # one robot out of a world
+
+The output's extension picks the format -- ``.stl``, ``.obj``, ``.ply``, ``.3mf`` -- and ``--format``
+overrides it, which is also the only way to ask for ASCII STL, since both STL flavours share an
+extension. An extension nothing recognises is a usage error rather than a guess.
+
+**The frame is the contract.** Vertices come out in the frame of one body -- ``--frame``, defaulting to
+the root of the selection, which for a mobile base is its own ``base_link`` because the wheels hang off
+it -- so a pose estimated against the mesh IS the pose of that body, with nothing to compose onto it.
+Every geom transform is composed back through the body tree from the compiled model rather than read
+from the world, so exporting a robot from a bare model and from a world that spawns it somewhere odd
+gives the same file.
+
+Group 3 is excluded by default: the convention here is that group-3 geometry is collision-only, and a
+chassis-swallowing collision cylinder is not a shape the robot has. ``--groups 3`` asks for exactly
+that envelope instead, which is the small clean solid to design a mount against.
+
+Formats differ in what they can carry, and it matters:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 20 20 48
+
+   * - Format
+     - Colour
+     - Structure
+     - Good for
+   * - ``.stl``
+     - none
+     - one merged mesh
+     - the universally readable lowest common denominator; states no unit anywhere
+   * - ``.obj``
+     - ``usemtl`` + ``.mtl``
+     - one merged mesh
+     - an estimator or renderer that matches on appearance (keep the ``.mtl`` beside it)
+   * - ``.ply``
+     - per-vertex RGB
+     - one merged mesh
+     - the same, in one self-contained file with no sidecar to lose
+   * - ``.3mf``
+     - base materials
+     - **one named object per geom**
+     - CAD: parts stay separable and named, and the unit is stated in the file
+
+3MF is the one to hand a CAD tool. It is an OPC package (a zip of three XML members, written with the
+standard library -- no dependency), and unlike the others it does not merge the selection: each geom
+becomes a named, coloured ``<object>`` assembled into one build item, so ``left_wheel_cylinder`` is
+something a designer can select and hide rather than anonymous triangles inside a lump. It also
+declares ``unit="millimeter"``, which removes the guess that makes a 0.35 m robot import 0.35 mm tall.
+One caveat: 3MF's specification wants manifold objects, and packaging does not make a non-watertight
+source mesh manifold -- consumers repair it, a strict conformance checker will complain.
+
+Units are metres by default, MuJoCo's own; ``--units mm`` is the CAD convention. Since an STL states no
+unit anywhere, the choice is always recorded in the JSON summary (and in the file's header or unit
+attribute where the format has one).
+
+**Watertightness is reported, not claimed.** A merged robot mesh is usually not a closed solid: shipped
+visual meshes may have boundary or non-manifold edges, and two geoms that touch do not fuse. That is
+fine for rendering and for pose estimation, which need a silhouette and an appearance; a CAD tool may
+need a repair pass before ``mesh -> solid``. So the summary counts boundary and non-manifold edges per
+geom rather than asserting a solid, and ``--weld`` (default 1e-6 m) first merges vertices that are
+merely duplicated, which is the common reason a mesh that looks closed is not.
+
 Checking a run is healthy
 -------------------------
 

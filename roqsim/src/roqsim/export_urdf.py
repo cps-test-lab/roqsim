@@ -62,6 +62,7 @@ import mujoco
 import numpy as np
 
 from . import logging_setup
+from .export_mesh import _quat_to_mat
 
 logger = logging.getLogger(__name__)
 
@@ -77,12 +78,6 @@ _PRIMITIVES = {
 
 def _name(model, objtype, idx: int) -> str:
     return mujoco.mj_id2name(model, objtype, idx) or ""
-
-
-def _quat_to_mat(quat) -> np.ndarray:
-    m = np.zeros(9)
-    mujoco.mju_quat2Mat(m, np.asarray(quat, dtype=float))
-    return m.reshape(3, 3)
 
 
 def _quat_to_rpy(quat) -> tuple[float, float, float]:
