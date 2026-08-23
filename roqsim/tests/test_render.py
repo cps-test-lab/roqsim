@@ -648,3 +648,61 @@ def test_an_explicit_at_is_not_announced(a_recording, tmp_path, caplog):
     with caplog.at_level(logging_mod.INFO):
         render.render_target(None, tmp_path / "o.png", size="64x48", state=npz, at=0.5)
     assert "LAST" not in caplog.text
+
+
+# -- the preview light -----------------------------------------------------------------------------
+#
+# GL-free like the rest of this file: the fix is a change to the light's pose, so it is asserted on the
+# pose rather than on pixels. What it prevents (shadow acne combing a thin visual shell) is documented
+# on `render.tilt_preview_light`.
+
+_LIGHTS = """
+<mujoco>
+  <worldbody>
+    <light name="ceiling" pos="0 0 2.5" dir="0 0 -1"/>
+    <light name="aimed" pos="2 -2 3" dir="-0.4082 0.4082 -0.8165"/>
+    <geom type="plane" size="5 5 0.1"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _lit():
+    model = mujoco.MjModel.from_xml_string(_LIGHTS)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def test_a_straight_down_preview_light_is_tilted_off_vertical():
+    model, data = _lit()
+    assert render.tilt_preview_light(model, data) == 1
+    i = model.light("ceiling").id
+    direction = np.asarray(model.light_dir[i])
+    assert -direction[2] < 0.99  # no longer parallel to a robot's vertical walls
+    elevation = np.degrees(np.arcsin(-direction[2] / np.linalg.norm(direction)))
+    assert 30.0 < elevation < 60.0
+    assert model.light_pos[i][2] == pytest.approx(2.5)  # same height, moved sideways
+
+
+def test_a_light_the_world_aimed_is_left_alone():
+    model, data = _lit()
+    before = np.array(model.light_dir[model.light("aimed").id])
+    render.tilt_preview_light(model, data)
+    assert np.allclose(model.light_dir[model.light("aimed").id], before)
+
+
+def test_the_tilt_reaches_the_renderer():
+    """The renderer reads ``data.light_xdir``, so a model-only edit would be invisible."""
+    model, data = _lit()
+    render.tilt_preview_light(model, data)
+    i = model.light("ceiling").id
+    assert np.allclose(data.light_xdir[i], model.light_dir[i], atol=1e-6)
+
+
+def test_tilting_is_idempotent():
+    model, data = _lit()
+    render.tilt_preview_light(model, data)
+    after_once = np.array(model.light_dir[model.light("ceiling").id])
+    assert render.tilt_preview_light(model, data) == 0
+    assert np.allclose(model.light_dir[model.light("ceiling").id], after_once)

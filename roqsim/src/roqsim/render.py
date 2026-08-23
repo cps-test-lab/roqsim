@@ -218,6 +218,43 @@ def mesh_scene(mesh_path: str) -> tuple[mujoco.MjModel, mujoco.MjvCamera]:
     return model, cam
 
 
+def tilt_preview_light(model, data) -> int:
+    """Tilt a straight-down light off vertical for a MODEL PREVIEW. Returns how many were moved.
+
+    A model shown by itself is welded into ``empty_room``, whose single ceiling light points straight
+    down -- which is the worst case for shadow-mapped rendering of a robot, because a robot's outer
+    walls are vertical and therefore parallel to the light. MuJoCo's shadow bias is fixed, and a thin
+    closed visual shell (a bumper, a body cover) is thinner than one shadow texel once the shadow map
+    is stretched over a room, so the shell's far face shadows its own near face: the surface comes out
+    combed with dark streaks that read as a defect in the mesh. It cost one investigation already.
+
+    Measured, so the cheaper-looking knobs are not tried again: ``shadowclip`` changes nothing (it
+    clips depth, not the footprint) and resolution barely helps -- at ``shadowsize`` 16384, a 1 GB
+    depth texture, the streaks are still there. Moving the light off vertical removes them outright,
+    keeps the contact shadow that tells a viewer whether a part is floating, and lights form better
+    than a top-down lamp does.
+
+    PREVIEWS ONLY. In a world, that light is the world's own lighting and a campaign's images depend
+    on it; this is why the fix lives here and not in the world definition.
+    """
+    tilted = 0
+    for i in range(model.nlight):
+        direction = np.asarray(model.light_dir[i], dtype=float)
+        norm = float(np.linalg.norm(direction))
+        # Within ~8 degrees of straight down. A light the world aimed deliberately is left alone.
+        if norm == 0.0 or -direction[2] / norm < 0.99:
+            continue
+        height = float(model.light_pos[i][2])
+        offset = 0.8 * height  # ~40 deg above the horizon, still inside the room's walls
+        model.light_pos[i] = [offset, -offset, height]
+        aim = -np.asarray(model.light_pos[i], dtype=float)
+        model.light_dir[i] = aim / np.linalg.norm(aim)
+        tilted += 1
+    if tilted:
+        mujoco.mj_forward(model, data)  # the renderer reads data.light_xpos/xdir, not the model's
+    return tilted
+
+
 def reset_to_home(model: mujoco.MjModel, data: mujoco.MjData) -> None:
     """Pose ``data`` at the model's ``home`` keyframe when it has one, else ``qpos0``; then forward.
 
@@ -399,6 +436,10 @@ def build_target(
     engine.setup()
     engine.reset()
     reset_to_home(engine.ctx.model, engine.ctx.data)
+    from .runner import is_model_ref
+
+    if is_model_ref(target):
+        tilt_preview_light(engine.ctx.model, engine.ctx.data)
     # Keep the engine reachable: a sensor replay has to run the plugins' post_step, and rebuilding the
     # world a second time to get at them would be both slow and a chance for the two to diverge.
     engine.ctx.engine = engine
