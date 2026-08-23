@@ -27,6 +27,7 @@
     <mesh name="tower_standoff"     file="tower_standoff.obj"/>
     <mesh name="tower_sensor_plate" file="tower_sensor_plate.obj"/>
     <mesh name="rplidar"            file="rplidar.obj"/>
+    <mesh name="camera_bracket"     file="camera_bracket.obj"/>
   </asset>
 
   <default>
@@ -64,7 +65,9 @@
                 diaginertia="0.02 0.02 0.03"/>
 
       <!-- Visual meshes (no contacts). pos/quat are the URDF link transforms
-           relative to base_link (see tools/place_meshes.py). MuJoCo reorients
+           relative to base_link, composed from nav2_minimal_tb4_description's
+           xacro chain (base_link -> shell_link -> the sensor/tower links).
+           MuJoCo reorients
            each mesh internally (mesh_pos/mesh_quat), so the URDF origin applies
            directly. The class sets type="mesh" -- without it the geoms inherit
            the default type="sphere" and render as bounding spheres. -->
@@ -85,12 +88,20 @@
       <site name="lidar" pos="-0.04 0 0.192915" quat="0.70711 0 0 0.70711"
             size="0.005" rgba="1 0 0 0.6"/>
 
+      <!-- The bracket that carries the camera (sensors/camera_bracket.urdf.xacro).
+           Without it the camera body hangs in mid-air, which is what it looked
+           like: the mesh was simply never converted with its five siblings.
+           pos = shell_link (0 0 0.0942) + the bracket origin (-0.118 0 0.05257).
+           The URDF joint has no rpy, so no reorientation applies. -->
+      <geom class="tb4_visual" mesh="camera_bracket" material="tb4_black"
+            pos="-0.118 0 0.14677"/>
+
       <!-- OAK-D Pro RGB-D camera (nav2_minimal_tb4_description/sensors/oakd.urdf.xacro):
-           mounted on the camera bracket on the tower, facing forward (+x). The
-           body cylinder is the only collision geom, so the camera body is a
-           visual-only box at the URDF collision dimensions (a future build can
-           swap in a converted oakd_pro.dae mesh). pos = the chained URDF link
-           transforms shell->bracket->oakd, relative to base_link. -->
+           mounted on the bracket above, facing forward (+x). The body cylinder is
+           the only collision geom, so the camera body is a visual-only box at the
+           URDF collision dimensions (a future build can swap in a converted
+           oakd_pro.dae mesh -- 12 MB, so it wants decimating). pos = the chained
+           URDF link transforms shell->bracket->oakd, relative to base_link. -->
       <geom class="tb4_visual" type="box" size="0.01125 0.0485 0.015"
             pos="-0.0706 0 0.23853" material="tb4_dark"/>
       <!-- RGB-D optical frame, read by the roqsim_sensors `oakd_camera` plugin.
