@@ -6,7 +6,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 ## Layout
 - `roqsim/` — ROS-free core pip package (engine, plugin base, registry, config, drivers, the `roqsim`
   command tree in `commands.py`, and the URDF/SRDF/web exporters; the world-agnostic `dummy`,
-  `spawn_model`, `ceiling`, `contact_monitor` and `model_override` plugins; state recording and
+  `spawn_model`, `ceiling`, `contact_monitor`, `clearance_monitor` and
+  `model_override` plugins; state recording and
   `roqsim render` are driver-level, in `capture.py` / `recording.py` / `render.py`, not plugins). Sources in
   `roqsim/src/roqsim/`, tests in `roqsim/tests/`. Depends on no sibling — keep it that way.
   `health.py` (`roqsim health`) is not even driver-level: it is a **reader**, a separate process that

@@ -247,6 +247,44 @@ Two things are worth knowing before reaching for a proximity check instead:
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
 
+**How close did it come?** ``clearance_monitor`` is the companion, and deliberately its opposite
+number. Contact is a bit: every configuration that does not touch scores identically, which is the
+right failure criterion and a poor thing to optimise. Distance is the same question asked
+continuously, so the two together give a verdict and a gradient over one geometry::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - contact_monitor:   {ignore: [floor], min_force: 1.0}   # did it touch?
+       - clearance_monitor: {ignore: [floor], distmax: 3.0}     # how close did it come?
+
+Both are **components of the robot** — nested under the entry that spawns it, so ownership is the
+shape of the document and there is no entity name to spell wrong. Their ``ignore`` lists should
+agree: if one excludes the floor and the other does not, clearance reads zero forever while contact
+reads clean, and the two describe different worlds.
+
+Three things about it:
+
+* **It measures real geometry.** ``mj_geomDistance`` against the actual shapes, so no footprint
+  radius sits between the simulator and the number — the same objection this section raises against
+  proximity checks applies to a circle drawn round a base. An articulated obstacle's nearest part is
+  a limb, and that is what it finds and names.
+* **Collision masks are respected.** ``mj_geomDistance`` itself ignores them, so a render-only geom
+  would otherwise be reported as clearance to something the robot passes straight through — a
+  pedestrian model carries six of those beside fifteen solid ones. Candidates and watched geoms are
+  filtered by MuJoCo's own pairing rule, on both sides.
+* **It never ends a trial.** ``contact_monitor`` latches and is what a scenario fails on; this
+  observes and does not. Two plugins reporting one failure by different rules is how a trial starts
+  disagreeing with itself, and a clearance threshold is precisely the tunable number the contact
+  oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
+  decides — with the threshold then stated in the experiment, where it belongs.
+
+``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
+distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
+world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
+pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
+``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
+
 The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
 failure is attributable rather than merely flagged.
 
