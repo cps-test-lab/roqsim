@@ -25,8 +25,10 @@ constant. Three refusals, each measured:
     ``body_weldid == 0`` and no mocap id means the body is rigidly fixed: its ``xpos`` is a
     compile-time constant and no amount of simulation will change it. Measured on a three-body
     model -- welded: ``weldid 0, mocapid -1, dofnum 0``; free: ``weldid 2, mocapid -1, dofnum 6``;
-    mocap: ``weldid 0, mocapid 0, dofnum 0``. The mocap row is why the test is not ``weldid == 0``
-    alone: a walker has zero DOFs and moves every step through ``mocap_pos``.
+    mocap: ``mocapid 0, dofnum 0`` with ``weldid`` 0 up to MuJoCo 3.11 and the body's own id from
+    3.12 on. The mocap row is why the test is not ``weldid == 0`` alone: a walker has zero DOFs and
+    moves every step through ``mocap_pos``, and on 3.11 its ``weldid`` is indistinguishable from
+    scenery's -- only ``mocapid`` separates the two there.
 
 The refusals are opt-out (``movable=False``) for a caller that only wants a frame to read -- a
 static TF publisher, an export -- rather than something it expects to move.
