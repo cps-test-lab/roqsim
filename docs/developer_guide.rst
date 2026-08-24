@@ -61,6 +61,18 @@ Developer workflow
    make doc       # build HTML docs into build/html
    make view-doc  # build + open in a browser
 
+``make test`` runs the packages in parallel over ``pytest-xdist``. The worker count is ``JOBS``,
+and it is bounded by memory rather than by cores: a full run peaks at roughly 3 GB per worker,
+because between them the tests import mujoco, torch, cv2 and matplotlib and load every robot mesh
+in the tree. The default is deliberately small -- raise it if you have the RAM, and drop to the
+serial path if a parallel run ever looks flaky:
+
+.. code-block:: bash
+
+   make test JOBS=6           # more workers, if there is memory for them
+   make test JOBS=1           # serial; the fallback when a parallel run looks wrong
+   make test-roqsim_sensors   # just one package, for the edit/run loop
+
 .. _adding-a-tool:
 
 Adding a tool

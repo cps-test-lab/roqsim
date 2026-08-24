@@ -22,6 +22,20 @@ PIP        := $(VENV)/bin/pip
 # first attempt did that and found a second plugin behind the first).
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD ?= 1
 PYTEST     := $(PY) -m pytest
+# Parallelism here is bounded by MEMORY, not by cores, and the margin is thinner than it looks: a
+# full serial run peaks at ~3.2 GB RSS, because between them these tests import mujoco, torch, cv2
+# and matplotlib and load every robot mesh in the tree. An xdist worker is a fresh interpreter that
+# ends up doing all of that too, so budget ~3 GB PER WORKER. That is why the default is a small
+# number and not `auto`: on a many-core machine `-n auto` asks for one worker per core, wants tens
+# of GB, and is OOM-killed (exit 137) rather than merely slow. Raise JOBS if you have the RAM;
+# `make test JOBS=1` is the serial fallback and the first thing to try if a parallel run looks
+# flaky.
+# xdist is named explicitly because PYTEST_DISABLE_PLUGIN_AUTOLOAD above switches autoload off
+# wholesale -- without `-p xdist` the plugin is simply absent and `-n` is an unrecognised argument.
+# --dist loadfile keeps every test in a file on one worker, which is what lets a module-scoped
+# fixture be built once rather than once per worker.
+JOBS       ?= 2
+XDIST      := $(if $(filter-out 1,$(JOBS)),-p xdist -n $(JOBS) --dist loadfile)
 RUFF       := $(PY) -m ruff
 SPHINX     := $(PY) -m sphinx
 # MUJOCO_GL is deliberately NOT set here. `roqsim.gl.select_offscreen_gl` chooses it per MACHINE at
@@ -102,7 +116,10 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	# the host changes -- inside ros:jazzy its pytest collected 1 test instead of 1449 and `make test`
 	# exited 5 ("no tests collected") while the same commit passed everywhere else. The venv owns its
 	# own test runner.
-	$(PIP) install --ignore-installed pytest
+	# pytest-xdist rides the same --ignore-installed for the same reason, and it is what makes
+	# `make test` parallel; the Makefile loads it explicitly (see JOBS above) because plugin
+	# autoload is off.
+	$(PIP) install --ignore-installed pytest pytest-xdist
 	# ruff is PINNED because it is the formatter: `ruff format` output changes between releases,
 	# so an unpinned one turns `make lint` red on a commit that touched nothing -- 0.16.4 rewrapped
 	# three files 0.16.3 was happy with, and main went red with no code change behind it. It also
@@ -126,7 +143,7 @@ build-ros:  ## colcon build ros2_ws (only if ROS is sourced)
 
 .PHONY: test
 test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when ROS is sourced
-	$(PYTEST) $(PKGS) -q
+	$(PYTEST) $(PKGS) -q $(XDIST)
 	@if [ -n "$$ROS_DISTRO" ]; then \
 		echo "ROS sourced -> building ros2_ws and running its tests"; \
 		$(MAKE) build-ros; \
@@ -134,6 +151,13 @@ test:  ## Run unit tests; also the ros2_ws tests (incl. nav2 integration) when R
 	else \
 		echo "ROS not sourced -> skipped the ros2_ws tests (source ROS to include them)."; \
 	fi
+
+# One package's tests, e.g. `make test-roqsim_sensors`. Not just a convenience: the full set in one
+# process is the memory peak described above, so this is how to bisect an OOM -- and how to re-run
+# only what you are editing without paying for the rest.
+.PHONY: test-%
+test-%:
+	$(PYTEST) $* -q
 
 .PHONY: smoke
 smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, resolves assets)
