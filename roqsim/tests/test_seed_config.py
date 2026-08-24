@@ -15,7 +15,7 @@ import logging
 
 import pytest
 
-from roqsim.config import PluginError, load_config
+from roqsim.config import PluginError, load_config, load_config_from_dict
 from roqsim.runner import _resolve_seed
 
 
@@ -52,12 +52,10 @@ def test_a_malformed_seed_is_rejected_at_load_time(tmp_path, value):
 def test_seed_survives_an_override(tmp_path):
     """The point of the feature: the seed is reachable through the same override
     channel as every other simulator setting."""
-    from roqsim.config import apply_overrides
-
-    p = tmp_path / "w.yaml"
-    p.write_text("sim: {seed: 1}\nplugins: []\n")
-    merged = apply_overrides({"sim": {"seed": 1}, "plugins": []}, {"sim": {"seed": 99}})
-    assert merged["sim"]["seed"] == 99
+    cfg = load_config_from_dict(
+        {"sim": {"seed": 1}, "components": []}, overrides={"sim": {"seed": 99}}
+    )
+    assert cfg.seed == 99
 
 
 # -- precedence -------------------------------------------------------------

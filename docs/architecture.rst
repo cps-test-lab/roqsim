@@ -509,12 +509,28 @@ consequences, and they differ:
    Restating the rest would be a duplicate that silently diverges the day the manifest changes. The
    entry carries no ``robot:`` key: it belongs to the robot because it sits inside it.
 
--  **An override cannot reach a default the document never declared.** ``--set`` /
-   ``--override`` are applied to the parsed YAML *before* manifest expansion (deliberately:
-   the override must be in the compiled model and therefore in the run's provenance), so at
-   that moment there is no ``lidar`` entry to address. The override is **refused**, which is
-   the right failure -- silently ignoring it would let a swept parameter do nothing while
-   the sweep looked healthy -- and the refusal names the model and the entry to nest it under.
+-  **An override reaches a default the document never declared.** Expansion runs while the document
+   loads, so ``--set components.robot.lidar.range_stddev=0.05`` resolves against what will actually
+   run -- no entry, no stub. It is still applied before compile, so the value is in the compiled
+   model and therefore in the run's provenance.
+
+   An address is a path through the document: consume a segment while it names a component, and the
+   first that does not begins the path into that component's config. So the two spellings are the
+   same assignment, which they have to be -- a campaign flattens a path onto a command line, a saved
+   override set writes a document, and they must not diverge::
+
+      --set components.robot.lidar.rays=720
+      components: {robot.lidar: {rays: 720}}
+
+   Assignments are applied twice: once against what the document declares, then again once its
+   models' manifests have contributed. The first pass is what lets a *structural* override work --
+   ``components.robot.model=husky_a200`` lands before expansion reads ``model:``, so the husky's
+   manifest is what expands -- and the second is what reaches a component only a manifest supplies.
+   An assignment that matched in neither pass is **refused**, which is the failure that matters:
+   silently ignoring a swept parameter would let a campaign change nothing while every run looked
+   healthy. The refusal names what the document does have, searching refs as well as addresses --
+   a bare ``lidar`` against a robot carrying two is a no-match rather than an ambiguity, and the
+   useful answer is both their addresses.
 
 9.2 Physical faults (``model_override``) [impl]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

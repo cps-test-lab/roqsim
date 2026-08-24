@@ -101,6 +101,28 @@ which is how an experiment loads its own plugin without registering anything.
 > `. * # [ ] = : /` or whitespace; and a component whose label is also one of its owner's config
 > keys.
 
+### Overriding a world from outside
+
+`--set` and `--override` address a **component by its address** and set a key in its config:
+
+```console
+$ roqsim sim world.yaml --set components.robot.lidar.rays=720
+```
+
+That reaches a lidar no file declares — it comes from the turtlebot4's manifest — and leaves every
+key the override did not name at the model's value. The same assignment written as a document, which
+is what `--override` takes:
+
+```yaml
+components:
+  robot.lidar: {rays: 720}
+```
+
+Overriding `components.robot.model` swaps the model *and* what its manifest contributes, because
+assignments are applied before expansion reads `model:` as well as after. An assignment that names no
+component is refused, and the message says what the document does have — a swept parameter that
+reaches nothing must never look like one that worked.
+
 ## Reproducibility
 
 `sim.seed` in the world -- or `roqsim sim --seed N`, which wins -- sets the run's seed and announces it (a run without either draws a seed and logs it,

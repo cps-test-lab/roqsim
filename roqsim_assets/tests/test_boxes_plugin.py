@@ -10,7 +10,7 @@ from __future__ import annotations
 import mujoco
 import pytest
 
-from roqsim.config import apply_overrides
+from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim_assets.plugins.boxes import BoxesPlugin
 
@@ -82,16 +82,16 @@ def test_geometry_is_the_box_plugins():
 def test_an_override_changes_the_population_count():
     """The whole point: a campaign varies "how many" without editing the world's structure.
 
-    `apply_overrides` deep-merges into a plugin resolved by name and refuses one matching no
-    plugin, so it can replace a list value but could never append a second `box:` entry. With one
-    entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
+    An override sets a key on a component that exists; it cannot append a second `box:` entry. With
+    one entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
     """
-    world = {"plugins": [{"boxes": {"name": "obstacles", "instances": _TWO}}]}
+    world = {"sim": {}, "components": [{"boxes": {"instances": _TWO}, "name": "obstacles"}]}
     five = [{"pos": [float(i), 0.0], "size": [0.3, 0.3, 0.3]} for i in range(5)]
 
-    merged = apply_overrides(world, {"plugins": {"boxes": {"instances": five}}})
+    cfg = load_config_from_dict(world, overrides={"components": {"obstacles": {"instances": five}}})
 
-    assert len(merged["components"][0]["boxes"]["instances"]) == 5
+    boxes = next(s for s in cfg.plugins if s.ref == "boxes")
+    assert len(boxes.config["instances"]) == 5
 
 
 def test_validation_names_the_offending_instance():

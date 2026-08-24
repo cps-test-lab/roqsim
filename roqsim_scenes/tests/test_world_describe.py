@@ -31,7 +31,8 @@ def world(tmp_path):
         "    instances:\n"
         "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
         "    - {pos: [3.0, 2.0], size: [0.4, 0.4, 0.4]}\n"
-        "  name: obstacles\n")
+        "  name: obstacles\n"
+    )
     return path
 
 
@@ -48,11 +49,7 @@ def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, wo
 
 def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
     path = tmp_path / "named.yaml"
-    path.write_text(
-        "plugins:\n"
-        "- boxes:\n"
-        "    instances: []\n"
-        "  name: obstacles\n")
+    path.write_text("plugins:\n- boxes:\n    instances: []\n  name: obstacles\n")
     plugin = _describe(capsys, str(path))["plugins"][0]
     assert (plugin["key"], plugin["ref"]) == ("obstacles", "boxes")
     assert "plugins.obstacles.instances" in plugin["paths"]
@@ -107,7 +104,9 @@ def test_the_overridable_fields_need_no_model(capsys, world):
 
 def test_overridable_targets_report_current_values(capsys, world):
     """The half that stops a caller inventing a name: what exists, and what it is right now."""
-    targets = _describe(capsys, str(world), "--overridable", "obstacles_0*")["overridable"]["targets"]
+    targets = _describe(capsys, str(world), "--overridable", "obstacles_0*")["overridable"][
+        "targets"
+    ]
     geoms = targets["geom"]
     assert [g["name"] for g in geoms] == ["obstacles_0_box"]
     assert geoms[0]["geom_friction"] == pytest.approx([1.0, 0.005, 0.0001])
@@ -163,13 +162,8 @@ def dummy_world(tmp_path):
     """
     path = tmp_path / "dummy_world.yaml"
     path.write_text(
-        "plugins:\n"
-        "- dummy:\n"
-        "    size: 0.3\n"
-        "  name: box_a\n"
-        "- dummy:\n"
-        "    size: 0.2\n"
-        "  name: box_b\n")
+        "plugins:\n- dummy:\n    size: 0.3\n  name: box_a\n- dummy:\n    size: 0.2\n  name: box_b\n"
+    )
     return path
 
 
@@ -203,7 +197,8 @@ def test_body_tree_glob_bounds_the_answer(capsys, dummy_world):
 
 
 def test_body_tree_truncates_rather_than_returning_a_partial_tree_silently(
-        capsys, dummy_world, monkeypatch):
+    capsys, dummy_world, monkeypatch
+):
     """The regression this flag exists to prevent: a broad glob must never risk "the scene"."""
     monkeypatch.setattr(world_describe, "_MAX_TREE_NODES", 1)
     matches = _describe(capsys, str(dummy_world), "--body-tree", "box_a_box")["body_tree"]
@@ -214,7 +209,8 @@ def test_body_tree_truncates_rather_than_returning_a_partial_tree_silently(
 
 
 def test_body_tree_shares_the_one_build_with_entities_and_overridable(
-        capsys, dummy_world, monkeypatch):
+    capsys, dummy_world, monkeypatch
+):
     """Compiling is the expensive part -- asking for all three must still build only once."""
     builds = []
     original = world_describe._built
@@ -227,8 +223,8 @@ def test_body_tree_shares_the_one_build_with_entities_and_overridable(
 
     monkeypatch.setattr(world_describe, "_built", counted)
     described = _describe(
-        capsys, str(dummy_world), "--entities", "--overridable", "*",
-        "--body-tree", "box_a_box")
+        capsys, str(dummy_world), "--entities", "--overridable", "*", "--body-tree", "box_a_box"
+    )
     assert described["entities"] == ["box_a", "box_b"]
     assert described["overridable"]["targets"]["geom"]
     assert described["body_tree"]
@@ -249,7 +245,8 @@ def ros_world(tmp_path):
         "    size: 0.3\n"
         "  name: box_a\n"
         "- ros2_bridge: {}\n"
-        "- sim_interfaces: {}\n")
+        "- sim_interfaces: {}\n"
+    )
     return path
 
 
@@ -281,10 +278,11 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
     world.write_text("components:\n- boxes: {instances: []}\n  name: obstacle\n")
     overrides = tmp_path / "ov.yaml"
     overrides.write_text(
-        "plugins:\n"
-        "  boxes:\n"
+        "components:\n"
+        "  obstacle:\n"  # the entry's LABEL, which is what an address names
         "    instances:\n"
-        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n")
+        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
+    )
 
     plain = _describe(capsys, str(world), "--entities")
     assert "obstacle_0" not in (plain["entities"] or [])
@@ -308,7 +306,7 @@ def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
     overrides = tmp_path / "ov.yaml"
     overrides.write_text("plugins:\n  boxesTYPO:\n    instances: []\n")
     assert world_describe.main([str(world), "--override", str(overrides)]) == 1
-    assert "matches no plugin" in capsys.readouterr().err
+    assert "matches no component" in capsys.readouterr().err
 
 
 def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
@@ -328,14 +326,16 @@ def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
 
 def test_a_build_failure_keeps_the_half_that_needed_no_build(capsys, dummy_world, monkeypatch):
     """A build-only failure used to discard the plugin list too, which cost the campaign its check."""
+
     @contextmanager
     def explode(_config):
         raise RuntimeError("mesh is not where it says it is")
         yield  # pragma: no cover - unreachable, and what makes this a context manager
 
     monkeypatch.setattr(world_describe, "_built", explode)
-    assert world_describe.main([str(dummy_world), "--entities"]) == 1, \
+    assert world_describe.main([str(dummy_world), "--entities"]) == 1, (
         "a partial answer is not a success"
+    )
     out = capsys.readouterr()
     described = json.loads(out.out.splitlines()[-1])
     assert [p["key"] for p in described["plugins"]] == ["box_a", "box_b"]

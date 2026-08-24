@@ -87,13 +87,21 @@ def test_a_checked_in_world_stays_ros_free(tmp_path):
     assert [spec.ref for spec in load_config(world).plugins] == ["dummy"]
 
 
-def test_transport_is_applied_after_overrides(tmp_path):
-    """Overrides address plugins by name and cannot append one, so ordering matters:
-    an override naming ros2_bridge before it exists would be an error."""
-    world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
+def test_transport_is_applied_before_overrides_resolve(tmp_path):
+    """So an injected bridge is addressable like anything else.
+
+    It was not: transport was appended after overrides had already been resolved, which meant
+    `plugins.ros2_bridge.*` named nothing in a world that did not author its own bridge -- the
+    deployment that added it could not then configure it.
+    """
+    world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     cfg = load_config(world, {"sim": {"pacing": "asap"}}, {"ros": True})
     assert cfg.pacing == "asap"
     assert [spec.ref for spec in cfg.plugins] == ["dummy", "ros2_bridge"]
+
+    cfg = load_config(world, {"components": {"ros2_bridge": {"tf_namespace": "r1"}}}, {"ros": True})
+    bridge = next(s for s in cfg.plugins if s.ref == "ros2_bridge")
+    assert bridge.config["tf_namespace"] == "r1"
 
 
 def test_overriding_a_plugin_that_does_not_exist_still_fails(tmp_path):
@@ -101,5 +109,5 @@ def test_overriding_a_plugin_that_does_not_exist_still_fails(tmp_path):
     from roqsim.plugin import PluginError
 
     world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
-    with pytest.raises(PluginError, match="matches no plugin"):
+    with pytest.raises(PluginError, match="matches no component"):
         load_config(world, {"plugins": {"nosuch": {}}})

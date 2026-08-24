@@ -9,7 +9,12 @@ something a run's results can keep and a person can replay from.
 import pytest
 import yaml
 
-from roqsim.config import apply_overrides, deep_merge, overrides_from_dotlist, overrides_from_files
+from roqsim.config import (
+    deep_merge,
+    load_config_from_dict,
+    overrides_from_dotlist,
+    overrides_from_files,
+)
 from roqsim.plugin import PluginError
 
 
@@ -84,11 +89,10 @@ def test_a_broken_document_is_refused_by_name(tmp_path):
         overrides_from_files([str(path)])
 
 
-def test_the_result_is_what_apply_overrides_takes(tmp_path):
-    """The whole point: the file lands in the same call ``--set`` funnels into."""
-    world = {"plugins": [{"floorplan": {"name": "floorplan", "size": 3.0}}]}
-    path = _write(tmp_path, "o.yaml", {"plugins": {"floorplan": {"size": 4.2}}})
-    applied = apply_overrides(world, overrides_from_files([path]))
-    assert applied["components"][0]["floorplan"]["size"] == 4.2
-    # Modified in place, not appended: a second floorplan would be a different world.
-    assert len(applied["components"]) == 1
+def test_the_result_is_what_the_loader_takes(tmp_path):
+    """The whole point: the file lands in the same place ``--set`` funnels into."""
+    world = {"sim": {}, "components": [{"floorplan": {"size": 3.0}}]}
+    path = _write(tmp_path, "o.yaml", {"components": {"floorplan": {"size": 4.2}}})
+    cfg = load_config_from_dict(world, overrides=overrides_from_files([path]))
+    assert [s.address for s in cfg.plugins] == ["floorplan"]  # set, not appended
+    assert cfg.plugins[0].config["size"] == 4.2
