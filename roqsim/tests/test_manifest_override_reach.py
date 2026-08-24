@@ -31,10 +31,9 @@ WORLD_BARE = {
 
 def _expanded(raw):
     """The plugin specs that actually run, manifest defaults included."""
-    from roqsim.config import _expand_plugins, load_config_from_dict
+    from roqsim.config import load_config_from_dict
 
-    cfg = load_config_from_dict(raw)
-    return {spec.ref: spec.config for spec, _cls in _expand_plugins(cfg)}
+    return {spec.ref: spec.config for spec in load_config_from_dict(raw).plugins}
 
 
 def test_a_world_may_set_one_key_of_a_model_default(tmp_path):

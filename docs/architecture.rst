@@ -277,6 +277,20 @@ Model plugin manifests (``expand``) [impl]
 A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + ``lidar``; an arm → ``arm_controller``) in a ``<model>.manifest.yaml`` manifest next to its MJCF, so a world only spawns the model instead of re-declaring them. Mechanism:
 
 - Before instantiation, ``_expand_plugins`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is the list of explicitly-declared specs; core does no dedupe of its own.
+- **Expansion runs while the document loads**, not inside the engine, so ``SimConfig.plugins`` is the
+  *effective* component list -- what the document declares plus what its models' manifests contribute
+  -- in build order. ``SimConfig.declared`` keeps the entries a reader actually wrote. That is what
+  lets a consumer see what will run: ``roqsim scenes describe`` can name a sensor the document never
+  declared, and ``world_sources`` sees a manifest-supplied component's files (it did not, so
+  ``prop_trajectory``'s CSV resolved against the caller's working directory rather than the world's).
+- **Loading stays tolerant; running does not.** A ref that will not import is recorded on
+  ``SimConfig.unresolved`` and its entry is kept, unexpanded, so a scene-only consumer (``roqsim
+  render``, the exporters, ``describe``) still gets a world whose transport is not installed.
+  ``instantiate_plugins`` is where that is refused, with the same report as before -- including the
+  case that says a world failed *solely* on its bridges and names the two ways on. Dropping the
+  transport prunes the matching deferred failures, or a consumer would remove the bridge it cannot
+  import and be refused for it anyway.
+
 - Spawn plugins implement ``expand`` in one line via the shared ``roqsim.manifest.expand_manifest(spec, world, *, base_dir=None)``. It resolves the model (see *Model discovery* below), reads the ``<model>.manifest.yaml`` beside the resolved file, and injects each entry as a **component of the spawn**. There is no per-family wiring key any more: an entry belongs to the entity whose entry it sits under, so a mobile spawn and an arm spawn wire their components identically. Distinct entities (two arms) never collide.
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 

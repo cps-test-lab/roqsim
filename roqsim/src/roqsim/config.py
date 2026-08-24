@@ -258,7 +258,15 @@ def flatten_specs(specs: list[PluginSpec], entity: str | None = None) -> list[Pl
 @dataclass
 class SimConfig:
     sim: dict = field(default_factory=dict)
+    #: The EFFECTIVE components, in build order: what the document declares plus what its models'
+    #: manifests contribute. Materialised at load time, so every consumer sees what will run.
     plugins: list[PluginSpec] = field(default_factory=list)
+    #: What the document itself declared, before expansion -- kept because that is the thing a
+    #: reader wrote, and the two are worth being able to tell apart.
+    declared: list[PluginSpec] = field(default_factory=list)
+    #: ``(ref, message)`` for every ref that would not import, deferred so a scene-only consumer can
+    #: still load a world whose transport is not installed. :func:`instantiate_plugins` refuses.
+    unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
 
@@ -566,13 +574,17 @@ def world_sources(path: str | Path) -> list[Path]:
 
 
 def _plugin_sources(cfg, leaf: Path) -> list:
-    """What the world's plugins say they point at, asked plugin by plugin.
+    """What the world's components say they point at, asked component by component.
 
-    Resolved **per spec, skipping what does not resolve**, rather than through
-    :func:`_expand_plugins` -- that raises on the first unresolvable ref, which would turn any
-    ROS world into a hard failure here in a pip-only environment where the bridge is not
-    installed. This function's contract is best-effort (see :func:`world_sources`), and the
-    same tolerance the ``extends`` walk already has.
+    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts. It did not
+    use to: expansion happened inside the engine, so this walked the declared entries only, and
+    ``prop_trajectory`` -- whose ``expand`` exists purely to hand its ``sources()`` the directory the
+    world lives in -- resolved its CSV against the caller's working directory instead, against what
+    its own docstring promises.
+
+    Still **per spec, skipping what does not resolve**: this function's contract is best-effort (see
+    :func:`world_sources`), the same tolerance the ``extends`` walk has, and a ROS world in a
+    pip-only environment must not become a hard failure here.
     """
     if cfg is None:
         return []
@@ -890,8 +902,14 @@ def _from_dict(raw: dict, base_dir: Path) -> SimConfig:
             for i, entry in enumerate(document_entries(raw))
         ]
     )
+    effective, unresolved = expand_document(plugins, base_dir)
     return SimConfig(
-        sim=dict(raw.get("sim", {}) or {}), plugins=plugins, base_dir=base_dir, raw=raw
+        sim=dict(raw.get("sim", {}) or {}),
+        plugins=effective,
+        declared=plugins,
+        unresolved=unresolved,
+        base_dir=base_dir,
+        raw=raw,
     )
 
 
@@ -980,7 +998,16 @@ def drop_transport_plugins(cfg: SimConfig) -> tuple[list[str], list[str]]:
             continue
         kept.append(spec)
     cfg.plugins = kept
+    # The deferred failures go with the specs they belong to, or a scene-only consumer would drop
+    # the bridge it cannot import and then still be refused for it by `instantiate_plugins`.
+    _prune_unresolved(cfg)
     return transport, unavailable
+
+
+def _prune_unresolved(cfg: SimConfig) -> None:
+    """Forget deferred resolution failures for specs no longer in the effective list."""
+    live = {spec.ref for spec in cfg.plugins}
+    cfg.unresolved = [(ref, msg) for ref, msg in cfg.unresolved if ref in live]
 
 
 def drop_transport(cfg: SimConfig) -> list[str]:
@@ -1017,41 +1044,52 @@ def drop_transport(cfg: SimConfig) -> list[str]:
         else:
             kept.append(spec)
     cfg.plugins = kept
+    _prune_unresolved(cfg)
     return dropped
 
 
-def _expand_plugins(cfg: SimConfig) -> list[tuple[PluginSpec, type[Plugin]]]:
-    """Resolve each plugin class and splice in any specs a plugin's ``expand`` implies.
+def expand_document(
+    declared: list[PluginSpec], base_dir: Path
+) -> tuple[list[PluginSpec], list[tuple[str, str]]]:
+    """The document's EFFECTIVE components, and the refs that would not resolve.
 
-    Expansion-injected specs (e.g. a spawn plugin's model manifest) land right after the plugin that
-    produced them. Whether to skip a default the world already declares is the producing plugin's
-    call -- it gets the world's explicit specs and dedupes on its own entity key (see
-    :func:`roqsim.manifest.expand_manifest`). Classes are resolved once here and handed back.
+    Runs while the document loads, so what a consumer gets back is what will actually run: a model's
+    manifest components are in the list, not conjured later inside the engine. That is what lets
+    ``roqsim scenes describe`` name a sensor the document never declared, and what makes a
+    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources` -- which it was not,
+    so a prop trajectory's CSV resolved against the caller's working directory.
 
-    Resolution failures are collected rather than raised at the first one, like the validation errors
-    in :func:`instantiate_plugins`: one report listing every bad ref beats three edit-and-rerun cycles,
-    and -- the reason it was worth changing -- only the full list can tell whether the world failed
-    *solely* on its transport, which is a fixable situation rather than a mistake (see
-    :func:`_unresolved_message`).
+    Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
+    build order still falls out of the document's shape. Whether to skip a default the document
+    already declares is the producing plugin's call: it is handed the declared specs and dedupes on
+    the label (see :func:`roqsim.manifest.expand_manifest`). One level deep, deliberately -- what
+    ``expand`` returns is not itself expanded.
+
+    Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
     """
-    resolved: list[tuple[PluginSpec, type[Plugin]]] = []
+    effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
-    for spec in cfg.plugins:
+    for spec in declared:
         try:
-            cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
+            cls = resolve_plugin(spec.ref, base_dir=base_dir)
         except PluginError as exc:
+            # Tolerated, not raised: this runs while the document LOADS, and a consumer that only
+            # wants the scene (`roqsim render`, the exporters, `roqsim scenes describe`) must still
+            # get one for a world whose transport it cannot import. The spec stays, unexpanded, and
+            # `instantiate_plugins` is where the refusal happens -- with the same message it always
+            # gave, including the "this is a ROS world, here are your two ways on" case.
             unresolved.append((spec.ref, str(exc)))
+            effective.append(spec)
             continue
         _check_ownership(spec, cls)
-        resolved.append((spec, cls))
-        for sub in cls.expand(spec, cfg.plugins, cfg.base_dir):
+        effective.append(spec)
+        for sub in cls.expand(spec, declared, base_dir):
+            effective.append(sub)
             try:
-                resolved.append((sub, resolve_plugin(sub.ref, base_dir=cfg.base_dir)))
+                resolve_plugin(sub.ref, base_dir=base_dir)
             except PluginError as exc:
                 unresolved.append((sub.ref, str(exc)))
-    if unresolved:
-        raise PluginError(_unresolved_message(unresolved))
-    return resolved
+    return effective, unresolved
 
 
 def _check_ownership(spec: PluginSpec, cls: type[Plugin]) -> None:
@@ -1116,7 +1154,9 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
 
     Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config.
     """
-    resolved = _expand_plugins(cfg)
+    if cfg.unresolved:
+        raise PluginError(_unresolved_message(cfg.unresolved))
+    resolved = [(spec, resolve_plugin(spec.ref, base_dir=cfg.base_dir)) for spec in cfg.plugins]
     instances: list[Plugin] = [
         cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
         for spec, cls in resolved

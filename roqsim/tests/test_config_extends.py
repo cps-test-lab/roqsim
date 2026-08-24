@@ -51,7 +51,9 @@ def test_child_plugins_appended_after_parent(tmp_path):
         """,
     )
     cfg = load_config(child)
-    refs = [s.ref for s in cfg.plugins]
+    # `declared` is what the two documents said; `plugins` is that plus what their models' manifests
+    # contribute, which is not what this test is about.
+    refs = [s.ref for s in cfg.declared]
     assert refs == [
         "spawn_model",
         "spawn_model",
@@ -172,6 +174,6 @@ def test_extends_package_ref_resolves(tmp_path):
     )
     cfg = load_config(child)
     assert cfg.timestep == 0.001
-    assert cfg.plugins[-1].ref == "spawn_robot"
+    assert cfg.declared[-1].ref == "spawn_robot"
     assert cfg.sim["world"].endswith("worlds/depot/depot.xml")
     assert len(cfg.plugins) > 1  # the parent's own plugins are inherited

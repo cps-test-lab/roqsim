@@ -18,6 +18,7 @@ import re
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import click
@@ -115,7 +116,33 @@ def test_tool_wrappers_stay_thin(tree):
 
 
 # -- the help stays cheap -------------------------------------------------------------------------
-def test_no_command_dumps_its_whole_docstring_into_help(tree):
+def _help_text(path: str) -> str:
+    """`roqsim <path> --help` as a subprocess, because that is what a user actually runs."""
+    return subprocess.run(
+        [sys.executable, "-m", "roqsim.commands", *path.split(), "--help"],
+        capture_output=True,
+        text=True,
+        timeout=300,
+        cwd=REPO,
+    ).stdout
+
+
+@pytest.fixture(scope="module")
+def helps(tree) -> dict[str, str]:
+    """Every leaf command's `--help`, captured once, concurrently.
+
+    Each launch is a clean interpreter that imports its tool's module -- mujoco, scipy, Pillow,
+    lxml, torch -- so it costs about a second, and there are ~38 of them. Paid serially inside one
+    test this was 34 s, comfortably the most expensive thing in the repository and, because no test
+    runner can split a single test, the floor on how fast the suite can go however many workers it
+    gets. Threads are the right pool here: the work is in the children, not under the GIL.
+    """
+    cmds = [path for path, cmd in _commands(tree).items() if hasattr(cmd, "module")]
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        return dict(zip(cmds, pool.map(_help_text, cmds), strict=True))
+
+
+def test_no_command_dumps_its_whole_docstring_into_help(helps):
     """The docstring is the rationale; `--help` is how to run it.
 
     Bounding the *description* rather than the whole output is the point: a tool with thirty options
@@ -123,16 +150,7 @@ def test_no_command_dumps_its_whole_docstring_into_help(tree):
     module docstring prints an essay before the first flag. One of those is worth paying for.
     """
     over = {}
-    for path, cmd in _commands(tree).items():
-        if not hasattr(cmd, "module"):
-            continue
-        out = subprocess.run(
-            [sys.executable, "-m", "roqsim.commands", *path.split(), "--help"],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            cwd=REPO,
-        ).stdout
+    for path, out in helps.items():
         # everything between the usage block and the first argument section is the description
         body = re.split(r"\n(?:positional arguments|options|Options):", out)[0]
         description = re.sub(r"^usage:.*?(?=\n\S|\Z)", "", body, flags=re.S).strip()

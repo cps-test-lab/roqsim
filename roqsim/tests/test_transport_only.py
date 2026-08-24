@@ -10,7 +10,12 @@ from __future__ import annotations
 import pytest
 
 from roqsim.bridge import BridgeBase
-from roqsim.config import drop_transport, drop_transport_plugins, load_config_from_dict
+from roqsim.config import (
+    drop_transport,
+    drop_transport_plugins,
+    instantiate_plugins,
+    load_config_from_dict,
+)
 from roqsim.plugin import Plugin, PluginError
 
 
@@ -232,3 +237,35 @@ def test_a_single_failure_keeps_the_original_wording():
     """A plain typo is the common case; it should not gain a list to read."""
     with pytest.raises(PluginError, match="^unknown plugin 'groud_truth_pose'"):
         _build({"plugins": [{"groud_truth_pose": {}}]})
+
+
+# -- expansion runs while the document loads, and must not make loading strict ------------------
+
+
+def test_a_document_whose_bridge_is_not_installed_still_LOADS(no_entry_points):
+    """Expansion moved into the load path, so a ref that will not import is met earlier than it
+    used to be. Loading has to stay tolerant: a consumer that wants the *scene* -- render, the
+    exporters, describe -- must still get one for a world it cannot run."""
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}]})
+    assert _refs(cfg) == [GEOMETRY, "ros2_bridge"]
+    assert [ref for ref, _msg in cfg.unresolved] == ["ros2_bridge"]
+
+
+def test_but_running_it_is_still_refused_with_the_same_report(no_entry_points):
+    """The refusal moves file position, not observable behaviour -- including the case that says
+    this is a ROS world rather than a typo, and names the two ways on."""
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}]})
+    with pytest.raises(PluginError) as exc:
+        instantiate_plugins(cfg)
+    msg = str(exc.value)
+    assert "transport, not scene" in msg
+    assert "--no-communication" in msg
+
+
+def test_dropping_the_transport_drops_its_deferred_failure_with_it(no_entry_points):
+    """Otherwise a scene-only consumer removes the bridge it cannot import and is then refused
+    for it anyway -- the exact situation dropping it exists to avoid."""
+    cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}]})
+    drop_transport_plugins(cfg)
+    assert cfg.unresolved == []
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == ["Geometry"]
