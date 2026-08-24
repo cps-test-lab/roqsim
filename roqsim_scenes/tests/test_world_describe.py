@@ -52,18 +52,18 @@ def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
     path.write_text("plugins:\n- boxes:\n    instances: []\n  name: obstacles\n")
     plugin = _describe(capsys, str(path))["plugins"][0]
     assert (plugin["key"], plugin["ref"]) == ("obstacles", "boxes")
-    assert "plugins.obstacles.instances" in plugin["paths"]
+    assert "components.obstacles.instances" in plugin["paths"]
 
 
 def test_it_reports_the_paths_that_exist(capsys, world):
     described = _describe(capsys, str(world))
-    assert "plugins.obstacles.instances" in described["plugins"][0]["paths"]
+    assert "components.obstacles.instances" in described["plugins"][0]["paths"]
 
 
 def test_a_lists_members_are_not_addressable_paths(capsys, world):
     """A campaign overrides the list; it does not address instance 7's y coordinate."""
     paths = _describe(capsys, str(world))["plugins"][0]["paths"]
-    assert not any(p.startswith("plugins.boxes.instances.") for p in paths)
+    assert not any(p.startswith("components.obstacles.instances.") for p in paths)
 
 
 def test_entities_are_absent_until_asked_for(capsys, world):
@@ -357,3 +357,50 @@ def test_a_world_that_cannot_load_reports_why(capsys, tmp_path):
     assert "cannot load world" in out.err
     # Unlike a build failure there is no half to hand back: nothing was resolved.
     assert out.out == ""
+
+
+# -- the published set IS the set an override may name -----------------------------------------
+
+
+@pytest.fixture
+def robot_world(tmp_path):
+    """A world that declares one entry and gets three more from the model's manifest."""
+    pytest.importorskip("roqsim_mobile", reason="turtlebot4 manifest lives in roqsim_mobile")
+    path = tmp_path / "r.yaml"
+    path.write_text("sim: {}\ncomponents:\n  - spawn_robot: {model: turtlebot4}\n    name: robot\n")
+    return path
+
+
+def test_it_describes_components_the_document_never_declared(capsys, robot_world):
+    """The whole point: a campaign sweeps a model default, so this has to be able to name one.
+
+    It could not -- the payload was zipped against the document's own entries, so the set published
+    and the set an override could reach were the same, and both excluded everything a manifest
+    contributed.
+    """
+    described = _describe(capsys, str(robot_world))
+    by_address = {p["address"]: p for p in described["plugins"]}
+    assert by_address["robot.lidar"]["origin"] == "manifest"
+    assert by_address["robot"]["origin"] == "document"
+    assert "components.robot.lidar.rays" in by_address["robot.lidar"]["paths"]
+
+
+def test_every_published_address_is_one_an_override_accepts(capsys, robot_world):
+    """The equality this command exists for. A published address that resolution refused would send
+    a caller looking for a mistake that is not there -- and it is checked by round-tripping each one
+    through the resolver rather than by reading the two lists side by side.
+    """
+    from roqsim.config import load_config
+
+    addresses = _describe(capsys, str(robot_world))["addresses"]
+    assert addresses  # the assertion below is vacuous otherwise
+    for address in addresses:
+        cfg = load_config(robot_world, {"components": {address: {"_probe": 1}}})
+        assert {s.address for s in cfg.plugins} >= {address}
+
+
+def test_the_key_field_stays_as_an_alias_of_address(capsys, robot_world):
+    """An external pre-flight reads `key`. The meaningful break is its VALUE changing to an address;
+    moving the field as well would break that reader for nothing."""
+    plugins = _describe(capsys, str(robot_world))["plugins"]
+    assert all(p["key"] == p["address"] for p in plugins)

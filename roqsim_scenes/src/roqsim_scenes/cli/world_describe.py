@@ -17,13 +17,19 @@ Why a command and not an import, for the same reason ``inputs`` is one: the call
 spends an image pull has no reason to have roqsim installed, and cannot resolve a world's
 ``extends`` chain without it -- so it asks the image that does.
 
-**Override paths.** ``plugins`` reports each plugin under the key ``apply_overrides`` resolves
-it by (its ``name:`` sibling if it has one, else its plugin ref) together with the dotted paths
-into its config that already exist. A path not listed is not necessarily invalid -- a plugin may
-accept a key its world leaves at the default -- so a caller reports an unlisted path as
-unverifiable rather than as wrong. What the list does settle is the expensive mistake: a
-*plugin* key matching nothing, which ``apply_overrides`` refuses at load time inside the
-container, after the pull and the schedule.
+**Override paths.** ``plugins`` reports every component that will RUN -- the document's own entries
+and everything its models' manifests contribute -- under the ``address`` an override names it by,
+with the dotted paths into its config that already exist. ``addresses`` is that set on its own, and
+it is exactly what resolution accepts: a caller can check a sweep key against it before spending an
+image pull.
+
+That equality is the point. The payload used to be built from the document's own entries, so the set
+published and the set an override could reach were the same -- and both excluded everything a model
+manifest supplied, which is precisely what a campaign wants to vary. A path not listed is still not
+necessarily invalid: a plugin may accept a key its world leaves at the default, so a caller reports
+an unlisted *path* as unverifiable rather than as wrong. What the list settles is the expensive
+mistake -- an *address* matching nothing, refused at load time inside the container, after the pull
+and the schedule.
 
 **Entities** are ``null`` unless ``--entities`` is passed, because naming them means compiling
 the model: which entities exist is settled at compile time (roqsim never recompiles mid-run, and
@@ -37,9 +43,9 @@ halves: which entities a world compiles depends on its plugins' config, so a cam
 obstacles come from its own overrides compiles them only with those overrides applied. Without
 the flag this command answers about the world the FILE declares, which is a different world than
 the run's -- and a caller comparing a scenario's entity names against that answer reads a working
-campaign as a broken one. A plugin key the world does not have is still refused here, as
-``apply_overrides`` refuses it at load time, which is the cheap mistake this command exists to
-catch before an image pull.
+campaign as a broken one. An address the world does not have is still refused
+here, exactly as it is refused at load time, which is the cheap mistake this command exists to catch
+before an image pull.
 
 **Overridable model values.** ``overridable.fields`` is the allowlist of model values the
 ``model_override`` plugin can change while a run is in progress, each with what it does and the way it
@@ -85,7 +91,7 @@ from pathlib import Path
 
 import yaml
 
-from roqsim.config import document_entries, drop_transport, entry_ref, load_config, world_sources
+from roqsim.config import drop_transport, load_config, world_sources
 from roqsim.world import resolve_world_yaml_ref
 
 #: Depth at which a dotted path stops being a *destination* and starts being data. A campaign
@@ -105,21 +111,28 @@ def _paths(value, prefix: str, depth: int = 0) -> list[str]:
 
 
 def _describe_plugins(config) -> list:
-    """Each plugin under the key an override addresses it by, with its existing paths."""
-    described = []
-    # strict: the two lists describe the same plugins; a length mismatch is a bug in load_config,
-    # not something to paper over by silently describing a prefix of them.
-    for spec, raw in zip(config.plugins, document_entries(config.raw), strict=True):
-        key = spec.name or entry_ref(raw) if isinstance(raw, dict) else spec.ref
-        described.append(
-            {
-                "key": key,
-                "ref": spec.ref,
-                "name": spec.name,
-                "paths": sorted(_paths(spec.config, f"plugins.{key}")),
-            }
-        )
-    return described
+    """Every component that will RUN, under the address an override names it by.
+
+    Read off the effective list, so a sensor a model's manifest supplies is here even though no entry
+    in the document mentions it. It used to be zipped against the document's own entries, which meant
+    the set this command published and the set an override could reach were the same -- and both
+    excluded everything a manifest contributed, which is exactly what a campaign wants to sweep.
+    """
+    return [
+        {
+            "address": spec.address,
+            # Kept as an alias of `address`: an external pre-flight reads this field, and the
+            # meaningful break is the value changing, not the field moving.
+            "key": spec.address,
+            "ref": spec.ref,
+            "name": spec.name,
+            "entity": spec.entity,
+            "enabled": spec.enabled,
+            "origin": "document" if spec in config.declared else "manifest",
+            "paths": sorted(_paths(spec.config, f"components.{spec.address}")),
+        }
+        for spec in config.plugins
+    ]
 
 
 def _overridable_fields() -> list:
@@ -373,6 +386,11 @@ def main(argv=None) -> int:
         "packaged": packaged,
         "inputs": [str(p) for p in world_sources(world)],
         "plugins": _describe_plugins(config),
+        # The set an override may name, published so a caller can check a sweep key before spending
+        # an image pull. It is exactly what resolution accepts -- asserted by round-tripping each
+        # one through the resolver in the tests, because a list that drifted from it would send a
+        # caller looking for a mistake that is not there.
+        "addresses": sorted(spec.address for spec in config.plugins),
         "entities": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.

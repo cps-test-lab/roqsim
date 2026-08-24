@@ -175,21 +175,32 @@ Listing what a world provides
 
 The other half of the same question, for a caller holding an *override* rather than staging files::
 
-   roqsim scenes describe worlds/depot.yaml
+   roqsim scenes describe worlds/turtlebot_nav2.yaml
    {"world": "...", "packaged": false, "inputs": [...],
-    "plugins": [{"key": "floorplan", "ref": "floorplan", "name": null,
-                 "paths": ["plugins.floorplan.mesh", "plugins.floorplan.floor.reflectance"]}],
+    "plugins": [{"address": "robot", "key": "robot", "ref": "spawn_robot", "name": "robot",
+                 "entity": null, "enabled": true, "origin": "document",
+                 "paths": ["components.robot.model", "components.robot.pos"]},
+                {"address": "robot.lidar", "key": "robot.lidar", "ref": "lidar", "name": null,
+                 "entity": "robot", "enabled": true, "origin": "manifest",
+                 "paths": ["components.robot.lidar.rays", "components.robot.lidar.max_range"]}],
+    "addresses": ["robot", "robot.diff_drive", "robot.lidar", "robot.oakd_camera"],
     "entities": null}
 
-``plugins`` reports each plugin under the key :func:`~roqsim.config.apply_overrides` resolves it by --
-its reserved ``name:`` sibling if it has one, else its plugin ref -- together with the dotted paths
-into its config that already exist. Note that a ``name`` *inside* a plugin's config is the entity's
-name and addresses nothing; confusing the two is an override refused at load time.
+``plugins`` reports every component that will **run** -- the document's own entries and everything its
+models' manifests contribute -- under the ``address`` an override names it by, with the dotted paths
+into its config that already exist. ``origin`` says which of the two a component came from. ``key`` is
+kept as an alias of ``address`` so a reader keyed on that field keeps working; the meaningful change
+is its value.
+
+``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
+sweep key against it before spending an image pull. Note the world above declares one entry and gets
+three more from the turtlebot4's manifest -- those three are the ones a campaign is most likely to
+want, and they used not to appear here at all.
 
 A path not listed is not necessarily wrong (a plugin may accept a key its world leaves at the
-default), so a caller reports an unlisted path as unverifiable. What the list does settle is the
-expensive mistake: a *plugin* key matching nothing, which ``apply_overrides`` refuses -- inside the
-container, after the image pull.
+default), so a caller reports an unlisted *path* as unverifiable. What the list does settle is the
+expensive mistake: an *address* matching nothing, refused at load -- inside the container, after the
+image pull.
 
 ``entities`` is ``null`` unless ``--entities`` is passed, because naming them means compiling the
 model. There is no cheaper way to ask: which entities exist is settled at compile time, since roqsim
@@ -231,7 +242,7 @@ obstacles come from its own overrides sees none of them without it::
    roqsim scenes describe world/secorolab_nav2.yaml --entities --override run.overrides.yaml
    {..., "entities": ["obstacle_0", "robot"], "errors": null}
 
-A plugin key the world does not have is still refused, exactly as ``apply_overrides`` refuses it when
+An address the world does not have is still refused, exactly as it is refused when
 a run loads -- which is the expensive mistake this command exists to catch first.
 
 That build has **no transport in it**, and ``dropped_transport`` names what went::
