@@ -62,7 +62,8 @@ def test_no_map_frame_consumer_is_more_impatient_than_amcl(path):
     assert not too_tight, (
         f"{path.name}: these transform map <-> odom but give up sooner than amcl ({amcl}s) "
         f"promises its transform stays valid: {too_tight}. A stale lookup here is silent and "
-        f"reads as an arrival at the frame origin.")
+        f"reads as an arrival at the frame origin."
+    )
 
 
 @pytest.mark.parametrize("path", _params_files(), ids=lambda p: p.name)
@@ -71,10 +72,13 @@ def test_every_map_frame_consumer_states_a_tolerance(path):
     default is 0.3 s, so a block that says nothing has already chosen a value below amcl's."""
     document = yaml.safe_load(path.read_text())
 
-    silent = [label for label, block in _blocks(document)
-              if block.get("global_frame") in AMCL_GOVERNED_FRAMES
-              and "transform_tolerance" not in block]
+    silent = [
+        label
+        for label, block in _blocks(document)
+        if block.get("global_frame") in AMCL_GOVERNED_FRAMES and "transform_tolerance" not in block
+    ]
 
     assert not silent, (
         f"{path.name}: {silent} transform map <-> odom without stating a transform_tolerance, so "
-        f"they inherit nav2's 0.3s default -- below what amcl promises. State it explicitly.")
+        f"they inherit nav2's 0.3s default -- below what amcl promises. State it explicitly."
+    )

@@ -31,7 +31,9 @@ def prefixed_joints(model, prefix: str) -> list[int]:
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, jid) or ""
         if not name.startswith(prefix):
             continue
-        if model.jnt_type[jid] in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
+        # int(): mjt* enums compare False against a numpy scalar (`x in (...)` puts the enum on the
+        # left of `==`), which would leave this list empty and the arm with no reportable joints.
+        if int(model.jnt_type[jid]) in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE):
             out.append(jid)
     return out
 

@@ -789,8 +789,9 @@ class StateRecorder:
             return
         try:
             self._entities_path.parent.mkdir(parents=True, exist_ok=True)
-            self._entities_path.write_text(json.dumps({"entities": roster}) + "\n",
-                                           encoding="utf-8")
+            self._entities_path.write_text(
+                json.dumps({"entities": roster}) + "\n", encoding="utf-8"
+            )
         except OSError as err:
             self.log.debug("recording: entity roster not written (%s)", err)
             return

@@ -146,7 +146,9 @@ def _load_world(
     for g in range(model.ngeom):
         if g in skip:
             continue
-        gtype = model.geom_type[g]
+        # int(): mjt* enums compare False against a numpy scalar (`x in (...)` puts the enum on
+        # the left of `==`), so the CYLINDER/CAPSULE match below would silently never fire.
+        gtype = int(model.geom_type[g])
         size = model.geom_size[g]
         if gtype == mujoco.mjtGeom.mjGEOM_PLANE:
             continue  # the floor: a scan plane above it never intersects it

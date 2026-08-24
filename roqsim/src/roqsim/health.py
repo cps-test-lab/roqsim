@@ -632,8 +632,9 @@ class Report:
 class Monitor:
     """The three checks over one source, polled until something is wrong or the caller stops."""
 
-    def __init__(self, source: FileSource, robots: list[str], origin: float,
-                 no_robots: str = "") -> None:
+    def __init__(
+        self, source: FileSource, robots: list[str], origin: float, no_robots: str = ""
+    ) -> None:
         self.source = source
         self.origin = origin
         self.report = Report()
@@ -657,8 +658,11 @@ class Monitor:
             # skipped check whose reason is unstated is one nobody can act on.
             self.report.skipped.append(
                 "check 1 (robot-motion): nothing to watch. "
-                + (no_robots or f"{SIM_POSE_FILENAME} names root bodies; it does not say which "
-                                f"are robots, and no {ENTITIES_FILENAME} said either.")
+                + (
+                    no_robots
+                    or f"{SIM_POSE_FILENAME} names root bodies; it does not say which "
+                    f"are robots, and no {ENTITIES_FILENAME} said either."
+                )
             )
 
     @property
@@ -743,10 +747,16 @@ class Monitor:
                     "sim_ts": round(row.sim_ts, 6),
                     "position": [round(v, 6) for v in row.pos],
                     **({"orientation": [round(v, 6) for v in row.quat]} if row.quat else {}),
-                    **({"twist_linear": [round(v, 6) for v in row.twist_linear]}
-                       if row.twist_linear else {}),
-                    **({"twist_angular": [round(v, 6) for v in row.twist_angular]}
-                       if row.twist_angular else {}),
+                    **(
+                        {"twist_linear": [round(v, 6) for v in row.twist_linear]}
+                        if row.twist_linear
+                        else {}
+                    ),
+                    **(
+                        {"twist_angular": [round(v, 6) for v in row.twist_angular]}
+                        if row.twist_angular
+                        else {}
+                    ),
                 }
                 for name, row in sorted(self._latest_pose.items())
             ]
@@ -845,8 +855,11 @@ def read_roster(directory: Path) -> tuple[dict, str | None]:
         if not isinstance(entry, dict) or not entry.get("name"):
             continue
         frame = entry.get("body") or entry["name"]
-        out[str(frame)] = (str(entry["name"]), str(entry.get("kind") or ""),
-                           bool(entry.get("present", True)))
+        out[str(frame)] = (
+            str(entry["name"]),
+            str(entry.get("kind") or ""),
+            bool(entry.get("present", True)),
+        )
     if not out:
         return {}, f"{path} names no entities"
     return out, None
@@ -860,8 +873,9 @@ def robots_in(roster: dict) -> list[str]:
     is standing still entirely correctly. Watching it would make check 1 fire on a world doing
     exactly what it was told to.
     """
-    return sorted(frame for frame, (_name, kind, present) in roster.items()
-                  if kind == "robot" and present)
+    return sorted(
+        frame for frame, (_name, kind, present) in roster.items() if kind == "robot" and present
+    )
 
 
 def _await_clock(run_dir: Path, deadline: float, poll: float) -> Path | None:
@@ -945,8 +959,9 @@ def main(argv: list | None = None) -> int:
     if not robots:
         robots = robots_in(roster)
         if not robots:
-            no_robots = (roster_error or f"{ENTITIES_FILENAME} lists no robot that is present") \
-                + ", and no --robot was given"
+            no_robots = (
+                roster_error or f"{ENTITIES_FILENAME} lists no robot that is present"
+            ) + ", and no --robot was given"
     monitor = Monitor(source, robots, origin, no_robots=no_robots)
     recording = recording_of(clock_path)
     deadline = origin + args.duration if (args.watch and args.duration > 0) else None
@@ -1023,9 +1038,11 @@ def main(argv: list | None = None) -> int:
             # One line, because the text mode is for a person watching and the detail belongs in
             # --json. Enough to see a wedged clock without asking a second question.
             rate = report.state.get("rate")
-            print(f"state sim {report.state.get('sim_ts', '?')}s"
-                  + (f" at {rate}x" if rate is not None else "")
-                  + f", {len(report.state.get('entities', []))} bodies")
+            print(
+                f"state sim {report.state.get('sim_ts', '?')}s"
+                + (f" at {rate}x" if rate is not None else "")
+                + f", {len(report.state.get('entities', []))} bodies"
+            )
         if not report.findings:
             print("ok    nothing wrong observed")
     return EXIT_FINDING if report.failed else EXIT_OK

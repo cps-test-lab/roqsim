@@ -103,7 +103,13 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	# exited 5 ("no tests collected") while the same commit passed everywhere else. The venv owns its
 	# own test runner.
 	$(PIP) install --ignore-installed pytest
-	$(PIP) install sphinx furo ruff
+	# ruff is PINNED because it is the formatter: `ruff format` output changes between releases,
+	# so an unpinned one turns `make lint` red on a commit that touched nothing -- 0.16.4 rewrapped
+	# three files 0.16.3 was happy with, and main went red with no code change behind it. It also
+	# breaks what the CI workflow promises, that a contributor reproduces CI with one make target:
+	# a contributor whose ruff differs from CI's cannot. Bump this deliberately, reformatting in
+	# the same commit. sphinx/furo only render docs, so they stay floating.
+	$(PIP) install sphinx furo ruff==0.16.4
 	$(EXTERNAL) convert --resource spot_locomotion_policy  # fetch the NVIDIA Spot policy (external asset; fail-soft)
 	@echo
 	@echo "venv ready. For ROS/nav2: 'source /opt/ros/jazzy/setup.bash' then 'make test'."

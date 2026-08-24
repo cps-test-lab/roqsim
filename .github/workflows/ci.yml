@@ -21,10 +21,14 @@ jobs:
       # backend selection picks osmesa rather than egl -- hence libosmesa6, not just libegl1.
       # ffmpeg is what `roqsim render --out x.webm` shells out to; without it the video tests fail
       # with the code's own "ffmpeg is not on PATH" error, which is a missing runner dep, not a bug.
-      - name: Install GL libraries and ffmpeg
+      # python3-tk is the scene-builder's GUI test dependency. tkinter ships with CPython but Ubuntu
+      # packages it separately, and this runner already has the Xvfb those tests map their window on --
+      # so the display fixture runs and `import tkinter` is what fails. The ros job has no Xvfb and
+      # skips them, which makes this the only job that measures the review panel's real geometry.
+      - name: Install GL libraries, ffmpeg and Tk
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6 ffmpeg
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libosmesa6 ffmpeg python3-tk
 
       - name: Create venv and install packages
         run: make venv
