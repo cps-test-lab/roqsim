@@ -283,6 +283,15 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
   lets a consumer see what will run: ``roqsim scenes describe`` can name a sensor the document never
   declared, and ``world_sources`` sees a manifest-supplied component's files (it did not, so
   ``prop_trajectory``'s CSV resolved against the caller's working directory rather than the world's).
+- **A run records the components that ran, and a recording is rebuilt by reading them.** The
+  provenance carries the resolved tree and the ``sim`` block beside the recipe (the world reference
+  and the override document, which stay because they are what a reader needs to see how the run was
+  asked for, and what an external consumer uses as world identity). Replay no longer re-runs the load
+  path, so no later change to how an override resolves can make a recording rebuild a *different*
+  world while looking correct. ``format_version`` is now **read**: a newer record is refused rather
+  than partly understood, and an older one still reads -- its samples, times and clock are intact --
+  but will not rebuild from overrides that would resolve differently today.
+
 - **Loading stays tolerant; running does not.** A ref that will not import is recorded on
   ``SimConfig.unresolved`` and its entry is kept, unexpanded, so a scene-only consumer (``roqsim
   render``, the exporters, ``describe``) still gets a world whose transport is not installed.

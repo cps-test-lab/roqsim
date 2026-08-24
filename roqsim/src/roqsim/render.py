@@ -400,7 +400,12 @@ def _preflight(out: Path, size: tuple[int, int], *, check: bool = False) -> None
 
 
 def build_target(
-    target: str, overrides: dict | None, *, no_ceiling: bool = False, skip_transport: bool = True
+    target: str,
+    overrides: dict | None,
+    *,
+    no_ceiling: bool = False,
+    skip_transport: bool = True,
+    world_model: dict | None = None,
 ):
     """Compile ``target`` and return ``(model, data, ctx, view, camera_or_None)``.
 
@@ -411,6 +416,11 @@ def build_target(
     That subtraction (``skip_transport``, see :func:`roqsim.config.drop_transport_plugins`) is what lets a
     ``*_ros`` world be rendered without ROS installed. Pass ``skip_transport=False`` to demand the
     simulator's own strict build.
+
+    ``world_model`` is a recording's resolved component tree (:meth:`roqsim.config.SimConfig.as_record`).
+    When given, the config is READ from it rather than resolved from ``target`` and ``overrides`` --
+    so a recording renders the components that ran, whatever has happened to the override grammar
+    since. ``target`` is still used for the assets those components name.
     """
     if is_mesh(target):
         model, cam = mesh_scene(target)
@@ -422,7 +432,12 @@ def build_target(
     from .engine import Engine
     from .runner import config_for_input
 
-    cfg = config_for_input(target, overrides)
+    if world_model is not None:
+        from .config import SimConfig
+
+        cfg = SimConfig.from_record(world_model)
+    else:
+        cfg = config_for_input(target, overrides)
     if skip_transport:
         transport, unavailable = drop_transport_plugins(cfg)
         if transport:

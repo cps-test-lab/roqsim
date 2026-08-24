@@ -50,7 +50,11 @@ log = logging.getLogger(__name__)
 
 #: The format this writer implements. A consumer refuses an unknown pair rather than misreading it.
 FORMAT = "robovast.run_capture"
-FORMAT_VERSION = 1
+#: v2: the ``overrides`` half of world identity addresses components by PATH (``robot.lidar``) rather
+#: than by plugin name or ref. The document's shape is unchanged, so an old one still parses -- which
+#: is exactly why the version has to move: a consumer keying a cache on it would otherwise take a
+#: stale hit for a document that now resolves to a different world.
+FORMAT_VERSION = 2
 
 #: Bodies whose world pose stays within this of its first sample are treated as static and get no
 #: track. Well below anything visible at any sane zoom, and above float32 round-trip noise (a

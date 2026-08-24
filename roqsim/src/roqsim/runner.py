@@ -705,6 +705,7 @@ def run(
                 rate,
                 world=target,
                 overrides=overrides,
+                config=engine.config,
                 camera=False,
                 sim_poses=env_flag("ROQSIM_SIM_POSES"),
                 logger=engine.logger or log,
@@ -718,6 +719,7 @@ def run(
             rate,
             world=target,
             overrides=overrides,
+            config=engine.config,
             camera=True,
             logger=engine.logger or log,
         )

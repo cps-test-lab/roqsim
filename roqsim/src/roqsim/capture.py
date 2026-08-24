@@ -241,7 +241,10 @@ STATE_FIELDS = (
 )
 
 #: The recording's own format version, so a future change is refused by name rather than misread.
-FORMAT_VERSION = 1
+#: Bumped when the provenance's shape changes. It is READ (see :meth:`Recording.describe`), which it
+#: was not: written in two places and checked nowhere, an unrecognised record was silently
+#: mis-handled rather than refused.
+FORMAT_VERSION = 2
 
 #: Header of the streamed clock record, written beside the recording while the run proceeds.
 CLOCK_MAP_FIELDS = ("wall_ts", "sim_ts")
@@ -560,6 +563,7 @@ class StateRecorder:
         *,
         world: str | None = None,
         overrides: dict | None = None,
+        config=None,
         camera: bool = False,
         sim_poses: bool = False,
         logger: logging.Logger | None = None,
@@ -622,7 +626,13 @@ class StateRecorder:
             "seed": getattr(ctx, "seed", None),
             "episode": int(getattr(ctx, "episode", 0)),
             "world": world,
+            # The recipe: what a reader needs to see how this run was asked for, and what an external
+            # consumer uses as world identity. Replay does NOT re-interpret it -- see `world_model`.
             "overrides": overrides or {},
+            # What actually ran: the resolved component tree and the sim block it ran with. Recorded
+            # outright so rebuilding is a read rather than a re-resolution, which is what keeps a
+            # recording valid across a change to the override grammar.
+            "world_model": config.as_record() if config is not None else None,
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
             "state_fields": list(STATE_FIELDS),

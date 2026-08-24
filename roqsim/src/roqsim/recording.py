@@ -56,9 +56,24 @@ class Sample:
 class Recording:
     """An opened recording, with its world rebuilt and checked against what produced it."""
 
+    #: Provenance shapes this reader understands. A record written by a newer roqsim is REFUSED
+    #: rather than read with the keys that happen to overlap: it was written to a contract this code
+    #: has not seen, and guessing produces a plausible-looking replay of something else.
+    READER_VERSION = 2
+
     def __init__(self, path: Path, meta: dict, samples: np.ndarray) -> None:
         self.path = path
         self.meta = meta
+        # A NEWER record is refused outright: it was written to a contract this code has not seen,
+        # and reading it with the keys that happen to overlap produces a plausible-looking answer
+        # about something else. An OLDER one still reads -- its samples, times and clock are all
+        # there -- and is refused only where it would be REBUILT (see `build`).
+        version = int(meta.get("format_version") or 1)
+        if version > self.READER_VERSION:
+            raise RecordingError(
+                f"{path} was written with recording format v{version}; this roqsim reads up to "
+                f"v{self.READER_VERSION}. Read it with the version that wrote it, or re-record."
+            )
         self._samples = samples
         self._model: mujoco.MjModel | None = None
         self._ctx = None
@@ -154,6 +169,13 @@ class Recording:
         if self._model is not None:
             return self._model, self._ctx
 
+        if int(self.meta.get("format_version") or 1) < self.READER_VERSION and target is None:
+            raise RecordingError(
+                f"{self.path} predates components being addressed by path, so the overrides it "
+                f"carries would resolve differently against this world -- a run rebuilt from them "
+                f"would be a different one while looking correct. Re-record it, or pass the world "
+                f"explicitly to rebuild it without them."
+            )
         ref = target or self.world
         if not ref:
             raise RecordingError(
@@ -163,8 +185,16 @@ class Recording:
         from .render import build_target
 
         try:
+            # Rebuilt from the RESOLVED tree when the record carries one: the components that ran,
+            # with the config they ran with, so nothing is re-resolved and no later change to the
+            # override grammar can make this disagree with the run it describes. `target` still wins,
+            # which is how a recording whose world moved is rendered.
+            world_model = self.meta.get("world_model") if target is None else None
             model, data, ctx, view, _cam = build_target(
-                ref, self.meta.get("overrides") or None, no_ceiling=no_ceiling
+                ref,
+                self.meta.get("overrides") or None,
+                no_ceiling=no_ceiling,
+                world_model=world_model,
             )
         except Exception as err:
             raise RecordingError(self._rebuild_help(ref, err)) from err

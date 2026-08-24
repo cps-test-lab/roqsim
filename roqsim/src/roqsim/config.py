@@ -304,6 +304,57 @@ class SimConfig:
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
 
+    # -- the record a run leaves ---------------------------------------------------------------
+
+    def as_record(self) -> dict:
+        """This config as plain data, for a run's provenance.
+
+        The RESOLVED tree, not the document plus the overrides that were applied to it. A recording
+        that stored only the recipe had to re-run the whole load path to be replayed, which coupled
+        replay to the override grammar: any change to it invalidated every recording ever made. What
+        ran is recorded outright, so rebuilding reads rather than re-interprets.
+        """
+        return {
+            "sim": dict(self.sim),
+            "base_dir": str(self.base_dir),
+            "components": [
+                {
+                    "address": spec.address,
+                    "ref": spec.ref,
+                    "name": spec.name,
+                    "entity": spec.entity,
+                    "enabled": spec.enabled,
+                    "config": spec.config,
+                }
+                for spec in self.plugins
+            ],
+        }
+
+    @classmethod
+    def from_record(cls, record: dict) -> SimConfig:
+        """Rebuild a config from :meth:`as_record`, without resolving anything.
+
+        The components are already flat and in build order, and each already knows its entity -- so
+        this is a read, and nothing here can disagree with what the run actually had.
+        """
+        specs = [
+            PluginSpec(
+                ref=c["ref"],
+                name=c.get("name"),
+                config=dict(c.get("config") or {}),
+                entity=c.get("entity"),
+                enabled=bool(c.get("enabled", True)),
+            )
+            for c in record.get("components") or []
+        ]
+        return cls(
+            sim=dict(record.get("sim") or {}),
+            plugins=specs,
+            declared=specs,
+            base_dir=Path(record.get("base_dir") or Path.cwd()),
+            raw={"sim": dict(record.get("sim") or {})},
+        )
+
     # -- convenience accessors for the ``sim:`` block -----------------------------------------
     @property
     def name(self) -> str | None:
