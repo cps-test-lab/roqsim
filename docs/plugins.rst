@@ -151,6 +151,12 @@ in its ``realsense_d435`` capture plugin.
   world says wins; nested values (e.g. ``topics:``) replace the manifest's mapping outright rather
   than being deep-merged. To start from the *plugin's* own defaults instead of the model's, opt out
   with ``default_plugins: false`` and declare the plugin fully.
+- **Switch one off** with ``enabled: false`` -- as a sibling in the document, or from an override::
+
+     roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+
+  The component is not deleted: it stays addressable, stays in the run's record saying it was turned
+  off, and a later override can turn it back on. Disabling an entry disables everything it owns.
 - **Opt out** entirely: set ``default_plugins: false`` on the ``spawn_*`` config.
 - **Derive one manifest from another** with ``extends:``. ``unitree_g1_dex1`` is a ``unitree_g1``
   plus hands, and used to say so by repeating the base's locomotion and lidar blocks verbatim --

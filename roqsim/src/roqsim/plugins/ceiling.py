@@ -17,13 +17,20 @@ Height is the whole definition -- no per-object name list -- so the same plugin 
 Config::
 
     ceiling:
-      enabled: true      # the with_ceiling switch. true = keep the ceiling (no-op, the default, so
-                         # adding this plugin never surprise-deletes geometry). false = remove it.
+      keep: true         # true = keep the ceiling (no-op, the default, so adding this plugin never
+                         # surprise-deletes geometry). false = remove it.
       above_z: 2.5       # a geom is "ceiling" iff its whole world-space AABB is above this height (m)
 
-Set ``enabled: false`` in the world YAML (or via ``--set`` / an ``extends`` override / a campaign
-factor) to open the roof. Removal happens in ``build`` (pre-compile); the engine's ``dedup_assets``
-pass then drops the textures the removed geoms leave unreferenced.
+Set ``keep: false`` in the world YAML (or via ``--set`` / an ``extends`` override / a campaign
+factor) to open the roof.
+
+The key is ``keep`` rather than ``enabled`` because this plugin is SUBTRACTIVE: it does its work by
+removing geometry, so it is the entry running that opens the roof. ``enabled:`` is now a reserved
+sibling meaning "run this component at all", and ``ceiling: {enabled: false}`` would therefore leave
+the ceiling standing -- the exact opposite of what it used to mean, silently. It is refused by name.
+
+Removal happens in ``build`` (pre-compile); the engine's ``dedup_assets`` pass then drops the
+textures the removed geoms leave unreferenced.
 """
 
 from __future__ import annotations
@@ -45,15 +52,21 @@ class CeilingPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # Default enabled=true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into
-        # a world never deletes geometry unless the world explicitly asks (enabled: false).
-        self.enabled = bool(self.config.get("enabled", True))
+        # Default keep=true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into
+        # a world never deletes geometry unless the world explicitly asks (keep: false).
+        self.keep = bool(self.config.get("keep", True))
         self.above_z = float(self.config.get("above_z", 2.5))
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
-        if "enabled" in config and not isinstance(config["enabled"], bool):
-            errors.append("'enabled' must be a boolean")
+        if "enabled" in config:
+            errors.append(
+                "'enabled' is now a reserved sibling meaning 'run this component at all', and this "
+                "plugin works by REMOVING geometry -- so `enabled: false` would leave the ceiling "
+                "standing, the opposite of what it used to mean. Use `keep:` instead."
+            )
+        if "keep" in config and not isinstance(config["keep"], bool):
+            errors.append("'keep' must be a boolean")
         if "above_z" in config:
             try:
                 z = float(config["above_z"])
@@ -64,7 +77,7 @@ class CeilingPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        if self.enabled:
+        if self.keep:
             return  # keep the ceiling: no-op
 
         # Measure world-space geom heights on a throwaway compile (the only reliable source of mesh

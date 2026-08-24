@@ -84,6 +84,10 @@ class PluginSpec:
     #: The entity this entry belongs to: its owner's label, filled in by the loader. ``None`` at the
     #: root, where an entry belongs to the world itself.
     entity: str | None = None
+    #: Whether this component runs. ``false`` turns a component off without deleting it, so it is
+    #: still addressable, still in the record, and still re-enablable by a later override -- which
+    #: makes "is this sensor present" a value a campaign can sweep rather than a structural edit.
+    enabled: bool = True
 
     @property
     def label(self) -> str:
@@ -129,7 +133,8 @@ def with_document_entries(doc: dict, entries: list) -> dict:
 #: can never collide with one of these.
 _NAME_KEY = "name"
 _CHILDREN_KEY = "components"
-_RESERVED_SIBLINGS = frozenset({_NAME_KEY, _CHILDREN_KEY})
+_ENABLED_KEY = "enabled"
+_RESERVED_SIBLINGS = frozenset({_NAME_KEY, _CHILDREN_KEY, _ENABLED_KEY})
 
 
 def entry_ref(entry: dict) -> str:
@@ -165,7 +170,12 @@ def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
         raise PluginError(
             f"{where}: config for '{ref}' must be a mapping, got {type(config).__name__}"
         )
-    spec = PluginSpec(ref=str(ref), name=entry.get(_NAME_KEY), config=dict(config or {}))
+    enabled = entry.get(_ENABLED_KEY, True)
+    if not isinstance(enabled, bool):
+        raise PluginError(f"{where}: '{_ENABLED_KEY}:' must be true or false, got {enabled!r}")
+    spec = PluginSpec(
+        ref=str(ref), name=entry.get(_NAME_KEY), config=dict(config or {}), enabled=enabled
+    )
     children = entry.get(_CHILDREN_KEY)
     if children is not None and not isinstance(children, list):
         raise PluginError(
@@ -212,6 +222,30 @@ def _check_label_vs_config(spec: PluginSpec) -> None:
             f"of the same name, so 'components.{spec.address}.{clash[0]}' would be ambiguous. "
             f"Rename the component."
         )
+
+
+def resolve_enabled(specs: list[PluginSpec]) -> None:
+    """Propagate ``enabled: false`` down the tree, in place.
+
+    Disabling an entry disables everything it owns. Without that the entity is never registered and
+    its components hit the soft lookup every one of them does (``ctx.entities.get(...)`` then
+    ``if entity else ""``), so a sensor resolves an unprefixed site and fails much later with a
+    message about MJCF names -- which is the silent class of failure this design exists to remove.
+    The cascade is computed rather than left to the reader, and each spec keeps its own ``enabled``
+    so the record shows what was turned off and what merely went with it.
+    """
+    for spec in specs:
+        if not spec.enabled:
+            for child in _subtree(spec):
+                child.enabled = False
+
+
+def _subtree(spec: PluginSpec) -> list[PluginSpec]:
+    out: list[PluginSpec] = []
+    for child in spec.children:
+        out.append(child)
+        out.extend(_subtree(child))
+    return out
 
 
 def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
@@ -384,33 +418,36 @@ def _entry_identities(entry: dict) -> set[str]:
 
 
 def _apply_disable(plugins: list, selectors: list) -> list:
-    """Return ``plugins`` with every entry an inherited ``disable`` selector names removed.
+    """Return ``plugins`` with every entry an inherited ``disable`` selector names turned OFF.
 
-    Selectors are plugin names (see :func:`_entry_identities`). A selector matching **no** inherited
-    plugin is a hard error -- a typo must not silently keep something the world meant to drop.
+    Sugar for ``enabled: false`` at that label, which is what makes it one mechanism rather than two:
+    the entry stays in the document, so it is still addressable, still in the record, and a later
+    override can turn it back on. It used to be deleted, which left no trace that a base world had
+    ever contributed it.
+
+    Selectors are labels (see :func:`_entry_identities`). A selector matching **no** inherited entry
+    is a hard error -- a typo must not silently keep something the document meant to drop.
     """
     if not isinstance(selectors, list):
-        raise PluginError(
-            f"'disable' must be a list of plugin names, got {type(selectors).__name__}"
-        )
+        raise PluginError(f"'disable' must be a list of labels, got {type(selectors).__name__}")
     sel_set: set[str] = set()
     for sel in selectors:
         if not isinstance(sel, str):
             raise PluginError(
-                f"'disable' entries must be strings (plugin names), got {type(sel).__name__}"
+                f"'disable' entries must be strings (labels), got {type(sel).__name__}"
             )
         sel_set.add(sel)
-    kept, matched = [], set()
+    out, matched = [], set()
     for entry in plugins:
-        drop = _entry_identities(entry) & sel_set
-        if drop:
-            matched |= drop
-        else:
-            kept.append(entry)
+        hit = _entry_identities(entry) & sel_set
+        if hit:
+            matched |= hit
+            entry = {**entry, _ENABLED_KEY: False}
+        out.append(entry)
     unmatched = sel_set - matched
     if unmatched:
-        raise PluginError(f"'disable' selector(s) matched no inherited plugin: {sorted(unmatched)}")
-    return kept
+        raise PluginError(f"'disable' selector(s) matched no inherited entry: {sorted(unmatched)}")
+    return out
 
 
 def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset()) -> dict:
@@ -785,6 +822,16 @@ def apply_assignments(cfg_raw: dict, specs: list[PluginSpec], assignments) -> li
                     f"override '{'.'.join(a.path)}' names the component '{spec.address}' but no key "
                     f"in it. An address is not a value; say which of its keys to set."
                 )
+            if config_path == (_ENABLED_KEY,):
+                # The one reserved sibling an override may set: it is the removal knob, and turning
+                # a component off is exactly the kind of thing a campaign varies.
+                if not isinstance(a.value, bool):
+                    raise PluginError(
+                        f"override '{'.'.join(a.path)}' must be true or false, got {a.value!r}"
+                    )
+                spec.enabled = a.value
+                matched.append(a)
+                continue
             if config_path[0] in _RESERVED_SIBLINGS:
                 raise PluginError(
                     f"override '{'.'.join(a.path)}' would set '{config_path[0]}', which is how "
@@ -989,6 +1036,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     matched = apply_assignments(raw, declared_tree, component_assignments)
     effective, unresolved = expand_document(plugins, base_dir)
     matched += apply_assignments(raw, _as_tree(effective), component_assignments)
+    resolve_enabled(_as_tree(effective))
     unmatched = [a for a in component_assignments if a not in matched]
     if unmatched:
         a = unmatched[0]
@@ -1249,7 +1297,13 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
     """
     if cfg.unresolved:
         raise PluginError(_unresolved_message(cfg.unresolved))
-    resolved = [(spec, resolve_plugin(spec.ref, base_dir=cfg.base_dir)) for spec in cfg.plugins]
+    # `enabled: false` is the removal. The spec stays in `cfg.plugins` -- addressable, recorded,
+    # and re-enablable by a later override -- but nothing is constructed for it.
+    resolved = [
+        (spec, resolve_plugin(spec.ref, base_dir=cfg.base_dir))
+        for spec in cfg.plugins
+        if spec.enabled
+    ]
     instances: list[Plugin] = [
         cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
         for spec, cls in resolved

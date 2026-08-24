@@ -145,7 +145,7 @@ def test_comments_survive_the_write():
 
         components:
           # Ships OPEN (roofless) -- set `enabled: true` for the roofed warehouse.
-          - ceiling: {above_z: 2.6, enabled: false}
+          - ceiling: {above_z: 2.6, keep: false}
         """)
     after = replace_sim_view(before, VIEW)
     assert _sim_view(after) == VIEW

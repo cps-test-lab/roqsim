@@ -118,6 +118,18 @@ components:
   robot.lidar: {rays: 720}
 ```
 
+Setting `enabled: false` removes a component without deleting it:
+
+```console
+$ roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+```
+
+That makes "is this sensor present" a value a campaign can sweep rather than an edit to the world
+file. The component stays addressable and stays in the run's record saying it was turned off, and a
+later override can turn it back on. Disabling an entry disables everything it owns, so switching off
+a robot switches off its sensors too rather than leaving them aimed at an entity that no longer
+exists. `disable:` in an `extends` chain is the same thing under another name.
+
 Overriding `components.robot.model` swaps the model *and* what its manifest contributes, because
 assignments are applied before expansion reads `model:` as well as after. An assignment that names no
 component is refused, and the message says what the document does have — a swept parameter that

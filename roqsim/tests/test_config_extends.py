@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from roqsim.config import load_config
+from roqsim.config import instantiate_plugins, load_config
 from roqsim.plugin import PluginError
 
 
@@ -112,7 +112,14 @@ def test_disable_drops_named_plugin(tmp_path):
     )
     cfg = load_config(child)
     # Both matched by their LABEL -- one key, whether the entry named itself or fell back to its ref.
-    assert [s.label for s in cfg.plugins] == ["table_1"]
+    # And turned OFF rather than deleted: the entry stays addressable, stays in the record, and a
+    # later override can turn it back on. Nothing is constructed for a disabled entry.
+    assert [(s.label, s.enabled) for s in cfg.declared] == [
+        ("table_1", True),
+        ("table_2", False),
+        ("greeter", False),
+    ]
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == ["SpawnModelPlugin"]
 
 
 def test_disable_unknown_selector_raises(tmp_path):
@@ -126,7 +133,7 @@ def test_disable_unknown_selector_raises(tmp_path):
         plugins: []
         """,
     )
-    with pytest.raises(PluginError, match="matched no inherited plugin"):
+    with pytest.raises(PluginError, match="matched no inherited entry"):
         load_config(child)
 
 

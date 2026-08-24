@@ -344,16 +344,19 @@ class _CamShim:
 def _disable_ceiling(cfg) -> bool:
     """Turn off the world's ``ceiling`` plugin if it has one. Returns whether anything changed.
 
-    Applied to the *parsed* config rather than as a ``--set`` override, because ``apply_overrides``
-    refuses an override that matches no plugin -- correct for ``--set`` (a typo there is a silent
-    no-op otherwise) but wrong for a convenience flag whose intent a ceiling-less world already
-    satisfies. Failing there also produced a genuinely hostile message: the override error lists every
-    plugin in the world, which for a populated scene is several hundred names.
+    Applied to the *parsed* config rather than as a ``--set`` override, because an override that
+    matches no component is refused -- correct for ``--set`` (a typo there would otherwise be a
+    silent no-op) but wrong for a convenience flag whose intent a ceiling-less world already
+    satisfies. Failing there also produced a genuinely hostile message: the refusal lists what the
+    document has, which for a populated scene is several hundred names.
+
+    Sets the plugin's own ``keep``, not the reserved ``enabled:`` sibling: this plugin opens the roof
+    by *removing* geometry, so turning the component off would leave the ceiling standing.
     """
     changed = False
     for spec in cfg.plugins:
         if spec.ref == "ceiling" or spec.name == "ceiling":
-            spec.config["enabled"] = False
+            spec.config["keep"] = False
             changed = True
     return changed
 
@@ -908,7 +911,7 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--no-ceiling",
         action="store_true",
-        help="shorthand for --set plugins.ceiling.enabled=false, to look into a roofed world",
+        help="shorthand for --set components.ceiling.keep=false, to look into a roofed world",
     )
     parser.add_argument(
         "--set",

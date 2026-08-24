@@ -181,7 +181,7 @@ def test_opening_the_roof_removes_every_fitting_but_keeps_its_light(tmp_path):
         {"strip_light": {"name": "s", "prefix": "s_", "pos": [4.0, 3.0, 3.5], "emit": True}},
     ]
     closed = _built(tmp_path, fittings)
-    opened = _built(tmp_path, [*fittings, {"ceiling": {"enabled": False, "above_z": 2.6}}])
+    opened = _built(tmp_path, [*fittings, {"ceiling": {"keep": False, "above_z": 2.6}}])
 
     for prefix in ("p_", "d_", "s_"):
         assert _geoms(closed, prefix), prefix
