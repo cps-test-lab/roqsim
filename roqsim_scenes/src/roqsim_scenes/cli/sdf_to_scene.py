@@ -446,7 +446,7 @@ class Importer:
                 continue
             try:
                 hull_vol = float(ConvexHull(pv).volume)
-            except Exception:  # degenerate/coplanar: no volume to swallow
+            except Exception:  # noqa: S112 - degenerate/coplanar: no volume to swallow
                 continue
             ratio = hull_vol / mesh_vol
             if ratio <= self._MAX_HULL_RATIO:

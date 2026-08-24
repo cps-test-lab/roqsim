@@ -292,7 +292,8 @@ class MovingBoxPlugin(Plugin):
         self._dir = 1
         self._done = False
         if self.random_walk is not None:
-            self._rng = random.Random(int(self.random_walk["seed"]))
+            # noqa S311: a seeded walk for a moving prop -- reproducibility, not secrecy.
+            self._rng = random.Random(int(self.random_walk["seed"]))  # noqa: S311
             self._heading = self._rng.uniform(-math.pi, math.pi)
         if ctx.data is not None and self._mocapid >= 0:
             ctx.data.mocap_pos[self._mocapid] = [self._xy[0], self._xy[1], self.pos[2]]
@@ -358,7 +359,7 @@ class MovingBoxPlugin(Plugin):
             if self._is_free(ctx, nxt, clearance) and self._in_bounds(walk.get("bounds"), nxt):
                 self._xy = nxt
                 return
-            assert self._rng is not None
+            assert self._rng is not None  # noqa: S101 - narrows the type; guarded by on_reset
             self._heading = _wrap(self._heading + math.radians(self._rng.uniform(lo, hi)))
         # Every sampled heading was blocked: hold position this step rather than tunnelling through
         # geometry. The next step re-samples, so a boxed-in mover idles instead of teleporting out.

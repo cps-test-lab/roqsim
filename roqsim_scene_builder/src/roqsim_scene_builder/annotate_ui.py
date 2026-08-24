@@ -29,7 +29,7 @@ FG = "#e8e8e8"
 MUTED = "#9a9a9a"
 ENTRY_BG = "#2a2a2a"
 BORDER = "#444444"
-PASS_BG = "#1f6b2e"
+PASS_BG = "#1f6b2e"  # noqa: S105 - a colour, not a credential
 FAIL_BG = "#7a1f1f"
 SEND_BG = "#1f4f7a"
 

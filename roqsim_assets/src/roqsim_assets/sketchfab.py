@@ -99,11 +99,16 @@ _load_dotenv()
 
 def _get(url: str, token: str | None = None) -> bytes:
     """GET raw bytes. Search / metadata / thumbnails are public; only the download endpoint needs a token."""
-    req = urllib.request.Request(url)
+    # urlopen honours whatever scheme it is handed, so a `file:` URL would read a local path and a
+    # redirect could downgrade to plain http -- with the API token attached, since the Authorization
+    # header rides along. Every Sketchfab endpoint is https, so anything else is a bug or an attack.
+    if not url.startswith("https://"):
+        raise ValueError(f"refusing a non-https Sketchfab URL: {url!r}")
+    req = urllib.request.Request(url)  # noqa: S310 - scheme checked above
     if token:
         req.add_header("Authorization", f"Token {token}")
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=60) as resp:  # noqa: S310 - scheme checked above
             return resp.read()
     except urllib.error.HTTPError as exc:
         sys.exit(f"HTTP {exc.code} for {url}: {exc.read().decode(errors='replace')[:200]}")
