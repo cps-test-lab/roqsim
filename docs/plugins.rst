@@ -364,6 +364,58 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
 
+Degrading a sensor mid-run
+--------------------------
+
+``model_override`` changes the *physics*. Its counterpart changes what a sensor **reports** — a lidar
+that starts dropping returns halfway down a corridor, a scanner whose noise triples when it fogs up.
+That perturbation belongs in the sensor's own config (§9.1), not in a model field, so it is written
+there and needs no plugin of its own::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - lidar:
+             range_stddev: 0.01
+             dropout_percent: 2.0
+             fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
+
+The sensor is nominal until the fault is switched on, so adding a ``fault:`` block changes nothing
+about a run that never fires it. A scenario switches it by the sensor's **address**::
+
+   set_sensor_override(instance: 'robot.lidar', active: true)
+   wait elapsed(8s)
+   set_sensor_override(instance: 'robot.lidar', active: false)
+
+and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/lidar/override``, with
+``robot/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
+path of labels with dots as slashes, because a dot is not legal in a ROS name; a bare ``lidar`` would
+name neither of a robot's two lidars.
+
+It mirrors ``model_override`` in the three ways that matter, rather than re-deciding them:
+
+* **Severity is configured, not sent.** The ``fault:`` values are ordinary config, so sweeping how bad
+  the fault gets is ``components.robot.lidar.fault.dropout_percent`` — a campaign factor,
+  deterministic per cell and in the run's provenance. One bit crosses the wire.
+* **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
+  experiment's independent variable.
+* **A fault that changed nothing is reported as such.** Applying a block whose values already equal
+  the nominal reports ``no_effect``, and ``set_sensor_override``'s ``require_landed`` fails the trial
+  on it — an unfaulted outcome wearing a faulted label is worse than a failed run. A *restore* has
+  nothing to verify and reports ``untested``.
+
+**Only keys the sensor reads per frame may be written.** Each sensor declares its own allowlist; on
+the ray-casting sensors that is ``range_stddev``, ``dropout_percent``, ``max_range``, ``range_min``
+and ``rate_hz``. Everything else is refused **at load**, by name, with the reason — ``rays``,
+``angle_min`` and ``angle_max`` because they change a ``LaserScan``'s length or the bearing its
+indices mean, and ``site``/``frame_id``/``exclude_body`` because they are consumed once at
+``configure``. This is the ``geom_size`` lesson from the physics channel: a value that writes fine,
+takes effect nowhere, and reads back as though it had is worse than one that is refused.
+
+A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
+next would quietly turn a nominal control cell into a degraded one.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 

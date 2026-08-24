@@ -73,18 +73,30 @@ class InProcessAccess(WorldAccess):
         return self._bids[key]
 
     # -- the fault ------------------------------------------------------------------------------
-    def apply_override(self, instance: str, active: bool) -> OverrideCall:
+    def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         ctx = self._ctx()
         if ctx is None:
             raise AccessError("the world is not built yet; call ready() first")
-        key = f"model_override:{instance}"
+        prefix = self.OVERRIDE_KINDS[kind]
+        key = f"{prefix}:{instance}"
         handle = ctx.blackboard.get(key)
         if handle is None:
+            published_by = (
+                "a `model_override` plugin instance in the world, whose `name:` must match"
+                if kind == "model"
+                else "a sensor carrying a `fault:` block, addressed by its COMPONENT ADDRESS "
+                "(`robot.lidar`, not `lidar`) -- a sensor with no `fault:` publishes nothing"
+            )
+            offered = sorted(
+                k.split(":", 1)[1]
+                for k in getattr(ctx.blackboard, "_data", {})
+                if k.startswith(prefix + ":")
+            )
             raise AccessError(
-                f"nothing on the blackboard under {key!r}. It is published by a `model_override` "
-                "plugin instance in the world -- check that the campaign's config is the world "
-                "carrying the fault, and that the instance's `name:` matches what the scenario "
-                "asks for. `roqsim scenes describe <world>` lists what a world offers an override."
+                f"nothing on the blackboard under {key!r}. It is published by {published_by}. "
+                f"This world offers: {', '.join(offered) if offered else '(none)'}. "
+                "Check that the campaign's config is the world carrying the fault; "
+                "`roqsim scenes describe <world>` lists what a world offers."
             )
         if bool(handle.is_active()) == bool(active):
             # Nothing to do, and nothing to WAIT for. A call that waited for a transition here would

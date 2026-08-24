@@ -66,6 +66,24 @@ action entity_teleport:
                                                       # a body or a TF frame
     pose: pose_3d
 
+action set_sensor_override:
+    # Degrade a SENSOR mid-run: apply (or restore) the `fault:` block the sensor carries in its own
+    # config. The report twin of set_model_override -- that one changes the physics, this one changes
+    # what a sensor reports, and roqsim keeps the two on separate channels on purpose.
+    #
+    # The WORLD owns how bad the fault is (the sensor's `fault:` values, so severity is an ordinary
+    # campaign factor: components.robot.lidar.fault.dropout_percent); this owns only WHEN.
+    #
+    # Fails the trial when the fault did not land -- either the simulator refused it, or every key in
+    # the block already held the value it sets, which would leave a row claiming a fault that never
+    # happened. Restoring is the same action with `active: false`, so a transient fault is two calls
+    # with a `wait` between them.
+    instance: string                                  # COMPONENT ADDRESS of the sensor -- the dotted
+                                                      # path of labels, e.g. 'robot.lidar'. Not the
+                                                      # bare ref: a robot may carry two lidars.
+    active: bool = true                               # true = apply the configured fault, false = nominal
+    require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'
+
 action set_model_override:
     # Apply (or restore) a world's `model_override` instance: the runtime physical fault. The WORLD
     # owns where the fault acts and how bad it is (`field:`, `select:`, `to:`); this owns only WHEN,

@@ -151,9 +151,22 @@ class WorldAccess(ABC):
         not knowing yet and must not be confused with it.
         """
 
+    #: Blackboard prefix per fault channel, and the only thing that differs between them in-process.
+    #: The ROS backend needs no entry: it addresses a fault by its endpoint, which both channels
+    #: scope the same way.
+    OVERRIDE_KINDS = {
+        "model": "model_override",  # roqsim.plugins.model_override -- a PHYSICS fault
+        "sensor": "sensor_fault",  # roqsim_sensors.live_config -- a sensor's REPORT fault
+    }
+
     @abstractmethod
-    def apply_override(self, instance: str, active: bool) -> OverrideCall:
-        """Switch a ``model_override`` instance on or off. Never blocks."""
+    def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
+        """Switch a fault on or off. Never blocks.
+
+        *kind* selects the channel (see :attr:`OVERRIDE_KINDS`); *instance* names the fault within
+        it -- a ``model_override`` instance's ``name:`` for the physics channel, a component
+        **address** (``robot.lidar``) for the sensor channel.
+        """
 
     @abstractmethod
     def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
