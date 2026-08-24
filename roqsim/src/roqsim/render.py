@@ -344,16 +344,19 @@ class _CamShim:
 def _disable_ceiling(cfg) -> bool:
     """Turn off the world's ``ceiling`` plugin if it has one. Returns whether anything changed.
 
-    Applied to the *parsed* config rather than as a ``--set`` override, because ``apply_overrides``
-    refuses an override that matches no plugin -- correct for ``--set`` (a typo there is a silent
-    no-op otherwise) but wrong for a convenience flag whose intent a ceiling-less world already
-    satisfies. Failing there also produced a genuinely hostile message: the override error lists every
-    plugin in the world, which for a populated scene is several hundred names.
+    Applied to the *parsed* config rather than as a ``--set`` override, because an override that
+    matches no component is refused -- correct for ``--set`` (a typo there would otherwise be a
+    silent no-op) but wrong for a convenience flag whose intent a ceiling-less world already
+    satisfies. Failing there also produced a genuinely hostile message: the refusal lists what the
+    document has, which for a populated scene is several hundred names.
+
+    Sets the plugin's own ``keep``, not the reserved ``enabled:`` sibling: this plugin opens the roof
+    by *removing* geometry, so turning the component off would leave the ceiling standing.
     """
     changed = False
     for spec in cfg.plugins:
         if spec.ref == "ceiling" or spec.name == "ceiling":
-            spec.config["enabled"] = False
+            spec.config["keep"] = False
             changed = True
     return changed
 
@@ -397,7 +400,12 @@ def _preflight(out: Path, size: tuple[int, int], *, check: bool = False) -> None
 
 
 def build_target(
-    target: str, overrides: dict | None, *, no_ceiling: bool = False, skip_transport: bool = True
+    target: str,
+    overrides: dict | None,
+    *,
+    no_ceiling: bool = False,
+    skip_transport: bool = True,
+    world_model: dict | None = None,
 ):
     """Compile ``target`` and return ``(model, data, ctx, view, camera_or_None)``.
 
@@ -408,6 +416,11 @@ def build_target(
     That subtraction (``skip_transport``, see :func:`roqsim.config.drop_transport_plugins`) is what lets a
     ``*_ros`` world be rendered without ROS installed. Pass ``skip_transport=False`` to demand the
     simulator's own strict build.
+
+    ``world_model`` is a recording's resolved component tree (:meth:`roqsim.config.SimConfig.as_record`).
+    When given, the config is READ from it rather than resolved from ``target`` and ``overrides`` --
+    so a recording renders the components that ran, whatever has happened to the override grammar
+    since. ``target`` is still used for the assets those components name.
     """
     if is_mesh(target):
         model, cam = mesh_scene(target)
@@ -419,7 +432,12 @@ def build_target(
     from .engine import Engine
     from .runner import config_for_input
 
-    cfg = config_for_input(target, overrides)
+    if world_model is not None:
+        from .config import SimConfig
+
+        cfg = SimConfig.from_record(world_model)
+    else:
+        cfg = config_for_input(target, overrides)
     if skip_transport:
         transport, unavailable = drop_transport_plugins(cfg)
         if transport:
@@ -908,7 +926,7 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--no-ceiling",
         action="store_true",
-        help="shorthand for --set plugins.ceiling.enabled=false, to look into a roofed world",
+        help="shorthand for --set components.ceiling.keep=false, to look into a roofed world",
     )
     parser.add_argument(
         "--set",

@@ -4,7 +4,7 @@
 # capture plugin. To override, declare zivid for the same mount in the world (it wins); to opt out,
 # set spawn_sensor config `default_plugins: false`. `robot` is filled in from the spawn_sensor
 # `name`. `camera: zivid_color` is the imaging sensor placed on the +x optical module.
-plugins:
+components:
   - zivid:
       camera: zivid_color
 

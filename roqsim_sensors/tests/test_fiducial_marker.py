@@ -90,11 +90,11 @@ def test_marker_attaches_to_named_body():
                         "family": "apriltag_36h11",
                         "id": 1,
                         "size": 0.04,
-                        "name": "wristtag",
                         "attach_to": "link",
                         "prefix": "rob_",
                         "rel_pose": [0, 0, 0.06],
                     },
+                    "name": "wristtag",
                 },
             ],
         }

@@ -15,7 +15,7 @@ The YAML has two top-level sections::
         follow_heading: true # optional: chase cam -- azimuth becomes an offset from the robot's yaw
       sync: {enabled: false} # foreseen lockstep mode (inert in M1)
 
-    plugins:
+    components:            # ``plugins:`` is the former spelling of this key, still accepted
       - floorplan:                                # a short-name ref is the entry's key
           size: 3.0                               # its config: opaque, validated by the plugin itself
         name: ground                              # reserved sibling key; identifies this instance
@@ -78,30 +78,89 @@ class PluginSpec:
     ref: str
     name: str | None
     config: dict
+    #: Entries this one owns. A component's owner is the entry it is nested under, so ownership is
+    #: the shape of the document rather than a value anyone can write wrong or forget.
+    children: list[PluginSpec] = field(default_factory=list)
+    #: The entity this entry belongs to: its owner's label, filled in by the loader. ``None`` at the
+    #: root, where an entry belongs to the world itself.
+    entity: str | None = None
+    #: Whether this component runs. ``false`` turns a component off without deleting it, so it is
+    #: still addressable, still in the record, and still re-enablable by a later override -- which
+    #: makes "is this sensor present" a value a campaign can sweep rather than a structural edit.
+    enabled: bool = True
+
+    @property
+    def label(self) -> str:
+        """How this entry is addressed among its siblings: its ``name:``, else its plugin ref.
+
+        A ref may be ``module.path:Class`` or ``./file.py:Class`` -- full of dots and colons, neither
+        of which can live in a dot-delimited address -- so for those the class part is the label.
+        """
+        return self.name or self.ref.rpartition(":")[2] or self.ref
+
+    @property
+    def address(self) -> str:
+        """The dotted path of labels from the root: ``robot``, ``robot.lidar``."""
+        return f"{self.entity}.{self.label}" if self.entity else self.label
 
 
-#: Reserved sibling key on a plugins-list entry: names the instance rather than being its plugin ref.
+#: The document key holding the list of entries. ``plugins`` is the former spelling: a document may
+#: use either while worlds and manifests are swept over, but never both -- two spellings of one key in
+#: one file is a merge nobody can predict, so it is refused rather than resolved.
+_ENTRIES_KEY = "components"
+_ENTRIES_KEY_LEGACY = "plugins"
+
+
+def document_entries(doc: dict, where: str = "document") -> list:
+    """The entry list of *doc*, under either spelling; ``[]`` when it has neither."""
+    if _ENTRIES_KEY in doc and _ENTRIES_KEY_LEGACY in doc:
+        raise PluginError(
+            f"{where}: has both 'components:' and 'plugins:', which are one key under two spellings "
+            f"('plugins' is the former one). Keep 'components:' and delete 'plugins:'."
+        )
+    return list(doc.get(_ENTRIES_KEY, doc.get(_ENTRIES_KEY_LEGACY)) or [])
+
+
+def with_document_entries(doc: dict, entries: list) -> dict:
+    """*doc* with its entry list replaced, normalised onto the current spelling."""
+    out = {k: v for k, v in doc.items() if k != _ENTRIES_KEY_LEGACY}
+    out[_ENTRIES_KEY] = entries
+    return out
+
+
+#: Reserved sibling keys on a components-list entry: everything an entry says about *itself* rather
+#: than about the plugin it names. The plugin's own config is the single remaining key, so a plugin
+#: can never collide with one of these.
 _NAME_KEY = "name"
+_CHILDREN_KEY = "components"
+_ENABLED_KEY = "enabled"
+_RESERVED_SIBLINGS = frozenset({_NAME_KEY, _CHILDREN_KEY, _ENABLED_KEY})
 
 
 def entry_ref(entry: dict) -> str:
-    """The plugin ref of a plugins-list ``entry`` -- its single non-``name`` key.
+    """The plugin ref of a components-list ``entry`` -- its single non-reserved key.
 
     Raises :class:`PluginError` if the entry is not a mapping with exactly one plugin-ref key.
     """
     if not isinstance(entry, dict):
         raise PluginError(f"plugin entry must be a mapping, got {type(entry).__name__}")
-    refs = [k for k in entry if k != _NAME_KEY]
+    refs = [k for k in entry if k not in _RESERVED_SIBLINGS]
     if len(refs) != 1:
+        reserved = ", ".join(sorted(_RESERVED_SIBLINGS))
         raise PluginError(
-            "plugin entry must have exactly one plugin-ref key (plus an optional 'name'); "
+            f"plugin entry must have exactly one plugin-ref key (plus optional {reserved}); "
             f"got keys {list(entry)}"
         )
     return refs[0]
 
 
 def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
-    """Parse one ``plugins:`` list entry (``<ref>: {config}`` + optional ``name:``) into a spec."""
+    """Parse one ``components:`` entry -- ``<ref>: {config}`` plus its reserved siblings -- to a spec.
+
+    A nested ``components:`` list is parsed with it, recursively: those entries belong to *this* one.
+    Whether an entry may own components is the producing plugin's call (``provides_entity``) and is
+    checked once the ref has been resolved to a class, not here -- this function reads shape only.
+    """
     try:
         ref = entry_ref(entry)
     except PluginError as exc:
@@ -111,15 +170,190 @@ def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
         raise PluginError(
             f"{where}: config for '{ref}' must be a mapping, got {type(config).__name__}"
         )
-    return PluginSpec(ref=str(ref), name=entry.get(_NAME_KEY), config=dict(config or {}))
+    enabled = entry.get(_ENABLED_KEY, True)
+    if not isinstance(enabled, bool):
+        raise PluginError(f"{where}: '{_ENABLED_KEY}:' must be true or false, got {enabled!r}")
+    spec = PluginSpec(
+        ref=str(ref), name=entry.get(_NAME_KEY), config=dict(config or {}), enabled=enabled
+    )
+    children = entry.get(_CHILDREN_KEY)
+    if children is not None and not isinstance(children, list):
+        raise PluginError(
+            f"{where}: '{_CHILDREN_KEY}:' must be a list of entries, got {type(children).__name__}"
+        )
+    spec.children = [
+        parse_plugin_entry(child, f"{where}.{_CHILDREN_KEY}[{i}]")
+        for i, child in enumerate(children or [])
+    ]
+    return spec
+
+
+#: Characters a label may not contain, and why each is reserved. ``.`` separates address segments;
+#: the rest are the shapes an address grammar grows into (wildcards, indices, key paths), kept free
+#: now so adding one later cannot invalidate a document that was legal when it was written.
+_RESERVED_IN_LABEL = ".*#[]=:/"
+
+
+def _check_label_chars(spec: PluginSpec) -> None:
+    """Refuse a ``name:`` that could not be spelled in an address."""
+    if spec.name is None:
+        return
+    bad = sorted({c for c in spec.name if c in _RESERVED_IN_LABEL or c.isspace()})
+    if bad:
+        shown = " ".join(repr(c) for c in bad)
+        raise PluginError(
+            f"name {spec.name!r} contains {shown}, which an address cannot spell: an address is a "
+            f"dot-separated path of labels ({_RESERVED_IN_LABEL!r} and whitespace are reserved). "
+            f"Rename it to something an override could name."
+        )
+
+
+def _check_label_vs_config(spec: PluginSpec) -> None:
+    """Refuse a child whose label is also one of its owner's own config keys.
+
+    ``components.robot.pos`` has to mean one thing. If a robot both carries a ``pos:`` and owns a
+    component labelled ``pos``, it means two, and no rule chooses between them that is not a
+    surprise to somebody.
+    """
+    clash = sorted({c.label for c in spec.children} & set(spec.config))
+    if clash:
+        raise PluginError(
+            f"'{spec.address}' ({spec.ref}) has a component labelled {clash[0]!r} and a config key "
+            f"of the same name, so 'components.{spec.address}.{clash[0]}' would be ambiguous. "
+            f"Rename the component."
+        )
+
+
+def resolve_enabled(specs: list[PluginSpec]) -> None:
+    """Propagate ``enabled: false`` down the tree, in place.
+
+    Disabling an entry disables everything it owns. Without that the entity is never registered and
+    its components hit the soft lookup every one of them does (``ctx.entities.get(...)`` then
+    ``if entity else ""``), so a sensor resolves an unprefixed site and fails much later with a
+    message about MJCF names -- which is the silent class of failure this design exists to remove.
+    The cascade is computed rather than left to the reader, and each spec keeps its own ``enabled``
+    so the record shows what was turned off and what merely went with it.
+    """
+    for spec in specs:
+        if not spec.enabled:
+            for child in _subtree(spec):
+                child.enabled = False
+
+
+def _subtree(spec: PluginSpec) -> list[PluginSpec]:
+    out: list[PluginSpec] = []
+    for child in spec.children:
+        out.append(child)
+        out.extend(_subtree(child))
+    return out
+
+
+def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
+    """Refuse two components of one owner answering to the same label.
+
+    A label is what an override addresses, what an entity is registered under, and what a generated
+    MJCF name is built from -- so two of them is one instance silently standing in for the other. It
+    is not hypothetical: three model manifests shipped duplicates, and a world stub written against
+    one of them collapsed a robot's two lidars into a single sensor without a word.
+    """
+    seen: dict[str, PluginSpec] = {}
+    for spec in specs:
+        clash = seen.get(spec.label)
+        if clash is not None:
+            where = f"'{owner}'" if owner else "this document"
+            raise PluginError(
+                f"{where} has two components labelled '{spec.label}' ({clash.ref} and {spec.ref}). "
+                f"A label addresses one component, so give at least one of them a 'name:' of its own."
+            )
+        seen[spec.label] = spec
+
+
+def flatten_specs(specs: list[PluginSpec], entity: str | None = None) -> list[PluginSpec]:
+    """The tree in build order, each spec wired to the entity that owns it.
+
+    Depth-first with the owner first: a spawn must build before the controllers and sensors that
+    attach to it, so the order the pipeline runs in falls out of the document's shape rather than
+    having to be maintained by hand. Wiring is done here, in the core, because the owner is *where an
+    entry sits* -- there is nothing for a plugin to parse and therefore nothing to get wrong.
+    """
+    _check_labels_unique(specs, entity)
+    out: list[PluginSpec] = []
+    for spec in specs:
+        spec.entity = entity
+        _check_label_chars(spec)
+        _check_label_vs_config(spec)
+        out.append(spec)
+        # Children are wired to their owner's ADDRESS, not its label: labels are unique only among
+        # siblings, so two robots each owning an `arm` would otherwise both call their owner "arm".
+        out.extend(flatten_specs(spec.children, spec.address))
+    return out
 
 
 @dataclass
 class SimConfig:
     sim: dict = field(default_factory=dict)
+    #: The EFFECTIVE components, in build order: what the document declares plus what its models'
+    #: manifests contribute. Materialised at load time, so every consumer sees what will run.
     plugins: list[PluginSpec] = field(default_factory=list)
+    #: What the document itself declared, before expansion -- kept because that is the thing a
+    #: reader wrote, and the two are worth being able to tell apart.
+    declared: list[PluginSpec] = field(default_factory=list)
+    #: ``(ref, message)`` for every ref that would not import, deferred so a scene-only consumer can
+    #: still load a world whose transport is not installed. :func:`instantiate_plugins` refuses.
+    unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
+
+    # -- the record a run leaves ---------------------------------------------------------------
+
+    def as_record(self) -> dict:
+        """This config as plain data, for a run's provenance.
+
+        The RESOLVED tree, not the document plus the overrides that were applied to it. A recording
+        that stored only the recipe had to re-run the whole load path to be replayed, which coupled
+        replay to the override grammar: any change to it invalidated every recording ever made. What
+        ran is recorded outright, so rebuilding reads rather than re-interprets.
+        """
+        return {
+            "sim": dict(self.sim),
+            "base_dir": str(self.base_dir),
+            "components": [
+                {
+                    "address": spec.address,
+                    "ref": spec.ref,
+                    "name": spec.name,
+                    "entity": spec.entity,
+                    "enabled": spec.enabled,
+                    "config": spec.config,
+                }
+                for spec in self.plugins
+            ],
+        }
+
+    @classmethod
+    def from_record(cls, record: dict) -> SimConfig:
+        """Rebuild a config from :meth:`as_record`, without resolving anything.
+
+        The components are already flat and in build order, and each already knows its entity -- so
+        this is a read, and nothing here can disagree with what the run actually had.
+        """
+        specs = [
+            PluginSpec(
+                ref=c["ref"],
+                name=c.get("name"),
+                config=dict(c.get("config") or {}),
+                entity=c.get("entity"),
+                enabled=bool(c.get("enabled", True)),
+            )
+            for c in record.get("components") or []
+        ]
+        return cls(
+            sim=dict(record.get("sim") or {}),
+            plugins=specs,
+            declared=specs,
+            base_dir=Path(record.get("base_dir") or Path.cwd()),
+            raw={"sim": dict(record.get("sim") or {})},
+        )
 
     # -- convenience accessors for the ``sim:`` block -----------------------------------------
     @property
@@ -173,16 +407,16 @@ class SimConfig:
 
 # -- world inheritance (``extends`` / ``disable``) ---------------------------------------------
 #
-# A world YAML may inherit another world's ``sim`` block and ``plugins`` list, then add, remove, or
+# A world YAML may inherit another world's ``sim`` block and ``components`` list, then add, remove, or
 # modify elements::
 #
 #     extends: roqsim_scenes:depot # parent world YAML: a "<package>:<world>" ref or a path
 #     sim: {timestep: 0.001}         # deep-merged over the parent's sim (child wins per key)
-#     disable: [table_2]      # drop inherited plugins by identity (name: sibling / config name)
-#     plugins: [ ... ]               # child plugins are APPENDED after the (kept) parent plugins
+#     disable: [table_2]      # drop inherited entries by identity (name: sibling / config name)
+#     components: [ ... ]            # child entries are APPENDED after the (kept) parent entries
 #
-# The two primitives -- append (child ``plugins``) and remove (``disable``) -- also cover *modify*:
-# disable the inherited element and re-add a tweaked copy in the child's ``plugins``.
+# The two primitives -- append (child ``components``) and remove (``disable``) -- also cover
+# *modify*: disable the inherited entry and re-add a tweaked copy in the child's ``components``.
 
 
 def _absolutize_world(world: Any, parent_dir: Path) -> Any:
@@ -221,47 +455,50 @@ def _resolve_extends_target(ext: Any, base_dir: Path) -> Path:
 
 
 def _entry_identities(entry: dict) -> set[str]:
-    """Names by which a ``disable`` selector may address a plugin entry: its reserved ``name:``
-    sibling and its config ``name`` field (spawn/shelf entries carry the entity name in the config,
-    e.g. ``spawn_model: {name: table_2, ...}``)."""
-    ids: set[str] = set()
+    """The name a ``disable`` selector addresses an entry by: its **label**.
+
+    There used to be two -- the reserved ``name:`` sibling *and* a ``name`` inside the plugin's own
+    config -- because a spawn carried its entity name in its config. They are one key now, so
+    ``disable:`` and an override finally address a component by the same string.
+    """
     reserved = entry.get(_NAME_KEY)
     if isinstance(reserved, str):
-        ids.add(reserved)
-    cfg = entry.get(entry_ref(entry))
-    if isinstance(cfg, dict) and isinstance(cfg.get("name"), str):
-        ids.add(cfg["name"])
-    return ids
+        return {reserved}
+    ref = entry_ref(entry)
+    return {ref.rpartition(":")[2] or ref}
 
 
 def _apply_disable(plugins: list, selectors: list) -> list:
-    """Return ``plugins`` with every entry an inherited ``disable`` selector names removed.
+    """Return ``plugins`` with every entry an inherited ``disable`` selector names turned OFF.
 
-    Selectors are plugin names (see :func:`_entry_identities`). A selector matching **no** inherited
-    plugin is a hard error -- a typo must not silently keep something the world meant to drop.
+    Sugar for ``enabled: false`` at that label, which is what makes it one mechanism rather than two:
+    the entry stays in the document, so it is still addressable, still in the record, and a later
+    override can turn it back on. It used to be deleted, which left no trace that a base world had
+    ever contributed it.
+
+    Selectors are labels (see :func:`_entry_identities`). A selector matching **no** inherited entry
+    is a hard error -- a typo must not silently keep something the document meant to drop.
     """
     if not isinstance(selectors, list):
-        raise PluginError(
-            f"'disable' must be a list of plugin names, got {type(selectors).__name__}"
-        )
+        raise PluginError(f"'disable' must be a list of labels, got {type(selectors).__name__}")
     sel_set: set[str] = set()
     for sel in selectors:
         if not isinstance(sel, str):
             raise PluginError(
-                f"'disable' entries must be strings (plugin names), got {type(sel).__name__}"
+                f"'disable' entries must be strings (labels), got {type(sel).__name__}"
             )
         sel_set.add(sel)
-    kept, matched = [], set()
+    out, matched = [], set()
     for entry in plugins:
-        drop = _entry_identities(entry) & sel_set
-        if drop:
-            matched |= drop
-        else:
-            kept.append(entry)
+        hit = _entry_identities(entry) & sel_set
+        if hit:
+            matched |= hit
+            entry = {**entry, _ENABLED_KEY: False}
+        out.append(entry)
     unmatched = sel_set - matched
     if unmatched:
-        raise PluginError(f"'disable' selector(s) matched no inherited plugin: {sorted(unmatched)}")
-    return kept
+        raise PluginError(f"'disable' selector(s) matched no inherited entry: {sorted(unmatched)}")
+    return out
 
 
 def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset()) -> dict:
@@ -297,11 +534,10 @@ def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = froz
         parent_sim["world"] = _absolutize_world(parent_sim["world"], parent_path.parent)
     merged_sim = deep_merge(parent_sim, raw.get("sim") or {})
 
-    kept = _apply_disable(list(parent_raw.get("plugins") or []), disable or [])
+    kept = _apply_disable(document_entries(parent_raw, str(parent_path)), disable or [])
     merged = {k: v for k, v in raw.items() if k not in ("extends", "disable")}
     merged["sim"] = merged_sim
-    merged["plugins"] = kept + list(raw.get("plugins") or [])
-    return merged
+    return with_document_entries(merged, kept + document_entries(raw))
 
 
 def load_config(
@@ -342,11 +578,11 @@ def load_config(
     with path.open() as fh:
         raw = yaml.safe_load(fh) or {}
     raw = _resolve_inheritance(raw, path.parent)
-    if overrides:
-        raw = apply_overrides(raw, overrides)
     if transport:
         raw = with_transport(raw, **transport)
-    return _from_dict(raw, base_dir=path.parent)
+    return _from_dict(
+        raw, base_dir=path.parent, assignments=assignments_from_mapping(overrides or {})
+    )
 
 
 def world_sources(path: str | Path) -> list[Path]:
@@ -426,13 +662,17 @@ def world_sources(path: str | Path) -> list[Path]:
 
 
 def _plugin_sources(cfg, leaf: Path) -> list:
-    """What the world's plugins say they point at, asked plugin by plugin.
+    """What the world's components say they point at, asked component by component.
 
-    Resolved **per spec, skipping what does not resolve**, rather than through
-    :func:`_expand_plugins` -- that raises on the first unresolvable ref, which would turn any
-    ROS world into a hard failure here in a pip-only environment where the bridge is not
-    installed. This function's contract is best-effort (see :func:`world_sources`), and the
-    same tolerance the ``extends`` walk already has.
+    Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts. It did not
+    use to: expansion happened inside the engine, so this walked the declared entries only, and
+    ``prop_trajectory`` -- whose ``expand`` exists purely to hand its ``sources()`` the directory the
+    world lives in -- resolved its CSV against the caller's working directory instead, against what
+    its own docstring promises.
+
+    Still **per spec, skipping what does not resolve**: this function's contract is best-effort (see
+    :func:`world_sources`), the same tolerance the ``extends`` walk has, and a ROS world in a
+    pip-only environment must not become a hard failure here.
     """
     if cfg is None:
         return []
@@ -440,7 +680,12 @@ def _plugin_sources(cfg, leaf: Path) -> list:
     for spec in getattr(cfg, "plugins", []) or []:
         try:
             plugin_cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
-            found.extend(plugin_cls(spec.config, name=spec.name).sources() or [])
+            found.extend(
+                plugin_cls(
+                    spec.config, name=spec.name, entity=spec.entity, label=spec.label
+                ).sources()
+                or []
+            )
         except Exception as exc:  # noqa: BLE001 - see docstring: best-effort by design
             _logger.debug(
                 "world_sources: no sources from plugin %r in %s (%s)", spec.ref, leaf, exc
@@ -469,13 +714,19 @@ def _mjcf_asset_dirs(mjcf: Path) -> list[Path]:
     return dirs
 
 
-def load_config_from_dict(raw: dict, base_dir: str | Path | None = None) -> SimConfig:
+def load_config_from_dict(
+    raw: dict, base_dir: str | Path | None = None, overrides: dict | None = None
+) -> SimConfig:
     """Build a :class:`SimConfig` from an already-parsed dict (used in tests).
 
     Honours ``extends``/``disable`` (resolved relative to ``base_dir``), like :func:`load_config`.
     """
     base = Path(base_dir) if base_dir else Path.cwd()
-    return _from_dict(_resolve_inheritance(raw, base), base_dir=base)
+    return _from_dict(
+        _resolve_inheritance(raw, base),
+        base_dir=base,
+        assignments=assignments_from_mapping(overrides or {}),
+    )
 
 
 # -- world overrides ---------------------------------------------------------------------------
@@ -491,57 +742,6 @@ def load_config_from_dict(raw: dict, base_dir: str | Path | None = None) -> SimC
 # A plugin key matches its ``name:`` first, then its plugin ref.
 
 
-def _model_default_hint(raw_plugins: list, key: str) -> str:
-    """Extra guidance when the named plugin may be running as a MODEL DEFAULT.
-
-    A spawn plugin pulls its model's manifest plugins in at expansion time, which happens
-    *after* overrides are applied here -- so a world that just spawns a robot has no
-    ``lidar`` entry to address even though a lidar is very much running. Without this the
-    refusal reads as "there is no such plugin", and the honest answer is "it exists, it is
-    just not addressable until the world names it".
-
-    Only offered when a model is actually spawned; otherwise the hint would be noise.
-    """
-    models = []
-    for entry in raw_plugins:
-        cfg = entry.get(entry_ref(entry))
-        if isinstance(cfg, dict) and cfg.get("model"):
-            models.append((str(cfg["model"]), cfg.get("name", "robot")))
-    if not models:
-        return ""
-    names = ", ".join(sorted({m for m, _ in models}))
-    entity = models[0][1]
-    return (
-        f". A model's default plugins (from {names}) are merged in after overrides are "
-        f"applied, so they cannot be addressed until the world names them. Declare a stub "
-        f"-- '{key}: {{robot: {entity}}}' -- and the manifest still fills in the rest; "
-        f"only the keys the world or the override sets are changed"
-    )
-
-
-def _resolve_plugin_index(raw_plugins: list, key: str | int) -> int:
-    """Map a plugin override key (instance name, plugin ref, or index) to its index in the list."""
-    if isinstance(key, int) or (isinstance(key, str) and key.lstrip("-").isdigit()):
-        idx = int(key)
-        if not -len(raw_plugins) <= idx < len(raw_plugins):
-            raise PluginError(f"plugin override index {idx} out of range")
-        return idx
-    by_name = [i for i, e in enumerate(raw_plugins) if e.get("name") == key]
-    matches = by_name or [i for i, e in enumerate(raw_plugins) if entry_ref(e) == key]
-    if not matches:
-        known = [e.get("name") or entry_ref(e) for e in raw_plugins]
-        raise PluginError(
-            f"plugin override '{key}' matches no plugin in the world (have: {known})"
-            + _model_default_hint(raw_plugins, key)
-        )
-    if len(matches) > 1:
-        raise PluginError(
-            f"plugin override '{key}' is ambiguous ({len(matches)} plugins match); "
-            "give the plugin an explicit 'name:' in the world"
-        )
-    return matches[0]
-
-
 def deep_merge(base: Any, override: Any) -> Any:
     """Recursively merge ``override`` into ``base``. Non-dict values (incl. lists) replace."""
     if isinstance(base, dict) and isinstance(override, dict):
@@ -552,36 +752,215 @@ def deep_merge(base: Any, override: Any) -> Any:
     return override
 
 
-def apply_overrides(raw: dict, overrides: dict) -> dict:
-    """Return a copy of the parsed world ``raw`` with the nested ``overrides`` deep-merged in.
+@dataclass(frozen=True)
+class Assignment:
+    """One override, as a path and a value -- never pre-nested into a dict.
 
-    ``overrides['plugins']`` is a mapping keyed by plugin name/ref (or index), which is resolved
-    against the world's plugin list; each value is deep-merged into that plugin's config. Everything
-    else merges by key.
+    Pre-nesting is what made an override ambiguous: ``--set components.robot.lidar.rays=4`` became
+    ``{"robot": {"lidar": {"rays": 4}}}``, at which point nothing could tell the two *address*
+    segments from the two *config-key* segments, and merging it into the entry labelled ``robot``
+    would have been silently wrong. Kept flat, the split is decided once, against the real tree.
     """
-    if not isinstance(overrides, dict):
-        raise PluginError(f"world overrides must be a mapping, got {type(overrides).__name__}")
-    result = dict(raw)
-    plugin_overrides = overrides.get("plugins")
-    for key, value in overrides.items():
-        if key != "plugins":
-            result[key] = deep_merge(result.get(key), value)
 
-    if plugin_overrides is None:
-        return result
-    if not isinstance(plugin_overrides, dict):
+    path: tuple[str, ...]
+    value: Any
+    source: str = "override"
+
+
+def _is_component(a: Assignment) -> bool:
+    return bool(a.path) and a.path[0] in _COMPONENT_ROOTS
+
+
+def _as_tree(effective: list[PluginSpec]) -> list[PluginSpec]:
+    """The effective list re-read as a tree, so injected components are addressable too.
+
+    ``expand_document`` returns build order, flat. Rebuilding the parent/child links from each
+    spec's ``entity`` is what lets the second pass walk to ``robot.lidar`` -- a component no entry
+    in the document names.
+    """
+    by_address: dict[str, PluginSpec] = {}
+    roots: list[PluginSpec] = []
+    for spec in effective:
+        by_address[spec.address] = spec
+        owner = by_address.get(spec.entity) if spec.entity else None
+        if owner is None:
+            roots.append(spec)
+        elif spec not in owner.children:
+            owner.children.append(spec)
+    return roots
+
+
+def _flatten(value: Any, prefix: tuple[str, ...], out: list, source: str) -> None:
+    """Leaves of a nested override document, with dotted keys split into segments.
+
+    A non-empty mapping recurses; ``{}``, a list and a scalar are leaves. Splitting dotted keys is
+    what makes ``{plugins: {"robot.lidar": {...}}}`` and ``{plugins: {robot: {lidar: {...}}}}`` the
+    same assignment -- which they have to be, since a caller flattening a path onto a command line
+    and one writing a document are describing the same override.
+    """
+    if isinstance(value, dict) and value:
+        for key, item in value.items():
+            _flatten(item, prefix + tuple(str(key).split(".")), out, source)
+        return
+    out.append(Assignment(prefix, value, source))
+
+
+def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assignment]:
+    """Flatten a nested override document into assignments."""
+    if not isinstance(doc, dict):
+        raise PluginError(f"world overrides must be a mapping, got {type(doc).__name__}")
+    out: list[Assignment] = []
+    _flatten(doc, (), out, source)
+    return out
+
+
+#: Roots an assignment may address. ``plugins`` is the former spelling of the container key and is
+#: accepted here for the same reason it is accepted in a document.
+_COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
+
+
+#: Matches exactly one address segment. One segment, not any number of them, because a path that
+#: could swallow a whole subtree would make ``components.*.rays`` mean something different every time
+#: a world gained a robot -- and a sweep factor that quietly changes what it addresses is worse than
+#: one that has to be written out.
+_WILDCARD = "*"
+
+
+def _resolve_targets(
+    rest: tuple[str, ...], specs: list[PluginSpec]
+) -> list[tuple[PluginSpec, tuple]]:
+    """Every ``(component, config_path)`` *rest* addresses.
+
+    Consume a segment while it names a child; the first that does not begins the path into that
+    component's config. No searching and no longest-prefix guessing: the address ends where the tree
+    does, which the document decides rather than a heuristic.
+
+    ``*`` matches one segment, so one assignment may land on several components -- which is how a
+    multi-robot sweep is written (``components.*.lidar.range_stddev``) without enumerating entities
+    the world may not have when the campaign is authored.
+
+    After a ``*``, the next segment must name a component. Otherwise ``components.*.lidar.rays``
+    against a fleet with no lidars would quietly write a config key called ``lidar.rays`` on every
+    robot: a sweep that reached nothing while every run looked healthy, which is the failure the
+    loud refusal exists to prevent. A wildcard is a fan-out over components, so what follows it is
+    read as one; to set a key on each of several components, name them.
+    """
+    # (spec-so-far, siblings to look in, index into rest)
+    frontier: list[tuple[PluginSpec | None, list[PluginSpec], int]] = [(None, specs, 0)]
+    out: list[tuple[PluginSpec, tuple]] = []
+    while frontier:
+        spec, siblings, i = frontier.pop()
+        if i >= len(rest):
+            if spec is not None:
+                out.append((spec, ()))
+            continue
+        segment = rest[i]
+        children = siblings if segment == _WILDCARD else [c for c in siblings if c.label == segment]
+        if not children:
+            # A segment straight after a wildcard has to name a component -- see the docstring.
+            if spec is not None and not (i and rest[i - 1] == _WILDCARD):
+                out.append((spec, rest[i:]))
+            continue
+        frontier.extend((c, c.children, i + 1) for c in children)
+    return out
+
+
+def _did_you_mean(rest: tuple[str, ...], specs: list[PluginSpec]) -> str:
+    """What the reader probably meant, drawn from what the document actually has.
+
+    Searches refs as well as addresses, because the interesting failure is a bare ``lidar`` against a
+    robot carrying two of them: that is a *no-match* rather than an ambiguity, and the useful answer
+    is both their addresses rather than "there is no lidar".
+    """
+    wanted = set(rest)
+    hits = sorted(
+        {s.address for s in specs if s.label in wanted or s.ref in wanted or s.ref in rest}
+    )
+    if hits:
+        return f" Did you mean {', '.join(hits)}?"
+    known = ", ".join(sorted(s.address for s in specs)) or "(none)"
+    return f" This document has: {known}."
+
+
+def apply_assignments(cfg_raw: dict, specs: list[PluginSpec], assignments) -> list[Assignment]:
+    """Apply what these *specs* answer to; return the assignments that matched.
+
+    Everything outside the component tree (``sim.*``, and any other top-level key) merges into the
+    document dict, as it always did. A component assignment is resolved against the tree.
+    """
+    matched: list[Assignment] = []
+    for a in assignments:
+        if a.path and a.path[0] in _COMPONENT_ROOTS:
+            targets = _resolve_targets(a.path[1:], specs)
+            if not targets:
+                continue
+            for spec, config_path in targets:
+                _assign_one(a, spec, config_path)
+            matched.append(a)
+            continue
+        node = cfg_raw
+        for key in a.path[:-1]:
+            nxt = node.get(key)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[key] = nxt
+            node = nxt
+        if a.path:
+            node[a.path[-1]] = a.value
+        matched.append(a)
+    return matched
+
+
+def _assign_one(a: Assignment, spec: PluginSpec, config_path: tuple) -> None:
+    """Apply one assignment to one component."""
+    if not config_path:
         raise PluginError(
-            "'plugins' override must be a mapping keyed by plugin name/ref, "
-            f"got {type(plugin_overrides).__name__}"
+            f"override '{'.'.join(a.path)}' names the component '{spec.address}' but no key "
+            f"in it. An address is not a value; say which of its keys to set."
         )
-    raw_plugins = [dict(e) for e in (raw.get("plugins") or [])]
-    for key, value in plugin_overrides.items():
-        idx = _resolve_plugin_index(raw_plugins, key)
-        entry = raw_plugins[idx]
-        ref = entry_ref(entry)
-        entry[ref] = deep_merge(entry.get(ref), value)
-    result["plugins"] = raw_plugins
-    return result
+    if config_path == (_ENABLED_KEY,):
+        # The one reserved sibling an override may set: it is the removal knob, and turning a
+        # component off is exactly the kind of thing a campaign varies.
+        if not isinstance(a.value, bool):
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' must be true or false, got {a.value!r}"
+            )
+        spec.enabled = a.value
+        return
+    if config_path == (_CHILDREN_KEY,):
+        # Adding, not setting: the same key that means "what this owns" in a document means it in
+        # an override too, so a campaign can add instrumentation to a robot without editing the
+        # world. Appended, then expanded and wired like anything else the owner has.
+        if not isinstance(a.value, list):
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' must be a list of entries to add under "
+                f"'{spec.address}', got {type(a.value).__name__}"
+            )
+        spec.children.extend(
+            parse_plugin_entry(e, f"override {'.'.join(a.path)}[{i}]")
+            for i, e in enumerate(a.value)
+        )
+        return
+    if config_path[0] == _CHILDREN_KEY:
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' looks like an attempt to add under '{spec.address}'. "
+            f"That takes a LIST of entries, the same shape a document's own '{_CHILDREN_KEY}:' "
+            f"block has -- a mapping here is read as a path into it instead."
+        )
+    if config_path[0] in _RESERVED_SIBLINGS:
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' would set '{config_path[0]}', which is how "
+            f"'{spec.address}' is addressed rather than something it configures. Change it in "
+            f"the document."
+        )
+    node = spec.config
+    for key in config_path[:-1]:
+        nxt = node.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            node[key] = nxt
+        node = nxt
+    node[config_path[-1]] = a.value
 
 
 def overrides_from_files(paths) -> dict:
@@ -721,9 +1100,14 @@ def _validate_contact_override(override) -> None:
             raise PluginError(f"sim.contact_override.{key}: all entries must be numbers")
 
 
-def _from_dict(raw: dict, base_dir: Path) -> SimConfig:
+def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    assignments = list(assignments or ())
+    # Non-component assignments (`sim.*`) merge into the document before anything reads it -- and
+    # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
+    # the file.
+    apply_assignments(raw, [], [a for a in assignments if not _is_component(a)])
     if "headless" in (raw.get("sim") or {}):
         _logger.warning(
             "\u26a0\ufe0f  sim.headless is IGNORED: the viewer is windowed by default; run with "
@@ -740,12 +1124,45 @@ def _from_dict(raw: dict, base_dir: Path) -> SimConfig:
     _validate_view((raw.get("sim") or {}).get("view"))
     _validate_seed((raw.get("sim") or {}).get("seed"))
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
-    plugins = [
-        parse_plugin_entry(entry, f"plugins[{i}]")
-        for i, entry in enumerate(raw.get("plugins", []) or [])
-    ]
+
+    component_assignments = [a for a in assignments if _is_component(a)]
+    plugins = flatten_specs(
+        [
+            parse_plugin_entry(entry, f"components[{i}]")
+            for i, entry in enumerate(document_entries(raw))
+        ]
+    )
+    # Two passes, and the boundary is expansion's inputs versus its outputs. The first is what lets
+    # a structural override work -- `--set components.robot.model=husky` lands before step two reads
+    # `model:` -- and the second is what reaches a component a manifest supplied.
+    declared_tree = [s for s in plugins if s.entity is None]
+    matched = apply_assignments(raw, declared_tree, component_assignments)
+    # Re-flatten: pass one may have ADDED components (`components:` on an address), and those have
+    # to be wired, checked and ordered exactly like the ones the document declared -- so they go
+    # back through the same walk rather than being spliced in beside it.
+    plugins = flatten_specs(declared_tree)
+    effective, unresolved = expand_document(plugins, base_dir)
+    matched += apply_assignments(raw, _as_tree(effective), component_assignments)
+    resolve_enabled(_as_tree(effective))
+    unmatched = [a for a in component_assignments if a not in matched]
+    if unmatched:
+        a = unmatched[0]
+        hint = _did_you_mean(a.path[1:], effective)
+        if _WILDCARD in a.path:
+            hint += (
+                f" ('{_WILDCARD}' fans out over components, so the segment after it is read as a "
+                f"component name too. To set a key on each of several components, name them.)"
+            )
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' matches no component in this document." + hint
+        )
     return SimConfig(
-        sim=dict(raw.get("sim", {}) or {}), plugins=plugins, base_dir=base_dir, raw=raw
+        sim=dict(raw.get("sim", {}) or {}),
+        plugins=effective,
+        declared=plugins,
+        unresolved=unresolved,
+        base_dir=base_dir,
+        raw=raw,
     )
 
 
@@ -781,7 +1198,7 @@ def with_transport(
     """
     if not ros:
         return raw
-    plugins = list(raw.get("plugins") or [])
+    plugins = document_entries(raw)
     if any(
         entry_ref(entry) in (_ROS_TRANSPORT, _ROS_CONTROL)
         for entry in plugins
@@ -795,11 +1212,9 @@ def with_transport(
         # namespaced too; without this both look under /<ns>/tf while the bridge
         # publishes globally, and init_nav2 hangs on "Waiting for transform".
         bridge["tf_namespace"] = tf_namespace
-    result = dict(raw)
-    result["plugins"] = (
-        plugins + [{_ROS_TRANSPORT: bridge}] + ([{_ROS_CONTROL: {}}] if control else [])
+    return with_document_entries(
+        raw, plugins + [{_ROS_TRANSPORT: bridge}] + ([{_ROS_CONTROL: {}}] if control else [])
     )
-    return result
 
 
 def drop_transport_plugins(cfg: SimConfig) -> tuple[list[str], list[str]]:
@@ -836,7 +1251,16 @@ def drop_transport_plugins(cfg: SimConfig) -> tuple[list[str], list[str]]:
             continue
         kept.append(spec)
     cfg.plugins = kept
+    # The deferred failures go with the specs they belong to, or a scene-only consumer would drop
+    # the bridge it cannot import and then still be refused for it by `instantiate_plugins`.
+    _prune_unresolved(cfg)
     return transport, unavailable
+
+
+def _prune_unresolved(cfg: SimConfig) -> None:
+    """Forget deferred resolution failures for specs no longer in the effective list."""
+    live = {spec.ref for spec in cfg.plugins}
+    cfg.unresolved = [(ref, msg) for ref, msg in cfg.unresolved if ref in live]
 
 
 def drop_transport(cfg: SimConfig) -> list[str]:
@@ -873,40 +1297,76 @@ def drop_transport(cfg: SimConfig) -> list[str]:
         else:
             kept.append(spec)
     cfg.plugins = kept
+    _prune_unresolved(cfg)
     return dropped
 
 
-def _expand_plugins(cfg: SimConfig) -> list[tuple[PluginSpec, type[Plugin]]]:
-    """Resolve each plugin class and splice in any specs a plugin's ``expand`` implies.
+def expand_document(
+    declared: list[PluginSpec], base_dir: Path
+) -> tuple[list[PluginSpec], list[tuple[str, str]]]:
+    """The document's EFFECTIVE components, and the refs that would not resolve.
 
-    Expansion-injected specs (e.g. a spawn plugin's model manifest) land right after the plugin that
-    produced them. Whether to skip a default the world already declares is the producing plugin's
-    call -- it gets the world's explicit specs and dedupes on its own entity key (see
-    :func:`roqsim.manifest.expand_manifest`). Classes are resolved once here and handed back.
+    Runs while the document loads, so what a consumer gets back is what will actually run: a model's
+    manifest components are in the list, not conjured later inside the engine. That is what lets
+    ``roqsim scenes describe`` name a sensor the document never declared, and what makes a
+    manifest-supplied plugin's ``sources()`` visible to :func:`world_sources` -- which it was not,
+    so a prop trajectory's CSV resolved against the caller's working directory.
 
-    Resolution failures are collected rather than raised at the first one, like the validation errors
-    in :func:`instantiate_plugins`: one report listing every bad ref beats three edit-and-rerun cycles,
-    and -- the reason it was worth changing -- only the full list can tell whether the world failed
-    *solely* on its transport, which is a fixable situation rather than a mistake (see
-    :func:`_unresolved_message`).
+    Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
+    build order still falls out of the document's shape. Whether to skip a default the document
+    already declares is the producing plugin's call: it is handed the declared specs and dedupes on
+    the label (see :func:`roqsim.manifest.expand_manifest`). One level deep, deliberately -- what
+    ``expand`` returns is not itself expanded.
+
+    Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
     """
-    resolved: list[tuple[PluginSpec, type[Plugin]]] = []
+    effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
-    for spec in cfg.plugins:
+    for spec in declared:
         try:
-            cls = resolve_plugin(spec.ref, base_dir=cfg.base_dir)
+            cls = resolve_plugin(spec.ref, base_dir=base_dir)
         except PluginError as exc:
+            # Tolerated, not raised: this runs while the document LOADS, and a consumer that only
+            # wants the scene (`roqsim render`, the exporters, `roqsim scenes describe`) must still
+            # get one for a world whose transport it cannot import. The spec stays, unexpanded, and
+            # `instantiate_plugins` is where the refusal happens -- with the same message it always
+            # gave, including the "this is a ROS world, here are your two ways on" case.
             unresolved.append((spec.ref, str(exc)))
+            effective.append(spec)
             continue
-        resolved.append((spec, cls))
-        for sub in cls.expand(spec, cfg.plugins, cfg.base_dir):
+        _check_ownership(spec, cls)
+        effective.append(spec)
+        for sub in cls.expand(spec, declared, base_dir):
+            effective.append(sub)
             try:
-                resolved.append((sub, resolve_plugin(sub.ref, base_dir=cfg.base_dir)))
+                resolve_plugin(sub.ref, base_dir=base_dir)
             except PluginError as exc:
                 unresolved.append((sub.ref, str(exc)))
-    if unresolved:
-        raise PluginError(_unresolved_message(unresolved))
-    return resolved
+    return effective, unresolved
+
+
+def _check_ownership(spec: PluginSpec, cls: type[Plugin]) -> None:
+    """Refuse an entry whose position contradicts what its plugin says it is.
+
+    Both mistakes used to be silent and both cost a debugging session. A sensor declared at the top
+    of a document has no entity to attach to, and used to fall back to the literal name ``robot`` --
+    running alongside the default it meant to replace rather than instead of it, so two controllers
+    fought over the same actuators and the config appeared to have no effect. A ``components:`` block
+    on something that registers no entity has nothing to own, and would silently wire its children to
+    a label that no entity answers to.
+    """
+    if spec.children and not cls.provides_entity:
+        raise PluginError(
+            f"'{spec.address}' ({spec.ref}) has a 'components:' block but registers no entity, so "
+            f"there is nothing for those {len(spec.children)} entries to attach to. Declare them "
+            f"beside it instead, or nest them under the entry that spawns their entity."
+        )
+    if cls.requires_owner and spec.entity is None:
+        raise PluginError(
+            f"'{spec.ref}' attaches to an entity, so it must be nested under the entry that "
+            f"provides one -- at the top of a document it has nothing to attach to. Move it into "
+            f"that entry's 'components:' block."
+        )
 
 
 def _unresolved_message(unresolved: list[tuple[str, str]]) -> str:
@@ -947,8 +1407,19 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
 
     Raises :class:`PluginError` listing *all* validation errors if any plugin rejects its config.
     """
-    resolved = _expand_plugins(cfg)
-    instances: list[Plugin] = [cls(spec.config, name=spec.name) for spec, cls in resolved]
+    if cfg.unresolved:
+        raise PluginError(_unresolved_message(cfg.unresolved))
+    # `enabled: false` is the removal. The spec stays in `cfg.plugins` -- addressable, recorded,
+    # and re-enablable by a later override -- but nothing is constructed for it.
+    resolved = [
+        (spec, resolve_plugin(spec.ref, base_dir=cfg.base_dir))
+        for spec in cfg.plugins
+        if spec.enabled
+    ]
+    instances: list[Plugin] = [
+        cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
+        for spec, cls in resolved
+    ]
 
     errors: list[str] = []
     for inst, (spec, _cls) in zip(instances, resolved, strict=True):

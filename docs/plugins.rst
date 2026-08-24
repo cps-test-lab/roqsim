@@ -59,7 +59,7 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    Set ``tf_namespace`` to the robot's namespace so the bridge joins that tree::
 
-       plugins:
+       components:
          - ros2_bridge: {tf_namespace: a200_0000}   # -> /a200_0000/tf, /a200_0000/tf_static
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
@@ -122,14 +122,15 @@ automatically, so a world just spawns the robot:
 
 .. code:: yaml
 
-   plugins:
+   components:
      - spawn_robot:
          model: turtlebot4
          pos: [0, 0]                # diff_drive + lidar + oakd_camera come with it
      - ros2_bridge: {}
 
-An arm's manifest can also carry an **eye-in-hand sensor**: the capture plugins accept ``arm:`` as
-their mount key (not only ``robot:``), so a camera declared for an arm rides its flange. The
+An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
+its flange, exactly as one among a mobile base's components rides the base -- there is no per-family
+mount key to choose between. The
 ``open_manipulator_x`` model ships the MJCF ``d435_color`` camera at ROBOTIS's own RealSense mount pose
 but deliberately leaves ``realsense_d435`` OUT of its manifest -- the arm provides the mount, the world
 decides whether anything renders from it, at what rate, and whether it reprojects to a point cloud.
@@ -138,22 +139,42 @@ The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` 
 arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
 in its ``realsense_d435`` capture plugin.
 
-- **Override** a default: declare the same plugin for the same robot/arm in the world — your entry
-  wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is duplicated.
-  **Name the entity in the override.** Matching is on ``(plugin ref, entity)``, where the entity comes
-  from the spawn's own key (``robot:`` for ``spawn_robot``, ``arm:`` for ``spawn_arm``). An override
-  that omits it has key ``(g1_locomotion, None)`` rather than ``(g1_locomotion, robot)``, so it does
-  **not** replace the manifest default — it runs *alongside* it, and two controllers then fight over
-  the same actuators. The symptom is a config that silently has no effect, so this is worth getting
-  right: write ``- g1_locomotion: {robot: robot, station_keeping: true}``.
+- **Override** a default: declare the same plugin inside that robot's/arm's ``components:`` block —
+  your entry wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is
+  duplicated. Matching is on the **label**: the entry's ``name:``, else its plugin ref, among that
+  owner's components. There is no entity key to name — an entry belongs to the entity whose block it
+  sits in — so the mistake this used to invite is not expressible: omitting ``robot:`` gave a *second*
+  controller running alongside the manifest default rather than replacing it, two controllers fighting
+  over the same actuators, and a config that silently had no effect.
   The override is **partial**: keys you do not mention keep the model's manifest values, so adding a
   ``test_cmd`` does not cost you the model's wheel geometry or actuator names. Per key, what the
   world says wins; nested values (e.g. ``topics:``) replace the manifest's mapping outright rather
   than being deep-merged. To start from the *plugin's* own defaults instead of the model's, opt out
   with ``default_plugins: false`` and declare the plugin fully.
+- **Switch one off** with ``enabled: false`` -- as a sibling in the document, or from an override::
+
+     roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+
+  The component is not deleted: it stays addressable, stays in the run's record saying it was turned
+  off, and a later override can turn it back on. Disabling an entry disables everything it owns.
 - **Opt out** entirely: set ``default_plugins: false`` on the ``spawn_*`` config.
+- **Derive one manifest from another** with ``extends:``. ``unitree_g1_dex1`` is a ``unitree_g1``
+  plus hands, and used to say so by repeating the base's locomotion and lidar blocks verbatim --
+  two copies that then had to be kept in step by hand. It now inherits them::
+
+     extends: unitree_g1        # a roqsim.models ref, or a path beside this manifest
+     components:
+       - arm_controller: {...}
+         name: left_arm_controller
+
+  What is inherited is **components, not geometry**: a derived model keeps its own MJCF. The base's
+  components come first, so a derived entry with the same label is the one that runs. Cycles raise.
+  A manifest may not carry ``sim:`` at all -- and neither may anything it extends -- because a model
+  is a component of a world, and the run's seed, pacing and contact overrides belong to the world
+  being run rather than to something included in it.
+
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
-  plugins (same shape as a world's ``plugins:``); the entity name is filled in for you, and each
+  plugins (same shape as a world's ``components:``); the entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
   prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
@@ -174,7 +195,7 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml
-   plugins:
+   components:
      - diff_drive: {}
      - lidar:
          site: lidar
@@ -188,7 +209,10 @@ Selecting a policy
 
 A policy-driven controller can be pointed at a different checkpoint with ``policy:``::
 
-   - g1_locomotion: {robot: robot, policy: g1_stand, station_keeping: true}
+   - spawn_robot: {model: unitree_g1}
+     name: robot
+     components:
+       - g1_locomotion: {policy: g1_stand, station_keeping: true}
 
 ``policy:`` names a directory under the family's ``policy/`` holding ``<name>.spec.yaml`` and its
 checkpoint (an absolute or relative path to a spec also works, for an out-of-tree policy). The spec
@@ -207,7 +231,10 @@ A navigation trial usually fails by touching something, and ``contact_monitor`` 
 for that. It watches an entity's whole kinematic subtree (chassis *and* wheels) and reports any
 contact against a geom outside its ``ignore`` list::
 
-   - contact_monitor: {robot: robot, ignore: [floor], min_force: 1.0}
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - contact_monitor: {ignore: [floor], min_force: 1.0}
 
 Two things are worth knowing before reaching for a proximity check instead:
 
@@ -306,7 +333,7 @@ A gantry, a ceiling track or a seventh-axis floor rail is a prismatic joint *car
 ``spawn_arm``'s ``rail:`` expresses it, and it is the one thing ``mount:`` cannot: ``mount`` welds the
 arm to a body that already exists, while a rail has to introduce the moving carriage itself::
 
-   plugins:
+   components:
      - spawn_arm:
          model: ur10e
          name: ur10e

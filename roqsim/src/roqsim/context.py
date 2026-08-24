@@ -77,6 +77,21 @@ class EntityRegistry:
         self._entities: dict[str, Entity] = {}
 
     def add(self, entity: Entity) -> None:
+        """Register *entity*. A name already taken is refused, never overwritten.
+
+        Entities are named by the address of the entry that creates them, which is unique by
+        construction -- so a collision here means a bug, not a world an author could write. A silent
+        overwrite would leave one entity hiding another: every sensor and controller aimed at the
+        lost one would resolve to the survivor, and report plausible numbers about the wrong thing.
+        """
+        existing = self._entities.get(entity.name)
+        if existing is not None and existing is not entity:
+            raise RuntimeError(
+                f"entity {entity.name!r} is already registered (as kind {existing.kind!r}, "
+                f"body {existing.body!r}). Entity names come from entry addresses and cannot "
+                f"collide in a loaded document, so this is a plugin registering a name it built "
+                f"itself rather than one derived from its address."
+            )
         self._entities[entity.name] = entity
 
     def remove(self, name: str) -> None:

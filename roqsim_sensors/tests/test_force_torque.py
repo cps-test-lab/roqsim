@@ -81,13 +81,17 @@ class _VendorSensorScene(_ArmScene):
     ships_own_sensors = True
 
 
-def _settled(scene: str = f"{__name__}:_ArmScene", **ft_config):
-    """An engine stepped until the link hangs static, so the wrench is the static load."""
+def _settled(scene: str = f"{__name__}:_ArmScene", *, name=None, **ft_config):
+    """An engine stepped until the link hangs static, so the wrench is the static load.
+
+    `name` is the entry's reserved sibling -- an instance is identified by its label, not by a
+    config key it carries."""
     from roqsim.engine import Engine
 
-    cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{scene: {}}, {"force_torque": {"site": "fts_site", **ft_config}}]}
-    )
+    entry = {"force_torque": {"site": "fts_site", **ft_config}}
+    if name is not None:
+        entry["name"] = name
+    cfg = load_config_from_dict({"sim": {}, "components": [{scene: {}}, entry]})
     engine = Engine(cfg)
     engine.setup()
     engine.reset()
@@ -159,21 +163,30 @@ def test_an_existing_sensor_pair_is_reused_not_duplicated():
 
 
 def test_two_sensors_cannot_share_a_blackboard_key():
-    from roqsim.engine import Engine
+    """Two entries answering to one label is refused when the document LOADS, before anything is
+    built -- the blackboard key it would collide on is derived from that label. The plugin keeps its
+    own guard for a directly-constructed pair (below), but a world can no longer reach it."""
+    from roqsim.config import PluginError
 
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "plugins": [
-                {f"{__name__}:_ArmScene": {}},
-                {"force_torque": {"site": "fts_site", "name": "ft"}},
-                {"force_torque": {"site": "fts_site", "name": "ft"}},
-            ],
-        }
-    )
-    engine = Engine(cfg)
+    with pytest.raises(PluginError, match="labelled 'ft'"):
+        load_config_from_dict(
+            {
+                "sim": {},
+                "components": [
+                    {f"{__name__}:_ArmScene": {}},
+                    {"force_torque": {"site": "fts_site"}, "name": "ft"},
+                    {"force_torque": {"site": "fts_site"}, "name": "ft"},
+                ],
+            }
+        )
+
+
+def test_the_plugins_own_duplicate_guard_still_holds():
+    """Reachable by constructing two directly, which an embedding driver may do."""
+    engine = _settled(name="ft")
+    ctx = engine.ctx
     with pytest.raises(RuntimeError, match="already registered"):
-        engine.setup()
+        ForceTorquePlugin({"site": "fts_site"}, label="ft").configure(ctx)
 
 
 # -- config -------------------------------------------------------------------------------

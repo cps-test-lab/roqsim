@@ -16,7 +16,7 @@
 # Only the Omron base mesh is this package's own, in meshes/frankie/.
 assets: [roqsim_manipulation_assets]
 
-plugins:
+components:
   # Base: a TRUE two-wheel differential drive with passive casters -- not a skid-steer. It therefore
   # needs no `slip_factor` calibration (the husky and G2 both do, because their fixed side-by-side
   # wheels must scrub sideways to yaw; a diff-drive's do not). slip_factor is left at its 1.0 default

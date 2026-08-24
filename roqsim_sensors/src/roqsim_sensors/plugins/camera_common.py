@@ -125,12 +125,12 @@ class CameraPlugin(Plugin):
     DEFAULT_WIDTH = 640
     DEFAULT_HEIGHT = 480
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         # The mount entity: a spawn_sensor/spawn_robot wires ``robot: <name>``, while an eye-in-hand
         # camera injected via an arm's manifest is wired ``arm: <name>`` (spawn_arm's target key).
         # Accept either so a camera can sit on a fixed mount, a mobile base, or a manipulator flange.
-        self.robot = self.config.get("robot") or self.config.get("arm") or "robot"
+        self.robot = self.entity
         self.camera = self.config.get("camera", self.DEFAULT_CAMERA)
         self.rate_hz = float(self.config.get("rate_hz", self.DEFAULT_RATE_HZ))
         self.frame_id = self.config.get("frame_id", self.DEFAULT_FRAME_ID)

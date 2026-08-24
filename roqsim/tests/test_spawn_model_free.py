@@ -22,19 +22,19 @@ def _world(tmp_path, **box):
                 {
                     "spawn_model": {
                         "model": "industrial_table",
-                        "name": "table",
                         "prefix": "t_",
                         "pos": [0, 0, 0],
-                    }
+                    },
+                    "name": "table",
                 },
                 {
                     "spawn_model": {
                         "model": "graspable_box",
-                        "name": "box",
                         "prefix": "b_",
                         "pos": [0, 0, 0.9],
                         **box,
-                    }
+                    },
+                    "name": "box",
                 },
             ],
         },
@@ -98,7 +98,10 @@ def test_free_requires_mass(tmp_path):
         "</body></worldbody></mujoco>"
     )
     cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{"spawn_model": {"model": str(prop), "name": "g", "free": True}}]},
+        {
+            "sim": {},
+            "components": [{"spawn_model": {"model": str(prop), "free": True}, "name": "g"}],
+        },
         base_dir=tmp_path,
     )
     # MuJoCo itself refuses a massless moving body at compile time, so no plugin-side guard is

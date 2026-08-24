@@ -142,7 +142,7 @@ def test_world_doc_spawns_mapped_markers():
     markers = [{"id": 1, "x_m": 2.5, "y_m": 3.0, "comment": "table"}]
     doc = fw.world_doc("r", "r/r.xml", (0.0, 0.0, 8.0, 6.0), markers, {"1": "industrial_table"})
     assert doc["sim"]["world"] == "r/r.xml"
-    assert doc["plugins"] == [
+    assert doc["components"] == [
         {
             "spawn_model": {
                 "model": "industrial_table",
@@ -174,7 +174,7 @@ def test_world_doc_yaw_from_map_and_sketch_with_map_override():
     }
     plugins = [
         p["spawn_model"]
-        for p in fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["plugins"]
+        for p in fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["components"]
     ]
     assert plugins[0]["model"] == "bed" and plugins[0]["rpy"] == pytest.approx(
         [0, 0, math.pi], abs=1e-4
@@ -233,7 +233,7 @@ def test_world_doc_emits_doors_before_markers():
     doors = [{"door": {"name": "door_1"}}]
     plugins = fw.world_doc(
         "r", "r/r.xml", (0.0, 0.0, 8.0, 6.0), markers, {"1": "industrial_table"}, doors=doors
-    )["plugins"]
+    )["components"]
     assert list(plugins[0]) == ["door"] and list(plugins[1]) == ["spawn_model"]
 
 

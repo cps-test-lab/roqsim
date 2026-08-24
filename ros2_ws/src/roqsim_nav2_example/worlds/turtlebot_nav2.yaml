@@ -9,13 +9,13 @@
 sim:
   pacing: realtime
 
-plugins:
+components:
   # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml).
   - spawn_robot:
       model: turtlebot4
-      name: robot
       pos: [0.0, 0.0]
       yaw: 0.0
+    name: robot
 
   # The bridge reads the robot's declared endpoints from ctx.interface and publishes
   # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->rplidar_link TF.

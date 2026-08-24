@@ -8,16 +8,16 @@
 sim:
   pacing: realtime      # realtime | asap | {factor: N}
 
-plugins:
+components:
   # arm_controller comes from the ur10e model manifest (models/ur10e.manifest.yaml).
   - spawn_arm:
       model: ur10e
-      name: ur10e
       prefix: "ur10e_"
       pos: [0.0, 0.0, 0.0]
+    name: ur10e
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
   # standalone scene shows motion (remove once a bridge drives the arm).
-  - arm_controller:
-      arm: ur10e
-      test_target: [0.0, -1.0, 1.2, -1.6, -1.57, 0.0]
+    components:
+      - arm_controller:
+          test_target: [0.0, -1.0, 1.2, -1.6, -1.57, 0.0]

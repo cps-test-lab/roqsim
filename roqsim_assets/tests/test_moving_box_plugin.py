@@ -16,7 +16,7 @@ from roqsim.context import SimContext
 from roqsim_assets.plugins.moving_box import MovingBoxPlugin
 
 
-def _build(walls=(), **cfg):
+def _build(walls=(), *, name=None, **cfg):
     """Compile a world with a floor, optional wall boxes, and the mover.
 
     `walls` are (x, y, sx, sy) axis-aligned wall boxes, 1 m tall — enough to make the look-ahead ray
@@ -34,7 +34,7 @@ def _build(walls=(), **cfg):
         g.size = [sx / 2, sy / 2, 0.5]
         g.pos = [x, y, 0.5]
     ctx = SimContext(config={})
-    plugin = MovingBoxPlugin(cfg)
+    plugin = MovingBoxPlugin(cfg, label=name)
     plugin.build(spec, ctx)
     model = spec.compile()
     data = mujoco.MjData(model)

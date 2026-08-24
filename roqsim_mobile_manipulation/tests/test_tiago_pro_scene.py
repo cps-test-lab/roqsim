@@ -65,7 +65,9 @@ GRIP_TOUCH_TRAVEL = 0.013
 # --- harness -----------------------------------------------------------------------------------
 def _manifest_entries(plugin: str) -> list[dict]:
     """Every manifest entry for *plugin*, in order. The manifest is the source of truth for config."""
-    out = [dict(e[plugin]) for e in yaml.safe_load(MANIFEST.read_text())["plugins"] if plugin in e]
+    out = [
+        dict(e[plugin]) for e in yaml.safe_load(MANIFEST.read_text())["components"] if plugin in e
+    ]
     if not out:
         raise AssertionError(f"tiago_pro manifest has no {plugin} plugin")
     return out
@@ -105,11 +107,11 @@ def rig(built):
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
 
-    drive = OmniDrivePlugin({**_manifest_entries("omni_drive")[0], "robot": "robot"})
+    drive = OmniDrivePlugin(_manifest_entries("omni_drive")[0], entity="robot")
     arms = {}
     for name in ("torso_head_controller", "arm_left_controller", "arm_right_controller"):
         cfg = _entry_by("arm_controller", "controller_name", name)
-        arms[name] = ArmControllerPlugin({**cfg, "robot": "robot"})
+        arms[name] = ArmControllerPlugin(cfg, entity="robot")
     for p in (drive, *arms.values()):
         p.configure(ctx)
         p.on_reset(ctx)
@@ -481,7 +483,7 @@ def test_c2_lidar_reads_a_known_wall(built):
     data.time = 1.0
     for cfg in _manifest_entries("lidar"):
         # range_stddev is PAL's own 0.01 m; zero it so this asserts geometry, not noise.
-        p = LidarPlugin({**cfg, "robot": "robot", "range_stddev": 0.0})
+        p = LidarPlugin({**cfg, "range_stddev": 0.0}, entity="robot")
         p.configure(ctx)
         p.on_reset(ctx)
         p.post_step(ctx)

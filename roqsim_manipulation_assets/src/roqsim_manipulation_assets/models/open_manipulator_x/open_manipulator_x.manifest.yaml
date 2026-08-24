@@ -4,7 +4,7 @@
 # re-declare the arm's controller. To override, declare arm_controller for the same arm in the world
 # (it wins); to opt out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is
 # filled in from the spawn_arm `name`.
-plugins:
+components:
   # No gripper keys: the two fingers are welded geometry in the MJCF (no joint, no actuator), so
   # there is nothing for arm_controller to expose a GripperCommand action for. See the port log.
   - arm_controller: {}

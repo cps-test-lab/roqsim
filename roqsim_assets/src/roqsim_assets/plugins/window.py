@@ -69,11 +69,14 @@ def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
 
 
 class WindowPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
     _ROOT_BODY = "window"
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "window")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         # Pose parsing tolerates malformed input (falls back to the origin / identity) so a bad length
         # is reported by validate_config with a friendly message rather than crashing construction.

@@ -5,7 +5,7 @@
 # out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the spawn_sensor
 # `name`. `exclude_body: mount` skips the sensor's own housing (a standalone mount has no chassis);
 # `frame_id: livox_frame` matches Livox's own ROS driver.
-plugins:
+components:
   - livox_mid360:
       site: mid360
       frame_id: livox_frame

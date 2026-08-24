@@ -87,9 +87,13 @@ class CartesianHandle:
 
 
 class CartesianAdmittancePlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.arm = self.config.get("arm") or self.config.get("robot") or "arm"
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.arm = self.entity
         self.site = self.config.get("site", "tool_site")
         self.ft_key = self.config.get("ft", "ft")
         self.law = self.config.get("law", "admittance")

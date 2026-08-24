@@ -40,13 +40,13 @@ Concepts
 The plugin (world-YAML toggle)
 ------------------------------
 
-List ``sensor_coverage_probe`` in a world's ``plugins:`` to compute coverage once (at ``configure``) and
+List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
 write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
 in the world; give an explicit list for lidars/Livox or hypothetical placements.
 
 .. code:: yaml
 
-   plugins:
+   components:
      - spawn_sensor: {model: mid360, name: cam_a, pos: [3, 1, 2.4], rpy: [3.14159, 0, 0]}
      - sensor_coverage_probe:
          sensors: auto              # or a list of {type, pos, rpy, config}

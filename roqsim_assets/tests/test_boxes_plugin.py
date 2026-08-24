@@ -10,22 +10,24 @@ from __future__ import annotations
 import mujoco
 import pytest
 
-from roqsim.config import apply_overrides
+from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
 from roqsim_assets.plugins.boxes import BoxesPlugin
 
-_TWO = [{"pos": [2.0, 1.0], "size": [0.5, 0.5, 1.0]},
-        {"pos": [4.0, -1.0], "size": [0.8, 0.8, 1.0], "yaw": 0.4}]
+_TWO = [
+    {"pos": [2.0, 1.0], "size": [0.5, 0.5, 1.0]},
+    {"pos": [4.0, -1.0], "size": [0.8, 0.8, 1.0], "yaw": 0.4},
+]
 
 
-def _build(**cfg):
+def _build(*, name="boxes", **cfg):
     spec = mujoco.MjSpec()
     floor = spec.worldbody.add_geom()
     floor.name = "floor"
     floor.type = mujoco.mjtGeom.mjGEOM_PLANE
     floor.size = [20, 20, 0.05]
     ctx = SimContext(config={})
-    plugin = BoxesPlugin(cfg)
+    plugin = BoxesPlugin(cfg, label=name)
     plugin.build(spec, ctx)
     model = spec.compile()
     data = mujoco.MjData(model)
@@ -64,44 +66,48 @@ def test_an_empty_population_is_legal():
 
 def test_geometry_is_the_box_plugins():
     """Delegation, not reimplementation: full extents, and two-element pos sits on the floor."""
-    model, _ = _build(name="obstacles",
-                      instances=[{"pos": [0.0, 0.0], "size": [0.4, 0.6, 1.0]}])
-    gid = next(g for g in range(model.ngeom)
-               if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").endswith("box"))
+    model, _ = _build(name="obstacles", instances=[{"pos": [0.0, 0.0], "size": [0.4, 0.6, 1.0]}])
+    gid = next(
+        g
+        for g in range(model.ngeom)
+        if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").endswith("box")
+    )
     assert list(model.geom_size[gid][:3]) == pytest.approx([0.2, 0.3, 0.5])
     assert model.body(model.geom_bodyid[gid]).pos[2] == pytest.approx(0.5)
 
 
 # -- the reason this plugin exists ---------------------------------------------------------------
 
+
 def test_an_override_changes_the_population_count():
     """The whole point: a campaign varies "how many" without editing the world's structure.
 
-    `apply_overrides` deep-merges into a plugin resolved by name and refuses one matching no
-    plugin, so it can replace a list value but could never append a second `box:` entry. With one
-    entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
+    An override sets a key on a component that exists; it cannot append a second `box:` entry. With
+    one entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
     """
-    world = {"plugins": [{"boxes": {"name": "obstacles", "instances": _TWO}}]}
+    world = {"sim": {}, "components": [{"boxes": {"instances": _TWO}, "name": "obstacles"}]}
     five = [{"pos": [float(i), 0.0], "size": [0.3, 0.3, 0.3]} for i in range(5)]
 
-    merged = apply_overrides(world, {"plugins": {"boxes": {"instances": five}}})
+    cfg = load_config_from_dict(world, overrides={"components": {"obstacles": {"instances": five}}})
 
-    assert len(merged["plugins"][0]["boxes"]["instances"]) == 5
+    boxes = next(s for s in cfg.plugins if s.ref == "boxes")
+    assert len(boxes.config["instances"]) == 5
 
 
 def test_validation_names_the_offending_instance():
-    """"size must have three elements" is not actionable when the world declares twelve boxes."""
-    plugin = BoxesPlugin({"name": "obstacles", "instances": _TWO})
+    """ "size must have three elements" is not actionable when the world declares twelve boxes."""
+    plugin = BoxesPlugin({"instances": _TWO}, label="obstacles")
     errors = plugin.validate_config(
-        {"name": "obstacles", "instances": [_TWO[0], {"pos": [1.0, 1.0], "size": "big"}]})
+        {"name": "obstacles", "instances": [_TWO[0], {"pos": [1.0, 1.0], "size": "big"}]}
+    )
     assert errors and all(e.startswith("instances[1]:") for e in errors)
 
 
 def test_instances_is_required():
-    plugin = BoxesPlugin({})
+    plugin = BoxesPlugin({}, label="boxes")
     assert plugin.validate_config({}) == ["'instances' is required (a list of box configs)"]
 
 
 def test_instances_must_be_a_list():
-    plugin = BoxesPlugin({})
+    plugin = BoxesPlugin({}, label="boxes")
     assert "must be a list" in plugin.validate_config({"instances": {"pos": [0, 0]}})[0]

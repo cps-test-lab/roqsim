@@ -45,8 +45,8 @@ class LidarPlugin(RayCastSensorPlugin):
     #: ``range_min`` rather than vanishing and shifting every later angle.
     CLAMP_NEAR_RETURNS = True
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self._num_rays = int(self.config.get("rays", 360))
         self.angle_min = float(self.config.get("angle_min", 0.0))
         self.angle_max = float(self.config.get("angle_max", 2.0 * math.pi))

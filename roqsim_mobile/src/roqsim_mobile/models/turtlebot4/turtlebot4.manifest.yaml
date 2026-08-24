@@ -4,7 +4,7 @@
 # the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin for the
 # same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
 # `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
-plugins:
+components:
   - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
   - lidar:
       site: lidar

@@ -68,8 +68,8 @@ class DepthCameraPlugin(CameraPlugin):
     DEFAULT_DEPTH_ENCODING = "32FC1"
     DEPTH_ENCODINGS = ("32FC1", "16UC1")
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.clip_near = float(self.config.get("clip_near", 0.3))
         self.clip_far = float(self.config.get("clip_far", 100.0))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))

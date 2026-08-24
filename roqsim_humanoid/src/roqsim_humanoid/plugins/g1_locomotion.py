@@ -115,9 +115,13 @@ def _gravity_orientation(quat: np.ndarray) -> np.ndarray:
 
 
 class G1LocomotionPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.policy_path = str(self.config.get("policy_path", DEFAULT_POLICY))
         self.config_path = str(self.config.get("config_path", DEFAULT_CONFIG))
         self.gait_period = float(self.config.get("gait_period", 0.8))

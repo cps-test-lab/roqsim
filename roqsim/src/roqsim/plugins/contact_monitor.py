@@ -66,9 +66,9 @@ class ContactReport:
 class ContactMonitorPlugin(Plugin):
     parallel_safe = True  # post_step only reads data.contact and writes its own state
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.body = self.config.get("body", "")
         self.ignore = list(self.config.get("ignore", ["floor"]))
         self.ignore_prefixes = list(self.config.get("ignore_prefixes", []))

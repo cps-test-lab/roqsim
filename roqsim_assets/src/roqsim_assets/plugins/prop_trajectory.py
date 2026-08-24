@@ -50,6 +50,10 @@ from roqsim.plugin import Plugin
 
 
 class PropTrajectoryPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
     @classmethod
     def expand(cls, spec, world, base_dir):
         """Record the world file's directory so ``path`` resolves relative to the WORLD, not the CWD.
@@ -89,9 +93,9 @@ class PropTrajectoryPlugin(Plugin):
             path = Path(self.config.get("_base_dir") or ".") / path
         return [str(path.resolve())]
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "prop_trajectory")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         self.speed = float(self.config.get("speed", 0.03))
         self.origin = [float(v) for v in self.config.get("origin", [0.0, 0.0, 0.0])]

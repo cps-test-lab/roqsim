@@ -112,12 +112,12 @@ def test_replaces_a_block_style_view():
             azimuth: 0.0
             elevation: 0.0
 
-        plugins:
+        components:
           - dummy: {}
         """)
     after = replace_sim_view(before, VIEW)
     assert _sim_view(after) == VIEW
-    assert yaml.safe_load(after)["plugins"] == [{"dummy": {}}]
+    assert yaml.safe_load(after)["components"] == [{"dummy": {}}]
 
 
 def test_replaces_a_flow_style_view_in_place():
@@ -143,9 +143,9 @@ def test_comments_survive_the_write():
             lookat: [0.0, 0.0, 0.0]
             distance: 1.0
 
-        plugins:
+        components:
           # Ships OPEN (roofless) -- set `enabled: true` for the roofed warehouse.
-          - ceiling: {above_z: 2.6, enabled: false}
+          - ceiling: {above_z: 2.6, keep: false}
         """)
     after = replace_sim_view(before, VIEW)
     assert _sim_view(after) == VIEW
@@ -176,10 +176,10 @@ def test_adds_a_view_to_a_sim_block_that_has_none():
 
 
 def test_adds_a_sim_block_to_a_world_that_has_none():
-    before = "plugins:\n  - dummy: {}\n"
+    before = "components:\n  - dummy: {}\n"
     after = replace_sim_view(before, VIEW)
     assert _sim_view(after) == VIEW
-    assert yaml.safe_load(after)["plugins"] == [{"dummy": {}}]
+    assert yaml.safe_load(after)["components"] == [{"dummy": {}}]
 
 
 def test_writes_into_the_child_of_an_extends_chain():

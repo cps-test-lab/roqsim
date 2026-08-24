@@ -11,8 +11,8 @@ class FakeBridge(BridgeBase):
 
     BACKEND = "fake"
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.outputs: list[tuple[str, str]] = []  # (endpoint name, namespace)
         self.inputs: list[tuple[str, str]] = []
 
@@ -94,8 +94,8 @@ def test_endpoint_namespace_defaults_empty():
 class RecordingBridge(FakeBridge):
     """Also records what actually got published, so the lazy gate is observable."""
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.published: list[str] = []
         self._handles: dict[int, str] = {}
 

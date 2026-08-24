@@ -8,19 +8,19 @@
 sim:
   pacing: realtime      # realtime | asap | {factor: N}
 
-plugins:
+components:
   # arm_controller comes from the gen3 model manifest (models/gen3.manifest.yaml).
   - spawn_arm:
       model: gen3
-      name: gen3
       prefix: "gen3_"
       pos: [0.0, 0.0, 0.0]
+    name: gen3
 
   # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
   # standalone scene shows motion (remove once a bridge drives the arm). Gripper config is preserved.
-  - arm_controller:
-      arm: gen3
-      gripper_joint: robotiq_85_left_knuckle_joint
-      gripper_open: 0.0
-      gripper_close: 0.8
-      test_target: [0.0, 0.5, 3.14159, -2.0, 0.0, 0.7, 1.5708]
+    components:
+      - arm_controller:
+          gripper_joint: robotiq_85_left_knuckle_joint
+          gripper_open: 0.0
+          gripper_close: 0.8
+          test_target: [0.0, 0.5, 3.14159, -2.0, 0.0, 0.7, 1.5708]

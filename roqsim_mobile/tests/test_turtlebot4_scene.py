@@ -62,7 +62,7 @@ MAX_W = 1.90
 
 def _manifest_plugin(kind: str) -> dict:
     """The plugin config the model actually ships with (the manifest is the source of truth)."""
-    for entry in yaml.safe_load(MANIFEST.read_text())["plugins"]:
+    for entry in yaml.safe_load(MANIFEST.read_text())["components"]:
         if kind in entry:
             return dict(entry[kind] or {})
     raise AssertionError(f"turtlebot4 manifest has no {kind} plugin")

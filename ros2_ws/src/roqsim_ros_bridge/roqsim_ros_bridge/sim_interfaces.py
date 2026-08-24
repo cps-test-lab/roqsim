@@ -60,8 +60,8 @@ class SimInterfacesPlugin(Plugin):
     # scene consumer (render, review, export) may drop it. See Plugin.transport_only.
     transport_only = True
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self._ctx = None
         self._node: Node | None = None
         self._own_node = False

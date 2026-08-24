@@ -8,14 +8,14 @@
 sim:
   pacing: realtime
 
-plugins:
+components:
   # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml);
   # driven via /cmd_vel, so no test_cmd override here.
   - spawn_robot:
       model: turtlebot4
-      name: robot
       pos: [0.0, 0.0]
       yaw: 0.0
+    name: robot
 
   # The bridge reads the robot's declared endpoints (cmd_vel in; odom+tf, scan, joint_states out)
   # from ctx.interface -- topics/types/frames/rates are declared on the robot, not configured here.

@@ -133,9 +133,12 @@ def test_missing_checkpoint_fails_loudly_with_how_to_get_it(tmp_path):
     cfg = load_config_from_dict(
         {
             "sim": {"timestep": 0.002},
-            "plugins": [
-                {"spawn_robot": {"model": "unitree_g1_dex1", "name": "robot", "pos": [0, 0]}},
-                {"g1_locomotion": {"robot": "robot", "policy": "g1_stand"}},
+            "components": [
+                {
+                    "spawn_robot": {"model": "unitree_g1_dex1", "pos": [0, 0]},
+                    "name": "robot",
+                    "components": [{"g1_locomotion": {"policy": "g1_stand"}}],
+                },
             ],
         },
         base_dir=tmp_path,

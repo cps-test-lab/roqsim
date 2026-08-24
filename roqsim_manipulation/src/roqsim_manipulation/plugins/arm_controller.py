@@ -133,6 +133,10 @@ class ArmHandle:
 
 
 class ArmControllerPlugin(Plugin):
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
     def validate_config(self, config: dict) -> list[str]:
         # Only the ``joint_states`` endpoint topic is hardwireable here (the trajectory action is not
         # a topic). ``topics: {joint_states: /joint_states}`` matches external/hardware names.
@@ -148,13 +152,13 @@ class ArmControllerPlugin(Plugin):
             )
         return errors
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         # Entity name. `spawn_arm` wires its manifest plugins with `arm: <name>`, `spawn_robot` with
         # `robot: <name>` (roqsim.manifest.expand_manifest sets the spawn's own target key). Accepting
         # either lets one controller serve a standalone arm and an arm carried by a robot, without the
         # manifest having to hardcode the entity name the world happens to choose.
-        self.arm = self.config.get("arm") or self.config.get("robot") or "arm"
+        self.arm = self.entity
         self.gripper_ctrl = float(self.config.get("gripper_ctrl", 255.0))
         self.stream_commands = bool(self.config.get("stream_commands", False))
         self.velocity_commands = bool(self.config.get("velocity_commands", False))

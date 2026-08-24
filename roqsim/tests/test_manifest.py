@@ -1,5 +1,7 @@
-"""Manifest: expand_manifest injects a model's default plugins, wired to the entity and deduped
-against explicit world declarations on the producing plugin's entity key.
+"""Manifest: expand_manifest injects a model's default plugins as components of the spawn.
+
+A manifest entry belongs to the spawn's entity because that is where it sits, and it is deduped
+against what the owner already declares by LABEL -- so a model shipping two of a kind keeps both.
 
 The model is referenced by an absolute file path (resolve_model's filesystem form), so these tests
 exercise the manifest logic in isolation without registering a roqsim.models provider -- the
@@ -24,19 +26,23 @@ def _write_model(models_dir, model, manifest_body=None):
 
 
 def _spawn(model=None, name=None, **cfg):
+    """A spawn entry. Its LABEL is the entity it brings into being, so `name` is the sibling."""
     if model is not None:
         cfg["model"] = model
-    if name is not None:
-        cfg["name"] = name
-    return PluginSpec(ref="spawn_arm", name=None, config=cfg)
+    return PluginSpec(ref="spawn_arm", name=name, config=cfg)
 
 
-def _expand(spec, world, target_key="arm"):
-    return expand_manifest(spec, world, target_key=target_key, default_name="arm")
+def _owned(ref, owner, **cfg):
+    """An entry the owner already declares -- a component of it, so wired by position."""
+    return PluginSpec(ref, None, cfg, entity=owner)
+
+
+def _expand(spec, world):
+    return expand_manifest(spec, world)
 
 
 ARM_MANIFEST = """
-    plugins:
+    components:
       - arm_controller: {}
 """
 
@@ -45,7 +51,9 @@ def test_injects_and_wires_entity(tmp_path):
     model = _write_model(tmp_path, "ur10e", ARM_MANIFEST)
     spec = _spawn(model, "ur10e")
     out = _expand(spec, [spec])
-    assert [(s.ref, s.config) for s in out] == [("arm_controller", {"arm": "ur10e", "prefix": ""})]
+    assert [(s.ref, s.entity, s.config) for s in out] == [
+        ("arm_controller", "ur10e", {"prefix": ""})
+    ]
 
 
 def test_injects_spawn_prefix(tmp_path):
@@ -55,7 +63,7 @@ def test_injects_spawn_prefix(tmp_path):
         tmp_path,
         "ur10e",
         """
-        plugins:
+        components:
           - fiducial_marker:
               attach_to: wrist_3_link
           - keep_own_prefix:
@@ -71,7 +79,7 @@ def test_injects_spawn_prefix(tmp_path):
 def test_world_entry_overrides_manifest(tmp_path):
     model = _write_model(tmp_path, "ur10e", ARM_MANIFEST)
     spec = _spawn(model, "ur10e")
-    world_ctrl = PluginSpec("arm_controller", None, {"arm": "ur10e", "test_target": [0.0]})
+    world_ctrl = _owned("arm_controller", "ur10e", test_target=[0.0])
     out = _expand(spec, [spec, world_ctrl])
     assert out == []  # world already declares arm_controller for ur10e -> injected default skipped
 
@@ -89,7 +97,7 @@ def test_world_entry_merges_manifest_defaults(tmp_path):
         tmp_path,
         "husky",
         """
-        plugins:
+        components:
           - diff_drive:
               wheel_radius: 0.17775
               slip_factor: 3.0
@@ -97,7 +105,7 @@ def test_world_entry_merges_manifest_defaults(tmp_path):
     """,
     )
     spec = _spawn(model, "husky")
-    world_dd = PluginSpec("diff_drive", None, {"arm": "husky", "test_cmd": [0.5, 0.4]})
+    world_dd = _owned("diff_drive", "husky", test_cmd=[0.5, 0.4])
     out = _expand(spec, [spec, world_dd])
 
     assert out == []  # still not injected: the world's entry is the one that runs
@@ -114,15 +122,15 @@ def test_world_value_wins_over_manifest(tmp_path):
         tmp_path,
         "turtlebot4",
         """
-        plugins:
+        components:
           - lidar:
               site: lidar
               rays: 640
     """,
     )
-    spec = PluginSpec("spawn_robot", None, {"model": model, "name": "robot"})
-    world_lidar = PluginSpec("lidar", None, {"robot": "robot", "rays": 1440})
-    out = expand_manifest(spec, [spec, world_lidar], target_key="robot", default_name="robot")
+    spec = PluginSpec("spawn_robot", "robot", {"model": model})
+    world_lidar = _owned("lidar", "robot", rays=1440)
+    out = expand_manifest(spec, [spec, world_lidar])
 
     assert out == []
     assert world_lidar.config["rays"] == 1440  # the world changed it; the manifest must not win
@@ -138,8 +146,8 @@ def test_two_entities_do_not_collide(tmp_path):
     world = [ur, pa]
     ur_out = _expand(ur, world)
     pa_out = _expand(pa, world)
-    assert [s.config["arm"] for s in ur_out] == ["ur10e"]
-    assert [s.config["arm"] for s in pa_out] == ["panda"]
+    assert [s.entity for s in ur_out] == ["ur10e"]
+    assert [s.entity for s in pa_out] == ["panda"]
 
 
 def test_default_plugins_false_and_missing_manifest(tmp_path):
@@ -152,19 +160,40 @@ def test_default_plugins_false_and_missing_manifest(tmp_path):
     assert _expand(no_model, [no_model]) == []
 
 
-def test_target_key_selects_wiring(tmp_path):
+def test_the_entity_is_the_spawns_label_whatever_family_it_is(tmp_path):
+    """No per-family key any more: a mobile spawn and an arm spawn wire their components the same
+    way, because ownership is where an entry sits rather than a key each family chose."""
     model = _write_model(
         tmp_path,
         "turtlebot4",
         """
-        plugins:
+        components:
           - lidar:
               site: lidar
     """,
     )
-    spec = PluginSpec("spawn_robot", None, {"model": model, "name": "robot"})
-    out = expand_manifest(spec, [spec], target_key="robot", default_name="robot")
-    assert out[0].config == {"site": "lidar", "robot": "robot", "prefix": ""}
+    spec = PluginSpec("spawn_robot", "robot", {"model": model})
+    out = expand_manifest(spec, [spec])
+    assert (out[0].entity, out[0].config) == ("robot", {"site": "lidar", "prefix": ""})
+
+
+def test_a_model_shipping_two_of_a_kind_keeps_both(tmp_path):
+    """Keyed on the label, not the ref: tiago_pro's two lidars are two components. Keying on the
+    ref collapsed them onto one entry and silently lost a sensor."""
+    model = _write_model(
+        tmp_path,
+        "twolidar",
+        """
+        components:
+          - lidar: {site: front}
+            name: lidar_front
+          - lidar: {site: rear}
+            name: lidar_rear
+    """,
+    )
+    spec = PluginSpec("spawn_robot", "robot", {"model": model})
+    out = expand_manifest(spec, [spec])
+    assert [s.address for s in out] == ["robot.lidar_front", "robot.lidar_rear"]
 
 
 def test_load_manifest_missing_returns_empty(tmp_path):

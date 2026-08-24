@@ -13,7 +13,7 @@ from roqsim.config import drop_transport_plugins, entry_ref, load_config, with_t
 
 
 def _refs(raw):
-    return [entry_ref(entry) for entry in raw["plugins"]]
+    return [entry_ref(entry) for entry in raw["components"]]
 
 
 def _world(tmp_path, body):
@@ -53,7 +53,7 @@ def test_a_world_that_already_has_a_transport_is_left_alone():
 
 def test_it_does_not_mutate_the_input():
     """The caller's parsed world is reused elsewhere (world_sources, the exporters)."""
-    raw = {"plugins": [{"floorplan": {}}]}
+    raw = {"components": [{"floorplan": {}}]}
     with_transport(raw)
     assert _refs(raw) == ["floorplan"]
 
@@ -63,7 +63,7 @@ def test_tf_namespace_is_topic_only():
     scenario-execution's listener look under /<ns>/tf while the bridge publishes
     globally, and init_nav2 hangs waiting for a transform."""
     out = with_transport({"plugins": []}, tf_namespace="robot")
-    assert out["plugins"][0]["ros2_bridge"] == {"tf_namespace": "robot"}
+    assert out["components"][0]["ros2_bridge"] == {"tf_namespace": "robot"}
 
 
 def test_it_is_the_inverse_of_dropping(tmp_path):
@@ -87,18 +87,27 @@ def test_a_checked_in_world_stays_ros_free(tmp_path):
     assert [spec.ref for spec in load_config(world).plugins] == ["dummy"]
 
 
-def test_transport_is_applied_after_overrides(tmp_path):
-    """Overrides address plugins by name and cannot append one, so ordering matters:
-    an override naming ros2_bridge before it exists would be an error."""
-    world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
+def test_transport_is_applied_before_overrides_resolve(tmp_path):
+    """So an injected bridge is addressable like anything else.
+
+    It was not: transport was appended after overrides had already been resolved, which meant
+    `plugins.ros2_bridge.*` named nothing in a world that did not author its own bridge -- the
+    deployment that added it could not then configure it.
+    """
+    world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     cfg = load_config(world, {"sim": {"pacing": "asap"}}, {"ros": True})
     assert cfg.pacing == "asap"
     assert [spec.ref for spec in cfg.plugins] == ["dummy", "ros2_bridge"]
+
+    cfg = load_config(world, {"components": {"ros2_bridge": {"tf_namespace": "r1"}}}, {"ros": True})
+    bridge = next(s for s in cfg.plugins if s.ref == "ros2_bridge")
+    assert bridge.config["tf_namespace"] == "r1"
 
 
 def test_overriding_a_plugin_that_does_not_exist_still_fails(tmp_path):
     """The injection must not turn a typo into a silent no-op."""
     from roqsim.plugin import PluginError
+
     world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
-    with pytest.raises(PluginError, match="matches no plugin"):
+    with pytest.raises(PluginError, match="matches no component"):
         load_config(world, {"plugins": {"nosuch": {}}})

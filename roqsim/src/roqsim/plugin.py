@@ -53,10 +53,48 @@ class Plugin:
     #: one.
     transport_only: bool = False
 
-    def __init__(self, config: dict | None = None, *, name: str | None = None):
+    #: Set True on a plugin that registers an entity (a ``spawn_*``, a prop). Such an entry may own
+    #: a nested ``components:`` block, and its label names the entity it brings into being. Declared
+    #: here rather than listed in the core for the same reason ``transport_only`` is: a name list in
+    #: core would silently serve only our own plugins.
+    provides_entity: bool = False
+
+    #: Set True on a plugin that attaches to an entity -- a sensor, a controller, a monitor. Such an
+    #: entry must be nested under the entry that provides its entity; declared at the top of a
+    #: document it has nothing to attach to, and is refused with the fix in the message rather than
+    #: silently running alongside the default it meant to replace.
+    requires_owner: bool = False
+
+    def __init__(
+        self,
+        config: dict | None = None,
+        *,
+        name: str | None = None,
+        entity: str | None = None,
+        label: str | None = None,
+    ):
         self.config: dict = dict(config or {})
         #: Instance name (defaults to the class name; overridable via ``name:`` in YAML).
         self.name: str = name or type(self).__name__
+        #: How this entry is addressed among its siblings: its ``name:``, else its plugin ref. For a
+        #: ``provides_entity`` plugin this IS the name of the entity it registers -- one spelling, so
+        #: an entity name can no longer be written in a config key *and* in a sibling and disagree.
+        self.label: str = label or (name or type(self).__name__)
+        #: The entity this instance belongs to -- the label of the entry it is nested under, filled
+        #: in by the loader. ``None`` for an entry at the top of a document, which belongs to the
+        #: world itself. A plugin reads this instead of parsing an entity name out of its own config:
+        #: ownership is where the entry sits, so there is nothing to spell wrong.
+        self.entity: str | None = entity
+
+    @property
+    def address(self) -> str:
+        """This instance's address: the dotted path of labels from the root of the document.
+
+        The one derived identity. An entity a ``provides_entity`` plugin registers is named by it --
+        not by its label, which is unique only among siblings, so two robots each carrying an ``arm``
+        would otherwise register one entity that hid the other.
+        """
+        return f"{self.entity}.{self.label}" if self.entity else self.label
 
     # -- plugin-spec expansion (optional) -----------------------------------------------------
     @classmethod

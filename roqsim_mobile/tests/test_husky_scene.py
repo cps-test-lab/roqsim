@@ -40,7 +40,7 @@ TOTAL_MASS = 33.455 + 4 * 2.637  # 44.003 kg
 
 def _drive_config() -> dict:
     """The diff_drive config the model actually ships with (manifest is the source of truth)."""
-    plugins = yaml.safe_load(MANIFEST.read_text())["plugins"]
+    plugins = yaml.safe_load(MANIFEST.read_text())["components"]
     for entry in plugins:
         if "diff_drive" in entry:
             return dict(entry["diff_drive"])
@@ -311,7 +311,7 @@ def test_c2_lidar_sees_a_box_of_known_size():
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    manifest = yaml.safe_load(MANIFEST.read_text())["plugins"]
+    manifest = yaml.safe_load(MANIFEST.read_text())["components"]
     cfg = next(e["lidar"] for e in manifest if "lidar" in e)
     lidar = LidarPlugin(dict(cfg))
     lidar.configure(ctx)

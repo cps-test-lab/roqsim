@@ -362,7 +362,7 @@ def world_doc(
     plugins = list(doors or []) + plugins
     return {
         "sim": {"world": xml_relpath, "pacing": "realtime", "view": _view(bbox)},
-        "plugins": plugins,
+        "components": plugins,
     }
 
 

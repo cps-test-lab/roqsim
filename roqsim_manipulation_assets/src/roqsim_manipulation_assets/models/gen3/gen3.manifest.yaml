@@ -4,7 +4,7 @@
 # controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
 # out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
 # spawn_arm `name`.
-plugins:
+components:
   # The tendon `fingers_actuator` makes the gripper commandable: arm_controller exposes a
   # GripperCommand action at <gripper_controller_name>/gripper_cmd and reports right_driver_joint as
   # the gripper position (0 open .. 0.8 closed), mapped onto the actuator's 0..255 ctrl. Start open.

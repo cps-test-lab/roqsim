@@ -258,19 +258,24 @@ def _cfg(text: str, tmp_path):
     return load_config(str(world))
 
 
-def test_no_ceiling_disables_the_plugin(tmp_path):
-    """`enabled` on the ceiling plugin means *keep* the ceiling, so opening the roof sets it False."""
-    cfg = _cfg("plugins:\n  - ceiling: {above_z: 2.6, enabled: true}\n", tmp_path)
+def test_no_ceiling_opens_the_roof(tmp_path):
+    """`keep` means *keep the ceiling*, so opening the roof sets it False.
+
+    Not the reserved `enabled:` sibling: this plugin works by REMOVING geometry, so turning the
+    component off would leave the ceiling standing -- the opposite of what the flag asks for.
+    """
+    cfg = _cfg("components:\n  - ceiling: {above_z: 2.6, keep: true}\n", tmp_path)
     assert render._disable_ceiling(cfg) is True
-    assert cfg.plugins[0].config["enabled"] is False
+    assert cfg.plugins[0].config["keep"] is False
+    assert cfg.plugins[0].enabled is True
 
 
 def test_no_ceiling_is_a_noop_without_a_ceiling_plugin(tmp_path):
     """A ceiling-less world already satisfies --no-ceiling; failing there would be unhelpful.
 
-    Applying it as a --set override *would* fail: apply_overrides refuses an override matching no
-    plugin, and its message lists every plugin in the world -- several hundred names in a populated
-    scene. That is right for --set (where a typo is otherwise silent) and wrong for this flag.
+    Applying it as a --set override *would* fail: an override matching no component is refused, and
+    the message lists what the document has -- several hundred names in a populated scene. That is
+    right for --set (where a typo is otherwise silent) and wrong for this flag.
     """
     cfg = _cfg("plugins:\n  - dummy: {}\n", tmp_path)
     assert render._disable_ceiling(cfg) is False

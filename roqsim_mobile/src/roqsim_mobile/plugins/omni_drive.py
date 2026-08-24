@@ -73,9 +73,13 @@ WHEEL_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
 
 
 class OmniDrivePlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.base_joint = self.config.get("base_joint", "base_free")
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
         self.base_body = self.config.get("base_body", "base_link")

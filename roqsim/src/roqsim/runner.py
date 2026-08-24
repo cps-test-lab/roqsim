@@ -49,7 +49,6 @@ from .capture import (
 )
 from .clock import Pacer
 from .config import (
-    apply_overrides,
     deep_merge,
     drop_transport,
     load_config,
@@ -535,11 +534,9 @@ def config_for_input(target: str, overrides: dict | None = None, transport: dict
         # A model reference: let spawn_model resolve it and place it in the empty room.
         raw = {"plugins": [{"spawn_model": {"model": target}}]}
         base_dir = Path.cwd()
-    if overrides:
-        raw = apply_overrides(raw, overrides)
     if transport:
         raw = with_transport(raw, **transport)
-    return load_config_from_dict(raw, base_dir=base_dir)
+    return load_config_from_dict(raw, base_dir=base_dir, overrides=overrides)
 
 
 # Back-compat alias: this was ``_config_for_input`` before it became a public reuse point.
@@ -708,6 +705,7 @@ def run(
                 rate,
                 world=target,
                 overrides=overrides,
+                config=engine.config,
                 camera=False,
                 sim_poses=env_flag("ROQSIM_SIM_POSES"),
                 logger=engine.logger or log,
@@ -721,6 +719,7 @@ def run(
             rate,
             world=target,
             overrides=overrides,
+            config=engine.config,
             camera=True,
             logger=engine.logger or log,
         )

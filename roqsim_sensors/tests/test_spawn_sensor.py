@@ -14,7 +14,8 @@ def _world(**spawn_config):
         "sim": {},
         "plugins": [
             {
-                "spawn_sensor": {"model": "d435", "name": "d435", **spawn_config},
+                "spawn_sensor": {"model": "d435", **spawn_config},
+                "name": "d435",
             },
         ],
     }
@@ -51,7 +52,7 @@ def test_default_plugins_false_skips_the_capture_plugin():
 def _mid360_world(**spawn_config):
     cfg = {
         "sim": {},
-        "plugins": [{"spawn_sensor": {"model": "mid360", "name": "mid360", **spawn_config}}],
+        "plugins": [{"spawn_sensor": {"model": "mid360", **spawn_config}, "name": "mid360"}],
     }
     return load_config_from_dict(cfg)
 
@@ -68,7 +69,7 @@ def _fov_alpha(engine: Engine):
 def _robin_world(**spawn_config):
     cfg = {
         "sim": {},
-        "plugins": [{"spawn_sensor": {"model": "robin_w1g", "name": "robin_w1g", **spawn_config}}],
+        "plugins": [{"spawn_sensor": {"model": "robin_w1g", **spawn_config}, "name": "robin_w1g"}],
     }
     return load_config_from_dict(cfg)
 
@@ -252,11 +253,11 @@ def test_camera_model_always_synthesises_occluded_frustum_not_envelope():
                 {
                     "spawn_sensor": {
                         "model": "zivid",
-                        "name": "zivid",
                         "show_fov": True,
                         "fov_alpha": 0.2,
                         **extra,
-                    }
+                    },
+                    "name": "zivid",
                 }
             ],
         }
@@ -323,7 +324,7 @@ def test_standalone_camera_mounts_share_the_horizontal_look_convention():
         ("d455", "d455_color"),
         ("zivid", "zivid_color"),
     ):
-        cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": model, "name": model}}]}
+        cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": model}, "name": model}]}
         engine = Engine(load_config_from_dict(cfg))
         engine.setup()
         engine.reset()

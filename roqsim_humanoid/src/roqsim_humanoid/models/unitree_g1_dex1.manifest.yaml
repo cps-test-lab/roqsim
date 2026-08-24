@@ -1,9 +1,9 @@
-plugins:
-  # Legs: the same 12 torque actuators and the same policy as unitree_g1. The leg chain and its
-  # actuator names are unchanged by the port, so this plugin drives them with no configuration.
-  # Standing is a zero cmd_vel; the policy was trained against the leg-only model whose upper body was
-  # one rigid mass, so arm motion and a carried payload reach it only as base disturbances. See
-  - g1_locomotion: {}
+# The dex1 IS a unitree_g1 plus hands: the same 12 leg actuators, the same walking policy, the same
+# lidar. Inheriting them says that once, instead of repeating two blocks that must then be kept in
+# step by hand. `extends:` carries COMPONENTS, not geometry -- this model keeps its own MJCF.
+extends: unitree_g1
+
+components:
 
   # Arms: one controller per side, each owning exactly its 7 arm joints and its own gripper. The
   # `joints:` allowlist is load-bearing here, not cosmetic -- without it arm_controller's prefix scan
@@ -34,6 +34,7 @@ plugins:
         # Merge with the legs' JointState so robot_state_publisher sees one complete robot. Each
         # controller reports only its own joints, so the three publishers do not contradict.
         joint_states: /joint_states
+    name: left_arm_controller
 
   - arm_controller:
       controller_name: right_arm_controller
@@ -52,6 +53,7 @@ plugins:
       gripper_close: 0.0
       topics:
         joint_states: /joint_states
+    name: right_arm_controller
 
   # The waist. Its job here is to hold the torso still, which it would do anyway -- but it also has to
   # be REPORTED. Without an owner the three waist joints appear in no /joint_states message at all, and
@@ -67,8 +69,4 @@ plugins:
         - waist_pitch_joint
       topics:
         joint_states: /joint_states
-
-  - lidar:
-      site: lidar
-      rays: 360
-      max_range: 12.0
+    name: waist_controller

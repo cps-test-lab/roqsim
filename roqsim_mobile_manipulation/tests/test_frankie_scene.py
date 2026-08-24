@@ -51,7 +51,7 @@ GRIP_KEY = "gripper:robot:gripper_controller"
 
 def _manifest(plugin: str) -> dict:
     """The config the model actually ships with — the manifest is the source of truth."""
-    for entry in yaml.safe_load(MANIFEST.read_text())["plugins"]:
+    for entry in yaml.safe_load(MANIFEST.read_text())["components"]:
         if plugin in entry:
             return dict(entry[plugin])
     raise AssertionError(f"frankie manifest has no {plugin} plugin")
@@ -99,7 +99,7 @@ def _drive(ctx, **overrides):
 
 
 def _arm(ctx, **overrides):
-    p = ArmControllerPlugin({**_manifest("arm_controller"), "robot": "robot", **overrides})
+    p = ArmControllerPlugin({**_manifest("arm_controller"), **overrides}, entity="robot")
     p.configure(ctx)
     p.on_reset(ctx)
     return p

@@ -10,16 +10,16 @@
 sim:
   pacing: realtime      # realtime | asap | {factor: N}
 
-plugins:
+components:
   # omni_drive (holonomic planar base + 4 mecanum wheel servos), the torso/head and both arm+gripper
   # controllers, and the two SICK TIM571 lidars all come from the tiago_pro model manifest
   # (models/tiago_pro/tiago_pro.manifest.yaml) -- including the arms' `rest` stance, without which they would
   # spawn stretched straight out in front of the robot.
   - spawn_robot:
       model: tiago_pro
-      name: robot
       pos: [0.0, 0.0]
       yaw: 0.0
+    name: robot
 
   # Override the manifest's omni_drive only to add test_cmd: with no ROS to send /cmd_vel, this
   # scripted [vx, vy, wz] gives the standalone scene some motion.
@@ -29,9 +29,9 @@ plugins:
   #   [0.0, 0.4, 0.0]  pure sideways strafe, heading locked
   #   [0.0, 0.0, 1.0]  rotation in place with no translation
   # All are inside PAL's limits (vx/vy 1.0 m/s, wz 2.09 rad/s).
-  - omni_drive:
-      robot: robot
-      test_cmd: [0.3, 0.3, 0.0]   # remove once the ros2_bridge drives /cmd_vel
+    components:
+      - omni_drive:
+          test_cmd: [0.3, 0.3, 0.0]   # remove once the ros2_bridge drives /cmd_vel
 
   # For ROS 2 (separate colcon package roqsim_ros_bridge): one bridge reads every declared endpoint
   # from ctx.interface -- no per-topic config needed. This robot declares cmd_vel/odom + three

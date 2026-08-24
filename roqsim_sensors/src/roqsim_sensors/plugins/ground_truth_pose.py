@@ -40,9 +40,9 @@ from roqsim.plugin import Plugin
 class GroundTruthPosePlugin(Plugin):
     parallel_safe = True  # post-compile read-only: reads data.xpos/xquat, publishes via endpoint
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.body = self.config.get("body", "")
         self.frame_id = self.config.get("frame_id", "map")
         self.child_frame = self.config.get("child_frame", "")

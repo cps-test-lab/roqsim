@@ -3,7 +3,7 @@
 # An END-EFFECTOR manifest (see robotiq_2f85.manifest.yaml for the mechanism): `spawn_arm:
 # {end_effector: {model: schunk_pg70}}` merges these keys into the arm's own arm_controller, so the
 # two grippers are interchangeable by one line of world YAML.
-plugins:
+components:
   - arm_controller:
       # The PG+70's ctrl is a target TENDON LENGTH in metres, not a 0..255 command like the Robotiq's
       # -- and its low end is the open end (the tendon's coefficients are negative for exactly that

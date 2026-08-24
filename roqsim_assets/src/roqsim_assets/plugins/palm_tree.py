@@ -111,11 +111,14 @@ def _euler_zy_quat(yaw: float, pitch: float) -> list[float]:
 
 
 class PalmTreePlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
     _ROOT_BODY = "palm_tree"
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "palm")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         if len(pos) in (2, 3):

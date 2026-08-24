@@ -17,14 +17,14 @@ from roqsim.context import SimContext
 from roqsim_assets.plugins.cylinder import CylinderPlugin
 
 
-def _build(**cfg):
+def _build(*, name=None, **cfg):
     spec = mujoco.MjSpec()
     floor = spec.worldbody.add_geom()
     floor.name = "floor"
     floor.type = mujoco.mjtGeom.mjGEOM_PLANE
     floor.size = [10, 10, 0.05]
     ctx = SimContext(config={})
-    plugin = CylinderPlugin(cfg)
+    plugin = CylinderPlugin(cfg, label=name)
     plugin.build(spec, ctx)
     model = spec.compile()
     data = mujoco.MjData(model)

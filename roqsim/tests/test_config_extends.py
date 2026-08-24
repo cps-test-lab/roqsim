@@ -6,7 +6,7 @@ import textwrap
 
 import pytest
 
-from roqsim.config import load_config
+from roqsim.config import instantiate_plugins, load_config
 from roqsim.plugin import PluginError
 
 
@@ -28,8 +28,10 @@ def _parent(dir_, **sim):
           world: {world}
           pacing: realtime
         {extra}plugins:
-          - spawn_model: {{model: industrial_table, name: table_1}}
-          - spawn_model: {{model: industrial_table, name: table_2}}
+          - spawn_model: {{model: industrial_table}}
+            name: table_1
+          - spawn_model: {{model: industrial_table}}
+            name: table_2
           - dummy: {{}}
             name: greeter
         """,
@@ -44,11 +46,14 @@ def test_child_plugins_appended_after_parent(tmp_path):
         """
         extends: parent.yaml
         plugins:
-          - spawn_robot: {model: oli, name: oli, prefix: oli_}
+          - spawn_robot: {model: oli, prefix: oli_}
+            name: oli
         """,
     )
     cfg = load_config(child)
-    refs = [s.ref for s in cfg.plugins]
+    # `declared` is what the two documents said; `plugins` is that plus what their models' manifests
+    # contribute, which is not what this test is about.
+    refs = [s.ref for s in cfg.declared]
     assert refs == [
         "spawn_model",
         "spawn_model",
@@ -106,9 +111,15 @@ def test_disable_drops_named_plugin(tmp_path):
         """,
     )
     cfg = load_config(child)
-    # table_2 (matched by config name) and greeter (matched by reserved name:) are gone.
-    names = [s.config.get("name") for s in cfg.plugins]
-    assert names == ["table_1"]
+    # Both matched by their LABEL -- one key, whether the entry named itself or fell back to its ref.
+    # And turned OFF rather than deleted: the entry stays addressable, stays in the record, and a
+    # later override can turn it back on. Nothing is constructed for a disabled entry.
+    assert [(s.label, s.enabled) for s in cfg.declared] == [
+        ("table_1", True),
+        ("table_2", False),
+        ("greeter", False),
+    ]
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == ["SpawnModelPlugin"]
 
 
 def test_disable_unknown_selector_raises(tmp_path):
@@ -122,7 +133,7 @@ def test_disable_unknown_selector_raises(tmp_path):
         plugins: []
         """,
     )
-    with pytest.raises(PluginError, match="matched no inherited plugin"):
+    with pytest.raises(PluginError, match="matched no inherited entry"):
         load_config(child)
 
 
@@ -164,11 +175,12 @@ def test_extends_package_ref_resolves(tmp_path):
         sim:
           timestep: 0.001
         plugins:
-          - spawn_robot: {model: turtlebot4, name: robot, prefix: robot_, pos: [-8.0, 0.0]}
+          - spawn_robot: {model: turtlebot4, prefix: robot_, pos: [-8.0, 0.0]}
+            name: robot
         """,
     )
     cfg = load_config(child)
     assert cfg.timestep == 0.001
-    assert cfg.plugins[-1].ref == "spawn_robot"
+    assert cfg.declared[-1].ref == "spawn_robot"
     assert cfg.sim["world"].endswith("worlds/depot/depot.xml")
     assert len(cfg.plugins) > 1  # the parent's own plugins are inherited

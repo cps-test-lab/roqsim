@@ -4,7 +4,7 @@
 # capture plugin. To override, declare realsense_d415 for the same mount in the world (it wins);
 # to opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
 # spawn_sensor `name`.
-plugins:
+components:
   - realsense_d415:
       camera: d415_color
 

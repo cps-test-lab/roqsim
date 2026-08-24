@@ -2,97 +2,75 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""Reaching a MODEL DEFAULT plugin's config from outside the world.
+"""Reaching a MODEL DEFAULT component's config from outside the document.
 
-``spawn_robot`` pulls a model's default plugins in from its manifest, so a world that
-just spawns a robot never names them. Two separate questions follow, and they have
-different answers:
+``spawn_robot`` pulls a model's components in from its manifest, so a world that just spawns a robot
+never names its lidar. It used to be unable to reach one either: overrides resolved against the
+parsed YAML, before expansion, so ``plugins.lidar.rays`` named nothing and was refused. The refusal
+was right -- silently ignoring a swept parameter lets a campaign look healthy while changing nothing
+-- but it left a model default unreachable, and the documented way out was a stub entry whose only
+job was to exist.
 
-1. Can a world set ONE key of a default without restating the rest? (It can — the
-   manifest merges underneath a world's declaration, per key.)
-2. Can an ``--override`` / ``--set`` reach a default the world never declared at all?
-   (It cannot — overrides are applied to the raw YAML, before manifest expansion.)
-
-The second is what decides whether a campaign can sweep a model default, so it is
-pinned here rather than left to be rediscovered.
+Expansion now happens while the document loads, so an override resolves against what will actually
+run. This is the file that says so, and it is the reason for the whole change.
 """
 
 import pytest
 
-from roqsim.config import PluginError, apply_overrides
+from roqsim.config import PluginError, load_config_from_dict, overrides_from_dotlist
 
 pytest.importorskip("roqsim_mobile", reason="turtlebot4 manifest lives in roqsim_mobile")
 
-WORLD_BARE = {
+BARE = {
     "sim": {"world": "empty_room"},
-    "plugins": [{"spawn_robot": {"model": "turtlebot4", "name": "robot"}}],
+    "components": [{"spawn_robot": {"model": "turtlebot4"}, "name": "robot"}],
 }
 
 
-def _expanded(raw):
-    """The plugin specs that actually run, manifest defaults included."""
-    from roqsim.config import _expand_plugins, load_config_from_dict
-
-    cfg = load_config_from_dict(raw)
-    return {spec.ref: spec.config for spec, _cls in _expand_plugins(cfg)}
+def _components(overrides=None):
+    return {s.address: s.config for s in load_config_from_dict(BARE, overrides=overrides).plugins}
 
 
-def test_a_world_may_set_one_key_of_a_model_default(tmp_path):
-    """The manifest merges UNDER the world's entry, so a one-key declaration keeps the
-    model's own geometry instead of silently discarding it."""
-    raw = {
-        "sim": {"world": "empty_room"},
-        "plugins": [
-            {"spawn_robot": {"model": "turtlebot4", "name": "robot"}},
-            {"lidar": {"robot": "robot", "range_stddev": 0.05}},
-        ],
-    }
-    lidar = _expanded(raw)["lidar"]
-    assert lidar["range_stddev"] == 0.05  # what the world asked for
-    assert lidar["rays"] == 360  # ...and the manifest's, not lost
+def test_a_model_default_is_addressable_with_nothing_declared():
+    """The headline: no stub, no entry, and the lidar the manifest supplies is reachable."""
+    lidar = _components({"components": {"robot.lidar": {"range_stddev": 0.05}}})["robot.lidar"]
+    assert lidar["range_stddev"] == 0.05
+
+
+def test_the_manifest_still_supplies_everything_the_override_did_not_name():
+    """An override is partial, like a declaration: it sets keys, it does not replace a component."""
+    lidar = _components({"components": {"robot.lidar": {"range_stddev": 0.05}}})["robot.lidar"]
+    assert lidar["rays"] == 360
     assert lidar["max_range"] == 12.0
     assert lidar["frame_id"] == "rplidar_link"
 
 
-def test_an_override_cannot_reach_a_default_the_world_never_declared():
-    """The actual limit: overrides resolve against the world's own plugin list, which
-    at that point has no `lidar` entry -- so a campaign sweeping `plugins.lidar.*`
-    against a bare world is REFUSED rather than silently ignored."""
-    with pytest.raises(PluginError):
-        apply_overrides(WORLD_BARE, {"plugins": {"lidar": {"range_stddev": 0.05}}})
+def test_the_dotlist_spelling_means_the_same_thing():
+    """`--set` and an override document are two spellings of one assignment; a campaign writes the
+    first and a saved override set the second, and they must not diverge."""
+    by_set = _components(overrides_from_dotlist(["components.robot.lidar.rays=720"]))
+    by_doc = _components({"components": {"robot.lidar": {"rays": 720}}})
+    assert by_set["robot.lidar"]["rays"] == by_doc["robot.lidar"]["rays"] == 720
 
 
-def test_the_refusal_names_the_fix_when_a_model_could_supply_the_plugin():
-    """A bare 'matches no plugin' is a dead end when the plugin DOES run -- it just came
-    from a model manifest. The world spawns a model, so say so and name the one-line
-    stub, or the reader concludes the plugin does not exist."""
+def test_a_structural_override_changes_which_manifest_expands():
+    """`model:` is read by expansion, and the override lands before it -- so this swaps the robot,
+    not just a value on it. The husky ships no depth camera; the turtlebot4 does."""
+    swapped = _components(overrides_from_dotlist(["components.robot.model=husky_a200"]))
+    assert "robot.diff_drive" in swapped
+    assert "robot.oakd_camera" not in swapped
+
+
+def test_an_override_that_names_no_component_is_still_refused():
+    """The property that must survive: a swept parameter that reaches nothing has to say so, or a
+    campaign changes nothing while every run looks healthy."""
+    with pytest.raises(PluginError, match="matches no component"):
+        _components({"components": {"nosuch": {"x": 1}}})
+
+
+def test_the_refusal_names_what_the_document_actually_has():
+    """A bare `lidar` is a no-match rather than an ambiguity, and the useful answer is the address
+    it should have used."""
     with pytest.raises(PluginError) as exc:
-        apply_overrides(WORLD_BARE, {"plugins": {"lidar": {"range_stddev": 0.05}}})
-    msg = str(exc.value)
-    assert "turtlebot4" in msg  # which model might be supplying it
-    assert "lidar: {robot: robot}" in msg  # the exact line to add
-
-
-def test_the_refusal_stays_terse_when_no_model_is_spawned():
-    """No model in the world means no manifest could be hiding the plugin, so the
-    hint would be noise."""
-    raw = {"sim": {}, "plugins": [{"ros2_bridge": {}}]}
-    with pytest.raises(PluginError) as exc:
-        apply_overrides(raw, {"plugins": {"lidar": {"range_stddev": 0.05}}})
-    assert "model" not in str(exc.value)
-
-
-def test_a_stub_declaration_makes_a_default_addressable():
-    """One line in the world -- the plugin named and wired, nothing restated -- is what
-    turns a model default into a campaign factor."""
-    raw = {
-        "sim": {"world": "empty_room"},
-        "plugins": [
-            {"spawn_robot": {"model": "turtlebot4", "name": "robot"}},
-            {"lidar": {"robot": "robot"}},  # the stub
-        ],
-    }
-    merged = apply_overrides(raw, {"plugins": {"lidar": {"range_stddev": 0.05}}})
-    lidar = _expanded(merged)["lidar"]
-    assert lidar["range_stddev"] == 0.05
-    assert lidar["rays"] == 360  # manifest still fills the rest
+        _components({"components": {"lidar": {"rays": 4}}})
+    assert "robot.lidar" in str(exc.value)

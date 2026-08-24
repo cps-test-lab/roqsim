@@ -101,26 +101,35 @@ def _export(tmp_path, model, **kwargs):
     return out, exporter, tree
 
 
-def test_export_round_trips_to_the_mjcf(tmp_path):
-    """THE test: the exported URDF and the MJCF agree on where every link is."""
-    engine = Engine(_mobile_manipulator(tmp_path))
+@pytest.fixture(scope="module")
+def robot(tmp_path_factory):
+    """The Husky + UR10e + Robotiq model, compiled once for the whole module.
+
+    Five tests below want exactly this model, and sharing one build is safe because none of them
+    writes to it: ``UrdfExporter`` only reads, and ``round_trip_error`` poses its own ``MjData``. A
+    test that needs a *different* robot (a rotated root, a free base) still builds its own.
+    """
+    engine = Engine(_mobile_manipulator(tmp_path_factory.mktemp("robot")))
     engine.setup()
+    return engine.ctx.model
+
+
+def test_export_round_trips_to_the_mjcf(tmp_path, robot):
+    """THE test: the exported URDF and the MJCF agree on where every link is."""
     out, _exporter, _tree = _export(
         tmp_path,
-        engine.ctx.model,
+        robot,
         collapse=("base_mount",),
         gripper_joint="robotiq_85_left_knuckle_joint",
     )
-    err, where = round_trip_error(out, engine.ctx.model, "ur10e_", samples=32)
+    err, where = round_trip_error(out, robot, "ur10e_", samples=32)
     assert err < 1e-6, f"URDF diverges from the MJCF by {err:.3e} m at {where!r}"
 
 
-def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path):
-    engine = Engine(_mobile_manipulator(tmp_path))
-    engine.setup()
+def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path, robot):
     _out, exporter, tree = _export(
         tmp_path,
-        engine.ctx.model,
+        robot,
         collapse=("base_mount",),
         gripper_joint="robotiq_85_left_knuckle_joint",
     )
@@ -176,11 +185,9 @@ def test_round_trip_survives_a_rotated_root_body(tmp_path):
     assert err < 1e-6, f"URDF diverges from the MJCF by {err:.3e} m at {where!r}"
 
 
-def test_free_base_becomes_a_fixed_root(tmp_path):
+def test_free_base_becomes_a_fixed_root(tmp_path, robot):
     """A floating base belongs to TF, not the description; MoveIt needs a fixed root."""
-    engine = Engine(_mobile_manipulator(tmp_path))
-    engine.setup()
-    _out, _exporter, tree = _export(tmp_path, engine.ctx.model, collapse=("base_mount",))
+    _out, _exporter, tree = _export(tmp_path, robot, collapse=("base_mount",))
     root = tree.getroot()
     links = {link.get("name") for link in root.findall("link")}
     children = {j.find("child").get("link") for j in root.findall("joint")}
@@ -188,18 +195,16 @@ def test_free_base_becomes_a_fixed_root(tmp_path):
     assert roots == {"arm_base_link"}, f"expected a single fixed root, got {roots}"
 
 
-def test_collapsed_link_keeps_the_full_gripper_mass(tmp_path):
+def test_collapsed_link_keeps_the_full_gripper_mass(tmp_path, robot):
     """Lumping must sum the subtree's mass; the 2F-85's fingers are most of it."""
-    engine = Engine(_mobile_manipulator(tmp_path))
-    engine.setup()
-    m = engine.ctx.model
+    m = robot
     gripper_mass = sum(
         float(m.body_mass[b])
         for b in range(m.nbody)
         if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("ur10e_")
         and _is_descendant(m, b, mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "ur10e_base_mount"))
     )
-    _out, _exporter, tree = _export(tmp_path, engine.ctx.model, collapse=("base_mount",))
+    _out, _exporter, tree = _export(tmp_path, robot, collapse=("base_mount",))
     link = next(el for el in tree.getroot().findall("link") if el.get("name") == "base_mount")
     urdf_mass = float(link.find("inertial/mass").get("value"))
     assert urdf_mass == pytest.approx(gripper_mass, rel=1e-6)
@@ -244,7 +249,11 @@ def test_collapsed_root_keeps_no_joint_of_its_own(tmp_path):
         """
     )
     tree = UrdfExporter(
-        model, prefix="", name="r", root_link="base_link", mesh_dir=tmp_path / "meshes",
+        model,
+        prefix="",
+        name="r",
+        root_link="base_link",
+        mesh_dir=tmp_path / "meshes",
         collapse=("branch",),
     ).export()
     root = tree.getroot()
@@ -310,11 +319,9 @@ def test_rescued_gripper_joint_keeps_its_mujoco_type_and_effort(tmp_path):
     assert float(limit.get("effort")) == pytest.approx(10.0)
 
 
-def test_visual_only_geometry_is_not_collidable(tmp_path):
+def test_visual_only_geometry_is_not_collidable(tmp_path, robot):
     """MoveIt must not plan around decoration. The husky's mast is visual-only in the MJCF."""
-    engine = Engine(_mobile_manipulator(tmp_path))
-    engine.setup()
-    _out, _exporter, tree = _export(tmp_path, engine.ctx.model, collapse=("base_mount",))
+    _out, _exporter, tree = _export(tmp_path, robot, collapse=("base_mount",))
     # The UR10e's link meshes are class `visual` (contype/conaffinity 0) plus separate collision
     # geoms, so every link should carry at least one visual and the collidable ones a collision.
     for link in tree.getroot().findall("link"):

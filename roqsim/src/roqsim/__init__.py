@@ -16,7 +16,7 @@ select_offscreen_gl()
 
 from .config import (
     SimConfig,
-    apply_overrides,
+    assignments_from_mapping,
     deep_merge,
     drop_transport,
     drop_transport_plugins,
@@ -41,8 +41,8 @@ __all__ = [
     "RobotHandle",
     "SimConfig",
     "SimContext",
-    "apply_overrides",
     "config_for_input",
+    "assignments_from_mapping",
     "deep_merge",
     "default_free_camera",
     "drop_transport",

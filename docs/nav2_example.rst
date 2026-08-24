@@ -68,7 +68,7 @@ URDF alone — two publishers for one static transform is a TF conflict, not red
 
 The Depot world (``roqsim_scenes:depot``) ships **open** (roofless) via the generic ``ceiling`` plugin,
 which is nav-neutral (the roof is above the 2D scan plane) but clears overhead sensor line-of-sight
-and top-down views. Set ``ceiling.enabled: true`` for the roofed warehouse.
+and top-down views. Set ``ceiling.keep: true`` for the roofed warehouse.
 
 The goal-reaching test
 ----------------------
