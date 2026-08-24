@@ -86,7 +86,14 @@ def _resolve_glew() -> str | None:
     if cand and os.path.isabs(cand) and os.path.exists(cand):
         return cand  # some platforms already return a full path
     try:
-        out = subprocess.run(["ldconfig", "-p"], capture_output=True, text=True, check=True).stdout
+        # `ldconfig` is resolved through PATH on purpose: its location differs per distro, and
+        # hard-coding one is what would break.
+        out = subprocess.run(
+            ["ldconfig", "-p"],  # noqa: S607 - PATH lookup is deliberate, see above
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
     except (OSError, subprocess.SubprocessError):
         out = ""
     want = cand or "libGLEW.so"
@@ -137,7 +144,8 @@ def ensure_gl_preload() -> None:
     # actually started with. sys.argv is a mutable display value -- the command tree rewrites argv[0]
     # so a tool's usage line names the subcommand the user typed -- and re-exec'ing that spelling
     # looks for a file called "roqsim sim".
-    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])
+    # noqa S606: no shell is the point -- the argv list is passed straight to execv.
+    os.execv(sys.executable, [sys.executable, *sys.orig_argv[1:]])  # noqa: S606
 
 
 def prepare_viewer_gl() -> None:
@@ -547,7 +555,7 @@ def close_viewer(handle, *, timeout: float = _CLOSE_TIMEOUT_S) -> None:
         walk.close()  # the arrow-key poll holds its own X connection
     try:
         handle.close()
-    except Exception:  # noqa: BLE001 — teardown must never raise
+    except Exception:  # noqa: BLE001, S110 — teardown must never raise
         pass
     deadline = time.monotonic() + timeout
     for thread in threads:

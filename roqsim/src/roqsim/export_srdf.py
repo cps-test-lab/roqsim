@@ -436,7 +436,8 @@ def links_from_urdf(model: mujoco.MjModel, urdf: Path, strip: str) -> dict[int, 
     Read from the URDF rather than recomputed so the two files cannot disagree about what a link is --
     which matters most for a collapsed gripper, where several MuJoCo bodies became one URDF link.
     """
-    root = ET.parse(urdf).getroot()
+    # noqa S314: the URDF being read back is the one this exporter just wrote, not caller input.
+    root = ET.parse(urdf).getroot()  # noqa: S314
     names = {link.get("name") for link in root.findall("link")}
     parent_of = {
         j.find("child").get("link"): j.find("parent").get("link") for j in root.findall("joint")

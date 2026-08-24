@@ -116,7 +116,8 @@ def _mjcf_info(prop_dir: str, name: str) -> dict:
     xml = os.path.join(prop_dir, f"{name}.xml")
     if not os.path.isfile(xml):
         return {"exists": False, "scale": 1.0, "textured": False, "pos": [0.0, 0.0, 0.0]}
-    root = ET.parse(xml).getroot()
+    # noqa S314: <name>.xml is a finalized model this package ships, not caller input.
+    root = ET.parse(xml).getroot()  # noqa: S314
     scale = 1.0
     mesh = root.find(".//asset/mesh")
     if mesh is not None and mesh.get("scale"):

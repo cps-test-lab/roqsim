@@ -16,14 +16,23 @@ extend-exclude = [
 ]
 
 [tool.ruff.lint]
-# pycodestyle errors/warnings, pyflakes, isort, pyupgrade, bugbear.
-select = ["E", "F", "I", "UP", "B"]
+# pycodestyle errors/warnings, pyflakes, isort, pyupgrade, bugbear, flake8-bandit.
+# S is bandit's ruleset, run through ruff rather than as a second tool: it needs no new dependency,
+# it is pinned with ruff, and it stays reproducible through `make lint` like every other check.
+select = ["E", "F", "I", "UP", "B", "S"]
 # E501 line length: the formatter handles code width; only long prose/comments would trip it.
 # B027: scenario_adapter's ABC fallback intentionally mirrors SimulationInterface's no-op defaults.
 # B008: false positives on default-arg calls we use deliberately.
-ignore = ["E501", "B027", "B008"]
+# S603: fires on EVERY subprocess call, shell or not, so it cannot separate safe from unsafe. The
+# risk it stands in for is `shell=True` (S602), which is enabled and which this repo never uses --
+# every call site here passes an argument list. Suppressing S603 keeps S602 meaningful.
+ignore = ["E501", "B027", "B008", "S603"]
 
 [tool.ruff.lint.per-file-ignores]
+# S101 (assert) and S110 (try/except/pass): these are pytest suites. `assert` IS pytest's assertion
+# mechanism, and they are inside SRC only because colcon puts a package's tests under ros2_ws/src --
+# every other package's tests live in tests/, which SRC does not cover.
+"ros2_ws/src/*/test/*" = ["S101", "S110"]
 # E402 (import not at top of file): roqsim's package __init__ must select MuJoCo's offscreen GL
 # backend BEFORE its re-exports reach `import mujoco`, which binds that backend permanently. A
 # statement between the two import blocks is the only way to express "this one first" that isort

@@ -166,7 +166,7 @@ class RosAccess(WorldAccess):
         ]:
             try:
                 self._node.destroy_client(client)
-            except Exception:  # noqa: BLE001 - teardown never fails a scenario
+            except Exception:  # noqa: BLE001, S110 - teardown never fails a scenario
                 pass
 
 

@@ -185,7 +185,10 @@ class NavCore:
                     lo, hi = st.dwell[st.goal_idx] if st.dwell else (0.0, 0.0)
                     if hi > 0.0:  # pause and stand-idle here for a while
                         if self._dwell_until <= 0.0:
-                            self._dwell_until = self._t + random.uniform(lo, hi)
+                            # noqa S311: a walker's dwell time, not a secret. This draw should
+                            # come from ctx.rng_for() so it replays from the run's seed; see the
+                            # randomness golden rule in CLAUDE.md.
+                            self._dwell_until = self._t + random.uniform(lo, hi)  # noqa: S311
                         if self._t < self._dwell_until:
                             self.pref_vel = np.zeros(2)
                             return True
