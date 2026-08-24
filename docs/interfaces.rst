@@ -177,10 +177,10 @@ The other half of the same question, for a caller holding an *override* rather t
 
    roqsim scenes describe worlds/turtlebot_nav2.yaml
    {"world": "...", "packaged": false, "inputs": [...],
-    "plugins": [{"address": "robot", "key": "robot", "ref": "spawn_robot", "name": "robot",
+    "plugins": [{"address": "robot", "ref": "spawn_robot", "name": "robot",
                  "entity": null, "enabled": true, "origin": "document",
                  "paths": ["components.robot.model", "components.robot.pos"]},
-                {"address": "robot.lidar", "key": "robot.lidar", "ref": "lidar", "name": null,
+                {"address": "robot.lidar", "ref": "lidar", "name": null,
                  "entity": "robot", "enabled": true, "origin": "manifest",
                  "paths": ["components.robot.lidar.rays", "components.robot.lidar.max_range"]}],
     "addresses": ["robot", "robot.diff_drive", "robot.lidar", "robot.oakd_camera"],
@@ -188,9 +188,7 @@ The other half of the same question, for a caller holding an *override* rather t
 
 ``plugins`` reports every component that will **run** -- the document's own entries and everything its
 models' manifests contribute -- under the ``address`` an override names it by, with the dotted paths
-into its config that already exist. ``origin`` says which of the two a component came from. ``key`` is
-kept as an alias of ``address`` so a reader keyed on that field keeps working; the meaningful change
-is its value.
+into its config that already exist. ``origin`` says which of the two a component came from.
 
 ``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
 sweep key against it before spending an image pull. Note the world above declares one entry and gets

@@ -6,7 +6,9 @@ what a caller holding an override needs to know::
     roqsim scenes describe worlds/depot.yaml
     {"world": "...", "packaged": false,
      "inputs": [...],
-     "plugins": [{"key": "floorplan", "ref": "floorplan", "paths": ["plugins.floorplan.mesh", ...]}],
+     "plugins": [{"address": "robot.lidar", "ref": "lidar",
+                  "paths": ["components.robot.lidar.rays", ...]}],
+     "addresses": ["robot", "robot.lidar", ...],
      "entities": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
@@ -121,9 +123,6 @@ def _describe_plugins(config) -> list:
     return [
         {
             "address": spec.address,
-            # Kept as an alias of `address`: an external pre-flight reads this field, and the
-            # meaningful break is the value changing, not the field moving.
-            "key": spec.address,
             "ref": spec.ref,
             "name": spec.name,
             "entity": spec.entity,
