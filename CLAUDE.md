@@ -108,13 +108,15 @@ widen a family's dependencies to accommodate it.
 - Sensor noise is per-sensor config (e.g. lidar `range_stddev`); there is no generic error-model
   framework (it was removed on purpose — see architecture.rst §9).
 - **Draw randomness from `ctx.rng_for(name)`, never from a module-level `np.random` or a stateful
-  generator.** It is counter-based (Philox) and keyed on `(seed, sim_time, name)`, so a draw is a
+  generator.** It is counter-based (Philox) and keyed on `(seed, episode, sim_time, name)`, so a draw is a
   pure function of the world rather than of how many draws happened before it. A shared stateful
   stream's position depends on sensor rates, step count, and whether anyone was subscribed to a
   camera — which makes a value at t = 12.5 unreproducible without replaying the whole run, and breaks
   re-running a sensor from a recording. Call it once per (sensor, step), not once per value; draws
-  are vectorised anyway. The run's seed comes from `roqsim sim --seed`, and a run without one draws and
-  logs a seed so it can be replayed.
+  are vectorised anyway. The run's seed comes from `sim.seed` in the world or `roqsim sim --seed`
+  (which wins), and a run without either draws and logs a seed so it can be replayed. The `episode`
+  is in the key because `reset()` restarts `sim_time`: without it every trial after the first in one
+  process re-draws the first one's noise, so repetitions are duplicates rather than samples.
 - **End a trial with `ctx.request_stop(reason)`, not by padding `--seconds`.** A wall-clock limit has
   to be guessed high enough for the slowest cell and is then wasted on every faster one. It is a
   request, not a kill switch: the driver polls it and exits cleanly, so `shutdown` runs and files

@@ -615,8 +615,12 @@ class StateRecorder:
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
-            # recomputed lidar scan needs the same noise the live run drew.
+            # recomputed lidar scan needs the same noise the live run drew. The episode travels with
+            # it for the same reason and is useless without it: the noise key is (seed, episode,
+            # sim_time, sensor), so a recording of the third trial replayed as the first would draw
+            # a different -- and entirely plausible-looking -- scan.
             "seed": getattr(ctx, "seed", None),
+            "episode": int(getattr(ctx, "episode", 0)),
             "world": world,
             "overrides": overrides or {},
             "packages": package_versions(),

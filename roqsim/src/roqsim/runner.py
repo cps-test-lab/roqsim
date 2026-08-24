@@ -653,7 +653,7 @@ def run(
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
         # recorded, so it can be repeated. Before this the sensors read a ctx.rng nothing ever set, so a
         # noisy run could not be reproduced at all.
-        engine.ctx.seed = _resolve_seed(seed, logger or log)
+        engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:
         # The compile failed while the loading window is up -- close it so it doesn't dangle.
@@ -824,11 +824,19 @@ def _export_capture_at_exit(engine, recorder, target, overrides, logger: logging
         logger.warning("run capture export failed (%s); the recording itself is unaffected", err)
 
 
-def _resolve_seed(seed: int | None, logger: logging.Logger) -> int:
-    """The run's noise seed: the given one, or a fresh one that is announced so it can be reused."""
+def _resolve_seed(seed: int | None, logger: logging.Logger, config_seed: int | None = None) -> int:
+    """The run's noise seed, by precedence: explicit > world config > drawn.
+
+    An explicitly passed seed wins because it is the more specific instruction -- the
+    world states what a run normally uses, the caller states what THIS run uses. With
+    neither, one is drawn and announced, exactly as before ``sim.seed`` existed.
+    """
     if seed is not None:
         logger.info("seed: %d (given)", seed)
         return int(seed)
+    if config_seed is not None:
+        logger.info("seed: %d (from sim.seed)", config_seed)
+        return int(config_seed)
     import secrets
 
     drawn = secrets.randbelow(2**31)

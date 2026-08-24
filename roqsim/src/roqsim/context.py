@@ -252,6 +252,14 @@ class SimContext:
         # Deterministic noise. `seed` is set by the driver (`roqsim sim --seed`); `None` means "draw one
         # and record it", which is the driver's job, not this object's. See `rng_for`.
         self.seed: int | None = None
+        #: Which trial this is within the process, counted from 0 and advanced by
+        #: :meth:`roqsim.engine.Engine.reset`. It is part of the noise key: a reset puts
+        #: ``data.time`` back to zero, so without it every trial after the first would
+        #: replay the *same* noise sequence -- repetitions that are duplicates wearing
+        #: the clothes of samples. Keyed rather than re-seeded so the whole series stays
+        #: reproducible from one base seed, and so trial *i* of two different runs draws
+        #: the same noise when their seeds match (common random numbers).
+        self.episode: int = 0
 
         # Run-control (play/pause/step/reset); consulted by the standalone driver.
         from .control import RunControl
@@ -280,7 +288,7 @@ class SimContext:
     # -- deterministic randomness -------------------------------------------------------------
 
     def rng_for(self, name: str):  # -> numpy.random.Generator (imported lazily below)
-        """A generator whose draws are a pure function of ``(seed, sim_time, name)``.
+        """A generator whose draws are a pure function of ``(seed, episode, sim_time, name)``.
 
         **Counter-based, not stateful**, and that is the whole point. A shared stateful generator's
         position depends on how many draws happened before it -- sensor rates, step count, and for
@@ -308,7 +316,13 @@ class SimContext:
         import zlib
 
         stream = zlib.crc32(name.encode()) & 0xFFFFFFFF
-        return np.random.Generator(np.random.Philox(key=seed, counter=[step, stream, 0, 0]))
+        # The episode occupies a counter slot rather than perturbing the key, which keeps the key
+        # meaning exactly "the run's seed" and leaves the generator randomly accessible: (seed,
+        # episode, step) addresses a draw directly, with no stream to replay. A reset restarts
+        # `sim_time`, so without this slot trial 2 would re-draw trial 1's noise step for step.
+        return np.random.Generator(
+            np.random.Philox(key=seed, counter=[step, stream, int(self.episode), 0])
+        )
 
     # -- time ---------------------------------------------------------------------------------
     @property
