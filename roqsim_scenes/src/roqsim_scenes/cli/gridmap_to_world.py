@@ -288,7 +288,7 @@ def build_world(
 
     # No sim.world: the engine's built-in empty room supplies ground and lighting, which is all a
     # generated obstacle field needs -- there is no scene to bake and nothing to include.
-    return {"sim": {"pacing": "realtime"}, "plugins": plugins}
+    return {"sim": {"pacing": "realtime"}, "components": plugins}
 
 
 def write_world(world: dict, path: Path, header: str | None = None) -> None:
@@ -372,7 +372,7 @@ def main(argv=None) -> int:
         raise SystemExit(str(exc)) from exc
     write_world(world, args.out_world, header=args.header)
 
-    n_props = sum(1 for entry in world["plugins"] if next(iter(entry)) in ("cylinder", "box"))
+    n_props = sum(1 for entry in world["components"] if next(iter(entry)) in ("cylinder", "box"))
     n_occ = int(grid.sum())
     if args.out_map:
         write_map(grid, args.out_map, cell_size=args.cell_size, origin=tuple(args.origin))

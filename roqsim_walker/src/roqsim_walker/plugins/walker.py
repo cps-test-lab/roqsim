@@ -77,9 +77,13 @@ class WalkerHandle:
 
 
 class WalkerPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.walker_name = self.config.get("name", "pedestrian")
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.walker_name = self.address
         self.blueprint = self.config.get("walker")
         self._spec: dict = {}
         self._ctx: SimContext | None = None

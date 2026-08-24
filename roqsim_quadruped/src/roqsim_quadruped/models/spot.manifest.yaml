@@ -8,7 +8,7 @@
 #
 # lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so Spot
 # publishes /scan for nav2 exactly like the turtlebot and G1 do.
-plugins:
+components:
   - spot_locomotion: {}                            # RL flat-terrain walking policy; config bundled
   - lidar:
       site: lidar

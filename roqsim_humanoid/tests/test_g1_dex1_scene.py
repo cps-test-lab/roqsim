@@ -18,11 +18,14 @@ from roqsim.engine import Engine
 
 
 def _world(tmp_path, loco=None):
-    plugins = [{"spawn_robot": {"model": "unitree_g1_dex1", "name": "robot", "pos": [0, 0]}}]
+    robot = {
+        "spawn_robot": {"model": "unitree_g1_dex1", "pos": [0, 0]},
+        "name": "robot",
+    }
     if loco is not None:
-        plugins.append({"g1_locomotion": {"robot": "robot", **loco}})
+        robot["components"] = [{"g1_locomotion": dict(loco)}]
     return load_config_from_dict(
-        {"sim": {"timestep": 0.002}, "plugins": plugins}, base_dir=tmp_path
+        {"sim": {"timestep": 0.002}, "components": [robot]}, base_dir=tmp_path
     )
 
 

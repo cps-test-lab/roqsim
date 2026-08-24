@@ -136,44 +136,37 @@ _DEFAULT_HOME = {
 
 
 class SpawnArmPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
     @classmethod
     def expand(cls, spec, world, base_dir):
         """Inject the arm model's default plugins (its ``<model>.manifest.yaml``, e.g. arm_controller).
 
-        Keeps arm-intrinsic plugins out of the world YAML: they ship with the model and are wired to
-        this arm via ``arm: <name>``. Off with ``default_plugins: false``; a world entry for the same
-        arm overrides the injected default.
+        Keeps arm-intrinsic plugins out of the world YAML: they ship with the model and become
+        components of this arm. Off with ``default_plugins: false``; an entry the world nests under
+        this arm with the same label overrides the injected default.
 
-        An ``end_effector`` additionally contributes ITS manifest, which carries the gripper half of
-        ``arm_controller``'s config. It is merged into whichever ``arm_controller`` will actually run
-        for this arm -- the world's own entry if it declared one, else the arm manifest's -- rather
-        than injected as a second controller, because two ``arm_controller``s on one entity fight
-        over the same actuators and refuse each other's blackboard keys. Precedence is the same as
-        everywhere else: what the world says wins, then the gripper manifest, then the arm manifest.
+        An ``end_effector`` contributes ITS manifest the same way -- a second included document,
+        merged in **underneath** whatever is already there. That is the general precedence rule
+        (nearer wins), and it is what the gripper half of ``arm_controller``'s config needs: the
+        world's value, then the gripper manifest's, then the arm manifest's. Matching is by label,
+        like everywhere else, so the gripper's keys land on the controller that will actually run
+        rather than starting a second one -- two ``arm_controller``s on one entity fight over the
+        same actuators and refuse each other's blackboard keys.
         """
-        injected = expand_manifest(
-            spec, world, target_key="arm", default_name="arm", base_dir=base_dir
-        )
+        injected = expand_manifest(spec, world, base_dir=base_dir)
         cfg = spec.config
         ee = cfg.get("end_effector") or {}
         if not (ee.get("model") and cfg.get("default_plugins", True)):
             return injected
 
-        name = cfg.get("name", "arm")
+        entity = spec.label
+        declared = {s.label: s for s in (*world, *injected) if s.entity == entity}
         ee_file = resolve_model(ee["model"], base_dir=base_dir).path
-        for entry in load_manifest(ee_file):
+        for entry in load_manifest(ee_file, base_dir=base_dir):
             base = parse_plugin_entry(entry, "end-effector manifest plugin")
-            # The spec that will run for (this plugin, this arm): the world's, else the one the arm's
-            # own manifest just contributed. `world` is searched first because a world entry is the
-            # merge target expand_manifest itself chose.
-            target = next(
-                (
-                    s
-                    for s in (*world, *injected)
-                    if s.ref == base.ref and s.config.get("arm", name) == name
-                ),
-                None,
-            )
             # The gripper's MJCF names carry the end-effector prefix once attached, but its manifest
             # cannot know that prefix -- it ships with the model, not with this world. Qualify the two
             # keys that ARE MJCF names so a prefixed gripper still resolves. (arm_controller adds the
@@ -183,18 +176,20 @@ class SpawnArmPlugin(Plugin):
                 for key in ("gripper_joint", "gripper_actuator"):
                     if key in base.config:
                         base.config[key] = f"{ee_prefix}{base.config[key]}"
+            target = declared.get(base.label)
             if target is None:
-                base.config.setdefault("arm", name)
+                base.entity = entity
                 base.config.setdefault("prefix", cfg.get("prefix", ""))
                 injected.append(base)
+                declared[base.label] = base
                 continue
             for key, value in base.config.items():
                 target.config.setdefault(key, value)
         return injected
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.arm_name = self.config.get("name", "arm")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.arm_name = self.address
         self.prefix = self.config.get("prefix", "")
         stem = str(self.config.get("model", "")).rsplit("/", 1)[-1].removesuffix(".xml")
         self.base_body = self.config.get("base_body", _DEFAULT_BASE_BODY.get(stem, "base"))

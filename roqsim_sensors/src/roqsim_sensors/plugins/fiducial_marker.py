@@ -104,8 +104,8 @@ def _import_cv2():
 class FiducialMarkerPlugin(Plugin):
     """Build-only plugin: generate a marker texture and add its geom to the scene."""
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.family = str(self.config.get("family", "apriltag_36h11"))
         self.marker_id = int(self.config.get("id", 0))
         self.size = float(self.config.get("size", 0.05))
@@ -114,7 +114,7 @@ class FiducialMarkerPlugin(Plugin):
         self.thickness = float(self.config.get("thickness", 0.002))
         self.vflip = bool(self.config.get("vflip", False))
         self.hflip = bool(self.config.get("hflip", False))
-        base = self.config.get("name") or f"{self.family}_{self.marker_id}"
+        base = self.label
         self.base_name = "".join(c if (c.isalnum() or c == "_") else "_" for c in str(base))
 
     def validate_config(self, config: dict) -> list[str]:

@@ -8,8 +8,8 @@
 just spawns a robot never names them. Two separate questions follow, and they have
 different answers:
 
-1. Can a world set ONE key of a default without restating the rest? (It can — the
-   manifest merges underneath a world's declaration, per key.)
+1. Can a world set ONE key of a default without restating the rest? (It can — declare it
+   as a component of the spawn, and the manifest merges underneath, per key.)
 2. Can an ``--override`` / ``--set`` reach a default the world never declared at all?
    (It cannot — overrides are applied to the raw YAML, before manifest expansion.)
 
@@ -25,7 +25,7 @@ pytest.importorskip("roqsim_mobile", reason="turtlebot4 manifest lives in roqsim
 
 WORLD_BARE = {
     "sim": {"world": "empty_room"},
-    "plugins": [{"spawn_robot": {"model": "turtlebot4", "name": "robot"}}],
+    "components": [{"spawn_robot": {"model": "turtlebot4"}, "name": "robot"}],
 }
 
 
@@ -38,13 +38,19 @@ def _expanded(raw):
 
 
 def test_a_world_may_set_one_key_of_a_model_default(tmp_path):
-    """The manifest merges UNDER the world's entry, so a one-key declaration keeps the
-    model's own geometry instead of silently discarding it."""
+    """The manifest merges UNDER the owner's entry, so a one-key declaration keeps the
+    model's own geometry instead of silently discarding it.
+
+    The entry sits inside the spawn, which is what says it belongs to that robot -- there is no
+    `robot:` key to spell, and therefore no way to spell it wrong."""
     raw = {
         "sim": {"world": "empty_room"},
-        "plugins": [
-            {"spawn_robot": {"model": "turtlebot4", "name": "robot"}},
-            {"lidar": {"robot": "robot", "range_stddev": 0.05}},
+        "components": [
+            {
+                "spawn_robot": {"model": "turtlebot4"},
+                "name": "robot",
+                "components": [{"lidar": {"range_stddev": 0.05}}],
+            }
         ],
     }
     lidar = _expanded(raw)["lidar"]
@@ -64,35 +70,28 @@ def test_an_override_cannot_reach_a_default_the_world_never_declared():
 
 def test_the_refusal_names_the_fix_when_a_model_could_supply_the_plugin():
     """A bare 'matches no plugin' is a dead end when the plugin DOES run -- it just came
-    from a model manifest. The world spawns a model, so say so and name the one-line
-    stub, or the reader concludes the plugin does not exist."""
+    from a model manifest. The world spawns a model, so say which, or the reader concludes
+    the plugin does not exist."""
     with pytest.raises(PluginError) as exc:
         apply_overrides(WORLD_BARE, {"plugins": {"lidar": {"range_stddev": 0.05}}})
-    msg = str(exc.value)
-    assert "turtlebot4" in msg  # which model might be supplying it
-    assert "lidar: {robot: robot}" in msg  # the exact line to add
+    assert "turtlebot4" in str(exc.value)  # which model might be supplying it
 
 
 def test_the_refusal_stays_terse_when_no_model_is_spawned():
     """No model in the world means no manifest could be hiding the plugin, so the
     hint would be noise."""
-    raw = {"sim": {}, "plugins": [{"ros2_bridge": {}}]}
+    raw = {"sim": {}, "components": [{"ros2_bridge": {}}]}
     with pytest.raises(PluginError) as exc:
         apply_overrides(raw, {"plugins": {"lidar": {"range_stddev": 0.05}}})
     assert "model" not in str(exc.value)
 
 
-def test_a_stub_declaration_makes_a_default_addressable():
-    """One line in the world -- the plugin named and wired, nothing restated -- is what
-    turns a model default into a campaign factor."""
-    raw = {
-        "sim": {"world": "empty_room"},
-        "plugins": [
-            {"spawn_robot": {"model": "turtlebot4", "name": "robot"}},
-            {"lidar": {"robot": "robot"}},  # the stub
-        ],
-    }
-    merged = apply_overrides(raw, {"plugins": {"lidar": {"range_stddev": 0.05}}})
-    lidar = _expanded(merged)["lidar"]
-    assert lidar["range_stddev"] == 0.05
-    assert lidar["rays"] == 360  # manifest still fills the rest
+def test_the_refusal_names_the_owner_to_nest_under():
+    """The old advice -- a stub at the top of the document -- no longer does anything: an entry
+    belongs to the entry it sits under, so a lidar declared beside the robot is not the robot's.
+    The message has to name the owner, or it sends the reader somewhere that silently fails."""
+    with pytest.raises(PluginError) as exc:
+        apply_overrides(WORLD_BARE, {"plugins": {"lidar": {"range_stddev": 0.05}}})
+    msg = str(exc.value)
+    assert "components:" in msg
+    assert "'robot'" in msg  # the entry to nest it under, by label

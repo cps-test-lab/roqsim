@@ -28,8 +28,10 @@ def _parent(dir_, **sim):
           world: {world}
           pacing: realtime
         {extra}plugins:
-          - spawn_model: {{model: industrial_table, name: table_1}}
-          - spawn_model: {{model: industrial_table, name: table_2}}
+          - spawn_model: {{model: industrial_table}}
+            name: table_1
+          - spawn_model: {{model: industrial_table}}
+            name: table_2
           - dummy: {{}}
             name: greeter
         """,
@@ -44,7 +46,8 @@ def test_child_plugins_appended_after_parent(tmp_path):
         """
         extends: parent.yaml
         plugins:
-          - spawn_robot: {model: oli, name: oli, prefix: oli_}
+          - spawn_robot: {model: oli, prefix: oli_}
+            name: oli
         """,
     )
     cfg = load_config(child)
@@ -106,9 +109,8 @@ def test_disable_drops_named_plugin(tmp_path):
         """,
     )
     cfg = load_config(child)
-    # table_2 (matched by config name) and greeter (matched by reserved name:) are gone.
-    names = [s.config.get("name") for s in cfg.plugins]
-    assert names == ["table_1"]
+    # Both matched by their LABEL -- one key, whether the entry named itself or fell back to its ref.
+    assert [s.label for s in cfg.plugins] == ["table_1"]
 
 
 def test_disable_unknown_selector_raises(tmp_path):
@@ -164,7 +166,8 @@ def test_extends_package_ref_resolves(tmp_path):
         sim:
           timestep: 0.001
         plugins:
-          - spawn_robot: {model: turtlebot4, name: robot, prefix: robot_, pos: [-8.0, 0.0]}
+          - spawn_robot: {model: turtlebot4, prefix: robot_, pos: [-8.0, 0.0]}
+            name: robot
         """,
     )
     cfg = load_config(child)

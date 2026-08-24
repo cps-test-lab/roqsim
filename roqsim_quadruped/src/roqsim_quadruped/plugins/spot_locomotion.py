@@ -65,9 +65,13 @@ _GRAVITY_W = np.array([0.0, 0.0, -1.0], dtype=np.float32)
 
 
 class SpotLocomotionPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         # Policy path resolution order: explicit config > $SPOT_POLICY_PATH > bundled (fetched) path.
         self.policy_path = str(
             self.config.get("policy_path") or os.environ.get("SPOT_POLICY_PATH") or DEFAULT_POLICY

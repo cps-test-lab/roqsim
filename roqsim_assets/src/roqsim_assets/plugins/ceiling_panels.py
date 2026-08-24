@@ -50,11 +50,14 @@ _PANEL_EMISSION = 0.35
 
 
 class CeilingPanelsPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
     _ROOT_BODY = "ceiling_panels"
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "panels")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         area = self.config.get("area", [0.0, 0.0, 1.0, 1.0])
         self.area = [float(v) for v in area] if len(area) == 4 else [0.0, 0.0, 1.0, 1.0]

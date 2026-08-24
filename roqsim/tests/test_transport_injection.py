@@ -13,7 +13,7 @@ from roqsim.config import drop_transport_plugins, entry_ref, load_config, with_t
 
 
 def _refs(raw):
-    return [entry_ref(entry) for entry in raw["plugins"]]
+    return [entry_ref(entry) for entry in raw["components"]]
 
 
 def _world(tmp_path, body):
@@ -53,7 +53,7 @@ def test_a_world_that_already_has_a_transport_is_left_alone():
 
 def test_it_does_not_mutate_the_input():
     """The caller's parsed world is reused elsewhere (world_sources, the exporters)."""
-    raw = {"plugins": [{"floorplan": {}}]}
+    raw = {"components": [{"floorplan": {}}]}
     with_transport(raw)
     assert _refs(raw) == ["floorplan"]
 
@@ -63,7 +63,7 @@ def test_tf_namespace_is_topic_only():
     scenario-execution's listener look under /<ns>/tf while the bridge publishes
     globally, and init_nav2 hangs waiting for a transform."""
     out = with_transport({"plugins": []}, tf_namespace="robot")
-    assert out["plugins"][0]["ros2_bridge"] == {"tf_namespace": "robot"}
+    assert out["components"][0]["ros2_bridge"] == {"tf_namespace": "robot"}
 
 
 def test_it_is_the_inverse_of_dropping(tmp_path):
@@ -99,6 +99,7 @@ def test_transport_is_applied_after_overrides(tmp_path):
 def test_overriding_a_plugin_that_does_not_exist_still_fails(tmp_path):
     """The injection must not turn a typo into a silent no-op."""
     from roqsim.plugin import PluginError
+
     world = _world(tmp_path, "sim: {}\nplugins:\n  - dummy: {}\n")
     with pytest.raises(PluginError, match="matches no plugin"):
         load_config(world, {"plugins": {"nosuch": {}}})

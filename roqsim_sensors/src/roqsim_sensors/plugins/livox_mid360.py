@@ -81,8 +81,8 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
     DEFAULT_V_FOV_MIN = _V_FOV_MIN
     DEFAULT_V_FOV_MAX = _V_FOV_MAX
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.h_rays = int(self.config.get("horizontal_rays", self.DEFAULT_H_RAYS))
         self.v_rays = int(self.config.get("vertical_rays", self.DEFAULT_V_RAYS))
         self.h_fov_min = float(self.config.get("h_fov_min", self.DEFAULT_H_FOV_MIN))

@@ -7,7 +7,7 @@
 #
 # Nothing here names an arm: which arm carries the gripper is the world's choice, and spawn_arm fills
 # `arm:` in from its own `name`.
-plugins:
+components:
   # The tendon `fingers_actuator` is what makes this a gripper rather than two more arm joints (a
   # non-joint transmission lands in arm_controller's `aux_acts`). It is exposed as a GripperCommand
   # action at <gripper_controller_name>/gripper_cmd.

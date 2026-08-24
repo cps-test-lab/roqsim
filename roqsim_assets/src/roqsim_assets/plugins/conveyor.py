@@ -70,6 +70,9 @@ class ConveyorHandle:
 
 
 class ConveyorPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
     # Base belt geometry (half-extents, m) as authored in conveyor.xml; the resize helper below
     # rescales the loaded spec to the configured length/width relative to these. Height-class
     # constants (half-height, roller radius) are fixed.
@@ -80,9 +83,9 @@ class ConveyorPlugin(Plugin):
     _RAIL_OFF = 0.006  # rail centre offset past belt edge (0.296 - 0.29); == rail half-thickness
     _SURF_Z = 0.9425  # belt-surface height inside the model (rail/roller z), fixed
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.conveyor_name = self.config.get("name", "conveyor")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.conveyor_name = self.address
         self.prefix = self.config.get("prefix", "")
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]

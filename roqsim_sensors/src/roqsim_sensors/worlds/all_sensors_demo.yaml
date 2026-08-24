@@ -25,17 +25,17 @@
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
 
-plugins:
+components:
   # --- Livox Mid-360 3D lidar (mast-mounted, centre of the room) --------------------------------
   # Its manifest auto-attaches livox_mid360 -> `cloud` (PointCloud2, frame livox_frame).
   - spawn_sensor:
       model: mid360
-      name: mid360
       prefix: "mid360_"
       pos: [0.0, 0.0, 0.5]
       show_fov: true          # synthesise the Mid-360's translucent 360° dome FOV sector
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 6.0           # override the manifest far (40 m) to fit this room, as the cameras do
+    name: mid360
                                # below: the walls clip the dome sideways, but the room is open above
                                # them, so the un-clamped reach would escape over the top and stretch
                                # the model's bounding box to ~160 m — which is what the default camera
@@ -43,13 +43,13 @@ plugins:
 
   # 2D lidar plugin, sharing the Mid-360 mount's `mid360` site — a robot-free way to exercise it
   # (normally it rides a mobile base). Publishes a separate `scan` (LaserScan) from the same origin.
-  - lidar:
-      robot: mid360           # resolves the mount's prefix/namespace, like a robot would
-      site: mid360
-      frame_id: mid360_scan
-      exclude_body: mount     # skip the sensor's own housing (no chassis on a standalone mount)
-      rays: 360
-      max_range: 20.0
+    components:
+      - lidar:
+          site: mid360
+          frame_id: mid360_scan
+          exclude_body: mount     # skip the sensor's own housing (no chassis on a standalone mount)
+          rays: 360
+          max_range: 20.0
 
   # --- Intel RealSense D435 (RGB) on the +x side, looking back toward the centre ----------------
   # The D435/D415 mounts ship no FOV mesh, so show_fov synthesises a translucent view frustum. Its
@@ -57,36 +57,36 @@ plugins:
   # the valid range automatically; fov_range below overrides the far to fit this small demo room.
   - spawn_sensor:
       model: d435
-      name: d435
       prefix: "d435_"
       pos: [1.5, 0.0, 0.5]
       rpy: [0.0, 0.0, 1.5708]    # yaw +90° so the +y-default camera faces -x (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5            # override the manifest far (6 m) to fit this room; near stays 0.2 m
+    name: d435
 
   # --- Intel RealSense D415 (RGB) on the -y side, looking toward the centre ---------------------
   - spawn_sensor:
       model: d415
-      name: d415
       prefix: "d415_"
       pos: [0.0, -1.5, 0.5]
       rpy: [0.0, 0.0, 0.0]       # the d415 camera looks along +y by default (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
+    name: d415
 
   # --- Intel RealSense D455 (RGB, wide 87°×62° FOV) on the +y side, looking toward the centre ------
   # Its noticeably wider frustum vs the D435/D415 is visible with show_fov (same synthesised-frustum path).
   - spawn_sensor:
       model: d455
-      name: d455
       prefix: "d455_"
       pos: [0.0, 1.5, 0.5]
       rpy: [0.0, 0.0, 3.14159]   # yaw 180° so the +y-default camera faces -y (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
+    name: d455
       # A camera frustum is always clipped against the room walls (visibility volume) at build time;
       # tune the raycast grid with `fov_rays: [h, v]` (default [32, 24]) — see spawn_sensor docs.
 
@@ -95,12 +95,12 @@ plugins:
   # its 39° square coverage frustum out to the 2.5 m focus distance (truncated by the room walls).
   - spawn_sensor:
       model: zivid
-      name: zivid
       prefix: "zivid_"
       pos: [-1.5, 0.0, 0.5]
       rpy: [0.0, 0.0, -1.5708]   # yaw -90° so the camera's +y optical axis faces +x (the centre)
       show_fov: true
       fov_alpha: 0.25
+    name: zivid
 
   # --- Seyond Robin W1G forward solid-state lidar in a corner, looking toward the centre ----------
   # Its manifest auto-attaches seyond_robin_w1g -> `cloud` (PointCloud2, frame seyond_lidar, topic
@@ -108,29 +108,34 @@ plugins:
   # room centre. show_fov synthesises its forward 120°×70° angular sector from the datasheet angles.
   - spawn_sensor:
       model: robin_w1g
-      name: robin_w1g
       prefix: "robin_"
       pos: [1.5, 1.5, 0.7]
       rpy: [0.0, 0.0, -2.35619]   # yaw -135° so the +x boresight points from this corner to the centre
       show_fov: true
       fov_alpha: 0.25
       fov_range: 6.0             # as for the Mid-360 above: the datasheet far is 200 m, which indoors
+    name: robin_w1g
                                  # only inflates the scene's bounding box
 
   # --- Fiducial targets so the cameras have something decodable to render ------------------------
   # Free-standing AprilTags facing the two cameras (markers face +z by default; rpy tips them upright).
+  # Two markers, so each needs a label of its own: a label is what an override addresses and what
+  # the generated texture is named after, and two entries answering to `fiducial_marker` is one
+  # instance silently overwriting the other.
   - fiducial_marker:
       family: apriltag_36h11
       id: 0
       size: 0.12
       pose: [0.0, 0.0, 0.5]
       rpy: [1.5708, 0.0, 1.5708]   # stand upright, face +x toward the D435
+    name: tag_toward_d435
   - fiducial_marker:
       family: apriltag_36h11
       id: 1
       size: 0.12
       pose: [0.0, 0.0, 0.5]
       rpy: [1.5708, 0.0, 3.14159]  # stand upright, face -y toward the D415
+    name: tag_toward_d415
 
   # --- Sensor coverage report (the coverage subpackage's world-YAML toggle) ----------------------
   # Computes once (at configure) how much of the room / which objects the cameras observe, and by how

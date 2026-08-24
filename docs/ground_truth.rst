@@ -10,7 +10,7 @@ Ground-truth topic namespace (``ros2_bridge`` ``gt:``)
 The :doc:`ros2_bridge <interfaces>` can divert *output* topics under a ground-truth prefix so a
 consumer can tell a true pose from real perception. Configure it on the bridge plugin::
 
-    plugins:
+    components:
       - ros2_bridge:
           gt:
             prefix: /gt              # published outputs move to /gt/... (e.g. /gt/tf)
@@ -41,12 +41,14 @@ unchanged — which is what lets roqsim stand in for Gazebo.
 
 Add it to a world (or a robot manifest)::
 
-    plugins:
-      - spawn_robot: {model: turtlebot4, name: robot}
+    components:
+      - spawn_robot: {model: turtlebot4}
+        name: robot
+        components:
+          - ground_truth_pose: {}   # -> /tf: map -> turtlebot4_base_link_gt
       - ros2_bridge: {}
-      - ground_truth_pose: {robot: robot}     # -> /tf: map -> turtlebot4_base_link_gt
 
-Config keys: ``robot`` (entity to read, default ``robot``), ``body`` (base-body override; default the
-entity's registered base body), ``frame_id`` (parent, default ``map``), ``child_frame`` (default
+Config keys: ``body`` (base-body override; default the entity's registered base body -- the entity
+itself is the entry this one is nested under), ``frame_id`` (parent, default ``map``), ``child_frame`` (default
 ``<model>_base_link_gt``), ``rate_hz`` (default ``30``), and the standard ``topics:`` hardwire map
 (``pose`` role; default relative ``tf`` → ``/tf``, or ``/gt/tf`` under the bridge ``gt`` prefix).

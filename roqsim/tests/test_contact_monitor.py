@@ -47,7 +47,7 @@ def _plugin(model, data, **cfg):
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    plugin = ContactMonitorPlugin({"robot": "robot", **cfg})
+    plugin = ContactMonitorPlugin(dict(cfg), entity="robot")
     plugin.configure(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
@@ -124,7 +124,7 @@ def test_missing_body_fails_loudly():
     ctx.model, ctx.data = model, data
     ctx.entities.add(Entity(name="robot", kind="robot", body="nope", meta={"prefix": ""}))
     with pytest.raises(RuntimeError, match="not found"):
-        ContactMonitorPlugin({"robot": "robot"}).configure(ctx)
+        ContactMonitorPlugin({}, entity="robot").configure(ctx)
 
 
 def test_min_force_filters_grazing_contacts():

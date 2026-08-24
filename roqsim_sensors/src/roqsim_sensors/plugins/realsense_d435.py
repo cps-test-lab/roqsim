@@ -73,14 +73,14 @@ class RealsenseD435Plugin(DepthCameraPlugin):
     DEFAULT_HEIGHT = 480
     DEFAULT_DEPTH_FRAME_ID = "camera_depth_optical_frame"
 
-    def __init__(self, config=None, *, name=None):
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
         cfg = dict(config or {})
         # The D435's own working range, not the OAK-D's 0.3-100 m: min-Z ~0.28 m, usable to ~3 m.
         # A wrong clip_far is not cosmetic here -- it is what decides whether the wall behind the
         # subject ends up in the occupancy map as an obstacle.
         cfg.setdefault("clip_near", 0.28)
         cfg.setdefault("clip_far", 3.0)
-        super().__init__(cfg, name=name)
+        super().__init__(cfg, name=name, entity=entity, label=label)
         self.points = bool(self.config.get("points", False))
         # `points` implies `depth`: the cloud IS the depth render, reprojected.
         self.depth = bool(self.config.get("depth", False)) or self.points

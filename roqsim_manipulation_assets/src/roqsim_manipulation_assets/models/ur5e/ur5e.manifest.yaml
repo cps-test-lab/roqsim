@@ -8,5 +8,5 @@
 # The FT sensor is deliberately NOT in this manifest. A model manifest carries what the robot always
 # has; whether a run measures the wrench, in which frame, and with how much noise are properties of
 # the experiment. The arm ships the `fts_site` to measure at -- a world adds `force_torque`.
-plugins:
+components:
   - arm_controller: {}   # the home target keeps the plugin/model defaults

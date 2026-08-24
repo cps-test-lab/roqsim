@@ -12,17 +12,17 @@ sim:
   pacing: realtime      # realtime | asap | {factor: N}
   timestep: 0.001       # REQUIRED for oli_locomotion: 1000 Hz PD / 100 Hz policy (the trained cadence)
 
-plugins:
+components:
   - spawn_robot:
       model: oli
-      name: robot
       pos: [0.0, 0.0]
       yaw: 0.0
+    name: robot
 
   # Override the manifest's oli_locomotion only to add test_cmd: with no ROS to send /cmd_vel, this
   # scripted [vx, vy, w] walks the robot forward so the standalone scene shows motion.
-  - oli_locomotion:
-      robot: robot
-      test_cmd: [0.3, 0.0, 0.0]   # remove once the ros2_bridge drives /cmd_vel
+    components:
+      - oli_locomotion:
+          test_cmd: [0.3, 0.0, 0.0]   # remove once the ros2_bridge drives /cmd_vel
 
   # - ros2_bridge: {}   # one bridge serves every declared endpoint (cmd_vel/odom/joint_states/scan/cameras)

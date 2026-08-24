@@ -46,6 +46,10 @@ def _strip_keyframes(spec: mujoco.MjSpec) -> None:
 
 
 class SpawnRobotPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
     @classmethod
     def expand(cls, spec, world, base_dir):
         """Inject the robot model's default controller/sensor plugins (its ``<model>.manifest.yaml``).
@@ -54,13 +58,11 @@ class SpawnRobotPlugin(Plugin):
         model and are wired to this robot via ``robot: <name>``. Off with ``default_plugins: false``;
         a world entry for the same robot overrides the injected default.
         """
-        return expand_manifest(
-            spec, world, target_key="robot", default_name="robot", base_dir=base_dir
-        )
+        return expand_manifest(spec, world, base_dir=base_dir)
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot_name = self.config.get("name", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot_name = self.address
         self.prefix = self.config.get("prefix", "")
         pos = self.config.get("pos", [0.0, 0.0])
         self.initial_pose = (float(pos[0]), float(pos[1]), float(self.config.get("yaw", 0.0)))

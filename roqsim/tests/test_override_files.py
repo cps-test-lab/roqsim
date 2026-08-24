@@ -20,23 +20,28 @@ def _write(tmp_path, name, data):
 
 
 def test_a_file_is_the_same_nested_mapping_set_builds(tmp_path):
-    path = _write(tmp_path, "o.yaml",
-                  {"plugins": {"floorplan": {"floor": {"reflectance": 0.3}}}})
-    assert (overrides_from_files([path])
-            == overrides_from_dotlist(["plugins.floorplan.floor.reflectance=0.3"]))
+    path = _write(tmp_path, "o.yaml", {"plugins": {"floorplan": {"floor": {"reflectance": 0.3}}}})
+    assert overrides_from_files([path]) == overrides_from_dotlist(
+        ["plugins.floorplan.floor.reflectance=0.3"]
+    )
 
 
 def test_it_carries_what_a_command_line_cannot(tmp_path):
     """The reason the file form exists: a list of instances survives it intact."""
-    instances = [{"pos": [2.1, -3.4], "size": [0.5, 0.5, 1.0]},
-                 {"pos": [5.8, -1.2], "size": [0.5, 0.5, 1.0]}]
+    instances = [
+        {"pos": [2.1, -3.4], "size": [0.5, 0.5, 1.0]},
+        {"pos": [5.8, -1.2], "size": [0.5, 0.5, 1.0]},
+    ]
     path = _write(tmp_path, "o.yaml", {"plugins": {"boxes": {"instances": instances}}})
     assert overrides_from_files([path])["plugins"]["boxes"]["instances"] == instances
 
 
 def test_several_files_merge_with_the_later_one_winning(tmp_path):
-    base = _write(tmp_path, "base.yaml",
-                  {"plugins": {"floorplan": {"size": 3.0, "floor": {"reflectance": 0.2}}}})
+    base = _write(
+        tmp_path,
+        "base.yaml",
+        {"plugins": {"floorplan": {"size": 3.0, "floor": {"reflectance": 0.2}}}},
+    )
     tweak = _write(tmp_path, "tweak.yaml", {"plugins": {"floorplan": {"size": 4.2}}})
     merged = overrides_from_files([base, tweak])
     assert merged["plugins"]["floorplan"] == {"size": 4.2, "floor": {"reflectance": 0.2}}
@@ -45,8 +50,7 @@ def test_several_files_merge_with_the_later_one_winning(tmp_path):
 def test_set_wins_over_a_file(tmp_path):
     """A saved override set plus one ad-hoc tweak: the tweak is what should win."""
     base = _write(tmp_path, "base.yaml", {"sim": {"pacing": "realtime"}})
-    merged = deep_merge(overrides_from_files([base]),
-                        overrides_from_dotlist(["sim.pacing=asap"]))
+    merged = deep_merge(overrides_from_files([base]), overrides_from_dotlist(["sim.pacing=asap"]))
     assert merged["sim"]["pacing"] == "asap"
 
 
@@ -85,6 +89,6 @@ def test_the_result_is_what_apply_overrides_takes(tmp_path):
     world = {"plugins": [{"floorplan": {"name": "floorplan", "size": 3.0}}]}
     path = _write(tmp_path, "o.yaml", {"plugins": {"floorplan": {"size": 4.2}}})
     applied = apply_overrides(world, overrides_from_files([path]))
-    assert applied["plugins"][0]["floorplan"]["size"] == 4.2
+    assert applied["components"][0]["floorplan"]["size"] == 4.2
     # Modified in place, not appended: a second floorplan would be a different world.
-    assert len(applied["plugins"]) == 1
+    assert len(applied["components"]) == 1

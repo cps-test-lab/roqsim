@@ -33,19 +33,25 @@ MOUNT_POS = [0.25, 0.0, 0.2587]
 
 
 def _world(tmp_path, arm_extra=None, robot_first=True, prefix="ur10e_"):
-    robot = {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}}
+    robot = {
+        "spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]},
+        "name": "husky",
+    }
+    # The arm stays a top-level entry: it PROVIDES an entity rather than attaching to one, and
+    # `mount:` is a build-time attachment naming a body, not ownership. Keeping it a sibling is
+    # also what lets this file test declaration order in both directions.
     arm = {
         "spawn_arm": {
             "model": "ur10e",
-            "name": "arm",
             "prefix": prefix,
             "mount": {"robot": "husky", "body": "base_link"},
             "pos": MOUNT_POS,
             **(arm_extra or {}),
-        }
+        },
+        "name": "arm",
     }
     plugins = [robot, arm] if robot_first else [arm, robot]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 GRIPPER = {
@@ -94,19 +100,22 @@ def test_mounted_arm_rides_the_base(tmp_path):
     config = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}},
-                # A scripted forward command, so the test needs no ROS transport.
-                {"diff_drive": {"robot": "husky", "test_cmd": [0.5, 0.0]}},
+            "components": [
+                {
+                    "spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]},
+                    "name": "husky",
+                    # A scripted forward command, so the test needs no ROS transport.
+                    "components": [{"diff_drive": {"test_cmd": [0.5, 0.0]}}],
+                },
                 {
                     "spawn_arm": {
                         "model": "ur10e",
-                        "name": "arm",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
                         "pos": MOUNT_POS,
                         **GRIPPER,
-                    }
+                    },
+                    "name": "arm",
                 },
             ],
         },

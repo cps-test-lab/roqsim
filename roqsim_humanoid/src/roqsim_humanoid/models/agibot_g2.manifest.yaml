@@ -10,7 +10,7 @@
 # (from roqsim_mobile) as a planar skid-steer approximation of the real 4-wheel swerve chassis
 # (the swerve steer joints are welded straight in the MJCF); `agibot_g2_controller` holds the torso/
 # head/arm/gripper position joints; `lidar` comes from roqsim_sensors.
-plugins:
+components:
   # Base: planar diff-drive over the four wheel roll actuators (left pair / right pair together).
   # Limits are a documented assumption (G2 is a slow indoor manipulator; the source gives no base
   # kinematic limits). slip_factor compensates MuJoCo skid-steer scrub -- calibrated, see port log.

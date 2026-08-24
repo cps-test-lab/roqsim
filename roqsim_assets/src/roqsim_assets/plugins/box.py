@@ -56,9 +56,13 @@ _ROOT_BODY = "box"
 
 
 class BoxPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "box")
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         self.size = self._vec3(self.config.get("size"), (0.4, 0.4, 0.4))
         self.pos = self._pos(self.config.get("pos"), self.size[2])

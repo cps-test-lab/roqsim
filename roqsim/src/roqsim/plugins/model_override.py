@@ -314,8 +314,8 @@ class _Target:
 class ModelOverridePlugin(Plugin):
     parallel_safe = True  # post_step only reads data.contact and writes its own state
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.overrides = list(self.config.get("overrides") or [])
         self.initial_active = bool(self.config.get("active", False))
         self.rate_hz = float(self.config.get("rate_hz", 10.0))

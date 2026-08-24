@@ -32,12 +32,15 @@ from roqsim.plugin import Plugin
 
 
 class AgibotG2ControllerPlugin(Plugin):
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
     #: actuator-name prefix (after the spawn prefix) that marks a body position servo
     POS_TAG = "p_"
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self._acts: list[int] = []  # actuator ids, in model order
         self._jids: list[int] = []  # driven joint ids (aligned with _acts)
         self._jnames: list[str] = []  # unprefixed joint names (aligned)

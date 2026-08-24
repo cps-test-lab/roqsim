@@ -32,7 +32,8 @@ TRACK = 0.436
 REST_Z = 0.040
 
 _CFG = {
-    list(e)[0]: (list(e.values())[0] or {}) for e in yaml.safe_load(MANIFEST.read_text())["plugins"]
+    list(e)[0]: (list(e.values())[0] or {})
+    for e in yaml.safe_load(MANIFEST.read_text())["components"]
 }
 
 

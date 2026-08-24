@@ -22,7 +22,7 @@
 # Every limit below is PAL's own, from omni_base_controller_configuration/config/
 # mobile_base_controller.yaml and the source URDF <limit> tags -- not a substrate guess.
 
-plugins:
+components:
   # ---------------------------------------------------------------------------------------------
   # Base: HOLONOMIC. The OMNI base is a 4-wheel mecanum platform (PAL runs
   # omni_drive_controller/OmniDriveController on it), so it strafes -- which is why it uses

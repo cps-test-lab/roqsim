@@ -16,7 +16,7 @@ scene, is declared in a **single YAML file**.
 ```yaml
 sim:
   world: empty_room
-plugins:
+components:
   - spawn_robot: {model: turtlebot4, pos: [0, 0]}
 ```
 

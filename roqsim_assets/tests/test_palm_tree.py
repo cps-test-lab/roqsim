@@ -25,14 +25,14 @@ BUNCHES = [
 def _world(tmp_path, **extra):
     cfg = {
         "palm_tree": {
-            "name": "palm",
             "prefix": "palm_",
             "pos": [0.5, 0.2, 0.0],
             "bunches": BUNCHES,
             **extra,
-        }
+        },
+        "name": "palm",
     }
-    return load_config_from_dict({"sim": {}, "plugins": [cfg]}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": [cfg]}, base_dir=tmp_path)
 
 
 def _built(tmp_path, **extra):

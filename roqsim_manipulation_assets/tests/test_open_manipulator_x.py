@@ -32,14 +32,14 @@ def _engine(tmp_path, **arm_extra):
         {
             "spawn_arm": {
                 "model": "open_manipulator_x",
-                "name": "omx",
                 "prefix": "omx_",
                 **arm_extra,
-            }
+            },
+            "name": "omx",
+            "components": [{"arm_controller": {}}],
         },
-        {"arm_controller": {"arm": "omx"}},
     ]
-    engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
+    engine = Engine(load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path))
     engine.setup()
     engine.reset()
     return engine

@@ -137,7 +137,7 @@ Single world YAML, two sections; ``plugins`` order = execution order:
      noslip_iterations: 10  # solver effort; see "Solver options" below
      sync: {enabled: false} # foreseen lockstep mode (§10); inert
 
-   plugins:
+   components:
      - floorplan:                   # (1) entry-point short name -- the ref *is* the key
          mesh: envs/x.stl
          collision: true
@@ -277,8 +277,8 @@ Model plugin manifests (``expand``) [impl]
 A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + ``lidar``; an arm → ``arm_controller``) in a ``<model>.manifest.yaml`` manifest next to its MJCF, so a world only spawns the model instead of re-declaring them. Mechanism:
 
 - Before instantiation, ``_expand_plugins`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is the list of explicitly-declared specs; core does no dedupe of its own.
-- Spawn plugins implement ``expand`` in one line via the shared ``roqsim.manifest.expand_manifest(spec, world, *, target_key, default_name, base_dir=None)``. It resolves the model (see *Model discovery* below), reads the ``<model>.manifest.yaml`` beside the resolved file, and wires each entry to this entity by setting ``config[target_key]`` to the spawn's ``name`` (``target_key="robot"`` for mobile, ``"arm"`` for manipulators). Distinct entities (two arms) never collide.
-- When the world already declares the same ``(plugin ref, entity)``, the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (``diff_drive: {robot: robot, test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
+- Spawn plugins implement ``expand`` in one line via the shared ``roqsim.manifest.expand_manifest(spec, world, *, base_dir=None)``. It resolves the model (see *Model discovery* below), reads the ``<model>.manifest.yaml`` beside the resolved file, and injects each entry as a **component of the spawn**. There is no per-family wiring key any more: an entry belongs to the entity whose entry it sits under, so a mobile spawn and an arm spawn wire their components identically. Distinct entities (two arms) never collide.
+- When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
      This merge was previously a plain skip (the manifest entry was dropped whole), which meant a
@@ -483,28 +483,24 @@ The test for which of the two a perturbation is, is **where the failure lives**.
 brings the lidar with it -- so a world that only spawns a robot never names it. Two
 consequences, and they differ:
 
--  **A world may set one key of a default** without restating the rest. ``expand_manifest``
-   merges the manifest's config *underneath* a world's entry, per key, so
-   ``lidar: {robot: robot, range_stddev: 0.05}`` keeps the model's ``rays``, ``max_range``
-   and ``frame_id``. Restating them would be a duplicate that silently diverges the day the
-   manifest changes.
+-  **A world may set one key of a default** without restating the rest. Declare it as a component of
+   the spawn; ``expand_manifest`` merges the manifest's config *underneath* that entry, per key, so::
 
--  **An override cannot reach a default the world never declared.** ``--set`` /
+      components:
+        - spawn_robot: {model: turtlebot4}
+          name: robot
+          components:
+            - lidar: {range_stddev: 0.05}   # keeps the model's rays, max_range, frame_id
+
+   Restating the rest would be a duplicate that silently diverges the day the manifest changes. The
+   entry carries no ``robot:`` key: it belongs to the robot because it sits inside it.
+
+-  **An override cannot reach a default the document never declared.** ``--set`` /
    ``--override`` are applied to the parsed YAML *before* manifest expansion (deliberately:
    the override must be in the compiled model and therefore in the run's provenance), so at
    that moment there is no ``lidar`` entry to address. The override is **refused**, which is
    the right failure -- silently ignoring it would let a swept parameter do nothing while
-   the sweep looked healthy -- and the refusal names the model and the one-line stub that
-   fixes it.
-
-So a world that wants a model default to be settable from outside declares it, wired and
-otherwise empty::
-
-   plugins:
-     - spawn_robot: {model: turtlebot4, name: robot}
-     - lidar: {robot: robot}          # stub: makes plugins.lidar.* addressable
-
-Nothing is duplicated -- the manifest still supplies everything the stub does not name.
+   the sweep looked healthy -- and the refusal names the model and the entry to nest it under.
 
 9.2 Physical faults (``model_override``) [impl]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

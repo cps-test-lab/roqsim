@@ -4,7 +4,7 @@
 # re-declare the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin
 # for the same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
 # `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
-plugins:
+components:
   # True 2-wheel differential drive with passive rear casters -- no skid-steer scrub, hence NO
   # `slip_factor` (contrast husky_a200 / clearpath_jackal, which need one). Geometry from
   # turtlebot3_description and the vendor MJCF; limits are the ROBOTIS Waffle datasheet values, which

@@ -82,9 +82,13 @@ NUM = 31
 
 
 class OliLocomotionPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    #: Drives an entity's actuators, so it cannot function without one: it belongs inside that
+    #: entity's ``components:`` block. (A *sensor* may be world-mounted and does not set this.)
+    requires_owner = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.policy_path = str(self.config.get("policy_path", OLI_POLICY))
         self.config_path = str(self.config.get("config_path", OLI_CONFIG))
         self.max_v = float(self.config.get("max_linear_vel", 0.5))

@@ -48,7 +48,7 @@ LIDAR_Z_GROUND = LIDAR_Z_BASE + REST_Z  # 0.3852
 
 def _manifest_plugin(kind: str) -> dict:
     """The plugin config the model actually ships with (the manifest is the source of truth)."""
-    for entry in yaml.safe_load(MANIFEST.read_text())["plugins"]:
+    for entry in yaml.safe_load(MANIFEST.read_text())["components"]:
         if kind in entry:
             return dict(entry[kind])
     raise AssertionError(f"clearpath_jackal manifest has no {kind} plugin")
@@ -364,7 +364,7 @@ def test_c3_lidar_sees_a_wall_at_the_right_range():
     ctx.entities.add(
         Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
     )
-    lidar = LidarPlugin(_manifest_plugin("lidar"))
+    lidar = LidarPlugin(_manifest_plugin("lidar"), entity="robot")
     lidar.configure(ctx)
     mujoco.mj_step(model, data)
     lidar.post_step(ctx)

@@ -58,9 +58,9 @@ class RayCastSensorPlugin(Plugin):
     #: point cloud (drop it). See the module docstring.
     CLAMP_NEAR_RETURNS = True
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.site = self.config.get("site", self.DEFAULT_SITE)
         # ROS frame the payload is stamped in, and the child of the static mount TF (one value, so
         # the two cannot disagree). Defaults to the site the rays are actually cast from; a model

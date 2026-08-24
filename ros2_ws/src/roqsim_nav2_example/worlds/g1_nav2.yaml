@@ -13,13 +13,13 @@ sim:
   timestep: 0.002
   pacing: realtime
 
-plugins:
+components:
   # g1_locomotion + lidar come from the unitree_g1 model manifest (models/unitree_g1.manifest.yaml).
   - spawn_robot:
       model: unitree_g1
-      name: robot
       pos: [0.0, 0.0]
       yaw: 0.0
+    name: robot
 
   # The bridge reads the robot's declared endpoints from ctx.interface and publishes
   # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->lidar TF.

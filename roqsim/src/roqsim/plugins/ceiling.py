@@ -43,8 +43,8 @@ _log = logging.getLogger(__name__)
 class CeilingPlugin(Plugin):
     parallel_safe = True  # build-only; no per-step work
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         # Default enabled=true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into
         # a world never deletes geometry unless the world explicitly asks (enabled: false).
         self.enabled = bool(self.config.get("enabled", True))

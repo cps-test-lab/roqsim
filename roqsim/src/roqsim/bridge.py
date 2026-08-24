@@ -65,8 +65,8 @@ class BridgeBase(Plugin):
     # without its middleware installed.
     transport_only = True
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self._ctx: SimContext | None = None
         self._outputs: list[_Output] = []
         self._ready = False

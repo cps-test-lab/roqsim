@@ -23,7 +23,7 @@ roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
 ## Configuration
 
 ```yaml
-plugins:
+components:
   - walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
       name: pedestrian         # entity name

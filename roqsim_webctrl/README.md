@@ -12,7 +12,7 @@ This package ships that reusable fragment so any scene can include it without ha
 
 ```yaml
 # web.yaml (any roqsim scene)
-plugins:
+components:
   - id: sim-control
     placement: bottom-right
     # steps: 10          # physics steps per single-step click (default 1)

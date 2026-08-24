@@ -8,7 +8,7 @@
 #
 # lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so the
 # G1 publishes /scan for nav2 exactly like the turtlebot does.
-plugins:
+components:
   - g1_locomotion: {}                              # RL walking policy + PD; gains/config bundled
   - lidar:
       site: lidar

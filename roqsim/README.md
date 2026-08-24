@@ -59,20 +59,47 @@ roqsim sim world.yaml --seed 7 --record run.npz --video run.webm
 tools), `roqsim <group> --help` gives one line per tool, and `roqsim <group> <tool> --help` is that tool's
 own options. `python -m pydoc <module>` has the reasoning behind one.
 
-A world is one YAML file — a `sim:` block of run-level settings and a `plugins:` list, where each
+A world is one YAML file — a `sim:` block of run-level settings and a `components:` list, where each
 entry names a plugin and configures it:
 
 ```yaml
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
 
-plugins:
-  - spawn_robot: {model: husky_a200, name: robot, pos: [0, 0], yaw: 0}
-  - diff_drive:  {robot: robot, test_cmd: [0.5, 0.4]}
+components:
+  - spawn_robot: {model: husky_a200, pos: [0, 0], yaw: 0}
+    name: robot                              # names the entry, and so the entity it spawns
+    components:                              # what belongs to that robot
+      - diff_drive: {test_cmd: [0.5, 0.4]}
 ```
+
+A component's owner is **the entry it is nested under** — there is no `robot:` key to write, and so
+no way to write it wrong. A robot's own sensors and controllers come from its model manifest and need
+no mention here at all; nest an entry only to add something the model does not ship.
 
 Plugins are referenced by registered name, by `module:Class`, or by `file.py:Class` beside the world —
 which is how an experiment loads its own plugin without registering anything.
+
+> **Two changes to the world format.**
+>
+> `plugins:` was renamed to **`components:`**. The former spelling still loads, so existing worlds and
+> model manifests keep working; a document carrying *both* keys is refused, because two spellings of
+> one key in one file is a merge nobody can predict. Anything that reads a loaded world back — `roqsim
+> scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — now emits `components:`.
+>
+> **Ownership is nesting, and `name:` is a sibling.** A sensor or controller belongs to the entry it
+> is nested under, so the per-family `robot:` / `arm:` config keys are gone. An entry's `name:` moved
+> out of the plugin's config to sit beside the plugin ref, and it is now the *one* name an entry has:
+> it labels the entry, names the entity a `spawn_*` or prop creates, and is what `disable:` and an
+> override address.
+>
+> An entry's **address** is the dotted path of labels from the top of the document — `robot`,
+> `robot.lidar` — and it is what an entity is registered under, so two robots may each carry an
+> `arm` without one hiding the other. A top-level entry's address is just its label, so no existing
+> world's entity names change. Three things are refused at load, because each would otherwise make
+> an address mean two things: two components of one owner sharing a label; a `name:` containing
+> `. * # [ ] = : /` or whitespace; and a component whose label is also one of its owner's config
+> keys.
 
 ## Reproducibility
 

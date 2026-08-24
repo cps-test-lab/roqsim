@@ -51,8 +51,8 @@ from ..coverage.report import build_report
 class SensorCoverageProbePlugin(Plugin):
     parallel_safe = False  # runs a one-shot compute + optional GL render at configure time
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.sensors = self.config.get("sensors", "auto")
         self.camera_far = float(self.config.get("camera_far", 10.0))
         self.target = self.config.get("target", {})

@@ -59,9 +59,9 @@ from roqsim.plugin import Plugin
 class ObjectDetectorPlugin(Plugin):
     parallel_safe = True  # post-compile read-only: reads data.xpos/xquat, publishes via endpoint
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.robot = self.config.get("robot", "robot")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.robot = self.entity
         self.frame = self.config.get("frame", "base_footprint")
         self.rate_hz = float(self.config.get("rate_hz", 10.0))
         self.objects = list(self.config.get("objects", []))

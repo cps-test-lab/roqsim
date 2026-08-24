@@ -85,7 +85,7 @@ from pathlib import Path
 
 import yaml
 
-from roqsim.config import drop_transport, entry_ref, load_config, world_sources
+from roqsim.config import document_entries, drop_transport, entry_ref, load_config, world_sources
 from roqsim.world import resolve_world_yaml_ref
 
 #: Depth at which a dotted path stops being a *destination* and starts being data. A campaign
@@ -109,7 +109,7 @@ def _describe_plugins(config) -> list:
     described = []
     # strict: the two lists describe the same plugins; a length mismatch is a bug in load_config,
     # not something to paper over by silently describing a prefix of them.
-    for spec, raw in zip(config.plugins, config.raw.get("plugins") or [], strict=True):
+    for spec, raw in zip(config.plugins, document_entries(config.raw), strict=True):
         key = spec.name or entry_ref(raw) if isinstance(raw, dict) else spec.ref
         described.append(
             {

@@ -36,10 +36,10 @@ class RealsenseD455Plugin(RealsenseD435Plugin):
     DEFAULT_WIDTH = 640
     DEFAULT_HEIGHT = 400
 
-    def __init__(self, config=None, *, name=None):
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
         cfg = dict(config or {})
         # The D455's own working range, not the D435's 0.28-3 m: min-Z ~0.6 m, ideal to ~6 m. Set
         # BEFORE super().__init__, whose setdefault would otherwise install the D435's numbers.
         cfg.setdefault("clip_near", 0.6)
         cfg.setdefault("clip_far", 6.0)
-        super().__init__(cfg, name=name)
+        super().__init__(cfg, name=name, entity=entity, label=label)

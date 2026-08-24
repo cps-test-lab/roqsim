@@ -4,7 +4,7 @@
 # robot's intrinsic kinematics/sensors. To override a default, declare the same plugin for the same
 # robot in the world (it wins); to opt out entirely, set `spawn_robot` config `default_plugins: false`.
 # Each entry's `robot` is filled in from the spawn_robot `name`.
-plugins:
+components:
   # Skid-steer: all four wheels driven, left pair and right pair commanded together. Kinematic limits
   # match the paper's DWB-RPP-MPPI Nav2 config (max_vel_x 1.0 m/s, max_vel_theta 1.0 rad/s,
   # acc_lim 1.0), so the model saturates where the stack does.

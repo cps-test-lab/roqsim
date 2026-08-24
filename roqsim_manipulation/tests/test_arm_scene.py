@@ -15,14 +15,14 @@ def _world(tmp_path, arm_extra=None, ctrl_extra=None):
         {
             "spawn_arm": {
                 "model": "ur10e",
-                "name": "ur10e",
                 "prefix": "ur10e_",
                 **(arm_extra or {}),
             },
+            "name": "ur10e",
+            "components": [{"arm_controller": dict(ctrl_extra or {})}],
         },
-        {"arm_controller": {"arm": "ur10e", **(ctrl_extra or {})}},
     ]
-    return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
+    return load_config_from_dict({"sim": {}, "components": plugins}, base_dir=tmp_path)
 
 
 def _run(engine, steps):

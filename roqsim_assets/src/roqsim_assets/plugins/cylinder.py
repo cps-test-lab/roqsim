@@ -46,9 +46,13 @@ _ROOT_BODY = "cylinder"
 
 
 class CylinderPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", "cylinder")
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         self.radius = self._float(self.config.get("radius"), 0.2)
         self.height = self._float(self.config.get("height"), 0.5)

@@ -6,7 +6,7 @@
 # spawn_sensor `name`. `exclude_body: mount` skips the sensor's own housing (a standalone mount has no
 # chassis); `frame_id: seyond_lidar` matches Seyond's own ROS driver.
 #
-plugins:
+components:
   - seyond_robin_w1g:
       site: robin_w1g
       frame_id: seyond_lidar

@@ -164,7 +164,7 @@ class _NamespacedTfPublisher:
 class Ros2Bridge(BridgeBase):
     BACKEND = "ros2"
 
-    def __init__(self, config=None, *, name=None):
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
         config = dict(config or {})
         # Optional GLOBAL prefix (the rclpy node namespace): scopes the whole sim, e.g. /sim1/...
         # Per-robot scoping is NOT set here -- it rides on each endpoint's own `namespace`.
@@ -191,7 +191,7 @@ class Ros2Bridge(BridgeBase):
         gt = config.get("gt") or {}
         self._gt_prefix = str(gt.get("prefix", "")).rstrip("/")
         self._gt_exempt: set[str] = set(gt.get("exempt") or [])
-        super().__init__(config, name=name)
+        super().__init__(config, name=name, entity=entity, label=label)
         self._context: Context | None = None
         self._node: Node | None = None
         self._action_servers: list[ActionServer] = []

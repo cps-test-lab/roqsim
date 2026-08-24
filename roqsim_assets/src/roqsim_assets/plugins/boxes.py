@@ -59,23 +59,35 @@ class BoxesPlugin(Plugin):
     keeping the names distinct.
     """
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.entity_name = self.config.get("name", _DEFAULT_NAME)
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.entity_name = self.label
         self._children: list[BoxPlugin] = [
-            BoxPlugin(self._child_config(entry, index), name=self.name)
+            # Each instance is a box in its own right, so it gets its own LABEL -- which is what
+            # names its entity, exactly as it would if the world had declared it. An instance may
+            # name itself; otherwise it is this entry's label plus its index.
+            BoxPlugin(
+                self._child_config(entry, index),
+                name=self.name,
+                label=self._child_label(entry, index),
+                # Its children are its SIBLINGS, not its components: `boxes` makes boxes, it does
+                # not own them, so each takes this entry's own owner.
+                entity=self.entity,
+            )
             for index, entry in enumerate(self.config.get("instances") or [])
         ]
 
+    def _child_label(self, entry: dict, index: int) -> str:
+        return str((entry or {}).get("name") or f"{self.entity_name}_{index}")
+
     def _child_config(self, entry: dict, index: int) -> dict:
-        """One instance's config, with a name and MJCF prefix that cannot collide.
+        """One instance's config, with an MJCF prefix that cannot collide.
 
         A distinct ``prefix`` per instance is not cosmetic: MuJoCo names must be unique, so without
         it a second box fails model compilation.
         """
-        child = dict(entry or {})
-        child.setdefault("name", f"{self.entity_name}_{index}")
-        child.setdefault("prefix", f"{child['name']}_")
+        child = {k: v for k, v in (entry or {}).items() if k != "name"}
+        child.setdefault("prefix", f"{self._child_label(entry, index)}_")
         return child
 
     def validate_config(self, config: dict) -> list[str]:

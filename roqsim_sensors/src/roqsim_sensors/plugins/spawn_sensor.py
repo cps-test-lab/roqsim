@@ -365,6 +365,10 @@ def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
 
 
 class SpawnSensorPlugin(Plugin):
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
     @classmethod
     def expand(cls, spec, world, base_dir):
         """Inject the sensor model's default capture plugin (its ``<model>.manifest.yaml``).
@@ -373,13 +377,11 @@ class SpawnSensorPlugin(Plugin):
         this mount via ``robot: <name>`` -- the same config key ``lidar``/``oakd_camera`` already
         use for a robot's own prefix/namespace, so a capture plugin needs no mount-specific config.
         """
-        return expand_manifest(
-            spec, world, target_key="robot", default_name="sensor", base_dir=base_dir
-        )
+        return expand_manifest(spec, world, base_dir=base_dir)
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.sensor_name = self.config.get("name", "sensor")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        self.sensor_name = self.address
         self.prefix = self.config.get("prefix", "")
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]

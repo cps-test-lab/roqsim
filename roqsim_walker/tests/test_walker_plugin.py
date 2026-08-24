@@ -17,10 +17,9 @@ from roqsim.engine import Engine
 WAYPOINTS = [[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0]]
 
 
-def _world(**walker_overrides):
+def _world(*, name="pedestrian", **walker_overrides):
     walker = {
         "walker": "MaleVisitorWalk",
-        "name": "pedestrian",
         "speed": 1.2,
         "loop": True,
         "arrival_radius": 0.25,
@@ -30,7 +29,10 @@ def _world(**walker_overrides):
     }
     walker.update(walker_overrides)
     return load_config_from_dict(
-        {"sim": {"headless": True, "pacing": "asap"}, "plugins": [{"walker": walker}]}
+        {
+            "sim": {"headless": True, "pacing": "asap"},
+            "components": [{"walker": walker, "name": name}],
+        }
     )
 
 

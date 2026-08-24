@@ -26,26 +26,24 @@ def world(tmp_path):
     path = tmp_path / "w.yaml"
     path.write_text(
         "sim: {timestep: 0.01}\n"
-        "plugins:\n"
+        "components:\n"
         "- boxes:\n"
-        "    name: obstacles\n"
         "    instances:\n"
         "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
-        "    - {pos: [3.0, 2.0], size: [0.4, 0.4, 0.4]}\n")
+        "    - {pos: [3.0, 2.0], size: [0.4, 0.4, 0.4]}\n"
+        "  name: obstacles\n")
     return path
 
 
-def test_the_override_key_is_the_plugin_ref_not_a_config_name(capsys, world):
-    """Two different `name`s, and confusing them is a run-time failure.
-
-    `apply_overrides` resolves a plugin by its reserved `name:` SIBLING, then by its ref. A
-    `name:` inside the plugin's own config -- what `boxes` calls its entities -- addresses
-    nothing, so an override written against it is refused inside the container.
-    """
+def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, world):
+    """There used to be two `name`s and confusing them was a run-time failure: a reserved sibling
+    that addressed the plugin, and one inside the config that named its entities and addressed
+    nothing. They are now one key -- the entry's label -- so an override written against the name a
+    world gave its boxes reaches the plugin that made them."""
     plugin = _describe(capsys, str(world))["plugins"][0]
-    assert plugin["key"] == "boxes"
+    assert plugin["key"] == "obstacles"
     assert plugin["ref"] == "boxes"
-    assert plugin["name"] is None
+    assert plugin["name"] == "obstacles"
 
 
 def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
@@ -62,7 +60,7 @@ def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
 
 def test_it_reports_the_paths_that_exist(capsys, world):
     described = _describe(capsys, str(world))
-    assert "plugins.boxes.instances" in described["plugins"][0]["paths"]
+    assert "plugins.obstacles.instances" in described["plugins"][0]["paths"]
 
 
 def test_a_lists_members_are_not_addressable_paths(capsys, world):
@@ -280,7 +278,7 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
     own overrides sees none of them unless they are applied first.
     """
     world = tmp_path / "base.yaml"
-    world.write_text("plugins:\n- boxes: {name: obstacle, instances: []}\n")
+    world.write_text("components:\n- boxes: {instances: []}\n  name: obstacle\n")
     overrides = tmp_path / "ov.yaml"
     overrides.write_text(
         "plugins:\n"

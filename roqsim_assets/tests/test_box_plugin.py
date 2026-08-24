@@ -15,14 +15,14 @@ from roqsim.context import SimContext
 from roqsim_assets.plugins.box import BoxPlugin
 
 
-def _build(**cfg):
+def _build(*, name="box", **cfg):
     spec = mujoco.MjSpec()
     floor = spec.worldbody.add_geom()
     floor.name = "floor"
     floor.type = mujoco.mjtGeom.mjGEOM_PLANE
     floor.size = [10, 10, 0.05]
     ctx = SimContext(config={})
-    plugin = BoxPlugin(cfg)
+    plugin = BoxPlugin(cfg, label=name)
     plugin.build(spec, ctx)
     model = spec.compile()
     data = mujoco.MjData(model)
@@ -136,9 +136,9 @@ def test_free_box_keeps_its_prefix_in_the_base_joint_name():
                 "pos": [x, 0.0],
                 "size": [0.4, 0.4, 0.8],
                 "prefix": f"o{i}_",
-                "name": f"obstacle_{i}",
                 "free": True,
-            }
+            },
+            label=f"obstacle_{i}",
         )
         p.build(spec, ctx)
         plugins.append(p)

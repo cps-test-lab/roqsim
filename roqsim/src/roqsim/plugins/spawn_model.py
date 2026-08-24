@@ -124,11 +124,15 @@ def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
 
 
 class SpawnModelPlugin(Plugin):
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
+    #: Registers an entity, so its label names that entity and it may own a
+    #: ``components:`` block of sensors, controllers and monitors that attach to it.
+    provides_entity = True
+
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
         self.model_ref = self.config.get("model", "")
         self.prefix = self.config.get("prefix", "")
-        self.entity_name = self.config.get("name") or ""
+        self.entity_name = self.address
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])

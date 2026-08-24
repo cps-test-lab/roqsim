@@ -89,11 +89,13 @@ class WrenchReader:
 class ForceTorquePlugin(Plugin):
     parallel_safe = True  # post-compile read-only: reads data.sensordata / xmat
 
-    def __init__(self, config=None, *, name=None):
-        super().__init__(config, name=name)
-        self.name = self.config.get("name", "ft")
+    def __init__(self, config=None, *, name=None, entity=None, label=None):
+        super().__init__(config, name=name, entity=entity, label=label)
+        # No config `name:` of its own: this instance is identified by its label, like every other
+        # entry. It used to overwrite `Plugin.name` from config, which meant a force_torque could be
+        # called one thing by the document and another by its blackboard key and its topic.
         self.site = self.config.get("site", "")
-        self.owner = self.config.get("arm") or self.config.get("robot") or "arm"
+        self.owner = self.entity
         self.frame = self.config.get("frame", "sensor")
         self.invert = bool(self.config.get("invert", True))
         self.noise_f = float(self.config.get("noise_force_stddev", 0.0))
@@ -191,16 +193,20 @@ class ForceTorquePlugin(Plugin):
             if self._ref_bid < 0:
                 raise RuntimeError(
                     f"force_torque[{self.name}]: frame 'base' needs the entity's base body, but "
-                    f"{body_name!r} was not found. Name the entity with `arm:` or use frame 'world'."
+                    f"{body_name!r} was not found. Nest this sensor under the entry that spawns "
+                    f"the entity, or use frame 'world'."
                 )
 
-        key = f"ft:{self.name}"
+        # Keyed on the LABEL, like every other identity: a document with two entries answering to
+        # one label is already refused when it loads, so reaching this means a caller constructed
+        # two directly.
+        key = f"ft:{self.label}"
         if ctx.blackboard.get(key) is not None:
             raise RuntimeError(
                 f"force_torque: blackboard key {key!r} is already registered. Two FT sensors need "
-                f"distinct `name`s, else a controller silently reads the wrong one."
+                f"distinct labels, else a controller silently reads the wrong one."
             )
-        ctx.blackboard.set(key, WrenchReader(name=self.name, frame=self.frame, read=self.read))
+        ctx.blackboard.set(key, WrenchReader(name=self.label, frame=self.frame, read=self.read))
 
         ctx.interface.add(
             Endpoint(

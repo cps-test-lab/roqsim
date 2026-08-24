@@ -16,7 +16,7 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
      integrator: implicitfast   # euler | rk4 | implicit | implicitfast (default)
      dedup_assets: true     # default; merge identical attached prop assets before compile
 
-   plugins:
+   components:
      - floorplan:                       # (1) entry-point short name -- the ref *is* the key
          size: 3.0
        name: ground                     # optional instance name (reserved sibling key)
@@ -272,7 +272,7 @@ inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elem
      timestep: 0.001              # deep-merged over the parent's sim (child wins per key)
    disable:                       # OPTIONAL: drop inherited plugins by name (needs ``extends``)
      - graspable_box
-   plugins:                       # child plugins are APPENDED after the (kept) parent plugins
+   components:                    # child entries are APPENDED after the (kept) parent entries
      - spawn_robot: {model: oli, name: oli, prefix: oli_, pos: [13.2, 2.6]}
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
