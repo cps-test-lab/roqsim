@@ -254,7 +254,9 @@ def _sample_matrix(
     movable = [
         j
         for j in range(model.njnt)
-        if model.jnt_type[j] in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE)
+        # int(): mjt* enums compare False against a numpy scalar (`x in (...)` puts the enum on the
+        # left of `==`); an empty `movable` would sample nothing and mark every pair Always.
+        if int(model.jnt_type[j]) in (mujoco.mjtJoint.mjJNT_HINGE, mujoco.mjtJoint.mjJNT_SLIDE)
         and int(model.jnt_bodyid[j]) in links
         and is_link_root(int(model.jnt_bodyid[j]))
     ]

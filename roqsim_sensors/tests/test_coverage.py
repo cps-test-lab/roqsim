@@ -7,6 +7,7 @@ import math
 import mujoco
 import numpy as np
 import pytest
+from external_meshes import needs_mid360, needs_robin, needs_zivid
 from roqsim_sensors.coverage import adapters
 from roqsim_sensors.coverage.adapters import PlacedSensor, build_fov
 from roqsim_sensors.coverage.engine import coverage
@@ -396,6 +397,9 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
 # -- the CLI's two entry-point contracts -------------------------------------------------------------
 
 
+@needs_mid360
+@needs_zivid
+@needs_robin
 def test_load_world_accepts_a_world_yaml():
     """`--world` must take a world YAML, not only a bare MJCF.
 
@@ -409,6 +413,8 @@ def test_load_world_accepts_a_world_yaml():
 
     from roqsim_sensors.coverage.cli import load_world
 
+    # all_sensors_demo mounts the mid360, the zivid and the robin_w1g, so loading it compiles all
+    # three vendor meshes -- hence three markers for one assertion.
     world = Path(__file__).parents[1] / "src/roqsim_sensors/worlds/all_sensors_demo.yaml"
     model, data = load_world(str(world))
     assert model.ngeom > 0 and data is not None

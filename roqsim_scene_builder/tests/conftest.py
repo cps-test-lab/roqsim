@@ -25,6 +25,9 @@ def virtual_display():
     on the developer's display flashes windows across their screen mid-run. Module-scoped because the
     fixture boots a real X server -- one per test class would start (and leak) several.
     """
+    # Tk is the other half of the same prerequisite, and it was the unguarded half: a machine with
+    # Xvfb but without python3-tk got past this fixture and died on `import tkinter` inside each test.
+    pytest.importorskip("tkinter", reason="python3-tk is not installed; the GUI tests need real Tk")
     if shutil.which("Xvfb") is None:
         pytest.skip("Xvfb not installed; skipping rather than opening windows on a real display")
     for num in range(90, 100):

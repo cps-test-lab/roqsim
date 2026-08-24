@@ -66,7 +66,9 @@ def world_bounds(model: mujoco.MjModel, data: mujoco.MjData) -> tuple[np.ndarray
 
 def _geom_local_surface(model: mujoco.MjModel, g: int, per_object: int) -> np.ndarray:
     """Surface sample points in the geom's local frame."""
-    gtype = model.geom_type[g]
+    # int(): mjt* enums compare False against a numpy scalar (`x in (...)` puts the enum on the
+    # left of `==`), so the CYLINDER/CAPSULE match below would silently never fire.
+    gtype = int(model.geom_type[g])
     size = np.asarray(model.geom_size[g], dtype=np.float64)
     if gtype == mujoco.mjtGeom.mjGEOM_MESH:
         mid = int(model.geom_dataid[g])

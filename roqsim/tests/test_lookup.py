@@ -96,9 +96,11 @@ def test_a_body_welded_to_the_world_is_refused_when_movement_is_expected(ctx):
 
 
 def test_a_mocap_body_is_accepted_although_it_has_no_joint(ctx):
-    """The reason the check is not `weldid == 0` alone: a walker has zero DOFs and moves anyway."""
+    """The reason the check is not `dofnum == 0` alone: a walker has zero DOFs and moves anyway."""
     bid = resolve_body_id(ctx, "walker")
-    assert int(ctx.model.body_weldid[bid]) == 0, "precondition: welded by MuJoCo's reckoning"
+    # Not `body_weldid`: it reads 0 for a mocap body up to MuJoCo 3.11 and the body's own id from
+    # 3.12 on, so asserting either number pins the test to one MuJoCo. `dofnum`/`mocapid` do not move.
+    assert int(ctx.model.body_dofnum[bid]) == 0, "precondition: no DOFs of its own"
     assert int(ctx.model.body_mocapid[bid]) >= 0
     assert resolve_body_id(ctx, "pedestrian") == bid
 

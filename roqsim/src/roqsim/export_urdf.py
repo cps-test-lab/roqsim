@@ -247,7 +247,9 @@ class UrdfExporter:
         transform from that body's frame into the collapse root's link frame.
         """
         for g in range(self.m.ngeom):
-            if self.m.geom_bodyid[g] != body or self.m.geom_type[g] not in _PRIMITIVES:
+            # int(): mjt* enums compare False against a numpy scalar (set/tuple membership puts the
+            # enum on the left of `==`), which would drop every geom and export empty links.
+            if self.m.geom_bodyid[g] != body or int(self.m.geom_type[g]) not in _PRIMITIVES:
                 continue
             pos = np.asarray(self.m.geom_pos[g], dtype=float) - shift
             quat = np.asarray(self.m.geom_quat[g], dtype=float)
@@ -441,7 +443,8 @@ class UrdfExporter:
         # is deliberately not handled this way -- a floating base belongs in TF (odom -> base_link),
         # which is why it stays a fixed root.
         root_jid = self._body_joint(root)
-        if root_jid is not None and self.m.jnt_type[root_jid] in (
+        # int(): see the geom_type note above -- the raw numpy value never matches an mjt* enum here.
+        if root_jid is not None and int(self.m.jnt_type[root_jid]) in (
             mujoco.mjtJoint.mjJNT_HINGE,
             mujoco.mjtJoint.mjJNT_SLIDE,
         ):
