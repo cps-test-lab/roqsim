@@ -41,6 +41,13 @@ Golden rules
 * **No mid-run recompile:** modify the ``MjSpec`` only in ``build()``; at runtime use mocap/qpos
   writes or a pre-compiled entity pool.
 * Keep the core ROS-free. The ROS bridge is just another plugin.
+* **Read a model field through ``int()`` before matching it against an ``mjt*`` enum.**
+  ``model.jnt_type[j]`` is a numpy scalar, and ``x in (mjJNT_HINGE, mjJNT_SLIDE)`` puts the
+  *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered
+  ``True``. A bare ``value == enum`` still works, so the break is silent and partial: the
+  filter just returns nothing, and an arm reports no joints instead of raising. ``int()`` on
+  the model value (or plain-``int`` members, as in ``export_capture._SCALAR_JOINTS``) is
+  correct on every version.
 
 Developer workflow
 ------------------
