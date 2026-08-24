@@ -436,7 +436,7 @@ A ``RenderService`` on the context owns all GL/EGL contexts and camera renderers
 
 Instead, each sensor owns its noise as plain config:
 
--  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to finite ranges (0 = off); ``dropout_percent`` randomly drops that percentage of points per scan to a "no return" (``inf``). Determinism: seeded from the run's ``--seed`` through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, sim_time, sensor name)``. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. Before this, ``ctx.rng`` was read by the sensors but never set by anything, so noisy runs were not reproducible at all. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses.
+-  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to finite ranges (0 = off); ``dropout_percent`` randomly drops that percentage of points per scan to a "no return" (``inf``). Determinism: seeded from the run's seed (``sim.seed`` in the world, or ``--seed``, which wins; with neither, one is drawn and announced) through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, sim_time, sensor name)``. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. Before this, ``ctx.rng`` was read by the sensors but never set by anything, so noisy runs were not reproducible at all. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the range window and the noise so the devices cannot drift apart on them. They had: the 3D lidars were missing the ``max_range`` clamp and the presence mask, both of which are now applied once, for everyone.
@@ -478,6 +478,33 @@ go through it. Three things live there because they must be decided once:
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
 
 .. _92-physical-faults-impl:
+
+**Reaching a sensor's config from outside the world.** A sensor usually arrives from a model manifest -- ``spawn_robot: {model: turtlebot4}``
+brings the lidar with it -- so a world that only spawns a robot never names it. Two
+consequences, and they differ:
+
+-  **A world may set one key of a default** without restating the rest. ``expand_manifest``
+   merges the manifest's config *underneath* a world's entry, per key, so
+   ``lidar: {robot: robot, range_stddev: 0.05}`` keeps the model's ``rays``, ``max_range``
+   and ``frame_id``. Restating them would be a duplicate that silently diverges the day the
+   manifest changes.
+
+-  **An override cannot reach a default the world never declared.** ``--set`` /
+   ``--override`` are applied to the parsed YAML *before* manifest expansion (deliberately:
+   the override must be in the compiled model and therefore in the run's provenance), so at
+   that moment there is no ``lidar`` entry to address. The override is **refused**, which is
+   the right failure -- silently ignoring it would let a swept parameter do nothing while
+   the sweep looked healthy -- and the refusal names the model and the one-line stub that
+   fixes it.
+
+So a world that wants a model default to be settable from outside declares it, wired and
+otherwise empty::
+
+   plugins:
+     - spawn_robot: {model: turtlebot4, name: robot}
+     - lidar: {robot: robot}          # stub: makes plugins.lidar.* addressable
+
+Nothing is duplicated -- the manifest still supplies everything the stub does not name.
 
 9.2 Physical faults (``model_override``) [impl]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

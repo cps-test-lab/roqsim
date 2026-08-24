@@ -135,6 +135,21 @@ class SimConfig:
         return None if ts is None else float(ts)
 
     @property
+    def seed(self) -> int | None:
+        """The run's noise seed, or ``None`` to draw one.
+
+        Sensor noise is drawn from :meth:`roqsim.context.SimContext.rng_for`, which is
+        keyed on this. Stating it here rather than only on the command line is what lets
+        a seed be set the same way as every other simulator setting -- through
+        ``--set``/``--override``, and therefore from whatever drives the run.
+
+        ``None`` means "draw one and announce it", which is NOT the same as ``0``: a
+        seed of zero is a chosen seed like any other.
+        """
+        v = self.sim.get("seed")
+        return None if v is None else int(v)
+
+    @property
     def pacing(self) -> Any:
         return self.sim.get("pacing", "realtime")
 
@@ -476,6 +491,34 @@ def load_config_from_dict(raw: dict, base_dir: str | Path | None = None) -> SimC
 # A plugin key matches its ``name:`` first, then its plugin ref.
 
 
+def _model_default_hint(raw_plugins: list, key: str) -> str:
+    """Extra guidance when the named plugin may be running as a MODEL DEFAULT.
+
+    A spawn plugin pulls its model's manifest plugins in at expansion time, which happens
+    *after* overrides are applied here -- so a world that just spawns a robot has no
+    ``lidar`` entry to address even though a lidar is very much running. Without this the
+    refusal reads as "there is no such plugin", and the honest answer is "it exists, it is
+    just not addressable until the world names it".
+
+    Only offered when a model is actually spawned; otherwise the hint would be noise.
+    """
+    models = []
+    for entry in raw_plugins:
+        cfg = entry.get(entry_ref(entry))
+        if isinstance(cfg, dict) and cfg.get("model"):
+            models.append((str(cfg["model"]), cfg.get("name", "robot")))
+    if not models:
+        return ""
+    names = ", ".join(sorted({m for m, _ in models}))
+    entity = models[0][1]
+    return (
+        f". A model's default plugins (from {names}) are merged in after overrides are "
+        f"applied, so they cannot be addressed until the world names them. Declare a stub "
+        f"-- '{key}: {{robot: {entity}}}' -- and the manifest still fills in the rest; "
+        f"only the keys the world or the override sets are changed"
+    )
+
+
 def _resolve_plugin_index(raw_plugins: list, key: str | int) -> int:
     """Map a plugin override key (instance name, plugin ref, or index) to its index in the list."""
     if isinstance(key, int) or (isinstance(key, str) and key.lstrip("-").isdigit()):
@@ -487,7 +530,9 @@ def _resolve_plugin_index(raw_plugins: list, key: str | int) -> int:
     matches = by_name or [i for i, e in enumerate(raw_plugins) if entry_ref(e) == key]
     if not matches:
         known = [e.get("name") or entry_ref(e) for e in raw_plugins]
-        raise PluginError(f"plugin override '{key}' matches no plugin in the world (have: {known})")
+        raise PluginError(
+            f"plugin override '{key}' matches no plugin in the world (have: {known})"
+            + _model_default_hint(raw_plugins, key))
     if len(matches) > 1:
         raise PluginError(
             f"plugin override '{key}' is ambiguous ({len(matches)} plugins match); "
@@ -632,6 +677,22 @@ def _validate_view(view) -> None:
 _CONTACT_OVERRIDE_WIDTHS = {"solref": 2, "solimp": 5, "friction": 5}
 
 
+def _validate_seed(seed) -> None:
+    """Reject a malformed ``sim.seed`` at load time.
+
+    Loudly, and here rather than at first use: a seed that quietly became ``0`` would
+    give every run of a campaign one noise draw while still looking varied, and nothing
+    downstream could tell that from a deliberate ``seed: 0``.
+    """
+    if seed is None:
+        return
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise PluginError(
+            f"sim.seed must be a non-negative integer, got {type(seed).__name__}")
+    if seed < 0:
+        raise PluginError(f"sim.seed must be a non-negative integer, got {seed}")
+
+
 def _validate_contact_override(override) -> None:
     """Reject a malformed ``sim.contact_override`` at load time, not at compile time."""
     if override is None:
@@ -677,6 +738,7 @@ def _from_dict(raw: dict, base_dir: Path) -> SimConfig:
             "see 'roqsim --help'."
         )
     _validate_view((raw.get("sim") or {}).get("view"))
+    _validate_seed((raw.get("sim") or {}).get("seed"))
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
     plugins = [
         parse_plugin_entry(entry, f"plugins[{i}]")
