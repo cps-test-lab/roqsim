@@ -532,7 +532,8 @@ def _resolve_plugin_index(raw_plugins: list, key: str | int) -> int:
         known = [e.get("name") or entry_ref(e) for e in raw_plugins]
         raise PluginError(
             f"plugin override '{key}' matches no plugin in the world (have: {known})"
-            + _model_default_hint(raw_plugins, key))
+            + _model_default_hint(raw_plugins, key)
+        )
     if len(matches) > 1:
         raise PluginError(
             f"plugin override '{key}' is ambiguous ({len(matches)} plugins match); "
@@ -687,8 +688,7 @@ def _validate_seed(seed) -> None:
     if seed is None:
         return
     if isinstance(seed, bool) or not isinstance(seed, int):
-        raise PluginError(
-            f"sim.seed must be a non-negative integer, got {type(seed).__name__}")
+        raise PluginError(f"sim.seed must be a non-negative integer, got {type(seed).__name__}")
     if seed < 0:
         raise PluginError(f"sim.seed must be a non-negative integer, got {seed}")
 

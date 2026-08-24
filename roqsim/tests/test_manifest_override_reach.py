@@ -32,6 +32,7 @@ WORLD_BARE = {
 def _expanded(raw):
     """The plugin specs that actually run, manifest defaults included."""
     from roqsim.config import _expand_plugins, load_config_from_dict
+
     cfg = load_config_from_dict(raw)
     return {spec.ref: spec.config for spec, _cls in _expand_plugins(cfg)}
 
@@ -47,8 +48,8 @@ def test_a_world_may_set_one_key_of_a_model_default(tmp_path):
         ],
     }
     lidar = _expanded(raw)["lidar"]
-    assert lidar["range_stddev"] == 0.05        # what the world asked for
-    assert lidar["rays"] == 360                 # ...and the manifest's, not lost
+    assert lidar["range_stddev"] == 0.05  # what the world asked for
+    assert lidar["rays"] == 360  # ...and the manifest's, not lost
     assert lidar["max_range"] == 12.0
     assert lidar["frame_id"] == "rplidar_link"
 
@@ -68,8 +69,8 @@ def test_the_refusal_names_the_fix_when_a_model_could_supply_the_plugin():
     with pytest.raises(PluginError) as exc:
         apply_overrides(WORLD_BARE, {"plugins": {"lidar": {"range_stddev": 0.05}}})
     msg = str(exc.value)
-    assert "turtlebot4" in msg          # which model might be supplying it
-    assert "lidar: {robot: robot}" in msg   # the exact line to add
+    assert "turtlebot4" in msg  # which model might be supplying it
+    assert "lidar: {robot: robot}" in msg  # the exact line to add
 
 
 def test_the_refusal_stays_terse_when_no_model_is_spawned():
@@ -88,10 +89,10 @@ def test_a_stub_declaration_makes_a_default_addressable():
         "sim": {"world": "empty_room"},
         "plugins": [
             {"spawn_robot": {"model": "turtlebot4", "name": "robot"}},
-            {"lidar": {"robot": "robot"}},          # the stub
+            {"lidar": {"robot": "robot"}},  # the stub
         ],
     }
     merged = apply_overrides(raw, {"plugins": {"lidar": {"range_stddev": 0.05}}})
     lidar = _expanded(merged)["lidar"]
     assert lidar["range_stddev"] == 0.05
-    assert lidar["rays"] == 360                     # manifest still fills the rest
+    assert lidar["rays"] == 360  # manifest still fills the rest

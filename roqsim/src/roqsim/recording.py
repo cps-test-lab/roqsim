@@ -175,6 +175,11 @@ class Recording:
         # not applying it made every replayed scan differ while looking perfectly plausible.
         if ctx is not None and self.meta.get("seed") is not None:
             ctx.seed = int(self.meta["seed"])
+        # The episode is half of the same key, and restoring one without the other reproduces the
+        # bug in miniature: the right seed at the wrong episode draws noise that never happened.
+        # Absent in a recording written before the episode existed, and 0 is what such a run had.
+        if ctx is not None:
+            ctx.episode = int(self.meta.get("episode") or 0)
         self._model, self._ctx, self._data, self._view = model, ctx, data, view
         self._buf = np.empty(int(self.meta["state_size"]))
         return model, ctx

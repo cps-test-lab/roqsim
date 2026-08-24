@@ -653,8 +653,7 @@ def run(
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
         # recorded, so it can be repeated. Before this the sensors read a ctx.rng nothing ever set, so a
         # noisy run could not be reproduced at all.
-        engine.ctx.seed = _resolve_seed(seed, logger or log,
-                                        config_seed=getattr(cfg, 'seed', None))
+        engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:
         # The compile failed while the loading window is up -- close it so it doesn't dangle.
@@ -825,8 +824,7 @@ def _export_capture_at_exit(engine, recorder, target, overrides, logger: logging
         logger.warning("run capture export failed (%s); the recording itself is unaffected", err)
 
 
-def _resolve_seed(seed: int | None, logger: logging.Logger,
-                  config_seed: int | None = None) -> int:
+def _resolve_seed(seed: int | None, logger: logging.Logger, config_seed: int | None = None) -> int:
     """The run's noise seed, by precedence: explicit > world config > drawn.
 
     An explicitly passed seed wins because it is the more specific instruction -- the

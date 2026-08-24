@@ -150,3 +150,62 @@ def test_the_seed_is_recorded_in_a_recordings_provenance(world, tmp_path):
         engine.shutdown()
     meta = json.loads(str(np.load(tmp_path / "r.npz")["meta"]))
     assert meta["seed"] == 4242
+
+
+# -- episodes ---------------------------------------------------------------
+#
+# A process that serves several trials resets between them rather than restarting, and
+# `mj_resetData` puts `data.time` back to zero. Since the noise is a pure function of
+# (seed, sim_time, sensor), an unchanged seed made every episode replay the SAME noise
+# sequence -- so repeated trials of one configuration were identical in everything the
+# sensors contributed, while looking like independent repetitions.
+
+
+def _scans_over_episodes(world, seed, episodes=3, steps=120):
+    """One process, several trials, resetting between them -- what a packed job does."""
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = seed
+    engine.setup()
+    endpoint = next(
+        e for e in engine.ctx.interface.all() if e.direction == "out" and "scan" in e.name
+    )
+    out = []
+    try:
+        for _ in range(episodes):
+            engine.reset()
+            for _ in range(steps):
+                engine.step()
+            out.append(np.asarray(endpoint.read().ranges, dtype=float).copy())
+        return out
+    finally:
+        engine.shutdown()
+
+
+def test_consecutive_episodes_do_not_replay_the_same_noise(world):
+    """The bug this guards: repetitions that are duplicates dressed as samples."""
+    first, second, third = _scans_over_episodes(world, seed=7)
+    assert not np.array_equal(first, second)
+    assert not np.array_equal(second, third)
+
+
+def test_the_whole_episode_sequence_is_reproducible_from_the_seed(world):
+    """Varying between episodes must not cost reproducibility: the same base seed
+    replays the same series of episodes."""
+    a = _scans_over_episodes(world, seed=7)
+    b = _scans_over_episodes(world, seed=7)
+    assert all(np.array_equal(x, y) for x, y in zip(a, b, strict=True))
+
+
+def test_episode_n_is_shared_across_runs_with_one_base_seed(world):
+    """Common random numbers, which is what makes two configurations comparable
+    run-for-run instead of only in distribution: episode i of one process and episode i
+    of another draw the same noise when the base seed matches."""
+    a = _scans_over_episodes(world, seed=11, episodes=3)
+    b = _scans_over_episodes(world, seed=11, episodes=3)
+    assert np.array_equal(a[2], b[2])
+
+
+def test_a_different_base_seed_changes_every_episode(world):
+    a = _scans_over_episodes(world, seed=11)
+    b = _scans_over_episodes(world, seed=12)
+    assert all(not np.array_equal(x, y) for x, y in zip(a, b, strict=True))

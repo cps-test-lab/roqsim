@@ -76,9 +76,9 @@ which is how an experiment loads its own plugin without registering anything.
 
 ## Reproducibility
 
-`roqsim sim --seed N` sets the run's seed and announces it (a run without one draws a seed and logs it,
+`sim.seed` in the world -- or `roqsim sim --seed N`, which wins -- sets the run's seed and announces it (a run without either draws a seed and logs it,
 so it can be replayed). Plugins draw noise from `ctx.rng_for(name)`, which is **counter-based** rather
-than stateful: its draws are a pure function of `(seed, sim_time, name)`, so a value is reproducible
+than stateful: its draws are a pure function of `(seed, episode, sim_time, name)`, so a value is reproducible
 without replaying the stream that preceded it — and a sensor re-run from a recording produces the same
 noise the live run published. See the docstring on `SimContext.rng_for` for why a shared stateful
 generator cannot do this.

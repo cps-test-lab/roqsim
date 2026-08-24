@@ -27,6 +27,7 @@ def _cfg(tmp_path, body: str):
 
 # -- the config key ---------------------------------------------------------
 
+
 def test_seed_is_read_from_the_sim_block(tmp_path):
     assert _cfg(tmp_path, "sim: {seed: 7}\nplugins: []\n").seed == 7
 
@@ -52,6 +53,7 @@ def test_seed_survives_an_override(tmp_path):
     """The point of the feature: the seed is reachable through the same override
     channel as every other simulator setting."""
     from roqsim.config import apply_overrides
+
     p = tmp_path / "w.yaml"
     p.write_text("sim: {seed: 1}\nplugins: []\n")
     merged = apply_overrides({"sim": {"seed": 1}, "plugins": []}, {"sim": {"seed": 99}})
@@ -59,6 +61,7 @@ def test_seed_survives_an_override(tmp_path):
 
 
 # -- precedence -------------------------------------------------------------
+
 
 def test_explicit_seed_beats_the_config(caplog):
     with caplog.at_level(logging.INFO):
@@ -75,5 +78,5 @@ def test_a_seed_is_drawn_when_neither_is_given(caplog):
     so it can be repeated."""
     with caplog.at_level(logging.INFO):
         drawn = _resolve_seed(None, logging.getLogger("t"), config_seed=None)
-    assert isinstance(drawn, int) and 0 <= drawn < 2 ** 31
+    assert isinstance(drawn, int) and 0 <= drawn < 2**31
     assert "drawn" in caplog.text

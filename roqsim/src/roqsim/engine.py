@@ -257,6 +257,12 @@ class Engine:
         self._require_setup()
         # Flush any pending commands so nothing targets the pre-reset state.
         self.ctx.drain_commands()
+        # A new trial, and the sensors' noise key says so. Advanced BEFORE the plugins are
+        # reset, so anything that starts a recording in its own on_reset stamps the episode
+        # it is actually about to record. `mj_resetData` puts `data.time` back to zero and
+        # `rng_for` is keyed on simulated time, so without this every trial after the first
+        # would replay the first one's noise exactly.
+        self.ctx.episode += 1
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
         if params:
