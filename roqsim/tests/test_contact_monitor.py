@@ -132,3 +132,43 @@ def test_min_force_filters_grazing_contacts():
     model, data = _build(wall_x=1.0)
     ctx, plugin = _plugin(model, data, min_force=1e6)
     assert _settle(ctx, plugin, 3.0, push=1.0).in_contact is False
+
+
+# -- ownership and identity -------------------------------------------------
+#
+# Both of these were latent: the plugin has needed an owner since ownership became
+# structural, and its blackboard handle has been keyed on a name that defaults to the class.
+
+def test_declared_at_the_top_of_a_document_it_is_refused():
+    """It watches an entity, so there is nothing for it to watch at the top of a document.
+
+    Before this it resolved `base_link` by accident when a robot happened to use that name,
+    and failed confusingly when one did not -- both worse than being told to nest it.
+    """
+    from roqsim.config import PluginError, load_config_from_dict
+
+    doc = {
+        "sim": {"world": "empty_room"},
+        "components": [{"contact_monitor": {"ignore": ["floor"]}}],
+    }
+    with pytest.raises(PluginError, match="nested"):
+        load_config_from_dict(doc)
+
+
+def test_two_monitors_get_two_handles():
+    """Keyed on the address, not on `name` -- which defaults to the CLASS name, so two
+    unnamed instances wrote to one key and the second silently replaced the first."""
+    model, data = _build()
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
+    )
+    ctx.entities.add(
+        Entity(name="other", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
+    )
+    for entity in ("robot", "other"):
+        ContactMonitorPlugin({"ignore": ["floor"]}, entity=entity).configure(ctx)
+
+    assert ctx.blackboard.get("contact:robot.ContactMonitorPlugin") is not None
+    assert ctx.blackboard.get("contact:other.ContactMonitorPlugin") is not None

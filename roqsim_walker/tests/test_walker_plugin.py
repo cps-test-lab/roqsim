@@ -36,13 +36,26 @@ def _world(*, name="pedestrian", **walker_overrides):
     )
 
 
-@pytest.fixture
-def sim():
+@pytest.fixture(scope="module")
+def _engine():
     engine = Engine(_world())
     engine.setup()
-    engine.reset()
     yield engine
     engine.shutdown()
+
+
+@pytest.fixture
+def sim(_engine):
+    """A fresh episode on one shared engine.
+
+    Building the engine is cheap (~0.1 s); its FIRST ``reset()`` is not (~0.9 s -- the character
+    meshes and the CARLA locomotion clips load lazily there). A second reset on the same engine is
+    about a millisecond, so ten tests each building their own engine paid that boot ten times.
+    ``reset()`` is the engine's episode boundary and the same call this fixture always made, so a
+    test still starts from the route's start with every plugin's ``on_reset`` having run.
+    """
+    _engine.reset()
+    return _engine
 
 
 def _xy(engine):
@@ -191,5 +204,77 @@ def test_walker_without_waypoints_stands_at_pos_until_commanded():
         _run(engine, 0.05)
         assert _run_until(engine, lambda: handle.status()[1]), "route never finished"
         assert np.linalg.norm(_xy(engine) - np.array([-1.0, 1.0])) < 0.26
+    finally:
+        engine.shutdown()
+
+
+# -- clearance to an articulated obstacle ------------------------------------
+
+
+def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
+    """A pedestrian is not a point with a radius around it.
+
+    Its nearest part is whichever limb happens to be extended, and a metric that reduced
+    it to an origin plus a circle would report the wrong distance in both directions: too
+    far when an arm is reaching toward the robot, too near when the walker is turned away.
+    `clearance_monitor` measures geom to geom, so the limb is what it finds -- and the
+    walker's six render-only geoms are excluded, or it would report clearance to
+    decoration the robot passes straight through.
+    """
+    import mujoco
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    scene = tmp_path / "s.xml"
+    scene.write_text(
+        '<mujoco><worldbody><geom name="floor" type="plane" size="10 10 .1"/></worldbody></mujoco>'
+    )
+    rover = tmp_path / "rover.xml"
+    rover.write_text(
+        '<mujoco model="rover"><worldbody><body name="base" pos="0 0 .2">'
+        '<geom name="base_geom" type="cylinder" size=".2 .2"/>'
+        "</body></worldbody></mujoco>"
+    )
+
+    world = {
+        "sim": {"world": str(scene)},
+        "components": [
+            {
+                "spawn_model": {"model": str(rover), "pos": [0.0, 0.0], "free": True},
+                "name": "robot",
+                "components": [{"clearance_monitor": {"ignore": ["floor"], "distmax": 8.0}}],
+            },
+            {
+                "walker": {
+                    "walker": "MaleVisitorWalk",
+                    "speed": 0.0,
+                    "waypoints": [[1.0, 0.0]],
+                    "avoidance": False,
+                },
+                "name": "pedestrian",
+            },
+        ],
+    }
+    engine = Engine(load_config_from_dict(world))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    try:
+        engine.step()
+        report = engine.ctx.blackboard.get("clearance:robot.clearance_monitor")()
+
+        model = engine.ctx.model
+        gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, report.geom)
+        if gid < 0:  # unnamed limb geoms report as geom<id>
+            gid = int(report.geom.removeprefix("geom"))
+        body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[gid])) or ""
+
+        # It found a part of the pedestrian, and that part is collidable rather than skin.
+        assert "pedestrian" in body, f"measured to {body!r}, not the walker"
+        assert int(model.geom_contype[gid]) or int(model.geom_conaffinity[gid]), (
+            "measured to a render-only geom"
+        )
+        # A body-part distance, not the ~1.0 m to the walker's origin.
+        assert 0.0 < report.current < 1.0
     finally:
         engine.shutdown()

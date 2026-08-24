@@ -29,6 +29,9 @@ dummy = "roqsim.plugins.dummy:DummyPlugin"
 spawn_model = "roqsim.plugins.spawn_model:SpawnModelPlugin"
 ceiling = "roqsim.plugins.ceiling:CeilingPlugin"
 contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
+# The gradient beside that verdict: contact_monitor says whether it touched, this says how
+# close it came. Same geometry, one owner each.
+clearance_monitor = "roqsim.plugins.clearance_monitor:ClearanceMonitorPlugin"
 # The write side of the same coin: contact_monitor REPORTS contacts, this CHANGES named model values
 # (friction, contact masks, actuator force limits, mass) mid-run on an external trigger, then restores
 # them exactly. Curated allowlist -- fields MuJoCo cannot take at runtime are refused by name.

@@ -65,6 +65,11 @@ class ContactReport:
 
 class ContactMonitorPlugin(Plugin):
     parallel_safe = True  # post_step only reads data.contact and writes its own state
+    # It watches an ENTITY, so it must be nested under the entry that provides one. Declared
+    # rather than left implicit: at the top of a document `self.entity` is None, and the base
+    # body fell back to a bare "base_link" -- resolving by accident when a robot happened to
+    # use that name, and failing obscurely when one did not.
+    requires_owner = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -140,7 +145,10 @@ class ContactMonitorPlugin(Plugin):
         # A consumer would otherwise have to find this instance in `engine.plugins` and match it by
         # class name -- which is what the handle convention exists to retire (architecture.rst §12).
         # `read_state` rather than the report itself, because the report is REPLACED each step.
-        ctx.blackboard.set(f"contact_monitor:{self.name}", self.read_state)
+        # Keyed on the ADDRESS. `self.name` falls back to the class name, so two unnamed
+        # monitors in one world wrote to a single key and the second silently replaced the
+        # first -- one robot's collisions reported as another's.
+        ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 
         ctx.interface.add(
             Endpoint(
