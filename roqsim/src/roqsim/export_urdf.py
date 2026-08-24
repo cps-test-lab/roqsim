@@ -631,16 +631,30 @@ def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
     fadr, fnum = int(model.mesh_faceadr[mesh_id]), int(model.mesh_facenum[mesh_id])
     verts = model.mesh_vert[vadr : vadr + vnum].reshape(-1, 3)
     faces = model.mesh_face[fadr : fadr + fnum].reshape(-1, 3)
+    # Whole-mesh at a time, not triangle at a time. A per-face Python loop calling np.cross was
+    # ~200k calls for one mobile manipulator and made a single export take four seconds -- most of
+    # the cost of `roqsim export-urdf`, and of every test that exercises it.
+    #
+    # Every VERTEX this writes is bit-identical to what the loop wrote (checked over all 205k faces
+    # of a husky+ur10e+robotiq). The face NORMAL can differ by one float32 ulp on a minority of
+    # faces, because numpy's axis-wise norm does not reduce in the same order as its scalar path.
+    # That field is redundant -- it is derivable from the winding, and STL consumers (MuJoCo's own
+    # loader included) recompute it rather than trust it -- so the geometry is unchanged.
+    a, b, c = verts[faces[:, 0]], verts[faces[:, 1]], verts[faces[:, 2]]
+    n = np.cross(b - a, c - a)
+    norm = np.linalg.norm(n, axis=1, keepdims=True)
+    # A degenerate face (zero area) has no normal; STL's convention is a zero vector, and dividing
+    # would put a NaN in the file instead.
+    n = np.divide(n, norm, out=np.zeros_like(n), where=norm > 0)
+
+    # Binary STL is a packed 50-byte record per face: 12 floats then a 2-byte attribute count. Build
+    # it as one structured array so the whole mesh is a single write.
+    rec = np.zeros(len(faces), dtype=np.dtype([("v", "<f4", 12), ("attr", "<u2")]))
+    rec["v"] = np.hstack([n, a, b, c]).astype("<f4")
     with open(out, "wb") as fh:
         fh.write(b"roqsim-export-urdf".ljust(80, b"\0"))
         fh.write(int(len(faces)).to_bytes(4, "little"))
-        for tri in faces:
-            a, b, c = (verts[int(i)] for i in tri)
-            n = np.cross(b - a, c - a)
-            norm = np.linalg.norm(n)
-            n = n / norm if norm > 0 else np.zeros(3)
-            fh.write(np.asarray([*n, *a, *b, *c], dtype="<f4").tobytes())
-            fh.write(b"\0\0")
+        fh.write(rec.tobytes())
 
 
 def round_trip_error(

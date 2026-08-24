@@ -118,6 +118,29 @@ components:
   robot.lidar: {rays: 720}
 ```
 
+`*` matches one address segment, so a fleet-wide sweep needs no enumeration of entities the world
+may not have when the campaign is written:
+
+```console
+$ roqsim sim world.yaml --set 'components.*.lidar.range_stddev=0.05'
+```
+
+A wildcard that reaches nothing is refused like a typo — a sweep that changed nothing would otherwise
+look exactly like one that worked. `*` fans out over *components*, so the segment after it is read as
+a component name too.
+
+An override can also **add** a component, which is how a campaign brings its own instrumentation to a
+world it does not edit:
+
+```yaml
+components:
+  robot:
+    components:                       # the same key that means "what this owns" in a document
+      - contact_monitor: {min_force: 2.0}
+```
+
+The added entry is wired, checked and merged exactly as though the document had declared it.
+
 Setting `enabled: false` removes a component without deleting it:
 
 ```console

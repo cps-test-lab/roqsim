@@ -819,24 +819,50 @@ def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assign
 _COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
 
 
-def _split_at_tree(
+#: Matches exactly one address segment. One segment, not any number of them, because a path that
+#: could swallow a whole subtree would make ``components.*.rays`` mean something different every time
+#: a world gained a robot -- and a sweep factor that quietly changes what it addresses is worse than
+#: one that has to be written out.
+_WILDCARD = "*"
+
+
+def _resolve_targets(
     rest: tuple[str, ...], specs: list[PluginSpec]
-) -> tuple[PluginSpec, tuple, bool]:
-    """Walk *rest* through the component tree; return ``(spec, config_path, matched)``.
+) -> list[tuple[PluginSpec, tuple]]:
+    """Every ``(component, config_path)`` *rest* addresses.
 
     Consume a segment while it names a child; the first that does not begins the path into that
     component's config. No searching and no longest-prefix guessing: the address ends where the tree
-    does, which is decided by the document rather than by a heuristic.
+    does, which the document decides rather than a heuristic.
+
+    ``*`` matches one segment, so one assignment may land on several components -- which is how a
+    multi-robot sweep is written (``components.*.lidar.range_stddev``) without enumerating entities
+    the world may not have when the campaign is authored.
+
+    After a ``*``, the next segment must name a component. Otherwise ``components.*.lidar.rays``
+    against a fleet with no lidars would quietly write a config key called ``lidar.rays`` on every
+    robot: a sweep that reached nothing while every run looked healthy, which is the failure the
+    loud refusal exists to prevent. A wildcard is a fan-out over components, so what follows it is
+    read as one; to set a key on each of several components, name them.
     """
-    spec = None
-    siblings = specs
-    i = 0
-    while i < len(rest):
-        match = next((c for c in siblings if c.label == rest[i]), None)
-        if match is None:
-            break
-        spec, siblings, i = match, match.children, i + 1
-    return spec, rest[i:], spec is not None
+    # (spec-so-far, siblings to look in, index into rest)
+    frontier: list[tuple[PluginSpec | None, list[PluginSpec], int]] = [(None, specs, 0)]
+    out: list[tuple[PluginSpec, tuple]] = []
+    while frontier:
+        spec, siblings, i = frontier.pop()
+        if i >= len(rest):
+            if spec is not None:
+                out.append((spec, ()))
+            continue
+        segment = rest[i]
+        children = siblings if segment == _WILDCARD else [c for c in siblings if c.label == segment]
+        if not children:
+            # A segment straight after a wildcard has to name a component -- see the docstring.
+            if spec is not None and not (i and rest[i - 1] == _WILDCARD):
+                out.append((spec, rest[i:]))
+            continue
+        frontier.extend((c, c.children, i + 1) for c in children)
+    return out
 
 
 def _did_you_mean(rest: tuple[str, ...], specs: list[PluginSpec]) -> str:
@@ -865,50 +891,76 @@ def apply_assignments(cfg_raw: dict, specs: list[PluginSpec], assignments) -> li
     matched: list[Assignment] = []
     for a in assignments:
         if a.path and a.path[0] in _COMPONENT_ROOTS:
-            spec, config_path, ok = _split_at_tree(a.path[1:], specs)
-            if not ok:
+            targets = _resolve_targets(a.path[1:], specs)
+            if not targets:
                 continue
-            if not config_path:
-                raise PluginError(
-                    f"override '{'.'.join(a.path)}' names the component '{spec.address}' but no key "
-                    f"in it. An address is not a value; say which of its keys to set."
-                )
-            if config_path == (_ENABLED_KEY,):
-                # The one reserved sibling an override may set: it is the removal knob, and turning
-                # a component off is exactly the kind of thing a campaign varies.
-                if not isinstance(a.value, bool):
-                    raise PluginError(
-                        f"override '{'.'.join(a.path)}' must be true or false, got {a.value!r}"
-                    )
-                spec.enabled = a.value
-                matched.append(a)
-                continue
-            if config_path[0] in _RESERVED_SIBLINGS:
-                raise PluginError(
-                    f"override '{'.'.join(a.path)}' would set '{config_path[0]}', which is how "
-                    f"'{spec.address}' is addressed rather than something it configures. Change it "
-                    f"in the document."
-                )
-            node = spec.config
-            for key in config_path[:-1]:
-                nxt = node.get(key)
-                if not isinstance(nxt, dict):
-                    nxt = {}
-                    node[key] = nxt
-                node = nxt
-            node[config_path[-1]] = a.value
-        else:
-            node = cfg_raw
-            for key in a.path[:-1]:
-                nxt = node.get(key)
-                if not isinstance(nxt, dict):
-                    nxt = {}
-                    node[key] = nxt
-                node = nxt
-            if a.path:
-                node[a.path[-1]] = a.value
+            for spec, config_path in targets:
+                _assign_one(a, spec, config_path)
+            matched.append(a)
+            continue
+        node = cfg_raw
+        for key in a.path[:-1]:
+            nxt = node.get(key)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[key] = nxt
+            node = nxt
+        if a.path:
+            node[a.path[-1]] = a.value
         matched.append(a)
     return matched
+
+
+def _assign_one(a: Assignment, spec: PluginSpec, config_path: tuple) -> None:
+    """Apply one assignment to one component."""
+    if not config_path:
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' names the component '{spec.address}' but no key "
+            f"in it. An address is not a value; say which of its keys to set."
+        )
+    if config_path == (_ENABLED_KEY,):
+        # The one reserved sibling an override may set: it is the removal knob, and turning a
+        # component off is exactly the kind of thing a campaign varies.
+        if not isinstance(a.value, bool):
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' must be true or false, got {a.value!r}"
+            )
+        spec.enabled = a.value
+        return
+    if config_path == (_CHILDREN_KEY,):
+        # Adding, not setting: the same key that means "what this owns" in a document means it in
+        # an override too, so a campaign can add instrumentation to a robot without editing the
+        # world. Appended, then expanded and wired like anything else the owner has.
+        if not isinstance(a.value, list):
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' must be a list of entries to add under "
+                f"'{spec.address}', got {type(a.value).__name__}"
+            )
+        spec.children.extend(
+            parse_plugin_entry(e, f"override {'.'.join(a.path)}[{i}]")
+            for i, e in enumerate(a.value)
+        )
+        return
+    if config_path[0] == _CHILDREN_KEY:
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' looks like an attempt to add under '{spec.address}'. "
+            f"That takes a LIST of entries, the same shape a document's own '{_CHILDREN_KEY}:' "
+            f"block has -- a mapping here is read as a path into it instead."
+        )
+    if config_path[0] in _RESERVED_SIBLINGS:
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' would set '{config_path[0]}', which is how "
+            f"'{spec.address}' is addressed rather than something it configures. Change it in "
+            f"the document."
+        )
+    node = spec.config
+    for key in config_path[:-1]:
+        nxt = node.get(key)
+        if not isinstance(nxt, dict):
+            nxt = {}
+            node[key] = nxt
+        node = nxt
+    node[config_path[-1]] = a.value
 
 
 def overrides_from_files(paths) -> dict:
@@ -1085,15 +1137,24 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # `model:` -- and the second is what reaches a component a manifest supplied.
     declared_tree = [s for s in plugins if s.entity is None]
     matched = apply_assignments(raw, declared_tree, component_assignments)
+    # Re-flatten: pass one may have ADDED components (`components:` on an address), and those have
+    # to be wired, checked and ordered exactly like the ones the document declared -- so they go
+    # back through the same walk rather than being spliced in beside it.
+    plugins = flatten_specs(declared_tree)
     effective, unresolved = expand_document(plugins, base_dir)
     matched += apply_assignments(raw, _as_tree(effective), component_assignments)
     resolve_enabled(_as_tree(effective))
     unmatched = [a for a in component_assignments if a not in matched]
     if unmatched:
         a = unmatched[0]
+        hint = _did_you_mean(a.path[1:], effective)
+        if _WILDCARD in a.path:
+            hint += (
+                f" ('{_WILDCARD}' fans out over components, so the segment after it is read as a "
+                f"component name too. To set a key on each of several components, name them.)"
+            )
         raise PluginError(
-            f"override '{'.'.join(a.path)}' matches no component in this document."
-            + _did_you_mean(a.path[1:], effective)
+            f"override '{'.'.join(a.path)}' matches no component in this document." + hint
         )
     return SimConfig(
         sim=dict(raw.get("sim", {}) or {}),

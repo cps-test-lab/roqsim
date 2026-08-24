@@ -46,7 +46,9 @@ def test_rebuilding_reads_the_tree_rather_than_re_resolving():
 
 def test_a_disabled_component_is_recorded_as_disabled():
     """Which is why `enabled: false` is a flag and not a deletion: the record can say so."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.lidar": {"enabled": False}}})
+    cfg = load_config_from_dict(
+        WORLD, overrides={"components": {"robot.lidar": {"enabled": False}}}
+    )
     entry = next(c for c in cfg.as_record()["components"] if c["address"] == "robot.lidar")
     assert entry["enabled"] is False
 

@@ -33,16 +33,24 @@ def _refs(entries):
 
 
 def test_a_derived_manifest_inherits_the_bases_components(tmp_path):
-    _model(tmp_path, "base", """
+    _model(
+        tmp_path,
+        "base",
+        """
         components:
           - locomotion: {}
           - lidar: {rays: 360}
-    """)
-    derived = _model(tmp_path, "derived", """
+    """,
+    )
+    derived = _model(
+        tmp_path,
+        "derived",
+        """
         extends: base.xml
         components:
           - arm_controller: {}
-    """)
+    """,
+    )
     assert _refs(load_manifest(derived, base_dir=tmp_path)) == [
         "locomotion",
         "lidar",
