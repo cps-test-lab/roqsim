@@ -130,20 +130,26 @@ class RosAccess(WorldAccess):
         )
 
     # -- the fault ------------------------------------------------------------------------------
-    def apply_override(self, instance: str, active: bool) -> OverrideCall:
+    def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         """Call ``<instance>/override``. The REPLY is the outcome -- that is why it is a service.
+
+        *kind* is accepted and unused: both channels scope their endpoint the same way, so over ROS
+        there is nothing to distinguish. A component ADDRESS arrives dotted (``robot.lidar``) and is
+        translated to slashes here, because a dot is not legal in a ROS name -- one translation, at
+        the boundary that owns the naming.
 
         The bridge's ``std_srvs/SetBool`` handler barriers on the physics thread twice (once for the
         write, once for the step that verifies it) and answers with the plugin's own verdict in
         ``message``, and ``success = verified != "no_effect"``. So the two-phase wait this backend
         needs is exactly the service future, with no state to reconstruct on this side.
         """
-        client = self._override_clients.get(instance)
+        service = instance.replace(".", "/")
+        client = self._override_clients.get(service)
         if client is None:
             client = self._node.create_client(
-                self._set_bool_type, f"{instance}/override", callback_group=self._group
+                self._set_bool_type, f"{service}/override", callback_group=self._group
             )
-            self._override_clients[instance] = client
+            self._override_clients[service] = client
         req = self._set_bool_type.Request()
         req.data = bool(active)
         return _RosCall(client, req, instance, bool(active))

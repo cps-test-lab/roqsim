@@ -45,6 +45,18 @@ class LidarPlugin(RayCastSensorPlugin):
     #: ``range_min`` rather than vanishing and shifting every later angle.
     CLAMP_NEAR_RETURNS = True
 
+    #: The 2D fan's geometry. A ``LaserScan`` is a FIXED-LENGTH array whose ``angle_increment`` a
+    #: consumer reads once, so writing any of these mid-run changes the array's length or the bearing
+    #: its indices mean -- and a costmap would rebuild against a scan it cannot compare with the
+    #: previous one. Set them in the world; sweep them as a campaign factor.
+    REFUSED_WRITES = {
+        "rays": "it changes the LaserScan's length mid-run, and a fixed length is the one thing "
+        "every consumer of it relies on.",
+        "angle_min": "it changes angle_increment, so the same index means a different bearing "
+        "before and after the write.",
+        "angle_max": "see 'angle_min'.",
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self._num_rays = int(self.config.get("rays", 360))

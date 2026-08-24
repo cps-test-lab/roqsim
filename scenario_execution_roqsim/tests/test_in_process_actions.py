@@ -32,6 +32,7 @@ from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: 
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.entity_teleport import EntityTeleport  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
+from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
 
 RUNNING = py_trees.common.Status.RUNNING
 SUCCESS = py_trees.common.Status.SUCCESS
@@ -467,3 +468,86 @@ def test_teleport_rejects_nonzero_roll_or_pitch_at_execute():
             entity="robot",
             pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "orientation": {"roll": 0.1, "yaw": 0.0}},
         )
+
+
+# -- set_sensor_override --------------------------------------------------------------------------
+#
+# The report channel's action, driven through the SAME access seam as set_model_override. A sensor
+# publishes its handle under `sensor_fault:<address>` rather than `model_override:<name>`, which is
+# the only thing that differs in-process -- so these tests are mostly about proving that, and about
+# the two verdicts a scenario is allowed to act on.
+
+
+def _sensor(ctx, fault, address="rig.lidar", nominal=None):
+    """A lidar carrying a `fault:` block, configured far enough to publish its handle.
+
+    Built directly rather than through an Engine: the action only ever touches the blackboard handle,
+    so a full world would be scaffolding around the one seam under test.
+    """
+    from roqsim_sensors.plugins.lidar import LidarPlugin
+
+    entity, _, label = address.rpartition(".")
+    cfg = {"site": "sensor_site", "rays": 8, "exclude_body": "", "fault": dict(fault)}
+    cfg.update(nominal or {})
+    plugin = LidarPlugin(cfg, name=label, entity=entity or None, label=label)
+    plugin.register_fault_endpoints(ctx, namespace="")
+    return plugin
+
+
+def _sensor_handle(ctx, address="rig.lidar"):
+    from roqsim_sensors.live_config import blackboard_key
+
+    return ctx.blackboard.get(blackboard_key(address))
+
+
+def test_a_sensor_fault_is_applied_and_the_verdict_read_back(world):
+    ctx, clock, sim = world
+    _sensor(ctx, fault={"dropout_percent": 60.0}, nominal={"dropout_percent": 2.0})
+
+    action = _start(
+        SetSensorOverride(), sim, clock, instance="rig.lidar", active=True, require_landed=True
+    )
+    assert action.update() is RUNNING, "the write is queued, not yet applied"
+    assert _sensor_handle(ctx).is_active() is False
+
+    _step(ctx, clock)
+    assert _sensor_handle(ctx).is_active() is True
+    assert action.update() is SUCCESS
+    assert "landed" in action.feedback_message
+
+
+def test_a_sensor_fault_that_changed_nothing_fails_the_trial(world):
+    """A `fault:` block restating the nominal leaves a run recorded as faulted that was not."""
+    ctx, clock, sim = world
+    _sensor(ctx, fault={"dropout_percent": 2.0}, nominal={"dropout_percent": 2.0})
+
+    action = _start(
+        SetSensorOverride(), sim, clock, instance="rig.lidar", active=True, require_landed=True
+    )
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "no_effect" in action.feedback_message or "changed nothing" in action.feedback_message
+
+
+def test_an_unknown_sensor_address_names_what_the_world_offers(world):
+    """A bare `lidar` against an owned sensor is the mistake the address exists to prevent."""
+    ctx, clock, sim = world
+    _sensor(ctx, fault={"dropout_percent": 60.0})
+
+    action = _start(
+        SetSensorOverride(), sim, clock, instance="lidar", active=True, require_landed=True
+    )
+    with pytest.raises(Exception) as err:
+        action.update()
+    assert "rig.lidar" in str(err.value), "the refusal must name the address that does exist"
+
+
+def test_an_empty_sensor_address_is_refused_at_execute(world):
+    _, clock, sim = world
+    action = SetSensorOverride()
+    action.name = "set_sensor_override"
+    action.setup(simulation=sim, clock=clock, action_name="set_sensor_override")
+    with pytest.raises(Exception) as err:
+        action.execute(instance="", active=True, require_landed=True)
+    assert "COMPONENT ADDRESS" in str(err.value)

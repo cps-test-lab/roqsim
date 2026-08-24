@@ -33,8 +33,10 @@ from roqsim import raycast
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
 
+from ..live_config import FaultableSensorMixin
 
-class RayCastSensorPlugin(Plugin):
+
+class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`."""
 
     parallel_safe = True  # post_step only reads data + writes its own payload buffer
@@ -57,6 +59,31 @@ class RayCastSensorPlugin(Plugin):
     #: True for a fixed-length scan (clamp a blind-zone return up to ``range_min``), False for a
     #: point cloud (drop it). See the module docstring.
     CLAMP_NEAR_RETURNS = True
+
+    #: Keys a ``fault:`` block may write WHILE THE RUN IS IN PROGRESS -> the attribute each lives in.
+    #: Every row is read inside ``post_step`` on the frame it is used (see the noise block at the end
+    #: of this file), so a write takes effect on the very next cast and reads back honestly.
+    #: ``max_range`` -> ``range_max`` because the config key and the attribute have never had the
+    #: same name, and a fault naming the attribute would silently write nothing.
+    LIVE_WRITABLE = {
+        "range_stddev": "range_stddev",
+        "dropout_percent": "dropout_percent",
+        "max_range": "range_max",
+        "range_min": "range_min",
+        "rate_hz": "rate_hz",
+    }
+
+    #: Refused by name, with the reason, rather than left to the undeclared-key message -- these are
+    #: the keys someone reaches for first. Each is consumed once, at ``configure``, and baked into a
+    #: buffer, an id or a frame name: writing it later changes nothing while reading back as though
+    #: it had, which is what ``geom_size`` is refused for on the physics channel.
+    REFUSED_WRITES = {
+        "site": "it is resolved to a site id at configure, so a later write moves no rays.",
+        "frame_id": "it is stamped into the payload and the static mount TF at configure; changing "
+        "it mid-run would relabel frames a consumer has already built a TF tree from.",
+        "exclude_body": "it is resolved to a body id at configure.",
+        "emit_static_tf": "the static TF is published once, at configure.",
+    }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -85,6 +112,8 @@ class RayCastSensorPlugin(Plugin):
         self._local_dirs: np.ndarray | None = None  # (nray, 3) unit directions, site frame
         self._hits: raycast.RayHits | None = None
         self._payload_value = None  # latest payload, read by the endpoint
+        # Faulted values + the switch. After the attributes above, since it reads them for nominal.
+        self._fault_init()
 
     @property
     def latest(self):
@@ -136,7 +165,7 @@ class RayCastSensorPlugin(Plugin):
             errors.append("'range_stddev' must be >= 0")
         if not 0.0 <= float(config.get("dropout_percent", 0.0)) <= 100.0:
             errors.append("'dropout_percent' must be in [0, 100]")
-        return errors + self._validate_extra(config)
+        return errors + self._validate_extra(config) + self.validate_fault(config)
 
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
@@ -162,6 +191,10 @@ class RayCastSensorPlugin(Plugin):
         }
         if self.emit_static_tf:
             ros2_hints["static_tf"] = self._mount_tf(m, prefix)
+
+        # The fault switch, if this sensor declares one. Registered here, beside the scan endpoint,
+        # so both are in ctx.interface before a bridge binds it.
+        self.register_fault_endpoints(ctx, ns)
 
         # Declared as a backend-neutral output endpoint (no ROS import here). The bridge resolves the
         # type string and publishes at rate; ``namespace`` scopes topic and frames.
@@ -201,6 +234,9 @@ class RayCastSensorPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         # sim_time restarts at 0 on reset; clear the gate so the first post-reset step casts again.
         self._last_cast = float("-inf")
+        # And back to nominal: a fault applied in one trial must not survive into the next of the
+        # same process, or the control cell silently becomes a faulted one.
+        self.on_reset_fault()
 
     def _mount_tf(self, m, prefix: str) -> dict:
         """Static mount transform (base body -> sensor site) as plain numbers, for a bridge.
