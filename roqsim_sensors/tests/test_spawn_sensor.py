@@ -2,36 +2,11 @@
 
 from __future__ import annotations
 
-import pathlib
-
 import numpy as np
-import pytest
+from external_meshes import needs_mid360, needs_robin, needs_zivid
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-
-_MODELS = pathlib.Path(__file__).resolve().parent.parent / "src" / "roqsim_sensors" / "models"
-
-
-#: The mid360, zivid and robin_w1g meshes are DERIVED from vendor CAD whose redistribution terms are
-#: unclear, so they are generated locally by `make external-resources` and git-ignored -- and two of
-#: the three sources sit behind a product page that cannot be fetched at all. A clean checkout (CI
-#: included) therefore has the models' MJCF but not their meshes, and the engine fails at compile with
-#: "Error opening file 'meshes/mid360_body.obj'". Skipping is the honest outcome: the asset is absent
-#: by design, not broken. See external/external_assets.yaml and the package's *_MESH_LICENSE files.
-def _needs_external_mesh(model: str, mesh: str):
-    return pytest.mark.skipif(
-        not (_MODELS / model / "meshes" / mesh).is_file(),
-        reason=(
-            f"{model}: {mesh} is a generated external asset and is not committed "
-            f"(run `make external-resources RESOURCE=...` -- some sources are manual downloads)"
-        ),
-    )
-
-
-needs_mid360 = _needs_external_mesh("mid360", "mid360_body.obj")
-needs_zivid = _needs_external_mesh("zivid", "zivid_body.obj")
-needs_robin = _needs_external_mesh("robin_w1g", "robin_w1g_body.obj")
 
 
 def _world(**spawn_config):
@@ -474,6 +449,7 @@ def test_fov_rays_config_validation():
     assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
 
 
+@needs_mid360
 def test_lidar_sector_is_clipped_by_the_walls():
     """A synthesised lidar sector must stop at world geometry, like a camera frustum already did.
 
