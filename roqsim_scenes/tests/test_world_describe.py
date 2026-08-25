@@ -41,7 +41,7 @@ def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, wo
     that addressed the plugin, and one inside the config that named its entities and addressed
     nothing. They are now one key -- the entry's label -- so an override written against the name a
     world gave its boxes reaches the plugin that made them."""
-    plugin = _describe(capsys, str(world))["plugins"][0]
+    plugin = _describe(capsys, str(world))["components"][0]
     assert plugin["address"] == "obstacles"
     assert plugin["ref"] == "boxes"
     assert plugin["name"] == "obstacles"
@@ -50,19 +50,19 @@ def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, wo
 def test_a_reserved_name_sibling_becomes_the_key(capsys, tmp_path):
     path = tmp_path / "named.yaml"
     path.write_text("plugins:\n- boxes:\n    instances: []\n  name: obstacles\n")
-    plugin = _describe(capsys, str(path))["plugins"][0]
+    plugin = _describe(capsys, str(path))["components"][0]
     assert (plugin["address"], plugin["ref"]) == ("obstacles", "boxes")
     assert "components.obstacles.instances" in plugin["paths"]
 
 
 def test_it_reports_the_paths_that_exist(capsys, world):
     described = _describe(capsys, str(world))
-    assert "components.obstacles.instances" in described["plugins"][0]["paths"]
+    assert "components.obstacles.instances" in described["components"][0]["paths"]
 
 
 def test_a_lists_members_are_not_addressable_paths(capsys, world):
     """A campaign overrides the list; it does not address instance 7's y coordinate."""
-    paths = _describe(capsys, str(world))["plugins"][0]["paths"]
+    paths = _describe(capsys, str(world))["components"][0]["paths"]
     assert not any(p.startswith("components.obstacles.instances.") for p in paths)
 
 
@@ -264,7 +264,7 @@ def test_a_ros_world_still_answers_where_the_bridge_does_not_resolve(capsys, ros
 
 def test_the_dropped_bridge_is_still_a_reported_plugin(capsys, ros_world):
     """It goes from the BUILD, not from the answer: `plugins.ros2_bridge.*` is a legal override."""
-    keys = [p["address"] for p in _describe(capsys, str(ros_world), "--entities")["plugins"]]
+    keys = [p["address"] for p in _describe(capsys, str(ros_world), "--entities")["components"]]
     assert keys == ["box_a", "ros2_bridge", "sim_interfaces"]
 
 
@@ -338,7 +338,7 @@ def test_a_build_failure_keeps_the_half_that_needed_no_build(capsys, dummy_world
     )
     out = capsys.readouterr()
     described = json.loads(out.out.splitlines()[-1])
-    assert [p["address"] for p in described["plugins"]] == ["box_a", "box_b"]
+    assert [p["address"] for p in described["components"]] == ["box_a", "box_b"]
     assert described["entities"] is None, "what needed the build is absent, not guessed"
     assert "mesh is not where it says it is" in described["errors"]["build"]
     assert "cannot build world" in out.err
@@ -379,7 +379,7 @@ def test_it_describes_components_the_document_never_declared(capsys, robot_world
     contributed.
     """
     described = _describe(capsys, str(robot_world))
-    by_address = {p["address"]: p for p in described["plugins"]}
+    by_address = {p["address"]: p for p in described["components"]}
     assert by_address["robot.lidar"]["origin"] == "manifest"
     assert by_address["robot"]["origin"] == "document"
     assert "components.robot.lidar.rays" in by_address["robot.lidar"]["paths"]
@@ -402,6 +402,6 @@ def test_every_published_address_is_one_an_override_accepts(capsys, robot_world)
 def test_a_component_is_reported_under_one_name(capsys, robot_world):
     """`address` and nothing beside it. A second field meaning the same thing is a second thing to
     keep in step, and the one reader that wanted it now reads `addresses`."""
-    plugins = _describe(capsys, str(robot_world))["plugins"]
+    plugins = _describe(capsys, str(robot_world))["components"]
     assert all("key" not in p for p in plugins)
     assert all(p["address"] for p in plugins)

@@ -6,8 +6,8 @@ what a caller holding an override needs to know::
     roqsim scenes describe worlds/depot.yaml
     {"world": "...", "packaged": false,
      "inputs": [...],
-     "plugins": [{"address": "robot.lidar", "ref": "lidar",
-                  "paths": ["components.robot.lidar.rays", ...]}],
+     "components": [{"address": "robot.lidar", "ref": "lidar",
+                     "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
      "entities": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
@@ -19,7 +19,7 @@ Why a command and not an import, for the same reason ``inputs`` is one: the call
 spends an image pull has no reason to have roqsim installed, and cannot resolve a world's
 ``extends`` chain without it -- so it asks the image that does.
 
-**Override paths.** ``plugins`` reports every component that will RUN -- the document's own entries
+**Override paths.** ``components`` reports every component that will RUN -- the document's own entries
 and everything its models' manifests contribute -- under the ``address`` an override names it by,
 with the dotted paths into its config that already exist. ``addresses`` is that set on its own, and
 it is exactly what resolution accepts: a caller can check a sweep key against it before spending an
@@ -72,7 +72,7 @@ nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim r
 resolve, which used to fail the build over plugins that contribute no geometry. Only *identified*
 transport goes (:func:`roqsim.config.drop_transport`, not the lenient ``drop_transport_plugins``): a
 misspelt geometry plugin must stay the loud failure it is, because dropping it would leave an entity
-missing and let a caller conclude the world does not have it. The ``plugins`` list above is computed
+missing and let a caller conclude the world does not have it. The ``components`` list above is computed
 before the drop and still reports the bridge, so an override addressing it is still checkable.
 
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
@@ -112,7 +112,7 @@ def _paths(value, prefix: str, depth: int = 0) -> list[str]:
     return out
 
 
-def _describe_plugins(config) -> list:
+def _describe_components(config) -> list:
     """Every component that will RUN, under the address an override names it by.
 
     Read off the effective list, so a sensor a model's manifest supplies is here even though no entry
@@ -384,7 +384,7 @@ def main(argv=None) -> int:
         "world": str(world),
         "packaged": packaged,
         "inputs": [str(p) for p in world_sources(world)],
-        "plugins": _describe_plugins(config),
+        "components": _describe_components(config),
         # The set an override may name, published so a caller can check a sweep key before spending
         # an image pull. It is exactly what resolution accepts -- asserted by round-tripping each
         # one through the resolver in the tests, because a list that drifted from it would send a
@@ -403,7 +403,7 @@ def main(argv=None) -> int:
     if args.entities or args.overridable or args.body_tree:
         # The scene is what these questions are about, and a describe publishes nothing, so the
         # transport goes before the build -- see the module docstring for why the strict variant.
-        # `plugins` is already in `result`, so the bridge stays in the reported list.
+        # `components` is already in `result`, so the bridge stays in the reported list.
         dropped = drop_transport(config)
         if dropped:
             result["dropped_transport"] = dropped

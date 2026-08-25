@@ -532,7 +532,7 @@ def config_for_input(target: str, overrides: dict | None = None, transport: dict
             if world_yaml is not None:
                 return load_config(world_yaml, overrides, transport)
         # A model reference: let spawn_model resolve it and place it in the empty room.
-        raw = {"plugins": [{"spawn_model": {"model": target}}]}
+        raw = {"components": [{"spawn_model": {"model": target}}]}
         base_dir = Path.cwd()
     if transport:
         raw = with_transport(raw, **transport)
