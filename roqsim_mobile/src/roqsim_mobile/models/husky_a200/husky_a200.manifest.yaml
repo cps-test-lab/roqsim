@@ -1,9 +1,10 @@
 # Default controller + sensors shipped with the Husky A200 robot description.
 #
 # `spawn_robot: {model: husky_a200}` pulls these in automatically, so a world does not re-declare the
-# robot's intrinsic kinematics/sensors. To override a default, declare the same plugin for the same
-# robot in the world (it wins); to opt out entirely, set `spawn_robot` config `default_plugins: false`.
-# Each entry's `robot` is filled in from the spawn_robot `name`.
+# robot's intrinsic kinematics/sensors. To override a default, nest an entry with the same LABEL under
+# that spawn_robot's `components:` (it merges into this one, per key); to opt out entirely, set
+# `spawn_robot` config `default_plugins: false`. Each entry below attaches to the spawned entity
+# because it is nested under it -- there is no ownership key to fill in.
 components:
   # Skid-steer: all four wheels driven, left pair and right pair commanded together. Kinematic limits
   # match the paper's DWB-RPP-MPPI Nav2 config (max_vel_x 1.0 m/s, max_vel_theta 1.0 rad/s,
