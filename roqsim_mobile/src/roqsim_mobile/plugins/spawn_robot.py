@@ -8,12 +8,15 @@ Config::
 
     spawn_robot:
       model: turtlebot4     # bundled model name, filename, or absolute path
-      name: robot           # entity name (default: 'robot')
       namespace: ""         # optional transport scope; the robot's endpoints inherit it
       prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
       pos: [0.0, 0.0]       # world XY spawn
       yaw: 0.0              # spawn heading (rad)
       base_joint: base_free # free joint used to place the base
+
+``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
+the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
+to that entity by position, and are addressed ``<name>.<label>``.
 
 The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix``, ``model``, and
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
@@ -55,8 +58,9 @@ class SpawnRobotPlugin(Plugin):
         """Inject the robot model's default controller/sensor plugins (its ``<model>.manifest.yaml``).
 
         Keeps robot-intrinsic plugins (diff_drive, lidar) out of the world YAML: they ship with the
-        model and are wired to this robot via ``robot: <name>``. Off with ``default_plugins: false``;
-        a world entry for the same robot overrides the injected default.
+        model and become components of this entry, so they attach by position rather than by a
+        wiring key. Off with ``default_plugins: false``; a component nested here with the same
+        LABEL merges into the injected default rather than running beside it.
         """
         return expand_manifest(spec, world, base_dir=base_dir)
 

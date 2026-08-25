@@ -8,7 +8,7 @@ The shared machinery -- the rate gate, the range window, the noise model, the st
 endpoint -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file is the fan pattern, the
 ``LaserScan`` payload, and the device defaults.
 
-Config (in addition to ``lidar_common``'s ``robot``/``namespace``/``site``/``frame_id``/
+Config (in addition to ``lidar_common``'s ``namespace``/``site``/``frame_id``/
 ``range_min``/``max_range``/``rate_hz``/``exclude_body``/``range_stddev``/``dropout_percent``/
 ``emit_static_tf``)::
 

@@ -17,7 +17,8 @@ is short and stable; listing what it may not is neither.
 Config::
 
     contact_monitor:
-      robot: robot           # entity to watch (default: 'robot'); its subtree's bodies are watched
+      # The entity watched is the one this entry is NESTED UNDER -- there is no key for it, and
+      # declaring it at the top of a document is refused (`requires_owner`).
       body: ""               # base body override; default: the entity's registered base body
       namespace: ""          # transport scope for the endpoint
       ignore: [floor]        # geom NAMES that never count as a collision (default: ['floor'])

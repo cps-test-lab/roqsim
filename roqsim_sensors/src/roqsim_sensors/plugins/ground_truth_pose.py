@@ -18,7 +18,8 @@ a ground-truth frame.
 Config::
 
     ground_truth_pose:
-      robot: robot              # entity name to read the base pose from (default: robot)
+      # The base pose read is the entity this entry is NESTED UNDER; ownership is position, not
+      # a config key. At the top of a document it belongs to the world and finds no base body.
       body: ""                  # base body override; default: the entity's registered base body
       frame_id: map             # parent frame of the ground-truth transform
       child_frame: ""           # default: "<model>_base_link_gt" (Gazebo-compatible)
