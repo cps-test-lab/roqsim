@@ -1,0 +1,260 @@
+name: image
+
+# roqsim's two container images, built for every architecture container/platforms.env names.
+#
+# The shape is one job per (image, architecture) on a runner NATIVE to that architecture, then a
+# `merge` job that gives each tag a multi-arch index pointing at the per-architecture digests. The
+# reasoning for native-rather-than-QEMU lives in container/platforms.env, beside the platform list
+# it justifies; the short version is that a native build cannot mislabel one architecture as
+# another, and no emulator is installed anywhere in this file.
+#
+# Each build execs inside the image it just built, on real hardware of that architecture, before
+# anything is pushed. That check is the point rather than a nicety: an image carrying foreign
+# architecture content builds, pushes and inspects perfectly, and fails only when something runs
+# it. Every other signal here would stay green.
+#
+# A pull request builds and smoke-tests every architecture and pushes nothing -- an arm64 break
+# should fail the PR rather than main. Pushes to main and v* tags publish.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "container/**"
+      - ".github/workflows/image.yml"
+      - "**/pyproject.toml"
+      - "ros2_ws/src/**"
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    name: architecture policy
+    runs-on: ubuntu-latest
+    outputs:
+      builds: ${{ steps.matrix.outputs.builds }}
+      images: ${{ steps.matrix.outputs.images }}
+      push: ${{ steps.mode.outputs.push }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Decide whether this run publishes
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            echo "push=false" >> "$GITHUB_OUTPUT"
+            echo "pull request -> build and smoke-test only, nothing is pushed"
+          else
+            echo "push=true" >> "$GITHUB_OUTPUT"
+            echo "push/tag -> build, smoke-test, push by digest, merge into one manifest"
+          fi
+
+      # The matrix is DERIVED from container/platforms.env rather than written here, so this
+      # workflow states no architecture of its own and adding one is a single edit in that file.
+      # `make check` enforces the same property from the other side.
+      - name: Expand the architecture policy into a build matrix
+        id: matrix
+        run: |
+          set -euo pipefail
+          . container/platforms.env
+
+          repo="${{ github.repository }}"
+          builds=""
+          images=""
+
+          # Every field is a bare word or a flag: the matrix travels as JSON and is then
+          # interpolated into a shell command, so a value needing a quote would have to survive
+          # both. `expect` is grepped for on the HOST, which is what keeps a pipe out of the
+          # container command.
+          add_image() {
+            local name="$1" image_repo="$2" dockerfile="$3" build_args="$4" platforms="$5"
+            local entrypoint_args="$6" expect="$7"
+            images="${images:+$images,}$(printf '{"image":"%s","repo":"%s"}' "$name" "$image_repo")"
+            local platform runner var arch
+            for platform in ${platforms//,/ }; do
+              var="RUNNER_$(printf '%s' "$platform" | tr '/-' '__')"
+              eval "runner=\${$var:-}"
+              if [ -z "$runner" ]; then
+                echo "::error::container/platforms.env asks $name for $platform but sets no $var" >&2
+                exit 1
+              fi
+              arch="${platform##*/}"
+              builds="${builds:+$builds,}$(printf \
+                '{"image":"%s","repo":"%s","dockerfile":"%s","buildArgs":"%s","platform":"%s","arch":"%s","runner":"%s","entrypointArgs":"%s","expect":"%s"}' \
+                "$name" "$image_repo" "$dockerfile" "$build_args" "$platform" "$arch" \
+                "$runner" "$entrypoint_args" "$expect")"
+            done
+          }
+
+          # The entrypoint check runs THROUGH each image's own ENTRYPOINT, so it also proves the
+          # entrypoint execs: `roqsim` for the lean image, /entrypoint.sh -- which sources ROS and
+          # the colcon workspace -- for the ROS one. Hence `ros2 pkg list`: it is worth nothing as
+          # a package census and everything as proof that sourcing the workspace worked.
+          add_image roqsim "$repo" container/Dockerfile "" \
+            "$PLATFORMS_ROQSIM" --help sim
+          add_image roqsim-ros "${repo}-ros" container/Dockerfile.ros ROS_DISTRO=jazzy \
+            "$PLATFORMS_ROQSIM_ROS" "ros2 pkg list" roqsim_ros_bridge
+
+          echo "builds={\"include\":[$builds]}" >> "$GITHUB_OUTPUT"
+          echo "images={\"include\":[$images]}" >> "$GITHUB_OUTPUT"
+          printf 'builds: %s\n' "{\"include\":[$builds]}"
+
+  build:
+    name: ${{ matrix.image }} (${{ matrix.arch }})
+    needs: prepare
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.builds) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Deliberately no docker/setup-qemu-action: this job builds only the architecture it is
+      # already running on. See container/platforms.env.
+
+      - name: Log in to the Container registry
+        if: needs.prepare.outputs.push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Loaded into the local daemon so the next step can run it. This is the expensive build; the
+      # push below reuses every layer from the same cache scope and only uploads.
+      - name: Build ${{ matrix.image }} for ${{ matrix.platform }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          build-args: ${{ matrix.buildArgs }}
+          load: true
+          tags: ${{ matrix.image }}:ci
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      # The check no other step in this file can make. Comparing the image's `uname -m` against the
+      # runner's needs no architecture named here and asserts exactly the thing that matters: the
+      # content matches the machine this job was chosen for. Importing mujoco then dlopens a native
+      # extension, which is where mislabelled content fails if a shell somehow did not.
+      - name: Smoke-test the image on native ${{ matrix.arch }}
+        run: |
+          set -euo pipefail
+          img="${{ matrix.image }}:ci"
+
+          host_machine=$(uname -m)
+          image_machine=$(docker run --rm --entrypoint uname "$img" -m)
+          echo "runner: $host_machine   image: $image_machine"
+          if [ "$image_machine" != "$host_machine" ]; then
+            echo "::error::$img reports $image_machine on a $host_machine runner -- the build" \
+                 "produced foreign-architecture content and labelled it ${{ matrix.platform }}" >&2
+            exit 1
+          fi
+
+          echo "--- native extension modules load"
+          docker run --rm --entrypoint python3 "$img" -c \
+            'import platform, mujoco, numpy, cv2, roqsim; print("mujoco", mujoco.__version__, "on", platform.machine())'
+
+          echo "--- the image's own entrypoint"
+          out=$(docker run --rm "$img" ${{ matrix.entrypointArgs }})
+          printf '%s\n' "$out" | head -20
+          if ! printf '%s\n' "$out" | grep -q '${{ matrix.expect }}'; then
+            echo "::error::$img entrypoint output does not mention '${{ matrix.expect }}'" >&2
+            exit 1
+          fi
+
+      # push-by-digest: each architecture is pushed as its own unnamed manifest, and the `merge`
+      # job is what attaches a tag. Tagging here instead would have the architectures race for one
+      # tag, and the loser's content would simply be gone from it.
+      - name: Push ${{ matrix.image }} by digest
+        id: push
+        if: needs.prepare.outputs.push == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          build-args: ${{ matrix.buildArgs }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.repo }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      # One empty file per digest, named after it. The merge job globs them, which is how it learns
+      # what to point a tag at without this job having to know the tag.
+      - name: Hand the digest to the merge job
+        if: needs.prepare.outputs.push == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p "${{ runner.temp }}/digests"
+          digest="${{ steps.push.outputs.digest }}"
+          test -n "$digest" || { echo "::error::the push produced no digest" >&2; exit 1; }
+          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        if: needs.prepare.outputs.push == 'true'
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  merge:
+    name: manifest (${{ matrix.image }})
+    needs: [prepare, build]
+    if: needs.prepare.outputs.push == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.images) }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ matrix.repo }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Point every tag at every architecture
+        working-directory: ${{ runner.temp }}/digests
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ matrix.repo }}@sha256:%s ' *)
+
+      # Not decoration: this is where a merge that dropped an architecture becomes visible, and it
+      # puts the published architecture list in the log of the run that published it.
+      - name: Report what was published
+        run: |
+          docker buildx imagetools inspect \
+            "${{ env.REGISTRY }}/${{ matrix.repo }}:${{ steps.meta.outputs.version }}"
