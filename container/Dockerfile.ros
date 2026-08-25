@@ -69,12 +69,15 @@ RUN pip install --no-cache-dir --break-system-packages \
         "mujoco>=3.0" \
         "numpy>=1.24" \
         "pyyaml>=6.0" \
+        "click>=8.1" \
         "pillow>=9.0" \
         "lxml>=4.0" \
         "py_trees>=2.2" \
         "trimesh>=3.20" \
         "opencv-python-headless>=4.6" \
-        "scipy>=1.10"
+        "requests>=2.25" \
+        "onnxruntime>=1.16" \
+        "scipy>=1.11"
 
 # 4) Volatile layer: all roqsim_* sources -> install with deps already present (--no-deps). Core
 #    first, then dependents. The Spot policy fetch is fail-soft (needs network; image still builds
@@ -108,6 +111,12 @@ RUN pip install --no-cache-dir --break-system-packages --no-deps \
         ./roqsim_quadruped \
         ./roqsim_humanoid && \
     python3 -m roqsim_quadruped.policy.fetch_policy || true
+
+# Same guard as the lean image, and for the same reason: every install above is --no-deps, so the
+# hand-written third-party list two layers up is load-bearing and nothing else would notice it
+# falling behind a pyproject. It had -- `click`, `requests` and `onnxruntime` were all missing.
+COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
+RUN python3 /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
 
 # 5) Volatile layer: colcon-build the ROS 2 workspace (bridge + nav2 example + walker_ros).
 COPY ros2_ws/src ./ros2_ws/src

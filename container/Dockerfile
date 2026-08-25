@@ -34,16 +34,20 @@ RUN pip install --no-cache-dir \
         "mujoco>=3.0" \
         "numpy>=1.24" \
         "pyyaml>=6.0" \
+        "click>=8.1" \
         "pillow>=9.0" \
         "lxml>=4.0" \
         "py_trees>=2.2" \
         "trimesh>=3.20" \
+        "scipy>=1.11" \
+        "requests>=2.25" \
         "opencv-python-headless>=4.6"
 
 # 1b) Optional torch-backed packages for a full non-ROS build. CPU wheel index only (no CUDA);
 #     kept in its own guarded layer so the lean default never pays for it.
 RUN if [ "${INCLUDE_TORCH_PKGS}" = "1" ]; then \
-        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu; \
+        pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+        pip install --no-cache-dir "onnxruntime>=1.16"; \
     fi
 
 # 2) Volatile layer: our package sources (each dir carries its own pyproject.toml + package data).
@@ -74,6 +78,13 @@ COPY roqsim_humanoid   ./roqsim_humanoid
 RUN if [ "${INCLUDE_TORCH_PKGS}" = "1" ]; then \
         pip install --no-cache-dir --no-deps ./roqsim_quadruped ./roqsim_humanoid; \
     fi
+
+# 4) Every --no-deps install above trusted the hand-written list in step 1 to already carry what the
+#    pyprojects declare. Nothing checked that, and it had drifted: `click` was absent, so this
+#    image's own ENTRYPOINT (`roqsim`, with CMD `--help`) exited with ModuleNotFoundError. Building
+#    fine and failing on first run is the whole failure mode -- so the drift is loud here now.
+COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
+RUN python /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
 
 ##############################################################
 ####                       final                          ####

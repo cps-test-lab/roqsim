@@ -26,6 +26,11 @@ Checks
    Checked by resolving ``file=`` rather than by compiling: several robot models declare contact pairs
    against the *world's* ``floor`` geom and cannot compile standalone by design, so a compile check
    reports them broken when they are not.
+6. Every architecture the container images are built for is stated once, in
+   ``container/platforms.env``, and each has a runner mapped to it. The image workflow derives its
+   build matrix from that file and names no architecture itself, so the two cannot drift -- and an
+   architecture with no runner would be dropped from the matrix silently, which reads as "built
+   everywhere" while building one thing less.
 """
 
 from __future__ import annotations
@@ -58,6 +63,11 @@ LICENCE_RE = re.compile(r"licen[cs]e|copyright|CC0|CC-BY|BSD|Apache|MIT|MPL", re
 # A path like /home/<user>/... or /Users/<user>/... in tracked text. Deliberately not matching
 # /opt/ros or /usr/share, which are legitimate system paths in docs and launch files.
 ABS_PATH_RE = re.compile(r"(?:/home/|/Users/)[a-z_][a-z0-9_-]*/", re.I)
+# A buildx platform written out longhand, e.g. linux/arm64. Only container/platforms.env may do
+# that; the workflow has to go through the matrix it derives from that file.
+PLATFORM_LITERAL_RE = re.compile(r"\blinux/[a-z0-9]")
+POLICY_FILE = "container/platforms.env"
+IMAGE_WORKFLOW = ".github/workflows/image.yml"
 
 TEXT_SUFFIXES = {
     ".py", ".md", ".rst", ".txt", ".yaml", ".yml", ".toml", ".cfg", ".xml", ".json",
@@ -212,6 +222,49 @@ def check_no_absolute_paths(files: list[str]) -> list[str]:
     return problems
 
 
+def _policy_values() -> dict[str, str]:
+    values = {}
+    for line in (ROOT / POLICY_FILE).read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def check_architecture_policy() -> list[str]:
+    policy, workflow = ROOT / POLICY_FILE, ROOT / IMAGE_WORKFLOW
+    if not policy.is_file():
+        return [f"{POLICY_FILE} is missing -- the image workflow derives its build matrix from it"]
+    if not workflow.is_file():
+        return [f"{IMAGE_WORKFLOW} is missing -- nothing builds the container images"]
+
+    problems = []
+    values = _policy_values()
+    platform_keys = sorted(k for k in values if k.startswith("PLATFORMS_"))
+    if not platform_keys:
+        problems.append(f"{POLICY_FILE}: no PLATFORMS_* entry, so the build matrix would be empty")
+    for key in platform_keys:
+        platforms = [p.strip() for p in values[key].split(",") if p.strip()]
+        if not platforms:
+            problems.append(f"{POLICY_FILE}: {key} is empty")
+        for platform in platforms:
+            runner = "RUNNER_" + platform.replace("/", "_").replace("-", "_")
+            if runner not in values:
+                problems.append(f"{POLICY_FILE}: {key} asks for {platform} but sets no {runner}")
+
+    # The workflow must name no architecture of its own: one place to edit, and no second place to
+    # forget. Comments may still discuss one, so they are stripped first.
+    for i, line in enumerate(workflow.read_text().splitlines(), 1):
+        if PLATFORM_LITERAL_RE.search(line.split("#", 1)[0]):
+            problems.append(
+                f"{IMAGE_WORKFLOW}:{i}: names a platform directly -- every architecture "
+                f"belongs in {POLICY_FILE}, which this workflow reads"
+            )
+    return problems
+
+
 def main() -> int:
     files = tracked_files()
     groups = [
@@ -220,6 +273,7 @@ def main() -> int:
         ("every vendored robot model carries a licence file", check_model_licences()),
         ("no absolute filesystem paths in tracked text", check_no_absolute_paths(files)),
         ("every model asset reference resolves", check_model_asset_refs()),
+        ("every image architecture is stated once, with a runner", check_architecture_policy()),
     ]
     failed = False
     for name, problems in groups:
