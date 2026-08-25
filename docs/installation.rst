@@ -141,7 +141,7 @@ lands on, not of the image, so both backends are installed and
 with a guess — see :doc:`architecture`.
 
 What is published, and for how long
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Only two kinds of tag exist: ``latest``, which follows ``main``, and released versions from a ``v*``
 git tag (``1.4.2`` and ``1.4``). A pull request builds and smoke-tests every architecture but pushes
