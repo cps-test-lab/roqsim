@@ -27,8 +27,22 @@ on:
       - "**/pyproject.toml"
       - "ros2_ws/src/**"
 
+# Two pushes minutes apart both run to completion, and the earlier one's cache export can land after
+# the later one's import -- so they cannot help each other. Cancelling is only safe for a pull
+# request, though: a push to main moves `latest`, and cancelling part-way could leave that tag
+# pointing at a half-pushed manifest.
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   REGISTRY: ghcr.io
+  # One buildcache package, one tag per (image, architecture), so the four builds cannot evict each
+  # other. NOT type=gha: the Actions cache is capped at 10 GB per repository and scoped per git ref,
+  # so multi-GB image layers stored once per ref thrash to a zero hit rate and starve every other
+  # workflow of the same repository's cache. A registry cache is uncapped and ref-agnostic -- one
+  # copy that a pull request reads rather than duplicating.
+  CACHE_REPO: ${{ github.repository }}-buildcache
 
 jobs:
   prepare:
@@ -120,8 +134,9 @@ jobs:
       # Deliberately no docker/setup-qemu-action: this job builds only the architecture it is
       # already running on. See container/platforms.env.
 
+      # Unconditional, unlike the pushes below: a pull request logs in to READ the layer cache, which
+      # is what makes a PR build fast. A read-only token is enough for that.
       - name: Log in to the Container registry
-        if: needs.prepare.outputs.push == 'true'
         uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
@@ -139,8 +154,10 @@ jobs:
           build-args: ${{ matrix.buildArgs }}
           load: true
           tags: ${{ matrix.image }}:ci
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_REPO }}:${{ matrix.image }}-${{ matrix.arch }}
+          # Written only on a push. A pull request would publish layers for code that may never
+          # merge, and a fork's GITHUB_TOKEN cannot write packages at all.
+          cache-to: ${{ needs.prepare.outputs.push == 'true' && format('type=registry,ref={0}/{1}:{2}-{3},mode=max', env.REGISTRY, env.CACHE_REPO, matrix.image, matrix.arch) || '' }}
 
       # The check no other step in this file can make. Comparing the image's `uname -m` against the
       # runner's needs no architecture named here and asserts exactly the thing that matters: the
@@ -164,6 +181,11 @@ jobs:
           docker run --rm --entrypoint python3 "$img" -c \
             'import platform, mujoco, numpy, cv2, roqsim; print("mujoco", mujoco.__version__, "on", platform.machine())'
 
+          # Uniform across both images, and the check that caught `click` missing from the lean
+          # image's third-party list -- which broke `roqsim`, i.e. that image's own ENTRYPOINT.
+          echo "--- the roqsim console script"
+          docker run --rm --entrypoint roqsim "$img" --help | grep -q sim
+
           echo "--- the image's own entrypoint"
           out=$(docker run --rm "$img" ${{ matrix.entrypointArgs }})
           printf '%s\n' "$out" | head -20
@@ -185,7 +207,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           build-args: ${{ matrix.buildArgs }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.repo }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_REPO }}:${{ matrix.image }}-${{ matrix.arch }}
 
       # One empty file per digest, named after it. The merge job globs them, which is how it learns
       # what to point a tag at without this job having to know the tag.
@@ -238,8 +260,10 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ matrix.repo }}
+          # Only `latest` and released versions. Deliberately no `type=ref,event=branch`: this
+          # workflow pushes from `main` alone, so a branch tag would just be a second name for
+          # `latest`. And no `type=ref,event=pr`, because a pull request pushes nothing at all.
           tags: |
-            type=ref,event=branch
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest,enable={{is_default_branch}}

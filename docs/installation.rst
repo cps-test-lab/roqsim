@@ -140,6 +140,26 @@ lands on, not of the image, so both backends are installed and
 :func:`roqsim.gl.select_offscreen_gl` picks at import. Baking a value in would override that choice
 with a guess — see :doc:`architecture`.
 
+What is published, and for how long
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Only two kinds of tag exist: ``latest``, which follows ``main``, and released versions from a ``v*``
+git tag (``1.4.2`` and ``1.4``). A pull request builds and smoke-tests every architecture but pushes
+nothing, so no branch or PR tag is ever created.
+
+The package listing also holds **untagged** manifests, and that is normal rather than debris: each
+architecture is pushed as its own untagged manifest and a tag is the index that references them, so
+half of every multi-arch image is untagged by construction. A weekly job
+(``cleanup_untagged_images.yml``) removes untagged manifests that no tagged index references and
+that are older than a grace window — it walks the tagged manifests first, because deleting an
+index's children would break the index. The grace window exists because untagged is not the same as
+unused: anything that pinned an image by digest still needs that digest after the tag has moved on.
+
+Layer caching goes to a ``roqsim-buildcache`` package rather than to the GitHub Actions cache, which
+is capped per repository and scoped per git ref — multi-GB image layers stored there thrash to a
+zero hit rate and starve the other workflows of the same cache. The cache tag is overwritten on each
+push, so its orphaned blobs are cleaned up by the same weekly job.
+
 Building them yourself
 ~~~~~~~~~~~~~~~~~~~~~~
 

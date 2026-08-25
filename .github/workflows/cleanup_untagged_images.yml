@@ -1,0 +1,114 @@
+---
+name: Cleanup Untagged GHCR Images
+
+# What accumulates, and why deleting it needs care.
+#
+# The image workflow pushes each architecture as its own UNTAGGED manifest and then merges them into
+# one index per tag. So an untagged manifest is the normal state of half a multi-arch image, not
+# debris: deleting the children of a tagged index would break that index. This job therefore walks
+# every tagged manifest first and keeps everything they reference.
+#
+# What is genuinely superseded: the per-architecture manifests of a previous `latest`, and the
+# buildcache blobs orphaned when the cache tag is overwritten on each push. Without this the
+# buildcache package in particular grows without bound.
+
+on:
+  schedule:
+    - cron: '0 0 * * 0' # Runs every Sunday at midnight
+  workflow_dispatch: # Allows manual trigger
+permissions: read-all
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    env:
+      # How long an untagged, unreferenced manifest is kept anyway. Untagged is not the same as
+      # unused: a recorded run pins the image it ran by DIGEST, so once a tag moves on, the digest
+      # that run recorded is untagged while still being the only thing a re-run can start from.
+      # The window is not permanence -- that would not scale to the number of images this produces
+      # -- it buys the interval in which a recent run is most likely to be repeated.
+      GRACE_DAYS: 90
+    permissions:
+      packages: write
+    strategy:
+      matrix:
+        package:
+          - ${{ github.event.repository.name }}
+          - ${{ github.event.repository.name }}-ros
+          - ${{ github.event.repository.name }}-buildcache
+    steps:
+      - name: Delete untagged images not referenced by tagged manifests for ${{ matrix.package }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ORG: ${{ github.repository_owner }}
+          PACKAGE: ${{ matrix.package }}
+        run: |
+          set -euo pipefail
+
+          api() {
+            curl -sf -L \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "X-GitHub-Api-Version: 2022-11-28" "$@"
+          }
+          versions_page() {
+            api "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE}/versions?per_page=100&page=$1"
+          }
+
+          # A package that has never been published is not an error: the buildcache appears only
+          # after the first push, and this job is scheduled independently of that.
+          if ! api "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE}" >/dev/null 2>&1; then
+            echo "package ${PACKAGE} does not exist yet -- nothing to clean"
+            exit 0
+          fi
+
+          # A registry token, to read manifests and learn what each tagged index references.
+          REGISTRY_TOKEN=$(curl -sf -u "token:${GH_TOKEN}" \
+            "https://ghcr.io/token?scope=repository:${ORG}/${PACKAGE}:pull&service=ghcr.io" | jq -r '.token')
+
+          declare -A REFERENCED
+          PAGE=1
+          while true; do
+            VERSIONS=$(versions_page "$PAGE")
+            [ "$(jq 'length' <<< "$VERSIONS")" -eq 0 ] && break
+            while IFS= read -r digest; do
+              MANIFEST=$(curl -sf \
+                -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
+                -H "Authorization: Bearer ${REGISTRY_TOKEN}" \
+                "https://ghcr.io/v2/${ORG}/${PACKAGE}/manifests/${digest}" || true)
+              while IFS= read -r ref; do
+                REFERENCED["$ref"]=1
+                echo "  keeping referenced sub-manifest: $ref"
+              done < <(jq -r '.manifests[]?.digest // empty' <<< "$MANIFEST")
+            done < <(jq -r '.[] | select(.metadata.container.tags | length > 0) | .name' <<< "$VERSIONS")
+            PAGE=$((PAGE + 1))
+          done
+          echo "total referenced sub-manifests: ${#REFERENCED[@]}"
+
+          PAGE=1
+          DELETED=0
+          KEPT_RECENT=0
+          while true; do
+            VERSIONS=$(versions_page "$PAGE")
+            [ "$(jq 'length' <<< "$VERSIONS")" -eq 0 ] && break
+            while IFS= read -r item; do
+              VERSION_ID=$(jq -r '.id' <<< "$item")
+              DIGEST=$(jq -r '.name' <<< "$item")
+              CREATED=$(jq -r '.created_at' <<< "$item")
+              if [[ -n "${REFERENCED[$DIGEST]+_}" ]]; then
+                echo "keeping referenced: $VERSION_ID ($DIGEST)"
+                continue
+              fi
+              AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -d "$CREATED" +%s) ) / 86400 ))
+              if [[ "$AGE_DAYS" -lt "$GRACE_DAYS" ]]; then
+                echo "keeping untagged but recent (${AGE_DAYS}d < ${GRACE_DAYS}d): $VERSION_ID ($DIGEST)"
+                KEPT_RECENT=$((KEPT_RECENT + 1))
+                continue
+              fi
+              echo "deleting untagged+unreferenced, ${AGE_DAYS}d old: $VERSION_ID ($DIGEST)"
+              api -X DELETE \
+                "https://api.github.com/orgs/${ORG}/packages/container/${PACKAGE}/versions/${VERSION_ID}"
+              DELETED=$((DELETED + 1))
+            done < <(jq -c '.[] | select(.metadata.container.tags | length == 0)' <<< "$VERSIONS")
+            PAGE=$((PAGE + 1))
+          done
+          echo "done. deleted $DELETED untagged unreferenced versions, kept $KEPT_RECENT within the ${GRACE_DAYS}-day grace window."
