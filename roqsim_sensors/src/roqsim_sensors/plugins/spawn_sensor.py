@@ -9,19 +9,19 @@ via its own ``robot: <name>`` config -- no sensor-specific wiring needed here.
 
 Config::
 
-    spawn_sensor:
-      model: d435            # bundled model name, filename, or absolute path
-      name: d435             # entity name (default: 'sensor')
-      namespace: ""          # optional transport scope; the capture plugin's endpoints inherit it
-      prefix: ""              # MJCF name prefix (use distinct prefixes for >1 mount of the model)
-      pos: [0.0, 0.0, 0.0]
-      rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
-      show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
-      fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
-                             #   darkness step between single- and multi-sensor overlap
-      fov_range: <far>       # far plane of a synthesised camera frustum (m); default: model manifest
-      fov_near: <near>       # near plane (m); >0 truncates the cone; default: model manifest 'fov:'
-      fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
+    - spawn_sensor:
+        model: d435            # bundled model name, filename, or absolute path
+        namespace: ""          # optional transport scope; the capture plugin's endpoints inherit it
+        prefix: ""             # MJCF name prefix (use distinct prefixes for >1 mount of the model)
+        pos: [0.0, 0.0, 0.0]
+        rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
+        show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
+        fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
+                               #   darkness step between single- and multi-sensor overlap
+        fov_range: <far>       # far plane of a synthesised camera frustum (m); default: model manifest
+        fov_near: <near>       # near plane (m); >0 truncates the cone; default: model manifest 'fov:'
+        fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
+      name: camera_1           # the entry's OWN key, not the config's: this mount's entity
 
 ``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see

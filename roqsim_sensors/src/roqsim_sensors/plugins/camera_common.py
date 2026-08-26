@@ -227,9 +227,10 @@ class CameraPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # The mount entity: a spawn_sensor/spawn_robot wires ``robot: <name>``, while an eye-in-hand
-        # camera injected via an arm's manifest is wired ``arm: <name>`` (spawn_arm's target key).
-        # Accept either so a camera can sit on a fixed mount, a mobile base, or a manipulator flange.
+        # The mount entity: whatever entry this camera is nested under -- a ``spawn_sensor`` on a
+        # tripod, a ``spawn_robot``, or the ``spawn_arm`` an eye-in-hand camera arrives with from a
+        # manifest. Ownership is where the entry sits, so a camera reads it rather than naming a
+        # mount in its own config, and one attribute covers all three mounts.
         self.robot = self.entity
         self.camera = self.config.get("camera", self.DEFAULT_CAMERA)
         self.rate_hz = float(self.config.get("rate_hz", self.DEFAULT_RATE_HZ))
