@@ -1,9 +1,10 @@
 # Default controller + sensors shipped with the TurtleBot3 Waffle robot description.
 #
 # `spawn_robot: {model: turtlebot3_waffle}` pulls these in automatically, so a world does not
-# re-declare the robot's intrinsic kinematics/sensors. To override a default, declare the same plugin
-# for the same robot in the world (it wins); to opt out entirely, set `spawn_robot` config
-# `default_plugins: false`. Each entry's `robot` is filled in from the spawn_robot `name`.
+# re-declare the robot's intrinsic kinematics/sensors. To override a default, nest an entry with the
+# same LABEL under that spawn_robot's `components:` (it merges into this one, per key); to opt out
+# entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
+# spawned entity because it is nested under it -- there is no ownership key to fill in.
 components:
   # True 2-wheel differential drive with passive rear casters -- no skid-steer scrub, hence NO
   # `slip_factor` (contrast husky_a200 / clearpath_jackal, which need one). Geometry from

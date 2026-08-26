@@ -270,7 +270,7 @@ def replace_sim_view(text: str, view: dict) -> str:
 
     Handles the four shapes a world can be in: a block-style ``view:``, a one-line ``view: {…}``, a
     ``sim:`` block with no ``view`` (appended), and no ``sim:`` block at all (one is created above
-    ``plugins:``). The result is re-parsed and compared against the original before it is returned, so
+    ``components:``). The result is re-parsed and compared against the original before it is returned, so
     a mis-sliced range is an error rather than a quietly mangled world.
     """
     lines = text.splitlines()
@@ -279,7 +279,11 @@ def replace_sim_view(text: str, view: dict) -> str:
     if sim_line is None:
         indent = _INDENT_STEP
         block = ["sim:", *format_view(view, indent=indent, flow=False), ""]
-        at = _find_key(lines, "plugins", 0, 0, len(lines))
+        # Either spelling of the entry key: a world written since the rename has no ``plugins:``
+        # at all, and looking only for that one appended the block to the end of the file.
+        at = _find_key(lines, "components", 0, 0, len(lines))
+        if at is None:
+            at = _find_key(lines, "plugins", 0, 0, len(lines))
         at = len(lines) if at is None else at
         new_lines = lines[:at] + block + lines[at:]
     elif lines[sim_line].partition("sim:")[2].strip().startswith("{"):

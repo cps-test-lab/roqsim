@@ -106,3 +106,99 @@ so ``roqsim`` is importable, e.g.:
    source ros2_ws/install/setup.bash
    .venv/bin/python -m roqsim_ros_bridge.run_bridge \
        --world ros2_ws/src/roqsim_ros_bridge/worlds/turtlebot_ros2.yaml
+
+Container images
+----------------
+
+Two images are published to the GitHub Container Registry on every push to ``main``, each as a
+multi-architecture index covering **linux/amd64 and linux/arm64** — so the same reference works on
+an x86 node and on an arm64 machine (an Apple Silicon laptop, a Graviton/Ampere node, an arm64
+robot host) with nothing to select by hand:
+
+``ghcr.io/cps-test-lab/roqsim``
+   The lean core: ROS-free, headless MuJoCo, with the sensor / mobile / manipulation / scenes /
+   walker packages. ``ENTRYPOINT`` is the ``roqsim`` command tree, so the image is used the way the
+   CLI is:
+
+   .. code-block:: bash
+
+      docker run --rm ghcr.io/cps-test-lab/roqsim --help
+      docker run --rm -v "$PWD:/work" -w /work ghcr.io/cps-test-lab/roqsim \
+          sim my_world.yaml --headless --seconds 10
+
+``ghcr.io/cps-test-lab/roqsim-ros``
+   ROS 2 Jazzy, nav2, MoveIt and rviz2, every ``roqsim_*`` package, and a colcon-built ``ros2_ws``
+   (bridge, nav2 example, walker_ros). Its entrypoint sources ROS and the workspace, then execs
+   what you pass:
+
+   .. code-block:: bash
+
+      docker run --rm ghcr.io/cps-test-lab/roqsim-ros ros2 pkg list
+
+Neither image sets ``MUJOCO_GL``: which offscreen backend works is a property of the node the image
+lands on, not of the image, so both backends are installed and
+:func:`roqsim.gl.select_offscreen_gl` picks at import. Baking a value in would override that choice
+with a guess — see :doc:`architecture`.
+
+What is published, and for how long
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Only two kinds of tag exist: ``latest``, which follows ``main``, and released versions from a ``v*``
+git tag (``1.4.2`` and ``1.4``). A pull request builds and smoke-tests every architecture but pushes
+nothing, so no branch or PR tag is ever created.
+
+The package listing also holds **untagged** manifests, and that is normal rather than debris: each
+architecture is pushed as its own untagged manifest and a tag is the index that references them, so
+half of every multi-arch image is untagged by construction. A weekly job
+(``cleanup_untagged_images.yml``) removes untagged manifests that no tagged index references and
+that are older than a grace window — it walks the tagged manifests first, because deleting an
+index's children would break the index. The grace window exists because untagged is not the same as
+unused: anything that pinned an image by digest still needs that digest after the tag has moved on.
+
+Layer caching goes to a ``roqsim-buildcache`` package rather than to the GitHub Actions cache, which
+is capped per repository and scoped per git ref — multi-GB image layers stored there thrash to a
+zero hit rate and starve the other workflows of the same cache. The cache tag is overwritten on each
+push, so its orphaned blobs are cleaned up by the same weekly job.
+
+Building them yourself
+~~~~~~~~~~~~~~~~~~~~~~
+
+``container/build.sh`` wraps ``docker build`` with the repo root as its context. It builds for the
+host by default, which is what a local test wants:
+
+.. code-block:: bash
+
+   ./container/build.sh --image roqsim
+   ./container/build.sh --platform linux/arm64 --image roqsim   # one explicit architecture
+
+``--multiarch`` instead builds every architecture the image is published for, reading the list from
+``container/platforms.env``. It requires ``--push`` and ``--project``: a multi-platform build
+produces an index, and since the local daemon can hold only one image there is nowhere but a
+registry for the result to go.
+
+.. code-block:: bash
+
+   ./container/build.sh --multiarch --project ghcr.io/cps-test-lab --push
+
+The architecture policy
+~~~~~~~~~~~~~~~~~~~~~~~
+
+``container/platforms.env`` is the single source of truth for which architectures each image is
+built for, read by both ``container/build.sh`` and ``.github/workflows/image.yml`` — so a local
+build and a CI build cannot disagree about what an image is. It also maps each platform to the
+GitHub runner native to it, because CI builds each architecture on its own hardware and merges the
+results into one manifest rather than emulating under QEMU.
+
+That is a correctness measure before it is a speed one. Asking buildx for an architecture the base
+image does not publish does not fail — it takes the base's only architecture, labels it with the
+one requested, and pushes an image that dies with ``Invalid ELF image for this architecture`` the
+first time anything execs inside it, at run time and on someone else's machine. A native build has
+no second architecture present to mislabel, and CI additionally runs each freshly built image on
+its own native hardware before pushing, which is the only check that catches this class of fault:
+a mislabelled image builds, pushes and inspects perfectly.
+
+Adding an architecture is therefore one edit in ``container/platforms.env`` (its platform line plus
+a ``RUNNER_`` mapping) and nothing in the workflow. ``make check`` fails if a platform has no
+runner mapped, or if the workflow starts naming an architecture of its own. The ceiling is what the
+**base** image publishes: ``python:*-slim`` and the official ``ros:*-ros-base`` are both
+multi-architecture indexes, which is what makes arm64 available here at all.

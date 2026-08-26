@@ -50,9 +50,9 @@ A caller may override parts of the world before it is built by passing a nested 
 else their plugin ref) rather than by list index, and the value is merged into that plugin's config::
 
     load_config("world.yaml", {"sim": {"pacing": "asap"},
-                               "plugins": {"floorplan": {"floor": {"reflectance": 0.3}}}})
+                               "components": {"floorplan": {"floor": {"reflectance": 0.3}}}})
 
-:func:`overrides_from_dotlist` turns ``["plugins.floorplan.floor.reflectance=0.3"]`` into that dict,
+:func:`overrides_from_dotlist` turns ``["components.floorplan.floor.reflectance=0.3"]`` into that dict,
 for command-line use.
 """
 
@@ -733,13 +733,13 @@ def load_config_from_dict(
 #
 # A caller (e.g. a scenario parameter, or the CLI's ``--set``) may override any part of the world
 # before it is built. Overrides are a *nested dict* mirroring the world YAML, deep-merged into it.
-# The one wrinkle: ``plugins:`` is a YAML **list**, but overrides address plugins **by name** so a
+# The one wrinkle: ``components:`` is a YAML **list**, but overrides address components **by name** so a
 # caller never has to know list indices; each value is merged into that plugin's config::
 #
 #     {"sim": {"pacing": "asap"},
-#      "plugins": {"floorplan": {"size": 4.0}}}
+#      "components": {"floorplan": {"size": 4.0}}}
 #
-# A plugin key matches its ``name:`` first, then its plugin ref.
+# A component key matches its ``name:`` first, then its plugin ref.
 
 
 def deep_merge(base: Any, override: Any) -> Any:
