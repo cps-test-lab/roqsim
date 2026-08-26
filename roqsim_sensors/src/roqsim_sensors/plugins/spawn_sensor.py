@@ -21,11 +21,31 @@ Config::
         fov_range: <far>       # far plane of a synthesised camera frustum (m); default: model manifest
         fov_near: <near>       # near plane (m); >0 truncates the cone; default: model manifest 'fov:'
         fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
+        intrinsics:            # this UNIT's measured lens, rendered as well as published
+          {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
       name: camera_1           # the entry's OWN key, not the config's: this mount's entity
 
 ``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see
 :func:`roqsim.manifest.expand_manifest`); off with ``default_plugins: false``.
+
+**A measured lens, per placement.** ``intrinsics:`` writes ``fx``/``fy``/``cx``/``cy`` (pixels, at the
+resolution they were measured at) onto the model's camera as ``sensorsize`` + ``focalpixel`` +
+``principalpixel``, which is what MuJoCo *renders* through -- so the frame really has an off-centre
+principal point and ``fx != fy``, and the capture plugin reads the same numbers back out of the compiled
+model (:func:`~roqsim_sensors.plugins.camera_common.intrinsics_from_model`, path 1). Pixels and
+``camera_info`` are then one claim rather than two.
+
+It belongs to the placement and not to the model because **a calibration describes one physical unit**:
+three D435s of one rig measure ``fx`` 1330 / 1344 / 1413 with principal points scattered up to 14 px off
+centre, so a shared ``d435.xml`` has no single lens to carry, and a variant per unit would clone a mesh
+in order to hold three numbers. Stating them here leaves one model and gives each mount its own optics.
+
+The resolution is part of the measurement, so ``width``/``height`` are required rather than inferred --
+the model camera's own ``resolution`` and the size the capture plugin renders at are both within reach
+and neither is necessarily the frame the calibration was made in. The plugin may then render at any
+size: the intrinsics scale with it. Distortion is a separate matter -- it cannot come out of a projection matrix --
+and stays on the capture plugin's ``distortion:``, which warps the render to match.
 
 **FOV visualisation.** ``show_fov: true`` makes the sensor's field of view visible. Three paths, tried
 in order: (1) if the model has cameras (e.g. the RealSense/Zivid mounts) a translucent view **frustum**
@@ -364,6 +384,60 @@ def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
     ]
 
 
+#: What a calibration measures, and the frame it measured them in. All six or none: a focal length in
+#: pixels means nothing without its resolution, and two plausible ones are always in reach -- the
+#: model's own ``resolution`` and the size the capture plugin renders at -- so neither is guessed.
+_LENS_KEYS = ("fx", "fy", "cx", "cy", "width", "height")
+
+#: Plus which camera they describe, for a model that carries more than one.
+_INTRINSICS_KEYS = _LENS_KEYS + ("camera",)
+
+#: Metres per pixel for a synthesised ``sensorsize``, used only when the model states none of its own.
+#: The value is arbitrary and cannot affect anything: every consumer -- MuJoCo's projection and
+#: :func:`~roqsim_sensors.plugins.camera_common.intrinsics_from_model` alike -- uses the focal and
+#: principal lengths only as a RATIO to it. 1 um/px merely keeps a 1920-wide sensor a legible 1.92 mm.
+_PIXEL_PITCH_M = 1e-6
+
+
+def _intrinsics_errors(intr) -> list[str]:
+    """Everything wrong with an ``intrinsics:`` block, as validation strings.
+
+    Separate from the plugin so it reads as one closed vocabulary, and strict about unknown keys: a
+    misspelled ``cy`` would otherwise render a centred principal point while the world says otherwise,
+    and that is indistinguishable from an uncalibrated run in every artifact it produces.
+    """
+    if intr is None:
+        return []
+    if not isinstance(intr, dict):
+        return ["'intrinsics' must be a mapping of fx/fy/cx/cy (plus width/height/camera)"]
+    errors = []
+    unknown = sorted(set(intr) - set(_INTRINSICS_KEYS))
+    if unknown:
+        errors.append(
+            f"'intrinsics' has unknown key(s) {unknown}; it takes {list(_INTRINSICS_KEYS)}"
+        )
+    missing = [k for k in _LENS_KEYS if intr.get(k) is None]
+    if missing:
+        errors.append(
+            f"'intrinsics' needs all of {list(_LENS_KEYS)} -- missing {missing}. A partial lens mixes "
+            "a measured number with an assumed one and says nothing about which is which, and the "
+            "resolution is part of the measurement rather than a default."
+        )
+    for key in _LENS_KEYS:
+        if intr.get(key) is None:
+            continue
+        try:
+            value = float(intr[key])
+        except (TypeError, ValueError):
+            errors.append(f"'intrinsics.{key}' must be a number, got {intr[key]!r}")
+            continue
+        if key in ("fx", "fy") and value <= 0:
+            errors.append(f"'intrinsics.{key}' must be > 0")
+        if key in ("width", "height") and value <= 1:
+            errors.append(f"'intrinsics.{key}' must be > 1 (it is a pixel count)")
+    return errors
+
+
 class SpawnSensorPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -387,6 +461,10 @@ class SpawnSensorPlugin(Plugin):
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
         self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        # This UNIT's measured lens, written onto the model's camera at build time so MuJoCo renders
+        # through it (see :meth:`_apply_intrinsics`). Empty is the historical path: the model's own
+        # fovy, an ideal pinhole, a centred principal point.
+        self._intrinsics = dict(self.config.get("intrinsics") or {})
         self.show_fov = bool(self.config.get("show_fov", False))
         self.fov_alpha = float(self.config.get("fov_alpha", 0.25))
         # Valid detection band (m) of the synthesised camera FOV frustum: ``fov_near`` is the near
@@ -430,6 +508,7 @@ class SpawnSensorPlugin(Plugin):
         rays = config.get("fov_rays", [32, 24])
         if len(rays) != 2 or any(int(r) < 2 or int(r) > 256 for r in rays):
             errors.append("'fov_rays' must be [nu, nv] with each in 2..256")
+        errors.extend(_intrinsics_errors(config.get("intrinsics")))
         return errors
 
     def _resolve_fov_range(self, asset) -> tuple[float, float]:
@@ -457,6 +536,10 @@ class SpawnSensorPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        # BEFORE _show_fov, which reads the camera back: a frustum drawn from the model's nominal
+        # fovy while the render uses a measured one would be a picture of the wrong lens.
+        if self._intrinsics:
+            self._apply_intrinsics(child)
         if self.show_fov:
             near, far = self._resolve_fov_range(asset)
             # A synthesised camera frustum is always clipped against the world built so far, so pass
@@ -466,6 +549,68 @@ class SpawnSensorPlugin(Plugin):
         frame.pos = self.pos
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
+
+    def _apply_intrinsics(self, child: mujoco.MjSpec) -> None:
+        """Write this placement's measured lens onto the model's camera, in pixels.
+
+        MuJoCo renders through ``sensorsize`` + ``focalpixel`` + ``principalpixel`` whenever a sensor
+        size is set, so the calibration goes HERE rather than into the capture plugin's config: the
+        plugin then reads the very numbers the renderer used back out of the compiled model
+        (:func:`~roqsim_sensors.plugins.camera_common.intrinsics_from_model`, path 1), and pixels and
+        ``camera_info`` cannot drift apart.
+        """
+        cam = self._lens_camera(child)
+        width, height = self._lens_resolution()
+        fx, fy = float(self._intrinsics["fx"]), float(self._intrinsics["fy"])
+        cx, cy = float(self._intrinsics["cx"]), float(self._intrinsics["cy"])
+        cam.resolution = [width, height]
+        # The sensor's physical size is a free scale -- everything downstream uses the focal and
+        # principal lengths only as a ratio to it -- so it has to be non-zero (0 is MuJoCo's "unset",
+        # which selects the fovy path) and square-pixelled, and nothing more. A model that states its
+        # own keeps it: that one is a fact about the device.
+        sw, sh = (float(v) for v in cam.sensor_size)
+        if not (sw > 0.0 and sh > 0.0):
+            cam.sensor_size = [width * _PIXEL_PITCH_M, height * _PIXEL_PITCH_M]
+        cam.focal_pixel = [fx, fy]
+        # MJCF's principal point is an OFFSET from the image centre with +y pointing UP the image,
+        # while a calibration's cy counts DOWN from the top row. This flip is the one sign in the
+        # file that a reader cannot check by eye, so a test pins it against the reader that undoes it.
+        cam.principal_pixel = [cx - width / 2.0, height / 2.0 - cy]
+
+    def _lens_camera(self, child: mujoco.MjSpec):
+        """The camera ``intrinsics:`` describes: the named one, or the only one there is."""
+        cameras = list(child.cameras)
+        wanted = self._intrinsics.get("camera")
+        if wanted:
+            for cam in cameras:
+                if cam.name == wanted:
+                    return cam
+            raise RuntimeError(
+                f"spawn_sensor: 'intrinsics.camera' is {wanted!r}, which model "
+                f"{self.config['model']!r} does not have. It has: {[c.name for c in cameras]}"
+            )
+        if len(cameras) == 1:
+            return cameras[0]
+        if not cameras:
+            raise RuntimeError(
+                f"spawn_sensor: 'intrinsics' states a lens but model {self.config['model']!r} has no "
+                f"camera to give it to."
+            )
+        raise RuntimeError(
+            f"spawn_sensor: model {self.config['model']!r} has {len(cameras)} cameras "
+            f"({[c.name for c in cameras]}), which do not share a lens -- name the one this "
+            f"calibration measured with 'intrinsics.camera'."
+        )
+
+    def _lens_resolution(self) -> tuple[int, int]:
+        """The resolution the stated lens was measured at -- required, never inferred.
+
+        Two other resolutions are always within reach: the model camera's own ``resolution``, and the
+        size the capture plugin renders at. Either would be a plausible guess, and a wrong one scales
+        every number in the block by the ratio between two frames, silently. So the block carries its
+        own, and :func:`_intrinsics_errors` refuses one without it.
+        """
+        return int(self._intrinsics["width"]), int(self._intrinsics["height"])
 
     def _show_fov(self, child: mujoco.MjSpec, asset, near: float, far: float, world_spec) -> None:
         """Make the sensor's field of view visible before attach.
@@ -521,8 +666,10 @@ class SpawnSensorPlugin(Plugin):
         cameras = list(child.cameras)
         if not cameras:
             return 0
-        probe = mujoco.MjSpec.from_file(str(asset.path))
-        apply_assets(probe, asset)
+        # A copy of CHILD rather than a re-read of the model file: a placement may have written its
+        # own lens onto the camera (:meth:`_apply_intrinsics`), and MuJoCo derives ``cam_fovy`` from
+        # a focal length, so copying is also what makes the drawn cone follow the measured optics.
+        probe = child.copy()
         pm = probe.compile()
         pd = mujoco.MjData(pm)
         mujoco.mj_forward(pm, pd)  # populate cam_xpos/cam_xmat (child-root frame)
