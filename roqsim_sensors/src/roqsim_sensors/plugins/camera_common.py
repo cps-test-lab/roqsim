@@ -271,7 +271,9 @@ class CameraPlugin(Plugin):
         distortion = config.get("distortion")
         if distortion is not None:
             if not isinstance(distortion, (list, tuple)) or len(distortion) != 5:
-                errors.append("'distortion' must be a list of 5 plumb_bob coefficients [k1,k2,p1,p2,k3]")
+                errors.append(
+                    "'distortion' must be a list of 5 plumb_bob coefficients [k1,k2,p1,p2,k3]"
+                )
             elif _cv2_import_error() is not None:
                 # Loud, and at validate time rather than at the first frame: silently skipping the
                 # warp would publish real coefficients over an unwarped render, which is the exact

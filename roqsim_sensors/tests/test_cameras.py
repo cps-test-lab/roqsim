@@ -7,8 +7,11 @@ import math
 import mujoco
 import numpy as np
 import pytest
-from roqsim_sensors.plugins.camera_common import (Intrinsics, _build_distortion_map,
-                                                  intrinsics_from_model)
+from roqsim_sensors.plugins.camera_common import (
+    Intrinsics,
+    _build_distortion_map,
+    intrinsics_from_model,
+)
 from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin
 
 from roqsim.config import load_config_from_dict
@@ -196,7 +199,8 @@ def test_distortion_without_opencv_is_a_config_error_not_a_skipped_warp():
     """
     plugin = RealsenseD435Plugin({"camera": "cam"})
     assert any(
-        "distortion" in e for e in plugin.validate_config({"camera": "cam", "distortion": [0.1, 0.2]})
+        "distortion" in e
+        for e in plugin.validate_config({"camera": "cam", "distortion": [0.1, 0.2]})
     )
     errors = plugin.validate_config({"camera": "cam", "distortion": [0.1, -0.5, 0.0, 0.0, 0.4]})
     assert errors == [] or all("distortion" in e and "OpenCV" in e for e in errors)
