@@ -110,6 +110,19 @@ If ``build_fov`` raises ``no adapter for '<type>'``, register one in
 and add a ``CATALOG`` entry in ``catalog.py``. The sensor plugin itself is never modified. See
 :doc:`architecture` › Sensor coverage for the design.
 
+**A catalog entry states policy, not optics.** Write ``cost``, ``mount`` and ``description`` -- how
+this device may realistically be deployed -- and name the bundled ``model`` it describes. The optics
+are read from that model: ``fovy`` and ``resolution`` off the MJCF camera its manifest wires to the
+capture plugin, ``near``/``far`` off the manifest's ``fov:`` block. So a camera's field of view is
+stated once, in the model, and the same numbers drive ``spawn_sensor: {show_fov: true}`` and a
+coverage study. A lidar entry names no model and needs no optics at all -- its adapter instantiates
+the plugin and reads the defaults it resolved.
+
+Restating those numbers in the catalog is what this module used to do, and the copies had drifted (the
+zivid entry claimed 704x704 against the model's 480x480), so there is no longer a field to write one
+in. ``fov_overrides`` exists for the genuine exception -- a study pinning a camera's ``far``, which is
+an analysis assumption rather than a property of the device.
+
 Visualising a sensor's FOV directly
 ------------------------------------
 
@@ -127,7 +140,7 @@ viewer/renders. Three paths, by what the model provides:
   (none of the current models: the Zivid ships one but has a camera, so it takes the frustum path).
 
 ``fov_near``/``fov_range`` default to the **sensor model's own** ``fov: {near, far}`` block in its
-``<model>.manifest.yaml`` (device knowledge lives with the device -- Zivid 1.3..5 m, D435 0.2..6 m,
+``<model>.manifest.yaml`` (device knowledge lives with the device -- Zivid 1.3..5 m, D435 0.28..6 m,
 Mid-360 0.1..40 m, Robin W1G 0.1..70 m), so ``show_fov: true`` alone draws the correct band; a world may
 override either per placement. ``fov_near`` sets the near cap of the drawn volume, so its shape *is* the
 valid detection band. A model that has a camera always synthesises its frustum from that camera, even the

@@ -1,0 +1,68 @@
+<mujoco model="oakd">
+  <!--
+    Luxonis OAK-D Pro: a box stand-in + a colour camera, for a standalone mount (see the
+    `spawn_sensor` plugin) -- not attached to any robot's own MJCF.
+
+    NO MESH, on purpose. roqsim_mobile's turtlebot4 carries this same device as a visual-only box at
+    the URDF's collision dimensions, and this model matches it rather than diverging: the source
+    package's oakd_pro.dae is 12 MB / 152k triangles, and a decimated copy of it was reviewed against
+    the box side by side and judged not worth carrying. What this model exists to provide is the
+    CAMERA -- the pose, lens and stereo frames below -- which is all `spawn_sensor`, the capture
+    plugin and the coverage catalog ever read from it. Should a mesh be wanted later, convert
+    nav2_minimal_tb4_description/meshes/oakd_pro.dae (Apache-2.0) and swap `oakd_visual` for it; every
+    pose here is already in the frame such a mesh exports in.
+
+    Every number below comes from nav2_minimal_tb4_description's urdf/sensors/oakd.urdf.xacro (see
+    OAKD_LICENSE), not from measurement: the collision box is its 2.25 x 9.7 x 3 cm at (-1.1, 0,
+    -0.5) cm, `oakd_rgb_camera_frame` sits at xyz="0 0 0" on `oakd_link` -- so the camera is at this
+    body's origin -- and the stereo frames are at +/- baseline/2 in y.
+
+    Body-local axes follow that URDF: x = depth, the lens face's outward normal; y = the ~97 mm long
+    face the lenses are arrayed across; z = height (~30 mm).
+
+    Standalone-mount convention: the `mount` body is pre-rotated (quat below) so that at spawn_sensor
+    rpy [0,0,0] the sensor sits upright (device height -> world +z) and looks HORIZONTALLY along +y --
+    i.e. toward a wall, matching the d435/d415/d455 and zivid mounts. Here that is a plain +90 deg
+    about z, mapping local +x -> +y and leaving +z up; the RealSense mounts need a different quat only
+    because their meshes put the lens on +z instead.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <!-- The source DAE's own phong diffuse (0.19216 0.2039 0.2039): the device's dark grey shell. -->
+    <material name="oakd_body" rgba="0.192 0.204 0.204 1" specular="0.4" shininess="0.3"/>
+    <material name="oakd_glass" rgba="0.05 0.05 0.05 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <!-- quat reorients the mount so the lens looks along +y at rpy [0,0,0] (see header). -->
+    <body name="mount" quat="0.70710678 0 0 0.70710678">
+      <!-- The xacro's collision box verbatim, serving as both the visual and the collision shape --
+           there is no mesh for it to stand apart from. Group 3 is the collision layer the other
+           sensor mounts put their collision geom in; this one is visible because it IS the device. -->
+      <geom name="oakd_visual" type="box" pos="-0.011 0 -0.005" size="0.01125 0.0485 0.015"
+            material="oakd_body"/>
+      <!-- Front glass strip, laid just proud of the box's front face (x = 0.0004) so the lens face is
+           tellable from the back at a glance -- a plain box has no other orientation cue. -->
+      <geom name="oakd_front" type="box" pos="0.0006 0 -0.005" size="0.0004 0.045 0.008"
+            material="oakd_glass" contype="0" conaffinity="0"/>
+      <!-- oakd_rgb_camera_frame sits at xyz="0 0 0" on oakd_link, so the camera is at this body's
+           origin. xyaxes aims -z (a MuJoCo camera's view direction) along local +x, and +y (its up)
+           along local +z.
+
+           fovy=56.84 is the xacro's Gazebo `horizontal_fov` of 1.25 rad re-expressed vertically at
+           320x240: 2*atan(tan(1.25/2) / (320/240)) = 56.84 deg. It is URDF-faithful rather than
+           datasheet-faithful (Luxonis gives the fixed-focus IMX378 a 55 deg VFOV), because this model
+           exists to be the same device roqsim_mobile's turtlebot4 already carries. THAT FILE HOLDS
+           THE SAME TWO NUMBERS -- roqsim_mobile's tests assert the pair agree, so they move together
+           or not at all. -->
+      <camera name="oakd_rgb" pos="0 0 0" xyaxes="0 -1 0 0 0 1"
+              fovy="56.84" resolution="320 240"/>
+      <!-- Stereo-pair frames at the xacro's 0.075 m baseline (left +y, right -y), for a TF / stereo
+           bridge; not consumed by the physics. Mirrors the sites turtlebot4.xml defines. -->
+      <site name="oakd"       pos="0 0       0" size="0.005" rgba="0 0 0 0"/>
+      <site name="oakd_left"  pos="0 0.0375  0" size="0.005" rgba="0 0 0 0"/>
+      <site name="oakd_right" pos="0 -0.0375 0" size="0.005" rgba="0 0 0 0"/>
+    </body>
+  </worldbody>
+</mujoco>

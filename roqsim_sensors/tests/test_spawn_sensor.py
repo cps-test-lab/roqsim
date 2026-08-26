@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import mujoco
 import numpy as np
+import pytest
 from external_meshes import needs_mid360, needs_robin, needs_zivid
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import Plugin
+from roqsim.context import SimContext
 
 
 def _world(**spawn_config):
@@ -487,3 +491,190 @@ def test_lidar_sector_is_clipped_by_the_walls():
     assert np.abs(verts[:, :2]).max() > 2 * wall_inner, (
         "the sector should still escape over the walls"
     )
+
+
+# --- a measured lens, per placement -------------------------------------------------------------
+#
+# The rig these came from: three D435s, one calibration each. They are kept as literals rather than
+# derived from a fovy because that is the point -- fx != fy and the principal point is off centre,
+# neither of which one angle can say.
+_CAM1 = {"fx": 1330.2327487213051, "fy": 1329.374480088922,
+         "cx": 974.2501995447395, "cy": 538.9934564521541, "width": 1920, "height": 1080}
+_CAM4 = {"fx": 1412.8497845, "fy": 1415.3488644597485,
+         "cx": 964.1221796, "cy": 531.7413608, "width": 1920, "height": 1080}
+
+
+class _LitBox(Plugin):
+    """A red box straight ahead of the origin, so a render has something whose position can move."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_PLANE, size=[5, 5, 0.1], rgba=[0.3, 0.3, 0.3, 1]
+        )
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX, pos=[2.0, 0, 0.5], size=[0.2, 0.2, 0.2],
+            rgba=[0.9, 0.05, 0.05, 1],
+        )
+
+
+def _lens_world(intrinsics, *, width, height, prefix="cam_", name="cam", scene=False, **spawn):
+    entries = [{f"{__name__}:_LitBox": {}}] if scene else []
+    entries.append({
+        "spawn_sensor": {"model": "d435", "prefix": prefix, **spawn,
+                         **({"intrinsics": intrinsics} if intrinsics else {})},
+        "name": name,
+        "components": [{"realsense_d435": {"width": width, "height": height}}],
+    })
+    return load_config_from_dict({"sim": {}, "components": entries})
+
+
+def test_a_placement_publishes_the_lens_it_was_given():
+    """The four measured numbers survive the round trip through the MJCF and back out again."""
+    import mujoco
+
+    from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+
+    engine = Engine(_lens_world(_CAM1, width=1920, height=1080))
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "cam_d435_color")
+    intr = intrinsics_from_model(m, cid, width=1920, height=1080)
+    # float32 in mjModel: 2e-4 px, i.e. four orders below the 14 px offset being asserted.
+    assert intr.fx == pytest.approx(_CAM1["fx"], abs=1e-3)
+    assert intr.fy == pytest.approx(_CAM1["fy"], abs=1e-3)
+    assert intr.cx == pytest.approx(_CAM1["cx"], abs=1e-3)
+    assert intr.cy == pytest.approx(_CAM1["cy"], abs=1e-3)
+    assert intr.fx != intr.fy, "a real lens does not have square-pixel-perfect focal lengths"
+
+
+def test_the_lens_scales_to_whatever_resolution_the_plugin_renders():
+    """The calibration is a measurement at ITS resolution; rendering smaller must not move the lens."""
+    import mujoco
+
+    from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+
+    engine = Engine(_lens_world(_CAM1, width=960, height=540))
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "cam_d435_color")
+    intr = intrinsics_from_model(m, cid, width=960, height=540)
+    assert intr.fx == pytest.approx(_CAM1["fx"] / 2, abs=1e-3)
+    assert intr.cx == pytest.approx(_CAM1["cx"] / 2, abs=1e-3)
+    assert intr.cy == pytest.approx(_CAM1["cy"] / 2, abs=1e-3)
+
+
+def test_two_mounts_of_one_model_carry_two_different_lenses():
+    """The reason this lives on the placement: one d435.xml, two units, two calibrations."""
+    import mujoco
+
+    from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+
+    cfg = load_config_from_dict({
+        "sim": {},
+        "components": [
+            {"spawn_sensor": {"model": "d435", "prefix": "one_", "intrinsics": _CAM1},
+             "name": "one",
+             "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
+            {"spawn_sensor": {"model": "d435", "prefix": "two_", "pos": [1, 0, 0],
+                              "intrinsics": _CAM4},
+             "name": "two",
+             "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
+        ],
+    })
+    engine = Engine(cfg)
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    lenses = {}
+    for prefix, want in (("one_", _CAM1), ("two_", _CAM4)):
+        cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, f"{prefix}d435_color")
+        lenses[prefix] = intrinsics_from_model(m, cid, width=1920, height=1080)
+        assert lenses[prefix].fx == pytest.approx(want["fx"], abs=1e-3)
+        assert lenses[prefix].cy == pytest.approx(want["cy"], abs=1e-3)
+    assert lenses["one_"].fx != lenses["two_"].fx
+
+
+def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
+    """The claim the whole feature rests on: MuJoCo RENDERS the stated lens.
+
+    A pure ``camera_info`` change would leave the image identical and tell every consumer the
+    principal point is somewhere it is not -- which is the failure this replaces, so it is the one
+    thing a test must not take on trust. Shifting the principal point right by N px must move the
+    image content left by N px, which a column correlation reads off directly.
+    """
+    import numpy as np
+
+    width, height = 640, 480
+    fovy = 42.5  # the d435 model's own, so ONLY the principal point differs between the two renders
+    f = height / (2 * np.tan(np.radians(fovy) / 2))
+    offset = 40.0
+
+    def column_profile(cx):
+        lens = {"fx": f, "fy": f, "cx": cx, "cy": height / 2, "width": width, "height": height}
+        engine = Engine(_lens_world(lens, width=width, height=height, scene=True,
+                                    pos=[0, 0, 0.5], rpy=[0, 0, 1.5707963]))
+        engine.setup()
+        engine.reset()
+        engine.step()
+        rgb = _endpoint(engine, "image").read().astype(np.float64)
+        return rgb[..., 0].mean(axis=0) - rgb[..., 1:].mean(axis=(0, 2))  # redness per column
+
+    centred = column_profile(width / 2)
+    shifted = column_profile(width / 2 + offset)
+    assert np.argmax(centred) != np.argmax(shifted), "the render ignored the principal point"
+    lag = np.argmax(np.correlate(shifted - shifted.mean(), centred - centred.mean(), "full"))
+    assert lag - (len(centred) - 1) == pytest.approx(-offset, abs=2.0)
+
+
+def test_the_drawn_frustum_follows_the_measured_lens():
+    """A cone drawn from the model's nominal fovy over a render that used another lens is a lie."""
+    import mujoco
+
+    def half_width(fy):
+        lens = {"fx": fy, "fy": fy, "cx": 320, "cy": 240, "width": 640, "height": 480}
+        engine = Engine(_lens_world(lens, width=640, height=480, show_fov=True, fov_range=2.0))
+        engine.setup()
+        engine.reset()
+        m, d = engine.ctx.model, engine.ctx.data
+        gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "cam_d435_color_fov")
+        assert gid >= 0
+        mesh = m.geom_dataid[gid]
+        adr, num = m.mesh_vertadr[mesh], m.mesh_vertnum[mesh]
+        verts = m.mesh_vert[adr : adr + num] @ d.geom_xmat[gid].reshape(3, 3).T
+        return np.abs(verts[:, 2]).max()
+
+    narrow, wide = half_width(1200.0), half_width(400.0)
+    assert wide > narrow * 1.5, "the frustum ignored the stated focal length"
+
+
+@pytest.mark.parametrize(
+    "block, expected",
+    [
+        ({"fx": 1330.0, "fy": 1329.0, "width": 1920, "height": 1080}, "missing"),
+        ({"fx": 1330.0, "fy": 1329.0, "cx": 974.0, "cy": 539.0, "width": 1920, "height": 1080,
+          "fovy": 42.5}, "unknown key"),
+        ({"fx": 0, "fy": 1329.0, "cx": 974.0, "cy": 539.0, "width": 1920, "height": 1080},
+         "must be > 0"),
+        ({"fx": 1330.0, "fy": 1329.0, "cx": 974.0, "cy": 539.0, "width": 1, "height": 1080},
+         "pixel count"),
+    ],
+)
+def test_a_half_stated_lens_is_refused(block, expected):
+    """Partial or misspelled is refused, never quietly completed from the model's own defaults."""
+    from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
+
+    errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": block})
+    assert any(expected in e for e in errors), errors
+
+
+def test_a_lens_without_its_resolution_is_refused():
+    """``fx`` in pixels is meaningless without the frame it was measured in, and there are two
+    plausible wrong answers to hand (the model's own resolution, and the render size), so the block
+    has to carry its own rather than inherit either."""
+    from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
+
+    lens = {k: v for k, v in _CAM1.items() if k not in ("width", "height")}
+    errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": lens})
+    assert any("width" in e and "height" in e for e in errors), errors

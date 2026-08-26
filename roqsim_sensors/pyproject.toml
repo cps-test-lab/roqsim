@@ -18,6 +18,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0", "opencv-python>=4.6"]
 markers = ["opencv-python>=4.6"]  # fiducial_marker: ArUco/AprilTag image generation
+# Separate from `markers` despite the same wheel: a world wanting a distorted camera is not a
+# world wanting fiducials, and an install that carries one should not imply the other.
+distortion = ["opencv-python>=4.6"]  # CameraPlugin `distortion:`: forward lens warp on the render
 coverage = ["matplotlib>=3.8"]  # coverage 2D heatmap; the 3D render uses mujoco + numpy only
 
 [project.scripts]

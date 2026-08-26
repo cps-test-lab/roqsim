@@ -23,6 +23,25 @@ def manifest_path(model_file: Path) -> Path:
     return model_file.parent / f"{model_file.stem}.manifest.yaml"
 
 
+def manifest_fov(model_file: Path) -> dict:
+    """The ``fov:`` block from a model's manifest (``{}`` when it has no manifest or no block).
+
+    Where a sensor model states its own valid detection range, so neither a world nor an analysis has
+    to repeat it: ``near``/``far`` for a camera frustum, plus the angular bounds a camera-less device
+    needs (``mid360`` adds ``h_min``/``h_max``/``v_min``/``v_max``). Two callers read it and must
+    agree -- ``spawn_sensor`` draws the ``show_fov`` cone from it, and the coverage catalog derives a
+    hypothetical placement's range from it -- which is why it is here rather than private to either.
+
+    Deliberately unvalidated: the keys are the reader's business (a frustum and an angular sector want
+    different ones), and a model with no ``fov:`` is normal rather than broken.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return {}
+    data = yaml.safe_load(path.read_text()) or {}
+    return data.get("fov", {}) or {}
+
+
 def load_manifest(
     model_file: Path, base_dir: Path | None = None, seen: frozenset[Path] = frozenset()
 ) -> list[dict]:

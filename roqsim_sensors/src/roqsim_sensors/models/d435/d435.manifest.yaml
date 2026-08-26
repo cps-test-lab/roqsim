@@ -8,8 +8,9 @@ components:
   - realsense_d435:
       camera: d435_color
 
-# Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to (RealSense D435 min depth;
-# far is a display range -- a camera has no physical far). Matches the coverage catalog's D435 entry.
+# Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to, and what the coverage
+# catalog reads for a hypothetical D435 placement.
 fov:
-  near: 0.2
-  far: 6.0
+  near: 0.28   # datasheet Min-Z at max resolution -- the same value realsense_d435 clips depth at.
+  far: 6.0     # A DISPLAY / ANALYSIS range, deliberately NOT the plugin's clip_far (3.0): a colour
+               # camera has no physical far. See coverage/catalog.py on tuning it per study.

@@ -9,18 +9,18 @@
 # `sim.world` is left unset, so the engine builds the default `empty_room` (a lit, walled room) —
 # that gives every sensor something to see. Each `spawn_sensor` pulls its capture plugin from the
 # model manifest automatically (mid360 -> livox_mid360, robin_w1g -> seyond_robin_w1g,
-# d435 -> realsense_d435, d415 -> realsense_d415, d455 -> realsense_d455, zivid -> zivid).
+# d435 -> realsense_d435, d415 -> realsense_d415, d455 -> realsense_d455, zivid -> zivid,
+# oakd -> oakd_camera).
 #
 # Covered here: livox_mid360 (3D lidar, 360° dome), seyond_robin_w1g (3D lidar, forward 120°×70°),
-# lidar (2D), realsense_d435, realsense_d415, realsense_d455, zivid (RGB-D), fiducial_marker,
-# sensor_coverage_probe (coverage report/render).
-# NOT here: oakd_camera — it is a robot-carried RGB-D camera with no standalone mount in this package;
-# see roqsim_mobile's TurtleBot 4 world for it.
+# lidar (2D), realsense_d435, realsense_d415, realsense_d455, zivid (RGB-D), oakd_camera (RGB-D),
+# fiducial_marker, sensor_coverage_probe (coverage report/render).
 #
 # Every sensor shows its field of view (show_fov): the Mid-360 and Robin W1G get a synthesised angular
-# sector (dome / forward wedge), the Zivid reveals its bundled coverage mesh, the RealSense cameras get
-# a synthesised frustum. sensor_coverage_probe then writes a coverage report + render to ./coverage —
-# run with MUJOCO_GL=egl.
+# sector (dome / forward wedge), and every camera mount — the RealSenses, the Zivid and the OAK-D —
+# gets a synthesised frustum. (The Zivid also ships a baked `_fov` envelope, which stays hidden: a
+# model with a camera always takes the frustum path.) sensor_coverage_probe then writes a coverage
+# report + render to ./coverage — run with MUJOCO_GL=egl.
 
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
@@ -91,8 +91,10 @@ components:
       # tune the raycast grid with `fov_rays: [h, v]` (default [32, 24]) — see spawn_sensor docs.
 
   # --- Zivid 3 XL250 structured-light 3D camera on the -x side, looking toward the centre ---------
-  # Its manifest auto-attaches `zivid` -> `image` + `depth` + `camera_info` (RGB-D). show_fov draws
-  # its 39° square coverage frustum out to the 2.5 m focus distance (truncated by the room walls).
+  # Its manifest auto-attaches `zivid` -> `image` + `depth` + `camera_info` (RGB-D). show_fov
+  # synthesises a 39° square frustum from `zivid_color` over the manifest's 1.3–5 m working range
+  # (truncated by the room walls). The model's baked `_fov` envelope is NOT what you see: a model with
+  # a camera always takes the frustum path.
   - spawn_sensor:
       model: zivid
       prefix: "zivid_"
@@ -101,6 +103,20 @@ components:
       show_fov: true
       fov_alpha: 0.25
     name: zivid
+
+  # --- Luxonis OAK-D Pro in the remaining corner, looking toward the centre ----------------------
+  # Its manifest auto-attaches `oakd_camera` -> `image` + `depth` + `camera_info` (RGB-D). The model
+  # is a box at the source URDF's collision dimensions rather than a mesh (see models/oakd/oakd.xml);
+  # what it provides is the camera. Its fovy is the TurtleBot 4's, which carries the same device.
+  - spawn_sensor:
+      model: oakd
+      prefix: "oakd_"
+      pos: [-1.5, -1.5, 0.6]
+      rpy: [0.0, 0.0, -0.7854]   # yaw -45° so the mount's +y optical axis faces the centre
+      show_fov: true
+      fov_alpha: 0.25
+      fov_range: 4.0             # override the manifest far (8 m) to fit this room, as the others do
+    name: oakd
 
   # --- Seyond Robin W1G forward solid-state lidar in a corner, looking toward the centre ----------
   # Its manifest auto-attaches seyond_robin_w1g -> `cloud` (PointCloud2, frame seyond_lidar, topic
@@ -140,7 +156,7 @@ components:
   # --- Sensor coverage report (the coverage subpackage's world-YAML toggle) ----------------------
   # Computes once (at configure) how much of the room / which objects the cameras observe, and by how
   # many (0..N), then writes coverage/report.json + a heatmap + a 3D marker render. `sensors: auto`
-  # covers the MuJoCo cameras (d435, d415, d455, zivid); the Mid-360 lidar is a site, not a camera, so add it
+  # covers the MuJoCo cameras (d435, d415, d455, zivid, oakd); the Mid-360 lidar is a site, not a camera, so add it
   # to an explicit sensor list or use the `roqsim-coverage` CLI to include it. Needs a GL backend
   # (MUJOCO_GL=egl). Remove this entry for no coverage output.
   - sensor_coverage_probe:
