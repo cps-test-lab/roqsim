@@ -8,8 +8,9 @@ components:
   - realsense_d455:
       camera: d455_color
 
-# Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to (RealSense D455 min depth;
-# far is a display range -- a camera has no physical far). Matches the coverage catalog's D455 entry.
+# Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to, and what the coverage
+# catalog reads for a hypothetical D455 placement. `near` is the datasheet min depth (which is also
+# realsense_d455's clip_near); `far` is a display/analysis range -- a camera has no physical far.
 fov:
   near: 0.6
   far: 6.0

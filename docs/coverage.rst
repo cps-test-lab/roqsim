@@ -110,6 +110,19 @@ If ``build_fov`` raises ``no adapter for '<type>'``, register one in
 and add a ``CATALOG`` entry in ``catalog.py``. The sensor plugin itself is never modified. See
 :doc:`architecture` › Sensor coverage for the design.
 
+**A catalog entry states policy, not optics.** Write ``cost``, ``mount`` and ``description`` -- how
+this device may realistically be deployed -- and name the bundled ``model`` it describes. The optics
+are read from that model: ``fovy`` and ``resolution`` off the MJCF camera its manifest wires to the
+capture plugin, ``near``/``far`` off the manifest's ``fov:`` block. So a camera's field of view is
+stated once, in the model, and the same numbers drive ``spawn_sensor: {show_fov: true}`` and a
+coverage study. A lidar entry names no model and needs no optics at all -- its adapter instantiates
+the plugin and reads the defaults it resolved.
+
+Restating those numbers in the catalog is what this module used to do, and the copies had drifted (the
+zivid entry claimed 704x704 against the model's 480x480), so there is no longer a field to write one
+in. ``fov_overrides`` exists for the genuine exception -- a study pinning a camera's ``far``, which is
+an analysis assumption rather than a property of the device.
+
 Visualising a sensor's FOV directly
 ------------------------------------
 

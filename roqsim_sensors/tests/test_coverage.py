@@ -2,16 +2,28 @@
 
 from __future__ import annotations
 
+import json
 import math
 
 import mujoco
 import numpy as np
 import pytest
+import yaml
 from external_meshes import needs_mid360, needs_robin, needs_zivid
-from roqsim_sensors.coverage import adapters
+from roqsim_sensors.coverage import adapters, optimize
 from roqsim_sensors.coverage.adapters import PlacedSensor, build_fov
+from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
 from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
+from roqsim_sensors.models import MODELS_DIR
+
+from roqsim.manifest import manifest_fov
+from roqsim.models import resolve_model
+from roqsim.registry import resolve_plugin
+
+MODEL_NAMES = sorted(
+    p.name for p in MODELS_DIR.iterdir() if p.is_dir() and (p / f"{p.name}.xml").is_file()
+)
 
 # -- FOV membership ----------------------------------------------------------------------------------
 
@@ -523,3 +535,93 @@ def test_batched_classification_matches_the_per_point_loop():
     assert np.array_equal(got, want)
     # Guard against the pair agreeing because both classified nothing.
     assert 0 < int(want.sum()) < len(points)
+
+
+# -- the catalog derives its optics -------------------------------------------------------------------
+#
+# The catalog used to restate `fovy`/resolution/`near`/`far` that the models already declared, and the
+# copies had drifted (its zivid entry claimed 704x704 against the model's 480x480). These pin the
+# derivation itself, because a bug there is silent: `_model_optics` returning nothing would fall
+# through to `camera_adapter`'s last-resort constants and report coverage for a lens no device has.
+
+_DERIVED = sorted(name for name, spec in CATALOG.items() if spec.model)
+
+
+@pytest.mark.parametrize("name", _DERIVED)
+def test_catalog_optics_come_from_the_model(name):
+    """Every derived entry's optics equal what its MJCF and manifest independently say.
+
+    Deliberately NOT marked `needs_zivid`: the derivation parses the MJCF instead of compiling it, so
+    it does not need the meshes on disk -- which is what lets the three generated-mesh sensors report
+    correct optics on a fresh clone, before `make external-convert` has ever run. If that regressed,
+    this test is where it would show up.
+    """
+    spec = CATALOG[name]
+    asset = resolve_model(spec.model)
+    cam = {c.name: c for c in mujoco.MjSpec.from_file(str(asset.path)).cameras}
+    manifest = yaml.safe_load((asset.path.parent / f"{asset.path.stem}.manifest.yaml").read_text())
+    # The manifest names the imaging camera when wiring its capture plugin; that is the one the
+    # catalog must read, not merely "some camera in the file".
+    wanted = next(
+        cfg["camera"]
+        for entry in manifest["components"]
+        for cfg in [next(iter(entry.values()))]
+        if cfg and "camera" in cfg
+    )
+
+    got = spec.fov_template
+    assert (got["fovy"], got["width"], got["height"]) == (
+        float(cam[wanted].fovy),
+        *(int(v) for v in cam[wanted].resolution),
+    )
+    assert (got["near"], got["far"]) == (
+        float(manifest["fov"]["near"]),
+        float(manifest["fov"]["far"]),
+    )
+
+
+def test_search_cannot_propose_a_type_the_catalog_lacks():
+    """`greedy --types X` must not die in `placed_from_proposal`.
+
+    `optimize._DOWN_RPY` is what `generate_candidates` will propose and `--types` is user-facing, so a
+    type listed there without a CATALOG entry is a KeyError reachable from the CLI. That is exactly
+    what `realsense_d415` was.
+    """
+    assert set(optimize._DOWN_RPY) <= set(CATALOG)
+
+
+def test_every_catalog_type_has_an_adapter():
+    # The other direction is not asserted: `camera` is a generic adapter alias with no catalog entry,
+    # which is correct. This one catches a typo'd `type=` that would otherwise surface as a KeyError
+    # deep inside build_fov(), mid-search.
+    assert set(CATALOG) <= set(adapters.registered_types())
+
+
+def test_catalog_as_dict_is_json_serialisable():
+    # fov_template is a property doing file IO now, so the CLI's `catalog` command (and the planner
+    # reading its output) would break on a non-serialisable leak rather than at import.
+    assert (
+        json.loads(json.dumps(catalog_as_dict()))["realsense_d435"]["fov_template"]["near"] == 0.28
+    )
+
+
+@pytest.mark.parametrize("name", MODEL_NAMES)
+def test_manifest_fov_near_matches_the_capture_plugin(name):
+    """A sensor model's `fov.near` is its device's min range, so it must equal the plugin's clip_near.
+
+    d435 stated 0.2 while `realsense_d435` clipped at 0.28, so the drawn cone began 8 cm nearer than
+    any depth was returned. Only `near` is pinned: both this manifest and the catalog document `far`
+    as an analysis/display range deliberately independent of `clip_far`.
+    """
+    asset = resolve_model(f"roqsim_sensors:{name}")
+    fov = manifest_fov(asset.path)
+    if "near" not in fov:
+        pytest.skip(f"{name}: no fov: block")
+    manifest = yaml.safe_load((asset.path.parent / f"{name}.manifest.yaml").read_text())
+    ref, cfg = next(iter(manifest["components"][0].items()))
+    # Instantiating is how the lidar adapters read plugin defaults too: __init__ only resolves config
+    # into attributes, so this reads the same clip the plugin would apply at run time.
+    clip_near = getattr(resolve_plugin(ref)(cfg or {}), "clip_near", None)
+    if clip_near is None:
+        pytest.skip(f"{name}: {ref} has no depth clip")
+    assert fov["near"] == pytest.approx(clip_near)

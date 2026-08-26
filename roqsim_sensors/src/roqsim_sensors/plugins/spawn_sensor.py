@@ -107,11 +107,10 @@ import math
 
 import mujoco
 import numpy as np
-import yaml
 
 from roqsim import raycast
 from roqsim.context import Entity, SimContext
-from roqsim.manifest import expand_manifest
+from roqsim.manifest import expand_manifest, manifest_fov
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
 
@@ -357,20 +356,6 @@ def _raycast_depths(
     ).dist
 
 
-def _manifest_fov(asset) -> dict:
-    """The ``fov: {near, far}`` block from a model's ``<model>.manifest.yaml`` (``{}`` if absent).
-
-    The manifest lives beside the MJCF (``asset.path``) and already declares the model's capture
-    plugin; the ``fov`` block is where a sensor model states its own valid detection range so worlds
-    need not repeat it. Returns an empty dict when the model has no manifest or no ``fov`` block.
-    """
-    manifest = asset.path.parent / f"{asset.path.stem}.manifest.yaml"
-    if not manifest.exists():
-        return {}
-    data = yaml.safe_load(manifest.read_text()) or {}
-    return data.get("fov", {}) or {}
-
-
 def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
     """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
     cr, sr = math.cos(roll / 2), math.sin(roll / 2)
@@ -518,7 +503,7 @@ class SpawnSensorPlugin(Plugin):
         ``<model>.manifest.yaml``; a world may override either per placement. Falls back to
         ``near=0`` (apex pyramid) / ``far=2.0`` when neither declares one. Fails loudly on an
         empty band so a mis-authored manifest can't silently draw nothing."""
-        meta = _manifest_fov(asset)
+        meta = manifest_fov(asset.path)
         near = self._fov_near_cfg if self._fov_near_cfg is not None else meta.get("near", 0.0)
         far = self._fov_far_cfg if self._fov_far_cfg is not None else meta.get("far", 2.0)
         near, far = float(near), float(far)
@@ -748,7 +733,7 @@ class SpawnSensorPlugin(Plugin):
 
         Returns 0 when the manifest declares no angular band (the model is not a lidar), so the caller
         falls through to the 'nothing to show' error rather than this silently doing nothing."""
-        meta = _manifest_fov(asset)
+        meta = manifest_fov(asset.path)
         if "h_min" not in meta:
             return 0
         h_min, h_max = float(meta["h_min"]), float(meta["h_max"])
