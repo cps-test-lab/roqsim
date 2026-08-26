@@ -415,6 +415,33 @@ def test_c3_camera_and_stereo_frames_match_the_urdf():
     assert baseline == pytest.approx(0.075, abs=1e-4)
 
 
+def test_c3b_the_oakd_lens_matches_the_standalone_sensor_model():
+    """C3b: this robot's OAK-D and `roqsim_sensors:oakd` are the same device, so one lens.
+
+    The camera element cannot literally be shared -- it sits inside this robot's body chain, while the
+    standalone mount is its own MJCF -- so the two files each hold the numbers and this asserts they
+    agree. Without it "one definition" is a comment in two files that nothing enforces, which is how
+    the coverage catalog's copy of these same optics drifted before it was made to derive them.
+
+    The dependency runs the way it already does: roqsim_mobile requires roqsim_sensors, never the
+    reverse, so the check lives here rather than beside the sensor model.
+    """
+    import mujoco as mj
+
+    from roqsim.models import resolve_model
+
+    model, _ = _build()
+    cid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "oakd_rgb")
+
+    standalone = mj.MjSpec.from_file(str(resolve_model("roqsim_sensors:oakd").path))
+    cam = next(c for c in standalone.cameras if c.name == "oakd_rgb")
+
+    assert float(model.cam_fovy[cid]) == pytest.approx(float(cam.fovy)), (
+        "turtlebot4.xml and roqsim_sensors:oakd disagree on the OAK-D's fovy; they are one device"
+    )
+    assert list(model.cam_resolution[cid]) == [int(v) for v in cam.resolution]
+
+
 def test_c4_wheel_encoders_imu_and_bumper_exist():
     """C4: the sensors a ROS 2 bridge publishes are present and named as the siblings' are."""
     model, _ = _build(settle=0.0)

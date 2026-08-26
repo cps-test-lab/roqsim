@@ -1,0 +1,32 @@
+roqsim_sensors/models/oakd/oakd.xml ships NO vendor geometry: the device is a box at the source
+URDF's own collision dimensions, the same stand-in roqsim_mobile's turtlebot4 uses. Nothing here is
+redistributed artwork.
+
+What IS derived from a third party is every number in that file -- the box size and offset, the
+camera's position and orientation, its 56.84 deg fovy (the Gazebo `horizontal_fov` of 1.25 rad
+re-expressed vertically at 320x240), and the 0.075 m stereo baseline. They come from:
+
+    https://github.com/ros-navigation/nav2_minimal_turtlebot_simulation
+    (nav2_minimal_tb4_description/urdf/sensors/oakd.urdf.xacro)
+
+That package declares its license in its package.xml as Apache 2.0:
+
+    Copyright (c) Open Navigation LLC
+
+    Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file
+    except in compliance with the License. You may obtain a copy of the License at
+
+        http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software distributed under the
+    License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND,
+    either express or implied. See the License for the specific language governing permissions
+    and limitations under the License.
+
+The same package ships a visual mesh for this device (meshes/oakd_pro.dae, 12 MB / 152k triangles)
+under the same license. It is deliberately not used here -- a decimated conversion was reviewed
+against the box and judged not worth carrying. If one is wanted later, that file is the source and
+this license covers it.
+
+OAK-D and OAK-D Pro are products of Luxonis Holding Corporation. No Luxonis-supplied asset is
+included, and no Luxonis copyright is claimed by the source package or by this model.

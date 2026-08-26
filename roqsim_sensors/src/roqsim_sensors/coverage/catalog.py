@@ -15,9 +15,9 @@ Restating those numbers here is what this module used to do, and they had alread
 entry claimed 704x704 against the model's 480x480. A hand-written copy cannot be kept true by
 attention, so there is no longer a place to write one.
 
-The one exception is named and temporary: ``oakd_camera`` has no model in this package (the
-``oakd_rgb`` camera its plugin reads lives in ``roqsim_mobile``'s turtlebot4, and this package must
-not depend on that one), so it states its optics in ``fov_overrides`` until that model exists.
+Every camera entry derives; there is no exception. ``oakd_camera`` was one until the OAK-D Pro got a
+model of its own here -- its plugin had been reading ``roqsim_mobile``'s turtlebot4 camera, which this
+package cannot depend on.
 """
 
 from __future__ import annotations
@@ -122,11 +122,11 @@ class SensorSpec:
     type: str
     cost: float
     mount: MountConstraint
-    #: Bundled model the optics are read from. ``None`` only for a device this package has no model
-    #: for, which must then state every optic in ``fov_overrides``.
-    model: str | None = None
+    #: Bundled model the optics are read from. Required for a camera; a lidar leaves it empty because
+    #: its adapter instantiates the plugin and reads the defaults that resolved.
+    model: str = ""
     #: What the model cannot state. ``far`` on a camera is an analysis assumption rather than a
-    #: property of the device, so a study may pin it here; everything else should come from the model.
+    #: property of the device, so a study may pin it here; everything else comes from the model.
     fov_overrides: dict = field(default_factory=dict)
     description: str = ""
 
@@ -145,12 +145,8 @@ class SensorSpec:
 CATALOG: dict[str, SensorSpec] = {
     "oakd_camera": SensorSpec(
         type="oakd_camera",
+        model="roqsim_sensors:oakd",
         cost=1.0,
-        # No `oakd` model in this package yet, so these are hand-written -- the only entry that is.
-        # They are the OAK-D Pro's fixed-focus IMX378 optics (Luxonis: 82/69/55 deg DFOV/HFOV/VFOV at
-        # 4056x3040, i.e. 4:3); 640x480 stands in for that aspect, which is all the frustum reads.
-        # Delete this block once models/oakd/ exists and set `model` instead.
-        fov_overrides={"fovy": 55.0, "width": 640, "height": 480, "near": 0.3, "far": 8.0},
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="OAK-D Pro RGB-D camera (narrow-ish FOV, medium range).",
     ),
