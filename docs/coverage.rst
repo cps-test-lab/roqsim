@@ -140,7 +140,7 @@ viewer/renders. Three paths, by what the model provides:
   (none of the current models: the Zivid ships one but has a camera, so it takes the frustum path).
 
 ``fov_near``/``fov_range`` default to the **sensor model's own** ``fov: {near, far}`` block in its
-``<model>.manifest.yaml`` (device knowledge lives with the device -- Zivid 1.3..5 m, D435 0.2..6 m,
+``<model>.manifest.yaml`` (device knowledge lives with the device -- Zivid 1.3..5 m, D435 0.28..6 m,
 Mid-360 0.1..40 m, Robin W1G 0.1..70 m), so ``show_fov: true`` alone draws the correct band; a world may
 override either per placement. ``fov_near`` sets the near cap of the drawn volume, so its shape *is* the
 valid detection band. A model that has a camera always synthesises its frustum from that camera, even the

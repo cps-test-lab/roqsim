@@ -65,9 +65,19 @@
             size="0.026 0.001" material="zivid_lens" contype="0" conaffinity="0"/>
       <!-- FOV coverage envelope: a 39 deg square frustum out to the 2.5 m focus distance (datasheet),
            placed at and aligned with the imaging camera's optical origin. Non-colliding; shipped
-           hidden (alpha 0). `spawn_sensor: {show_fov: true}` reveals it (sets the alpha) -- FOV geoms
-           are recognised by the `_fov` name suffix. No material, so the plugin controls alpha via the
-           geom rgba. NOTE: group 2, not the group-3 collision layer, and deliberately not group 4/5:
+           hidden (alpha 0), and FOV geoms are recognised by the `_fov` name suffix.
+
+           CURRENTLY UNREACHABLE, and this comment used to claim otherwise. `spawn_sensor._show_fov`
+           tries the camera path FIRST and returns as soon as it draws a frustum, so a model that has
+           a camera never reaches `_reveal_fov` -- and this model has `zivid_color`. What `show_fov`
+           actually draws here is a frustum synthesised from that camera over the manifest's 1.3-5 m
+           band, which is also occlusion-clipped, where this baked mesh would not be. That makes the
+           synthesised one strictly more informative and this mesh dead weight (it is a generated
+           asset, see external/external_assets.yaml). Left in place rather than deleted because the
+           decision is whether the bundled-envelope path is worth keeping at all -- no bundled model
+           reaches it today.
+
+           NOTE: group 2, not the group-3 collision layer, and deliberately not group 4/5:
            the MuJoCo 3.x offscreen renderer drops large group-4 geoms once a scene has several geoms,
            so a mast-mounted FOV would silently vanish in any real world. -->
       <geom name="zivid_fov" type="mesh" mesh="zivid_fov_mesh" pos="0.125 0.030 0.011" group="2"
