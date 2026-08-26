@@ -391,13 +391,16 @@ def _fill_compressed_depth(msg, payload, encoding: str, hints: dict) -> None:
 
 @converter("sensor_msgs.msg.CameraInfo")
 def fill_camera_info(msg, payload, stamp: Time, hints: dict) -> None:
-    # payload: a roqsim_sensors camera_common.Intrinsics (width, height, fx, fy, cx, cy).
+    # payload: a roqsim_sensors camera_common.Intrinsics (width, height, fx, fy, cx, cy, d).
     msg.header.stamp = stamp
     msg.header.frame_id = frame(hints, "frame_id", "camera_optical_frame")
     msg.height = payload.height
     msg.width = payload.width
     msg.distortion_model = "plumb_bob"
-    msg.d = [0.0] * 5
+    # Whatever the camera plugin says its pixels carry -- zeros for a plain MuJoCo render (an ideal
+    # pinhole), the configured coefficients when that plugin warped the frame to match a real lens.
+    # getattr, so an Intrinsics from an older roqsim_sensors still converts.
+    msg.d = [float(v) for v in getattr(payload, "d", None) or [0.0] * 5]
     msg.k = [payload.fx, 0.0, payload.cx, 0.0, payload.fy, payload.cy, 0.0, 0.0, 1.0]
     msg.r = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
     msg.p = [

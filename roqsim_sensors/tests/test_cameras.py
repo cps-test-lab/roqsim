@@ -7,7 +7,8 @@ import math
 import mujoco
 import numpy as np
 import pytest
-from roqsim_sensors.plugins.camera_common import intrinsics_from_model
+from roqsim_sensors.plugins.camera_common import (Intrinsics, _build_distortion_map,
+                                                  intrinsics_from_model)
 from roqsim_sensors.plugins.realsense_d435 import RealsenseD435Plugin
 
 from roqsim.config import load_config_from_dict
@@ -73,6 +74,132 @@ def test_intrinsics_from_model_falls_back_when_resolution_unset():
     m = mujoco.MjModel.from_xml_string(xml)
     intr = intrinsics_from_model(m, 0, default_width=320, default_height=240)
     assert intr.width == 320 and intr.height == 240
+
+
+def test_intrinsics_come_from_the_mjcf_lens_when_sensorsize_is_set():
+    """A camera that states real optics gets them published -- fx != fy, principal point off centre.
+
+    These are camera_1 of the fixed-camera rig at its 1920x1080 profile. `fovy` cannot express
+    either property, which is why the model has to carry them and why MuJoCo renders with them.
+    """
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam" resolution="1920 1080" sensorsize="0.0036 0.002025"
+                focalpixel="1330.2327 1329.3745" principalpixel="14.25 1.01"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    intr = intrinsics_from_model(m, 0)
+    assert intr.width == 1920 and intr.height == 1080
+    assert math.isclose(intr.fx, 1330.2327, rel_tol=1e-4)
+    assert math.isclose(intr.fy, 1329.3745, rel_tol=1e-4)
+    assert intr.fx != intr.fy
+    # cy is BELOW centre for a positive principalpixel y: MJCF counts it up the image, ROS down.
+    assert math.isclose(intr.cx, 974.25, abs_tol=0.01)
+    assert math.isclose(intr.cy, 538.99, abs_tol=0.01)
+
+
+def test_an_explicit_fovy_still_wins_over_the_mjcf_lens():
+    """So a world can render a lens-carrying model at a different field without editing it."""
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam" resolution="64 48" sensorsize="0.0036 0.0027"
+                focalpixel="1000 1000" principalpixel="5 5"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    intr = intrinsics_from_model(m, 0, fovy=60)
+    assert math.isclose(intr.fx, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
+    assert intr.fx == intr.fy and intr.cx == 32.0 and intr.cy == 24.0
+
+
+def test_intrinsics_can_be_stated_field_by_field():
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam" fovy="60" resolution="64 48"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    intr = intrinsics_from_model(m, 0, fx=100.0, cy=20.0)
+    assert intr.fx == 100.0 and intr.cy == 20.0
+    # The ones not stated still come from the model.
+    assert math.isclose(intr.fy, 48 / (2.0 * math.tan(math.radians(60) / 2.0)))
+    assert intr.cx == 32.0
+
+
+def test_distortion_defaults_to_zero_because_a_render_is_an_ideal_pinhole():
+    xml = """<mujoco><worldbody>
+        <geom type="plane" size="5 5 0.1"/>
+        <camera name="cam" fovy="60" resolution="64 48"/>
+    </worldbody></mujoco>"""
+    m = mujoco.MjModel.from_xml_string(xml)
+    assert tuple(intrinsics_from_model(m, 0).d) == (0.0,) * 5
+    coeffs = [0.151, -0.509, 0.0002, 0.0013, 0.492]
+    assert list(intrinsics_from_model(m, 0, d=coeffs).d) == pytest.approx(coeffs)
+
+
+def test_the_distortion_map_warps_forward_not_backward():
+    """The map must answer "where in the IDEAL render did this DISTORTED pixel come from".
+
+    Checked against OpenCV's own forward model rather than by eye: `projectPoints` says where a ray
+    lands on the real sensor, so the map read at that pixel must give back the ideal pixel the same
+    ray produced. Built with initUndistortRectifyMap instead -- the inverse, and the easy mistake --
+    this displaces the wrong way and the assertion fails by roughly double the distortion.
+    """
+    cv2 = pytest.importorskip("cv2")
+    intr = Intrinsics(
+        width=1920,
+        height=1080,
+        fx=1330.2327,
+        fy=1329.3745,
+        cx=974.25,
+        cy=538.99,
+        d=(0.151, -0.509, 0.0002, 0.0013, 0.492),
+    )
+    map_x, map_y = _build_distortion_map(intr)
+    assert map_x.shape == (1080, 1920) and map_x.flags["C_CONTIGUOUS"]
+
+    k = np.array([[intr.fx, 0, intr.cx], [0, intr.fy, intr.cy], [0, 0, 1]], dtype=np.float64)
+    d = np.asarray(intr.d, dtype=np.float64)
+    zero = np.zeros(3)
+    for ideal in [(300.0, 200.0), (960.0, 540.0), (1700.0, 900.0)]:
+        # The ray that the ideal render put at `ideal`, and where the real lens would image it.
+        ray = np.array([[(ideal[0] - intr.cx) / intr.fx, (ideal[1] - intr.cy) / intr.fy, 1.0]])
+        distorted = cv2.projectPoints(ray, zero, zero, k, d)[0].ravel()
+        u, v = int(round(distorted[0])), int(round(distorted[1]))
+        assert (map_x[v, u], map_y[v, u]) == pytest.approx(ideal, abs=1.0)
+
+
+def test_the_distortion_map_covers_the_frame_for_a_real_lens():
+    """No destination pixel may sample outside the render, or the frame grows a black rim.
+
+    True of this rig's coefficients, not of every lens -- which is why the remap still passes an
+    explicit BORDER_CONSTANT rather than relying on it.
+    """
+    pytest.importorskip("cv2")
+    intr = Intrinsics(
+        width=1920,
+        height=1080,
+        fx=1330.2327,
+        fy=1329.3745,
+        cx=974.25,
+        cy=538.99,
+        d=(0.151, -0.509, 0.0002, 0.0013, 0.492),
+    )
+    map_x, map_y = _build_distortion_map(intr)
+    assert map_x.min() >= 0 and map_x.max() <= intr.width - 1
+    assert map_y.min() >= 0 and map_y.max() <= intr.height - 1
+
+
+def test_distortion_without_opencv_is_a_config_error_not_a_skipped_warp():
+    """The failure mode this guards is silent: publishing real coefficients over an unwarped render.
+
+    Only meaningful where OpenCV is absent, so it asserts the shape of the check rather than
+    simulating an uninstall -- a 5-vector is accepted, a malformed one never is.
+    """
+    plugin = RealsenseD435Plugin({"camera": "cam"})
+    assert any(
+        "distortion" in e for e in plugin.validate_config({"camera": "cam", "distortion": [0.1, 0.2]})
+    )
+    errors = plugin.validate_config({"camera": "cam", "distortion": [0.1, -0.5, 0.0, 0.0, 0.4]})
+    assert errors == [] or all("distortion" in e and "OpenCV" in e for e in errors)
 
 
 # -- capture (real mujoco.Renderer, needs a GL backend e.g. MUJOCO_GL=egl) ------------------
