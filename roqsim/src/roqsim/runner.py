@@ -765,6 +765,12 @@ def run(
             with _deaf_to_stop_signals(engine.logger or log):
                 written = recorder.close() if recorder is not None else None
                 _export_capture_at_exit(engine, recorder, target, overrides, engine.logger or log)
+                # Once, here, because every stop that matters reaches this block and because the
+                # fact is about the whole run. Silent unless the run genuinely failed its rate:
+                # the line's presence is the signal, so it must not appear on healthy runs.
+                _pacing = pacer.report_line()
+                if _pacing:
+                    (engine.logger or log).warning("%s", _pacing)
                 if profile:
                     print(engine.format_timing(), file=sys.stderr)
                 engine.shutdown()
