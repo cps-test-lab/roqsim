@@ -29,6 +29,12 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   `roqsim_manipulation`, never the reverse. Real robots only — no workpieces.
 - `roqsim_mobile_manipulation/` — robots that are a base **and** an arm (frankie, tiago_pro). The one
   package that may depend on both `roqsim_mobile` and `roqsim_manipulation`.
+- `roqsim_aerial/` — aerial vehicles (`crazyflie_2`) + `quadrotor_controller`, cascaded position and
+  attitude control over collective thrust and three body moments. Depends on `roqsim` only. Two
+  things differ from every ground family and both fail silently: a world with no `density`/
+  `viscosity` is a **vacuum**, so the drone hovers but nothing damps it; and a quadrotor MJCF has no
+  stabiliser, so an uncommanded drone is not a robot standing still but a falling brick — its
+  manifest pulls the controller in rather than offering it.
 - `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
   behaviour-tree navigation with optional ORCA, character blueprints (`models/people/`) and CARLA
   locomotion clips (`models/anims/`). Depends on `roqsim` only — it is a *dynamic obstacle*, not a robot

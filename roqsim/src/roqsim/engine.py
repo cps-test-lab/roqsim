@@ -191,6 +191,13 @@ class Engine:
             ("ls_iterations", "ls_iterations"),
             ("noslip_iterations", "noslip_iterations"),
             ("impratio", "impratio"),
+            # The medium. MuJoCo defaults both to 0 -- a vacuum -- which is right for a ground robot
+            # and wrong for anything that flies: a quadrotor still hovers there, but nothing damps
+            # it, so a lateral step rings forever and reads as bad gains rather than as missing air.
+            # Before these existed an aerial model had no honest option but to pin <option> itself,
+            # and thereby reconfigure every world it was spawned into.
+            ("density", "density"),
+            ("viscosity", "viscosity"),
         ):
             if (value := self.config.sim.get(key)) is not None:
                 setattr(
@@ -200,6 +207,10 @@ class Engine:
                 )
         if (cone := self.config.sim.get("cone")) is not None:
             spec.option.cone = _CONES[cone]
+        if (wind := self.config.sim.get("wind")) is not None:
+            # Only meaningful with a medium: MuJoCo applies wind as relative velocity into the drag
+            # terms, so with density and viscosity at 0 it does nothing at all.
+            spec.option.wind = [float(v) for v in wind]
         if (gravity := self.config.sim.get("gravity")) is not None:
             # A fixed-base contact experiment often runs at zero g so the measured wrench carries only
             # contact, not the tool's static weight. That is a property of the experiment, so it is a

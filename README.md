@@ -97,7 +97,7 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 | BSD-3-Clause | Spot and xArm 7 (MuJoCo Menagerie), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky |
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
-| MIT | Frankie |
+| MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie) |
 | CC0-1.0 | surface textures (ambientCG, Poly Haven) |
 | CC-BY-4.0 | the warehouse scene (Gazebo Fuel), pedestrian characters and locomotion clips (CARLA, Fuel) |
 

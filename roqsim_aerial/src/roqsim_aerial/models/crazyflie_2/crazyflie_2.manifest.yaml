@@ -1,0 +1,12 @@
+# Default controller shipped with the Crazyflie 2 description.
+#
+# `spawn_robot: {model: crazyflie_2}` pulls this in automatically, so a world does not re-declare
+# the drone's intrinsic control. To override a default, declare the same plugin for the same robot
+# in the world; to opt out entirely, set `spawn_robot` config `default_plugins: false`.
+#
+# Unlike a ground robot's manifest this one is not optional in practice: the MJCF exposes collective
+# thrust and three body moments with no stabiliser, so a Crazyflie spawned without a controller does
+# not stand still -- it falls. The IMU (gyro, accelerometer, framequat) is in the MJCF itself, being
+# part of the airframe rather than a mountable sensor.
+components:
+  - quadrotor_controller: {}   # gains and limits keep the plugin defaults; see its docstring
