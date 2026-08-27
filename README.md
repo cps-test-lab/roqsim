@@ -94,7 +94,7 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 
 | license | assets |
 | --- | --- |
-| BSD-3-Clause | Spot (MuJoCo Menagerie), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky |
+| BSD-3-Clause | Spot and xArm 7 (MuJoCo Menagerie), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky |
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
 | MIT | Frankie |

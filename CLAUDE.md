@@ -25,8 +25,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,
-  OpenManipulator-X, Robotiq 2F-85, Schunk PG+70) + demo worlds. Depends on `roqsim_manipulation`,
-  never the reverse. Real robots only — no workpieces.
+  OpenManipulator-X, xArm 7, Robotiq 2F-85, Schunk PG+70) + demo worlds. Depends on
+  `roqsim_manipulation`, never the reverse. Real robots only — no workpieces.
 - `roqsim_mobile_manipulation/` — robots that are a base **and** an arm (frankie, tiago_pro). The one
   package that may depend on both `roqsim_mobile` and `roqsim_manipulation`.
 - `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
