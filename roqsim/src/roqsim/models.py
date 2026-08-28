@@ -234,16 +234,27 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
     2N provider searches to one. Errors are not cached (lru_cache does not memoize raises).
     """
     # 1) filesystem path: absolute, or relative to base_dir, or a path-like that exists from CWD.
+    #
+    # `is_file()`, not `exists()`, and the distinction is load-bearing. A bare DIRECTORY beside the
+    # world that happens to share a packaged model's short name would otherwise shadow it, and the
+    # failure is silent in the worst way: resolution "succeeds" with a path that is not a model, so
+    # the `<model>.manifest.yaml` lookup beside it finds nothing and the robot spawns with none of
+    # its intrinsic components -- no drive, no lidar -- while the world loads and runs. Observed
+    # with a scratch directory named `rosbot` next to a test world.
     p = Path(model)
     if p.is_absolute():
-        if p.exists():
+        if p.is_file():
             return _asset_for_file(p)
-        raise ModelError(f"model path {model!r} does not exist")
+        raise ModelError(
+            f"model path {model!r} does not exist"
+            if not p.exists()
+            else f"model path {model!r} is a directory, not a model file"
+        )
     if base_dir is not None:
         rel = Path(base_dir) / model
-        if rel.exists():
+        if rel.is_file():
             return _asset_for_file(rel)
-    if ("/" in model or model.endswith(".xml")) and p.exists():
+    if ("/" in model or model.endswith(".xml")) and p.is_file():
         return _asset_for_file(p)
 
     # 2) package-qualified ref "<package>:<model>": a registered provider by name, else a module path.

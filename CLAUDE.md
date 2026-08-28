@@ -21,7 +21,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   OpenCV-generated; optional `markers` extra). Models are one folder per device
   (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
-  wheeled base models, demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
+  wheeled base models — turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, rosbot — and
+  demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,
