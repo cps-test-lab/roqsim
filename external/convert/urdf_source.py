@@ -141,8 +141,17 @@ def link_visuals(
 
     ``materials`` maps a mesh stem to an MJCF material name; a link's own ``<material name=...>`` is
     used when the map has nothing for it, and ``default_material`` when neither does.
+
+    An **exactly** repeated visual -- same geometry, same pose, same material -- is emitted once. A
+    vendor tree can carry one: the Warthog's ``diff_link`` lists ``susp-link.stl`` twice at an
+    identical origin, and that mesh already spans both sides (y -0.400..0.400), so the second is a
+    no-op that only makes the two coincident geoms z-fight. The test is byte equality of the emitted
+    geom, which is why this cannot repeat the Raspberry Pi Mouse's dropped leg cylinders: a geom that
+    differs in any attribute is a different geom and is still emitted. If upstream ever gives the
+    duplicate the mirrored origin it was presumably meant to have, it stops matching and comes back.
     """
     out = ""
+    emitted: set[str] = set()
     for visual in link.findall("visual"):
         xyz, quat = pose(visual)
         x, y, z = (float(v) for v in xyz.split())
@@ -153,6 +162,7 @@ def link_visuals(
         box = geometry.find("box")
         sphere = geometry.find("sphere")
 
+        geom = ""
         if mesh is not None:
             stem = Path(mesh.get("filename")).stem
             named = visual.find("material")
@@ -160,17 +170,20 @@ def link_visuals(
                 named.get("name") if named is not None else None
             ) or default_material
             attr = f' material="{material}"' if material else ""
-            out += f'{indent}<geom class="visual" mesh="{stem}"{attr} {placed}/>\n'
+            geom = f'{indent}<geom class="visual" mesh="{stem}"{attr} {placed}/>\n'
         elif cylinder is not None:
             half = float(cylinder.get("length")) / 2
-            out += (f'{indent}<geom class="visual" type="cylinder"'
+            geom = (f'{indent}<geom class="visual" type="cylinder"'
                     f' size="{float(cylinder.get("radius")):g} {half:g}" {placed}'
                     f' rgba="{default_rgba}"/>\n')
         elif box is not None:
             half = " ".join(f"{float(v) / 2:g}" for v in box.get("size").replace(",", " ").split())
-            out += (f'{indent}<geom class="visual" type="box" size="{half}" {placed}'
+            geom = (f'{indent}<geom class="visual" type="box" size="{half}" {placed}'
                     f' rgba="{default_rgba}"/>\n')
         elif sphere is not None:
-            out += (f'{indent}<geom class="visual" type="sphere"'
+            geom = (f'{indent}<geom class="visual" type="sphere"'
                     f' size="{float(sphere.get("radius")):g}" {placed} rgba="{default_rgba}"/>\n')
+        if geom and geom not in emitted:
+            emitted.add(geom)
+            out += geom
     return out

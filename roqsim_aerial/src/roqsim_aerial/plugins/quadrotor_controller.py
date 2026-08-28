@@ -283,7 +283,7 @@ class QuadrotorControllerPlugin(Plugin):
         x_head = np.array([np.cos(self._yaw), np.sin(self._yaw), 0.0])
         y_des = np.cross(z_des, x_head)
         norm = np.linalg.norm(y_des)
-        if norm < 1e-6:                      # heading parallel to thrust: keep the current y axis
+        if norm < 1e-6:  # heading parallel to thrust: keep the current y axis
             y_des, norm = rot[:, 1], 1.0
         y_des = y_des / norm
         rot_des = np.column_stack((np.cross(y_des, z_des), y_des, z_des))
