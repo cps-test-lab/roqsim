@@ -39,7 +39,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
-from urdf_source import expand_xacro, inertial, link_visuals, pose  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_primitives, pose  # noqa: E402
 
 OOMWOO_URL = "https://github.com/makerspet/oomwoo-one.git"
 #: The jazzy branch, which is this package's default and only release branch.
@@ -67,33 +67,6 @@ FIXED_PARTS = ["caster_link", "base_scan", "range_left_link", "range_right_link"
                "tof_front_link", "camera_left_link", "camera_right_link", "imu_link"]
 WHEELS = ["left", "right"]
 
-
-def _geoms(link: ET.Element, tag: str, cls: str, indent: str) -> str:
-    """A link's ``<visual>`` or ``<collision>`` primitives as MJCF geoms.
-
-    ``link_visuals`` covers the visual side for every other generator; the collision side is written
-    here because only this model has collision *primitives* worth reproducing one-for-one -- the
-    twelve bumper plates, which are what a bump sensor would read. Everything else in the corpus
-    ships a collision mesh or a single cylinder.
-    """
-    out = ""
-    for index, element in enumerate(link.findall(tag)):
-        xyz, quat = pose(element)
-        geometry = element.find("geometry")[0]
-        named = element.find("material")
-        material = MATERIALS.get(named.get("name")) if named is not None else None
-        attr = f' material="{material}"' if material and tag == "visual" else ""
-        name = f' name="{link.get("name")}_{cls}{index}"' if tag == "collision" else ""
-        if geometry.tag == "cylinder":
-            size = f'{float(geometry.get("radius")):g} {float(geometry.get("length")) / 2:g}'
-        elif geometry.tag == "sphere":
-            size = f'{float(geometry.get("radius")):g}'
-        else:
-            size = " ".join(f"{float(v) / 2:g}"
-                            for v in geometry.get("size").replace(",", " ").split())
-        out += (f'{indent}<geom class="{cls}" type="{geometry.tag}" size="{size}"'
-                f'{name}{attr} pos="{xyz}"{quat}/>\n')
-    return out
 
 
 def build(urdf: ET.Element) -> str:
@@ -125,8 +98,8 @@ def build(urdf: ET.Element) -> str:
         body_pos, body_quat = frame_of(name)
         parts += PART_BODY.format(
             name=name, body_pos=body_pos, body_quat=body_quat,
-            geoms=_geoms(links[name], "visual", "visual", "          ")
-            + _geoms(links[name], "collision", "collision", "          "),
+            geoms=link_primitives(links[name], "visual", "visual", "          ", MATERIALS)
+            + link_primitives(links[name], "collision", "collision", "          "),
             **inertial(links[name]),
         )
 
@@ -140,8 +113,7 @@ def build(urdf: ET.Element) -> str:
             side=side, body_pos=body_pos, body_quat=body_quat, quat=quat,
             radius=f'{float(cylinder.get("radius")):g}',
             half_width=f'{float(cylinder.get("length")) / 2:g}',
-            geoms=link_visuals(link, "          ", materials=None,
-                               default_material="oomwoo_red"),
+            geoms=link_primitives(link, "visual", "visual", "          ", MATERIALS),
             **inertial(link),
         )
 
@@ -151,8 +123,8 @@ def build(urdf: ET.Element) -> str:
     wheel_radius = float(links["wheel_left_link"].find("collision/geometry/cylinder").get("radius"))
     return TEMPLATE.format(
         commit=OOMWOO_COMMIT, materials=materials,
-        base_geoms=_geoms(base, "visual", "visual", "        ")
-        + _geoms(base, "collision", "collision", "        "),
+        base_geoms=link_primitives(base, "visual", "visual", "        ", MATERIALS)
+        + link_primitives(base, "collision", "collision", "        "),
         parts=parts, wheels=wheels,
         lidar_z=f"{offset_of('base_scan')[2]:g}",
         imu_z=f"{offset_of('imu_link')[2]:g}",

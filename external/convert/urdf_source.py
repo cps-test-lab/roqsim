@@ -187,3 +187,54 @@ def link_visuals(
             emitted.add(geom)
             out += geom
     return out
+
+def link_primitives(
+    link: ET.Element,
+    tag: str,
+    cls: str,
+    indent: str,
+    materials: dict[str, str] | None = None,
+    name_prefix: str | None = None,
+    mesh_stems: dict[str, str] | None = None,
+) -> str:
+    """A link's ``<visual>`` or ``<collision>`` entries as MJCF geoms, primitives included.
+
+    :func:`link_visuals` covers the visual side for the mesh-based ports and emits exactly the
+    attribute order their committed models already carry, so it is left alone. This is for the
+    descriptions built out of *primitives* -- the two makerspet vendors, whose collision geometry is
+    boxes, cylinders and spheres worth reproducing one-for-one rather than hulling. Those need the
+    collision side too, and named, so a contact-based sensor has something to reference.
+
+    ``mesh_stems`` maps a mesh basename stem to the MJCF mesh asset name; a mesh visual is skipped
+    when the map has nothing for it, which is how a description that references a mesh it does not
+    install is handled without silently emitting a dangling asset.
+    """
+    out = ""
+    for index, element in enumerate(link.findall(tag)):
+        xyz, quat = pose(element)
+        geometry = element.find("geometry")[0]
+        named = element.find("material")
+        material = (materials or {}).get(named.get("name")) if named is not None else None
+        attr = f' material="{material}"' if material and tag == "visual" else ""
+        # Named from the TAG, not the class: a geom's name must not change because it was given a
+        # different contact class. Naming it from `cls` renamed the caster the moment it earned a
+        # caster_collision class, and a test looking up the old name got mj_name2id's -1 back and
+        # silently asserted against whichever geom sits last in the model.
+        name = f' name="{name_prefix or link.get("name")}_{tag}{index}"' if tag == "collision" else ""
+        if geometry.tag == "mesh":
+            stem = (mesh_stems or {}).get(Path(geometry.get("filename")).stem)
+            if stem is None:
+                continue
+            out += (f'{indent}<geom class="{cls}" type="mesh" mesh="{stem}"'
+                    f'{name}{attr} pos="{xyz}"{quat}/>\n')
+            continue
+        if geometry.tag == "cylinder":
+            size = f'{float(geometry.get("radius")):g} {float(geometry.get("length")) / 2:g}'
+        elif geometry.tag == "sphere":
+            size = f'{float(geometry.get("radius")):g}'
+        else:
+            size = " ".join(f"{float(v) / 2:g}"
+                            for v in geometry.get("size").replace(",", " ").split())
+        out += (f'{indent}<geom class="{cls}" type="{geometry.tag}" size="{size}"'
+                f'{name}{attr} pos="{xyz}"{quat}/>\n')
+    return out

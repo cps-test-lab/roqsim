@@ -21,6 +21,8 @@ import mujoco
 import numpy as np
 import pytest
 
+from mobile_scene_utils import named
+
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
@@ -65,7 +67,7 @@ def _yaw_ratio(engine, commanded):
     yaw sign for a correct ridgeback, which cost that port an iteration.
     """
     model, data = engine.ctx.model, engine.ctx.data
-    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
+    bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
     handle = engine.ctx.blackboard.get("robot:w")
     for _ in range(500):
         engine.step()
@@ -122,7 +124,7 @@ def test_b1_drives_straight():
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
+        bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
         handle = engine.ctx.blackboard.get("robot:w")
         for _ in range(500):
             engine.step()
@@ -208,8 +210,8 @@ def test_wheels_are_upright_and_the_scanner_clears_the_fenders():
                 axis = data.geom_xmat[gid].reshape(3, 3)[:, 2]
                 assert abs(abs(axis[1]) - 1.0) < 1e-6, (
                     f"{end}_{side} tyre axis is {np.round(axis, 4)}, not along y")
-        base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "w_lidar")
+        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
+        sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "w_lidar")
         height = float(data.site_xpos[sid][2] - data.xpos[base][2])
         assert height == pytest.approx(LIDAR_HEIGHT, abs=1e-3)
         assert height > FENDER_TOP + 0.05, (

@@ -119,14 +119,14 @@
         <body name="wheel_left_link" pos="0 0.1175 0.021500000000000002" quat="0.7071068 -0.7071068 0 0">
           <inertial pos="0 0 0" mass="0.1" diaginertia="3.010000000000001e-05 3.010000000000001e-05 5.780000000000001e-05"/>
           <joint name="wheel_left_joint" class="wheel"/>
-          <geom class="visual" type="cylinder" size="0.034 0.006" pos="0 0 0" rgba="0.15 0.15 0.15 1"/>
+          <geom class="visual" type="cylinder" size="0.034 0.006" material="oomwoo_red" pos="0 0 0"/>
           <geom class="wheel_collision" name="wheel_left_tyre"
                 size="0.034 0.006"/>
         </body>
         <body name="wheel_right_link" pos="0 -0.1175 0.021500000000000002" quat="0.7071068 -0.7071068 0 0">
           <inertial pos="0 0 0" mass="0.1" diaginertia="3.010000000000001e-05 3.010000000000001e-05 5.780000000000001e-05"/>
           <joint name="wheel_right_joint" class="wheel"/>
-          <geom class="visual" type="cylinder" size="0.034 0.006" pos="0 0 0" rgba="0.15 0.15 0.15 1"/>
+          <geom class="visual" type="cylinder" size="0.034 0.006" material="oomwoo_red" pos="0 0 0"/>
           <geom class="wheel_collision" name="wheel_right_tyre"
                 size="0.034 0.006"/>
         </body>

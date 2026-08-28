@@ -22,6 +22,8 @@ import mujoco
 import numpy as np
 import pytest
 
+from mobile_scene_utils import named
+
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
@@ -106,9 +108,12 @@ def test_it_rests_on_two_wheels_and_the_caster():
             for i in range(data.ncon)
             for g in (data.contact[i].geom1, data.contact[i].geom2)
         }
+        for geom in ("o_wheel_left_tyre", "o_wheel_right_tyre", "o_base_link_collision0"):
+            named(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
         assert "o_wheel_left_tyre" in touching, touching
         assert "o_wheel_right_tyre" in touching, touching
         for i in range(BUMPER_FACETS):
+            named(model, mujoco.mjtObj.mjOBJ_GEOM, f"o_base_link_collision{i + 1}")
             assert f"o_base_link_collision{i + 1}" not in touching, (
                 "a bumper plate is dragging on the floor -- the wheels are not carrying the robot"
             )
@@ -122,7 +127,7 @@ def test_wheels_spin_about_the_robot_y_axis():
     try:
         model, data = engine.ctx.model, engine.ctx.data
         for side in ("left", "right"):
-            gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"o_wheel_{side}_tyre")
+            gid = named(model, mujoco.mjtObj.mjOBJ_GEOM, f"o_wheel_{side}_tyre")
             axis = data.geom_xmat[gid].reshape(3, 3)[:, 2]
             assert abs(abs(axis[1]) - 1.0) < 1e-6, (
                 f"{side} tyre axis is {np.round(axis, 4)}, not along y")
@@ -134,7 +139,7 @@ def test_b1_drives_straight():
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
+        bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
         handle = engine.ctx.blackboard.get("robot:o")
         for _ in range(500):
             engine.step()
@@ -158,7 +163,7 @@ def test_b2_rotates_at_the_commanded_rate(commanded):
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
+        bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
         handle = engine.ctx.blackboard.get("robot:o")
         for _ in range(500):
             engine.step()
@@ -182,7 +187,7 @@ def test_the_caster_barely_carries_load():
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
+        bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
         for _ in range(1000):
             engine.step()
         mujoco.mj_subtreeVel(model, data)
@@ -204,12 +209,12 @@ def test_the_bumper_ring_is_present_and_proud_of_the_body():
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
-        body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "o_base_link_collision0")
+        body = named(model, mujoco.mjtObj.mjOBJ_GEOM, "o_base_link_collision0")
         body_radius = float(model.geom_size[body][0])
-        plates = [mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, f"o_base_link_collision{i + 1}")
+        plates = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"o_base_link_collision{i + 1}")
                   for i in range(BUMPER_FACETS)]
         assert all(g >= 0 for g in plates), "the bumper ring is incomplete"
-        base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
+        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
         for gid in plates:
             offset = data.geom_xpos[gid][:2] - data.xpos[base][:2]
             reach = float(np.linalg.norm(offset)) + float(model.geom_size[gid][1])
