@@ -1,0 +1,22 @@
+# Default controller shipped with the Interbotix/Trossen WidowX 250 6DOF description.
+#
+# `spawn_arm: {model: wx250s}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`.
+components:
+  # The gripper needs naming rather than inferring. arm_controller detects a gripper as the arm's
+  # non-joint (tendon) actuator, and this one is a POSITION actuator on the `left_finger` slide
+  # joint, with `right_finger` mirrored by an <equality polycoef="0 -1 0 0 0">. Left to the prefix
+  # scan it would be claimed as a seventh arm joint and driven by trajectories. Naming the six arm
+  # joints and the gripper actuator explicitly is what separates them.
+  - arm_controller:
+      joints: [waist, shoulder, elbow, forearm_roll, wrist_angle, wrist_rotate]
+      gripper_actuator: gripper
+      gripper_joint: left_finger    # the finger whose travel is reported as gripper position
+      gripper_open: 0.037           # slide limit, metres: fingers apart (upstream's ctrlrange hi)
+      gripper_close: 0.015          # slide limit, metres: fingers together (ctrlrange lo)
+      gripper_ctrl: 0.037           # start open. NOTE these three are per-ARM: the
+                                    # WidowX 250 6DOF's finger slide is [0.015, 0.037] m, and the
+                                    # two X-Series arms do NOT share it -- using the
+                                    # other's values commands outside ctrlrange and the
+                                    # gripper simply does not move.

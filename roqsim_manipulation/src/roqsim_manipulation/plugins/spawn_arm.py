@@ -135,6 +135,29 @@ _DEFAULT_HOME = {
 }
 
 
+def _home_from_keyframe(model: str) -> list[float]:
+    """The model's own ``home`` keyframe qpos, or ``[]``.
+
+    Read from the MJCF rather than from the composed world, because the spawn path strips keyframes:
+    they cannot merge into a scene that already has its own. Failure is not an error -- most models
+    ship no keyframe and simply have no default home.
+    """
+    if not model:
+        return []
+    try:
+        import mujoco
+
+        from roqsim.models import resolve_model
+
+        spec = mujoco.MjSpec.from_file(str(resolve_model(model).path))
+        for key in spec.keys:
+            if key.name == "home" and len(key.qpos):
+                return [float(q) for q in key.qpos]
+    except Exception:  # noqa: BLE001 -- a missing/odd model is the spawn's error to raise, not ours
+        return []
+    return []
+
+
 class SpawnArmPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -198,6 +221,15 @@ class SpawnArmPlugin(Plugin):
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
         self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         self.home = list(self.config.get("home", _DEFAULT_HOME.get(stem, [])))
+        if not self.home:
+            # Fall back to the model's OWN `home` keyframe. `_DEFAULT_HOME` above is a name list in a
+            # plugin -- the pattern this substrate otherwise refuses ("a capability is declared by
+            # the plugin, never listed in the core") -- and it exists only because the arms that
+            # predate this shipped no keyframe. One that does should not need core edited to spawn
+            # correctly, and for some it is not cosmetic: the WidowX 250's finger slide is
+            # [0.015, 0.037] m, so at qpos0 = 0 its jaws spawn interpenetrating and the gripper
+            # actuator fights four contacts instead of moving.
+            self.home = _home_from_keyframe(self.config.get("model", ""))
         # Linear axis carrying the arm base (gantry / ceiling track / seventh axis).
         rail = self.config.get("rail") or {}
         self.rail = rail or None

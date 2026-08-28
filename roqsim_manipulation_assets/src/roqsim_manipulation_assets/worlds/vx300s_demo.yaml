@@ -1,0 +1,31 @@
+# Interbotix/Trossen ViperX 300 6DOF — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets/src/roqsim_manipulation_assets/worlds/vx300s_demo.yaml
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory + GripperCommand), add the ros2_bridge
+# plugin from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime
+
+  # NOT optional for a GRASPING world, and the model deliberately does not carry them: they are
+  # world-scoped, so an arm that pinned them would reconfigure the contact solver for every other
+  # robot in the scene. Upstream's MJCF pins cone/impratio precisely because this arm is meant to
+  # grasp; noslip_iterations is roqsim's own measured requirement (a 0.5 kg payload crept out of the
+  # jaws at 0.119 m/s without it, 0.0009 m/s with it — see roqsim/docs/architecture.rst).
+  cone: elliptic
+  impratio: 10
+  noslip_iterations: 10
+
+components:
+  # arm_controller (with the gripper wiring) comes from the vx300s model manifest.
+  - spawn_arm:
+      model: vx300s
+      prefix: "vx300s_"
+      pos: [0.0, 0.0, 0.0]
+    name: vx300s
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm).
+    components:
+      - arm_controller:
+          test_target: [0.5, -0.6, 0.8, 0.0, -0.2, 0.0]
