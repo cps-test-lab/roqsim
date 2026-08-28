@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Build roqsim's Maker's Pet MJCF models from the `makerspet/makerspet_*` descriptions.
 
-Parameterised by robot, because the vendor ships one design at four sizes (Loki 200 mm, Snoopy
-300 mm, Fido 250 mm, Mini 170 mm) and they differ in dimensions rather than in kind. Only the ones
-in :data:`ROBOTS` are built; adding a sibling is a line there plus its pinned commit.
+Parameterised by robot, because the vendor ships one design at four sizes (Mini 170 mm, Loki 200 mm,
+Fido 250 mm, Snoopy 300 mm) and they differ in dimensions rather than in kind. Only the ones in
+:data:`ROBOTS` are built; adding a sibling is a line there plus its pinned commit -- which is how
+this generator was repointed from Loki to Mini without touching anything below it.
 
 Unlike ``build_oomwoo_one_mjcf.py``, which walks a flat list of links hanging off ``base_link``,
-these have a genuinely **nested** tree -- ``base_link -> base_upper_link -> head_link ->
-tablet_link -> {camera, imu}`` -- so the body emitter here is recursive. That is the only structural
+these have a **nested** tree -- the Mini hangs its lidar motor off the scanner puck, and the Loki
+stacks a head and tablet above two decks -- so the body emitter here is recursive. That is the only structural
 difference; both vendors share the same self-contained, primitive-heavy, ``$(find)``-free idiom, and
 both use :func:`urdf_source.link_primitives`.
 
@@ -40,11 +41,11 @@ from urdf_source import (  # noqa: E402
 
 #: model short name -> (repo, pinned commit on the jazzy branch, human name, body diameter mm)
 ROBOTS = {
-    "makerspet_loki": (
-        "https://github.com/makerspet/makerspet_loki.git",
-        "e778ecde98b4f0dc2dcb32d25f43cb4cb4af1158",
-        "Maker's Pet Loki",
-        200,
+    "makerspet_mini": (
+        "https://github.com/makerspet/makerspet_mini.git",
+        "77d196b6749f577cc181c6263eaecef6ef808a6c",
+        "Maker's Pet Mini",
+        170,
     ),
 }
 
@@ -134,7 +135,7 @@ def build(urdf: ET.Element, model: str, commit: str, human: str, meshes: dict[st
 
 
 #: From each robot's own config/navigation.yaml: (max_vel_x, max_vel_theta).
-TOP_SPEED = {"makerspet_loki": (0.26, 1.0)}
+TOP_SPEED = {"makerspet_mini": (0.1, 0.5)}
 
 TEMPLATE = """<mujoco model="{model}">
   <!--

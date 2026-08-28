@@ -42,7 +42,7 @@ from roqsim.engine import Engine  # noqa: E402
 #: drive plugin's own config, so this table cannot drift from a manifest and does not care that
 #: turtlebot4's wheel geom is unnamed while everyone else's is named three different ways.
 WHEELED = (
-    "clearpath_jackal", "husky_a200", "lgdxrobot2", "makerspet_loki", "mp_400", "mpo_500",
+    "clearpath_jackal", "husky_a200", "lgdxrobot2", "makerspet_mini", "mp_400", "mpo_500",
     "mpo_700", "oomwoo_one", "panther", "raspimouse", "ridgeback", "rosbot",
     "turtlebot3_waffle", "turtlebot4",
 )
