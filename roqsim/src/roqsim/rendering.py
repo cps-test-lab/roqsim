@@ -378,8 +378,8 @@ def check_gl_backend() -> None:
         raise GLBackendError(
             "This process was given an NVIDIA GPU but no DRI render node, so it fell back to "
             "software rendering (osmesa) and would produce correct frames many times slower.\n"
-            "  /dev/nvidiactl exists, /dev/dri/renderD128 does not -- the signature of a "
-            "container started without the 'graphics' driver capability.\n"
+            "  /dev/nvidiactl exists but /dev/dri holds no renderD* node -- the signature of "
+            "a container started without the 'graphics' driver capability.\n"
             "  - Set NVIDIA_DRIVER_CAPABILITIES to include 'graphics' (or use 'all'), or\n"
             "  - set MUJOCO_GL=osmesa explicitly if software rendering is what you want here."
         )
