@@ -32,9 +32,7 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,
   OpenManipulator-X, xArm 7, Interbotix ViperX 300 / WidowX 250, Doosan M1013, Robotiq 2F-85,
-  Schunk PG+70) + the Interbotix WidowX XSeries **turret** (`wxxms`, a 2-DOF pan/tilt sensor mount —
-  `arm_controller` drives it unchanged, since an arm to it is a chain of position-controlled joints)
-  + demo worlds. Depends on
+  Schunk PG+70) + demo worlds. Depends on
   `roqsim_manipulation`, never the reverse. Real robots only — no workpieces.
 - `roqsim_mobile_manipulation/` — robots that are a base **and** an arm (frankie, tiago_pro). The one
   package that may depend on both `roqsim_mobile` and `roqsim_manipulation`.
