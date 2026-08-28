@@ -385,3 +385,101 @@ def test_multi_joint_body_is_refused(tmp_path):
     exporter = UrdfExporter(spec.compile(), prefix="r_", name="two", root_link="base_link")
     with pytest.raises(ValueError, match="one joint per link"):
         exporter.export()
+
+
+# -- --tip-site: the link a site becomes ---------------------------------------------------------
+
+
+def _tip_export(tmp_path, robot, **kwargs):
+    return _export(
+        tmp_path,
+        robot,
+        collapse=("base_mount",),
+        gripper_joint="robotiq_85_left_knuckle_joint",
+        **kwargs,
+    )
+
+
+def test_no_tip_site_emits_no_tip_link(tmp_path, robot):
+    """Off by default: a chain that ends at the flange is still the right answer for a bare arm."""
+    _out, _exporter, tree = _tip_export(tmp_path, robot)
+    assert tree.getroot().find("link[@name='tcp']") is None
+
+
+def test_tip_site_is_parented_to_the_link_its_body_collapsed_into(tmp_path, robot):
+    """The case that makes this worth doing at all.
+
+    The 2F-85's ``pinch`` sits on ``robotiq_85_base_link``, a descendant of the ``base_mount`` that
+    ``--collapse`` folds away -- so its own body has no URDF link, and a naive parent lookup names a
+    link the file does not contain. srdfdom then drops the chain and move_group loads a robot it
+    cannot plan for, which is the failure that hangs rather than erroring.
+    """
+    _out, _exporter, tree = _tip_export(tmp_path, robot, tip_site="pinch")
+    root = tree.getroot()
+    links = {link.get("name") for link in root.findall("link")}
+    assert "tcp" in links
+    assert "robotiq_85_base_link" not in links, "fixture is wrong: this body should be collapsed"
+
+    joint = root.find("joint[@name='tcp_fixed']")
+    assert joint.get("type") == "fixed"
+    assert joint.find("parent").get("link") == "base_mount"
+    assert joint.find("child").get("link") == "tcp"
+
+
+def test_tip_link_is_a_frame_and_carries_no_mass(tmp_path, robot):
+    """Giving it an inertial would change the dynamics of a robot this file only describes."""
+    _out, _exporter, tree = _tip_export(tmp_path, robot, tip_site="pinch")
+    tcp = tree.getroot().find("link[@name='tcp']")
+    assert list(tcp) == [], f"the tip link should be empty, got {[c.tag for c in tcp]}"
+
+
+def test_tip_link_lands_on_the_site_it_names(tmp_path, robot):
+    """THE test for this flag: the emitted origin really is where the site is.
+
+    Checked against MuJoCo's own FORWARD KINEMATICS rather than against a restatement of the
+    exporter's arithmetic. That makes it an independent measurement -- ``mj_forward`` walks the tree
+    itself, so a wrong ancestor, a dropped joint anchor or a mis-ordered quaternion product shows up
+    here as millimetres.
+
+    Note the URDF cannot be loaded back for this the way ``round_trip_error`` does it: MuJoCo's URDF
+    parser MERGES fixed-joint links into their parent, so ``tool0``, ``base_mount`` and ``tcp`` are
+    all absent from the reloaded model. That is also why a synthetic frame link cannot break
+    ``--check``.
+    """
+    _out, exporter, tree = _tip_export(tmp_path, robot, tip_site="pinch")
+
+    md = mujoco.MjData(robot)
+    mujoco.mj_forward(robot, md)
+    sid = mujoco.mj_name2id(robot, mujoco.mjtObj.mjOBJ_SITE, "ur10e_pinch")
+    owner = mujoco.mj_name2id(robot, mujoco.mjtObj.mjOBJ_BODY, "ur10e_base_mount")
+    assert sid >= 0 and owner >= 0, "fixture is wrong: the collapsed gripper's site should be here"
+
+    # The link's frame is its body's frame less whatever anchor shift the link absorbed.
+    owner_rot = md.xmat[owner].reshape(3, 3)
+    want_pos = owner_rot.T @ (md.site_xpos[sid] - md.xpos[owner]) - exporter._shift_of[owner]
+    want_rot = owner_rot.T @ md.site_xmat[sid].reshape(3, 3)
+
+    origin = tree.getroot().find("joint[@name='tcp_fixed']/origin")
+    got_pos = np.array([float(v) for v in origin.get("xyz").split()])
+    got_rot = _rpy_to_mat(*(float(v) for v in origin.get("rpy").split()))
+
+    assert np.allclose(got_pos, want_pos, atol=1e-9), f"tcp at {got_pos}, site is at {want_pos}"
+    assert np.allclose(got_rot, want_rot, atol=1e-7), "the tip link dropped the site's orientation"
+
+
+def test_tip_link_does_not_break_the_round_trip_check(tmp_path, robot):
+    """``--check`` runs against the written file, so the synthetic link is present when it does.
+
+    It has no MuJoCo counterpart and is skipped by the name match -- but the file must still COMPILE
+    in MuJoCo's URDF parser, which is the half a name-matching check cannot notice.
+    """
+    out, _exporter, _tree = _tip_export(tmp_path, robot, tip_site="pinch")
+    err, where = round_trip_error(out, robot, "ur10e_", samples=16)
+    assert err < 1e-6, f"URDF diverges from the MJCF by {err:.3e} m at {where!r}"
+
+
+def test_an_unknown_tip_site_names_the_sites_the_model_has(tmp_path, robot):
+    """A typo here is otherwise invisible: the link is simply absent and the SRDF names a ghost."""
+    with pytest.raises(ValueError, match="names no site") as err:
+        _tip_export(tmp_path, robot, tip_site="pnich")
+    assert "pinch" in str(err.value), "the error should list what was available"

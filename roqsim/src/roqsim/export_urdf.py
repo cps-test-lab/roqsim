@@ -130,6 +130,8 @@ class UrdfExporter:
         gripper_joint: str = "",
         strip: str | None = None,
         mesh_package: str = "",
+        tip_site: str = "",
+        tip_link: str = "tcp",
     ):
         self.m = model
         self.prefix = prefix
@@ -158,6 +160,10 @@ class UrdfExporter:
         self.gripper_joint = gripper_joint
         # (parent link, joint id, rotation, translation) for a gripper DOF rescued from a collapse.
         self._kept_gripper: tuple | None = None
+        # A MuJoCo SITE the arm chain should end at, and the name of the link emitted for it. Empty
+        # site -> no such link, and the chain ends at whatever body is last.
+        self.tip_site = tip_site
+        self.tip_link = tip_link
 
     # -- naming -------------------------------------------------------------------------------
     def _mesh_uri(self, path: Path) -> str:
@@ -467,8 +473,88 @@ class UrdfExporter:
             self._write_joint(robot, link_name, body, jid, shift, link_of)
 
         self._write_gripper_drive(robot)
+        self._write_tip_site(robot, link_of, shift_of)
 
         return ET.ElementTree(robot)
+
+    def _write_tip_site(self, robot: ET.Element, link_of: dict, shift_of: dict) -> None:
+        """Emit a frame link at ``--tip-site``, so the arm chain can end where the tool acts.
+
+        A gripper's grasp point is a SITE in the MJCF (the 2F-85's ``pinch``, 0.145 m out along the
+        approach axis), and a site is not a body -- so ``export()`` above, which walks bodies, has no
+        way to emit it and MoveIt cannot plan for it. Without this the chain ends at the tool flange
+        and a goal for the fingertips has to be written as "the flange, plus N mm down the tool axis".
+
+        That indirection is not merely inconvenient, it is wrong in a way that looks right: every
+        orientation tolerance is multiplied by the lever arm, so 0.15 rad of permitted tilt becomes
+        +-33 mm at the fingers. A cell measured 61 mm of lateral error against 12.2 mm of jaw
+        clearance -- MoveIt had satisfied the goal exactly, and the goal was about the wrong point.
+        With the chain ending here, a 3 mm position tolerance means 3 mm at the pads.
+
+        Emitted as a pure FRAME: no <visual>, no <collision>, no <inertial>. An inertial-less link is
+        legal in URDF and MoveIt treats it as a frame; giving it mass would change the dynamics of a
+        robot this file only describes. MuJoCo's own URDF parser accepts it because the joint is
+        FIXED -- its mjMINVAL floor applies to bodies that move.
+
+        The site's full pose is carried, orientation included, because that is what the model says:
+        the site's frame IS the tool's axis convention, and dropping it would silently redefine what
+        an orientation goal means.
+        """
+        if not self.tip_site:
+            return
+        sid = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_SITE, self.prefix + self.tip_site)
+        if sid < 0:  # unprefixed, for a model exported whole (see strip_prefix)
+            sid = mujoco.mj_name2id(self.m, mujoco.mjtObj.mjOBJ_SITE, self.tip_site)
+        if sid < 0:
+            sites = sorted(
+                filter(
+                    None, (_name(self.m, mujoco.mjtObj.mjOBJ_SITE, i) for i in range(self.m.nsite))
+                )
+            )
+            raise ValueError(
+                f"--tip-site {self.tip_site!r} names no site in this model. Sites present: "
+                f"{', '.join(sites) or '(none)'}"
+            )
+
+        body = int(self.m.site_bodyid[sid])
+        parent = link_of.get(body)
+        if parent is None:
+            raise ValueError(
+                f"--tip-site {self.tip_site!r} sits on a body outside the exported robot "
+                f"(--prefix {self.prefix!r} selects the robot)."
+            )
+
+        # Where the site's frame is, expressed in its LINK's frame. Two cases, one formula: a body
+        # that owns its link contributes only that link's own anchor shift, while a body `--collapse`
+        # folded away contributes the rigid transform up to the surviving link -- which is the case
+        # that matters here, since a 2F-85's `pinch` hangs off `robotiq_85_base_link`, a descendant of
+        # the `base_mount` a caller collapses.
+        owner = self._collapsed_into(body)
+        pos = np.asarray(self.m.site_pos[sid], dtype=float)
+        quat = np.asarray(self.m.site_quat[sid], dtype=float)
+        if owner is not None and owner != body:
+            rot, trans = self._rigid_to(body, owner, shift_of[owner])
+            pos = rot @ pos + trans
+            q = np.zeros(4)
+            mujoco.mju_mulQuat(q, self._mat_quat(rot), quat)
+            quat = q
+        else:
+            pos = pos - shift_of[body]
+
+        # The REFERENCE configuration (body_pos/body_quat, via _rigid_to), not FK: a URDF joint origin
+        # is the pose at zero, so this needs no MjData and cannot drift with the simulator's state.
+        ET.SubElement(robot, "link", name=self.tip_link)
+        joint = ET.SubElement(robot, "joint", name=f"{self.tip_link}_fixed", type="fixed")
+        ET.SubElement(joint, "parent", link=parent)
+        ET.SubElement(joint, "child", link=self.tip_link)
+        _origin(joint, pos, quat)
+        logger.info(
+            "tip site %r -> link %r, %.1f mm from %s",
+            self.tip_site,
+            self.tip_link,
+            float(np.linalg.norm(pos)) * 1000.0,
+            parent,
+        )
 
     def _write_gripper_drive(self, robot: ET.Element) -> None:
         """Re-attach the gripper's commanded DOF to the link its linkage was collapsed into.
@@ -809,6 +895,20 @@ def main(argv: list | None = None) -> int:
         "as a URDF joint so MoveIt's GripperCommand controller and SRDF gripper group have one",
     )
     parser.add_argument(
+        "--tip-site",
+        default="",
+        help="MuJoCo site the arm chain should END at -- a gripper's grasp point (e.g. `pinch` on a "
+        "Robotiq 2F-85). A site is not a body, so it has no link of its own; this emits one as a "
+        "fixed child of whatever link carries it, `--collapse` included. Without it a goal for the "
+        "fingertips must be written as an offset from the flange, and every orientation tolerance "
+        "is then multiplied by that lever arm",
+    )
+    parser.add_argument(
+        "--tip-link",
+        default="tcp",
+        help="name of the link --tip-site emits (ignored without it)",
+    )
+    parser.add_argument(
         "--mesh-package",
         default="",
         help="emit meshes as package://<PKG>/<mesh-dir>/<file> instead of file://<abs path>. Use "
@@ -862,6 +962,8 @@ def main(argv: list | None = None) -> int:
         gripper_joint=args.gripper_joint,
         strip=args.strip,
         mesh_package=args.mesh_package,
+        tip_site=args.tip_site,
+        tip_link=args.tip_link,
     )
     tree = exporter.export()
     ET.indent(tree, space="  ")
