@@ -85,6 +85,17 @@ def render_node() -> str | None:
     return None
 
 
+def gpu_visible() -> bool:
+    """Whether an NVIDIA GPU has been handed to *this process*.
+
+    ``/dev/nvidiactl`` is injected by the container runtime only into a container that
+    requested a device, so this is "we were given a GPU", not "the host has one" -- which is
+    the question worth asking, because being given a GPU and not rendering on it is the
+    mistake (:func:`roqsim.rendering.check_bound_device`).
+    """
+    return os.path.exists(_NVIDIA_CONTROL)
+
+
 def gpu_without_render_node() -> bool:
     """True when an NVIDIA GPU is visible but the DRI render node it needs is not.
 
@@ -98,8 +109,15 @@ def gpu_without_render_node() -> bool:
     It cannot fire anywhere a GPU was not deliberately handed over -- a CPU-only node and a
     laptop with a working render node both answer False -- which is what makes it safe to act
     on rather than merely warn about.
+
+    **It is an early warning, not the authoritative test**, and must not be mistaken for one:
+    device-node presence is a proxy for "hardware GL works", and it misses the case where a
+    render node IS present but belongs to something else -- an integrated chip beside the
+    NVIDIA card that was handed over. That process picks ``egl``, binds the wrong device, and
+    this function answers False throughout. What the bound context actually is can only be
+    read once one exists: :func:`roqsim.rendering.check_bound_device`.
     """
-    return os.path.exists(_NVIDIA_CONTROL) and render_node() is None
+    return gpu_visible() and render_node() is None
 
 
 def chosen_backend() -> str | None:
