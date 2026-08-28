@@ -1,0 +1,14 @@
+# Default controller for the Interbotix WidowX XSeries turret (wxxms).
+#
+# `spawn_arm: {model: wxxms}` pulls this in automatically, so a world does not re-declare the
+# turret's controller. To override, declare arm_controller for the same entity in the world (it
+# wins); to opt out, set `spawn_arm` config `default_plugins: false`.
+components:
+  # A 2-DOF pan/tilt driven by arm_controller, which needs no extension: an "arm" to it is a chain of
+  # position-controlled joints, and two is a chain. There is no gripper, so nothing to name.
+  #
+  # The joints are listed explicitly rather than left to the prefix scan. This model has only two
+  # actuators so the scan would get it right today, but naming them is what keeps a future variant
+  # honest -- pxxls_cam adds a camera link, and the six variants differ in servo model.
+  - arm_controller:
+      joints: [pan, tilt]

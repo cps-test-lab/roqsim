@@ -1,0 +1,22 @@
+# Interbotix WidowX XSeries turret — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets:wxxms_demo
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory), add the ros2_bridge plugin
+# from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime
+
+components:
+  # arm_controller comes from the wxxms model manifest.
+  - spawn_arm:
+      model: wxxms
+      prefix: "wxxms_"
+      pos: [0.0, 0.0, 0.0]
+    name: wxxms
+
+    # Override the manifest's arm_controller only to add test_target: aims the turret so the
+    # standalone scene shows motion. Inside the vendor's limits -- pan is +-pi, tilt +-pi/2.
+    components:
+      - arm_controller:
+          test_target: [1.2, -0.6]
