@@ -60,16 +60,20 @@ def _yaw(data, bid):
 def test_body_mesh_is_in_metres():
     """The URDF scales body.glb by 0.001 and the wheels by 1.0; the OBJs must already be metres."""
     meshes = resolve_model("roqsim_mobile:rosbot").path.parent / "meshes"
-    for stem, limit in (("body", BODY_EXTENT_M), ("wheel_l", 0.1)):
-        verts = np.array([
-            [float(v) for v in line.split()[1:4]]
-            for line in (meshes / f"{stem}.obj").read_text().splitlines()
-            if line.startswith("v ")
-        ])
-        extent = (verts.max(axis=0) - verts.min(axis=0)).max()
-        assert extent < limit, (
-            f"{stem}.obj spans {extent:.3f} m; it is almost certainly still in millimetres"
-        )
+    # Per-material files: reduce-mesh --split-materials writes <stem>__<material>.obj.
+    for prefix, limit in (("body__", BODY_EXTENT_M), ("wheel_", 0.1)):
+        found = sorted(meshes.glob(f"{prefix}*.obj"))
+        assert found, f"no {prefix}*.obj meshes -- the split did not run"
+        for obj in found:
+            verts = np.array([
+                [float(v) for v in line.split()[1:4]]
+                for line in obj.read_text().splitlines()
+                if line.startswith("v ")
+            ])
+            extent = (verts.max(axis=0) - verts.min(axis=0)).max()
+            assert extent < limit, (
+                f"{obj.name} spans {extent:.3f} m; it is almost certainly still in millimetres"
+            )
 
 
 def test_manifest_is_expanded():
@@ -177,5 +181,67 @@ def test_uncompensated_rotation_is_why_slip_factor_exists():
             f"uncompensated yaw ratio is {ratio:.3f}; if MuJoCo now reproduces skid-steer scrub "
             f"faithfully the slip_factor should be revisited rather than left in"
         )
+    finally:
+        engine.shutdown()
+
+
+def test_wheels_are_upright_and_coloured():
+    """Wheel axles on Y, and the vendor's materials present.
+
+    Two bugs this caught, both of which every other test passed through. The GLB source is Y-up and
+    `reduce-mesh` already exports Z-up, so re-applying the URDF's own rpy to the visual mesh rotated
+    the wheels a second time and laid them flat -- while the collision cylinders, which genuinely do
+    need that rotation because MuJoCo cylinders run along local z, stayed correct. Visual and
+    collision disagreeing is invisible to a drive test: the robot drove perfectly on invisible
+    upright cylinders while its wheels rendered as plates.
+
+    And the meshes were converted joined, so MuJoCo -- which loads one mesh per OBJ and reads no OBJ
+    material -- rendered a uniformly grey robot instead of a black one with red fenders.
+    """
+    engine = _engine()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        for _ in range(750):
+            engine.step()
+
+        visuals = 0
+        for g in range(model.ngeom):
+            body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[g]) or ""
+            if "wheel" not in body or model.geom_dataid[g] < 0:
+                continue
+            visuals += 1
+            mid = model.geom_dataid[g]
+            adr, num = model.mesh_vertadr[mid], model.mesh_vertnum[mid]
+            verts = model.mesh_vert[adr:adr + num].reshape(-1, 3)
+            rot = np.zeros(9)
+            mujoco.mju_quat2Mat(rot, model.geom_quat[g])
+            local = verts @ rot.reshape(3, 3).T + model.geom_pos[g]
+            world = local @ np.array(data.xmat[model.geom_bodyid[g]]).reshape(3, 3).T
+            extent = world.max(axis=0) - world.min(axis=0)
+            assert int(np.argmin(extent)) == 1, (
+                f"{body}: wheel mesh is thinnest along {'xyz'[int(np.argmin(extent))]}, not y -- "
+                f"the axle is not aligned with the joint and the wheel is lying flat"
+            )
+        assert visuals == 8, f"expected 8 wheel visual sub-meshes (4 wheels x 2 materials), got {visuals}"
+
+        # Collision cylinders must point the same way, or the robot drives on geometry it does not
+        # look like.
+        for g in range(model.ngeom):
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            if not name.endswith("_wheel_geom"):
+                continue
+            rot = np.zeros(9)
+            mujoco.mju_quat2Mat(rot, model.geom_quat[g])
+            axis = np.array(data.xmat[model.geom_bodyid[g]]).reshape(3, 3) @ (
+                rot.reshape(3, 3) @ np.array([0.0, 0.0, 1.0])
+            )
+            assert abs(axis[1]) > 0.99, f"{name}: cylinder axis is {axis}, not along y"
+
+        # spawn_robot prefixes every name it splices in, materials included.
+        for material in ("body_black", "fenders_red", "rim_metallic", "tire_rubber"):
+            assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MATERIAL, f"rb_{material}") >= 0, (
+                f"material {material!r} missing -- the meshes were joined instead of split, so the "
+                f"robot renders flat grey"
+            )
     finally:
         engine.shutdown()

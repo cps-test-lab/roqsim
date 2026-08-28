@@ -40,6 +40,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import shutil
 import subprocess
@@ -58,13 +59,19 @@ ROSBOT_COMMIT = "41fad02196ee200a39e01579c75391385cc9b714"
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/rosbot"
 
-#: mesh stem -> (source file, scale to metres). The body's 0.001 is the URDF's own scale attribute.
+#: mesh stem -> (source file, scale to metres, per-part triangle budget). The body's 0.001 is the
+#: URDF's own scale attribute, applied to body.glb alone -- see the docstring.
+#:
+#: Every one of these is SPLIT PER MATERIAL. The vendor's GLBs carry two materials each (a black
+#: body with red fenders, dark rims with black tires), and MuJoCo loads one mesh per OBJ and reads no
+#: OBJ material -- so joining them, as `reduce-mesh` does by default, delivers a uniformly grey
+#: robot. The split writes `<stem>__<material>.obj` plus a `<stem>.materials.json` of base colours,
+#: which this script turns into an MJCF `<material>` per sub-geom.
 MESHES = {
-    "body": ("body.glb", 0.001),
-    "wheel_l": ("wheel_l.glb", 1.0),
-    "wheel_r": ("wheel_r.glb", 1.0),
+    "body": ("body.glb", 0.001, 6000),
+    "wheel_l": ("wheel_l.glb", 1.0, 3000),
+    "wheel_r": ("wheel_r.glb", 1.0, 3000),
 }
-TARGET_FACES = 8000
 
 #: A minimal xacro wrapper around the robot macro, so the components repository is not required.
 BASE_XACRO = """<?xml version='1.0'?>
@@ -111,17 +118,24 @@ def expand_xacro(description: Path, work: Path) -> ET.Element:
     return ET.fromstring(proc.stdout)
 
 
-def convert_meshes(description: Path) -> None:
-    """GLB -> OBJ through `roqsim assets reduce-mesh`, baking the URDF's scale in."""
+def convert_meshes(description: Path) -> dict[str, dict[str, list[float]]]:
+    """GLB -> per-material OBJs through `roqsim assets reduce-mesh`, baking the URDF's scale in.
+
+    Returns ``{stem: {material: rgba}}`` so the MJCF can declare the vendor's real colours.
+    """
     (PKG / "meshes").mkdir(parents=True, exist_ok=True)
-    for stem, (source, scale) in MESHES.items():
-        out = PKG / "meshes" / f"{stem}.obj"
+    for stale in list((PKG / "meshes").glob("*.obj")) + list((PKG / "meshes").glob("*.json")):
+        stale.unlink()
+    palette: dict[str, dict[str, list[float]]] = {}
+    for stem, (source, scale, budget) in MESHES.items():
         subprocess.run(
             [sys.executable, "-m", "roqsim.commands", "assets", "reduce-mesh",
-             "--target-faces", str(TARGET_FACES), "--no-materials", "--scale", str(scale),
-             str(description / "meshes/rosbot" / source), str(out)],
+             "--target-faces", str(budget), "--split-materials", "--scale", str(scale),
+             str(description / "meshes/rosbot" / source), str(PKG / "meshes" / f"{stem}.obj")],
             check=True, cwd=ROOT, capture_output=True,
         )
+        palette[stem] = json.loads((PKG / "meshes" / f"{stem}.materials.json").read_text())
+    return palette
 
 
 def _inertial(link: ET.Element) -> dict[str, str]:
@@ -135,7 +149,7 @@ def _inertial(link: ET.Element) -> dict[str, str]:
     }
 
 
-def build(urdf: ET.Element) -> str:
+def build(urdf: ET.Element, palette: dict) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.get("name"): j for j in urdf.findall("joint")}
     body = _inertial(links["body_link"])
@@ -146,26 +160,46 @@ def build(urdf: ET.Element) -> str:
     radius, length = float(cyl.get("radius")), float(cyl.get("length"))
     body_z = joints["base_to_body_joint"].find("origin").get("xyz").split()[2]
 
+    # One <material> and one <mesh> per vendor material, so the robot keeps its real colours.
+    materials, assets = [], []
+    for stem, colours in sorted(palette.items()):
+        for material, rgba in sorted(colours.items()):
+            materials.append(
+                f'    <material name="{material}" rgba="{" ".join(f"{c:g}" for c in rgba)}"/>\n'
+            )
+            assets.append(f'    <mesh file="{stem}__{material}.obj"/>\n')
+    # A material may be shared across meshes (both wheels use the same rim and tire); declare once.
+    materials = sorted(set(materials))
+
+    body_geoms = "".join(
+        f'        <geom class="visual" mesh="body__{m}" material="{m}" pos="0 0 -0.0173"/>\n'
+        for m in sorted(palette["body"])
+    )
+
     wheels = []
     for name in ("fl", "fr", "rl", "rr"):
         xyz = joints[f"{name}_wheel_joint"].find("origin").get("xyz").replace(",", " ")
-        mesh = "wheel_l" if name.endswith("l") else "wheel_r"
-        wheels.append(WHEEL.format(name=name, xyz=xyz, mesh=mesh, radius=f"{radius:g}",
+        stem = "wheel_l" if name.endswith("l") else "wheel_r"
+        geoms = "".join(
+            f'        <geom class="visual" mesh="{stem}__{m}" material="{m}"/>\n'
+            for m in sorted(palette[stem])
+        )
+        wheels.append(WHEEL.format(name=name, xyz=xyz, geoms=geoms, radius=f"{radius:g}",
                                    halflen=f"{length / 2:g}", **wheel))
 
     return TEMPLATE.format(
         commit=ROSBOT_COMMIT, body_z=body_z, box=box, half=half,
         radius=f"{radius:g}", length=f"{length:g}",
         body_mass=body["mass"], body_pos=body["pos"], body_inertia=body["diaginertia"],
-        wheels="".join(wheels),
+        materials="".join(materials), assets="".join(assets),
+        body_geoms=body_geoms, wheels="".join(wheels),
     )
 
 
 WHEEL = """      <body name="{name}_wheel_link" pos="{xyz}">
         <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
         <joint name="{name}_wheel_joint" class="wheel"/>
-        <geom class="visual" mesh="{mesh}" quat="0.7071068 0.7071068 0 0"/>
-        <geom class="wheel_collision" name="{name}_wheel_geom" size="{radius} {halflen}"/>
+{geoms}        <geom class="wheel_collision" name="{name}_wheel_geom" size="{radius} {halflen}"/>
       </body>
 """
 
@@ -214,10 +248,7 @@ TEMPLATE = """<mujoco model="rosbot">
   </default>
 
   <asset>
-    <mesh file="body.obj"/>
-    <mesh file="wheel_l.obj"/>
-    <mesh file="wheel_r.obj"/>
-  </asset>
+{materials}{assets}  </asset>
 
   <worldbody>
     <!-- base_link: the URDF root, at ground level (the wheels' 0.0425 m radius lifts body_link to
@@ -227,7 +258,7 @@ TEMPLATE = """<mujoco model="rosbot">
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
       <body name="body_link" pos="0 0 {body_z}">
         <inertial pos="{body_pos}" mass="{body_mass}" diaginertia="{body_inertia}"/>
-        <geom class="visual" mesh="body" pos="0 0 -0.0173" quat="0.5 0.5 0.5 0.5"/>
+{body_geoms}
         <geom class="collision" size="{half}" pos="0 0 0.02"/>
         <!-- The stock scanner sits on the cover. Height is an assumption (see the port log): the
              base description ships no lidar, because Husarion keeps sensors in a separate package. -->
@@ -272,18 +303,26 @@ def main() -> int:
 
     description = resolve_source("husarion_rosbot", ROSBOT_URL, ROSBOT_COMMIT,
                                  sparse="rosbot_description", subdir="rosbot_description")
-    with tempfile.TemporaryDirectory() as tmp:
-        xml = build(expand_xacro(description, Path(tmp)))
-    target = PKG / "rosbot.xml"
-
     if args.check:
+        # Read the committed palette rather than re-converting: the meshes are the expensive half,
+        # and a check that regenerated them would rewrite what it is supposed to be checking.
+        palette = {
+            stem: json.loads((PKG / "meshes" / f"{stem}.materials.json").read_text())
+            for stem in MESHES
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            xml = build(expand_xacro(description, Path(tmp)), palette)
+        target = PKG / "rosbot.xml"
         if not target.exists() or target.read_text() != xml:
             print(f"{target} differs from a fresh build - was it hand-edited?", file=sys.stderr)
             return 1
         print(f"{target}: up to date with {ROSBOT_COMMIT[:12]}")
         return 0
 
-    convert_meshes(description)
+    palette = convert_meshes(description)
+    with tempfile.TemporaryDirectory() as tmp:
+        xml = build(expand_xacro(description, Path(tmp)), palette)
+    target = PKG / "rosbot.xml"
     shutil.copy2(description.parent / "LICENSE", PKG / "rosbot_LICENSE")
     target.write_text(xml)
     print(f"wrote {target} + {len(MESHES)} meshes + rosbot_LICENSE")

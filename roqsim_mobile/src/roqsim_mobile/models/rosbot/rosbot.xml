@@ -43,9 +43,16 @@
   </default>
 
   <asset>
-    <mesh file="body.obj"/>
-    <mesh file="wheel_l.obj"/>
-    <mesh file="wheel_r.obj"/>
+    <material name="body_black" rgba="0.102 0.102 0.102 1"/>
+    <material name="fenders_red" rgba="0.7843 0.0863 0.0863 1"/>
+    <material name="rim_metallic" rgba="0.06 0.06 0.065 1"/>
+    <material name="tire_rubber" rgba="0.018 0.018 0.018 1"/>
+    <mesh file="body__body_black.obj"/>
+    <mesh file="body__fenders_red.obj"/>
+    <mesh file="wheel_l__rim_metallic.obj"/>
+    <mesh file="wheel_l__tire_rubber.obj"/>
+    <mesh file="wheel_r__rim_metallic.obj"/>
+    <mesh file="wheel_r__tire_rubber.obj"/>
   </asset>
 
   <worldbody>
@@ -56,7 +63,9 @@
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
       <body name="body_link" pos="0 0 0.0425">
         <inertial pos="0.0 0.0 0.02" mass="1.728" diaginertia="0.004162 0.00651 0.008828"/>
-        <geom class="visual" mesh="body" pos="0 0 -0.0173" quat="0.5 0.5 0.5 0.5"/>
+        <geom class="visual" mesh="body__body_black" material="body_black" pos="0 0 -0.0173"/>
+        <geom class="visual" mesh="body__fenders_red" material="fenders_red" pos="0 0 -0.0173"/>
+
         <geom class="collision" size="0.0985 0.075 0.04" pos="0 0 0.02"/>
         <!-- The stock scanner sits on the cover. Height is an assumption (see the port log): the
              base description ships no lidar, because Husarion keeps sensors in a separate package. -->
@@ -64,25 +73,29 @@
       <body name="fl_wheel_link" pos="0.053 0.096 0.0">
         <inertial pos="0 0 0" mass="0.074" diaginertia="4.1e-05 6.7e-05 4.1e-05"/>
         <joint name="fl_wheel_joint" class="wheel"/>
-        <geom class="visual" mesh="wheel_l" quat="0.7071068 0.7071068 0 0"/>
+        <geom class="visual" mesh="wheel_l__rim_metallic" material="rim_metallic"/>
+        <geom class="visual" mesh="wheel_l__tire_rubber" material="tire_rubber"/>
         <geom class="wheel_collision" name="fl_wheel_geom" size="0.0425 0.018"/>
       </body>
       <body name="fr_wheel_link" pos="0.053 -0.096 0.0">
         <inertial pos="0 0 0" mass="0.074" diaginertia="4.1e-05 6.7e-05 4.1e-05"/>
         <joint name="fr_wheel_joint" class="wheel"/>
-        <geom class="visual" mesh="wheel_r" quat="0.7071068 0.7071068 0 0"/>
+        <geom class="visual" mesh="wheel_r__rim_metallic" material="rim_metallic"/>
+        <geom class="visual" mesh="wheel_r__tire_rubber" material="tire_rubber"/>
         <geom class="wheel_collision" name="fr_wheel_geom" size="0.0425 0.018"/>
       </body>
       <body name="rl_wheel_link" pos="-0.053 0.096 0.0">
         <inertial pos="0 0 0" mass="0.074" diaginertia="4.1e-05 6.7e-05 4.1e-05"/>
         <joint name="rl_wheel_joint" class="wheel"/>
-        <geom class="visual" mesh="wheel_l" quat="0.7071068 0.7071068 0 0"/>
+        <geom class="visual" mesh="wheel_l__rim_metallic" material="rim_metallic"/>
+        <geom class="visual" mesh="wheel_l__tire_rubber" material="tire_rubber"/>
         <geom class="wheel_collision" name="rl_wheel_geom" size="0.0425 0.018"/>
       </body>
       <body name="rr_wheel_link" pos="-0.053 -0.096 0.0">
         <inertial pos="0 0 0" mass="0.074" diaginertia="4.1e-05 6.7e-05 4.1e-05"/>
         <joint name="rr_wheel_joint" class="wheel"/>
-        <geom class="visual" mesh="wheel_r" quat="0.7071068 0.7071068 0 0"/>
+        <geom class="visual" mesh="wheel_r__rim_metallic" material="rim_metallic"/>
+        <geom class="visual" mesh="wheel_r__tire_rubber" material="tire_rubber"/>
         <geom class="wheel_collision" name="rr_wheel_geom" size="0.0425 0.018"/>
       </body>
       </body>
