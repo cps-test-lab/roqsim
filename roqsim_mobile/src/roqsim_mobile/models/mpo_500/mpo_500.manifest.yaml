@@ -1,0 +1,56 @@
+# Default controller + sensors for the Neobotix MPO-500 omnidirectional base.
+#
+# `spawn_robot: {model: mpo_500}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors.
+components:
+  # HOLONOMIC via omni wheels: all four drive, none steers. So this uses omni_drive's existing
+  # mecanum path -- no swerve inverse kinematics (unlike mpo_700) and no slip_factor, because it does
+  # not turn by scrubbing. The vendor's only wheel macro is `mpo_500_omni_wheel` and there is no
+  # caster macro at all, which is what settles the drive type.
+  - omni_drive:
+      base_joint: base_free
+      vx_actuator: base_vx
+      vy_actuator: base_vy
+      wz_actuator: base_wz
+      # The vendor's own Nav2 profile (configs/mpo_500/navigation.yaml). NOT isotropic: 0.6 forward
+      # against 0.5 sideways. A holonomic base need not strafe as fast as it drives.
+      max_linear_vel: 0.6            # max_vel_x
+      max_lateral_vel: 0.5           # max_vel_y
+      max_combined_linear_vel: 0.6   # cap on hypot(vx, vy)
+      max_angular_vel: 1.0           # OURS: their profile states no max_vel_theta, so this borrows
+                                     # the magnitude of acc_lim_theta. An assumption.
+      accel_limit: 0.25              # acc_lim_x / acc_lim_y
+      angular_accel_limit: 1.0       # acc_lim_theta
+      # Geometry from the expanded xacro: wheel sphere radius 0.117, wheels at (+-0.25, +-0.28).
+      wheel_radius: 0.117
+      wheel_separation: 0.56         # lateral, 2 x 0.28
+      axis_separation: 0.50          # longitudinal, 2 x 0.25
+      wheels: [mpo_500_omni_wheel_front_left, mpo_500_omni_wheel_front_right,
+               mpo_500_omni_wheel_back_left, mpo_500_omni_wheel_back_right]
+      wheel_actuators: [wheel_front_left_motor, wheel_front_right_motor,
+                        wheel_back_left_motor, wheel_back_right_motor]
+  # TWO scanners, front and rear on the centreline -- the vendor's own mounts. SICK MicroScan3,
+  # whose published field is 275 degrees; range and rate here are ours. Same reasoning as the
+  # mpo_700: a single 360 scan would be simpler and would give the robot a sensor it does not have.
+  - lidar:
+      site: lidar_1
+      frame_id: lidar_1_link
+      rays: 550
+      angle_min: -2.399827722
+      angle_max: 2.399827722
+      range_min: 0.1
+      max_range: 40.0
+      rate_hz: 12.5
+      exclude_body: base_link
+    name: scan_front
+  - lidar:
+      site: lidar_2
+      frame_id: lidar_2_link
+      rays: 550
+      angle_min: -2.399827722
+      angle_max: 2.399827722
+      range_min: 0.1
+      max_range: 40.0
+      rate_hz: 12.5
+      exclude_body: base_link
+    name: scan_rear

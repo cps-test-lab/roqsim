@@ -324,11 +324,12 @@ TEMPLATE = """<mujoco model="mpo_700">
   </worldbody>
 
   <actuator>
-    <!-- The planar drive. Neobotix publishes 1.0 m/s and 1.0 rad/s for the MPO-700; forcerange is
-         sized to move 196.8 kg. -->
-    <velocity name="base_vx" joint="base_free" gear="1 0 0 0 0 0" kv="25000" ctrlrange="-1.0 1.0" forcerange="-2500 2500"/>
-    <velocity name="base_vy" joint="base_free" gear="0 1 0 0 0 0" kv="25000" ctrlrange="-1.0 1.0" forcerange="-2500 2500"/>
-    <velocity name="base_wz" joint="base_free" gear="0 0 0 0 0 1" kv="12500" ctrlrange="-1.0 1.0" forcerange="-1500 1500"/>
+    <!-- The planar drive. ctrlrange is the vendor's own Nav2 profile
+         (configs/mpo_700/navigation.yaml): 0.8 m/s forward, 0.5 sideways, and NOT isotropic - a
+         holonomic base need not strafe as fast as it drives. forcerange is sized to move 196.8 kg. -->
+    <velocity name="base_vx" joint="base_free" gear="1 0 0 0 0 0" kv="25000" ctrlrange="-0.8 0.8" forcerange="-2500 2500"/>
+    <velocity name="base_vy" joint="base_free" gear="0 1 0 0 0 0" kv="25000" ctrlrange="-0.5 0.5" forcerange="-2500 2500"/>
+    <velocity name="base_wz" joint="base_free" gear="0 0 0 0 0 1" kv="12500" ctrlrange="-0.8 0.8" forcerange="-1500 1500"/>
     <!-- Steer POSITION servos, one per corner. Unlimited range because the joints are continuous;
          omni_drive resolves each target to the nearer of the two equivalent headings, so the wheels
          never slew half a turn to cross straight-ahead. -->

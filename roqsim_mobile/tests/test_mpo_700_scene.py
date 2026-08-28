@@ -61,8 +61,14 @@ def _steer_angles(engine):
     ]
 
 
-def _drive(engine, vx, vy, wz, steps=1200):
-    """Command a body-frame twist and return the achieved body-frame twist."""
+def _drive(engine, vx, vy, wz, steps=2600):
+    """Command a body-frame twist and return the achieved body-frame twist.
+
+    2600 steps = 5.2 s, because the vendor's acceleration limit is 0.25 m/s^2: reaching their 0.8 m/s
+    top speed alone takes 3.2 s. A shorter window measures the ramp, not the steady state -- which is
+    what this test did until the limits were corrected from a remembered datasheet figure to the
+    vendor's own Nav2 profile.
+    """
     model, data = engine.ctx.model, engine.ctx.data
     bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "n_base_link")
     dof = model.jnt_dofadr[named(model, mujoco.mjtObj.mjOBJ_JOINT, "n_base_free")]
@@ -72,6 +78,22 @@ def _drive(engine, vx, vy, wz, steps=1200):
     rot = data.xmat[bid].reshape(3, 3)
     local = rot.T @ np.array(data.qvel[dof:dof + 3])
     return float(local[0]), float(local[1]), float(data.qvel[dof + 5])
+
+
+def test_the_limits_are_not_isotropic():
+    """The vendor's Nav2 profile allows 0.8 m/s forward and only 0.5 sideways.
+
+    Pinned because the first version of this port used 1.0 for both, from a remembered datasheet
+    figure rather than the file -- overstating the lateral direction by 60%.
+    """
+    engine = _engine()
+    try:
+        drive = next(p for p in engine.plugins if "OmniDrive" in type(p).__name__)
+        assert drive.config["max_linear_vel"] == pytest.approx(0.8)
+        assert drive.config["max_lateral_vel"] == pytest.approx(0.5)
+        assert drive.config["max_lateral_vel"] < drive.config["max_linear_vel"]
+    finally:
+        engine.shutdown()
 
 
 def test_mass_matches_the_vendor_description():
@@ -190,7 +212,10 @@ def test_a_pure_spin_aims_each_wheel_tangentially():
         engine.shutdown()
 
 
-@pytest.mark.parametrize("command", [(0.6, 0.0, 0.0), (0.0, 0.6, 0.0), (0.0, 0.0, 0.6),
+#: Commands stay inside the vendor's own per-axis limits (0.8 forward, 0.5 sideways). The lateral
+#: cases are 0.5, not 0.6: this base is deliberately NOT isotropic, and a first draft of this test
+#: commanded 0.6 sideways and failed against a model that was correctly clamping.
+@pytest.mark.parametrize("command", [(0.8, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.6),
                                      (0.4, 0.4, 0.0)])
 def test_it_tracks_a_holonomic_twist(command):
     engine = _engine()

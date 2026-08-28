@@ -16,12 +16,16 @@ components:
       vx_actuator: base_vx
       vy_actuator: base_vy
       wz_actuator: base_wz
-      max_linear_vel: 1.0            # Neobotix's published figure for the MPO-700
-      max_lateral_vel: 1.0           # holonomic: the same sideways
-      max_combined_linear_vel: 1.0   # cap on hypot(vx, vy)
-      max_angular_vel: 1.0
-      accel_limit: 0.5
-      angular_accel_limit: 1.0
+      # The vendor's own Nav2 profile (configs/mpo_700/navigation.yaml), not a datasheet figure.
+      # Note it is NOT isotropic: 0.8 forward against 0.5 sideways. A holonomic base need not strafe
+      # as fast as it drives, and assuming it does would have overstated this platform by 60%.
+      max_linear_vel: 0.8            # max_vel_x
+      max_lateral_vel: 0.5           # max_vel_y
+      max_combined_linear_vel: 0.8   # cap on hypot(vx, vy)
+      max_angular_vel: 0.8           # OURS: their profile states no max_vel_theta, so this
+                                     # borrows the magnitude of acc_lim_theta. An assumption.
+      accel_limit: 0.25              # acc_lim_x / acc_lim_y
+      angular_accel_limit: 0.8       # acc_lim_theta
       # Geometry from the expanded xacro: wheel sphere radius 0.09, steering axes at (+-0.24, +-0.18).
       wheel_radius: 0.09
       wheel_separation: 0.36         # lateral, 2 x 0.18
