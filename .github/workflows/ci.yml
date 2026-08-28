@@ -17,8 +17,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # MuJoCo renders offscreen here. A GitHub runner has no /dev/dri/renderD128, so roqsim's own
-      # backend selection picks osmesa rather than egl -- hence libosmesa6, not just libegl1.
+      # MuJoCo renders offscreen here. A GitHub runner has no /dev/dri render node at all, so
+      # roqsim's own backend selection picks osmesa rather than egl -- hence libosmesa6, not just
+      # libegl1.
       # ffmpeg is what `roqsim render --out x.webm` shells out to; without it the video tests fail
       # with the code's own "ffmpeg is not on PATH" error, which is a missing runner dep, not a bug.
       # python3-tk is the scene-builder's GUI test dependency. tkinter ships with CPython but Ubuntu
@@ -46,7 +47,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Same GL and ffmpeg deps as the core job, and for the same reasons: no /dev/dri/renderD128 on a
+      # Same GL and ffmpeg deps as the core job, and for the same reasons: no /dev/dri render node on a
       # runner so the offscreen backend resolves to osmesa, and `roqsim render --out x.webm` shells out
       # to ffmpeg. Having given them to one job and not the other is what left 9 tests failing here
       # after the collection fix, on a commit whose core job was already green.
