@@ -117,7 +117,12 @@ def _import(path: str) -> None:
     if ext in ("gltf", "glb"):
         bpy.ops.import_scene.gltf(filepath=path)
     elif ext == "obj":
-        bpy.ops.wm.obj_import(filepath=path)
+        # Match the axes this script EXPORTS with, or an OBJ round-trip is not the identity: Blender
+        # imports OBJ as Y-up by default while the export below writes Z-up, so a Z-up OBJ passed
+        # through for decimation comes back rotated 90 degrees about x. A glTF/FBX source is
+        # genuinely Y-up so the default is right there -- it is only OBJ, which MuJoCo and every
+        # converter here already treat as Z-up, that must say so.
+        bpy.ops.wm.obj_import(filepath=path, forward_axis="Y", up_axis="Z")
     elif ext == "fbx":
         bpy.ops.import_scene.fbx(filepath=path)
     elif ext == "stl":

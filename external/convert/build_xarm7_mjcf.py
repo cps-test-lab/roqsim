@@ -43,6 +43,7 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from collision_fit import fit_collision_primitive, mesh_vertices  # noqa: E402
 from sources import resolve_source  # noqa: E402
 
 MENAGERIE_URL = "https://github.com/google-deepmind/mujoco_menagerie.git"
@@ -65,71 +66,15 @@ MESHES = [
 # the link is meaningfully longer than it is wide; otherwise a box bounds a stubby link far more
 # tightly than a capsule swollen to contain it.
 CAPSULE_ASPECT = 1.3
-# CALIBRATED, not a fudge -- a capsule's circular cross-section is a poor envelope for the xArm's
-# prismatic links, so the radius that merely bounds the widest point over-reports self-collision
-# badly. Measured self-collision rate over 3000 uniformly sampled joint configurations:
-#
-#     upstream, full-detail convex hulls   8.0%     (the ground truth this approximates)
-#     RADIUS_SCALE 1.00                   35.3%
-#     RADIUS_SCALE 0.93                   21.1%
-#     RADIUS_SCALE 0.86                   16.8%     <- chosen
-#
-# 0.86 puts this arm level with the package's own reference arms (ur10e 17.4%, ur5e 17.5%) measured
-# the same way, i.e. at the conservatism the substrate already accepts, rather than at some rate
-# invented here. SENSITIVITY: high for anything that reasons about self-collision -- a motion planner
-# will refuse configurations that upstream's hulls allow. Re-measure if the meshes change. A tighter
-# envelope needs several primitives per link (ur10e uses two on its long links), not a smaller scale:
-# a single axis-aligned box was tried and is worse (30.2%), because these links are bent.
+#: CALIBRATED per robot, not inherited. A capsule is a poor envelope for the xArm's prismatic links,
+#: so the radius that merely bounds the widest point over-reports self-collision badly. Measured over
+#: 3000 uniform joint samples: upstream's exact hulls 8.0%, scale 1.00 -> 35.3%, 0.93 -> 21.1%,
+#: 0.86 -> 16.8%. 0.86 puts this arm level with the package's own reference arms (ur10e 17.4%,
+#: ur5e 17.5%) measured identically. SENSITIVITY: high for anything reasoning about self-collision --
+#: a motion planner will refuse poses upstream's hulls allow. A tighter envelope needs several
+#: primitives per link (ur10e uses two on its long links), not a smaller scale: a single
+#: axis-aligned box was tried and is worse (30.2%), because these links are bent.
 RADIUS_SCALE = 0.86
-
-AXIS_QUAT = {0: "0.7071068 0 0.7071068 0", 1: "0.7071068 -0.7071068 0 0", 2: None}
-
-
-def fit_collision_primitive(verts: np.ndarray) -> dict[str, str]:
-    """Fit one collision primitive to a link's mesh vertices, in the body frame.
-
-    Returns the MJCF geom attributes. Bounding-box based on purpose: the point is a conservative,
-    cheap collision volume, not a faithful one -- a tight fit to concave CAD is exactly what the
-    visual mesh is for.
-    """
-    lo, hi = verts.min(axis=0), verts.max(axis=0)
-    centre, extent = (lo + hi) / 2, hi - lo
-    axis = int(np.argmax(extent))
-    perp = [i for i in range(3) if i != axis]
-    radius = float(max(extent[perp]) / 2 * RADIUS_SCALE)
-    half = float(extent[axis] / 2)
-
-    pos = " ".join(f"{v:.5g}" for v in centre)
-    if half / radius >= CAPSULE_ASPECT:
-        # MuJoCo capsules run along local z, so rotate z onto the link's long axis. size is
-        # (radius, cylinder half-length): subtract the radius so the caps stay inside the bbox.
-        attrs = {"type": "capsule", "size": f"{radius:.5g} {max(half - radius, 1e-4):.5g}",
-                 "pos": pos}
-        if (quat := AXIS_QUAT[axis]) is not None:
-            attrs["quat"] = quat
-        return attrs
-    return {"type": "box", "size": " ".join(f"{v / 2 * RADIUS_SCALE:.5g}" for v in extent),
-            "pos": pos}
-
-
-def mesh_vertices(model, body_name: str) -> np.ndarray:
-    """Vertices of every mesh geom on *body_name*, expressed in that body's frame."""
-    import mujoco
-
-    body = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-    chunks = []
-    for g in range(model.ngeom):
-        if model.geom_bodyid[g] != body or model.geom_dataid[g] < 0:
-            continue
-        mid = model.geom_dataid[g]
-        adr, num = model.mesh_vertadr[mid], model.mesh_vertnum[mid]
-        verts = model.mesh_vert[adr:adr + num].reshape(-1, 3)
-        rot = np.zeros(9)
-        mujoco.mju_quat2Mat(rot, model.geom_quat[g])
-        chunks.append(verts @ rot.reshape(3, 3).T + model.geom_pos[g])
-    if not chunks:
-        raise RuntimeError(f"{body_name} carries no mesh geom to fit a collision primitive to")
-    return np.concatenate(chunks)
 
 
 def build(source: Path) -> str:
@@ -167,7 +112,7 @@ def build(source: Path) -> str:
             continue
         for geom in geoms:
             geom.set("class", "visual")
-        attrs = fit_collision_primitive(mesh_vertices(model, name))
+        attrs = fit_collision_primitive(mesh_vertices(model, name), RADIUS_SCALE)
         # Insert after the last visual geom so the file reads visual-then-collision per link.
         body.insert(list(body).index(geoms[-1]) + 1,
                     ET.Element("geom", {"class": "collision", **attrs}))
