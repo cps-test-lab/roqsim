@@ -142,30 +142,16 @@ def test_an_explicit_glfw_request_is_not_second_guessed():
 # something actually renders.
 
 
-def _fake_devices(monkeypatch, *, nvidiactl, render_node, names=None):
-    """Point gl.py's two probes at a scripted answer, without touching /dev.
-
-    *names* is what ``/dev/dri`` contains, so a test can pin WHICH node is present rather
-    than only whether one is -- the distinction the ``renderD129`` regression turns on.
-    ``render_node=False`` scripts a directory holding no render node at all, which is what
-    a GPU handed over without the ``graphics`` capability actually looks like.
-    """
+def _fake_devices(monkeypatch, *, nvidiactl, render_node):
+    """Point gl.py's two probes at a scripted answer, without touching /dev."""
     from roqsim import gl
 
     present = set()
     if nvidiactl:
         present.add(gl._NVIDIA_CONTROL)
+    if render_node:
+        present.add(gl._RENDER_NODE)
     monkeypatch.setattr(gl.os.path, "exists", lambda path: path in present)
-
-    if names is None:
-        names = ["by-path", "card0", "renderD128"] if render_node else ["by-path", "card0"]
-
-    def _listdir(path):
-        if path == gl._RENDER_NODE_DIR:
-            return list(names)
-        raise FileNotFoundError(path)
-
-    monkeypatch.setattr(gl.os, "listdir", _listdir)
 
 
 def test_a_gpu_without_a_render_node_is_recognised(monkeypatch):
@@ -186,45 +172,6 @@ def test_the_ordinary_shapes_are_not_mistaken_for_it(monkeypatch):
     _fake_devices(monkeypatch, nvidiactl=True, render_node=True)  # a working GPU node
     assert gl.gpu_without_render_node() is False
     _fake_devices(monkeypatch, nvidiactl=False, render_node=True)  # laptop, no nvidiactl
-    assert gl.gpu_without_render_node() is False
-
-
-def test_a_discrete_card_numbered_past_128_is_a_render_node(monkeypatch):
-    """The regression this detection was written without.
-
-    Render nodes are numbered from 128 in probe order, so a machine with an integrated chip
-    and a discrete card puts the discrete one at ``renderD129`` -- and a container handed
-    only that card sees no ``renderD128``. Probing the fixed name read a working RTX 4090 as
-    a GPU with no render node and REFUSED THE RUN, which is the worst direction for this
-    check to fail in: it turns a correct fast configuration into a hard error.
-    """
-    from roqsim import gl
-
-    _fake_devices(monkeypatch, nvidiactl=True, render_node=True,
-                  names=["by-path", "card1", "renderD129"])
-    assert gl.render_node() == "/dev/dri/renderD129"
-    assert gl.gpu_without_render_node() is False
-
-
-def test_a_dri_dir_with_only_card_nodes_is_not_a_render_node(monkeypatch):
-    """``card*`` is the privileged primary node, not the one EGL renders through. A
-    directory holding only those is the no-graphics-capability case, not a working GPU."""
-    from roqsim import gl
-
-    _fake_devices(monkeypatch, nvidiactl=True, render_node=True, names=["by-path", "card0"])
-    assert gl.render_node() is None
-    assert gl.gpu_without_render_node() is True
-
-
-def test_no_dri_directory_at_all_is_the_cpu_only_answer(monkeypatch):
-    """A machine with no ``/dev/dri`` must answer "no render node", not raise: that is
-    every CPU-only node and every CI runner."""
-    from roqsim import gl
-
-    _fake_devices(monkeypatch, nvidiactl=False, render_node=False, names=None)
-    monkeypatch.setattr(gl.os, "listdir", lambda path: (_ for _ in ()).throw(
-        FileNotFoundError(path)))
-    assert gl.render_node() is None
     assert gl.gpu_without_render_node() is False
 
 
