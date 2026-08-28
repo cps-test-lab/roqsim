@@ -77,7 +77,7 @@ A bridge publishes what the other plugins built; it adds nothing to the model. S
 class attribute ``transport_only = True`` — ``BridgeBase`` does, so every transport inherits it,
 including one you write — and the tools that want the *scene* rather than a running simulation drop it
 before building: ``roqsim render``, the scene-review window (``roqsim_scene_builder``), and ``roqsim export
-web/urdf/srdf``.
+web/urdf/srdf/moveit``.
 
 That is what makes a ``*_ros`` world **renderable without ROS**. Those same tools also skip a plugin
 whose ref does not resolve at all (the bridge is registered by a colcon package, so it is absent from a
@@ -458,6 +458,63 @@ floating`` for a full 6-DOF one), while a base welded to the world — an arm on
 whose DOF is already a URDF joint — gets none, which is how MoveIt spells a bolted-down robot. Declaring
 a virtual joint nothing publishes does not fail loudly; move_group logs ``Missing virtual_joint`` and
 never assembles a complete robot state, so ``--base-joint planar`` on a welded model is refused.
+
+Manipulation: the whole MoveIt configuration
+--------------------------------------------
+
+``move_group`` needs six files, and the two above are the two a human would call the robot
+description. ``roqsim export moveit`` writes all six:
+
+.. code-block:: bash
+
+   roqsim export moveit --world cell.yaml --out cfg/ --tip-site pinch --check
+
+.. code-block:: text
+
+   cfg/
+     <arm>.urdf   meshes/     the kinematics, FK-checked against the MJCF
+     <arm>.srdf               groups, named states, a sampled collision matrix
+     kinematics.yaml          a solver over the chain the SRDF names
+     joint_limits.yaml        the kinematic limits that time a geometric path
+     moveit_controllers.yaml  which action a trajectory is executed against
+     ompl_planning.yaml       the planner -- a starting point, meant to be overridden
+
+The invariant is the same one the URDF export exists for, extended to the rest: **the configuration
+MoveIt plans against is derived from the model the simulator loads**, and ``--check`` fails the export
+when the two disagree by more than a micrometre.
+
+That matters most for the file that looks least interesting. ``moveit_controllers.yaml`` maps MoveIt's
+controller names onto the actions this substrate's *bridge* serves and onto the joint list
+``arm_controller`` publishes — so it is read from the ``Endpoint`` objects the controller declared,
+not restated. A name written by hand there can be right on the day and wrong after a world renames a
+controller, and the failure is that a trajectory is executed against nothing.
+
+Four more answers come off the model rather than from flags, each because getting it wrong is quiet:
+
+* **the joint list and its order** — the ``ArmHandle`` the controller published, i.e. the names that
+  reach ``/joint_states``. ``robot_state_publisher`` matches by name, so a list that is right about the
+  robot and wrong about the order leaves MoveIt planning from a pose the arm is not in.
+* **the home posture** — ``data.qpos`` after setup, not the world's ``home:`` key. The controller
+  applies that key itself and a ``rest`` stance may overlay it, while MoveIt's start-state bounds check
+  runs against the posture the arm is really in.
+* **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
+  A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
+  the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
+* **``start_state_max_bounds_error``** — emitted only for an arm that has a *continuous* joint. MoveIt
+  maps such a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start
+  state that has drifted a hair outside it, which surfaces as a phase failing instantly with
+  ``START_STATE_INVALID`` right after a phase that succeeded — at a different phase each run. A
+  range-limited arm has no such problem and gets no such setting.
+
+**Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
+fingertips has to be written as an offset from there — which multiplies every orientation tolerance by
+that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. One cell measured 61 mm of
+lateral error against 12.2 mm of jaw clearance: MoveIt had satisfied the goal exactly, and the goal was
+about the wrong point. ``--tip-site pinch`` emits a frame link at the gripper's own grasp site (through
+a collapsed parent, where such a site usually sits), so a 3 mm position tolerance means 3 mm at the pads.
+
+What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
+units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.
 
 Manipulation: what a contact task needs
 ---------------------------------------

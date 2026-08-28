@@ -344,10 +344,10 @@ costs you the numbers as well.
 Exporting a model as one mesh
 -----------------------------
 
-``export web``, ``export urdf`` and ``export srdf`` all keep a model as a body tree, because their
-consumers animate or plan it. A second class of consumer wants the opposite -- one rigid mesh and
-nothing else. A model-based 6D pose estimator takes a single mesh and returns the pose *of that mesh's
-frame*; a CAD tool imports one body and knows nothing about joints:
+``export web``, ``export urdf``, ``export srdf`` and ``export moveit`` all keep a model as a body tree,
+because their consumers animate or plan it. A second class of consumer wants the opposite -- one rigid
+mesh and nothing else. A model-based 6D pose estimator takes a single mesh and returns the pose *of that
+mesh's frame*; a CAD tool imports one body and knows nothing about joints:
 
 .. code-block:: bash
 
