@@ -40,17 +40,15 @@
               friction="0.04 0.005 0.0001" priority="2"/>
       </default>
       <default class="wheel">
-        <!-- The description's axis is `-1 0 0`, which its joint rpy (0 0 1.57) rotates to -y in the
-             base frame. This is `1 0 0` instead, i.e. +y: `diff_drive` writes the commanded wheel
-             rate straight to the actuator with no sign derivation, so it REQUIRES the +y convention
-             that all five existing diff_drive models happen to use. With the vendor's sign the robot
-             drives and turns backwards -- measured, -0.984 of a forward command.
+        <!-- The description's own axis. Its joint rpy (0 0 1.57) rotates this to -y in the base
+             frame, which is the opposite of every other wheeled model here and perfectly valid: a
+             revolute axis is arbitrary up to sign.
 
-             Flipping the axis is a sign convention, not a geometry change: a revolute axis is
-             arbitrary up to sign and the vendor's choice is one of the two equivalent ones. The
-             better fix is in the plugin, which should derive the sign off the model the way
-             omni_drive does -- see the port log. -->
-        <joint axis="1 0 0" damping="0.5" armature="0.02" limited="false"/>
+             This was briefly flipped to `1 0 0` because `diff_drive` wrote the commanded rate
+             straight to the actuator and so silently required +y -- a convention the other models
+             satisfied only because our own generators wrote them. The plugin now derives the sign
+             off the model, as omni_drive does, so the vendor's axis is kept. -->
+        <joint axis="-1 0 0" damping="0.5" armature="0.02" limited="false"/>
       </default>
     </default>
   </default>

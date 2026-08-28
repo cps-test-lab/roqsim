@@ -73,6 +73,10 @@ class DiffDrivePlugin(Plugin):
         # to full speed in one step and the robot lurches on the first cmd_vel.
         # https://iroboteducation.github.io/create3_docs/api/safety/
         self.wheel_accel = float(self.config.get("wheel_accel_limit", 0.9))
+        # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
+        self.base_body = self.config.get("base_body", "base_link")
+        self._sign_l: list[float] = []
+        self._sign_r: list[float] = []
         self._target_v = 0.0
         self._target_w = 0.0
         self._cmd_wl = 0.0  # ramped wheel angular-velocity commands (rad/s)
@@ -152,6 +156,35 @@ class DiffDrivePlugin(Plugin):
         ]
         if missing:
             raise RuntimeError(f"diff_drive: could not resolve {missing} for robot {self.robot!r}")
+
+        # Per-wheel roll sign, read off the model at the reference pose.
+        #
+        # A wheel rolling forward without slip has its contact point stationary: with the contact a
+        # distance R below the axle, v_contact = v_centre + omega x r = 0 gives omega_y = +V/R. So a
+        # wheel carries the base forward when it spins about the base's +y, and sign = +axis_y.
+        #
+        # Derived rather than assumed, because a source URDF may express the same wheel about either
+        # y direction and both are correct: the Neobotix MP-400's are -y. This plugin previously
+        # wrote the commanded rate straight to the actuator, which silently required +y -- a
+        # convention every model here satisfied only because our own generators wrote them, and which
+        # drove the MP-400 backwards until its axis was flipped to suit. omni_drive has always
+        # derived this; it simply had the sign inverted until 2026-08-28.
+        base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
+        if base_b < 0:
+            raise RuntimeError(
+                f"diff_drive: base body {prefix + self.base_body!r} not found; the wheel roll signs "
+                f"are read off the wheel axes expressed in it"
+            )
+        d0 = mujoco.MjData(m)
+        mujoco.mj_forward(m, d0)
+        rb = d0.xmat[base_b].reshape(3, 3)
+
+        def roll_sign(jid: int) -> float:
+            axis_w = d0.xmat[m.jnt_bodyid[jid]].reshape(3, 3) @ m.jnt_axis[jid]
+            return 1.0 if float((rb.T @ axis_w)[1]) > 0 else -1.0
+
+        self._sign_l = [roll_sign(j) for j in self._jid_l]
+        self._sign_r = [roll_sign(j) for j in self._jid_r]
 
         # RobotHandle: kept for in-process consumers (teleop, standalone driver).
         ctx.blackboard.set(
@@ -246,16 +279,31 @@ class DiffDrivePlugin(Plugin):
         dw_max = (self.wheel_accel / self.r) * ctx.dt if self.wheel_accel > 0 else np.inf
         self._cmd_wl += float(np.clip(tgt_wl - self._cmd_wl, -dw_max, dw_max))
         self._cmd_wr += float(np.clip(tgt_wr - self._cmd_wr, -dw_max, dw_max))
-        for aid in self._aid_l:
-            ctx.data.ctrl[aid] = self._cmd_wl
-        for aid in self._aid_r:
-            ctx.data.ctrl[aid] = self._cmd_wr
+        for aid, sign in zip(self._aid_l, self._sign_l, strict=True):
+            ctx.data.ctrl[aid] = sign * self._cmd_wl
+        for aid, sign in zip(self._aid_r, self._sign_r, strict=True):
+            ctx.data.ctrl[aid] = sign * self._cmd_wr
 
     def post_step(self, ctx: SimContext) -> None:
         m, d = ctx.model, ctx.data
         # Per-side wheel angular velocity: average across that side's wheels (>1 for skid-steer).
-        wl = float(np.mean([d.qvel[m.jnt_dofadr[j]] for j in self._jid_l]))
-        wr = float(np.mean([d.qvel[m.jnt_dofadr[j]] for j in self._jid_r]))
+        # The same roll signs the command used, so odometry reads the wheel the way it was driven.
+        wl = float(
+            np.mean(
+                [
+                    s * d.qvel[m.jnt_dofadr[j]]
+                    for j, s in zip(self._jid_l, self._sign_l, strict=True)
+                ]
+            )
+        )
+        wr = float(
+            np.mean(
+                [
+                    s * d.qvel[m.jnt_dofadr[j]]
+                    for j, s in zip(self._jid_r, self._sign_r, strict=True)
+                ]
+            )
+        )
         v = self.r * (wr + wl) / 2.0
         # Invert the same slip model used to command the wheels, so odometry tracks the base's
         # actual yaw rather than the (inflated) ideal-differential prediction.

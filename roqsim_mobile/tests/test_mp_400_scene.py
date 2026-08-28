@@ -9,12 +9,12 @@ is provably copy-paste, not a plausible figure, and it is why this model is fit 
 for dynamics. The test exists so nobody "fixes" the mass audit by quietly substituting our own number:
 the audit's value is that it checks the vendor's.
 
-``test_the_wheel_axis_matches_the_plugin_convention`` pins a sign. ``diff_drive`` writes the commanded
-wheel rate straight to the actuator with no sign derivation, so it requires wheels whose axis is +y in
-the base frame — which all five existing ``diff_drive`` models happen to have. This description's axis
-is -y, and with it the robot drives and turns *backwards* (measured: -0.984 of a forward command).
-``omni_drive`` derives the sign off the model instead and would not have cared. That asymmetry between
-the two drive plugins is recorded in the port log as a substrate follow-up.
+``test_the_vendors_wheel_axis_is_kept_and_still_drives_forward`` pins a sign. ``diff_drive`` used to write the commanded
+wheel rate straight to the actuator with no sign derivation, so it silently required wheels whose axis
+is +y in the base frame — a convention every other model satisfied only because our own generators
+wrote them. This description's axis is -y and the robot drove *backwards* (-0.984 of a forward
+command). The plugin now derives the sign off the model, so the vendor's axis is kept and the tests
+pin that the plugin copes rather than that the model was bent to suit it.
 """
 
 from __future__ import annotations
@@ -85,8 +85,16 @@ def test_the_caster_masses_are_upstream_nonsense():
         engine.shutdown()
 
 
-def test_the_wheel_axis_matches_the_plugin_convention():
-    """diff_drive has no sign derivation, so the model must supply +y -- see the docstring."""
+def test_the_vendors_wheel_axis_is_kept_and_still_drives_forward():
+    """This description's wheel axis is -y, the opposite of every other model here, and that is fine.
+
+    A revolute axis is arbitrary up to sign, so a vendor may express the same wheel either way. The
+    axis was briefly flipped in this port because ``diff_drive`` wrote the commanded rate straight to
+    the actuator and so silently required +y -- a convention the other models satisfied only because
+    our own generators wrote them, and which drove this robot backwards. The plugin now derives the
+    sign off the model, as ``omni_drive`` does, so the vendor's axis is kept and this test pins that
+    the *plugin* copes rather than that the model was bent to suit it.
+    """
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
@@ -95,10 +103,46 @@ def test_the_wheel_axis_matches_the_plugin_convention():
         for side in WHEELS:
             jid = named(model, mujoco.mjtObj.mjOBJ_JOINT, f"q_mp_400_fixed_wheel_{side}_joint")
             axis = rot.T @ (data.xmat[model.jnt_bodyid[jid]].reshape(3, 3) @ model.jnt_axis[jid])
-            assert axis[1] > 0.99, (
-                f"{side} wheel axis is {np.round(axis, 4)}; diff_drive writes the wheel rate with no "
-                f"sign derivation and needs +y, or the robot drives backwards"
+            assert axis[1] < -0.99, (
+                f"{side} wheel axis is {np.round(axis, 4)}; the vendor's is -y, and keeping it is the "
+                f"point -- if this is now +y someone re-applied the old workaround"
             )
+        handle = engine.ctx.blackboard.get("robot:q")
+        for _ in range(400):
+            engine.step()
+        handle.drive(0.2, 0.0, 0.0)
+        for _ in range(1800):
+            engine.step()
+        assert float(data.qvel[0]) > 0.15, (
+            f"drives at {float(data.qvel[0]):+.4f} m/s on a +0.2 command -- the plugin's roll-sign "
+            f"derivation is not absorbing the vendor's -y axis"
+        )
+    finally:
+        engine.shutdown()
+
+
+def test_odometry_agrees_with_ground_truth():
+    """The roll sign must be applied to the odometry read as well as to the command.
+
+    Applying it in only one place is the subtle failure: the robot drives correctly and reports
+    itself going backwards, which looks like a bridge or frame problem rather than a drive one.
+    """
+    engine = _engine()
+    try:
+        data = engine.ctx.data
+        handle = engine.ctx.blackboard.get("robot:q")
+        for _ in range(400):
+            engine.step()
+        handle.drive(0.2, 0.0, 0.0)
+        for _ in range(1800):
+            engine.step()
+        truth = float(data.qvel[0])
+        reported = float(handle.read_odom()[3])
+        assert reported * truth > 0, (
+            f"odometry reports {reported:+.4f} m/s while the base does {truth:+.4f} -- opposite "
+            f"signs mean the roll sign reached the command but not the odometry read"
+        )
+        assert abs(reported - truth) < 0.05, f"odometry {reported:+.4f} vs truth {truth:+.4f}"
     finally:
         engine.shutdown()
 
@@ -205,7 +249,14 @@ def test_the_wheels_grip_rather_than_slip():
         handle.drive(MAX_LINEAR_VEL, 0.0, 0.0)
         for _ in range(1750):
             engine.step()
-        rolling = float(data.qvel[model.jnt_dofadr[jid]]) * WHEEL_RADIUS
+        # Signed by the wheel's axis in the base frame: this vendor's axis is -y, so the raw joint
+        # velocity is negative while the robot drives forward. Comparing the raw number to the base
+        # speed is the frame error this batch has now made four times.
+        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "q_base_link")
+        rot = data.xmat[base].reshape(3, 3)
+        axis_y = float((rot.T @ (data.xmat[model.jnt_bodyid[jid]].reshape(3, 3)
+                                 @ model.jnt_axis[jid]))[1])
+        rolling = float(data.qvel[model.jnt_dofadr[jid]]) * np.sign(axis_y) * WHEEL_RADIUS
         assert abs(1 - float(data.qvel[0]) / rolling) < 0.05, (
             f"base {float(data.qvel[0]):.4f} m/s against a rolling speed of {rolling:.4f} -- the "
             f"wheels are slipping")
