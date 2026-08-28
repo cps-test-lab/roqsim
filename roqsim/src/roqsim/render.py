@@ -230,9 +230,13 @@ def tilt_preview_light(model, data) -> int:
 
     Measured, so the cheaper-looking knobs are not tried again: ``shadowclip`` changes nothing (it
     clips depth, not the footprint) and resolution barely helps -- at ``shadowsize`` 16384, a 1 GB
-    depth texture, the streaks are still there. Moving the light off vertical removes them outright,
-    keeps the contact shadow that tells a viewer whether a part is floating, and lights form better
-    than a top-down lamp does.
+    depth texture, the streaks are still there. Tilting keeps the contact shadow that tells a viewer
+    whether a part is floating, and lights form better than a top-down lamp does.
+
+    It is HALF the fix, not all of it: the tilt removes the streaks that run down a shell's flank, but
+    the shadow map still combs the terminator itself, where the surface turns away from the light and
+    no fixed bias can cover a texel's depth spread. :func:`fill_preview_self_shadows` handles that
+    half, and is why this one no longer claims to remove the artefact outright.
 
     PREVIEWS ONLY. In a world, that light is the world's own lighting and a campaign's images depend
     on it; this is why the fix lives here and not in the world definition.
@@ -253,6 +257,48 @@ def tilt_preview_light(model, data) -> int:
     if tilted:
         mujoco.mj_forward(model, data)  # the renderer reads data.light_xpos/xdir, not the model's
     return tilted
+
+
+#: Preview lighting split (see :func:`fill_preview_self_shadows`). The shadow-casting room light keeps
+#: enough diffuse to cast a readable contact shadow; the headlight carries the modelling light. Public
+#: because the thumbnail renderer builds its own preview scene and must light it the same way -- a
+#: thumbnail and `roqsim render` are supposed to be the same picture.
+PREVIEW_HEADLIGHT_DIFFUSE = 0.85
+PREVIEW_HEADLIGHT_AMBIENT = 0.20
+PREVIEW_LIGHT_DIFFUSE = 0.35
+PREVIEW_LIGHT_AMBIENT = 0.30
+
+
+def fill_preview_self_shadows(model) -> None:
+    """Move a MODEL PREVIEW's modelling light into the headlight, leaving the room light to cast.
+
+    The second half of the preview shadow fix (:func:`tilt_preview_light` is the first). Where a robot's
+    surface turns away from the tilted room light, the shadow map combs the terminator into a ragged
+    white/grey border that reads as two meshes intersecting. It is not the meshes: hiding a robot's
+    visual geometry and rendering only its primitive collision capsules reproduces the same border, and
+    the border disappears entirely with ``castshadow`` off.
+
+    MuJoCo 3.11 exposes no shadow bias, and the knobs it does expose do not reach this: ``shadowclip``
+    is inert, ``shadowsize`` 16384 only thins the comb, and ``shadowscale``, the spot cutoff and the
+    light distance each trade the comb for a blockier or dimmer shadow. What works is denying the
+    shadow map the contrast it needs to show: the headlight is attached to the camera and casts no
+    shadow, so lighting the model with it and leaving the room light only strong enough to darken the
+    floor puts the acne band on an already-lit surface. Measured on xarm7, terminator contrast 0.72 ->
+    0.28, with the contact shadow intact.
+
+    Worst on a matte pure-white robot (xarm7, m1013), where the lit side saturates and the shadowed
+    side has nothing but ambient to fall back on.
+
+    PREVIEWS ONLY, and only for lights :func:`tilt_preview_light` recognised as the built-in room's --
+    a world that aimed its own lights owns its own look.
+    """
+    model.vis.headlight.diffuse = [PREVIEW_HEADLIGHT_DIFFUSE] * 3
+    model.vis.headlight.ambient = [PREVIEW_HEADLIGHT_AMBIENT] * 3
+    for i in range(model.nlight):
+        if not model.light_castshadow[i]:
+            continue
+        model.light_diffuse[i] = [PREVIEW_LIGHT_DIFFUSE] * 3
+        model.light_ambient[i] = [PREVIEW_LIGHT_AMBIENT] * 3
 
 
 def reset_to_home(model: mujoco.MjModel, data: mujoco.MjData) -> None:
@@ -456,8 +502,9 @@ def build_target(
     reset_to_home(engine.ctx.model, engine.ctx.data)
     from .runner import is_model_ref
 
-    if is_model_ref(target):
-        tilt_preview_light(engine.ctx.model, engine.ctx.data)
+    if is_model_ref(target) and tilt_preview_light(engine.ctx.model, engine.ctx.data):
+        # Only when the tilt recognised the built-in room's light: a world that aimed its own keeps them.
+        fill_preview_self_shadows(engine.ctx.model)
     # Keep the engine reachable: a sensor replay has to run the plugins' post_step, and rebuilding the
     # world a second time to get at them would be both slow and a chance for the two to diverge.
     engine.ctx.engine = engine
