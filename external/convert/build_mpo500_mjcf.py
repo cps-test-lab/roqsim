@@ -40,10 +40,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from neobotix import (  # noqa: E402
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+)
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
-NEO_URL = "https://github.com/neobotix/neo_simulation2.git"
-NEO_COMMIT = "832041452c1a0199afea1e9b65adf37381e96214"
 
 ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/mpo_500"
@@ -52,66 +53,18 @@ PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/mpo_500"
 TARGET_FACES = {"MPO-500-WHEEL": 2500}
 DEFAULT_FACES = 4000
 
-#: Our own top-level. The vendor's would work here (unlike the MPO-700's), but going through it
-#: pulls in their Gazebo xacro and its ros2_control block; this keeps the expansion to geometry.
-WRAPPER = """<?xml version="1.0"?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mpo_500">
-  <xacro:arg name="use_docking_adapter" default="false"/>
-  <xacro:property name="ODM_joint_type" value="revolute"/>
-  <xacro:property name="arm" value=""/>
-  <xacro:property name="use_arm" value="false"/>
-  <xacro:include filename="$(find neo_simulation2)/robots/mpo_500/urdf/mpo_500_body.urdf.xacro"/>
-</robot>
-"""
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
 
 
-def convert_meshes(source: Path, urdf: ET.Element) -> dict[str, str]:
-    """DAE -> per-material OBJ -> decimated OBJ, with the palette kept beside the meshes."""
-    scales = mesh_scales(urdf)
-    (PKG / "meshes").mkdir(parents=True, exist_ok=True)
-    for stale in (PKG / "meshes").glob("*.obj"):
-        stale.unlink()
-    wanted = {}
-    for mesh in urdf.iter("mesh"):
-        rel = mesh.get("filename").split("neo_simulation2/", 1)[1]
-        wanted[Path(rel).stem] = source / rel
-    with tempfile.TemporaryDirectory() as tmp:
-        staged = Path(tmp) / "dae"
-        staged.mkdir()
-        for stem, path in wanted.items():
-            shutil.copy2(path, staged / f"{stem}.dae")
-        raw = Path(tmp) / "obj"
-        subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "dae2obj.py"), str(staged), str(raw)],
-            check=True, capture_output=True,
-        )
-        palette = json.loads((raw / "materials.json").read_text())
-        (PKG / "meshes/mpo_500.materials.json").write_text(
-            json.dumps(palette, indent=2, sort_keys=True) + "\n")
-        for stem, parts in palette.items():
-            budget = TARGET_FACES.get(stem, DEFAULT_FACES)
-            for sub, _rgb in parts:
-                subprocess.run(
-                    [sys.executable, "-m", "roqsim.commands", "assets", "reduce-mesh",
-                     "--target-faces", str(budget), "--no-materials",
-                     str(raw / f"{sub}.obj"), str(PKG / "meshes" / f"{sub}.obj")],
-                    check=True, cwd=ROOT, capture_output=True,
-                )
-    return scales
 
 
 def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.find("child").get("link"): j for j in urdf.findall("joint")}
-    colours = {
-        sub: " ".join(f"{float(c):g}" for c in (*rgb[:3], 1.0))
-        for parts in json.loads((PKG / "meshes/mpo_500.materials.json").read_text()).values()
-        for sub, rgb in parts
-    }
+    palette = colours(PKG, "mpo_500")
 
     def geoms(link: ET.Element, indent: str, wheel: bool = False) -> str:
         out = ""
@@ -121,8 +74,8 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                 continue
             stem = Path(mesh.get("filename")).stem
             xyz, quat = pose(visual)
-            for sub in sorted(s for s in shipped if s == stem or s.startswith(f"{stem}__")):
-                mat = f' material="{sub}_mat"' if sub in colours else ""
+            for sub in subs_for(stem, shipped):
+                mat = f' material="{sub}_mat"' if sub in palette else ""
                 out += f'{indent}<geom class="visual" mesh="{sub}"{mat} pos="{xyz}"{quat}/>\n'
         for collision in link.findall("collision"):
             shape = collision.find("geometry")[0]
@@ -132,8 +85,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                         f' size="{float(shape.get("radius")):g}" pos="{xyz}"/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
-                sub = next(iter(sorted(s for s in shipped
-                                       if s == stem or s.startswith(f"{stem}__"))))
+                sub = subs_for(stem, shipped)[0]
                 out += (f'{indent}<geom class="collision" mesh="{sub}"'
                         f' name="{link.get("name")}_collision" pos="{xyz}"{quat}/>\n')
         return out
@@ -157,14 +109,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     excludes = "".join(
         f'    <exclude body1="base_link" body2="mpo_500_omni_wheel_{c}_link"/>\n' for c in CORNERS
     )
-    assets = "".join(
-        f'    <material name="{sub}_mat" rgba="{rgba}"/>\n'
-        for sub, rgba in sorted(colours.items()) if sub in shipped
-    ) + "".join(
-        f'    <mesh file="{sub}.obj" scale="{scales.get(sub.split("__")[0], "1 1 1")}"'
-        f' inertia="shell"/>\n'
-        for sub in sorted(shipped)
-    )
+    assets = asset_block(shipped, palette, scales)
     wheel_z = float(pose(joints[f"mpo_500_omni_wheel_{CORNERS[0]}_link"])[0].split()[2])
     radius = float(links[f"mpo_500_omni_wheel_{CORNERS[0]}_link"]
                    .find("collision/geometry/sphere").get("radius"))
@@ -299,7 +244,7 @@ def main() -> int:
     target = PKG / "mpo_500.xml"
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_500.urdf.xacro"),
-                            Path(tmp), wrapper=WRAPPER)
+                            Path(tmp), wrapper=wrapper("mpo_500", "revolute"))
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}
@@ -310,7 +255,7 @@ def main() -> int:
         return 0
 
     PKG.mkdir(parents=True, exist_ok=True)
-    scales = convert_meshes(source, urdf)
+    scales = convert_meshes(source, urdf, PKG, "mpo_500", ROOT, budgets=TARGET_FACES)
     shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}
     shutil.copy2(source / "LICENSE", PKG / "mpo_500_LICENSE")
     target.write_text(build(urdf, shipped, scales))

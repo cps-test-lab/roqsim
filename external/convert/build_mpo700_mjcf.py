@@ -46,6 +46,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from neobotix import (  # noqa: E402
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+)
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
 NEO_URL = "https://github.com/neobotix/neo_simulation2.git"
@@ -56,18 +59,6 @@ ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/mpo_700"
 TARGET_FACES = 4000
 
-#: Our own top-level, because the vendor's hardcodes `ODM_joint_type` to "fixed" as a
-#: <xacro:property> rather than a <xacro:arg> -- so it cannot be overridden from outside, and the
-#: articulated tree its own macros support is unreachable through it.
-WRAPPER = """<?xml version="1.0"?>
-<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="mpo_700">
-  <xacro:arg name="use_docking_adapter" default="false"/>
-  <xacro:property name="ODM_joint_type" value="continuous"/>
-  <xacro:property name="arm" value=""/>
-  <xacro:property name="use_arm" value="false"/>
-  <xacro:include filename="$(find neo_simulation2)/robots/mpo_700/urdf/mpo_700_body.urdf.xacro"/>
-</robot>
-"""
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
@@ -75,46 +66,6 @@ CORNERS = ("front_left", "front_right", "back_left", "back_right")
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
 
 
-def convert_meshes(source: Path, urdf: ET.Element) -> dict[str, str]:
-    """Convert only the meshes the expanded tree actually references. Returns ``{stem: scale}``.
-
-    The per-material split is also what carries COLOUR: these Collada files bind ten distinct
-    diffuse colours across four meshes -- including the SICK scanners' signature yellow and the
-    wheels' orange accent -- and MuJoCo reads no OBJ material, so without one geom per material the
-    whole robot renders flat grey. dae2obj's ``materials.json`` is kept beside the meshes so
-    ``--check`` can rebuild the MJCF without Blender or pycollada.
-    """
-    scales = mesh_scales(urdf)
-    (PKG / "meshes").mkdir(parents=True, exist_ok=True)
-    for stale in (PKG / "meshes").glob("*.obj"):
-        stale.unlink()
-    wanted = {}
-    for mesh in urdf.iter("mesh"):
-        rel = mesh.get("filename").split("neo_simulation2/", 1)[1]
-        wanted[Path(rel).stem] = source / rel
-    with tempfile.TemporaryDirectory() as tmp:
-        staged = Path(tmp) / "dae"
-        staged.mkdir()
-        for stem, path in wanted.items():
-            shutil.copy2(path, staged / f"{stem}.dae")
-        raw = Path(tmp) / "obj"
-        subprocess.run(
-            [sys.executable, str(Path(__file__).parent / "dae2obj.py"), str(staged), str(raw)],
-            check=True, capture_output=True,
-        )
-        palette = json.loads((raw / "materials.json").read_text())
-        (PKG / "meshes").mkdir(parents=True, exist_ok=True)
-        (PKG / "meshes/mpo_700.materials.json").write_text(
-            json.dumps(palette, indent=2, sort_keys=True) + "\n")
-        for parts in palette.values():
-            for sub, _rgb in parts:
-                subprocess.run(
-                    [sys.executable, "-m", "roqsim.commands", "assets", "reduce-mesh",
-                     "--target-faces", str(TARGET_FACES), "--no-materials",
-                     str(raw / f"{sub}.obj"), str(PKG / "meshes" / f"{sub}.obj")],
-                    check=True, cwd=ROOT, capture_output=True,
-                )
-    return scales
 
 
 def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
@@ -123,11 +74,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     # One material per sub-mesh, named after it. A shared palette keyed on colour would need a
     # hand-maintained table (as the LGDXRobot2 port has); with ten colours over four meshes, 1:1 is
     # both simpler and impossible to get wrong -- and an upstream repaint just changes an rgba.
-    colours = {
-        sub: " ".join(f"{float(c):g}" for c in (*rgb[:3], 1.0))
-        for parts in json.loads((PKG / "meshes/mpo_700.materials.json").read_text()).values()
-        for sub, rgb in parts
-    }
+    palette = colours(PKG, "mpo_700")
 
     def geoms(link: ET.Element, indent: str, cls: str, offset=("0", "0", "0")) -> str:
         """A link's mesh visuals and its collision, in MJCF form.
@@ -143,8 +90,8 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
             stem = Path(mesh.get("filename")).stem
             xyz, quat = pose(visual)
             x, y, z = (float(a) + float(b) for a, b in zip(xyz.split(), offset, strict=True))
-            for sub in sorted(s for s in shipped if s == stem or s.startswith(f"{stem}__")):
-                mat = f' material="{sub}_mat"' if sub in colours else ""
+            for sub in subs_for(stem, shipped):
+                mat = f' material="{sub}_mat"' if sub in palette else ""
                 out += (f'{indent}<geom class="visual" mesh="{sub}"{mat}'
                         f' pos="{x:g} {y:g} {z:g}"{quat}/>\n')
         for collision in link.findall("collision"):
@@ -157,8 +104,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                         f' pos="{x:g} {y:g} {z:g}"{quat}/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
-                sub = next(iter(sorted(s for s in shipped
-                                       if s == stem or s.startswith(f"{stem}__"))))
+                sub = subs_for(stem, shipped)[0]
                 out += (f'{indent}<geom class="collision" mesh="{sub}"'
                         f' name="{link.get("name")}_collision"'
                         f' pos="{x:g} {y:g} {z:g}"{quat}/>\n')
@@ -199,14 +145,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                + float(pose(joints["mpo_700_wheel_front_left_link"])[0].split()[2]))
     radius = float(links["mpo_700_wheel_front_left_link"]
                    .find("collision/geometry/sphere").get("radius"))
-    assets = "".join(
-        f'    <material name="{sub}_mat" rgba="{rgba}"/>\n'
-        for sub, rgba in sorted(colours.items()) if sub in shipped
-    ) + "".join(
-        f'    <mesh file="{sub}.obj" scale="{scales.get(sub.split("__")[0], "1 1 1")}"'
-        f' inertia="shell"/>\n'
-        for sub in sorted(shipped)
-    )
+    assets = asset_block(shipped, palette, scales)
     return TEMPLATE.format(
         commit=NEO_COMMIT, assets=assets, base_geoms=base_geoms, sensors=sensors, corners=corners,
         rest_height=f"{radius - wheel_z:g}",
@@ -364,7 +303,7 @@ def main() -> int:
     target = PKG / "mpo_700.xml"
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_700.urdf.xacro"),
-                            Path(tmp), wrapper=WRAPPER)
+                            Path(tmp), wrapper=wrapper("mpo_700", "continuous"))
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}
@@ -375,7 +314,7 @@ def main() -> int:
         return 0
 
     PKG.mkdir(parents=True, exist_ok=True)
-    scales = convert_meshes(source, urdf)
+    scales = convert_meshes(source, urdf, PKG, "mpo_700", ROOT)
     shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}
     shutil.copy2(source / "LICENSE", PKG / "mpo_700_LICENSE")
     target.write_text(build(urdf, shipped, scales))

@@ -1,0 +1,20 @@
+# Neobotix MP-400 in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:mp_400_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # diff_drive (a true 2-wheel differential drive with passive casters, so no slip_factor) and the
+  # vendor's single front SICK S300 come from the mp_400 model manifest.
+  - spawn_robot:
+      model: mp_400
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          test_cmd: [0.5, 0.4]   # remove once the ros2_bridge drives /cmd_vel

@@ -41,8 +41,8 @@ def test_every_model_is_a_folder():
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
     assert set(ROBOTS) == {
         "clearpath_jackal", "husky_a200", "panther", "raspimouse", "ridgeback", "rosbot",
-        "lgdxrobot2", "mpo_500", "mpo_700", "oomwoo_one", "turtlebot3_waffle", "turtlebot4",
-        "warthog",
+        "lgdxrobot2", "mp_400", "mpo_500", "mpo_700", "oomwoo_one", "turtlebot3_waffle",
+        "turtlebot4", "warthog",
     }
 
 
