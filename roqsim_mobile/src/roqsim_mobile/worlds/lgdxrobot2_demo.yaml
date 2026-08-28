@@ -1,0 +1,22 @@
+# LGDXRobot2 in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:lgdxrobot2_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # omni_drive (holonomic; four mecanum wheels, no slip_factor) and the lidar come from the
+  # lgdxrobot2 model manifest.
+  - spawn_robot:
+      model: lgdxrobot2
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      # A strafing command — the point of a mecanum base, and something only this and the ridgeback
+      # can do here. Well inside the vendor's own 0.33 / 0.33 / 0.3 limits.
+      - omni_drive:
+          test_cmd: [0.15, 0.12, 0.15]   # [vx, vy, wz]; remove once the ros2_bridge drives /cmd_vel

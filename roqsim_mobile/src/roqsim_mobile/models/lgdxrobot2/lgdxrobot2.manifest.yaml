@@ -1,0 +1,50 @@
+# Default controller + sensors for the LGDXRobot2 mecanum research platform.
+#
+# `spawn_robot: {model: lgdxrobot2}` pulls these in automatically, so a world does not re-declare
+# the robot's intrinsic kinematics/sensors.
+components:
+  # HOLONOMIC, and the second such base in roqsim_mobile after the ridgeback. Four mecanum wheels
+  # strafe, so this uses omni_drive rather than diff_drive -- and therefore carries NO slip_factor,
+  # because the platform does not turn by scrubbing. The rollers are not modelled; the commanded
+  # twist drives three velocity actuators on the base free joint and the wheel servos keep the
+  # visuals and joint_states honest.
+  #
+  # The drive TYPE is the vendor's own statement, not an inference: lgdxrobot2_sim.urdf declares
+  # gz::sim::systems::MecanumDrive, and the geometry below is that plugin's configuration.
+  - omni_drive:
+      base_joint: base_free
+      vx_actuator: base_vx
+      vy_actuator: base_vy
+      wz_actuator: base_wz
+      # From lgdxrobot2_bringup/param/loc/nav2.yaml -- the vendor's profile for the REAL robot.
+      # Its Gazebo profile (param/slam-gz) sets max_vel_y to 0, treating the platform as if it were
+      # differential; the real profile is the one that describes the machine. Recorded because the
+      # two disagree, which is a fact about the description rather than a choice of ours.
+      max_linear_vel: 0.33
+      max_lateral_vel: 0.33           # holonomic: the same sideways
+      max_combined_linear_vel: 0.33   # cap on hypot(vx, vy)
+      max_angular_vel: 0.3
+      accel_limit: 1.0                # acc_lim_x
+      angular_accel_limit: 1.0        # acc_lim_theta
+      # Mecanum wheel handling is OBSERVATIONAL. Geometry is the MecanumDrive plugin's own:
+      # wheel_radius 0.0375, wheel_separation 0.208 (lateral), wheelbase 0.164 (longitudinal).
+      wheel_radius: 0.0375
+      wheel_separation: 0.208
+      axis_separation: 0.164
+      # The plugin's own mapping: wheel1 front-left, wheel2 front-right, wheel3 back-left,
+      # wheel4 back-right.
+      wheels: [wheel1_link, wheel2_link, wheel3_link, wheel4_link]
+      wheel_actuators: [wheel1_motor, wheel2_motor, wheel3_motor, wheel4_motor]
+  # The description ships a lidar_link with a mesh and a mount pose but no scan parameters -- no
+  # Gazebo ray sensor and no SDF. MOUNT is the vendor's (lidar_link_joint, 0.156 m, rotated pi);
+  # the SCAN is ours. These are LDS-class values for a 0.24 m indoor platform -- see the port log.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 360
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.12
+      max_range: 12.0
+      rate_hz: 10.0
+      exclude_body: base_link
