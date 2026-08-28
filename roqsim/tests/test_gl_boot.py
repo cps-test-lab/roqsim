@@ -142,16 +142,30 @@ def test_an_explicit_glfw_request_is_not_second_guessed():
 # something actually renders.
 
 
-def _fake_devices(monkeypatch, *, nvidiactl, render_node):
-    """Point gl.py's two probes at a scripted answer, without touching /dev."""
+def _fake_devices(monkeypatch, *, nvidiactl, render_node, names=None):
+    """Point gl.py's two probes at a scripted answer, without touching /dev.
+
+    *names* is what ``/dev/dri`` contains, so a test can pin WHICH node is present rather
+    than only whether one is -- the distinction the ``renderD129`` regression turns on.
+    ``render_node=False`` scripts a directory holding no render node at all, which is what
+    a GPU handed over without the ``graphics`` capability actually looks like.
+    """
     from roqsim import gl
 
     present = set()
     if nvidiactl:
         present.add(gl._NVIDIA_CONTROL)
-    if render_node:
-        present.add(gl._RENDER_NODE)
     monkeypatch.setattr(gl.os.path, "exists", lambda path: path in present)
+
+    if names is None:
+        names = ["by-path", "card0", "renderD128"] if render_node else ["by-path", "card0"]
+
+    def _listdir(path):
+        if path == gl._RENDER_NODE_DIR:
+            return list(names)
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(gl.os, "listdir", _listdir)
 
 
 def test_a_gpu_without_a_render_node_is_recognised(monkeypatch):
@@ -172,6 +186,45 @@ def test_the_ordinary_shapes_are_not_mistaken_for_it(monkeypatch):
     _fake_devices(monkeypatch, nvidiactl=True, render_node=True)  # a working GPU node
     assert gl.gpu_without_render_node() is False
     _fake_devices(monkeypatch, nvidiactl=False, render_node=True)  # laptop, no nvidiactl
+    assert gl.gpu_without_render_node() is False
+
+
+def test_a_discrete_card_numbered_past_128_is_a_render_node(monkeypatch):
+    """The regression this detection was written without.
+
+    Render nodes are numbered from 128 in probe order, so a machine with an integrated chip
+    and a discrete card puts the discrete one at ``renderD129`` -- and a container handed
+    only that card sees no ``renderD128``. Probing the fixed name read a working RTX 4090 as
+    a GPU with no render node and REFUSED THE RUN, which is the worst direction for this
+    check to fail in: it turns a correct fast configuration into a hard error.
+    """
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=True,
+                  names=["by-path", "card1", "renderD129"])
+    assert gl.render_node() == "/dev/dri/renderD129"
+    assert gl.gpu_without_render_node() is False
+
+
+def test_a_dri_dir_with_only_card_nodes_is_not_a_render_node(monkeypatch):
+    """``card*`` is the privileged primary node, not the one EGL renders through. A
+    directory holding only those is the no-graphics-capability case, not a working GPU."""
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=True, render_node=True, names=["by-path", "card0"])
+    assert gl.render_node() is None
+    assert gl.gpu_without_render_node() is True
+
+
+def test_no_dri_directory_at_all_is_the_cpu_only_answer(monkeypatch):
+    """A machine with no ``/dev/dri`` must answer "no render node", not raise: that is
+    every CPU-only node and every CI runner."""
+    from roqsim import gl
+
+    _fake_devices(monkeypatch, nvidiactl=False, render_node=False, names=None)
+    monkeypatch.setattr(gl.os, "listdir", lambda path: (_ for _ in ()).throw(
+        FileNotFoundError(path)))
+    assert gl.render_node() is None
     assert gl.gpu_without_render_node() is False
 
 
@@ -254,3 +307,83 @@ def test_the_gl_device_is_reported_next_to_the_backend():
     # A hardware backend must be able to say which device; software rendering names llvmpipe
     # or similar. Either way the string is non-empty, which is what makes the log worth having.
     assert device, "a live context reported no GL_RENDERER"
+
+
+# -- what actually bound, which is the only authoritative answer --------------------
+#
+# Everything above reasons from device paths before a context exists. These pin the check
+# that reads the bound renderer instead, and with it the case the path heuristics cannot
+# see: a render node that belongs to an integrated chip sitting beside the NVIDIA card.
+
+
+def _bound(monkeypatch, *, device, nvidiactl=True, chosen="egl"):
+    """Script "a GPU was handed over and X bound", without a GL context."""
+    from roqsim import gl, rendering
+
+    monkeypatch.setattr(gl, "gpu_visible", lambda: nvidiactl)
+    monkeypatch.setattr(gl, "chosen_backend", lambda: chosen)
+    return rendering
+
+
+def test_software_rendering_next_to_a_gpu_is_refused(monkeypatch):
+    """The missing-'graphics'-capability case, caught by what bound rather than by a path."""
+    from roqsim.rendering import GLBackendError
+
+    r = _bound(monkeypatch, device="llvmpipe (LLVM 20.1.2, 256 bits)")
+    with pytest.raises(GLBackendError) as err:
+        r.check_bound_device("llvmpipe (LLVM 20.1.2, 256 bits)")
+    assert "graphics" in str(err.value), "must name the capability to set"
+    assert "llvmpipe" in str(err.value), "must name what actually bound"
+
+
+def test_binding_the_integrated_chip_beside_the_card_is_refused(monkeypatch):
+    """The case no device-path test can reach.
+
+    A container given the NVIDIA card AND an iGPU's render node has a render node present, so
+    gpu_without_render_node() is False and every path-based check passes -- while EGL binds
+    the Intel chip and the discrete card goes unused. Only the bound device string says so.
+    """
+    from roqsim.rendering import GLBackendError
+
+    r = _bound(monkeypatch, device="Mesa Intel(R) UHD Graphics 770 (ADL-S GT1)")
+    with pytest.raises(GLBackendError) as err:
+        r.check_bound_device("Mesa Intel(R) UHD Graphics 770 (ADL-S GT1)")
+    assert "bound a different device" in str(err.value)
+    assert "Intel" in str(err.value)
+
+
+def test_the_nvidia_card_binding_is_silent(monkeypatch):
+    r = _bound(monkeypatch, device="NVIDIA GeForce RTX 4090/PCIe/SSE2")
+    r.check_bound_device("NVIDIA GeForce RTX 4090/PCIe/SSE2")  # must not raise
+
+
+def test_software_rendering_with_no_gpu_is_silent(monkeypatch):
+    """A CPU-only node binding llvmpipe is the correct answer for that machine, not a fault."""
+    r = _bound(monkeypatch, device="llvmpipe (LLVM 20.1.2, 256 bits)", nvidiactl=False)
+    r.check_bound_device("llvmpipe (LLVM 20.1.2, 256 bits)")
+
+
+def test_an_explicit_backend_is_never_second_guessed(monkeypatch):
+    """Same rule the osmesa refusal follows: a request is honoured, only a fallback is judged.
+
+    chosen_backend() is None exactly when MUJOCO_GL was already set, so this is the escape
+    hatch for someone who deliberately wants software rendering on a GPU machine.
+    """
+    r = _bound(monkeypatch, device="llvmpipe (LLVM 20.1.2, 256 bits)", chosen=None)
+    r.check_bound_device("llvmpipe (LLVM 20.1.2, 256 bits)")
+
+
+def test_an_unreadable_device_string_never_fails_a_render(monkeypatch):
+    """bound_gl_device() returns "" when it cannot read the renderer. Diagnostics must not be
+    the reason a render fails."""
+    r = _bound(monkeypatch, device="")
+    r.check_bound_device("")
+
+
+def test_software_renderers_are_recognised():
+    from roqsim.rendering import software_rendered
+
+    for name in ("llvmpipe (LLVM 20.1.2, 256 bits)", "softpipe", "SWRAST", "lavapipe"):
+        assert software_rendered(name) is True, name
+    for name in ("NVIDIA GeForce RTX 4090/PCIe/SSE2", "Mesa Intel(R) UHD Graphics 770", ""):
+        assert software_rendered(name) is False, name

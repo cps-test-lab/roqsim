@@ -32,18 +32,29 @@ _logger = logging.getLogger(__name__)
 #: ``gladLoadGL`` clash on camera worlds. Overridden by setting ``MUJOCO_GL`` yourself.
 DEFAULT_MUJOCO_GL = "egl"
 
-#: A DRI render node -- the thing ``egl`` actually needs. Its absence is what makes a
-#: CPU-only node different from a broken GL install, which is the distinction MuJoCo's
-#: own error message cannot draw.
-_RENDER_NODE = "/dev/dri/renderD128"
+#: Where DRI render nodes live -- the things ``egl`` actually needs. The absence of *any* of
+#: them is what makes a CPU-only node different from a broken GL install, which is the
+#: distinction MuJoCo's own error message cannot draw.
+#:
+#: Any ``renderD*`` counts, and probing for the specific name ``renderD128`` was a bug: nodes
+#: are numbered from 128 in probe order, so on a machine with an integrated chip *and* a
+#: discrete card the discrete one is ``renderD129`` -- and a container handed only that card
+#: sees no ``renderD128`` at all. That container has a perfectly good GPU, and the fixed path
+#: read it as the half-configured case below and refused to run.
+_RENDER_NODE_DIR = "/dev/dri"
+
+#: The prefix a DRI render node's name always has (``renderD128``, ``renderD129``, ...), as
+#: opposed to the ``card*`` primary nodes, which need privileges EGL does not use.
+_RENDER_NODE_PREFIX = "renderD"
 
 #: Opt out of the selection entirely and let MuJoCo's own default stand. The sibling of
 #: ``ROQSIM_NO_GL_PRELOAD`` (see :func:`roqsim.viewer.ensure_gl_preload`), for a caller that wants
 #: to own the decision -- including the decision to make no decision.
 _OPT_OUT = "ROQSIM_NO_GL_SELECT"
 
-#: An NVIDIA GPU is visible to this process. Paired with a *missing* :data:`_RENDER_NODE` it
-#: describes one specific mistake and nothing else -- see :func:`gpu_without_render_node`.
+#: An NVIDIA GPU is visible to this process. Paired with *no* render node at all (see
+#: :func:`render_node`) it describes one specific mistake and nothing else -- see
+#: :func:`gpu_without_render_node`.
 _NVIDIA_CONTROL = "/dev/nvidiactl"
 
 #: What :func:`select_offscreen_gl` decided, or ``None`` when it deferred to a value that was
@@ -52,6 +63,37 @@ _NVIDIA_CONTROL = "/dev/nvidiactl"
 #: fallback is ever second-guessed (:func:`roqsim.rendering.check_gl_backend`); a request is
 #: honoured, exactly as an explicit ``glfw`` is.
 _chosen: str | None = None
+
+
+def render_node() -> str | None:
+    """The first DRI render node this process can see, or ``None``.
+
+    Sorted so the answer is stable rather than dependent on directory order, and any
+    ``renderD*`` counts -- see :data:`_RENDER_NODE_DIR` for why pinning ``renderD128``
+    was wrong. Which node it returns is diagnostic only: EGL chooses its device through
+    the glvnd ICD ordering, not from this path (see :func:`roqsim.rendering.bound_gl_device`).
+
+    An unreadable or missing ``/dev/dri`` is not an error here -- it is the CPU-only answer.
+    """
+    try:
+        names = sorted(os.listdir(_RENDER_NODE_DIR))
+    except OSError:
+        return None
+    for name in names:
+        if name.startswith(_RENDER_NODE_PREFIX):
+            return os.path.join(_RENDER_NODE_DIR, name)
+    return None
+
+
+def gpu_visible() -> bool:
+    """Whether an NVIDIA GPU has been handed to *this process*.
+
+    ``/dev/nvidiactl`` is injected by the container runtime only into a container that
+    requested a device, so this is "we were given a GPU", not "the host has one" -- which is
+    the question worth asking, because being given a GPU and not rendering on it is the
+    mistake (:func:`roqsim.rendering.check_bound_device`).
+    """
+    return os.path.exists(_NVIDIA_CONTROL)
 
 
 def gpu_without_render_node() -> bool:
@@ -67,8 +109,15 @@ def gpu_without_render_node() -> bool:
     It cannot fire anywhere a GPU was not deliberately handed over -- a CPU-only node and a
     laptop with a working render node both answer False -- which is what makes it safe to act
     on rather than merely warn about.
+
+    **It is an early warning, not the authoritative test**, and must not be mistaken for one:
+    device-node presence is a proxy for "hardware GL works", and it misses the case where a
+    render node IS present but belongs to something else -- an integrated chip beside the
+    NVIDIA card that was handed over. That process picks ``egl``, binds the wrong device, and
+    this function answers False throughout. What the bound context actually is can only be
+    read once one exists: :func:`roqsim.rendering.check_bound_device`.
     """
-    return os.path.exists(_NVIDIA_CONTROL) and not os.path.exists(_RENDER_NODE)
+    return gpu_visible() and render_node() is None
 
 
 def chosen_backend() -> str | None:
@@ -111,7 +160,7 @@ def select_offscreen_gl() -> str | None:
     existing = os.environ.get("MUJOCO_GL")
     if existing:
         return existing
-    backend = "egl" if os.path.exists(_RENDER_NODE) else "osmesa"
+    backend = "egl" if render_node() is not None else "osmesa"
     os.environ["MUJOCO_GL"] = backend
     _chosen = backend
     if backend == "osmesa" and gpu_without_render_node():
@@ -119,10 +168,12 @@ def select_offscreen_gl() -> str | None:
         # build a renderer, and a CUDA-only process has no reason to care. The refusal belongs
         # where something actually renders -- see :func:`roqsim.rendering.check_gl_backend`.
         _logger.warning(
-            "An NVIDIA GPU is visible (%s exists) but %s is not, so this process fell back to "
-            "software rendering. The container was given the GPU without the 'graphics' driver "
-            "capability: set NVIDIA_DRIVER_CAPABILITIES to include 'graphics' (or 'all').",
+            "An NVIDIA GPU is visible (%s exists) but %s holds no %s* render node, so this "
+            "process fell back to software rendering. The container was given the GPU without "
+            "the 'graphics' driver capability: set NVIDIA_DRIVER_CAPABILITIES to include "
+            "'graphics' (or 'all').",
             _NVIDIA_CONTROL,
-            _RENDER_NODE,
+            _RENDER_NODE_DIR,
+            _RENDER_NODE_PREFIX,
         )
     return backend

@@ -378,8 +378,8 @@ def check_gl_backend() -> None:
         raise GLBackendError(
             "This process was given an NVIDIA GPU but no DRI render node, so it fell back to "
             "software rendering (osmesa) and would produce correct frames many times slower.\n"
-            "  /dev/nvidiactl exists, /dev/dri/renderD128 does not -- the signature of a "
-            "container started without the 'graphics' driver capability.\n"
+            "  /dev/nvidiactl exists but /dev/dri holds no renderD* node -- the signature of "
+            "a container started without the 'graphics' driver capability.\n"
             "  - Set NVIDIA_DRIVER_CAPABILITIES to include 'graphics' (or use 'all'), or\n"
             "  - set MUJOCO_GL=osmesa explicitly if software rendering is what you want here."
         )
@@ -399,22 +399,95 @@ def check_gl_backend() -> None:
 #: one renderer per camera and the answer cannot differ between them.
 _gl_logged = False
 
+#: Substrings identifying a SOFTWARE renderer in a GL device string. Mesa's CPU rasterisers
+#: (``llvmpipe``, ``softpipe``, ``lavapipe``) and the ancient ``swrast`` are the ones reachable
+#: here. Matched case-insensitively as substrings because the full string carries a version and
+#: a word size -- ``llvmpipe (LLVM 20.1.2, 256 bits)`` -- that must not have to be predicted.
+_SOFTWARE_RENDERERS = ("llvmpipe", "softpipe", "lavapipe", "swrast")
+
+
+def software_rendered(device: str) -> bool:
+    """Whether *device* (a :func:`bound_gl_device` string) is a CPU rasteriser."""
+    lowered = device.lower()
+    return any(marker in lowered for marker in _SOFTWARE_RENDERERS)
+
+
+def check_bound_device(device: str) -> None:
+    """Refuse a GPU that was handed to this process and then not rendered on.
+
+    **This is the authoritative check, and the only one that can be.** Every other test in
+    this module reasons from device paths *before* a context exists, and a path is a proxy:
+    it can say a render node is present without saying whether the GL stack behind it is the
+    card we were given. Two ways that goes wrong, and the second is invisible to
+    :func:`roqsim.gl.gpu_without_render_node` by construction:
+
+    * the ``graphics`` driver capability was not requested, so ``libEGL_nvidia`` was never
+      mounted and EGL falls through to Mesa's CPU rasteriser;
+    * a render node IS present but belongs to an **integrated chip beside** the NVIDIA card,
+      so EGL binds the iGPU. Nothing is missing, nothing errors, and the discrete card sits
+      idle.
+
+    Reading the renderer string collapses both, and every future variant, into one question
+    that needs no device paths at all: *we were given an NVIDIA GPU -- is that what bound?*
+    A run that answers no produces correct frames many times slower while reporting success,
+    which is why this raises rather than warns (measured: 26-32x more CPU for the same frames).
+
+    Honoured escape hatches, matching the rest of this module: an explicit ``MUJOCO_GL``
+    is never second-guessed (:func:`roqsim.gl.chosen_backend` returns ``None`` then), and
+    ``ROQSIM_NO_GL_SELECT`` opts out of the selection entirely. Someone who asked for software
+    rendering on a GPU machine gets it.
+
+    Silent where no GPU was handed over: a CPU-only node binding ``llvmpipe`` is not a
+    misconfiguration, it is the correct answer for that machine.
+    """
+    from .gl import chosen_backend, gpu_visible
+
+    # Only a backend WE chose is second-guessed -- the same rule check_gl_backend applies to
+    # osmesa. An explicit request is a decision, not a fallback.
+    if chosen_backend() is None or not gpu_visible():
+        return
+    if not device:
+        return  # the renderer string could not be read; diagnostics must not fail a render
+    if "nvidia" in device.lower():
+        return
+    how = (
+        "fell back to software rendering"
+        if software_rendered(device)
+        else "bound a different device"
+    )
+    raise GLBackendError(
+        f"This process was given an NVIDIA GPU but {how}, so it would produce correct frames "
+        f"many times slower while reporting success.\n"
+        f"  /dev/nvidiactl exists, but the GL context bound {device!r}.\n"
+        "  - Set NVIDIA_DRIVER_CAPABILITIES to include 'graphics' (or use 'all'), which is "
+        "what mounts the NVIDIA EGL driver, or\n"
+        "  - set MUJOCO_GL explicitly if rendering off the NVIDIA card is what you want here."
+    )
+
 
 def _log_gl_once() -> None:
-    """Log the backend *and* the device it bound, once, at INFO.
+    """Log the backend *and* the device it bound, once, then verify the device.
 
     This is the line that answers "did this run use the GPU", and it is worth a log entry
     because the alternative -- inferring it from wall-clock afterwards -- is how a mis-bound
     backend went unnoticed across every campaign this substrate had run.
+
+    The verification lives here because this is the first point in the process where a GL
+    context exists, and :func:`check_bound_device` cannot answer anything before one does.
+    It runs on every renderer while the log line is emitted once: the check is a single
+    ``glGetString`` and a caller that catches the refusal and builds another renderer must
+    not be met with silence the second time.
     """
     global _gl_logged
-    if _gl_logged:
-        return
-    _gl_logged = True
     device = bound_gl_device()
-    _logger.info(
-        "offscreen GL: %s%s", bound_gl_backend() or "unknown", f" -- {device}" if device else ""
-    )
+    if not _gl_logged:
+        _gl_logged = True
+        _logger.info(
+            "offscreen GL: %s%s",
+            bound_gl_backend() or "unknown",
+            f" -- {device}" if device else "",
+        )
+    check_bound_device(device)
 
 
 class FrameRenderer:

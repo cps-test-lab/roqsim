@@ -39,7 +39,7 @@ XDIST      := $(if $(filter-out 1,$(JOBS)),-p xdist -n $(JOBS) --dist loadfile)
 RUFF       := $(PY) -m ruff
 SPHINX     := $(PY) -m sphinx
 # MUJOCO_GL is deliberately NOT set here. `roqsim.gl.select_offscreen_gl` chooses it per MACHINE at
-# import time -- egl where /dev/dri/renderD128 exists, osmesa where it does not -- and an explicit
+# import time -- egl where a /dev/dri render node exists, osmesa where it does not -- and an explicit
 # value is always honoured, so exporting one here overrode that decision for the whole suite with a
 # guess that is simply wrong on a CPU-only host. It also cost two CI fixes: a GPU-less runner needed
 # libosmesa6 installed anyway, and test_gl_boot had to stop inheriting the PYOPENGL_PLATFORM that
