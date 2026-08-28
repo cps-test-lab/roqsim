@@ -4,8 +4,8 @@ Wheeled mobile **bases** for [roqsim](../README.md): the drive plugins, the room
 robot models themselves. ROS-free — ROS coupling lives in `roqsim_ros_bridge`.
 
 ```sh
-roqsim sim roqsim_mobile:turtlebot_ros2                      # each model has a demo world
-roqsim sim roqsim_mobile:turtlebot3_ros2 --manual-control    # ... and can be hand-driven
+roqsim sim roqsim_mobile:turtlebot_demo                      # each model has a demo world
+roqsim sim roqsim_mobile:turtlebot3_demo --manual-control    # ... and can be hand-driven
 python -m pytest roqsim_mobile/tests
 ```
 

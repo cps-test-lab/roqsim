@@ -21,7 +21,7 @@ Five steps
    make venv
 
    # 3. run the TurtleBot 4 demo world (a viewer window opens)
-   .venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2
+   .venv/bin/roqsim sim roqsim_mobile:turtlebot_demo
 
 A MuJoCo window opens and the TurtleBot 4 drives in a circle. That's it.
 
@@ -30,12 +30,12 @@ No display? Run it headless
 
 .. code-block:: bash
 
-   .venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2 \
+   .venv/bin/roqsim sim roqsim_mobile:turtlebot_demo \
        --headless --pacing asap --steps 1000 --profile
 
 ``--profile`` prints a per-plugin timing table so you can see where the time goes.
 
-``roqsim_mobile:turtlebot_ros2`` is a world resolved by name from an installed package; a path to a
+``roqsim_mobile:turtlebot_demo`` is a world resolved by name from an installed package; a path to a
 world YAML works just as well. ``roqsim`` is the only command name to learn — ``roqsim --help`` lists the
 groups, one per installed package that ships tools.
 

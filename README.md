@@ -56,7 +56,7 @@ hand-assemble.
 make venv     # create .venv and install everything
 make help     # list all targets
 
-.venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2      # a viewer opens
+.venv/bin/roqsim sim roqsim_mobile:turtlebot_demo      # a viewer opens
 ```
 
 **21 ready-to-run worlds** ship in the box — robot demos, a warehouse scene, sensor rigs and nav2
@@ -65,7 +65,7 @@ setups. `roqsim --help` lists the command groups; `roqsim <group> --help` gives 
 Headless, as fast as the machine allows, with timings:
 
 ```bash
-.venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2 --headless --pacing asap --steps 1000 --profile
+.venv/bin/roqsim sim roqsim_mobile:turtlebot_demo --headless --pacing asap --steps 1000 --profile
 ```
 
 ## Documentation

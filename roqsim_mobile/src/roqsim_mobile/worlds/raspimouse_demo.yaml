@@ -1,6 +1,6 @@
 # RT Corporation Raspberry Pi Mouse — standalone demo world (roqsim_mobile).
 #
-# Standalone:  roqsim sim roqsim_mobile:raspimouse_ros2
+# Standalone:  roqsim sim roqsim_mobile:raspimouse_demo
 # For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
 
 sim:

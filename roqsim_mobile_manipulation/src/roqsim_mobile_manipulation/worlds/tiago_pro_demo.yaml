@@ -1,7 +1,7 @@
 # PAL Robotics TIAGo Pro in an empty room — standalone demo world (roqsim_mobile_manipulation).
 #
-# Standalone:  roqsim sim roqsim_mobile_manipulation:tiago_pro_ros2
-# Drive it by hand instead:  roqsim sim roqsim_mobile_manipulation:tiago_pro_ros2 --manual-control
+# Standalone:  roqsim sim roqsim_mobile_manipulation:tiago_pro_demo
+# Drive it by hand instead:  roqsim sim roqsim_mobile_manipulation:tiago_pro_demo --manual-control
 # For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
 #
 # In the viewer, toggle geom group 3 to see the collision overlay (the source's convex hulls and

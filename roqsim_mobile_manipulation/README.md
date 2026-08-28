@@ -10,7 +10,7 @@ Robot models that are a **mobile base and an arm**: composite platforms which be
 
 ```sh
 roqsim sim roqsim_mobile_manipulation:frankie_demo
-roqsim sim roqsim_mobile_manipulation:tiago_pro_ros2
+roqsim sim roqsim_mobile_manipulation:tiago_pro_demo
 python -m pytest roqsim_mobile_manipulation/tests
 ```
 

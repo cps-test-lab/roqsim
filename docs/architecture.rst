@@ -317,7 +317,7 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
      This merge was previously a plain skip (the manifest entry was dropped whole), which meant a
      partial override silently fell back to the *plugin's* generic defaults for everything the world
      did not restate — e.g. a Husky's ``diff_drive`` inheriting TurtleBot wheel radius and actuator
-     names, then failing to resolve them against its MJCF. ``husky_ros2.yaml`` crashed on exactly
+     names, then failing to resolve them against its MJCF. ``husky_demo.yaml`` crashed on exactly
      that, while ``plugins.rst`` documented the merge. If you rely on a world entry starting from the
      plugin's defaults rather than the model's, use ``default_plugins: false`` and declare it fully.
 - Opt out per spawn with ``default_plugins: false``; a model with no manifest yields nothing.
