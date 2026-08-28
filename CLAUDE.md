@@ -24,7 +24,7 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   wheeled base models — turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, rosbot,
   panther, raspimouse, ridgeback (the only holonomic one), warthog (260 kg, the largest),
   oomwoo_one (a robot vacuum; its 12-plate bumper ring is collision geometry with no plugin
-  reading it), makerspet_loki — and
+  reading it) — and
   demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.

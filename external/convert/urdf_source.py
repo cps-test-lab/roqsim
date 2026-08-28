@@ -201,7 +201,7 @@ def link_primitives(
 
     :func:`link_visuals` covers the visual side for the mesh-based ports and emits exactly the
     attribute order their committed models already carry, so it is left alone. This is for the
-    descriptions built out of *primitives* -- the two makerspet vendors, whose collision geometry is
+    descriptions built out of *primitives*, whose collision geometry is
     boxes, cylinders and spheres worth reproducing one-for-one rather than hulling. Those need the
     collision side too, and named, so a contact-based sensor has something to reference.
 
@@ -238,3 +238,29 @@ def link_primitives(
         out += (f'{indent}<geom class="{cls}" type="{geometry.tag}" size="{size}"'
                 f'{name}{attr} pos="{xyz}"{quat}/>\n')
     return out
+
+
+def mesh_scales(urdf: ET.Element) -> dict[str, str]:
+    """``{mesh stem: MJCF scale string}`` for every mesh the URDF references.
+
+    URDF puts the scale on the *reference*, MJCF puts it on the *asset*, so it has to be collected
+    before the assets are written. Ignoring it is the classic meters-versus-millimetres trap, and it
+    is worse than it sounds because it can be **non-uniform** and it can hide completely: one
+    description in this corpus scaled a head mesh by ~2e-4 per axis, so emitted at 1:1 the mesh came
+    out 1000 units across on a 0.2 m robot -- and no physics check noticed, because that link's
+    *collision* was a primitive and only its visual was the mesh. It took a render. Any generator
+    that emits mesh assets should route them through here.
+
+    Raises when one mesh is referenced at two different scales, rather than silently picking one.
+    """
+    scales: dict[str, str] = {}
+    for mesh in urdf.iter("mesh"):
+        stem = Path(mesh.get("filename")).stem
+        raw = (mesh.get("scale") or "1 1 1").replace(",", " ").split()
+        scale = " ".join(f"{float(v):g}" for v in raw)
+        if scales.setdefault(stem, scale) != scale:
+            raise RuntimeError(
+                f"mesh {stem!r} is referenced at two scales ({scales[stem]!r} and {scale!r}); MJCF "
+                f"puts the scale on the asset, so this needs one asset per scale."
+            )
+    return scales
