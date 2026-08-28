@@ -1059,6 +1059,7 @@ def _validate_view(view) -> None:
 #: ``o_solref`` produces a model that compiles, runs, and quietly uses the untouched defaults.
 _CONTACT_OVERRIDE_WIDTHS = {"solref": 2, "solimp": 5, "friction": 5}
 
+
 def _validate_seed(seed) -> None:
     """Reject a malformed ``sim.seed`` at load time.
 

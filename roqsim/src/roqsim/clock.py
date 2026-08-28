@@ -13,7 +13,6 @@ from __future__ import annotations
 import time
 from typing import Any
 
-
 #: Report the shortfall only past this share of late steps. A run crosses it when it is
 #: genuinely not holding its rate, not when a few steps ran long -- an occasional late step is
 #: normal on any loaded machine and saying so every time would train the reader to skip the line.
