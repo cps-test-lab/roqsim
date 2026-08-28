@@ -450,8 +450,11 @@ def check_bound_device(device: str) -> None:
         return  # the renderer string could not be read; diagnostics must not fail a render
     if "nvidia" in device.lower():
         return
-    how = ("fell back to software rendering" if software_rendered(device)
-           else "bound a different device")
+    how = (
+        "fell back to software rendering"
+        if software_rendered(device)
+        else "bound a different device"
+    )
     raise GLBackendError(
         f"This process was given an NVIDIA GPU but {how}, so it would produce correct frames "
         f"many times slower while reporting success.\n"
@@ -480,7 +483,8 @@ def _log_gl_once() -> None:
     if not _gl_logged:
         _gl_logged = True
         _logger.info(
-            "offscreen GL: %s%s", bound_gl_backend() or "unknown",
+            "offscreen GL: %s%s",
+            bound_gl_backend() or "unknown",
             f" -- {device}" if device else "",
         )
     check_bound_device(device)
