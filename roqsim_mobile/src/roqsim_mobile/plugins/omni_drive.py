@@ -237,11 +237,20 @@ class OmniDrivePlugin(Plugin):
                 (-self.lx, -self.ly),
             ]
 
-        # Per-wheel roll sign, read off the model at the reference pose: a wheel rolls the base
-        # forward when it spins about the base's -y, so sign = -axis_y. Derived rather than
-        # hardcoded because the source URDF mirrors left/right wheels (here the two reflections
-        # happen to cancel and all four axes come out +y, which is exactly the kind of thing that
-        # should not be assumed).
+        # Per-wheel roll sign, read off the model at the reference pose.
+        #
+        # A wheel rolling forward WITHOUT SLIP has its contact point stationary: with the contact a
+        # distance R below the axle, v_contact = v_centre + omega x r = 0 gives omega_y = +V/R. So a
+        # wheel spinning about the base's **+y** carries it forward, and sign = +axis_y.
+        #
+        # This read `-axis_y` until 2026-08-28, so every omni_drive wheel span backwards. It was
+        # invisible in the dynamics -- these wheels are deliberately near-frictionless load carriers
+        # and the base is driven through the planar actuators -- but it was wrong in the viewer and in
+        # `joint_states`, which is most of what these servos exist for. Found by measuring contact
+        # slip: the four omni bases showed |v_contact| ~ 2V while the diff_drive bases showed ~0.
+        #
+        # Derived rather than hardcoded because a source URDF may mirror left/right wheels, as the
+        # Neobotix descriptions do -- exactly the kind of thing that should not be assumed.
         if self._wjid:
             d0 = mujoco.MjData(m)
             mujoco.mj_forward(m, d0)
@@ -255,7 +264,7 @@ class OmniDrivePlugin(Plugin):
             for k, jid in enumerate(self._wjid):
                 axis_w = d0.xmat[m.jnt_bodyid[jid]].reshape(3, 3) @ m.jnt_axis[jid]
                 axis_y = float((rb.T @ axis_w)[1])
-                self._wsign[k] = -1.0 if axis_y > 0 else 1.0
+                self._wsign[k] = 1.0 if axis_y > 0 else -1.0
 
         ctx.blackboard.set(
             f"robot:{self.robot}",
