@@ -1,0 +1,22 @@
+# Clearpath Ridgeback in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:ridgeback_ros2
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # omni_drive (holonomic; four mecanum wheels, no slip_factor) and the lidar come from the
+  # ridgeback model manifest.
+  - spawn_robot:
+      model: ridgeback
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+  # A strafing command, which is the whole point of this platform: no other base in roqsim_mobile
+  # can accept a non-zero vy.
+    components:
+      - omni_drive:
+          test_cmd: [0.4, 0.3, 0.2]   # [vx, vy, wz]; remove once the ros2_bridge drives /cmd_vel

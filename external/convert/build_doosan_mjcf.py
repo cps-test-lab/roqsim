@@ -62,6 +62,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
 
 DOOSAN_URL = "https://github.com/DoosanRobotics/doosan-robot2.git"
 DOOSAN_COMMIT = "816ecb5d1c2599303eaf9540216afa03552f80ad"
@@ -77,38 +78,6 @@ PKG = ROOT / "roqsim_manipulation_assets/src/roqsim_manipulation_assets/models" 
 #: files; this is a visual-only budget, since collision is primitives.
 TARGET_FACES = 4000
 JOINTS = [f"joint_{i}" for i in range(1, 7)]
-
-
-def expand_xacro(sources: dict[str, Path], work: Path) -> ET.Element:
-    xacro = shutil.which("xacro") or "/opt/ros/jazzy/bin/xacro"
-    if not Path(xacro).exists():
-        raise RuntimeError(
-            "xacro is required to expand dsr_description2 and was not found.\n"
-            "Install ROS 2 (ros-jazzy-xacro) or `pip install xacro`, then re-run. Refusing to guess "
-            "the expanded tree: every mass, inertia and joint limit comes from it."
-        )
-    share = work / "prefix/share"
-    (share / "ament_index/resource_index/packages").mkdir(parents=True, exist_ok=True)
-    for name, path in sources.items():
-        (share / f"ament_index/resource_index/packages/{name}").write_text("")
-        if not (share / name).exists():
-            (share / name).symlink_to(path)
-
-    env = dict(os.environ)
-    env["AMENT_PREFIX_PATH"] = f"{work / 'prefix'}:{env.get('AMENT_PREFIX_PATH', '')}"
-    ros_site = sorted(Path(xacro).resolve().parents[1].glob("lib/python3*/site-packages"))
-    if ros_site:
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(ros_site[-1]), env.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep)
-    proc = subprocess.run(
-        [xacro, str(sources["dsr_description2"] / f"xacro/{MODEL}.urdf.xacro"),
-         f"color:={COLOURWAY}", "gripper:=none"],
-        capture_output=True, text=True, env=env,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"xacro failed:\n{proc.stderr.strip()}")
-    return ET.fromstring(proc.stdout)
 
 
 def convert_meshes(description: Path) -> dict[str, list]:
@@ -133,19 +102,6 @@ def convert_meshes(description: Path) -> dict[str, list]:
                     check=True, cwd=ROOT, capture_output=True,
                 )
     return materials
-
-
-def _inertial(link: ET.Element) -> dict[str, str]:
-    inertial = link.find("inertial")
-    origin = inertial.find("origin")
-    inertia = inertial.find("inertia")
-    return {
-        "pos": (origin.get("xyz") if origin is not None else "0 0 0").replace(",", " "),
-        "mass": inertial.find("mass").get("value"),
-        "fullinertia": " ".join(
-            inertia.get(k) for k in ("ixx", "iyy", "izz", "ixy", "ixz", "iyz")
-        ),
-    }
 
 
 def build(urdf: ET.Element, materials: dict[str, list]) -> str:
@@ -183,9 +139,9 @@ def build(urdf: ET.Element, materials: dict[str, list]) -> str:
             origin = joint.find("origin")
             xyz = (origin.get("xyz") or "0 0 0").replace(",", " ")
             rpy = [float(v) for v in (origin.get("rpy") or "0 0 0").replace(",", " ").split()]
-            quat = _rpy_to_quat(*rpy)
+            quat = rpy_to_quat(*rpy)
             body += (f'{indent}<body name="{name}" pos="{xyz}" quat="{quat}">\n')
-        inert = _inertial(links[name])
+        inert = inertial(links[name], full=True)
         body += (f'{indent}  <inertial pos="{inert["pos"]}" mass="{inert["mass"]}"'
                  f' fullinertia="{inert["fullinertia"]}"/>\n')
         if i > 0:
@@ -228,17 +184,6 @@ def _gain_class(limit: ET.Element) -> str:
     """Servo class from the joint's published effort limit -- see the default block's comment."""
     effort = float(limit.get("effort"))
     return "strong" if effort >= 300 else ("medium" if effort >= 100 else "weak")
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> str:
-    import numpy as np
-
-    cr, sr = np.cos(roll / 2), np.sin(roll / 2)
-    cp, sp = np.cos(pitch / 2), np.sin(pitch / 2)
-    cy, sy = np.cos(yaw / 2), np.sin(yaw / 2)
-    q = [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy,
-         cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy]
-    return " ".join(f"{v:.7g}" for v in q)
 
 
 TEMPLATE = """<mujoco model="m1013">
@@ -335,7 +280,8 @@ def main() -> int:
     if args.check:
         materials = json.loads((PKG / "meshes" / f"{MODEL}.materials.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
-            xml = build(expand_xacro(sources, Path(tmp)), materials)
+            xml = build(expand_xacro(sources, sources["dsr_description2"] / f"xacro/{MODEL}.urdf.xacro",
+                                     Path(tmp), args=[f"color:={COLOURWAY}", "gripper:=none"]), materials)
         if not target.exists() or target.read_text() != xml:
             print(f"{target} differs from a fresh build - was it hand-edited?", file=sys.stderr)
             return 1
@@ -347,7 +293,8 @@ def main() -> int:
         json.dumps(materials, indent=2, sort_keys=True)
     )
     with tempfile.TemporaryDirectory() as tmp:
-        xml = build(expand_xacro(sources, Path(tmp)), materials)
+        xml = build(expand_xacro(sources, sources["dsr_description2"] / f"xacro/{MODEL}.urdf.xacro",
+                                     Path(tmp), args=[f"color:={COLOURWAY}", "gripper:=none"]), materials)
     shutil.copy2(sources["dsr_description2"].parent / "LICENSE", PKG / "M1013_LICENSE")
     target.write_text(xml)
     print(f"wrote {target} + meshes + M1013_LICENSE")

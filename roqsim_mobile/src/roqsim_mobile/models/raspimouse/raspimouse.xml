@@ -82,8 +82,8 @@
              leaves it floating 3 cm above the mount. `lidar:=lds` is a supported option of the
              description, so the mount height and the 0.120 m scan plane are the vendor's numbers,
              not assumptions. -->
-        <geom class="visual" type="mesh" mesh="RasPiMouse_MultiLiDARMount" material="mat_mount" pos="0 0 0.0855"/>
-        <geom class="visual" type="mesh" mesh="robotis_lds01" material="mat_lidar" pos="0 0 0.12"/>
+        <geom class="visual" mesh="RasPiMouse_MultiLiDARMount" material="mat_mount" pos="0 0 0.0855"/>
+        <geom class="visual" mesh="robotis_lds01" material="mat_lidar" pos="0 0 0.12"/>
         <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.035 0.025 0.0972" rgba="0.1 0.1 0.1 1"/>
         <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.035 -0.025 0.0972" rgba="0.1 0.1 0.1 1"/>
         <geom class="visual" type="cylinder" size="0.005 0.0095" pos="-0.022 0.031 0.0972" rgba="0.1 0.1 0.1 1"/>

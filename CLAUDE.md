@@ -22,7 +22,7 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
   wheeled base models — turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, rosbot,
-  panther, raspimouse — and
+  panther, raspimouse, ridgeback (the only holonomic one) — and
   demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.

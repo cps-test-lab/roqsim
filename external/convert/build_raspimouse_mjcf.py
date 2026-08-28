@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
 
 RASPIMOUSE_URL = "https://github.com/rt-net/raspimouse_description.git"
 RASPIMOUSE_COMMIT = "ed2c8b7a5039ff0a8711c1d817ea678ddb687beb"
@@ -54,39 +55,6 @@ MESH_DIRS = ("body", "wheel")
 #: lidar:=lds, so the scanner the manifest declares is geometry rather than a bare site marker.
 STL_MESHES = ("RasPiMouse_MultiLiDARMount.stl", "robotis_lds01.stl")
 WHEELS = {"left_wheel": "left", "right_wheel": "right"}
-
-
-def expand_xacro(source: Path, work: Path) -> ET.Element:
-    xacro = shutil.which("xacro") or "/opt/ros/jazzy/bin/xacro"
-    if not Path(xacro).exists():
-        raise RuntimeError(
-            "xacro is required to expand raspimouse_description and was not found.\n"
-            "Install ROS 2 (ros-jazzy-xacro) or `pip install xacro`, then re-run. Refusing to guess "
-            "the expanded tree: every mass, inertia and offset comes from it."
-        )
-    share = work / "prefix/share"
-    (share / "ament_index/resource_index/packages").mkdir(parents=True, exist_ok=True)
-    (share / "ament_index/resource_index/packages/raspimouse_description").write_text("")
-    if not (share / "raspimouse_description").exists():
-        (share / "raspimouse_description").symlink_to(source)
-
-    env = dict(os.environ)
-    env["AMENT_PREFIX_PATH"] = f"{work / 'prefix'}:{env.get('AMENT_PREFIX_PATH', '')}"
-    ros_site = sorted(Path(xacro).resolve().parents[1].glob("lib/python3*/site-packages"))
-    if ros_site:
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(ros_site[-1]), env.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep)
-    # lidar:=lds pulls in the vendor's OWN multi-lidar mount and LDS-01 links. Without it the
-    # description has no scanner at all and the mount height has to be guessed -- which it was, at
-    # 0.089 m, against the vendor's actual 0.0855 + 0.0345 = 0.120 m.
-    proc = subprocess.run(
-        [xacro, str(source / "urdf/raspimouse.urdf.xacro"), "lidar:=lds", "lidar_frame:=laser"],
-        capture_output=True, text=True, env=env,
-    )
-    if proc.returncode != 0:
-        raise RuntimeError(f"xacro failed:\n{proc.stderr.strip()}")
-    return ET.fromstring(proc.stdout)
 
 
 def convert_meshes(source: Path) -> dict[str, list]:
@@ -116,68 +84,10 @@ def convert_meshes(source: Path) -> dict[str, list]:
     return palette
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> str:
-    import numpy as np
-
-    cr, sr = np.cos(roll / 2), np.sin(roll / 2)
-    cp, sp = np.cos(pitch / 2), np.sin(pitch / 2)
-    cy, sy = np.cos(yaw / 2), np.sin(yaw / 2)
-    q = [cr * cp * cy + sr * sp * sy, sr * cp * cy - cr * sp * sy,
-         cr * sp * cy + sr * cp * sy, cr * cp * sy - sr * sp * cy]
-    return " ".join(f"{v:.7g}" for v in q)
-
-
-def _link_visuals(link: ET.Element, indent: str, mesh_material: dict[str, str]) -> str:
-    """Every <visual> of a URDF link as MJCF geoms -- meshes AND primitives.
-
-    Written generically after hand-picking bit: the LDS-01 link carries its mesh *and* four leg
-    cylinders, and emitting only the mesh left the scanner floating 3 cm above its mount, which no
-    test noticed and a human spotted in the viewer immediately.
-    """
-    out = ""
-    for visual in link.findall("visual"):
-        origin = visual.find("origin")
-        pos = (origin.get("xyz") if origin is not None else "0 0 0").replace(",", " ")
-        rpy = [float(v) for v in
-               ((origin.get("rpy") if origin is not None else "0 0 0") or "0 0 0").replace(",", " ").split()]
-        quat = _rpy_to_quat(*rpy)
-        quat_attr = "" if quat.startswith("1 ") else f' quat="{quat}"'
-        geometry = visual.find("geometry")
-        mesh = geometry.find("mesh")
-        cylinder = geometry.find("cylinder")
-        box = geometry.find("box")
-        if mesh is not None:
-            stem = Path(mesh.get("filename")).stem
-            material = mesh_material.get(stem, "mat_lidar")
-            out += (f'{indent}<geom class="visual" type="mesh" mesh="{stem}" material="{material}"'
-                    f' pos="{pos}"{quat_attr}/>\n')
-        elif cylinder is not None:
-            half = float(cylinder.get("length")) / 2
-            out += (f'{indent}<geom class="visual" type="cylinder"'
-                    f' size="{float(cylinder.get("radius")):g} {half:g}" pos="{pos}"{quat_attr}'
-                    f' rgba="0.1 0.1 0.1 1"/>\n')
-        elif box is not None:
-            half = " ".join(f"{float(v) / 2:g}" for v in box.get("size").replace(",", " ").split())
-            out += (f'{indent}<geom class="visual" type="box" size="{half}" pos="{pos}"'
-                    f'{quat_attr} rgba="0.15 0.15 0.15 1"/>\n')
-    return out
-
-
-def _inertial(link: ET.Element) -> dict[str, str]:
-    inertial = link.find("inertial")
-    origin = inertial.find("origin")
-    inertia = inertial.find("inertia")
-    return {
-        "pos": (origin.get("xyz") if origin is not None else "0 0 0").replace(",", " "),
-        "mass": inertial.find("mass").get("value"),
-        "diaginertia": " ".join(inertia.get(k) for k in ("ixx", "iyy", "izz")),
-    }
-
-
 def build(urdf: ET.Element, palette: dict[str, list]) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.get("name"): j for j in urdf.findall("joint")}
-    base = _inertial(links["base_link"])
+    base = inertial(links["base_link"])
     box = links["base_link"].find("collision/geometry/box").get("size").replace(",", " ")
     box_origin = links["base_link"].find("collision/origin").get("xyz").replace(",", " ")
     half = " ".join(f"{float(v) / 2:g}" for v in box.split())
@@ -215,7 +125,8 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
     mesh_material = {"RasPiMouse_MultiLiDARMount": "mat_mount", "robotis_lds01": "mat_lidar"}
     lidar_geoms = ""
     for link_name, offset in (("lds_multi_mount_link", mount_z), ("laser", lidar_z)):
-        block = _link_visuals(links[link_name], "        ", mesh_material)
+        block = link_visuals(links[link_name], "        ", materials=mesh_material,
+                              default_rgba="0.1 0.1 0.1 1")
         # shift each geom into base_link by the link's own z offset
         for line in block.splitlines():
             if 'pos="' in line:
@@ -240,9 +151,9 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
             for sub, _ in palette.get("raspimouse_wheel", [])
         )
         wheels += WHEEL_BODY.format(
-            side=side, xyz=xyz, quat=_rpy_to_quat(*rpy), axis=axis, geoms=geoms,
+            side=side, xyz=xyz, quat=rpy_to_quat(*rpy), axis=axis, geoms=geoms,
             radius=f"{float(cyl.get('radius')):g}", halflen=f"{float(cyl.get('length')) / 2:g}",
-            c_xyz=c_xyz, **_inertial(links[link_name]),
+            c_xyz=c_xyz, **inertial(links[link_name]),
         )
 
     return TEMPLATE.format(
@@ -368,7 +279,9 @@ def main() -> int:
     if args.check:
         palette = json.loads((PKG / "meshes" / "raspimouse.materials.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
-            xml = build(expand_xacro(source, Path(tmp)), palette)
+            xml = build(expand_xacro({"raspimouse_description": source},
+                                     source / "urdf/raspimouse.urdf.xacro", Path(tmp),
+                                     args=["lidar:=lds", "lidar_frame:=laser"]), palette)
         if not target.exists() or target.read_text() != xml:
             print(f"{target} differs from a fresh build - was it hand-edited?", file=sys.stderr)
             return 1
@@ -380,7 +293,9 @@ def main() -> int:
         json.dumps(palette, indent=2, sort_keys=True)
     )
     with tempfile.TemporaryDirectory() as tmp:
-        xml = build(expand_xacro(source, Path(tmp)), palette)
+        xml = build(expand_xacro({"raspimouse_description": source},
+                                     source / "urdf/raspimouse.urdf.xacro", Path(tmp),
+                                     args=["lidar:=lds", "lidar_frame:=laser"]), palette)
     shutil.copy2(source / "LICENSE", PKG / "raspimouse_LICENSE")
     target.write_text(xml)
     print(f"wrote {target} + meshes + raspimouse_LICENSE")

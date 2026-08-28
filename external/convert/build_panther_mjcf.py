@@ -46,6 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
 
 HUSARION_URL = "https://github.com/husarion/husarion_ugv_ros.git"
 HUSARION_COMMIT = "559e784b84c05c813b6ecfce02751d8b3966528a"
@@ -74,36 +75,6 @@ WRAPPER = """<?xml version="1.0"?>
 """
 
 CORNERS = {"fl": ("fl", "l"), "fr": ("fr", "r"), "rl": ("rl", "l"), "rr": ("rr", "r")}
-
-
-def expand_xacro(sources: dict[str, Path], work: Path) -> ET.Element:
-    xacro = shutil.which("xacro") or "/opt/ros/jazzy/bin/xacro"
-    if not Path(xacro).exists():
-        raise RuntimeError(
-            "xacro is required to expand husarion_ugv_description and was not found.\n"
-            "Install ROS 2 (ros-jazzy-xacro) or `pip install xacro`, then re-run. Refusing to guess "
-            "the expanded tree: every mass, inertia and offset comes from it."
-        )
-    share = work / "prefix/share"
-    (share / "ament_index/resource_index/packages").mkdir(parents=True, exist_ok=True)
-    for name, path in sources.items():
-        (share / f"ament_index/resource_index/packages/{name}").write_text("")
-        if not (share / name).exists():
-            (share / name).symlink_to(path)
-
-    source = work / "base.urdf.xacro"
-    source.write_text(WRAPPER.format(wheels=WHEELS))
-    env = dict(os.environ)
-    env["AMENT_PREFIX_PATH"] = f"{work / 'prefix'}:{env.get('AMENT_PREFIX_PATH', '')}"
-    ros_site = sorted(Path(xacro).resolve().parents[1].glob("lib/python3*/site-packages"))
-    if ros_site:
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(ros_site[-1]), env.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep)
-    proc = subprocess.run([xacro, str(source)], capture_output=True, text=True, env=env)
-    if proc.returncode != 0:
-        raise RuntimeError(f"xacro failed:\n{proc.stderr.strip()}")
-    return ET.fromstring(proc.stdout)
 
 
 def convert_meshes(description: Path) -> dict[str, list]:
@@ -135,22 +106,11 @@ def convert_meshes(description: Path) -> dict[str, list]:
     return palette
 
 
-def _inertial(link: ET.Element) -> dict[str, str]:
-    inertial = link.find("inertial")
-    origin = inertial.find("origin")
-    inertia = inertial.find("inertia")
-    return {
-        "pos": (origin.get("xyz") if origin is not None else "0 0 0").replace(",", " "),
-        "mass": inertial.find("mass").get("value"),
-        "diaginertia": " ".join(inertia.get(k) for k in ("ixx", "iyy", "izz")),
-    }
-
-
 def build(urdf: ET.Element, wheel_cfg: dict, palette: dict[str, list]) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.get("name"): j for j in urdf.findall("joint")}
-    body = _inertial(links["body_link"])
-    wheel = _inertial(links["fl_wheel_link"])
+    body = inertial(links["body_link"])
+    wheel = inertial(links["fl_wheel_link"])
     radius = float(wheel_cfg["wheel_radius"])
     width = float(wheel_cfg["wheel_width"])
 
@@ -305,7 +265,8 @@ def main() -> int:
     if args.check:
         palette = json.loads((PKG / "meshes" / "panther.materials.json").read_text())
         with tempfile.TemporaryDirectory() as tmp:
-            xml = build(expand_xacro(sources, Path(tmp)), wheel_cfg, palette)
+            xml = build(expand_xacro(sources, description / "urdf/panther.urdf.xacro", Path(tmp),
+                                     wrapper=WRAPPER.format(wheels=WHEELS)), wheel_cfg, palette)
         if not target.exists() or target.read_text() != xml:
             print(f"{target} differs from a fresh build - was it hand-edited?", file=sys.stderr)
             return 1
@@ -317,7 +278,8 @@ def main() -> int:
         json.dumps(palette, indent=2, sort_keys=True)
     )
     with tempfile.TemporaryDirectory() as tmp:
-        xml = build(expand_xacro(sources, Path(tmp)), wheel_cfg, palette)
+        xml = build(expand_xacro(sources, description / "urdf/panther.urdf.xacro", Path(tmp),
+                                     wrapper=WRAPPER.format(wheels=WHEELS)), wheel_cfg, palette)
     shutil.copy2(description.parent / "LICENSE", PKG / "panther_LICENSE")
     target.write_text(xml)
     print(f"wrote {target} + meshes + panther_LICENSE")

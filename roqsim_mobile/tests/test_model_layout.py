@@ -40,8 +40,8 @@ def test_every_model_is_a_folder():
     assert not list(MODELS_DIR.glob("*.xml"))
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
     assert set(ROBOTS) == {
-        "clearpath_jackal", "husky_a200", "panther", "raspimouse", "rosbot", "turtlebot3_waffle",
-        "turtlebot4",
+        "clearpath_jackal", "husky_a200", "panther", "raspimouse", "ridgeback", "rosbot",
+        "turtlebot3_waffle", "turtlebot4",
     }
 
 

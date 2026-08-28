@@ -51,6 +51,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
 
 ROSBOT_URL = "https://github.com/husarion/rosbot_ros.git"
 # Pinned. If this moves, the port log moves with it.
@@ -83,41 +84,6 @@ BASE_XACRO = """<?xml version='1.0'?>
 """
 
 
-def expand_xacro(description: Path, work: Path) -> ET.Element:
-    """Expand the robot macro into a plain URDF, with an ament index pointing at the checkout."""
-    xacro = shutil.which("xacro") or "/opt/ros/jazzy/bin/xacro"
-    if not Path(xacro).exists():
-        raise RuntimeError(
-            "xacro is required to expand rosbot_description and was not found.\n"
-            "Install ROS 2 (the model ships with ros-jazzy-xacro) or `pip install xacro`, then "
-            "re-run. Refusing to guess the expanded tree: the masses and offsets come from it."
-        )
-    prefix = work / "prefix/share"
-    (prefix / "ament_index/resource_index/packages").mkdir(parents=True, exist_ok=True)
-    (prefix / "ament_index/resource_index/packages/rosbot_description").write_text("")
-    link = prefix / "rosbot_description"
-    if not link.exists():
-        link.symlink_to(description)
-
-    source = work / "base.urdf.xacro"
-    source.write_text(BASE_XACRO)
-    env = dict(os.environ)
-    env["AMENT_PREFIX_PATH"] = f"{work / 'prefix'}:{env.get('AMENT_PREFIX_PATH', '')}"
-    # The ROS xacro entry point imports its own package, which is only on PYTHONPATH once the ROS
-    # setup has been sourced. Sourcing it here would leak the whole ROS environment into this
-    # process; adding the one site-packages it needs does not, and keeps the failure legible when
-    # ROS is absent entirely.
-    ros_site = sorted(Path(xacro).resolve().parents[1].glob("lib/python3*/site-packages"))
-    if ros_site:
-        env["PYTHONPATH"] = os.pathsep.join(
-            [str(ros_site[-1]), env.get("PYTHONPATH", "")]
-        ).rstrip(os.pathsep)
-    proc = subprocess.run([xacro, str(source)], capture_output=True, text=True, env=env)
-    if proc.returncode != 0:
-        raise RuntimeError(f"xacro failed:\n{proc.stderr.strip()}")
-    return ET.fromstring(proc.stdout)
-
-
 def convert_meshes(description: Path) -> dict[str, dict[str, list[float]]]:
     """GLB -> per-material OBJs through `roqsim assets reduce-mesh`, baking the URDF's scale in.
 
@@ -138,22 +104,11 @@ def convert_meshes(description: Path) -> dict[str, dict[str, list[float]]]:
     return palette
 
 
-def _inertial(link: ET.Element) -> dict[str, str]:
-    inertial = link.find("inertial")
-    origin = inertial.find("origin")
-    inertia = inertial.find("inertia")
-    return {
-        "pos": origin.get("xyz", "0 0 0").replace(",", " ") if origin is not None else "0 0 0",
-        "mass": inertial.find("mass").get("value"),
-        "diaginertia": " ".join(inertia.get(k) for k in ("ixx", "iyy", "izz")),
-    }
-
-
 def build(urdf: ET.Element, palette: dict) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.get("name"): j for j in urdf.findall("joint")}
-    body = _inertial(links["body_link"])
-    wheel = _inertial(links["fl_wheel_link"])
+    body = inertial(links["body_link"])
+    wheel = inertial(links["fl_wheel_link"])
     box = links["body_link"].find("collision/geometry/box").get("size").replace(",", " ")
     half = " ".join(f"{float(v) / 2:g}" for v in box.split())
     cyl = links["fl_wheel_link"].find("collision/geometry/cylinder")
@@ -311,7 +266,9 @@ def main() -> int:
             for stem in MESHES
         }
         with tempfile.TemporaryDirectory() as tmp:
-            xml = build(expand_xacro(description, Path(tmp)), palette)
+            xml = build(expand_xacro({"rosbot_description": description},
+                                       description / "urdf/rosbot.urdf.xacro", Path(tmp),
+                                       wrapper=BASE_XACRO), palette)
         target = PKG / "rosbot.xml"
         if not target.exists() or target.read_text() != xml:
             print(f"{target} differs from a fresh build - was it hand-edited?", file=sys.stderr)
@@ -321,7 +278,9 @@ def main() -> int:
 
     palette = convert_meshes(description)
     with tempfile.TemporaryDirectory() as tmp:
-        xml = build(expand_xacro(description, Path(tmp)), palette)
+        xml = build(expand_xacro({"rosbot_description": description},
+                                       description / "urdf/rosbot.urdf.xacro", Path(tmp),
+                                       wrapper=BASE_XACRO), palette)
     target = PKG / "rosbot.xml"
     shutil.copy2(description.parent / "LICENSE", PKG / "rosbot_LICENSE")
     target.write_text(xml)
