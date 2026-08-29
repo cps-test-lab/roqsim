@@ -711,3 +711,30 @@ def test_tilting_is_idempotent():
     after_once = np.array(model.light_dir[model.light("ceiling").id])
     assert render.tilt_preview_light(model, data) == 0
     assert np.allclose(model.light_dir[model.light("ceiling").id], after_once)
+
+
+# -- the preview headlight fill --------------------------------------------------------------------
+#
+# GL-free like the tilt tests above: the fix is a change to the light balance, so it is asserted on
+# that balance. What it prevents (the shadow map combing the terminator into a ragged white/grey
+# border) is documented on `render.fill_preview_self_shadows`.
+
+
+def test_the_preview_fill_moves_the_modelling_light_into_the_headlight():
+    model, _ = _lit()
+    before = float(np.asarray(model.light_diffuse[model.light("ceiling").id])[0])
+    render.fill_preview_self_shadows(model)
+    after = float(np.asarray(model.light_diffuse[model.light("ceiling").id])[0])
+    assert after < before  # the shadow caster no longer carries the modelling light
+    assert after > 0.0  # but still casts a contact shadow
+    assert np.asarray(model.vis.headlight.diffuse)[0] > after
+
+
+def test_the_preview_fill_leaves_a_light_that_casts_no_shadow_alone():
+    """Only a shadow caster can produce the artefact, so only a shadow caster is rebalanced."""
+    model, _ = _lit()
+    i = model.light("aimed").id
+    model.light_castshadow[i] = 0
+    before = np.array(model.light_diffuse[i])
+    render.fill_preview_self_shadows(model)
+    assert np.allclose(model.light_diffuse[i], before)

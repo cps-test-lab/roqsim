@@ -10,7 +10,6 @@ Config::
 
     spawn_arm:
       model: ur10e          # bundled model name, filename, or absolute path
-      name: ur10e           # entity name (default: 'arm')
       namespace: ur10e      # optional transport scope; the arm's endpoints inherit it (default: "")
       prefix: "ur10e_"      # MJCF name prefix (use distinct prefixes for >1 arm)
       base_body: base       # arm root body (ur10e -> 'base', panda -> 'link0')
@@ -86,6 +85,11 @@ obscurely later:
   joints by prefix scan, and with an empty prefix that scan also claims the base's wheel joints --
   writing arm position targets into wheel actuators that another plugin owns. (An arm that names its
   ``joints:`` explicitly is safe either way, but the prefix is the cheap general guard.)
+
+``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
+the entity this spawn registers (default: the plugin ref, i.e. ``spawn_arm``). Written *inside* the
+config block it is silently inert -- the arm is then called ``spawn_arm``, and anything addressing
+it by the name you chose (``arm_controller``'s ``arm:``, a sensor's ``robot:``) resolves to nothing.
 
 **End effectors (``end_effector:``)**
 A gripper is attached **into the arm's own spec before the arm is attached to the world**, so the

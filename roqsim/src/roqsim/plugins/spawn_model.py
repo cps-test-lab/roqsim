@@ -11,7 +11,6 @@ Config::
 
     spawn_model:
       model: industrial_table        # bundled model name, filename, or absolute path
-      name: table                    # entity name (default: the model's file stem)
       prefix: ""                     # MJCF name prefix (use distinct prefixes for >1 of the model)
       pos: [0.0, 0.0, 0.0]           # [x, y] or [x, y, z]
       rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
@@ -21,6 +20,10 @@ Config::
       friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
       tf_rate: 30.0                  # publish_tf: dynamic -- stream rate (Hz)
+
+``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
+the entity this spawn registers (default: the plugin ref). Written *inside* the config block it is
+silently inert, and anything addressing the prop by the name you chose then resolves to nothing.
 
 ``mass`` and ``friction`` exist so the two properties that decide whether a grasp holds are world-YAML
 keys, and therefore ordinary campaign factors -- a sweep over payload or surface friction needs no new

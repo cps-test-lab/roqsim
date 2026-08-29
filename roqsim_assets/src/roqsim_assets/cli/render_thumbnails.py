@@ -35,7 +35,13 @@ import numpy as np
 from PIL import Image
 
 from roqsim.mesh_preview import build_mesh_scene as _build_mesh_scene
-from roqsim.render import reset_to_home
+from roqsim.render import (
+    PREVIEW_HEADLIGHT_AMBIENT,
+    PREVIEW_HEADLIGHT_DIFFUSE,
+    PREVIEW_LIGHT_AMBIENT,
+    PREVIEW_LIGHT_DIFFUSE,
+    reset_to_home,
+)
 from roqsim.rendering import FrameRenderer
 
 _SIZE = 480  # square source PNG; the doc pages display it at ~150px.
@@ -95,8 +101,14 @@ def _ground_and_light(spec: mujoco.MjSpec) -> None:
         light = spec.worldbody.add_light()
         light.pos = [1.5, -1.5, 3]
         light.dir = [-1, 1, -2]
-        light.ambient = [0.4, 0.4, 0.4]
-        light.diffuse = [0.9, 0.9, 0.9]
+        # The same split `roqsim render` uses for a model preview: this light only casts the contact
+        # shadow, and the shadow-free headlight does the modelling. Carrying both here would let the
+        # shadow map comb the terminator into a ragged white/grey border on a matte white robot --
+        # see `roqsim.render.fill_preview_self_shadows` for why no MuJoCo shadow knob fixes it.
+        light.ambient = [PREVIEW_LIGHT_AMBIENT] * 3
+        light.diffuse = [PREVIEW_LIGHT_DIFFUSE] * 3
+        spec.visual.headlight.diffuse = [PREVIEW_HEADLIGHT_DIFFUSE] * 3
+        spec.visual.headlight.ambient = [PREVIEW_HEADLIGHT_AMBIENT] * 3
 
 
 def _render_mesh(obj_path: Path, out: Path) -> None:
