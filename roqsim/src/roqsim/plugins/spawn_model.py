@@ -164,7 +164,7 @@ class SpawnModelPlugin(Plugin):
             errors.append("'model' is required")
         else:
             try:
-                resolve_model(config["model"])
+                resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
         if "rpy" in config and len(config["rpy"]) != 3:
@@ -208,7 +208,7 @@ class SpawnModelPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        asset = resolve_model(self.model_ref)
+        asset = resolve_model(self.model_ref, base_dir=self.base_dir)
         try:
             child = mujoco.MjSpec.from_file(str(asset.path))
         except ValueError as exc:

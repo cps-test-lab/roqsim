@@ -481,7 +481,7 @@ def assert_agrees(out: Path, urdf: Path, srdf: Path, facts: ArmFacts, arm_tip: s
 
     Every check here catches a configuration that LOADS and then cannot plan, which is the expensive
     failure: move_group logs a complaint once a second and the task hangs rather than failing, so a
-    campaign pays its whole timeout to discover it. Owning both files is what makes these checkable at
+    caller waits out its whole timeout to discover it. Owning both files is what makes these checkable at
     all -- ``export srdf`` alone cannot validate ``--arm-tip``, and accepts a tip link that is not in
     the URDF at all.
     """
@@ -637,7 +637,10 @@ def main(argv: list | None = None) -> int:
         default="",
         help="emit meshes as package://<PKG>/meshes/<file> instead of file://<abs path>",
     )
-    parser.add_argument("--manifest", help="also write {'inputs': [...]} for campaign caching")
+    parser.add_argument(
+        "--manifest",
+        help="also write {'inputs': [...]} so a caller can tell when this output is stale",
+    )
     parser.add_argument(
         "--check",
         action="store_true",
@@ -671,7 +674,7 @@ def _run(args, log) -> int:
         raise ValueError(
             "--mjcf is not supported: the controller and gripper configuration this reads come from "
             "the PLUGINS a world declares, and a bare MJCF has none. Point --world at the world the "
-            "campaign runs, which is also what makes the export match the simulated scene."
+            "world the simulation runs, which is what makes the export match the simulated scene."
         )
 
     cfg = load_config(args.world)

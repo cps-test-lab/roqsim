@@ -173,7 +173,7 @@ class ConveyorPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        asset = resolve_model(self.config.get("model", "conveyor"))
+        asset = resolve_model(self.config.get("model", "conveyor"), base_dir=self.base_dir)
         child = mujoco.MjSpec.from_file(str(asset.path))
         apply_assets(child, asset)
         if self.length is not None or self.width is not None:
