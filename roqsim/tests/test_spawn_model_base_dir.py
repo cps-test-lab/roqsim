@@ -82,31 +82,33 @@ def test_validation_resolves_it_too_not_just_the_build(world, monkeypatch, tmp_p
     assert any(type(p).__name__ == "SpawnModelPlugin" for p in plugins)
 
 
-def test_the_world_wins_over_a_same_named_file_in_the_cwd(world, monkeypatch, tmp_path):
-    """Precedence, and it is the whole point: the document's own directory is authoritative.
+def test_the_cwd_is_not_a_second_anchor(world, monkeypatch, tmp_path):
+    """There is exactly one anchor, so a file under the working directory is never consulted.
 
-    ``resolve_model`` still falls back to the CWD for a caller that supplies no base_dir, and that
-    fallback is a hazard rather than a feature -- it lets the SAME document naming the SAME string
-    load a different file depending on where it was run from, or fail. Measured before this change:
-    a world referencing `world/prop.xml` with no such sibling picked up an unrelated
-    `./world/prop.xml` under the working directory and compiled it, silently.
+    While the CWD was a fallback, a world naming a sibling that did not exist picked up an unrelated
+    file of the same name from wherever the process happened to start -- and compiled it. Measured:
+    the same document and the same string gave a 0.5 m box from one directory and "not found" from
+    another, with nothing downstream able to tell which it got.
 
-    Nothing here guarantees that fallback. What is guaranteed is that it can never SHADOW the
-    world's own sibling, which is what makes a world mean one thing wherever it is opened.
+    Pinned as ABSENCE rather than precedence: precedence would still leave a world that resolves
+    only because of where it was run from.
     """
     decoy = tmp_path / "decoy"
     (decoy / "world").mkdir(parents=True)
-    # Same name, different geometry, sitting where the CWD fallback would find it.
-    (decoy / "world" / "sibling_prop.xml").write_text(
-        BIN_MJCF.replace('size="0.1 0.1 0.1"', 'size="0.5 0.5 0.5"'), encoding="utf-8")
+    (decoy / "world" / "ghost.xml").write_text(BIN_MJCF, encoding="utf-8")
+    (decoy / "world" / "cell.yaml").write_text(textwrap.dedent("""
+        components:
+          - spawn_model: {model: world/ghost.xml, pos: [0.0, 0.0, 0.0]}
+            name: prop
+    """), encoding="utf-8")
     monkeypatch.chdir(decoy)
 
-    import mujoco
-    model = _compile(world)
-    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "sibling_prop_geom")
-    assert model.geom_size[gid][0] == pytest.approx(0.1), (
-        "a file under the CWD shadowed the world's own sibling"
-    )
+    # The world is `decoy/world/cell.yaml`, so its sibling is `decoy/world/world/ghost.xml` --
+    # which does not exist. `decoy/world/ghost.xml` does, and used to be found from this CWD.
+    from roqsim.plugin import PluginError
+
+    with pytest.raises(PluginError, match="ghost.xml"):
+        _compile(decoy / "world" / "cell.yaml")
 
 
 def test_a_bundled_model_name_is_unaffected(tmp_path, monkeypatch):
