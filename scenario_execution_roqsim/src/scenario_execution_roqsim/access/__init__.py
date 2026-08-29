@@ -206,8 +206,8 @@ def select(kwargs: dict, *, what: str) -> WorldAccess:
         return RosAccess(node)
     raise AccessError(
         f"{what} needs a simulation to talk to and the runner offered none. Either run the stepped "
-        "runner with `--simulation <module>:<Class>` (scenario-execution's own binary, RoboVAST's "
-        "`mode: base`), or run under the ROS runner, where the simulator is reached over "
+        "runner with `--simulation <module>:<Class>` (scenario-execution's own binary), or run "
+        "under the ROS runner, where the simulator is reached over "
         "simulation_interfaces. Note this action can never run under `remote()`: a remote server is "
         "handed neither."
     )

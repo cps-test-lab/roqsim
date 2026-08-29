@@ -138,9 +138,9 @@ def select_offscreen_gl() -> str | None:
     included; this picks only the offscreen renderer, and offscreen never wants ``glfw``
     -- a window is opened by ``mujoco.viewer`` through its own glfw context, independently
     of ``MUJOCO_GL`` (see :data:`DEFAULT_MUJOCO_GL`). Trusting ``DISPLAY`` here is worse
-    than useless in a container: the RoboVAST base image sets ``DISPLAY=:0``
-    unconditionally, so a headless campaign run would pick glfw and fail against an X
-    server that was never started.
+    than useless in a container: a base image may set ``DISPLAY=:0`` unconditionally --
+    ours does -- so a headless run would pick glfw and fail against an X server that was
+    never started.
 
     **When** this runs matters as much as what it picks, which is why the call site is
     :mod:`roqsim`'s ``__init__`` and not a driver's ``main``: a driver's module-level

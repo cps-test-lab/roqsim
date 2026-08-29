@@ -270,7 +270,7 @@ class MujocoSim(_Base):
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
         world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory --
         a relative path resolves against the scenario's ``output_dir`` (passed to ``setup()`` by
-        the runner; under RoboVAST that is the run's result directory, so the exact simulated scene,
+        the runner; under a run harness that is the run's result directory, so the exact simulated scene,
         world_overrides included, ships as a run artifact for browser viewers), falling back to the
         process cwd when the runner provides none. Called after ``engine.reset()`` so mocap-driven
         bodies (walkers) and re-seated robot bases are captured at their true initial pose; the

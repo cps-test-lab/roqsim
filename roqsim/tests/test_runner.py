@@ -273,7 +273,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
 
 # -- graceful stop -------------------------------------------------------------------------------
 #
-# A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a Kubernetes
+# A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a scheduler
 # eviction and a campaign timeout all send it. Its *default* action kills the process outright, so no
 # `finally` runs and the recording and the run capture are both lost -- which is how one campaign
 # finished 1/1 clean and produced no `run.npz` at all. These pin that both signals now flip run-control

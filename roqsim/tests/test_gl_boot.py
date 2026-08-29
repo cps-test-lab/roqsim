@@ -73,8 +73,8 @@ def _run(code: str, **env) -> str:
 def test_import_roqsim_binds_an_offscreen_backend(display):
     """Never glfw, and never left unset -- with or without a DISPLAY.
 
-    ``DISPLAY=:0`` is the container case and the one that actually bit: the RoboVAST base image
-    exports it unconditionally with no X server behind it, so anything keying off ``DISPLAY`` picks
+    ``DISPLAY=:0`` is the container case and the one that actually bit: a base image exported it
+    unconditionally with no X server behind it, so anything keying off ``DISPLAY`` picks
     the on-screen backend and dies. The answer must not depend on it.
     """
     selected, bound = _run(_PROBE, DISPLAY=display).split()

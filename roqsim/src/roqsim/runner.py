@@ -134,7 +134,7 @@ def _graceful_stop(control: ctl.RunControl, logger: logging.Logger):
     second signal restores default handling and forces the interrupt. No-op off the main thread.
 
     SIGTERM is handled alongside SIGINT because that is how a *supervised* run ends: a container
-    teardown, ``docker stop``, a Kubernetes eviction and a campaign timeout all send TERM, whose
+    teardown, ``docker stop``, a scheduler eviction and a supervisor's timeout all send TERM, whose
     default action kills the process outright — no ``finally``, so the recording and the capture
     are both lost. Under a campaign that is the common exit, not the exceptional one; only SIGKILL
     can still take the artifacts with it.
@@ -927,7 +927,9 @@ def main(argv: list | None = None) -> int:
         help="what to run: a world YAML, an MJCF scene (.xml), or a model reference "
         "(<pkg>:<name>, a bundled model name, or a path) shown alone in an empty room",
     )
-    parser.add_argument("--headless", action="store_true", help="no viewer window (k8s)")
+    parser.add_argument(
+        "--headless", action="store_true", help="no viewer window (for CI and containers)"
+    )
     parser.add_argument(
         "--ros",
         action="store_true",
