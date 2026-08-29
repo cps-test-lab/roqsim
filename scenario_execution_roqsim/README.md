@@ -24,8 +24,7 @@ do parallel:
 
 An roqsim simulation is driven two ways and these actions work in both, unedited:
 
-- **stepped, in-process** — scenario-execution's own runner owns the loop (`--simulation`, RoboVAST's
-  `mode: base`). The action is handed the adapter and reads `MujocoSim.context`: entity poses from
+- **stepped, in-process** — scenario-execution's own runner owns the loop (`--simulation`). The action is handed the adapter and reads `MujocoSim.context`: entity poses from
   `data.xpos`, the fault through the blackboard handle `model_override:<name>`, writes queued with
   `ctx.post` because only the physics thread may touch `model`/`data`.
 - **over ROS** — the simulator is in another container. Poses come from

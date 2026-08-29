@@ -29,7 +29,7 @@ on-screen window. The window management lives here so neither driver duplicates 
   ``Handle.close()`` alone leaves the window's teardown racing the process exit (see
   :func:`close_viewer`).
 
-``mujoco.viewer`` is imported lazily so a headless/k8s process that never opens a window needs no
+``mujoco.viewer`` is imported lazily so a headless process that never opens a window needs no
 on-screen GL context.
 """
 

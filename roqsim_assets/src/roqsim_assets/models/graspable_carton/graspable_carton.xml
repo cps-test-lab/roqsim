@@ -39,7 +39,7 @@
 
        Spawn it with `spawn_model: {model: graspable_carton, free: true, publish_tf: dynamic}` --
        `free` adds the <freejoint/>, so this file declares none and the same prop can also be placed
-       as static scenery. See the tiago_pick example (robovast-examples) for a worked pick. -->
+       as static scenery. -->
   <default>
     <geom condim="4" friction="1.2 0.005 0.0001" solimp="0.9 0.95 0.001" solref="0.005 1"/>
   </default>

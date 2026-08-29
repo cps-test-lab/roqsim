@@ -47,7 +47,7 @@ the same ROS graph.
    ros2 launch roqsim_nav2_example nav2_turtlebot_depot.launch.py headless:=false   # MuJoCo window
 
 Pass ``map:=`` / ``params_file:=`` to pin an external map or nav2 params, and ``autostart:=False`` to
-bring nav2 up configured-but-inactive. A campaign comparing this backend against gz passes all
+bring nav2 up configured-but-inactive. A comparison of this backend against gz passes all
 three, so both simulators run byte-identical nav2 config *and* activate on the same condition: wait
 for the simulator's first ``/scan``, then call ``manage_nodes`` with ``ManageLifecycleNodes.STARTUP``
 on each lifecycle manager. Nothing in nav2 waits for a simulator — ``autostart`` arms a one-shot timer

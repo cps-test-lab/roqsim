@@ -337,7 +337,7 @@ and can *fail the trial* when the reply says the fault did not land — a topic 
 followed by hoping. In a ROS-free stepped run the same switch is
 ``ctx.blackboard.require("model_override:grip_fault").set_active(True)``, which is what an ``.osc``
 action calls. Severity is not on the wire: it is the configured ``to:`` value, so sweeping how
-slippery the pads get is an ordinary campaign factor rather than a runtime message.
+slippery the pads get is an ordinary experiment factor rather than a runtime message.
 
 Three things to know before writing one:
 
@@ -354,7 +354,7 @@ Three things to know before writing one:
   not a failure. It is published as ``override_verified`` too, because a service call leaves no trace
   in a rosbag and ``mjModel`` is in neither the bag nor the state recording.
 * **A reset returns the world to the configured state**, exactly, from the values read at startup.
-  Without that, repetition 2 of a campaign cell would start already faulted and report a plausible
+  Without that, repetition 2 of a sweep cell would start already faulted and report a plausible
   wrong number — ``Engine.reset`` resets ``MjData`` and never touches ``MjModel``.
 
 Not every model value can be written at runtime; ``geom_size`` and the ``opt.*`` globals are refused
@@ -396,7 +396,7 @@ name neither of a robot's two lidars.
 It mirrors ``model_override`` in the three ways that matter, rather than re-deciding them:
 
 * **Severity is configured, not sent.** The ``fault:`` values are ordinary config, so sweeping how bad
-  the fault gets is ``components.robot.lidar.fault.dropout_percent`` — a campaign factor,
+  the fault gets is ``components.robot.lidar.fault.dropout_percent`` — an experiment factor,
   deterministic per cell and in the run's provenance. One bit crosses the wire.
 * **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
   experiment's independent variable.
@@ -558,7 +558,7 @@ Three things decide whether such a world measures anything at all:
   example, including the sweeps.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
-``ctx.request_stop()`` when it resolves, so a campaign cell ends when the trial does instead of being
+``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
 padded to a guessed ``--seconds``. Two rules are worth copying from a trial-protocol plugin: give it
 an explicit failure condition as well as a success one (a trial that can only succeed cannot produce a
 success *rate*, it can only hang), and write the raw observable rather than the metric, because a
@@ -585,7 +585,7 @@ they cost something a navigation world should not pay:
    (and ``gripper_actuator:``, which cannot be inferred once one entity carries two grippers), and each
    controller also reports only its own joints, so several can share one ``/joint_states`` topic.
 4. **``mass`` / ``friction``** on the spawn, if either is a factor you want to vary — they are ordinary
-   world-YAML keys, so a campaign sweeps them with ``ParameterVariationList`` and needs no new
+   world-YAML keys, so an ordinary parameter sweep varies them and needs no new
    variation plugin.
 
 ``unitree_g1_dex1``'s manifest is a worked example of (3): two ``arm_controller`` instances on one
@@ -681,7 +681,7 @@ colon and is the plugins-list entry's *key*, so **quote it** — ``- "my_pkg.mod
 to keep the colon from splitting the key.
 
 **If your config names a file, implement ``sources``.** ``roqsim.config.world_sources`` — what
-``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a campaign runner
+``roqsim scenes inputs`` and the exporters' ``--manifest`` report, and what a run harness
 stages a world by — walks the YAML's ``extends`` chain and the MJCF's assets. It cannot see
 into a plugin's config, so a mesh or a CSV named there is invisible to every caller asking
 "what does this world need?" unless the plugin says so. Return absolute paths; entries that do

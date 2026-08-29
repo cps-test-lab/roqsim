@@ -558,9 +558,9 @@ def load_config(
     # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. `roqsim sim` and the
     # scenario adapter each resolved one before calling in, so the ref was a property of those two
     # entry points rather than of a world -- and `roqsim-export-web` (which no human types, but which
-    # RoboVAST's scene cache runs to build a run view's geometry) got the ref verbatim and reported
-    # "world config /abs/cwd/tiago_pick:tiago_pick_ros2 does not exist". Downstream that surfaces
-    # as "no 3D geometry" for the whole campaign, so the campaign looks broken rather than one caller.
+    # a consumer's scene cache runs to build a run view's geometry) got the ref verbatim and reported
+    # "world config /abs/cwd/pick_cell:pick_cell_ros2 does not exist". Downstream that surfaces
+    # as "no 3D geometry" for every run, so the whole batch looks broken rather than one caller.
     #
     # Guarded on the path not existing, the same way `extends` and `sim.world` decide: a real file
     # whose name contains a colon is still a file.

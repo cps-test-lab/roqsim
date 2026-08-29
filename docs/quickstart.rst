@@ -264,9 +264,9 @@ computations over a run, use :mod:`roqsim.recording`:
        sample.sim_time, sample.wall_time, sample.index, sample.data
        ...          # any numpy/mujoco computation over a real restored state
 
-``--record`` is for a run you launch yourself. A run launched *for* you — a campaign starting this world
-through a ROS launch file, where the command line belongs to that file — asks for the same thing through
-the environment, which both drivers honour:
+``--record`` is for a run you launch yourself. A run launched *for* you — an orchestrator starting this
+world through a ROS launch file, where the command line belongs to that file — asks for the same thing
+through the environment, which both drivers honour:
 
 .. code-block:: bash
 
@@ -311,9 +311,9 @@ Like the clock map and unlike the ``.npz``, it is flushed per row, so a run kill
 everything up to the last sample.
 
 A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directory) or, failing that,
-``OUTPUT_DIR`` (the job's), so a campaign's artifacts land beside that run's other results instead of
+``OUTPUT_DIR`` (the job's), so a run's artifacts land beside its other results instead of
 wherever the launch left the working directory; otherwise it resolves against the working directory as
-usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the campaign root, shared by every run, so
+usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
 concern either way — the same footing as ``sim.headless``, which the world YAML rejects on purpose — so
 there is no route to it through the world.
@@ -327,13 +327,13 @@ viewer, alongside the geometry ``roqsim export web`` emits:
 
 It writes ``capture.json`` + ``capture.bin``: one track per joint value and one per body pose that
 actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
-without either knowing about MuJoCo. The format is the consumer's (RoboVAST defines it; see its
-``docs/run_capture.rst``) and roqsim is one producer of it, the same relationship this package has with
+without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
+where it is defined — and roqsim is one producer of it, the same relationship this package has with
 URDF and SRDF.
 
 A run stopped any of the normal ways writes its recording on the way out: closing the viewer window, one
 Ctrl+C, or a **SIGTERM** — which is how a *supervised* run ends, whether that is ``docker stop``, a
-container teardown, a Kubernetes eviction or a campaign timeout. Only ``SIGKILL`` loses it: an ``.npz``
+container teardown, a scheduler eviction or a supervisor's timeout. Only ``SIGKILL`` loses it: an ``.npz``
 writes its index at the end, so there is nothing to read. Such a run leaves its ``<recording>.npz.part``
 sample stream behind, buffered up to whatever the kill interrupted; nothing reads it, and the archive's
 *absence* remains the signal that the run did not end on purpose.
@@ -473,10 +473,10 @@ the same row.
 ``ROQSIM_RECORD`` (and ``ROQSIM_SIM_POSES`` for check 1) cannot be checked. That is reported and exits
 ``2``; it never reads as health.
 
-**Who runs it, in a campaign.** RoboVAST executes this command itself, in the running container, on a
-bounded interval while somebody is watching the campaign — and reads ``--json``: the ``findings``, and
-``level`` in particular, are the contract it acts on. An ``error``-level finding ends its campaign
-waiter. So the exit code and the document are a public interface, and ``check`` slugs are names other
+**Who runs it, when a supervisor does.** A run harness executes this command itself, in the running
+container, on a bounded interval while somebody is watching the run — and reads ``--json``: the
+``findings``, and ``level`` in particular, are the contract it acts on. An ``error``-level finding is
+what such a supervisor ends a run on. So the exit code and the document are a public interface, and ``check`` slugs are names other
 software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
 into a run's output by this: it is read on demand and answered.
 
@@ -579,21 +579,21 @@ instead of crashing in the native viewer init. Unlike the standalone runner, the
 apply the runner's *windowed* GL defaults (the libGLEW preload and its re-exec); set them yourself if
 a windowed adapter run hits ``gladLoadGL error`` on a camera world. The offscreen backend is not
 among them — that one is chosen by ``import roqsim``, so the adapter gets it like everything else,
-which is what makes a stepped campaign able to render at all.
+which is what makes a stepped run able to render at all.
 
 The adapter can also leave a browser scene descriptor next to the run: set
 ``ROQSIM_SCENE_EXPORT_DIR`` and every (re)built world is exported as ``scene.json`` +
 ``scene.bin`` (+ textures) into that directory after ``reset()`` — the same format
 ``roqsim export web`` produces, but of the *exact* simulated world (``world_overrides``
 included), captured at its true initial pose. A relative path resolves against the scenario's
-``output_dir`` (which scenario-execution passes to ``setup()``; under a campaign runner such as
-RoboVAST that is the run's result directory, so the descriptor ships as an ordinary run artifact
-for web viewers), falling back to the process working directory.
+``output_dir`` (which scenario-execution passes to ``setup()``; under a run harness that is the run's
+result directory, so the descriptor ships as an ordinary run artifact for web viewers), falling back to
+the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
 relative path anchored to the scenario's ``output_dir`` here, since scenario-execution passes one. That
-is what turns a campaign run into something replayable: the descriptor above is the world's geometry, the
+is what turns a run into something replayable: the descriptor above is the world's geometry, the
 recording is what moved in it, and the run capture is that motion in the form a browser reads.
 
 What a scenario can ask the simulation
