@@ -112,19 +112,16 @@ def test_rail_geometry_is_visual_only(tmp_path):
 def test_rail_config_is_refused_when_unusable(rail, expected):
     from roqsim_manipulation.plugins.spawn_arm import SpawnArmPlugin
 
-    errors = SpawnArmPlugin.validate_config(
-        SpawnArmPlugin, {"model": "ur10e", "rail": {**RAIL, **rail}}
-    )
+    config = {"model": "ur10e", "rail": {**RAIL, **rail}}
+    errors = SpawnArmPlugin(config).validate_config(config)
     assert any(expected in e for e in errors), errors
 
 
 def test_rail_and_mount_are_mutually_exclusive():
     from roqsim_manipulation.plugins.spawn_arm import SpawnArmPlugin
 
-    errors = SpawnArmPlugin.validate_config(
-        SpawnArmPlugin,
-        {"model": "ur10e", "prefix": "a_", "rail": RAIL, "mount": {"robot": "base"}},
-    )
+    config = {"model": "ur10e", "prefix": "a_", "rail": RAIL, "mount": {"robot": "base"}}
+    errors = SpawnArmPlugin(config).validate_config(config)
     assert any("mutually exclusive" in e for e in errors), errors
 
 

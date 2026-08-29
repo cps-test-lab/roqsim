@@ -235,7 +235,7 @@ class SpawnArmPlugin(Plugin):
             errors.append("'model' is required")
         else:
             try:
-                resolve_model(config["model"])
+                resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
         if "rpy" in config and len(config["rpy"]) != 3:
@@ -291,7 +291,7 @@ class SpawnArmPlugin(Plugin):
                 errors.append("'end_effector' requires 'model'")
             else:
                 try:
-                    resolve_model(ee["model"])
+                    resolve_model(ee["model"], base_dir=self.base_dir)
                 except ModelError as exc:
                     errors.append(f"end_effector: {exc}")
                 if "rpy" in ee and len(ee["rpy"]) != 3:
@@ -299,7 +299,7 @@ class SpawnArmPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        asset = resolve_model(self.config["model"])
+        asset = resolve_model(self.config["model"], base_dir=self.base_dir)
         child = mujoco.MjSpec.from_file(str(asset.path))
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (its own package
         # plus any borrowed via the manifest's `assets:`), so a model from another package -- or one
@@ -418,7 +418,7 @@ class SpawnArmPlugin(Plugin):
 
     def _attach_end_effector(self, child: mujoco.MjSpec) -> None:
         """Weld the gripper model into the arm's spec at the arm's tool site."""
-        ee_asset = resolve_model(self.ee_model)
+        ee_asset = resolve_model(self.ee_model, base_dir=self.base_dir)
         ee = mujoco.MjSpec.from_file(str(ee_asset.path))
         apply_assets(ee, ee_asset)
         # Whatever tool the arm model ships with goes first, or the new one is welded into it. The

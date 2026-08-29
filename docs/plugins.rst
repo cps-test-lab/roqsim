@@ -689,6 +689,15 @@ not exist are dropped, and the hook must never raise (callers treat it as best-e
 the same rule as ``transport_only``: a capability is declared by the plugin, never listed in
 the core.
 
+**And resolve it against ``self.base_dir``, not the CWD.** That attribute is the directory of the
+world document the entry was declared in, so a path written beside the world resolves the same
+wherever the world is opened from. That matters more than it sounds: the working directory is not
+the document's directory in general, and need not be the same twice. A world may be opened by
+absolute path from somewhere unrelated, or copied under a different root by a tool that stages its
+inputs — and a CWD-relative path then names a different file, or none. ``resolve_model`` and
+``load_manifest`` both take a ``base_dir`` for this; pass ``self.base_dir``. A bundled model *name*
+is a provider lookup and is unaffected.
+
 A *spawn* plugin can bundle a model's default plugins by implementing ``expand`` via
 ``roqsim.manifest.expand_manifest`` (see the manifest mechanism in the :doc:`developer_guide` /
 architecture reference). See the porting playbook in the :doc:`developer_guide`.
