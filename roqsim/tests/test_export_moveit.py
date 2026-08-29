@@ -198,7 +198,7 @@ def test_the_projection_evaluator_names_joints_in_the_group(ur5e):
 
 
 def _run_cli(tmp_path, world: dict, *extra):
-    """Drive the CLI the way a campaign's generate step does: a world file in, a directory out."""
+    """Drive the CLI the way a build step does: a world file in, a directory out."""
     from roqsim.export_moveit import main
 
     (tmp_path / "cell.yaml").write_text(yaml.safe_dump(world), encoding="utf-8")

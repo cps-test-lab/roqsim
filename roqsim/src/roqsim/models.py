@@ -11,7 +11,12 @@ lives in *any* installed package -- not just its own:
    of the same name, or to self-document which package a world depends on. ``<package>`` is a
    ``roqsim.models`` provider's entry-point name; a dotted importable module exposing ``MODELS_DIR``
    also works (e.g. ``my_pkg.models:foo``) for models outside the entry-point group.
-3. **Filesystem path** (absolute, or relative to ``base_dir``/CWD) -> loaded directly.
+3. **Filesystem path** -> loaded directly. Absolute, else relative to ``base_dir`` -- the
+   directory of the document that named it, which is the anchor that does not depend on who
+   is loading. A caller supplying no ``base_dir`` falls back to the CWD; that fallback is
+   legacy and a hazard rather than a feature, because it lets one document naming one string
+   resolve to different files from different directories. ``base_dir`` always wins over it,
+   so a document's own sibling can never be shadowed.
    e.g. ``./models/my_arm.xml``.
 
 Crucially, each resolved model carries **its own** ``meshdir``/``texturedir`` (its provider's, or

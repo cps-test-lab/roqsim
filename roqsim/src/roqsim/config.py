@@ -1420,6 +1420,11 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
         cls(spec.config, name=spec.name, entity=spec.entity, label=spec.label)
         for spec, cls in resolved
     ]
+    # Where this document lives, so a plugin resolving a FILE its config names does it relative to
+    # the world rather than to whatever CWD happened to load it. Set here, before the validation
+    # below, because `validate_config` is the first thing that resolves such a path.
+    for inst in instances:
+        inst.base_dir = cfg.base_dir
 
     errors: list[str] = []
     for inst, (spec, _cls) in zip(instances, resolved, strict=True):

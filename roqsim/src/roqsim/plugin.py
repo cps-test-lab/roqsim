@@ -12,11 +12,10 @@ Threading contract (see docs/architecture.rst > Concurrency):
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # avoid importing mujoco / context at module import time
-    from pathlib import Path
-
     import mujoco
 
     from .config import PluginSpec
@@ -74,6 +73,17 @@ class Plugin:
         label: str | None = None,
     ):
         self.config: dict = dict(config or {})
+        #: Directory of the world document this entry was declared in, so a config value naming a
+        #: FILE beside that document resolves the same wherever the world is loaded from. Without
+        #: it such a path is only resolvable from the CWD that happened to load the world, and the
+        #: working directory is neither the document's directory nor the same one twice.
+        #:
+        #: Assigned by :func:`~roqsim.config.instantiate_plugins` after construction rather than
+        #: taken as a constructor argument: most plugins override ``__init__`` with the four
+        #: keywords below, so a fifth would have to be added to every one of them -- and a plugin
+        #: that had not been updated would fail at construction rather than fall back. The CWD
+        #: default here is what a plugin built outside a document (a test, a driver) gets.
+        self.base_dir: Path = Path.cwd()
         #: Instance name (defaults to the class name; overridable via ``name:`` in YAML).
         self.name: str = name or type(self).__name__
         #: How this entry is addressed among its siblings: its ``name:``, else its plugin ref. For a

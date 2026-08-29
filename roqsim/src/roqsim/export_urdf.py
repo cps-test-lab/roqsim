@@ -933,7 +933,10 @@ def main(argv: list | None = None) -> int:
         help="extra plugin names/refs to drop before compiling; transport/bridge plugins are always "
         "dropped (they contribute no geometry)",
     )
-    parser.add_argument("--manifest", help="also write {'inputs': [...]} for campaign caching")
+    parser.add_argument(
+        "--manifest",
+        help="also write {'inputs': [...]} so a caller can tell when this output is stale",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
