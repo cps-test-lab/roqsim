@@ -1,13 +1,13 @@
 """World plugin: time-varying wind -- steady flow, a discrete gust, and Dryden turbulence.
 
-``sim.wind`` sets a *constant* wind vector before compile, which is the right shape for stating the
-conditions a world is in. It is the wrong shape for testing disturbance rejection, because a constant
-is the one wind a controller never has to reject: the drone trims against it once and the error goes
-to zero. What defeats an attitude loop is wind that *changes* -- a gust front, and the continuous
-turbulence underneath it.
+``sim.wind`` sets a *constant* wind vector before compile, which states the conditions a world is
+in. A constant is the one wind a controller never has to reject: it trims against it once and the
+error goes to zero. Testing disturbance rejection needs wind that *changes* -- a gust front, and the
+continuous turbulence underneath it -- which is what this plugin supplies.
 
-This plugin writes ``model.opt.wind`` each tick, so MuJoCo's existing drag terms do the work; nothing
-here applies a force of its own.
+It writes ``model.opt.wind`` each tick, so MuJoCo's existing drag terms do the work; nothing here
+applies a force of its own. Any body with drag feels it -- an airframe, a walker, a light trailer --
+so the plugin belongs to the world rather than to a robot family.
 
 Config::
 
@@ -23,31 +23,24 @@ Config::
         length_scale: 5.0         # L, m -- larger = slower, more correlated gusting
         vertical: 0.5             # sigma scale on the w axis (Dryden's low-altitude form)
 
-**Why a plugin and not a runtime override.** ``model_override`` refuses every ``opt.*`` global on
-purpose (see its module docstring, and ``docs/architecture.rst``): the ``sim:`` block owns them, it
-owns them *before compile*, and a runtime write would make the value a run recorded differ from the
-value that ran. That argument is about a fault-injection hook poking a global whose recorded value is
-a single number. It does not extend to wind, because wind here is not a value -- it is a *signal*,
-fully determined by the parameters above plus the run's seed, all of which are recorded with the
-world. Re-run the same world with the same seed and the same wind happens, tick for tick.
+**Wind is a signal, not a value.** ``model_override`` refuses every ``opt.*`` global at runtime,
+because a fault-injection write would make the value a run recorded differ from the value that ran.
+The wind here is fully determined by the parameters above plus the run's seed, both recorded with
+the world: re-run the same world with the same seed and the same wind happens, tick for tick.
 
-**One owner per knob**, which is why declaring both ``sim.wind`` and this plugin is refused rather
-than merged. Two owners of one global is precisely the situation that rule exists to prevent: the
-compiled model would say one thing, the first tick would say another, and the run's provenance would
-record the value that was immediately overwritten. State the mean flow in ``steady:`` instead --
-that is the same wind, owned once.
+**One owner per knob**: declaring both ``sim.wind`` and this plugin is refused rather than merged,
+because the compiled model would say one thing, the first tick another, and the run's provenance
+would record the value that was immediately overwritten. State the mean flow in ``steady:``.
 
-**Randomness comes from ``ctx.rng_for``, like every other stochastic plugin here.** Turbulence is
-therefore a pure function of ``(sim.seed, episode, sim_time)``, randomly accessible rather than
-replayed, and the run's own seed governs it -- so this plugin has no ``seed`` key of its own. Note
-the consequence, which is deliberate substrate behaviour rather than an accident: because ``episode``
-is part of the key, repetitions of one configuration see *different* turbulence. Repetitions are
-samples of the weather, not copies of it, which is what makes averaging over them mean anything.
+**Randomness comes from ``ctx.rng_for``**, like every other stochastic plugin, so turbulence is a
+pure function of ``(sim.seed, episode, sim_time)`` and this plugin has no ``seed`` key of its own.
+Because ``episode`` is part of the key, repetitions of one configuration see *different* turbulence:
+repetitions are samples of the weather, not copies of it, which is what makes averaging over them
+mean anything.
 
 **Wind is inert in a vacuum.** MuJoCo applies wind as a relative velocity into the density and
-viscosity drag terms, so with both at 0 this plugin has no effect whatever. That is a silent,
-plausible-looking failure -- the drone still flies, it just ignores the weather -- so it warns, the
-same way ``quadrotor_controller`` warns about the same missing medium.
+viscosity drag terms, so with both at 0 this plugin has no effect whatever -- a silent,
+plausible-looking failure, so it warns.
 """
 
 from __future__ import annotations
@@ -65,8 +58,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_VERTICAL_SCALE = 0.5
 
 #: The convection speed the Dryden filter is discretised against, when the mean flow is too slow to
-#: supply one. Turbulence is carried past the vehicle at the airspeed; a hovering drone in still air
-#: has none, and the filter would freeze. This is the "there is still weather when it is calm" floor.
+#: supply one. Turbulence is carried past the vehicle at the airspeed; a stationary vehicle in
+#: still air has none, and the filter would freeze. This is the "it is calm, not windless" floor.
 _MIN_CONVECTION_MPS = 1.0
 
 

@@ -303,6 +303,50 @@ to its own robot. Un-namespaced, two monitors publish on one ``/collision``, whi
    fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
    contact makes "wait for any message" look correct; it is not portable.
 
+What the robot carries, and the weather it is in
+------------------------------------------------
+
+Two core plugins state the *conditions* of a trial rather than its behaviour, and both are
+robot-family-agnostic.
+
+``payload`` adds a carried mass to one body of an entity::
+
+   - spawn_robot: {model: crazyflie_2, prefix: "cf2_"}
+     name: drone
+     components:
+       - quadrotor_controller: {target: [0.0, 0.0, 1.0]}
+       - payload: {mass: 0.005}      # kg, on the entity's root body
+
+It is a **point mass at the body's centre of mass**: mass adds, and a point mass contributes no
+inertia about its own centre. An ``offset`` is refused rather than approximated — an offset payload
+shifts the centre of mass and adds a parallel-axis term, which is a different body, not a heavier
+one. ``mass: 0`` leaves the model untouched, so the unloaded cell of a sweep is identical to a world
+that never declared a payload. Load a body other than the root with ``body:`` (the entity's spawn
+prefix is applied for you), and a robot other than the owning entity with ``robot:``.
+
+``wind_field`` is a **world** plugin that writes ``model.opt.wind`` each tick, so MuJoCo's own drag
+terms do the work::
+
+   - wind_field:
+       steady: [3.0, 0.0, 0.0]                                  # m/s, world frame
+       gust: {magnitude: 6.0, onset: 4.0, duration: 1.5}        # 1-cosine (MIL-F-8785C)
+       turbulence: {intensity: 0.8, length_scale: 4.0}          # Dryden
+
+``sim.wind`` states a *constant*, which is the one wind a controller never has to reject: it trims
+against it once and the error goes to zero. Rejection is tested by wind that changes, which is what
+the gust and turbulence terms are for. Three things follow from how it works:
+
+* **One owner per knob.** Declaring both ``sim.wind`` and ``wind_field`` is refused rather than
+  merged: the compiled model would say one thing and the first tick another, and the run's
+  provenance would record the value that was immediately overwritten. State the mean flow in
+  ``steady:``.
+* **Turbulence draws from the run's seed** through ``ctx.rng_for``, so there is no ``seed`` key here
+  and the whole world reproduces together. Because the episode is part of the key, repetitions of
+  one configuration see *different* turbulence — samples of the weather, not copies of it.
+* **Wind is inert in a vacuum.** MuJoCo applies it through the density and viscosity drag terms, so
+  with both at 0 the plugin has no effect at all; it warns rather than letting that pass. Air is
+  ``sim: {density: 1.225, viscosity: 1.8e-5}``.
+
 Injecting a physical fault
 --------------------------
 

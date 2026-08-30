@@ -97,18 +97,13 @@ class SpawnRobotPlugin(Plugin):
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def _resolve_base_body(self, ctx: SimContext) -> str:
-        """The robot's root body: ``<prefix>base_link`` where it exists, else the base joint's body.
+        """The robot's root body: ``<prefix>base_link`` if the model has one, else the body owning
+        the base joint.
 
-        The ROS convention is ``base_link`` and every wheeled base here follows it, but that is a
-        convention rather than a guarantee -- the Crazyflie's root body is ``cf2``. When the assumed
-        name did not exist the entity was registered pointing at a body that was not in the model,
-        which is not an error anyone sees at spawn time: it surfaces later, in whatever tries to use
-        it. That cost ``sim.view.track: <robot>`` (the camera could not follow an aerial robot at
-        all) and made every consumer carry its own fallback.
-
-        The base joint is the general answer: whatever a robot calls its root, the free joint is on
-        it. For a model that does have ``base_link`` both rules name the same body, so this changes
-        nothing for the wheeled families.
+        ``base_link`` is a ROS convention, not a guarantee. The base joint holds whatever a model
+        calls its root, so it is the rule that works for every family; where ``base_link`` exists,
+        both name the same body. If neither resolves the entity would name a body absent from the
+        compiled model, so this raises here rather than at the first use of that name.
         """
         named = self.prefix + "base_link"
         if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, named) >= 0:

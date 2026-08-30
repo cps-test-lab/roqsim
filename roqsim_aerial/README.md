@@ -5,7 +5,7 @@ Aerial-vehicle plugins and models for [roqsim](../README.md).
 | | |
 | --- | --- |
 | Models | `crazyflie_2` — Bitcraze Crazyflie 2 nano quadrotor (MIT, from MuJoCo Menagerie) |
-| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments<br>`payload` — carried mass, the thrust-margin knob<br>`wind_field` — steady flow, 1-cosine gust, Dryden turbulence |
+| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments |
 | Worlds | `crazyflie_2_demo.yaml` — takes off from the floor and holds 1 m |
 
 ```bash
@@ -35,8 +35,9 @@ convenience.
 ## The flight envelope is the experiment
 
 The Crazyflie carries 0.35 N of collective thrust against a 27 g airframe — a thrust-to-weight ratio
-of **1.32**. That margin, not the controller, is what an aerial campaign is usually about, and two
-plugins exist to vary it:
+of **1.32**. That margin, not the controller, is what an aerial campaign is usually about. The two
+plugins that vary it are core roqsim ones, not aerial-specific: `payload` (carried mass) and
+`wind_field` (steady flow, gust, turbulence) — see [docs/plugins.rst](../docs/plugins.rst).
 
 ```yaml
 components:
@@ -60,18 +61,11 @@ Measured against a 1 m altitude hold, the boundary sits where physics says it do
 | 6 g | 33 g | 1.08 | 0.82 m |
 | 9 g | 36 g | 0.99 | never leaves the floor |
 
-The graded sag before the collapse is real and worth knowing: `quadrotor_controller` has no integral
-term, so added weight buys steady-state altitude error rather than a cliff. The cliff arrives at
-T/W = 1.
+The graded sag before the collapse is worth knowing: `quadrotor_controller` has no integral term, so
+added weight buys steady-state altitude error rather than a cliff. The cliff arrives at T/W = 1.
 
-`payload` models a point mass **at the centre of mass** and refuses an `offset` rather than
-approximating one — an offset payload moves the centre of mass and adds a parallel-axis inertia term,
-which is a different airframe, not a heavier one.
-
-`wind_field` **replaces** `sim.wind` rather than adding to it: declaring both is refused, because two
-owners of one global means the compiled model and the first tick disagree and provenance records the
-value that was overwritten. Its turbulence draws from the run's seed through `ctx.rng_for`, so it has
-no seed of its own and reproduces with the rest of the world.
+Wind needs a medium: a world with `density` and `viscosity` at 0 is a vacuum, and `wind_field` has no
+effect in it at all. Set `sim: {density: 1.225, viscosity: 1.8e-5}` for air.
 
 ## Licensing
 

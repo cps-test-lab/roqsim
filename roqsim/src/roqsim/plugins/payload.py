@@ -1,32 +1,26 @@
 """Component plugin: a carried payload, as added mass on a robot's body.
 
-Thrust margin is the first thing an aerial experiment varies, and until now there was no way to
-state it. A Crazyflie's airframe is 27 g against 0.35 N of collective thrust -- a thrust-to-weight
-ratio of 1.32 -- so a few grams of payload is not a detail, it is the whole flight envelope: 5 g
-takes T/W to 1.11, and somewhere under 10 g the drone cannot hold altitude at all. A campaign that
-cannot set payload mass cannot ask the question every aerial developer asks first.
+Carried mass is a first-class experiment factor: it changes what a mobile base can accelerate, what
+an arm can hold at reach, and -- where thrust is bounded -- whether a vehicle flies at all. This
+plugin states it in the world, so it is swept like any other factor and recorded with the run.
 
 Config::
 
     payload:
-      robot: drone        # entity whose body carries it (default: the owning entity)
-      mass: 0.005         # kg, REQUIRED -- added to the body's own mass
-      body: cf2           # body to load (default: the entity's root body)
+      robot: robot        # entity whose body carries it (default: the owning entity)
+      mass: 2.5           # kg, REQUIRED -- added to the body's own mass
+      body: tray          # body to load (default: the entity's root body)
 
-Deliberately a **point mass at the body's centre of mass**, and nothing else. That is what a payload
-strapped to an airframe's belly is to within the precision anyone has about it, and it is the case
-where "added mass" has an unambiguous meaning: mass adds, and the inertia a point mass contributes
-about its own centre is zero. An *offset* payload is a different physical object -- it shifts the
-centre of mass and adds a parallel-axis inertia term, which changes the attitude dynamics rather than
-just the thrust margin -- and getting that right means building a child body before compile. Rather
-than quietly approximate it, an ``offset`` is refused with a message saying so.
+The payload is a **point mass at the body's centre of mass**: mass adds, and the inertia a point
+mass contributes about its own centre is zero. An *offset* payload is a different physical object --
+it shifts the centre of mass and adds a parallel-axis inertia term, changing the attitude dynamics
+rather than the load alone -- and representing it means adding a child body before compile. An
+``offset`` key is therefore refused rather than approximated.
 
-**Why this runs after compile rather than as a build hook.** Both are defensible; this one is chosen
-because the entity registry is what maps ``robot: drone`` to a *prefixed* MJCF body name, and that
-registry does not exist until ``configure`` (``spawn_robot`` registers its entity there). A build
-hook would have to be told the prefix a second time, in a second place, with nothing checking the two
-agree. Writing ``model.body_mass`` and re-deriving the cached constants is the same mechanism
-``model_override`` already uses for ``body_mass``, so this is an established write, not a new one.
+The mass is applied in ``configure``, after compile: the entity registry is what maps ``robot:`` to
+a *prefixed* MJCF body name, and it is populated by the spawn plugins during ``configure``. Writing
+``model.body_mass`` and re-deriving the cached constants with ``mj_setConst`` is the same mechanism
+:mod:`roqsim.plugins.model_override` uses for ``body_mass``.
 
 The mass is stated in the world and therefore recorded with it, so a run's provenance carries the
 payload even though the compiled MJCF's own inertial does not.
@@ -67,8 +61,8 @@ class PayloadPlugin(Plugin):
                     errors.append("'mass' must be >= 0 kg")
         if "offset" in config:
             # Loud rather than approximate: an offset payload moves the centre of mass and adds a
-            # parallel-axis term, which this plugin does not model. Silently ignoring the key would
-            # report an attitude result for an airframe nobody configured.
+            # parallel-axis term, which this plugin does not model. Ignoring the key would report a
+            # result for a body nobody configured.
             errors.append(
                 "'offset' is not supported: this plugin models a point mass at the body's centre "
                 "of mass. An offset payload changes the inertia tensor and needs a body added "
@@ -77,13 +71,11 @@ class PayloadPlugin(Plugin):
         return errors
 
     def _resolve_body(self, ctx: SimContext, entity) -> int:
-        """The body the payload is strapped to, by the first rule that resolves.
+        """The body the payload is carried on, by the first rule that resolves.
 
-        Three rules rather than one because the families disagree about naming. ``spawn_robot``
-        registers ``entity.body`` as ``<prefix>base_link``, which every wheeled base has and the
-        Crazyflie does not -- its root body is ``cf2`` (``quadrotor_controller`` carries a fallback
-        for the same reason). The body owning the base *joint* is the one general answer: whatever a
-        robot calls its root, the free joint is on it.
+        A named ``body:`` wins. Otherwise the body owning the entity's base joint, which is the one
+        rule that holds across families: whatever a robot calls its root, its base joint is on it.
+        Otherwise the entity's registered body.
         """
         model = ctx.model
         prefix = entity.meta.get("prefix", "")
@@ -124,21 +116,21 @@ class PayloadPlugin(Plugin):
         self._bid = self._resolve_body(ctx, entity)
 
         if mass == 0.0:
-            # The zero level of a sweep, not a mistake: leave the model untouched so the unloaded
-            # cell is bit-identical to a world that never declared a payload at all.
+            # The zero level of a sweep: leave the model untouched so the unloaded cell is
+            # bit-identical to a world that never declared a payload at all.
             return
 
         model = ctx.model
-        airframe = float(model.body_mass[self._bid])
-        model.body_mass[self._bid] = airframe + mass
+        own_mass = float(model.body_mass[self._bid])
+        model.body_mass[self._bid] = own_mass + mass
         # body_mass feeds cached quantities (subtree masses, gravity compensation); mj_setConst is
         # what makes a mass write take effect rather than sit in an array nothing re-reads.
         mujoco.mj_setConst(model, ctx.data)
         logger.info(
-            "payload (%s): %.1f g on %r -- airframe %.1f g, total %.1f g",
+            "payload (%s): %.4f kg on %r -- body %.4f kg, total %.4f kg",
             self.robot,
-            mass * 1e3,
+            mass,
             mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, self._bid),
-            airframe * 1e3,
-            (airframe + mass) * 1e3,
+            own_mass,
+            own_mass + mass,
         )

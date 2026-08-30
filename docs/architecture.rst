@@ -567,19 +567,18 @@ The runtime counterpart to ``--set``: name a model field, name the objects, name
 
 ``geom_size`` is refused: ``geom_rbound`` is cached at compile, so a box grown 0.05 → 0.4 m kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that renders big and collides as if small. Three further refusals are *decisions* rather than safety, and the plugin says so: ``geom_priority`` (it also governs ``condim``/``solref``/``solimp``, so it would swap the contact's stiffness model at the instant of the fault), MuJoCo's own ``sensor_noise`` (§9.1 gave that to per-sensor config), and every ``opt.*`` global (``sim.contact_override`` and the ``sim:`` block own those, *before compile*, so they are in the compiled model and in the run's provenance -- a runtime write would make the recorded value differ from the one that ran).
 
-That last refusal is about a *fault-injection hook* poking a global whose recorded value is a single
-number, and it is worth stating what it does **not** forbid, because one plugin now writes an
-``opt.*`` global every tick. ``roqsim_aerial``'s ``wind_field`` owns ``opt.wind``: constant wind is
-the one wind a controller never has to reject (it trims against it once and the error goes to zero),
-so a world that can only state a constant cannot test disturbance rejection at all. The provenance
-argument does not carry across, because the wind there is not a value but a *signal* -- fully
-determined by the plugin's declared parameters plus the run's seed, both recorded with the world, and
-reproducible tick for tick. What makes that legitimate rather than a loophole is the same rule the
-refusal comes from: **one owner per knob**. ``wind_field`` refuses to load beside a ``sim.wind``,
-rather than merging with it, because two owners of one global is exactly the situation where the
-compiled model and the first tick disagree and the run records the value that was overwritten. A
-plugin that wants an ``opt.*`` global must take it over completely, say so, and fail loudly when
-something else has claimed it -- not share it.
+That refusal governs a *fault-injection hook* poking a global whose recorded value is a single
+number; it is not a ban on writing an ``opt.*`` global. ``wind_field`` owns ``opt.wind`` and writes
+it every tick, because constant wind is the one wind a controller never has to reject -- it trims
+against it once and the error goes to zero -- so a world that can only state a constant cannot test
+disturbance rejection at all. The provenance argument does not carry across: the wind there is not a
+value but a *signal*, fully determined by the plugin's declared parameters plus the run's seed, both
+recorded with the world, and reproducible tick for tick. What keeps that inside the rule rather than
+around it is **one owner per knob**: ``wind_field`` refuses to load beside a ``sim.wind`` rather than
+merging with it, because two owners of one global is exactly the situation where the compiled model
+and the first tick disagree and the run records the value that was overwritten. A plugin that wants
+an ``opt.*`` global takes it over completely, says so, and fails loudly when something else has
+claimed it -- it does not share it.
 
 **The plugin never decides when to fire.** A fault's timing is the experiment's independent variable, and severity is the configured target value, so both stay sweepable: what crosses the wire is one bit. The inbound endpoint is therefore a ``std_srvs/SetBool`` **service** rather than a topic -- a command whose outcome the caller needs -- and its reply carries the verdict, so a scenario's ``service_call()`` can fail a trial that failed to inject its fault.
 
