@@ -235,10 +235,19 @@ class QuadrotorControllerPlugin(Plugin):
         qw, qx, qy, qz = self._quat
         wx, wy, wz = self._omega
         return {
-            "x": x, "y": y, "z": z,
-            "qx": qx, "qy": qy, "qz": qz, "qw": qw,
-            "vx": vx, "vy": vy, "vz": vz,
-            "wx": wx, "wy": wy, "wz": wz,
+            "x": x,
+            "y": y,
+            "z": z,
+            "qx": qx,
+            "qy": qy,
+            "qz": qz,
+            "qw": qw,
+            "vx": vx,
+            "vy": vy,
+            "vz": vz,
+            "wx": wx,
+            "wy": wy,
+            "wz": wz,
         }
 
     # -- lifecycle ---------------------------------------------------------------------------
