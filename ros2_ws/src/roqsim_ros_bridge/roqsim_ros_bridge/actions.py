@@ -90,6 +90,55 @@ def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
     ]
 
 
+#: Goal tolerance a controller falls back to when neither the goal nor the config names one, in
+#: radians. DELIBERATELY LOOSE: it is not there to police tracking, it is there to notice that the
+#: arm never arrived. A position servo converges asymptotically, so a healthy execution ends a few
+#: hundredths of a radian out and any threshold tight enough to grade that would abort real work.
+#: Half a radian is ~29 degrees -- no arm that followed its trajectory ends there, and an arm that
+#: was blocked does. Measured on a manipulation cell that planned through its own bench: the arm
+#: stalled 5.59 rad from the last waypoint and this action still reported SUCCESSFUL.
+DEFAULT_GOAL_TOLERANCE = 0.5
+#: ...and how long after the final waypoint the joints are given to get inside it.
+DEFAULT_GOAL_TIME_TOLERANCE = 1.0
+
+
+def _goal_tolerances(request, hints: dict, names: list[str]) -> dict[str, float]:
+    """Per-joint position tolerance in force, the GOAL's own first and the controller's config next.
+
+    Mirrors ros2_control's JointTrajectoryController, where ``constraints.<joint>.goal`` is the
+    controller's default and a goal may tighten it per joint. A tolerance of ``0`` disables the
+    check for that joint, which is the action's own convention for "no constraint".
+    """
+    configured = hints.get("goal_tolerance", DEFAULT_GOAL_TOLERANCE)
+    if isinstance(configured, dict):
+        tol = {n: float(configured.get(n, 0.0)) for n in names}
+    else:
+        tol = dict.fromkeys(names, float(configured))
+    # The goal's own entries win, so a caller that cares can ask for more than the controller's
+    # default. `position` is the JointTolerance field this handler grades; velocity/acceleration
+    # tolerances are not enforced, because nothing here commands either as a goal.
+    for entry in getattr(request, "goal_tolerance", ()) or ():
+        if entry.name in tol:
+            tol[entry.name] = float(entry.position)
+    return {n: v for n, v in tol.items() if v > 0.0}
+
+
+def _worst_violation(names, commanded, actual, tol: dict[str, float]):
+    """``(joint, error, allowed)`` for the joint furthest outside its tolerance, or ``None``.
+
+    Pure, so the policy can be tested without an action server or a running simulation.
+    """
+    worst = None
+    for name, want, got in zip(names, commanded, actual, strict=False):
+        allowed = tol.get(name)
+        if allowed is None:
+            continue
+        err = abs(got - want)
+        if err > allowed and (worst is None or err - allowed > worst[1] - worst[2]):
+            worst = (name, err, allowed)
+    return worst
+
+
 def _dur_to_sec(d: DurationMsg) -> float:
     return float(d.sec) + float(d.nanosec) * 1e-9
 
@@ -107,6 +156,12 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     way a ros2_control JointTrajectoryController does. Reporting the command as both -- which this did
     -- makes the tracking error identically zero, hiding exactly the saturation or gain problem the
     feedback exists to expose.
+
+    The result is graded on where the JOINTS ended, not on the trajectory's clock running out: the
+    goal's own ``goal_tolerance`` first, then the controller's ``goal_tolerance`` config, and a
+    deliberately loose default under both (see :data:`DEFAULT_GOAL_TOLERANCE`). Missing it aborts the
+    goal with ``GOAL_TOLERANCE_VIOLATED`` and an ``error_string`` naming the joint and its error, so
+    a blocked or saturated arm is a failed execution rather than a silent success.
     """
     traj = goal_handle.request.trajectory
     names = list(traj.joint_names)
@@ -177,6 +232,44 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         feedback.actual.positions = actual
         feedback.error.positions = [a - c for a, c in zip(actual, positions, strict=True)]
         goal_handle.publish_feedback(feedback)
+
+    # FEEDING the last waypoint is not ARRIVING at it. Without the check below this action reported
+    # SUCCESSFUL the moment the trajectory's clock ran out, whatever the arm was actually doing --
+    # so an arm held back by a collision, a saturated actuator or a plan through the furniture came
+    # back indistinguishable from one that did the job. Nothing downstream could tell: MoveIt
+    # forwards this verdict, so the caller sees a clean execution and a scene that did not change.
+    hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
+    tol = _goal_tolerances(goal_handle.request, hints, names)
+    final = list(traj.points[-1].positions) if traj.points else []
+    violation = None
+    if tol and final:
+        # The joints are given until the goal time tolerance to get inside it: the trajectory ends
+        # at its last waypoint, but a position servo is still converging when the clock says stop.
+        grace = _dur_to_sec(goal_handle.request.goal_time_tolerance)
+        deadline = ctx.sim_time + (
+            grace
+            if grace > 0.0
+            else float(hints.get("goal_time_tolerance", DEFAULT_GOAL_TIME_TOLERANCE))
+        )
+        while True:
+            violation = _worst_violation(names, final, measured(final), tol)
+            if violation is None or ctx.sim_time >= deadline:
+                break
+            if goal_handle.is_cancel_requested:
+                goal_handle.canceled()
+                result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+                return result
+            time.sleep(0.002)
+
+    if violation is not None:
+        joint, err, allowed = violation
+        result.error_code = FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED
+        result.error_string = (
+            f"{joint} ended {err:.4f} rad from the last waypoint, tolerance {allowed:.4f} rad"
+        )
+        logger.warning("trajectory did not reach its goal: %s", result.error_string)
+        goal_handle.abort()
+        return result
 
     goal_handle.succeed()
     result.error_code = FollowJointTrajectory.Result.SUCCESSFUL

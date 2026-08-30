@@ -39,6 +39,13 @@ Config::
       topics: {joint_states: /joint_states}  # optional: hardwire the joint_states topic to an
                                  #   absolute name, overriding namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
+      goal_tolerance: 0.5        # rad the joints may end from the trajectory's last waypoint before
+                                 #   the action reports GOAL_TOLERANCE_VIOLATED instead of success.
+                                 #   A scalar applies to every joint; {joint: rad} sets them apart;
+                                 #   0 disables the check. Loose on purpose -- it exists to catch an
+                                 #   arm that never arrived (blocked, saturated, planned through the
+                                 #   furniture), not to grade a servo's steady-state error.
+      goal_time_tolerance: 1.0   # s the joints get, after the last waypoint, to reach that
       stream_commands: false     # also expose <controller_name>/joint_trajectory as a high-rate topic
                                  #   input (mirrors ros2_control's JointTrajectoryController): the path
                                  #   moveit_servo streams position targets to. Off by default.
@@ -154,6 +161,43 @@ class ArmControllerPlugin(Plugin):
                 "arm_controller: `gripper_actuator` only applies together with `joints`; "
                 "without it the prefix scan picks up tendon actuators itself"
             )
+        errors += self._validate_tolerances(config)
+        return errors
+
+    @staticmethod
+    def _validate_tolerances(config: dict) -> list[str]:
+        """Refuse a goal tolerance that would not do what it says.
+
+        A negative one is meaningless, and a per-joint one naming a joint this controller does not
+        own is worse than meaningless: it is silently dropped, so the author reads the config as
+        setting a tolerance that was never in force. Only checkable against an explicit ``joints:``
+        -- without one the plugin claims joints by prefix scan, which needs the compiled model.
+        """
+        errors: list[str] = []
+        for key in ("goal_tolerance", "goal_time_tolerance"):
+            value = config.get(key)
+            if value is None or isinstance(value, dict):
+                continue
+            if not isinstance(value, int | float) or value < 0.0:
+                errors.append(
+                    f"arm_controller: `{key}` must be a non-negative number, got {value!r}"
+                )
+        tol = config.get("goal_tolerance")
+        if isinstance(tol, dict):
+            for joint, value in tol.items():
+                if not isinstance(value, int | float) or value < 0.0:
+                    errors.append(
+                        f"arm_controller: `goal_tolerance[{joint}]` must be a non-negative number, "
+                        f"got {value!r}"
+                    )
+            owned = config.get("joints")
+            if isinstance(owned, list):
+                unknown = [j for j in tol if j not in owned]
+                if unknown:
+                    errors.append(
+                        f"arm_controller: `goal_tolerance` names {unknown}, which `joints` does not "
+                        "list -- it would be dropped rather than applied"
+                    )
         return errors
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -325,6 +369,11 @@ class ArmControllerPlugin(Plugin):
                         # `actual` against commanded `desired` -- as a real JTC does. Its default
                         # (arm:<owner>) cannot tell two arms on one entity apart.
                         "arm_state_key": arm_key,
+                        # What "reached the goal" means for THIS arm. The handler grades the result
+                        # on the joints rather than on the trajectory's clock; a goal may tighten
+                        # these per joint, and a heavier or softer arm loosens them here.
+                        "goal_tolerance": self.config.get("goal_tolerance", 0.5),
+                        "goal_time_tolerance": float(self.config.get("goal_time_tolerance", 1.0)),
                     }
                 },
             )
