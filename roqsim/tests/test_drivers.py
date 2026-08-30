@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from roqsim.clock import Pacer
+from roqsim.clock import SHORTFALL_REPORT_SHARE, Pacer
 from roqsim.config import load_config_from_dict
 from roqsim.runner import run
 from roqsim.scenario_adapter import MujocoSim
@@ -45,14 +45,23 @@ def test_pacer_factor_parsing():
 
 
 def test_pacer_reports_no_shortfall_when_it_keeps_up():
-    pacer = Pacer.from_config("realtime", dt=0.001)
+    """The promise is SILENCE, not a zero count.
+
+    Asserted through ``report_line`` rather than as ``late_steps == 0``, because the count is a
+    wall-clock measurement of the machine the test runs on: a stray late step under load is
+    normal, and is exactly what ``SHORTFALL_REPORT_SHARE`` exists to absorb. Pinning the count
+    made this test assert that CI was idle, and it duly failed on a loaded runner while the
+    feature worked. The 50 ms budget is roomy for the same reason -- unlike the 1 ms one the
+    counting test needs, overrunning it means the machine is in real trouble.
+    """
+    pacer = Pacer.from_config("realtime", dt=0.05)
     pacer.wait()
-    for _ in range(20):
+    for _ in range(6):
         pacer.wait()
     report = pacer.shortfall()
-    assert report["late_steps"] == 0
-    assert report["achieved_factor"] == 1.0
     assert report["requested_factor"] == 1.0
+    assert report["late_share"] < SHORTFALL_REPORT_SHARE
+    assert pacer.report_line() is None
 
 
 def test_pacer_counts_steps_it_could_not_pace():
