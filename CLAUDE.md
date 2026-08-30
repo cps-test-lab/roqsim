@@ -21,13 +21,15 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   OpenCV-generated; optional `markers` extra). Models are one folder per device
   (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
-  wheeled base models — turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, rosbot,
-  panther, raspimouse, ridgeback (the only holonomic one), warthog (260 kg, the largest),
-  oomwoo_one (a robot vacuum; its 12-plate bumper ring is collision geometry with no plugin
-  reading it), lgdxrobot2 (mecanum), mpo_700 (SWERVE -- four independently steered wheels) and
-  mpo_500 (omni wheels), mp_400 (differential), makerspet_mini (170 mm, the smallest wheeled one); the two holonomic Neobotix are
-  the only models declaring two lidars each — and
-  demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled **bases only**.
+  wheeled base models, and demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled
+  **bases only**.
+  - `diff_drive`: turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, mp_400, raspimouse,
+    makerspet_mini (170 mm, the smallest), oomwoo_one (a robot vacuum; its 12-plate bumper ring is
+    collision geometry with no plugin reading it), and the skid-steer rosbot, panther and warthog
+    (260 kg, the largest).
+  - `omni_drive`: ridgeback and lgdxrobot2 (mecanum), mpo_500 (omni wheels), mpo_700 (SWERVE —
+    four independently steered wheels). The two Neobotix are the only models declaring two lidars
+    each.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,

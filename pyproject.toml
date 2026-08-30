@@ -40,6 +40,7 @@ ignore = ["E501", "B027", "B008"]
 [tool.ruff.lint.isort]
 known-first-party = [
     "roqsim",
+    "roqsim_aerial",
     "roqsim_assets",
     "roqsim_scenes",
     "roqsim_mobile",

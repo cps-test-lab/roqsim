@@ -42,6 +42,8 @@ roqsim_aerial = [
     "models/*/*.manifest.yaml",
     "models/*/meshes/*.obj",
     "models/*/meshes/*.stl",
+    # Thumbnails (`make thumbnails`), the same as every other family package ships.
+    "models/*/*.png",
     "models/*/*LICENSE*",
     "worlds/*.yaml",
 ]
