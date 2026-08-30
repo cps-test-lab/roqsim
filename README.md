@@ -39,7 +39,7 @@ hand-assemble.
   and get a world back.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus
   optional ORCA local avoidance, for the case your robot has to share a corridor.
-- **Runs where you need it.** Viewer by default, headless for CI and Kubernetes; real-time, scaled, or
+- **Runs where you need it.** Viewer by default, headless for CI and containers; real-time, scaled, or
   as-fast-as-possible pacing.
 - **Speaks to your stack.** A ROS 2 bridge exposing standard `simulation_interfaces`, a working nav2
   example, and a `SimulationInterface` for

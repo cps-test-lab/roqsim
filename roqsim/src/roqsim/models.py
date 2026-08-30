@@ -11,7 +11,12 @@ lives in *any* installed package -- not just its own:
    of the same name, or to self-document which package a world depends on. ``<package>`` is a
    ``roqsim.models`` provider's entry-point name; a dotted importable module exposing ``MODELS_DIR``
    also works (e.g. ``my_pkg.models:foo``) for models outside the entry-point group.
-3. **Filesystem path** (absolute, or relative to ``base_dir``/CWD) -> loaded directly.
+3. **Filesystem path** -> loaded directly. Absolute, else relative to exactly one anchor:
+   ``base_dir`` -- the directory of the document that named it -- or the working directory
+   for a caller that has no document, such as a path typed on a command line. There is no
+   second attempt: a fallback would let one document naming one string resolve to different
+   files depending on where the process was started, and neither the world nor the run
+   records which one it got.
    e.g. ``./models/my_arm.xml``.
 
 Crucially, each resolved model carries **its own** ``meshdir``/``texturedir`` (its provider's, or
@@ -233,14 +238,20 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
     resolves twice (validate_config + build) — a world spawning N copies of a prop went from
     2N provider searches to one. Errors are not cached (lru_cache does not memoize raises).
     """
-    # 1) filesystem path: absolute, or relative to base_dir, or a path-like that exists from CWD.
+    # 1) filesystem path: absolute, else relative to ONE anchor -- `base_dir`, or the process's
+    #    working directory for a caller that has no document to be relative to (a CLI argument
+    #    typed in a shell). One anchor, not a chain: a fallback lets the same reference resolve to
+    #    different files depending on where the caller was standing, which is a difference nothing
+    #    downstream can see and nothing records.
     #
-    # `is_file()`, not `exists()`, and the distinction is load-bearing. A bare DIRECTORY beside the
-    # world that happens to share a packaged model's short name would otherwise shadow it, and the
-    # failure is silent in the worst way: resolution "succeeds" with a path that is not a model, so
-    # the `<model>.manifest.yaml` lookup beside it finds nothing and the robot spawns with none of
-    # its intrinsic components -- no drive, no lidar -- while the world loads and runs. Observed
-    # with a scratch directory named `rosbot` next to a test world.
+    #    `is_file()`, not `exists()`, and the distinction is load-bearing on top of that. A bare
+    #    DIRECTORY at the anchor that happens to share a packaged model's short name would
+    #    otherwise shadow it, and the failure is silent in the worst way: resolution "succeeds"
+    #    with a path that is not a model, so the `<model>.manifest.yaml` lookup beside it finds
+    #    nothing and the robot spawns with none of its intrinsic components -- no drive, no
+    #    lidar -- while the world loads and runs. Observed with a scratch directory named `rosbot`
+    #    next to a test world. A directory now falls through to the provider search, which is where
+    #    the packaged model it was shadowing actually lives.
     p = Path(model)
     if p.is_absolute():
         if p.is_file():
@@ -250,12 +261,9 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
             if not p.exists()
             else f"model path {model!r} is a directory, not a model file"
         )
-    if base_dir is not None:
-        rel = Path(base_dir) / model
-        if rel.is_file():
-            return _asset_for_file(rel)
-    if ("/" in model or model.endswith(".xml")) and p.is_file():
-        return _asset_for_file(p)
+    rel = (Path(base_dir) if base_dir is not None else Path.cwd()) / model
+    if rel.is_file():
+        return _asset_for_file(rel)
 
     # 2) package-qualified ref "<package>:<model>": a registered provider by name, else a module path.
     if ":" in model:

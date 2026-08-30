@@ -16,7 +16,7 @@ roqsim is a lightweight, plugin-driven MuJoCo simulator for mobile robots, robot
 
 Two ways to run, one engine:
 
--  **Standalone driver** (``runner.py``) — owns the loop; windowed by default, headless for Kubernetes; real-time / factor / as-fast-as-possible pacing; can record world state over time. **[impl]**
+-  **Standalone driver** (``runner.py``) — owns the loop; windowed by default, headless for containers; real-time / factor / as-fast-as-possible pacing; can record world state over time. **[impl]**
 -  **scenario-execution driver** (``scenario_adapter.py``) — a ``SimulationInterface`` subclass; scenario-execution owns the loop and calls ``dt``/``setup``/``reset``/``step``/``shutdown``. It also publishes ``context``, the seam an in-process scenario action reads (§12, *Reaching a plugin from outside*). **[impl]**
 
 Both wrap the same ``Engine`` **[impl]**, so behaviour is identical across the two.
@@ -235,7 +235,7 @@ They are here for **fidelity** first. A published model that enables MuJoCo's gl
 be reproducible as published, and these three are the values such a model states -- and often the ones
 it randomizes, since the flag makes them the only contact parameters in play. One corpus
 reconstruction turns on exactly that, and its spec records the flag as *required* for the three to
-have any effect at all. That a sweep over them is then an ordinary campaign factor -- needing no
+have any effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
 bespoke plugin and no hand-edited MJCF per cell, the same reason ``spawn_model``'s
 ``mass``/``friction`` exist -- is the second reason rather than the first.
 
@@ -472,7 +472,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to finite ranges (0 = off); ``dropout_percent`` randomly drops that percentage of points per scan to a "no return" (``inf``). Determinism: seeded from the run's seed (``sim.seed`` in the world, or ``--seed``, which wins; with neither, one is drawn and announced) through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, episode, sim_time, sensor name)``. The ``episode`` — :attr:`~roqsim.context.SimContext.episode`, advanced by :meth:`~roqsim.engine.Engine.reset` — is what stops a process that serves several trials from replaying one noise sequence over and over: ``mj_resetData`` puts ``data.time`` back to zero, so keying on simulated time alone made trial 2 re-draw trial 1's noise step for step, and repeated trials of one configuration were duplicates wearing the clothes of samples. It occupies a counter slot rather than perturbing the key, so the key still means "the run's seed", the generator stays randomly accessible, the whole series stays reproducible from one base seed, and trial *i* of two different runs draws the *same* noise when their seeds match — which is what makes two configurations comparable trial-for-trial rather than only in distribution. A recording carries the episode beside the seed, because the right seed at the wrong episode reproduces the bug in miniature: noise that never happened, and entirely plausible-looking. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. Before this, ``ctx.rng`` was read by the sensors but never set by anything, so noisy runs were not reproducible at all. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §5 removed. Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary campaign factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §5 removed. Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the range window and the noise so the devices cannot drift apart on them. They had: the 3D lidars were missing the ``max_range`` clamp and the presence mask, both of which are now applied once, for everyone.
 
@@ -494,7 +494,7 @@ go through it. Three things live there because they must be decided once:
    and concurrency breaks it. The leak is monotonic, so a long trial walks toward stack exhaustion;
    the observed failure while developing this was a core dump. Every one of those 320000 casts
    returned the *right answer*, which is the point: the race corrupts an allocator invariant, not the
-   output, so it survives any amount of parity testing and then crashes in a campaign. MuJoCo's own
+   output, so it survives any amount of parity testing and then crashes in a long run. MuJoCo's own
    guidance is one ``mjData`` per thread and the ray functions are not exempt. If 3D-lidar throughput
    ever becomes binding, the route is a pool of per-worker ``mjData`` clones with geom poses copied
    in — which needs the ``mjData`` fields the ray path reads pinned down and kept pinned across
@@ -504,7 +504,7 @@ go through it. Three things live there because they must be decided once:
    nearest-hit cannot be post-filtered into the right answer — rejecting a hit does not reveal what
    is behind it, so an absent obstacle would read as "no return" rather than "the wall behind it".
    Honouring exclusion on a GPU means keeping excluded geometry out of the BVH, i.e. per-sensor BVHs
-   refitted on every presence change. Measured against a 2D-lidar campaign the payoff is ~0: the
+   refitted on every presence change. Measured against a 2D-lidar sweep the payoff is ~0: the
    simulator there is paced ``realtime`` with 30-40x headroom, and raycasting is ~2% of one core
    against a container that is mostly ROS transport. Cameras are unaffected either way — they
    rasterize through ``mujoco.Renderer`` on the GPU already, and their depth is that render's
@@ -537,7 +537,7 @@ consequences, and they differ:
 
    An address is a path through the document: consume a segment while it names a component, and the
    first that does not begins the path into that component's config. So the two spellings are the
-   same assignment, which they have to be -- a campaign flattens a path onto a command line, a saved
+   same assignment, which they have to be -- a sweep flattens a path onto a command line, a saved
    override set writes a document, and they must not diverge::
 
       --set components.robot.lidar.rays=720
@@ -548,7 +548,7 @@ consequences, and they differ:
    ``components.robot.model=husky_a200`` lands before expansion reads ``model:``, so the husky's
    manifest is what expands -- and the second is what reaches a component only a manifest supplies.
    An assignment that matched in neither pass is **refused**, which is the failure that matters:
-   silently ignoring a swept parameter would let a campaign change nothing while every run looked
+   silently ignoring a swept parameter would let a sweep change nothing while every run looked
    healthy. The refusal names what the document does have, searching refs as well as addresses --
    a bare ``lidar`` against a robot carrying two is a no-match rather than an ambiguity, and the
    useful answer is both their addresses.

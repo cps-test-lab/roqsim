@@ -222,18 +222,29 @@ def test_the_listing_is_fast(tree):
 #: covered by `make check`, and no enclosing tree is named here on purpose -- a check for what to hide
 #: should not itself be the list of it.
 #:
-#: `robovast` is deliberately absent: it is a published project
-#: (github.com/cps-test-lab/robovast), so naming it points a reader at something real, which is the
-#: opposite of what this check is for.
-_FOREIGN = (".claude/skills",)
+#: The consumers this substrate happens to be run BY are also foreign, and that is a separate
+#: argument from the one above: naming them is not a leak -- they are public -- but it makes a
+#: standalone simulator read as a component of one particular stack, and it dates. A run harness is
+#: one caller among several (a shell, a scenario runner, CI, an MCP client), so what is true of all
+#: of them is what belongs here. `kubernetes` is the same mistake one layer down: this project is
+#: headless or windowed, and where the container runs is not its business.
+_FOREIGN = (".claude/skills", "robovast", "RoboVAST", "kubernetes", "Kubernetes")
 
-#: Lines allowed to spell a foreign name, and why. The rule above is about a path or an instruction
-#: that only resolves inside the larger tree; an identifier for a format someone else SPECIFIES is
-#: neither. It resolves fine in a bare clone, and renaming it to avoid the word would make this
+#: Lines allowed to spell a foreign name, and why. The rule above is about a path, an instruction or
+#: a stack this project does not belong to; an identifier for a format someone else SPECIFIES is
+#: none of those. It resolves fine in a bare clone, and renaming it to avoid the word would make this
 #: writer's output unreadable by the very consumer whose specification defines it. Keep this list
 #: short, per-line rather than per-file, and each entry justified -- an unexplained entry here is how
 #: the check decays into the convention it replaced.
-_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {}
+_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
+    # The wire identifier a consumer matches on, and the citation saying where that format is
+    # specified. Renaming either would not make this file standalone -- it would make its output
+    # unreadable, and leave a reader unable to find the spec it implements.
+    "roqsim/src/roqsim/export_capture.py": ('FORMAT = "robovast.run_capture"',
+                                            "The format is defined by the consumer that reads it"),
+    # Same: the pose table this writer fills in is somebody else's published contract.
+    "roqsim/src/roqsim/capture.py": ("pose-table contract",),
+}
 
 
 def test_nothing_here_names_a_repository_that_may_not_exist():

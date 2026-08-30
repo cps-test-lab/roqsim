@@ -2,7 +2,7 @@
 # what it can break in one. `import osc.roqsim`.
 #
 # Every action here works in BOTH shapes -- a stepped in-process run (scenario-execution's own runner
-# with `--simulation`, RoboVAST's `mode: base`) and a ROS run (the simulator in its own container,
+# with `--simulation`) and a ROS run (the simulator in its own container,
 # reached over simulation_interfaces). The transport is chosen from what the runner offers, not
 # declared here, so a scenario moves between the two unedited. None of them can run under `remote()`:
 # a remote server is handed no simulation and no node.

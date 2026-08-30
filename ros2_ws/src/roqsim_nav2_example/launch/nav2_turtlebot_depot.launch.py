@@ -93,7 +93,7 @@ def generate_launch_description():
             DeclareLaunchArgument("params_file", default_value=default_params),
             DeclareLaunchArgument("use_sim_time", default_value="true"),
             # nav2_bringup's own argument, same name and same default, so this launch and
-            # tb4_simulation_launch.py are driven by one flag: the shared campaign scenario passes
+            # tb4_simulation_launch.py are driven by one flag: the shared scenario passes
             # autostart:=False to BOTH backends and activates nav2 itself once the simulator is up.
             DeclareLaunchArgument(
                 "autostart",
@@ -145,7 +145,7 @@ def generate_launch_description():
             # lifecycle_manager_localization (map_server, amcl) + lifecycle_manager_navigation (the
             # rest). This used to be twelve hand-listed Nodes under a single manager -- the node
             # set matched, but the process structure and the manager topology did not, so a
-            # campaign comparing the two backends still compared two different nav2 deployments.
+            # comparison of the two backends still compared two different nav2 deployments.
             #
             # use_composition / use_respawn / namespace are deliberately NOT passed: taking
             # bringup_launch.py's defaults is what keeps the two backends identical by

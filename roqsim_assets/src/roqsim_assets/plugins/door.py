@@ -362,7 +362,7 @@ class DoorPlugin(Plugin):
         leaf_h = max(self.height - 2 * self.floor_gap, 0.01)  # clearance top and bottom
         if self.model:
             try:
-                asset = resolve_model(self.model)
+                asset = resolve_model(self.model, base_dir=self.base_dir)
             except ModelError as exc:
                 raise RuntimeError(
                     f"door {self.door_name!r}: leaf model {self.model!r} could not be resolved ({exc})"
@@ -404,7 +404,7 @@ class DoorPlugin(Plugin):
         if not self.frame:
             return
         try:
-            asset = resolve_model(self.frame_model)
+            asset = resolve_model(self.frame_model, base_dir=self.base_dir)
         except ModelError as exc:
             logger.warning(
                 "door %r: frame model %r unresolved (%s); leaving a bare opening",

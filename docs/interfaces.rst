@@ -85,7 +85,7 @@ Selecting the world itself
 A world is normally chosen once, by whoever starts the run: the positional argument to
 ``roqsim sim``, or ``ROQSIM_WORLD`` for the scenario-execution adapter (which is constructed with no
 arguments). A *scenario* never has to know that this simulator has a thing called a world -- and
-neither does it need to when a campaign runner sweeps the world across configurations, since that
+neither does it need to when a run harness sweeps the world across configurations, since that
 too is the deployment choosing, one process at a time.
 
 The exception is a study whose **experiment is the world** -- one problem instance per configuration.
@@ -136,7 +136,7 @@ first ``mujoco.Renderer`` with ``mujoco.FatalError: gladLoadGL error``.
 So ``import roqsim`` picks one when ``MUJOCO_GL`` is unset (see
 :func:`roqsim.gl.select_offscreen_gl`): a render node means ``egl``, its absence means ``osmesa``.
 An explicit ``MUJOCO_GL`` is always honoured, and ``ROQSIM_NO_GL_SELECT=1`` opts out. This has to
-happen where the simulator runs -- a campaign configured on one machine and dispatched to another
+happen where the simulator runs -- a run configured on one machine and dispatched to another
 cannot know.
 
 The **package** ``__init__`` is the call site, not a driver's ``main``, and that is load-bearing
@@ -152,9 +152,9 @@ names both the cause and the fix instead of letting ``gladLoadGL error`` stand.
 
 ``DISPLAY`` is deliberately not consulted, unlike the shell script this replaces. That script set
 ``MUJOCO_GL`` for the whole process; this picks only the *offscreen* renderer, and a window comes
-from ``mujoco.viewer``'s own glfw context regardless. The RoboVAST base image sets ``DISPLAY=:0``
-unconditionally, so trusting it would make a headless campaign choose ``glfw`` and fail against an
-X server that was never started.
+from ``mujoco.viewer``'s own glfw context regardless. A base image may well set ``DISPLAY=:0``
+unconditionally -- ours does -- so trusting it would make a headless run choose ``glfw`` and fail
+against an X server that was never started.
 
 Listing what a world is made of
 -------------------------------
@@ -192,7 +192,7 @@ into its config that already exist. ``origin`` says which of the two a component
 
 ``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
 sweep key against it before spending an image pull. Note the world above declares one entry and gets
-three more from the turtlebot4's manifest -- those three are the ones a campaign is most likely to
+three more from the turtlebot4's manifest -- those three are the ones a sweep is most likely to
 want, and they used not to appear here at all.
 
 A path not listed is not necessarily wrong (a plugin may accept a key its world leaves at the

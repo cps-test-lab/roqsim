@@ -14,18 +14,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""A real MCP server for ``roqsim.introspection`` -- for use *without* robovast at all.
+"""A real MCP server for ``roqsim.introspection`` -- for use without any surrounding harness.
 
 The JSON CLI (``roqsim plugins list --json`` / ``python -m roqsim.introspection list``)
 answers "what plugins does this container have" from a shell, but not from an MCP
 client. This registers the exact same functions as MCP tools -- no new logic, just a
-second, equally thin adapter, the same one-line pattern robovast's own MCP plugins use
-to register theirs.
+second, equally thin adapter, the same one-line pattern any MCP plugin uses to register
+theirs.
 
 Runnable via ``roqsim mcp serve``, the ``roqsim-mcp`` console script, or
-``python -m roqsim_mcp`` (stdio transport), so anyone with a shell in the image -- not
-just robovast, and not needing core ``roqsim`` to have ever heard of ``fastmcp`` -- can
-point an MCP client at it directly.
+``python -m roqsim_mcp`` (stdio transport), so anyone with a shell in the image -- and
+without core ``roqsim`` having ever heard of ``fastmcp`` -- can point an MCP client at it
+directly.
 """
 
 from fastmcp import FastMCP

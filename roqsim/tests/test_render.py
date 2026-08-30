@@ -225,7 +225,7 @@ def test_headless_without_a_backend_names_both_options(tmp_path, monkeypatch):
 
     ``DISPLAY`` is deliberately set here, and must not rescue the render. The old spelling was
     ``not os.environ.get("MUJOCO_GL") and not has_display()``, which a container defeats twice
-    over: the RoboVAST base image exports ``DISPLAY=:0`` with no X server behind it, and
+    over: a base image exports ``DISPLAY=:0`` with no X server behind it, and
     ``MUJOCO_GL`` can be set long after ``import mujoco`` already bound something else. Both let a
     doomed render past this guard and into ``mujoco.FatalError: gladLoadGL error``.
     """
