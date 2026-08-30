@@ -6,10 +6,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 ## Layout
 - `roqsim/` — ROS-free core pip package (engine, plugin base, registry, config, drivers, the `roqsim`
   command tree in `commands.py`, and the URDF/SRDF/web exporters; the world-agnostic `dummy`,
-  `spawn_model`, `ceiling`, `contact_monitor`, `clearance_monitor`, `model_override`, `payload`
-  (carried mass on any robot's body) and `wind_field` (steady flow, 1-cosine gust, Dryden
-  turbulence — the one plugin that owns an `opt.*` global, so it refuses to load beside a
-  `sim.wind`) plugins; state recording and
+  `spawn_model`, `ceiling`, `contact_monitor`, `clearance_monitor`, `model_override` and `payload`
+  (carried mass on any robot's body) plugins; state recording and
   `roqsim render` are driver-level, in `capture.py` / `recording.py` / `render.py`, not plugins). Sources in
   `roqsim/src/roqsim/`, tests in `roqsim/tests/`. Depends on no sibling — keep it that way.
   `health.py` (`roqsim health`) is not even driver-level: it is a **reader**, a separate process that
@@ -41,13 +39,14 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 - `roqsim_mobile_manipulation/` — robots that are a base **and** an arm (frankie, tiago_pro). The one
   package that may depend on both `roqsim_mobile` and `roqsim_manipulation`.
 - `roqsim_aerial/` — aerial vehicles (`crazyflie_2`) + `quadrotor_controller`, cascaded position and
-  attitude control over collective thrust and three body moments. Depends on `roqsim` only. Two
-  things differ from every ground family and both fail silently: a world with no `density`/
+  attitude control over collective thrust and three body moments, plus `wind_field` (steady flow,
+  1-cosine gust, Dryden turbulence). Depends on `roqsim` only. Two things differ from every ground family and both fail silently: a world with no `density`/
   `viscosity` is a **vacuum**, so the drone hovers but nothing damps it; and a quadrotor MJCF has no
   stabiliser, so an uncommanded drone is not a robot standing still but a falling brick — its
   manifest pulls the controller in rather than offering it. `crazyflie_2`'s thrust-to-weight ratio is
-  1.32, so the core `payload` plugin is what sets an aerial flight envelope: the hover boundary sits
-  at ~9 g.
+  1.32, so core roqsim's `payload` plugin is what sets an aerial flight envelope: the hover boundary
+  sits at ~9 g. `wind_field` is the one plugin that owns an `opt.*` global (`opt.wind`), so it
+  refuses to load beside a `sim.wind` — see `docs/architecture.rst` §9.2.
 - `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
   behaviour-tree navigation with optional ORCA, character blueprints (`models/people/`) and CARLA
   locomotion clips (`models/anims/`). Depends on `roqsim` only — it is a *dynamic obstacle*, not a robot

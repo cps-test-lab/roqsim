@@ -1,9 +1,7 @@
-"""payload and wind_field: carried mass on a body, and the weather the world is in.
+"""wind_field: the signal itself, measured without a vehicle in the way.
 
-Both are stated in the world and both change the physics without changing any robot's code, so the
-things worth pinning are the ones a "does it load" check cannot see: that a mass write actually
-reaches the dynamics, that turbulence is a function of the world rather than of draw order, and that
-the two refusals (an offset payload, a second owner of ``opt.wind``) are loud.
+A body's response mixes the wind with the controller driving it, so these read ``model.opt.wind``
+directly on a bare free body. What a gust does to a real airframe is ``test_flight_envelope``.
 """
 
 from __future__ import annotations
@@ -15,13 +13,13 @@ import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
-from roqsim.plugins.payload import PayloadPlugin
-from roqsim.plugins.wind_field import WindFieldPlugin
+from roqsim_aerial.plugins.wind_field import WindFieldPlugin
 
-# A single free body in air. Gravity is off so that qacc IS force/mass: the payload assertion is then
-# arithmetic rather than the outcome of a constraint solve.
+# A single free body in air (density and viscosity set: wind acts through MuJoCo's drag terms, so a
+# vacuum would make every assertion here read zero). Gravity is off -- nothing is flying, the wind
+# signal is read straight off the model.
 SCENE = """
-<mujoco model="payload_test">
+<mujoco model="wind_test">
   <option timestep="0.002" gravity="0 0 0" density="1.225" viscosity="1.8e-5"/>
   <worldbody>
     <body name="cart" pos="0 0 1">
@@ -33,7 +31,7 @@ SCENE = """
 """
 
 
-def _ctx(scene=SCENE, *, wind=None, seed=7, body="cart"):
+def _ctx(scene=SCENE, *, wind=None, seed=7):
     model = mujoco.MjModel.from_xml_string(scene)
     if wind is not None:
         model.opt.wind = wind
@@ -42,88 +40,27 @@ def _ctx(scene=SCENE, *, wind=None, seed=7, body="cart"):
     ctx = SimContext(config={})
     ctx.model, ctx.data = model, data
     ctx.seed = seed
-    # The entity a spawn plugin would register: name, root body, and the base joint that is the
-    # general fallback when a model does not call its root `base_link`.
+    # An entity so the plugin is configured the way a world configures it; wind owns no entity.
     ctx.entities.add(
-        Entity(name="robot", kind="robot", body=body, meta={"base_joint": "cart_free"})
+        Entity(name="robot", kind="robot", body="cart", meta={"base_joint": "cart_free"})
     )
     return ctx
 
 
-def _plugin(cls, config, *, name="p"):
+def _plugin(config, *, name="wind"):
     """A configured plugin. Config errors are raised rather than returned."""
-    plugin = cls(config, name=name, entity="robot")
+    plugin = WindFieldPlugin(config, name=name, entity="robot")
     errors = plugin.validate_config(config)
     if errors:
         raise ValueError("; ".join(errors))
     return plugin
 
 
-# -- payload ---------------------------------------------------------------------------------
-
-def test_payload_adds_mass_to_the_body():
-    ctx = _ctx()
-    _plugin(PayloadPlugin, {"mass": 0.5}).configure(ctx)
-    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart")
-    assert float(ctx.model.body_mass[bid]) == pytest.approx(1.5, abs=1e-9)
-
-
-def test_the_added_mass_reaches_the_dynamics():
-    """mj_setConst is what makes a body_mass write take effect rather than sit in an array."""
-    accelerations = {}
-    for mass in (0.0, 1.0):
-        ctx = _ctx()
-        _plugin(PayloadPlugin, {"mass": mass}).configure(ctx)
-        ctx.data.xfrc_applied[
-            mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart"), 0
-        ] = 1.0
-        mujoco.mj_forward(ctx.model, ctx.data)
-        accelerations[mass] = float(ctx.data.qacc[0])
-    # 1 N on 1 kg, then on 2 kg.
-    assert accelerations[0.0] == pytest.approx(1.0, rel=1e-6)
-    assert accelerations[1.0] == pytest.approx(0.5, rel=1e-6)
-
-
-def test_zero_payload_leaves_the_model_untouched():
-    # The unloaded cell of a sweep must be identical to a world that never declared a payload,
-    # otherwise the sweep's baseline is its own separate configuration.
-    loaded, bare = _ctx(), _ctx()
-    _plugin(PayloadPlugin, {"mass": 0.0}).configure(loaded)
-    assert np.array_equal(loaded.model.body_mass, bare.model.body_mass)
-
-
-def test_payload_resolves_the_body_owning_the_base_joint():
-    """The entity's registered body may be absent from the compiled model; the base joint is not."""
-    ctx = _ctx(body="base_link")
-    _plugin(PayloadPlugin, {"mass": 0.5}).configure(ctx)
-    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart")
-    assert float(ctx.model.body_mass[bid]) == pytest.approx(1.5, abs=1e-9)
-
-
-def test_refuses_an_offset_payload():
-    # An offset payload shifts the centre of mass and adds a parallel-axis term. Approximating it as
-    # a centred point mass would report a result for a body nobody configured.
-    with pytest.raises(ValueError, match="offset"):
-        _plugin(PayloadPlugin, {"mass": 0.5, "offset": [0.1, 0.0, 0.0]})
-
-
-def test_requires_a_mass():
-    with pytest.raises(ValueError, match="mass"):
-        _plugin(PayloadPlugin, {})
-
-
-def test_names_the_entity_it_could_not_find():
-    with pytest.raises(RuntimeError, match="no entity named"):
-        _plugin(PayloadPlugin, {"mass": 0.5, "robot": "absent"}).configure(_ctx())
-
-
-# -- wind ------------------------------------------------------------------------------------
-
 def _wind_track(config, seconds, *, seed=7, timestep=None):
     """The wind signal itself, sampled per tick -- not a body's response to it."""
     scene = SCENE if timestep is None else SCENE.replace('timestep="0.002"', f'timestep="{timestep}"')
     ctx = _ctx(scene, seed=seed)
-    plugin = _plugin(WindFieldPlugin, config)
+    plugin = _plugin(config)
     plugin.configure(ctx)
     plugin.on_reset(ctx)
     track = []
@@ -195,16 +132,16 @@ def test_refuses_a_second_wind_owner():
     # and the first tick another, and the run's provenance would record the overwritten value.
     ctx = _ctx(wind=[1.0, 0.0, 0.0])
     with pytest.raises(RuntimeError, match="One owner per knob"):
-        _plugin(WindFieldPlugin, {"steady": [1.0, 0.0, 0.0]}).configure(ctx)
+        _plugin({"steady": [1.0, 0.0, 0.0]}).configure(ctx)
 
 
 def test_refuses_a_seed_of_its_own():
     with pytest.raises(ValueError, match="seed"):
-        _plugin(WindFieldPlugin, {"steady": [1.0, 0.0, 0.0], "seed": 3})
+        _plugin({"steady": [1.0, 0.0, 0.0], "seed": 3})
 
 
 def test_warns_when_there_is_no_medium(caplog):
     vacuum = SCENE.replace('density="1.225" viscosity="1.8e-5"', 'density="0" viscosity="0"')
     with caplog.at_level(logging.WARNING):
-        _plugin(WindFieldPlugin, {"steady": [3.0, 0.0, 0.0]}).configure(_ctx(vacuum))
+        _plugin({"steady": [3.0, 0.0, 0.0]}).configure(_ctx(vacuum))
     assert any("wind has no effect" in r.getMessage() for r in caplog.records)

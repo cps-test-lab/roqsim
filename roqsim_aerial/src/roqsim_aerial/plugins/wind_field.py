@@ -6,8 +6,8 @@ error goes to zero. Testing disturbance rejection needs wind that *changes* -- a
 continuous turbulence underneath it -- which is what this plugin supplies.
 
 It writes ``model.opt.wind`` each tick, so MuJoCo's existing drag terms do the work; nothing here
-applies a force of its own. Any body with drag feels it -- an airframe, a walker, a light trailer --
-so the plugin belongs to the world rather than to a robot family.
+applies a force of its own. It is a **world** plugin and owns no entity: every body with drag feels
+it, not just the vehicle the experiment is about.
 
 Config::
 

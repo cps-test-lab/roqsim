@@ -36,10 +36,9 @@ clearance_monitor = "roqsim.plugins.clearance_monitor:ClearanceMonitorPlugin"
 # (friction, contact masks, actuator force limits, mass) mid-run on an external trigger, then restores
 # them exactly. Curated allowlist -- fields MuJoCo cannot take at runtime are refused by name.
 model_override = "roqsim.plugins.model_override:ModelOverridePlugin"
-# Environment and load, both robot-family-agnostic: what a robot carries, and the weather it flies
-# or drives through. wind_field owns opt.wind for the whole run; payload adds mass to one body.
+# Carried mass on any robot's body -- a load, not a robot family, so it is core beside the other
+# world-agnostic plugins.
 payload = "roqsim.plugins.payload:PayloadPlugin"
-wind_field = "roqsim.plugins.wind_field:WindFieldPlugin"
 
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of

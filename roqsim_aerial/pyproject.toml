@@ -22,6 +22,9 @@ test = ["pytest>=7.0"]
 # Aerial controller plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
 quadrotor_controller = "roqsim_aerial.plugins.quadrotor_controller:QuadrotorControllerPlugin"
+# Wind is a world plugin and any body with drag feels it, but disturbance rejection is what flies
+# a vehicle off course, so it lives with the family that needs it.
+wind_field = "roqsim_aerial.plugins.wind_field:WindFieldPlugin"
 
 # Bundled aerial models (crazyflie_2), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]
