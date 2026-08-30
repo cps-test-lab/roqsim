@@ -191,7 +191,7 @@ class QuadrotorControllerPlugin(Plugin):
                 direction="out",
                 owner=self.robot,
                 namespace=ns,
-                read=self.read_state,
+                read=self.read_odom6,
                 backend={"ros2": {"type": "nav_msgs.msg.Odometry", "topic": "odom"}},
             )
         )
@@ -223,12 +223,41 @@ class QuadrotorControllerPlugin(Plugin):
         x, y, z, vx, vy, vz, yaw, w = self._state
         return (x, y, yaw, vx, vy, w)
 
+    def read_odom6(self):
+        """Full 6-DOF odometry payload (the bridge's ``ODOM6_KEYS`` mapping).
+
+        The planar tuple ``read_odom`` returns satisfies :class:`RobotHandle`, whose consumers are
+        2D by construction; it must NOT be what reaches the odometry topic. Flattened to yaw, a
+        quadrotor publishes zero tilt and no vertical speed -- which reads not as a coarse
+        measurement but as a level, hovering aircraft whatever it is actually doing.
+        """
+        x, y, z, vx, vy, vz, _yaw, _w = self._state
+        qw, qx, qy, qz = self._quat
+        wx, wy, wz = self._omega
+        return {
+            "x": x,
+            "y": y,
+            "z": z,
+            "qx": qx,
+            "qy": qy,
+            "qz": qz,
+            "qw": qw,
+            "vx": vx,
+            "vy": vy,
+            "vz": vz,
+            "wx": wx,
+            "wy": wy,
+            "wz": wz,
+        }
+
     # -- lifecycle ---------------------------------------------------------------------------
 
     def on_reset(self, ctx: SimContext) -> None:
         self._vel_cmd = None
         self._yaw_rate = 0.0
         self._state = (0.0,) * 8
+        self._quat = (1.0, 0.0, 0.0, 0.0)
+        self._omega = (0.0, 0.0, 0.0)
 
     def pre_step(self, ctx: SimContext) -> None:
         model, data = ctx.model, ctx.data
@@ -239,6 +268,14 @@ class QuadrotorControllerPlugin(Plugin):
 
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         self._state = (*pos, *vel, yaw, float(omega[2]))
+        # Keep the FULL rotation as well. Yaw alone is what a ground robot may report; an airframe
+        # holds attitude to fly, so tilt is the signal a flight-envelope experiment measures and a
+        # yaw-only projection reports it as identically zero. mju_mat2Quat rather than a hand-rolled
+        # conversion so the sign convention is MuJoCo's own.
+        quat = np.empty(4)
+        mujoco.mju_mat2Quat(quat, np.asarray(rot, dtype=float).reshape(9))
+        self._quat = tuple(float(v) for v in quat)  # (w, x, y, z)
+        self._omega = tuple(float(v) for v in omega)
 
         if getattr(self, "_yaw_rate", 0.0):
             self._yaw += self._yaw_rate * ctx.dt

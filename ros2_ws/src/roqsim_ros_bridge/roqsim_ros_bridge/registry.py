@@ -103,7 +103,20 @@ def get_decoder(type_path: str) -> Callable[[Any], Any]:
     fn = DECODERS.get(type_path)
     if fn is not None:
         return fn
-    return lambda msg: msg.data
+
+    def decode_reflective(msg):
+        # Loudly, and mirroring fill_reflective on the encoder side: an unregistered type with no
+        # 'data' field would otherwise raise AttributeError inside the subscription callback, which
+        # rclpy surfaces by killing the executor's spin thread -- every endpoint on the bridge then
+        # goes silent at once, far from the type that caused it.
+        if not hasattr(msg, "data"):
+            raise TypeError(
+                f"no decoder registered for {type_path!r} and it has no 'data' field to fall "
+                f"back on"
+            )
+        return msg.data
+
+    return decode_reflective
 
 
 # -- shared helpers ----------------------------------------------------------------------------
@@ -127,15 +140,53 @@ def frame(hints: dict, key: str, default: str) -> str:
 
 
 # -- converters (outbound: neutral payload -> ROS message, filled in place) --------------------
+#: Keys of the 6-DOF odometry payload. A producer whose body genuinely pitches and rolls passes a
+#: mapping with these instead of the planar tuple below -- see ``fill_odom``.
+ODOM6_KEYS = ("x", "y", "z", "qx", "qy", "qz", "qw", "vx", "vy", "vz", "wx", "wy", "wz")
+
+
+def is_odom6(payload) -> bool:
+    """Is this the 6-DOF odometry payload rather than the planar tuple?"""
+    return hasattr(payload, "keys") and "qw" in payload
+
+
 @converter("nav_msgs.msg.Odometry")
 def fill_odom(msg, payload, stamp: Time, hints: dict) -> None:
-    # Optional 7th element is the base height; legged robots report it so base_link sits at its true
-    # z (a planar producer omits it -> z=0, unchanged). nav2 is 2D and ignores it.
-    x, y, yaw, v, vy, w, *rest = payload
-    z = float(rest[0]) if rest else 0.0
+    """Odometry from either payload shape.
+
+    TWO SHAPES, because two kinds of robot report honestly in different terms:
+
+    * the planar tuple ``(x, y, yaw, v, vy, w[, z])`` -- a ground robot, with the optional trailing
+      z the base height so a legged robot's base_link sits at its true elevation (planar -> z=0).
+    * a mapping of ``ODOM6_KEYS`` -- a body that pitches and rolls, and for which the planar tuple
+      is not merely lossy but WRONG: it would report tilt as zero and drop vertical speed entirely,
+      so a drone flying on its side reads as level. Yaw-only orientation is a projection that a
+      ground robot may make and an aircraft may not.
+    """
     msg.header.stamp = stamp
     msg.header.frame_id = frame(hints, "frame_id", "odom")
     msg.child_frame_id = frame(hints, "child_frame_id", "base_link")
+
+    if is_odom6(payload):
+        msg.pose.pose.position.x = float(payload["x"])
+        msg.pose.pose.position.y = float(payload["y"])
+        msg.pose.pose.position.z = float(payload["z"])
+        msg.pose.pose.orientation = Quaternion(
+            x=float(payload["qx"]),
+            y=float(payload["qy"]),
+            z=float(payload["qz"]),
+            w=float(payload["qw"]),
+        )
+        msg.twist.twist.linear.x = float(payload["vx"])
+        msg.twist.twist.linear.y = float(payload["vy"])
+        msg.twist.twist.linear.z = float(payload["vz"])
+        msg.twist.twist.angular.x = float(payload.get("wx", 0.0))
+        msg.twist.twist.angular.y = float(payload.get("wy", 0.0))
+        msg.twist.twist.angular.z = float(payload.get("wz", 0.0))
+        return
+
+    x, y, yaw, v, vy, w, *rest = payload
+    z = float(rest[0]) if rest else 0.0
     msg.pose.pose.position.x = float(x)
     msg.pose.pose.position.y = float(y)
     msg.pose.pose.position.z = z
@@ -430,6 +481,16 @@ def decode_twist_stamped(msg) -> tuple[float, float, float]:
     return decode_twist(msg.twist)
 
 
+@decoder("geometry_msgs.msg.PoseStamped")
+def decode_pose_stamped(msg) -> tuple[float, float, float, float]:
+    """Position setpoint -> neutral ``(x, y, z, yaw)``. Yaw is projected out of the quaternion: a
+    setpoint names where to be and which way to face, and no consumer of this payload commands
+    pitch or roll -- an airframe holds those to fly, it is not told them."""
+    q = msg.pose.orientation
+    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+    return (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z, yaw)
+
+
 @decoder("trajectory_msgs.msg.JointTrajectory")
 def decode_joint_trajectory(msg) -> tuple[list[str], list[float]]:
     """Streamed joint command -> neutral ``(names, positions)`` for an arm's ``set_targets`` (same
@@ -442,14 +503,27 @@ def decode_joint_trajectory(msg) -> tuple[list[str], list[float]]:
 
 # -- transform (owned by the bridge, derived from an odom payload) -----------------------------
 def make_tf(payload, stamp: Time, frame_id: str, child_frame_id: str) -> TransformStamped:
-    # payload is the odom tuple (x, y, yaw, v, vy, w[, z]); the optional trailing z is the base
-    # height, so a legged robot's base_link renders at its true elevation (planar -> z=0).
-    x, y, yaw, *rest = payload
-    z = float(rest[3]) if len(rest) >= 4 else 0.0
+    # payload is either odom shape -- see fill_odom. Planar: (x, y, yaw, v, vy, w[, z]), the
+    # optional trailing z being the base height so a legged robot's base_link renders at its true
+    # elevation (planar -> z=0). 6-DOF: the ODOM6_KEYS mapping, whose full rotation must be carried
+    # through rather than flattened to yaw, or TF would stand a banking drone upright.
     tf = TransformStamped()
     tf.header.stamp = stamp
     tf.header.frame_id = frame_id
     tf.child_frame_id = child_frame_id
+    if is_odom6(payload):
+        tf.transform.translation.x = float(payload["x"])
+        tf.transform.translation.y = float(payload["y"])
+        tf.transform.translation.z = float(payload["z"])
+        tf.transform.rotation = Quaternion(
+            x=float(payload["qx"]),
+            y=float(payload["qy"]),
+            z=float(payload["qz"]),
+            w=float(payload["qw"]),
+        )
+        return tf
+    x, y, yaw, *rest = payload
+    z = float(rest[3]) if len(rest) >= 4 else 0.0
     tf.transform.translation.x = float(x)
     tf.transform.translation.y = float(y)
     tf.transform.translation.z = z

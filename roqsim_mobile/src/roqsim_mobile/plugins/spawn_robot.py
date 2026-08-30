@@ -96,8 +96,32 @@ class SpawnRobotPlugin(Plugin):
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
+    def _resolve_base_body(self, ctx: SimContext) -> str:
+        """The robot's root body: ``<prefix>base_link`` if the model has one, else the body owning
+        the base joint.
+
+        ``base_link`` is a ROS convention, not a guarantee. The base joint holds whatever a model
+        calls its root, so it is the rule that works for every family; where ``base_link`` exists,
+        both name the same body. If neither resolves the entity would name a body absent from the
+        compiled model, so this raises here rather than at the first use of that name.
+        """
+        named = self.prefix + "base_link"
+        if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, named) >= 0:
+            return named
+        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
+        if jid >= 0:
+            resolved = mujoco.mj_id2name(
+                ctx.model, mujoco.mjtObj.mjOBJ_BODY, int(ctx.model.jnt_bodyid[jid])
+            )
+            if resolved:
+                return resolved
+        raise RuntimeError(
+            f"spawn_robot ({self.robot_name}): cannot resolve a root body -- neither {named!r} nor "
+            f"a body owning the base joint {self.base_joint!r} exists in the compiled model"
+        )
+
     def configure(self, ctx: SimContext) -> None:
-        base_body = self.prefix + "base_link"
+        base_body = self._resolve_base_body(ctx)
         ctx.entities.add(
             Entity(
                 name=self.robot_name,

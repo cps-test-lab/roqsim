@@ -303,6 +303,28 @@ to its own robot. Un-namespaced, two monitors publish on one ``/collision``, whi
    fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
    contact makes "wait for any message" look correct; it is not portable.
 
+What a robot carries
+--------------------
+
+``payload`` adds a carried mass to one body of an entity -- a load is a property of the trial, not
+of a robot family, so it is stated in the world and swept like any other factor::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - payload: {mass: 2.5}      # kg, on the entity's root body
+
+It is a **point mass at the body's centre of mass**: mass adds, and a point mass contributes no
+inertia about its own centre. An ``offset`` is refused rather than approximated -- an offset payload
+shifts the centre of mass and adds a parallel-axis term, which is a different body, not a heavier
+one. ``mass: 0`` leaves the model untouched, so the unloaded cell of a sweep is identical to a world
+that never declared a payload. Load a body other than the root with ``body:`` (the entity's spawn
+prefix is applied for you), and a robot other than the owning entity with ``robot:``.
+
+Where thrust is bounded this is the flight envelope rather than a detail: see
+``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight
+ratio of 1.
+
 Injecting a physical fault
 --------------------------
 
