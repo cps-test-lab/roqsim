@@ -116,8 +116,8 @@ an x86 node and on an arm64 machine (an Apple Silicon laptop, a Graviton/Ampere 
 robot host) with nothing to select by hand:
 
 ``ghcr.io/cps-test-lab/roqsim``
-   The lean core: ROS-free, headless MuJoCo, with the sensor / mobile / manipulation / scenes /
-   walker packages. ``ENTRYPOINT`` is the ``roqsim`` command tree, so the image is used the way the
+   The lean core: ROS-free, headless MuJoCo, with the sensor / mobile / manipulation (plugins and
+   the arm and gripper models) / mobile-manipulation / scenes / walker packages. ``ENTRYPOINT`` is the ``roqsim`` command tree, so the image is used the way the
    CLI is:
 
    .. code-block:: bash
