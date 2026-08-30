@@ -1,0 +1,44 @@
+# Default controller + sensors shipped with the Husarion ROSbot description.
+#
+# `spawn_robot: {model: rosbot}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors. To override a default, nest an entry with the same LABEL
+# under that spawn_robot's `components:`; to opt out entirely, set `spawn_robot` config
+# `default_plugins: false`.
+components:
+  # 4-wheel skid-steer, left pair and right pair commanded together -- the husky_a200 /
+  # clearpath_jackal class, and it needs the same slip_factor for the same reason: MuJoCo point
+  # contacts reproduce lateral scrub badly, so without it the base yaws at a fraction of what was
+  # commanded and a planner cannot rotate. Values below are Husarion's own published controller
+  # config (rosbot_controller/config/rosbot/controllers.yaml) except where noted.
+  - diff_drive:
+      wheel_radius: 0.0425           # controllers.yaml, and it matches the wheel mesh (0.0839 dia)
+      wheel_separation: 0.186        # controllers.yaml. NOTE: the URDF geometry gives 0.192
+                                     # (2 x 0.096); the vendor's controller uses the smaller value,
+                                     # which is the one their odometry is calibrated against.
+      max_linear_vel: 1.1            # controllers.yaml max linear velocity
+      max_angular_vel: 3.14          # controllers.yaml max angular velocity
+      wheel_accel_limit: 1.2         # controllers.yaml max linear acceleration
+      # Skid-steer ICR slip compensation, calibrated against THIS model's wheel friction, mass and
+      # timestep -- without it the base yaws at ~66% of commanded and a planner under-rotates.
+      # chi=1.5 -> achieved/commanded 0.995/0.978/1.004/1.003 at w = 0.3/0.5/0.8/1.0 rad/s.
+      # Much smaller than husky_a200's 3.0: this chassis is short (0.106 m wheelbase) relative to its
+      # 0.192 m track, so it scrubs far less. Re-measure if friction, actuator kv, mass or timestep
+      # change. See the port log.
+      slip_factor: 1.5
+      left_actuators:  [fl_wheel_motor, rl_wheel_motor]
+      right_actuators: [fr_wheel_motor, rr_wheel_motor]
+      left_joints:  [fl_wheel_joint, rl_wheel_joint]
+      right_joints: [fr_wheel_joint, rr_wheel_joint]
+  # The base description ships NO lidar: Husarion keeps sensors in husarion_components_description,
+  # so which scanner a unit carries is a deployment choice. These are the stock ROSbot 2R's RPLIDAR
+  # A2 published values, and the mount height is an assumption -- see the port log.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 360
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.15
+      max_range: 12.0
+      rate_hz: 10.0
+      exclude_body: base_link

@@ -65,6 +65,15 @@ def _parse(argv: list[str]) -> argparse.Namespace:
         "--scale", type=float, default=1.0, help="uniform scale to metres (default 1.0)"
     )
     ap.add_argument(
+        "--split-materials",
+        action="store_true",
+        help="write one OBJ per material instead of one joined mesh, as "
+        "<output-stem>__<material>.obj, plus a <output-stem>.materials.json mapping each to its "
+        "base colour. MuJoCo loads one mesh per OBJ and reads no OBJ material, so a vendor part "
+        "with several colours is otherwise flat: this is what lets the MJCF declare a <material> "
+        "per sub-geom and get the real thing back",
+    )
+    ap.add_argument(
         "--no-materials",
         action="store_true",
         help="omit the .mtl and its reference. MuJoCo ignores OBJ materials, so for a mesh whose "
@@ -96,6 +105,8 @@ def _run_outside_blender(args: argparse.Namespace) -> None:
     ]
     if args.no_materials:
         passthrough.append("--no-materials")
+    if args.split_materials:
+        passthrough.append("--split-materials")
     cmd = [exe, "--background", "--python", __file__, "--", *passthrough]
     print("+", " ".join(cmd))
     raise SystemExit(subprocess.run(cmd).returncode)
@@ -106,7 +117,12 @@ def _import(path: str) -> None:
     if ext in ("gltf", "glb"):
         bpy.ops.import_scene.gltf(filepath=path)
     elif ext == "obj":
-        bpy.ops.wm.obj_import(filepath=path)
+        # Match the axes this script EXPORTS with, or an OBJ round-trip is not the identity: Blender
+        # imports OBJ as Y-up by default while the export below writes Z-up, so a Z-up OBJ passed
+        # through for decimation comes back rotated 90 degrees about x. A glTF/FBX source is
+        # genuinely Y-up so the default is right there -- it is only OBJ, which MuJoCo and every
+        # converter here already treat as Z-up, that must say so.
+        bpy.ops.wm.obj_import(filepath=path, forward_axis="Y", up_axis="Z")
     elif ext == "fbx":
         bpy.ops.import_scene.fbx(filepath=path)
     elif ext == "stl":
@@ -121,6 +137,87 @@ def _import(path: str) -> None:
         sys.exit(f"unsupported input extension: .{ext}")
 
 
+def _base_colour(material) -> list:
+    """The material's base colour as RGBA, from the Principled BSDF where there is one."""
+    if material is not None and material.use_nodes:
+        bsdf = material.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            return [round(c, 4) for c in bsdf.inputs["Base Color"].default_value]
+    if material is not None:
+        return [round(c, 4) for c in material.diffuse_color]
+    return [0.8, 0.8, 0.8, 1.0]
+
+
+def _export_per_material(args: argparse.Namespace, meshes: list) -> None:
+    """One OBJ per material + a colour sidecar, for a vendor part that is not one colour.
+
+    MuJoCo loads one mesh per OBJ and reads no OBJ/MTL material, so a joined multi-material part
+    renders as a single flat geom -- a black robot with red fenders arrives uniformly grey. Splitting
+    by material gives the MJCF one sub-geom per colour to attach a `<material>` to, which is the only
+    way the real appearance survives the import.
+
+    The triangle budget applies PER PART, since each becomes its own mesh.
+    """
+    import json
+    import re
+
+    by_material: dict = {}
+    for obj in meshes:
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        if len(obj.data.materials) > 1:
+            bpy.ops.object.mode_set(mode="EDIT")
+            bpy.ops.mesh.select_all(action="SELECT")
+            bpy.ops.mesh.separate(type="MATERIAL")
+            bpy.ops.object.mode_set(mode="OBJECT")
+    for obj in [o for o in bpy.data.objects if o.type == "MESH" and o.data.polygons]:
+        material = obj.data.materials[0] if obj.data.materials else None
+        by_material.setdefault(material.name if material else "default", []).append(obj)
+
+    stem = args.output[:-4] if args.output.lower().endswith(".obj") else args.output
+    colours = {}
+    for name, parts in sorted(by_material.items()):
+        safe = re.sub(r"[^A-Za-z0-9_]+", "_", name).strip("_") or "default"
+        bpy.ops.object.select_all(action="DESELECT")
+        for part in parts:
+            part.select_set(True)
+        bpy.context.view_layer.objects.active = parts[0]
+        if len(parts) > 1:
+            bpy.ops.object.join()
+        obj = bpy.context.view_layer.objects.active
+
+        total = sum(len(p.vertices) - 2 for p in obj.data.polygons)
+        ratio = min(1.0, args.target_faces / total) if total else 1.0
+        if args.scale != 1.0:
+            obj.scale = (args.scale, args.scale, args.scale)
+        if ratio < 1.0:
+            mod = obj.modifiers.new("decimate", "DECIMATE")
+            mod.decimate_type = "COLLAPSE"
+            mod.ratio = ratio
+
+        out = f"{stem}__{safe}.obj"
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        bpy.ops.wm.obj_export(
+            filepath=out,
+            export_selected_objects=True,
+            apply_modifiers=True,
+            export_materials=False,  # the sidecar carries the colour; MuJoCo would ignore the .mtl
+            export_triangulated_mesh=True,
+            forward_axis="Y",
+            up_axis="Z",
+        )
+        colours[safe] = _base_colour(obj.data.materials[0] if obj.data.materials else None)
+        print(f"REDUCE_OK in_tris={total} target={args.target_faces} -> {out}")
+
+    sidecar = f"{stem}.materials.json"
+    with open(sidecar, "w") as handle:
+        json.dump(colours, handle, indent=2, sort_keys=True)
+    print(f"REDUCE_MATERIALS {len(colours)} -> {sidecar}")
+
+
 def _run_in_blender(args: argparse.Namespace) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     _import(args.input)
@@ -128,6 +225,10 @@ def _run_in_blender(args: argparse.Namespace) -> None:
     meshes = [o for o in bpy.data.objects if o.type == "MESH" and o.data.polygons]
     if not meshes:
         sys.exit("no mesh geometry imported")
+
+    if args.split_materials:
+        _export_per_material(args, meshes)
+        return
 
     # MuJoCo loads a single mesh per OBJ file (a multi-object OBJ loads as ~1 face), so join every
     # imported part into one mesh -- the prop becomes one MuJoCo mesh geom.

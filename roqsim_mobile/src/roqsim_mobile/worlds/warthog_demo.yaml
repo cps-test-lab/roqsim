@@ -1,0 +1,22 @@
+# Clearpath Warthog W200 in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:warthog_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # diff_drive (outdoor skid-steer, 4 driven wheels + the calibrated slip_factor of 5.25 — the
+  # largest in roqsim_mobile) and the lidar come from the warthog model manifest.
+  - spawn_robot:
+      model: warthog
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          # A 2.0 m circle: v/w, chosen so the far side plus the 0.68 m nose stays inside
+          # empty_room's 5 m half-extent. A Warthog is a big machine for a 10 m room.
+          test_cmd: [1.0, 0.5]   # remove once the ros2_bridge drives /cmd_vel

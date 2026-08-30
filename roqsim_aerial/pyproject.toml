@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_aerial"
+version = "0.1.0"
+description = "Aerial-vehicle plugins and assets for roqsim (Bitcraze Crazyflie 2 + quadrotor controller)."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",
+    "numpy>=1.24",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+
+# Aerial controller plugins, registered into the shared roqsim.plugins group.
+[project.entry-points."roqsim.plugins"]
+quadrotor_controller = "roqsim_aerial.plugins.quadrotor_controller:QuadrotorControllerPlugin"
+
+# Bundled aerial models (crazyflie_2), discoverable across packages via roqsim.models.
+[project.entry-points."roqsim.models"]
+roqsim_aerial = "roqsim_aerial.models"
+
+[project.entry-points."roqsim.worlds"]
+roqsim_aerial = "roqsim_aerial"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_aerial = [
+    # One folder per model, the layout preferred for a new package: a model is one directory, so
+    # adding or removing one is a single mv. Globs rather than an enumeration -- with a list, a new
+    # mesh installs cleanly and then fails at RUN time inside a container.
+    "models/*/*.xml",
+    "models/*/*.manifest.yaml",
+    "models/*/meshes/*.obj",
+    "models/*/meshes/*.stl",
+    # Thumbnails (`make thumbnails`), the same as every other family package ships.
+    "models/*/*.png",
+    "models/*/*LICENSE*",
+    "worlds/*.yaml",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

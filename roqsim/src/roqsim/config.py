@@ -6,6 +6,9 @@ The YAML has two top-level sections::
       name: OpenSpace        # optional; viewer window title becomes "Roqsim: <name>"
       timestep: 0.004        # optional; else taken from the model
       pacing: realtime       # realtime | {factor: 4.0} | asap
+      integrator: rk4        # optional; euler | rk4 | implicit | implicitfast
+      density: 1.225         # optional; kg/m^3. MuJoCo's default is 0, i.e. a vacuum
+      viscosity: 1.8e-5      # optional; Pa*s
       view:                  # optional initial viewer setup (windowed only; see viewer)
         lookat: [0, 0.4, 0.9]
         distance: 3.2

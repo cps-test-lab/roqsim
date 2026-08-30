@@ -1,0 +1,38 @@
+# Default controller + sensors shipped with the Husarion Panther description.
+#
+# `spawn_robot: {model: panther}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors.
+components:
+  # 4-wheel skid-steer, left pair and right pair commanded together -- the husky_a200 /
+  # clearpath_jackal / rosbot class. Values are Husarion's own published controller config
+  # (husarion_ugv_controller/config/WH01_controller.yaml) except slip_factor.
+  - diff_drive:
+      wheel_radius: 0.1825           # config/WH01.yaml, and the wheel cylinder matches it
+      wheel_separation: 0.697        # WH01_controller.yaml, = the URDF geometry (2 x 0.3485)
+      max_linear_vel: 2.0            # WH01_controller.yaml
+      max_angular_vel: 4.0           # WH01_controller.yaml
+      wheel_accel_limit: 2.7         # WH01_controller.yaml max linear acceleration
+      # Skid-steer ICR slip compensation, calibrated against THIS model. Husarion publishes
+      # wheel_separation_multiplier 1.5 for the same purpose on the real robot -- and the useful
+      # finding is that the two numbers are NOT interchangeable. At 1.5 this base achieves only 0.40
+      # of commanded yaw in MuJoCo, because point-contact scrub is far worse than a real tyre's.
+      # Uncompensated it manages 0.26. chi=3.4 -> achieved/commanded 0.894/0.992/1.073/1.099 at
+      # w = 0.3/0.5/0.8/1.0 rad/s. Re-measure if friction, actuator kv, mass or timestep change.
+      slip_factor: 3.4
+      left_actuators:  [fl_wheel_motor, rl_wheel_motor]
+      right_actuators: [fr_wheel_motor, rr_wheel_motor]
+      left_joints:  [fl_wheel_joint, rl_wheel_joint]
+      right_joints: [fr_wheel_joint, rr_wheel_joint]
+  # The base description ships NO lidar: Husarion keeps sensors in husarion_components_description,
+  # so which scanner a unit carries is a deployment choice. These are the Panther's commonly shipped
+  # 3D-capable scanner reduced to a planar scan, and the mount height is an assumption -- port log.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 720
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.2
+      max_range: 40.0
+      rate_hz: 10.0
+      exclude_body: base_link

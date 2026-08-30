@@ -1,0 +1,24 @@
+# Husarion ROSbot in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:rosbot_demo
+# A `test_cmd` drives the robot in a circle so the standalone scene shows motion.
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+components:
+  # diff_drive (skid-steer, 4 driven wheels + the calibrated slip_factor) and the 360 deg / 10 Hz
+  # lidar come from the rosbot model manifest (models/rosbot/rosbot.manifest.yaml).
+  - spawn_robot:
+      model: rosbot
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+  # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this
+  # scripted [v, w] drives the robot in a circle. Well inside Husarion's published 1.1 m/s and
+  # 3.14 rad/s limits.
+    components:
+      - diff_drive:
+          test_cmd: [0.4, 0.5]   # remove once the ros2_bridge drives /cmd_vel

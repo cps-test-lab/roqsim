@@ -92,6 +92,20 @@ def resolve_source(
                 f"With no network access, prepare the source by hand:\n{manual}"
             ) from exc
 
+    # A sparse cone is set when the checkout is CREATED, so the second model converted out of the
+    # same repository would otherwise find the tree at the right commit but without its directory --
+    # reported as "the pinned commit may predate that path", which is both wrong and hard to act on.
+    # Widen the cone instead: sparse-checkout add is idempotent, and one shared checkout serving
+    # every model from a monorepo is the point of pinning by name.
+    if sparse and not (dest / sparse).exists():
+        try:
+            _git("sparse-checkout", "add", sparse, cwd=dest)
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{name} is checked out without {sparse!r} and the cone could not be widened "
+                f"({exc}).\nPrepare it by hand:\n  git -C {dest} sparse-checkout add {sparse}"
+            ) from exc
+
     out = dest / subdir if subdir else dest
     if not out.exists():
         raise RuntimeError(

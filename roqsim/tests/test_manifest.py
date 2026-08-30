@@ -90,7 +90,7 @@ def test_world_entry_merges_manifest_defaults(tmp_path):
     The bug this pins: the world declaring a plugin used to make expand_manifest skip the manifest
     entry entirely, so `diff_drive: {robot, test_cmd}` silently dropped the model's wheel geometry and
     actuator names and fell back to the plugin's own (TurtleBot) defaults -- which then failed to
-    resolve against the husky's MJCF. roqsim_mobile's own husky_ros2.yaml crashed on exactly this,
+    resolve against the husky's MJCF. roqsim_mobile's own husky_demo.yaml crashed on exactly this,
     while docs/plugins.rst documented the merge ("add test_cmd, or change lidar rays").
     """
     model = _write_model(

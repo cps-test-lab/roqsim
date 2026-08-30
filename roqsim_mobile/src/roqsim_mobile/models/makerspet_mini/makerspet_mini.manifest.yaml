@@ -1,0 +1,35 @@
+# Default controller + sensors for the Maker's Pet Mini (170 mm 3D-printed educational robot).
+#
+# `spawn_robot: {model: makerspet_mini}` pulls these in automatically, so a world does not re-declare
+# the robot's intrinsic kinematics/sensors.
+#
+# NOTHING here is an assumption of ours: every value is the description's own, from urdf/params.xacro,
+# urdf/plugins.xacro and config/navigation.yaml. That is unusual -- most mobile ports here have to
+# invent at least a scanner mount height -- and it is the same property the OOMWOO vacuum has, from
+# the same vendor.
+components:
+  # A TRUE two-wheel differential drive with a modelled caster -- so no slip_factor, the same line
+  # turtlebot3_waffle, raspimouse and oomwoo_one draw. It does not turn by scrubbing.
+  - diff_drive:
+      wheel_radius: 0.0215           # params.xacro wheel_diameter 0.043
+      wheel_separation: 0.105043     # params.xacro wheel_base, and the URDF geometry agrees
+      max_linear_vel: 0.1            # config/navigation.yaml max_vel_x
+      max_angular_vel: 0.5           # config/navigation.yaml max_vel_theta
+      wheel_accel_limit: 1.0         # params.xacro max_linear_acceleration
+      left_actuators:  [wheel_left_motor]
+      right_actuators: [wheel_right_motor]
+      left_joints:  [wheel_left_joint]
+      right_joints: [wheel_right_joint]
+  # The vendor's own scan, from plugins.xacro's laser_scan_sensor: 360 samples over a full turn,
+  # 0.1-10 m, 5 Hz. The mount is the description's scan_joint -- 0.0704 m above base_link with the
+  # puck INVERTED (rpy -pi), which is how this design fits a 360-degree scanner under its head.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 360
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.1
+      max_range: 10.0
+      rate_hz: 5.0
+      exclude_body: base_link

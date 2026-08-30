@@ -27,6 +27,10 @@ Config::
       axis_separation: 0.488        # longitudinal, front <-> rear
       wheels: [front_left, front_right, rear_left, rear_right]   # joint name stems
       wheel_actuators: [...]        # same order; defaults to <stem>_motor
+      # SWERVE bases only: give the steer joints and their POSITION actuators, same order as
+      # `wheels`. Their presence is what selects swerve inverse kinematics over mecanum.
+      steer_joints: [...]
+      steer_actuators: [...]
       test_cmd: [0.2, 0.1, 0.0]     # optional [vx, vy, wz] applied every tick (standalone demo)
 
 **Planar drive.** A real omnidirectional base translates sideways because each mecanum wheel's passive rollers let the
@@ -46,6 +50,21 @@ DOFs in the **body** frame (both verified against MuJoCo 3.11), and ``gear`` inh
 body-frame ``vx``/``vy`` command is rotated by the base yaw before it is written to ``ctrl``, while
 ``wz`` needs no rotation. Getting this wrong yields a base that drives correctly only while its
 heading is zero -- which a straight-line test would not catch.
+
+**Swerve.** A steerable-wheel base is holonomic like a mecanum one, so the planar drive above is
+unchanged: what differs is only how the wheels are told to follow. Given ``steer_joints`` and
+``steer_actuators``, each corner's contact velocity is computed from the body twist
+(``v_k = v + w x r_k``), the steer actuator is commanded to ``atan2`` of it and the roll actuator to
+its magnitude over the wheel radius. The steer target is resolved to whichever of the two equivalent
+headings (theta, theta+pi) is nearer the joint's current angle, negating the roll rate for the flipped
+one -- without that a command crossing straight-ahead makes every wheel slew half a turn, which looks
+like a violent glitch and is purely an artefact of the branch cut.
+
+Like the mecanum case this is **observational**: the wheels are not the motive force. The difference
+is that a swerve base's steering is visible and physically meaningful, so getting it right matters for
+anything reading `joint_states` or watching the robot -- but a paper measuring the steer joints
+themselves (their rate limits, or the reorientation delay at a direction change) needs real steer
+actuation, which this is not.
 
 **Wheels.** The wheel velocity servos are driven from the mecanum inverse kinematics purely so that the visual
 and ``joint_states`` are right (the wheels turn, and turn *differently* when strafing). They are not
@@ -107,6 +126,12 @@ class OmniDrivePlugin(Plugin):
             self.config.get("wheel_actuators", [f"{w}_motor" for w in self._wheels])
         )
         self._wj_names = [f"{w}_joint" for w in self._wheels]
+        self._steer = list(self.config.get("steer_joints", []))
+        self._sa_names = list(self.config.get("steer_actuators", []))
+        self._said: list[int] = []
+        self._sjid: list[int] = []
+        #: Corner offsets (x, y) in WHEEL_ORDER, for the swerve twist -> per-wheel velocity map.
+        self._corner: list[tuple[float, float]] = []
 
         self._target = np.zeros(3)  # commanded body-frame [vx, vy, wz], clipped
         self._cmd = np.zeros(3)  # ramped body-frame command actually written
@@ -138,6 +163,16 @@ class OmniDrivePlugin(Plugin):
                 errors.append("'wheels' must list exactly 4 wheels (front/rear x left/right)")
             if "wheel_actuators" in config and len(config["wheel_actuators"]) != n:
                 errors.append("'wheel_actuators' must have the same length as 'wheels'")
+        steer = config.get("steer_joints", [])
+        if steer:
+            if not wheeled:
+                errors.append("'steer_joints' needs 'wheel_radius' -- swerve IK is a wheel model")
+            if len(steer) != len(config.get("wheels", WHEEL_ORDER)):
+                errors.append("'steer_joints' must have the same length and order as 'wheels'")
+            if len(config.get("steer_actuators", [])) != len(steer):
+                errors.append("'steer_actuators' must have the same length as 'steer_joints'")
+        elif config.get("steer_actuators"):
+            errors.append("'steer_actuators' without 'steer_joints' -- give both or neither")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, wz]")
         return errors
@@ -178,11 +213,44 @@ class OmniDrivePlugin(Plugin):
         self._qadr = int(m.jnt_qposadr[bjid])
         self._vadr = int(m.jnt_dofadr[bjid])
 
-        # Per-wheel roll sign, read off the model at the reference pose: a wheel rolls the base
-        # forward when it spins about the base's -y, so sign = -axis_y. Derived rather than
-        # hardcoded because the source URDF mirrors left/right wheels (here the two reflections
-        # happen to cancel and all four axes come out +y, which is exactly the kind of thing that
-        # should not be assumed).
+        if self._steer:
+            self._said = [act(n) for n in self._sa_names]
+            self._sjid = [jnt(n) for n in self._steer]
+            absent = [
+                n
+                for n, v in [
+                    *zip(self._sa_names, self._said, strict=True),
+                    *zip(self._steer, self._sjid, strict=True),
+                ]
+                if v < 0
+            ]
+            if absent:
+                raise RuntimeError(
+                    f"omni_drive: could not resolve steer {absent} for robot {self.robot!r}"
+                )
+            # Corner offsets in WHEEL_ORDER. Derived from the same two separations the mecanum
+            # model uses, so a config that is right for one is right for the other.
+            self._corner = [
+                (self.lx, self.ly),
+                (self.lx, -self.ly),
+                (-self.lx, self.ly),
+                (-self.lx, -self.ly),
+            ]
+
+        # Per-wheel roll sign, read off the model at the reference pose.
+        #
+        # A wheel rolling forward WITHOUT SLIP has its contact point stationary: with the contact a
+        # distance R below the axle, v_contact = v_centre + omega x r = 0 gives omega_y = +V/R. So a
+        # wheel spinning about the base's **+y** carries it forward, and sign = +axis_y.
+        #
+        # This read `-axis_y` until 2026-08-28, so every omni_drive wheel span backwards. It was
+        # invisible in the dynamics -- these wheels are deliberately near-frictionless load carriers
+        # and the base is driven through the planar actuators -- but it was wrong in the viewer and in
+        # `joint_states`, which is most of what these servos exist for. Found by measuring contact
+        # slip: the four omni bases showed |v_contact| ~ 2V while the diff_drive bases showed ~0.
+        #
+        # Derived rather than hardcoded because a source URDF may mirror left/right wheels, as the
+        # Neobotix descriptions do -- exactly the kind of thing that should not be assumed.
         if self._wjid:
             d0 = mujoco.MjData(m)
             mujoco.mj_forward(m, d0)
@@ -196,7 +264,7 @@ class OmniDrivePlugin(Plugin):
             for k, jid in enumerate(self._wjid):
                 axis_w = d0.xmat[m.jnt_bodyid[jid]].reshape(3, 3) @ m.jnt_axis[jid]
                 axis_y = float((rb.T @ axis_w)[1])
-                self._wsign[k] = -1.0 if axis_y > 0 else 1.0
+                self._wsign[k] = 1.0 if axis_y > 0 else -1.0
 
         ctx.blackboard.set(
             f"robot:{self.robot}",
@@ -300,8 +368,13 @@ class OmniDrivePlugin(Plugin):
         ctx.data.ctrl[self._aid[1]] = s * self._cmd[0] + c * self._cmd[1]
         ctx.data.ctrl[self._aid[2]] = self._cmd[2]
 
-        # Observational mecanum wheel spin, from the body-frame command.
-        if self._waid:
+        # Observational wheel following, from the body-frame command.
+        if self._said:
+            for k, aid in enumerate(self._waid):
+                angle, rate = self._swerve(ctx, k, *self._cmd)
+                ctx.data.ctrl[self._said[k]] = angle
+                ctx.data.ctrl[aid] = self._wsign[k] * rate
+        elif self._waid:
             for k, aid in enumerate(self._waid):
                 ctx.data.ctrl[aid] = self._wsign[k] * self._wheel_rate(k, *self._cmd)
 
@@ -312,6 +385,29 @@ class OmniDrivePlugin(Plugin):
     # `wheel_front_left`, not `front_left`), so matching on the name silently degrades every wheel to
     # the same sign -- which looks like a working forward drive and a broken strafe.
     _MECANUM = ((-1.0, -1.0), (1.0, 1.0), (1.0, -1.0), (-1.0, 1.0))
+
+    def _swerve(self, ctx: SimContext, k: int, vx: float, vy: float, wz: float) -> tuple:
+        """Steer angle (rad) and roll rate (rad/s) for corner *k*, in ``WHEEL_ORDER``.
+
+        The corner's contact velocity is the body twist evaluated there, ``v + w x r``. Below a small
+        speed the heading is indeterminate, so the wheel is left where it is rather than snapped to
+        zero -- a base easing to a halt should not straighten its wheels.
+
+        The steer target is resolved to whichever of ``theta`` and ``theta + pi`` is nearer the
+        joint's current angle, with the roll rate negated for the flipped one. Both describe the same
+        motion; picking blindly makes a command crossing straight-ahead slew every wheel half a turn.
+        """
+        x, y = self._corner[k]
+        ux, uy = vx - wz * y, vy + wz * x
+        speed = float(np.hypot(ux, uy))
+        current = float(ctx.data.qpos[ctx.model.jnt_qposadr[self._sjid[k]]])
+        if speed < 1e-4:
+            return current, 0.0
+        theta = float(np.arctan2(uy, ux))
+        # Nearest equivalent heading to `current`, among theta + n*pi.
+        turns = np.round((current - theta) / np.pi)
+        target = theta + turns * np.pi
+        return target, (speed / self.r) * (-1.0 if int(abs(turns)) % 2 else 1.0)
 
     def _wheel_rate(self, k: int, vx: float, vy: float, wz: float) -> float:
         """Mecanum inverse kinematics for wheel *k* in ``WHEEL_ORDER``, in rad/s.

@@ -1,0 +1,24 @@
+# UFACTORY xArm 7 on the floor — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets/src/roqsim_manipulation_assets/worlds/xarm7_demo.yaml
+# A `test_target` drives the arm to a pose so the standalone scene shows motion.
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory), add the ros2_bridge plugin
+# from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+components:
+  # arm_controller comes from the xarm7 model manifest (models/xarm7/xarm7.manifest.yaml).
+  - spawn_arm:
+      model: xarm7
+      prefix: "xarm7_"
+      pos: [0.0, 0.0, 0.0]
+    name: xarm7
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion (remove once a bridge drives the arm). Within joint2's
+  # [-2.059, 2.0944] and joint4's [-0.19198, 3.927] limits, which are narrower than the rest.
+    components:
+      - arm_controller:
+          test_target: [0.6, -0.5, 0.0, 1.4, 0.0, 1.0, 0.0]

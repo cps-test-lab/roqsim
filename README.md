@@ -56,7 +56,7 @@ hand-assemble.
 make venv     # create .venv and install everything
 make help     # list all targets
 
-.venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2      # a viewer opens
+.venv/bin/roqsim sim roqsim_mobile:turtlebot4_demo      # a viewer opens
 ```
 
 **21 ready-to-run worlds** ship in the box — robot demos, a warehouse scene, sensor rigs and nav2
@@ -65,7 +65,7 @@ setups. `roqsim --help` lists the command groups; `roqsim <group> --help` gives 
 Headless, as fast as the machine allows, with timings:
 
 ```bash
-.venv/bin/roqsim sim roqsim_mobile:turtlebot_ros2 --headless --pacing asap --steps 1000 --profile
+.venv/bin/roqsim sim roqsim_mobile:turtlebot4_demo --headless --pacing asap --steps 1000 --profile
 ```
 
 ## Documentation
@@ -94,10 +94,10 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 
 | license | assets |
 | --- | --- |
-| BSD-3-Clause | Spot (MuJoCo Menagerie), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky |
-| Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro |
+| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
+| Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
-| MIT | Frankie |
+| MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |
 | CC0-1.0 | surface textures (ambientCG, Poly Haven) |
 | CC-BY-4.0 | the warehouse scene (Gazebo Fuel), pedestrian characters and locomotion clips (CARLA, Fuel) |
 

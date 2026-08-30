@@ -7,7 +7,8 @@
 # sources are copied and installed last (change often), so editing our code only rebuilds the cheap
 # final --no-deps install layer.
 #
-# Contains: core + assets + sensors + mobile + manipulation + scenes + walker + rso.
+# Contains: core + assets + sensors + mobile + manipulation (plugins + arm/gripper models)
+# + mobile manipulation + scenes + walker + rso.
 # NOT included: quadruped/humanoid (they pull torch). Set INCLUDE_TORCH_PKGS=1 for a full non-ROS
 # variant (adds CPU-only torch + quadruped + humanoid).
 
@@ -56,6 +57,14 @@ COPY roqsim_assets     ./roqsim_assets
 COPY roqsim_sensors    ./roqsim_sensors
 COPY roqsim_mobile     ./roqsim_mobile
 COPY roqsim_manipulation ./roqsim_manipulation
+# The arm/gripper MODELS, and the robots that are a base AND an arm (frankie, tiago_pro). Neither
+# was here: `roqsim_manipulation` is plugins only, so the image had spawn_arm and arm_controller
+# and nothing to point them at -- `roqsim sim roqsim_manipulation_assets:ur10e_demo` could not
+# resolve, and no mobile manipulator existed at all. Dockerfile.ros was already corrected for this;
+# the lean image had the same hole. The order matters: roqsim_mobile_manipulation depends on both
+# families, and Frankie borrows the Panda meshes from roqsim_manipulation_assets.
+COPY roqsim_manipulation_assets ./roqsim_manipulation_assets
+COPY roqsim_mobile_manipulation ./roqsim_mobile_manipulation
 COPY roqsim_scenes     ./roqsim_scenes
 COPY roqsim_walker     ./roqsim_walker
 COPY roqsim_webctrl        ./roqsim_webctrl
@@ -68,6 +77,8 @@ RUN pip install --no-cache-dir --no-deps \
         ./roqsim_sensors \
         ./roqsim_mobile \
         ./roqsim_manipulation \
+        ./roqsim_manipulation_assets \
+        ./roqsim_mobile_manipulation \
         ./roqsim_scenes \
         ./roqsim_walker \
         ./roqsim_webctrl

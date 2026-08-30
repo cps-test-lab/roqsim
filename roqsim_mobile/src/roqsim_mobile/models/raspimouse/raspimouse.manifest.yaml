@@ -1,0 +1,32 @@
+# Default controller + sensors shipped with the Raspberry Pi Mouse description.
+#
+# `spawn_robot: {model: raspimouse}` pulls these in automatically.
+components:
+  # A TRUE two-wheel differential drive: the wheels roll, they do not scrub, so unlike husky_a200 /
+  # clearpath_jackal / rosbot / panther there is NO slip_factor here -- the same line
+  # turtlebot3_waffle draws. Geometry is RT Corporation's own; the limits are the platform's
+  # published figures.
+  - diff_drive:
+      wheel_radius: 0.024            # the URDF's collision cylinder, and the wheel mesh agrees
+      wheel_separation: 0.085        # track = 2 x 0.0425, straight from the joint origins
+      max_linear_vel: 0.5            # RT's published top speed
+      max_angular_vel: 3.0           # assumption: no yaw-rate figure is published (see port log)
+      wheel_accel_limit: 1.0         # assumption: none published
+      left_actuator: left_wheel_motor
+      right_actuator: right_wheel_motor
+      left_joint: left_wheel_joint
+      right_joint: right_wheel_joint
+  # The LDS-01 on RT's own multi-lidar mount. NOT an assumption: the description supports it as
+  # `lidar:=lds`, and the generator expands with that option, so the mount, the scanner geometry and
+  # the 0.120 m scan height are all the vendor's own values. Rates and ranges are the LDS-01's
+  # published figures (the same sensor turtlebot3_waffle carries).
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 360
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.12
+      max_range: 3.5
+      rate_hz: 5.0
+      exclude_body: base_link

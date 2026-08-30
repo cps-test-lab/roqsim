@@ -1,0 +1,31 @@
+# Default controller + sensors for the Neobotix MP-400 differential-drive base.
+#
+# `spawn_robot: {model: mp_400}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors.
+components:
+  # A TRUE two-wheel differential drive with four passive casters -- so NO slip_factor, because it
+  # does not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw, and
+  # the opposite of the four skid-steers here. This is the first differential Neobotix; its two
+  # siblings in the same repository are holonomic.
+  - diff_drive:
+      wheel_radius: 0.0765           # the collision sphere the vendor gives each driven wheel
+      wheel_separation: 0.52         # the URDF geometry, 2 x 0.26
+      max_linear_vel: 0.8            # configs/mp_400/navigation.yaml max_vel_x
+      max_angular_vel: 1.0           # OURS: their profile states no max_vel_theta
+      wheel_accel_limit: 0.25        # configs/mp_400/navigation.yaml acc_lim_x
+      left_actuators:  [wheel_left_motor]
+      right_actuators: [wheel_right_motor]
+      left_joints:  [mp_400_fixed_wheel_left_joint]
+      right_joints: [mp_400_fixed_wheel_right_joint]
+  # ONE scanner here, unlike both holonomic siblings' two -- the vendor's own single front mount
+  # (lidar_1_joint). SICK S300, whose published field is 270 degrees; range and rate are ours.
+  - lidar:
+      site: lidar
+      frame_id: lidar_1_link
+      rays: 541
+      angle_min: -2.356194490
+      angle_max: 2.356194490
+      range_min: 0.1
+      max_range: 29.0
+      rate_hz: 12.5
+      exclude_body: base_link

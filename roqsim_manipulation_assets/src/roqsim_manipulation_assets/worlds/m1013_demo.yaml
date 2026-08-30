@@ -1,0 +1,22 @@
+# Doosan M1013 — standalone demo world (roqsim_manipulation_assets).
+#
+# Standalone: roqsim sim roqsim_manipulation_assets/src/roqsim_manipulation_assets/worlds/m1013_demo.yaml
+# For ROS 2 / MoveIt2 (joint_states + FollowJointTrajectory), add the ros2_bridge plugin
+# from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime
+
+components:
+  # arm_controller comes from the m1013 model manifest.
+  - spawn_arm:
+      model: m1013
+      prefix: "m1013_"
+      pos: [0.0, 0.0, 0.0]
+    name: m1013
+
+  # Override the manifest's arm_controller only to add test_target: drives the arm to a pose so the
+  # standalone scene shows motion. Within joint_3's [-2.792, 2.792] limit, which is the narrow one.
+    components:
+      - arm_controller:
+          test_target: [0.6, 0.3, 1.2, 0.0, 1.0, 0.0]

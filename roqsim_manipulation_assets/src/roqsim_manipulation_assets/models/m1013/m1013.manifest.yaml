@@ -1,0 +1,7 @@
+# Default controller shipped with the Doosan M1013 arm description.
+#
+# `spawn_arm: {model: m1013}` pulls this in automatically, so a world does not re-declare the arm's
+# controller. To override, declare arm_controller for the same arm in the world (it wins); to opt
+# out, set `spawn_arm` config `default_plugins: false`.
+components:
+  - arm_controller: {}   # the home keyframe target keeps the plugin/model defaults

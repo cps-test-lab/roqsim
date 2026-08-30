@@ -1,0 +1,20 @@
+# Husarion Panther in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:panther_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # diff_drive (skid-steer, 4 driven wheels + the calibrated slip_factor) and the lidar come from
+  # the panther model manifest.
+  - spawn_robot:
+      model: panther
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          test_cmd: [0.6, 0.4]   # remove once the ros2_bridge drives /cmd_vel

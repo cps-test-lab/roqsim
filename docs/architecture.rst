@@ -210,6 +210,16 @@ Contact overrides (``sim.contact_override``, ``sim.cone``, ``sim.gravity``) [imp
 Three more ``<option>`` passthroughs, added for contact-rich worlds where the *contact* is the
 measurement rather than an incidental.
 
+.. note::
+
+   ``sim.density``, ``sim.viscosity`` and ``sim.wind`` join these passthroughs, added for aerial
+   worlds. MuJoCo defaults the first two to **0** -- a vacuum -- which is right for a ground robot
+   and wrong for anything that flies: a quadrotor still hovers there, but nothing damps it, so a
+   lateral step rings forever and reads as badly tuned gains rather than as missing air. Before they
+   existed an aerial model had no honest option but to pin ``<option>`` itself, and thereby
+   reconfigure every world it was spawned into. ``wind`` is inert without a medium, since MuJoCo
+   feeds it into the drag terms.
+
 ``sim.contact_override`` sets MuJoCo's global ``o_solref`` / ``o_solimp`` / ``o_friction``, which
 replace every contact's own parameters::
 
@@ -307,7 +317,7 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
      This merge was previously a plain skip (the manifest entry was dropped whole), which meant a
      partial override silently fell back to the *plugin's* generic defaults for everything the world
      did not restate — e.g. a Husky's ``diff_drive`` inheriting TurtleBot wheel radius and actuator
-     names, then failing to resolve them against its MJCF. ``husky_ros2.yaml`` crashed on exactly
+     names, then failing to resolve them against its MJCF. ``husky_demo.yaml`` crashed on exactly
      that, while ``plugins.rst`` documented the merge. If you rely on a world entry starting from the
      plugin's defaults rather than the model's, use ``default_plugins: false`` and declare it fully.
 - Opt out per spawn with ``default_plugins: false``; a model with no manifest yields nothing.
@@ -597,7 +607,7 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 12. Conventions
 ---------------
 
--  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
+-  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, aerial vehicles in ``roqsim_aerial/`` (``quadrotor_controller``, models, worlds), and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
 -  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``).
 -  **Reaching a plugin from outside:** a plugin an out-of-process *or* out-of-package driver must reach **publishes a blackboard handle** in ``configure`` — a small callable or dataclass under ``<kind>:<name>``, where ``<name>`` is the instance's world-YAML ``name:``. Consumers resolve that key; they never iterate ``engine.plugins`` and never match on a class name, which breaks silently on a rename and cannot distinguish two instances of one plugin. Publish a *callable* when the value is replaced each step (``contact_monitor.read_state``) rather than the object it returns. The in-process seam a driver starts from is ``MujocoSim.context`` (a :class:`~roqsim.context.SimContext`, i.e. exactly the rights a plugin has, single-writer rule included) — not the ``Engine``, so ``plugins`` and ``config`` stay the engine's own. Over a transport the same capability is an ``Endpoint`` (§13); the two are the same declaration read two ways, which is what lets one scenario action serve a stepped run and a ROS run.
 -  **Assets:** record upstream license for any vendored MJCF/mesh next to it (see ``roqsim_mobile/.../husky_a200/husky_a200_LICENSE`` for the pattern).

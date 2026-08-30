@@ -1,0 +1,68 @@
+# Default controller + sensors for the Neobotix MPO-700 swerve base.
+#
+# `spawn_robot: {model: mpo_700}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors.
+components:
+  # HOLONOMIC via four INDEPENDENTLY STEERED wheels -- the substrate's first swerve base. It uses
+  # omni_drive like the ridgeback and lgdxrobot2, because a swerve base is holonomic and the planar
+  # drive is unchanged; what differs is that the wheels must be AIMED, which is the swerve inverse
+  # kinematics `steer_joints`/`steer_actuators` select. No slip_factor: it does not turn by scrubbing.
+  #
+  # The steering is OBSERVATIONAL, like every other wheel treatment here -- geometrically right, and
+  # not the motive force. A paper measuring steer rate limits or the reorientation delay at a
+  # direction change needs real steer actuation, which this is not. See the port log.
+  - omni_drive:
+      base_joint: base_free
+      vx_actuator: base_vx
+      vy_actuator: base_vy
+      wz_actuator: base_wz
+      # The vendor's own Nav2 profile (configs/mpo_700/navigation.yaml), not a datasheet figure.
+      # Note it is NOT isotropic: 0.8 forward against 0.5 sideways. A holonomic base need not strafe
+      # as fast as it drives, and assuming it does would have overstated this platform by 60%.
+      max_linear_vel: 0.8            # max_vel_x
+      max_lateral_vel: 0.5           # max_vel_y
+      max_combined_linear_vel: 0.8   # cap on hypot(vx, vy)
+      max_angular_vel: 0.8           # OURS: their profile states no max_vel_theta, so this
+                                     # borrows the magnitude of acc_lim_theta. An assumption.
+      accel_limit: 0.25              # acc_lim_x / acc_lim_y
+      angular_accel_limit: 0.8       # acc_lim_theta
+      # Geometry from the expanded xacro: wheel sphere radius 0.09, steering axes at (+-0.24, +-0.18).
+      wheel_radius: 0.09
+      wheel_separation: 0.36         # lateral, 2 x 0.18
+      axis_separation: 0.48          # longitudinal, 2 x 0.24
+      wheels: [mpo_700_wheel_front_left, mpo_700_wheel_front_right,
+               mpo_700_wheel_back_left, mpo_700_wheel_back_right]
+      wheel_actuators: [wheel_front_left_motor, wheel_front_right_motor,
+                        wheel_back_left_motor, wheel_back_right_motor]
+      steer_joints: [mpo_700_caster_front_left_joint, mpo_700_caster_front_right_joint,
+                     mpo_700_caster_back_left_joint, mpo_700_caster_back_right_joint]
+      steer_actuators: [steer_front_left, steer_front_right, steer_back_left, steer_back_right]
+  # TWO scanners, diagonally opposite, which is what the vendor ships -- and the first model here to
+  # declare more than one. Neither covers 360 degrees alone; together they see around the robot. A
+  # single centre-mounted 360 scan would have been simpler and would have given the robot a sensor it
+  # does not have, with no blind corners.
+  #
+  # Mounts are the vendor's (lidar_1_joint / lidar_2_joint). The SICK S300's published field is 270
+  # degrees; its range and rate here are ours -- see the port log.
+  - lidar:
+      site: lidar_1
+      frame_id: lidar_1_link
+      rays: 541
+      angle_min: -2.356194490
+      angle_max: 2.356194490
+      range_min: 0.1
+      max_range: 29.0
+      rate_hz: 12.5
+      exclude_body: base_link
+    name: scan_front
+  - lidar:
+      site: lidar_2
+      frame_id: lidar_2_link
+      rays: 541
+      angle_min: -2.356194490
+      angle_max: 2.356194490
+      range_min: 0.1
+      max_range: 29.0
+      rate_hz: 12.5
+      exclude_body: base_link
+    name: scan_rear

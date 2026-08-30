@@ -243,13 +243,26 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
     #    typed in a shell). One anchor, not a chain: a fallback lets the same reference resolve to
     #    different files depending on where the caller was standing, which is a difference nothing
     #    downstream can see and nothing records.
+    #
+    #    `is_file()`, not `exists()`, and the distinction is load-bearing on top of that. A bare
+    #    DIRECTORY at the anchor that happens to share a packaged model's short name would
+    #    otherwise shadow it, and the failure is silent in the worst way: resolution "succeeds"
+    #    with a path that is not a model, so the `<model>.manifest.yaml` lookup beside it finds
+    #    nothing and the robot spawns with none of its intrinsic components -- no drive, no
+    #    lidar -- while the world loads and runs. Observed with a scratch directory named `rosbot`
+    #    next to a test world. A directory now falls through to the provider search, which is where
+    #    the packaged model it was shadowing actually lives.
     p = Path(model)
     if p.is_absolute():
-        if p.exists():
+        if p.is_file():
             return _asset_for_file(p)
-        raise ModelError(f"model path {model!r} does not exist")
+        raise ModelError(
+            f"model path {model!r} does not exist"
+            if not p.exists()
+            else f"model path {model!r} is a directory, not a model file"
+        )
     rel = (Path(base_dir) if base_dir is not None else Path.cwd()) / model
-    if rel.exists():
+    if rel.is_file():
         return _asset_for_file(rel)
 
     # 2) package-qualified ref "<package>:<model>": a registered provider by name, else a module path.

@@ -46,8 +46,8 @@ omni_drive = "roqsim_mobile.plugins.omni_drive:OmniDrivePlugin"
 [project.entry-points."roqsim.models"]
 roqsim_mobile = "roqsim_mobile.models"
 
-# Demo worlds, so `roqsim sim roqsim_mobile:husky_ros2` resolves and another world can build on one with
-# `extends: roqsim_mobile:husky_ros2` -- mirrors the roqsim.models provider mechanism. Without this the
+# Demo worlds, so `roqsim sim roqsim_mobile:husky_demo` resolves and another world can build on one with
+# `extends: roqsim_mobile:husky_demo` -- mirrors the roqsim.models provider mechanism. Without this the
 # worlds are reachable only by their path inside the installed package, which is not an interface.
 [project.entry-points."roqsim.worlds"]
 roqsim_mobile = "roqsim_mobile"
@@ -69,6 +69,10 @@ roqsim_mobile = [
     "models/*/meshes/*.stl",
     "models/*/meshes/*.STL",
     "models/*/meshes/*.png",
+    # Per-material colour sidecars from `reduce-mesh --split-materials`. Not loaded at run time --
+    # the MJCF carries the colours -- but they are the provenance of those numbers, and a converter
+    # re-run reads them back, so they ship with the meshes they describe.
+    "models/*/meshes/*.materials.json",
     # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
     # licence is not redistributable.
     "models/*/*LICENSE*",

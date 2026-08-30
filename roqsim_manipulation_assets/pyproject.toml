@@ -61,6 +61,10 @@ roqsim_manipulation_assets = [
     "models/*/meshes/*.stl",
     "models/*/meshes/*.STL",
     "models/*/meshes/*.png",
+    # Per-material colour sidecars from the Collada/glTF converters. Not loaded at run time -- the
+    # MJCF carries the colours -- but they are the provenance of those numbers and a converter
+    # re-run reads them back, so they ship with the meshes they describe.
+    "models/*/meshes/*.materials.json",
     # Provenance ships with the geometry it covers: a wheel carrying a vendor's meshes without its
     # licence is not redistributable.
     "models/*/*LICENSE*",

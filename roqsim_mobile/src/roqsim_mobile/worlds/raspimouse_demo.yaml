@@ -1,0 +1,22 @@
+# RT Corporation Raspberry Pi Mouse — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:raspimouse_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+  # A 0.74 kg robot on 24 mm wheels: the default 2 ms step is coarse for contacts this small.
+  timestep: 0.001
+
+components:
+  # diff_drive (a TRUE two-wheel differential drive, no slip_factor) and the LDS-01 come from the
+  # raspimouse model manifest.
+  - spawn_robot:
+      model: raspimouse
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          test_cmd: [0.15, 0.5]   # remove once the ros2_bridge drives /cmd_vel

@@ -1,0 +1,27 @@
+# TurtleBot 4 in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:turtlebot4_demo
+# A `test_cmd` drives the robot in a circle so the standalone scene shows motion.
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+components:
+  # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml).
+  - spawn_robot:
+      model: turtlebot4
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+  # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this
+  # scripted [v, w] drives the robot in a circle so the standalone scene shows motion.
+    components:
+      - diff_drive:
+          test_cmd: [0.15, 0.4]   # remove once the ros2_bridge drives /cmd_vel
+
+  # For ROS 2 (separate colcon package roqsim_ros_bridge): one bridge reads every declared endpoint
+  # from ctx.interface -- no per-topic config needed. For >1 robot, set `namespace: <name>` on each
+  # spawn_robot; its endpoints (topics/frames) then live under /<name>/... automatically.
+  # - ros2_bridge: {}

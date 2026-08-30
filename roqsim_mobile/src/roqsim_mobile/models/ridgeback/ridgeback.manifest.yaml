@@ -1,0 +1,41 @@
+# Default controller + sensors shipped with the Clearpath Ridgeback description.
+#
+# `spawn_robot: {model: ridgeback}` pulls these in automatically.
+components:
+  # HOLONOMIC, and the only base in roqsim_mobile that is. Four mecanum wheels strafe, so this uses
+  # omni_drive rather than diff_drive -- and therefore carries NO slip_factor, because the platform
+  # does not turn by scrubbing. The rollers are not modelled; the commanded twist drives three
+  # velocity actuators on the base free joint and the wheel servos keep the visuals and joint_states
+  # honest. See the plugin's docstring.
+  - omni_drive:
+      base_joint: base_free
+      vx_actuator: base_vx
+      vy_actuator: base_vy
+      wz_actuator: base_wz
+      max_linear_vel: 1.1            # Clearpath's published translation speed
+      max_lateral_vel: 1.1           # holonomic: the same sideways
+      max_combined_linear_vel: 1.1   # cap on hypot(vx, vy)
+      max_angular_vel: 2.0           # Clearpath's published yaw rate
+      accel_limit: 1.0
+      angular_accel_limit: 2.0
+      # Mecanum wheel handling is OBSERVATIONAL -- it makes the wheels turn, and turn differently
+      # when strafing. Geometry from the expanded xacro: wheel radius 0.0759, lateral separation
+      # 2 x 0.2755, longitudinal 2 x 0.319.
+      wheel_radius: 0.0759
+      wheel_separation: 0.551
+      axis_separation: 0.638
+      wheels: [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]
+      wheel_actuators: [front_left_wheel_motor, front_right_wheel_motor,
+                        rear_left_wheel_motor, rear_right_wheel_motor]
+  # The description ships no scanner. Ridgebacks are usually fitted with one at each front corner;
+  # this is a single planar scan, and the mount height is an assumption -- see the port log.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 720
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.1
+      max_range: 25.0
+      rate_hz: 10.0
+      exclude_body: base_link

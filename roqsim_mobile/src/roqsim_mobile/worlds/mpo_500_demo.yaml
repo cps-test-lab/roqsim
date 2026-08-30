@@ -1,0 +1,21 @@
+# Neobotix MPO-500 in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:mpo_500_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # omni_drive (holonomic omni wheels, no steering, no slip_factor) and the vendor's two SICK
+  # MicroScan3 scanners come from the mpo_500 model manifest.
+  - spawn_robot:
+      model: mpo_500
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - omni_drive:
+          # Well inside the vendor's 0.6 forward / 0.5 sideways.
+          test_cmd: [0.35, 0.25, 0.2]   # [vx, vy, wz]; remove once the ros2_bridge drives /cmd_vel

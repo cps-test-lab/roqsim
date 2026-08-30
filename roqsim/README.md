@@ -50,7 +50,7 @@ Five built-in plugins, all world-agnostic:
 ## Run it
 
 ```bash
-roqsim sim roqsim_mobile:husky_ros2          # a demo world from a sibling package (a viewer opens)
+roqsim sim roqsim_mobile:husky_demo          # a demo world from a sibling package (a viewer opens)
 roqsim sim world.yaml --headless --pacing asap --steps 1000 --profile
 roqsim sim world.yaml --seed 7 --record run.npz --video run.webm
 ```

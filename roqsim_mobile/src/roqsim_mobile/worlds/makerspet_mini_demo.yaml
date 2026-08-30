@@ -1,0 +1,22 @@
+# Maker's Pet Mini in an empty room — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:makerspet_mini_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+
+components:
+  # diff_drive (a true 2-wheel differential drive with a caster, so no slip_factor) and the lidar
+  # come from the makerspet_mini model manifest. Every value in it is the vendor's own.
+  - spawn_robot:
+      model: makerspet_mini
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          # A ~0.25 m circle at the vendor's own 0.1 m/s. This is a 124 mm robot in a 10 m room, so
+          # it is the smallest thing in the substrate and it moves like it.
+          test_cmd: [0.09, 0.35]   # remove once the ros2_bridge drives /cmd_vel

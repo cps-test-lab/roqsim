@@ -29,8 +29,12 @@ Config::
                                  #   into what may be torque actuators. Naming the joints also scopes
                                  #   `joint_states` to this arm, so several controllers can share one
                                  #   topic without each restating the others' joints.
-      gripper_actuator: left_gripper  # required WITH `joints:` for a gripper: the tendon actuator is
-                                 #   not inferable once one entity carries two of them (left/right).
+      gripper_actuator: left_gripper  # required WITH `joints:` for a gripper, and the ONLY way to
+                                 #   declare one that is a plain joint actuator (the X-Series arms
+                                 #   drive their jaws from a `left_finger` slide, which the scan
+                                 #   below would otherwise claim as a seventh arm joint). Resolved by
+                                 #   ACTUATOR NAME, so it need not be a tendon -- and a tendon one is
+                                 #   not inferable anyway once an entity carries two (left/right).
       namespace: ur10e           # transport scope (default: inherited from spawn_arm's namespace)
       topics: {joint_states: /joint_states}  # optional: hardwire the joint_states topic to an
                                  #   absolute name, overriding namespace (see Plugin.topic_override)

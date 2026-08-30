@@ -1,0 +1,30 @@
+# Bitcraze Crazyflie 2 hovering — standalone demo world (roqsim_aerial).
+#
+# Standalone: roqsim sim roqsim_aerial/src/roqsim_aerial/worlds/crazyflie_2_demo.yaml
+# For ROS 2, add the ros2_bridge plugin from the roqsim_ros_bridge package.
+
+sim:
+  pacing: realtime      # realtime | asap | {factor: N}
+
+  # NOT optional for an aerial world. MuJoCo defaults density and viscosity to 0, i.e. a vacuum:
+  # the drone still hovers, but nothing damps it, so a lateral step rings forever and the run reads
+  # as badly tuned gains rather than as missing air. rk4 because a quadrotor's attitude loop is
+  # stiff relative to the timestep; Euler needs a much smaller step for the same stability.
+  # (These live here rather than in the model because they are world-scoped -- they would apply to
+  # every other robot in the scene too. `integrator` was already a sim key; `density`/`viscosity`
+  # were added for this port, since nothing that flies had ever needed a medium.)
+  integrator: rk4
+  density: 1.225        # kg/m^3, air at sea level
+  viscosity: 1.8e-5     # Pa*s, air
+
+components:
+  # quadrotor_controller comes from the crazyflie_2 model manifest.
+  - spawn_robot:
+      model: crazyflie_2
+      prefix: "cf2_"
+      pos: [0.0, 0.0]           # spawn_robot places on the floor (it takes [x, y]); the drone takes off
+    name: drone
+
+    components:
+      - quadrotor_controller:
+          target: [0.0, 0.0, 1.0]   # take off from the floor and hold 1 m

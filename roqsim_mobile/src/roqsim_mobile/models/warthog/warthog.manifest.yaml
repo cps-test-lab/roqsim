@@ -1,0 +1,46 @@
+# Default controller + sensors for the Clearpath Warthog W200.
+#
+# `spawn_robot: {model: warthog}` pulls these in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics/sensors.
+components:
+  # 4-wheel outdoor skid-steer, left pair and right pair commanded together -- the husky_a200 /
+  # clearpath_jackal / rosbot / panther class. Values are Clearpath's own, from
+  # clearpath_control/config/w200/control/diff_4wd.yaml, except slip_factor.
+  - diff_drive:
+      wheel_radius: 0.3              # diff_4wd.yaml, and the wheel cylinder matches it
+      wheel_separation: 1.13642      # the URDF geometry (2 x 0.56821) -- see the note below
+      max_linear_vel: 5.0            # diff_4wd.yaml linear.x.max_velocity
+      max_angular_vel: 4.0           # diff_4wd.yaml angular.z.max_velocity
+      wheel_accel_limit: 2.5         # diff_4wd.yaml linear.x.max_acceleration
+      # Skid-steer ICR slip compensation, calibrated against THIS model.
+      #
+      # Clearpath publishes its own compensation, and here it is unusually legible: diff_4wd.yaml
+      # declares wheel_separation 1.5 for a robot whose URDF track is 1.13642 m, then applies
+      # wheel_separation_multiplier 1.125 on top -- an effective 1.6875 m, inflating the geometric
+      # track by 48%. That is the real driver's ICR compensation under another name, so the honest
+      # thing is to keep the geometric separation above and carry the vendor's factor here as 1.485.
+      #
+      # It is not enough, exactly as on the Panther. At the vendor-equivalent 1.485 this base
+      # achieves 0.31 of commanded yaw; uncompensated it manages 0.22. MuJoCo's point-contact scrub
+      # is far harsher than a real tyre's, and the shortfall grows with the machine: husky 3.0,
+      # panther 3.4, and this 260 kg base on a 1.136 m track needs 5.25.
+      # chi=5.25 -> achieved/commanded 1.082/0.976/0.994/0.891 at w = 0.3/0.5/0.8/1.0 rad/s.
+      # Re-measure if friction, actuator kv, mass or timestep change.
+      slip_factor: 5.25
+      left_actuators:  [front_left_wheel_motor, rear_left_wheel_motor]
+      right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
+      left_joints:  [front_left_wheel_joint, rear_left_wheel_joint]
+      right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
+  # The w200 description ships NO scanner -- Clearpath keeps sensors in attachments a unit is
+  # ordered with. Mount height is an assumption, and a consequential one here: the fenders reach
+  # 0.533 m above base_link, so a deck-height scan would see fender and nothing else.
+  - lidar:
+      site: lidar
+      frame_id: laser
+      rays: 720
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.3
+      max_range: 50.0
+      rate_hz: 10.0
+      exclude_body: base_link

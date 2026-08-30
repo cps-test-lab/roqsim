@@ -21,7 +21,7 @@ Standalone
    .venv/bin/roqsim sim <world.yaml> --seed 7 --record run.npz --video run.webm
 
 The target is a world YAML, an MJCF scene, or a ``<pkg>:<name>`` reference resolved from an installed
-package (``roqsim sim roqsim_mobile:turtlebot_ros2``).
+package (``roqsim sim roqsim_mobile:turtlebot4_demo``).
 
 Pacing is ``realtime`` (default), a numeric factor, or ``asap``. Headless works anywhere, offscreen
 sensors included: ``import roqsim`` picks a backend that exists on this machine (``egl`` where there
@@ -566,7 +566,7 @@ environment variable and load the adapter by ``module:Class``:
 
 .. code-block:: bash
 
-   export ROQSIM_WORLD=roqsim_mobile/src/roqsim_mobile/worlds/turtlebot_ros2.yaml
+   export ROQSIM_WORLD=roqsim_mobile/src/roqsim_mobile/worlds/turtlebot4_demo.yaml
    scenario_execution --simulation roqsim.scenario_adapter:MujocoSim <scenario.osc>
 
 scenario-execution owns the loop and calls ``dt`` / ``setup`` / ``reset`` / ``step`` / ``shutdown``;
