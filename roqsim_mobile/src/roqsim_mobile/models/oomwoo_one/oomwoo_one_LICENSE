@@ -1,3 +1,14 @@
+Maker's Pet oomwoo! One -- vendored geometry and description.
+
+Upstream:   https://github.com/makerspet/oomwoo-one
+Commit:     5305e6c5bb64208563b2f68c15258b0815c7d7cf
+Copyright:  Ilia O. (iliao@makerspet.com)
+License:    Apache License 2.0, as declared by the upstream package.xml.
+
+Regenerate with: external/convert/build_oomwoo_one_mjcf.py
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

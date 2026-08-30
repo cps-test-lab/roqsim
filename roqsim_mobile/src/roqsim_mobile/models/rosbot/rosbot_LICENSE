@@ -1,3 +1,14 @@
+Husarion ROSbot -- vendored geometry and description.
+
+Upstream:   https://github.com/husarion/rosbot_ros  (rosbot_description)
+Commit:     41fad02196ee200a39e01579c75391385cc9b714
+Copyright:  Husarion (support@husarion.com)
+License:    Apache License 2.0, as declared by rosbot_description/package.xml.
+
+Regenerate with: external/convert/build_rosbot_mjcf.py
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

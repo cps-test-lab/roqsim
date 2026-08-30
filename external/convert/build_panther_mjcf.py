@@ -46,7 +46,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
-from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat, write_license  # noqa: E402
 
 HUSARION_URL = "https://github.com/husarion/husarion_ugv_ros.git"
 HUSARION_COMMIT = "559e784b84c05c813b6ecfce02751d8b3966528a"
@@ -280,7 +280,21 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         xml = build(expand_xacro(sources, description / "urdf/panther.urdf.xacro", Path(tmp),
                                      wrapper=WRAPPER.format(wheels=WHEELS)), wheel_cfg, palette)
-    shutil.copy2(description.parent / "LICENSE", PKG / "panther_LICENSE")
+    write_license(
+        description.parent / "LICENSE",
+        PKG / "panther_LICENSE",
+        [
+            "Husarion Panther -- vendored geometry and description.",
+            "",
+            f"Upstream:   {HUSARION_URL.removesuffix('.git')}  (husarion_ugv_description)",
+            f"Commit:     {HUSARION_COMMIT}",
+            "Copyright:  Husarion (support@husarion.com)",
+            "License:    Apache License 2.0, as declared by husarion_ugv_description/package.xml.",
+            "",
+            "Regenerate with: external/convert/build_panther_mjcf.py",
+            "The full text of the grant follows.",
+        ],
+    )
     target.write_text(xml)
     print(f"wrote {target} + meshes + panther_LICENSE")
     return 0

@@ -31,7 +31,6 @@ Usage::
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
@@ -39,7 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
-from urdf_source import expand_xacro, inertial, link_primitives, pose  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_primitives, pose, write_license  # noqa: E402
 
 OOMWOO_URL = "https://github.com/makerspet/oomwoo-one.git"
 #: The jazzy branch, which is this package's default and only release branch.
@@ -247,7 +246,21 @@ def main() -> int:
 
     PKG.mkdir(parents=True, exist_ok=True)
     xml = fresh()
-    shutil.copy2(source / "LICENSE", PKG / "oomwoo_one_LICENSE")
+    write_license(
+        source / "LICENSE",
+        PKG / "oomwoo_one_LICENSE",
+        [
+            "Maker's Pet oomwoo! One -- vendored geometry and description.",
+            "",
+            f"Upstream:   {OOMWOO_URL.removesuffix('.git')}",
+            f"Commit:     {OOMWOO_COMMIT}",
+            "Copyright:  Ilia O. (iliao@makerspet.com)",
+            "License:    Apache License 2.0, as declared by the upstream package.xml.",
+            "",
+            "Regenerate with: external/convert/build_oomwoo_one_mjcf.py",
+            "The full text of the grant follows.",
+        ],
+    )
     target.write_text(xml)
     print(f"wrote {target} + oomwoo_one_LICENSE (no meshes: the description is primitives)")
     return 0

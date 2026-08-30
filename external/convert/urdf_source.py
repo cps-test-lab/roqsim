@@ -86,6 +86,28 @@ def expand_xacro(
     return ET.fromstring(proc.stdout)
 
 
+#: Rule separating the provenance header from the upstream licence text below it.
+_LICENSE_RULE = "=" * 78
+
+
+def write_license(source: Path, dest: Path, header: list[str]) -> None:
+    """Copy an upstream LICENSE to ``dest``, prefixed with who it belongs to.
+
+    A plain copy is not enough for the permissive boilerplate licences. Apache-2.0's text names
+    nobody -- upstream ships the unmodified 201-line grant with no copyright line -- so a bare copy
+    beside a model is byte-identical to roqsim's own top-level LICENSE, and a reader cannot tell
+    whose grant it is, which upstream it came from, or at which commit. That is the one question a
+    per-model licence file exists to answer. BSD and MIT texts carry their own copyright line and do
+    not need this, but they are cheap to head as well.
+
+    The header is written by the generator rather than by hand for the usual reason: a rebuild
+    rewrites this file, so a hand-added header survives exactly until someone re-runs the converter.
+    """
+    dest.write_text(
+        "\n".join(header) + "\n\n" + _LICENSE_RULE + "\n" + source.read_text().lstrip("\n")
+    )
+
+
 def rpy_to_quat(roll: float, pitch: float, yaw: float) -> str:
     """URDF roll/pitch/yaw as an MJCF ``quat`` string (w x y z)."""
     import numpy as np

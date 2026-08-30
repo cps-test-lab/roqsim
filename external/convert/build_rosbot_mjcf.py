@@ -42,7 +42,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -51,7 +50,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
-from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat, write_license  # noqa: E402
 
 ROSBOT_URL = "https://github.com/husarion/rosbot_ros.git"
 # Pinned. If this moves, the port log moves with it.
@@ -282,7 +281,21 @@ def main() -> int:
                                        description / "urdf/rosbot.urdf.xacro", Path(tmp),
                                        wrapper=BASE_XACRO), palette)
     target = PKG / "rosbot.xml"
-    shutil.copy2(description.parent / "LICENSE", PKG / "rosbot_LICENSE")
+    write_license(
+        description.parent / "LICENSE",
+        PKG / "rosbot_LICENSE",
+        [
+            "Husarion ROSbot -- vendored geometry and description.",
+            "",
+            f"Upstream:   {ROSBOT_URL.removesuffix('.git')}  (rosbot_description)",
+            f"Commit:     {ROSBOT_COMMIT}",
+            "Copyright:  Husarion (support@husarion.com)",
+            "License:    Apache License 2.0, as declared by rosbot_description/package.xml.",
+            "",
+            "Regenerate with: external/convert/build_rosbot_mjcf.py",
+            "The full text of the grant follows.",
+        ],
+    )
     target.write_text(xml)
     print(f"wrote {target} + {len(MESHES)} meshes + rosbot_LICENSE")
     return 0

@@ -1,4 +1,16 @@
+Doosan Robotics M1013 -- vendored geometry and description.
 
+Upstream:   https://github.com/DoosanRobotics/doosan-robot2  (dsr_description2)
+Commit:     816ecb5d1c2599303eaf9540216afa03552f80ad
+Copyright:  Doosan Robotics (ros.robotics@doosan.com)
+License:    Apache License 2.0. This is the repository's own LICENSE file, and
+            dsr_description2/package.xml declares the same. GitHub's repository
+            metadata says BSD-3-Clause; the file and the manifest are authoritative.
+
+Regenerate with: external/convert/build_doosan_mjcf.py
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/

@@ -36,7 +36,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from urdf_source import (  # noqa: E402
-    expand_xacro, inertial, link_primitives, mesh_scales, pose,
+    expand_xacro, inertial, link_primitives, mesh_scales, pose, write_license,
 )
 
 #: model short name -> (repo, pinned commit on the jazzy branch, human name, body diameter mm)
@@ -261,7 +261,21 @@ def main() -> int:
 
         package.mkdir(parents=True, exist_ok=True)
         copy_meshes(source, package)
-        shutil.copy2(source / "LICENSE", package / f"{model}_LICENSE")
+        write_license(
+            source / "LICENSE",
+            package / f"{model}_LICENSE",
+            [
+                f"{human} -- vendored geometry and description.",
+                "",
+                f"Upstream:   {url.removesuffix('.git')}",
+                f"Commit:     {commit}",
+                "Copyright:  Ilia O. (iliao@makerspet.com)",
+                "License:    Apache License 2.0, as declared by the upstream package.xml.",
+                "",
+                "Regenerate with: external/convert/build_makerspet_mjcf.py",
+                "The full text of the grant follows.",
+            ],
+        )
         target.write_text(fresh())
         print(f"wrote {target} + meshes + {model}_LICENSE")
     return 1 if failed else 0

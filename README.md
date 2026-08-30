@@ -94,10 +94,10 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 
 | license | assets |
 | --- | --- |
-| BSD-3-Clause | Spot, xArm 7 and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Doosan M1013, Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky, Ridgeback |
-| Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther |
+| BSD-3-Clause | Spot, xArm 7 (© UFACTORY) and the Interbotix ViperX 300 / WidowX 250 (MuJoCo Menagerie; the last two © Trossen Robotics), Unitree G1 ×2, UR5e/UR10e/Robotiq (ROS-Industrial), Jackal, Husky, Ridgeback, Warthog (Clearpath) |
+| Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
-| MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse |
+| MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |
 | CC0-1.0 | surface textures (ambientCG, Poly Haven) |
 | CC-BY-4.0 | the warehouse scene (Gazebo Fuel), pedestrian characters and locomotion clips (CARLA, Fuel) |
 

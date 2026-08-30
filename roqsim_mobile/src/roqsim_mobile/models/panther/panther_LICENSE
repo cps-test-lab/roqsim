@@ -1,3 +1,14 @@
+Husarion Panther -- vendored geometry and description.
+
+Upstream:   https://github.com/husarion/husarion_ugv_ros  (husarion_ugv_description)
+Commit:     559e784b84c05c813b6ecfce02751d8b3966528a
+Copyright:  Husarion (support@husarion.com)
+License:    Apache License 2.0, as declared by husarion_ugv_description/package.xml.
+
+Regenerate with: external/convert/build_panther_mjcf.py
+The full text of the grant follows.
+
+==============================================================================
                                  Apache License
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
