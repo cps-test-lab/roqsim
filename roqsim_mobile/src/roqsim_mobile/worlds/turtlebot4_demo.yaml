@@ -1,6 +1,6 @@
 # TurtleBot 4 in an empty room — standalone demo world (roqsim_mobile).
 #
-# Standalone:  roqsim sim roqsim_mobile:turtlebot_demo
+# Standalone:  roqsim sim roqsim_mobile:turtlebot4_demo
 # A `test_cmd` drives the robot in a circle so the standalone scene shows motion.
 # For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
 
