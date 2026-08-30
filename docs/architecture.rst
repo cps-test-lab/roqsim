@@ -664,6 +664,14 @@ type string, e.g. ``control_msgs.action.FollowJointTrajectory``) is served as an
 whose goal-execution policy comes from a handler registry (``roqsim_ros_bridge/actions.py``) — so even
 MoveIt2 trajectory execution needs no dedicated bridge and no ROS import on the producer.
 
+That policy includes **what counts as done**, which is a property of the joints rather than of the
+clock. ``FollowJointTrajectory`` grades its result on where the arm actually ended: the goal's own
+``goal_tolerance`` first, then the controller's ``goal_tolerance`` config, then a deliberately loose
+default, and missing it aborts with ``GOAL_TOLERANCE_VIOLATED``. Succeeding as soon as the last
+waypoint has been *fed* — which this did — makes a blocked or saturated arm indistinguishable from one
+that did the job, and MoveIt forwards that verdict unchanged, so the caller sees a clean execution
+against a scene that never moved.
+
 **Injection, not authoring.** A world does not declare its transport. ``with_transport`` appends the
 bridge at load time (``roqsim sim --ros``; ``ROQSIM_ROS`` for the scenario-execution adapter), which is
 the exact inverse of ``drop_transport_plugins`` and is what keeps a checked-in world **ROS-free** and
