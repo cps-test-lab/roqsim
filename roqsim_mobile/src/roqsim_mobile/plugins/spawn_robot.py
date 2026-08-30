@@ -96,8 +96,37 @@ class SpawnRobotPlugin(Plugin):
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
+    def _resolve_base_body(self, ctx: SimContext) -> str:
+        """The robot's root body: ``<prefix>base_link`` where it exists, else the base joint's body.
+
+        The ROS convention is ``base_link`` and every wheeled base here follows it, but that is a
+        convention rather than a guarantee -- the Crazyflie's root body is ``cf2``. When the assumed
+        name did not exist the entity was registered pointing at a body that was not in the model,
+        which is not an error anyone sees at spawn time: it surfaces later, in whatever tries to use
+        it. That cost ``sim.view.track: <robot>`` (the camera could not follow an aerial robot at
+        all) and made every consumer carry its own fallback.
+
+        The base joint is the general answer: whatever a robot calls its root, the free joint is on
+        it. For a model that does have ``base_link`` both rules name the same body, so this changes
+        nothing for the wheeled families.
+        """
+        named = self.prefix + "base_link"
+        if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, named) >= 0:
+            return named
+        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
+        if jid >= 0:
+            resolved = mujoco.mj_id2name(
+                ctx.model, mujoco.mjtObj.mjOBJ_BODY, int(ctx.model.jnt_bodyid[jid])
+            )
+            if resolved:
+                return resolved
+        raise RuntimeError(
+            f"spawn_robot ({self.robot_name}): cannot resolve a root body -- neither {named!r} nor "
+            f"a body owning the base joint {self.base_joint!r} exists in the compiled model"
+        )
+
     def configure(self, ctx: SimContext) -> None:
-        base_body = self.prefix + "base_link"
+        base_body = self._resolve_base_body(ctx)
         ctx.entities.add(
             Entity(
                 name=self.robot_name,

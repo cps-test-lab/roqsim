@@ -567,6 +567,20 @@ The runtime counterpart to ``--set``: name a model field, name the objects, name
 
 ``geom_size`` is refused: ``geom_rbound`` is cached at compile, so a box grown 0.05 → 0.4 m kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that renders big and collides as if small. Three further refusals are *decisions* rather than safety, and the plugin says so: ``geom_priority`` (it also governs ``condim``/``solref``/``solimp``, so it would swap the contact's stiffness model at the instant of the fault), MuJoCo's own ``sensor_noise`` (§9.1 gave that to per-sensor config), and every ``opt.*`` global (``sim.contact_override`` and the ``sim:`` block own those, *before compile*, so they are in the compiled model and in the run's provenance -- a runtime write would make the recorded value differ from the one that ran).
 
+That last refusal is about a *fault-injection hook* poking a global whose recorded value is a single
+number, and it is worth stating what it does **not** forbid, because one plugin now writes an
+``opt.*`` global every tick. ``roqsim_aerial``'s ``wind_field`` owns ``opt.wind``: constant wind is
+the one wind a controller never has to reject (it trims against it once and the error goes to zero),
+so a world that can only state a constant cannot test disturbance rejection at all. The provenance
+argument does not carry across, because the wind there is not a value but a *signal* -- fully
+determined by the plugin's declared parameters plus the run's seed, both recorded with the world, and
+reproducible tick for tick. What makes that legitimate rather than a loophole is the same rule the
+refusal comes from: **one owner per knob**. ``wind_field`` refuses to load beside a ``sim.wind``,
+rather than merging with it, because two owners of one global is exactly the situation where the
+compiled model and the first tick disagree and the run records the value that was overwritten. A
+plugin that wants an ``opt.*`` global must take it over completely, say so, and fail loudly when
+something else has claimed it -- not share it.
+
 **The plugin never decides when to fire.** A fault's timing is the experiment's independent variable, and severity is the configured target value, so both stay sweepable: what crosses the wire is one bit. The inbound endpoint is therefore a ``std_srvs/SetBool`` **service** rather than a topic -- a command whose outcome the caller needs -- and its reply carries the verdict, so a scenario's ``service_call()`` can fail a trial that failed to inject its fault.
 
 **An override that lands in the model and changes nothing** is the failure that would otherwise produce plausible wrong data. MuJoCo takes a contact's friction from the geom with the higher ``priority``, and at *equal* priority the element-wise **maximum** of the two, so lowering one side cannot bring a pair below the other side's value. ``configure`` raises for what is certain (an unknown name, an empty selection, an explicit ``<pair>`` covering a selected geom, a geom :mod:`roqsim.presence` has made absent, an all-visual-only selection, a ``geom_contype`` override without its ``geom_conaffinity`` partner -- measured to be a no-op alone). The rest is caught at runtime by reading the *applied* contact rather than predicting it: one step after a change, ``verified`` reads ``landed``, ``no_effect`` (with a warning, and a failed service reply) or ``untested``. Deliberately *not* done: a configure-time analysis of which geom governs which pair, which would re-derive MuJoCo's mixing rule inside a generic field writer and could only ever warn.

@@ -19,9 +19,11 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
-# Aerial controller plugins, registered into the shared roqsim.plugins group.
+# Aerial controller and environment plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
 quadrotor_controller = "roqsim_aerial.plugins.quadrotor_controller:QuadrotorControllerPlugin"
+payload = "roqsim_aerial.plugins.payload:PayloadPlugin"
+wind_field = "roqsim_aerial.plugins.wind_field:WindFieldPlugin"
 
 # Bundled aerial models (crazyflie_2), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]

@@ -39,11 +39,16 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 - `roqsim_mobile_manipulation/` — robots that are a base **and** an arm (frankie, tiago_pro). The one
   package that may depend on both `roqsim_mobile` and `roqsim_manipulation`.
 - `roqsim_aerial/` — aerial vehicles (`crazyflie_2`) + `quadrotor_controller`, cascaded position and
-  attitude control over collective thrust and three body moments. Depends on `roqsim` only. Two
-  things differ from every ground family and both fail silently: a world with no `density`/
-  `viscosity` is a **vacuum**, so the drone hovers but nothing damps it; and a quadrotor MJCF has no
-  stabiliser, so an uncommanded drone is not a robot standing still but a falling brick — its
-  manifest pulls the controller in rather than offering it.
+  attitude control over collective thrust and three body moments, plus the two plugins an aerial
+  *experiment* varies: `payload` (carried mass — the thrust-margin knob) and `wind_field` (steady
+  flow, 1-cosine gust, Dryden turbulence). Depends on `roqsim` only. Two things differ from every
+  ground family and both fail silently: a world with no `density`/`viscosity` is a **vacuum**, so the
+  drone hovers but nothing damps it; and a quadrotor MJCF has no stabiliser, so an uncommanded drone
+  is not a robot standing still but a falling brick — its manifest pulls the controller in rather
+  than offering it. The airframe's thrust-to-weight ratio is 1.32, so payload is not a detail but the
+  flight envelope: the hover boundary sits at ~9 g. `wind_field` is the one plugin here that owns an
+  `opt.*` global (`opt.wind`); it therefore refuses to load beside a `sim.wind` — see
+  `docs/architecture.rst` §9.2.
 - `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
   behaviour-tree navigation with optional ORCA, character blueprints (`models/people/`) and CARLA
   locomotion clips (`models/anims/`). Depends on `roqsim` only — it is a *dynamic obstacle*, not a robot

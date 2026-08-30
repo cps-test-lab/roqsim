@@ -5,7 +5,7 @@ Aerial-vehicle plugins and models for [roqsim](../README.md).
 | | |
 | --- | --- |
 | Models | `crazyflie_2` — Bitcraze Crazyflie 2 nano quadrotor (MIT, from MuJoCo Menagerie) |
-| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments |
+| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments<br>`payload` — carried mass, the thrust-margin knob<br>`wind_field` — steady flow, 1-cosine gust, Dryden turbulence |
 | Worlds | `crazyflie_2_demo.yaml` — takes off from the floor and holds 1 m |
 
 ```bash
@@ -31,6 +31,47 @@ sim:
 standing still, it is a falling brick. `crazyflie_2`'s manifest therefore pulls
 `quadrotor_controller` in automatically, and unlike a ground robot's manifest that entry is not a
 convenience.
+
+## The flight envelope is the experiment
+
+The Crazyflie carries 0.35 N of collective thrust against a 27 g airframe — a thrust-to-weight ratio
+of **1.32**. That margin, not the controller, is what an aerial campaign is usually about, and two
+plugins exist to vary it:
+
+```yaml
+components:
+  - spawn_robot: {model: crazyflie_2, prefix: "cf2_", pos: [0.0, 0.0]}
+    name: drone
+    components:
+      - quadrotor_controller: {target: [0.0, 0.0, 1.0]}
+      - payload: {mass: 0.005}        # 5 g -> T/W 1.11
+  - wind_field:
+      steady: [3.0, 0.0, 0.0]
+      gust: {magnitude: 6.0, onset: 4.0, duration: 1.5}
+      turbulence: {intensity: 0.8, length_scale: 4.0}
+```
+
+Measured against a 1 m altitude hold, the boundary sits where physics says it does:
+
+| payload | total | T/W | altitude held |
+| --- | --- | --- | --- |
+| 0 g | 27 g | 1.32 | 1.00 m |
+| 3 g | 30 g | 1.19 | 0.91 m |
+| 6 g | 33 g | 1.08 | 0.82 m |
+| 9 g | 36 g | 0.99 | never leaves the floor |
+
+The graded sag before the collapse is real and worth knowing: `quadrotor_controller` has no integral
+term, so added weight buys steady-state altitude error rather than a cliff. The cliff arrives at
+T/W = 1.
+
+`payload` models a point mass **at the centre of mass** and refuses an `offset` rather than
+approximating one — an offset payload moves the centre of mass and adds a parallel-axis inertia term,
+which is a different airframe, not a heavier one.
+
+`wind_field` **replaces** `sim.wind` rather than adding to it: declaring both is refused, because two
+owners of one global means the compiled model and the first tick disagree and provenance records the
+value that was overwritten. Its turbulence draws from the run's seed through `ctx.rng_for`, so it has
+no seed of its own and reproduces with the rest of the world.
 
 ## Licensing
 
