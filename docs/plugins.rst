@@ -535,13 +535,6 @@ The two front wheels are steered by *different* angles and the two rear wheels d
 speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
 shared value would scrub the tyres. Both splits vanish as the curve straightens.
 
-``piracer`` (``roqsim_mobile``) ships with this plugin in its manifest, so a world that wants a car
-spawns one and declares none of the above::
-
-   components:
-     - spawn_robot: {model: piracer}
-       name: robot
-
 **Which width is** ``track``. A real car has three, and they are not interchangeable: the separation
 of the two *steering axes*, the separation of the front wheel centres, and the rear axle's track. The
 steer split is set by the first -- that is where the geometry pivots -- so a model whose steering

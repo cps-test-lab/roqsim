@@ -96,6 +96,12 @@ def test_the_world_count_is_the_number_a_ref_can_name():
 
     Several packages ship debugging worlds that are deliberately unregistered and run by path; a
     README promising "ready to run" is promising the ones a `<package>:<world>` ref names.
+
+    `*_demo.yaml` is excluded on top of that. A per-model demo is a way to look at ONE robot in an
+    empty room -- it exists so `roqsim sim <pkg>:<model>_demo` shows you the model -- and counting
+    one per model makes the total track the model count rather than the number of environments there
+    are to run anything in. They are still registered and still runnable; they are just not what this
+    number is claiming.
     """
     providers = list(_world_entry_points())
     if len(providers) < 5:
@@ -103,7 +109,8 @@ def test_the_world_count_is_the_number_a_ref_can_name():
     total = 0
     for ep in providers:
         worlds = Path(ep.load().WORLDS_DIR)
-        total += len(list(worlds.glob("*.yaml"))) if worlds.is_dir() else 0
+        if worlds.is_dir():
+            total += sum(1 for w in worlds.glob("*.yaml") if not w.name.endswith("_demo.yaml"))
     assert _stated(r"\*\*(\d+) ready-to-run worlds\*\*") == total, (
         f"the README says a different number of runnable worlds than are registered here ({total})"
     )
