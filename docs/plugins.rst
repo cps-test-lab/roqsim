@@ -420,6 +420,37 @@ were seen in; they are correspondingly not contiguous, which is why the detectio
 And class id **0 is background**: a declared class with id 0 would be indistinguishable from an
 unlabelled geom, so it is refused at load.
 
+What a run cost
+---------------
+
+``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
+a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
+analysis fits::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - energy_monitor: {efficiency: 0.72, idle_w: 8.0, capacity_wh: 26.0, voltage: 14.4}
+
+The split between measurement and assumption is explicit, and the defaults assume nothing.
+``force * velocity`` per actuator is measured, every step, at the physics rate -- reconstructed from
+a recording afterwards it would be sampled at the recording's rate and need a drivetrain model to
+turn poses back into effort, which is a fitted constant between the simulator and the result.
+``efficiency``, ``idle_w`` and ``regenerative`` are the platform's own numbers; unset, the plugin
+reports mechanical work and nothing else. A state of charge exists only where a ``capacity_wh`` was
+given -- without one the fraction is reported as *unknown* rather than as a full battery.
+
+Which actuators count is derived, not configured: every actuator driving a body of the robot's
+kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
+joint does not need the world edited. An entity with no actuators is an error, because a meter
+reading zero forever looks exactly like a robot that costs nothing to drive.
+
+**It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
+driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
+collision -- a scenario reads the endpoint and stops the run itself.
+
 Degrading a sensor mid-run
 --------------------------
 
