@@ -44,6 +44,11 @@ payload = "roqsim.plugins.payload:PayloadPlugin"
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 
+# Carrying something and letting go of it: a weld equality switched at run time (Gazebo's
+# DetachableJoint). Core, beside payload, because "the load rides along" is not a robot family --
+# a forklift, a deck and a drone's release hook are the same constraint.
+attachment = "roqsim.plugins.attachment:AttachmentPlugin"
+
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of
 # `roqsim export *` because they are already written into other people's configs and scripts.
