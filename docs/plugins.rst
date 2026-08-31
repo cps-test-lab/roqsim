@@ -390,6 +390,36 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
 
+Perception ground truth
+-----------------------
+
+Two plugins answer two different questions about the same objects, and an experiment usually wants
+one of them, not both. ``object_detector`` reports an object's POSE in the robot's frame -- what a
+manipulation stack consumes, and what a real pose estimator would output. ``segmentation_camera``
+reports which PIXELS an object covers -- what an IoU, a mask AP or a training set is computed from::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - segmentation_camera:
+             camera: oakd_rgb
+             classes:
+               - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
+               - {class_id: 2, name: person, entities: [walker_1]}
+             instances: true
+
+That publishes a ``mono8`` class image, a ``16UC1`` instance image and a
+``vision_msgs/Detection2DArray`` of tight boxes, all off one render through the named MJCF camera.
+
+Three properties are worth knowing before a metric is built on it. Boxes measure the **visible**
+extent, because that is the only extent derivable from a mask and the only one a detector could have
+produced -- an occluded object shrinks and, below ``min_pixels``, is not reported at all. Instance ids
+are **body ids**, so they are stable across frames and runs rather than depending on the order things
+were seen in; they are correspondingly not contiguous, which is why the detections name them.
+And class id **0 is background**: a declared class with id 0 would be indistinguishable from an
+unlabelled geom, so it is refused at load.
+
 Degrading a sensor mid-run
 --------------------------
 

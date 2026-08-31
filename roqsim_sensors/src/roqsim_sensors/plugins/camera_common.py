@@ -208,6 +208,7 @@ class CameraPlugin(Plugin):
                                  #   coefficients, so camera_info keeps describing its own pixels
           rate_hz: <DEFAULT_RATE_HZ>
           frame_id: <DEFAULT_FRAME_ID>
+          color: true            # publish the colour stream at all -- see PUBLISHES_COLOR
           compressed: true       # also publish <image topic>/compressed (CompressedImage)
           jpeg_quality: 95       # image_transport's default; only read when compressed is on
           topics: {}             # optional: hardwire absolute topics, e.g.
@@ -217,6 +218,13 @@ class CameraPlugin(Plugin):
     """
 
     parallel_safe = False  # owns a private mujoco.Renderer (not safe to share/parallelize)
+
+    #: Whether this camera's colour stream is worth publishing by default. A device that images
+    #: something other than colour -- a label camera, whose colour frame duplicates whatever RGB
+    #: sensor already looks through the same MJCF camera -- sets this False, and a world turns the
+    #: stream back on with ``color: true``. The render itself is unconditional (it is one pass and
+    #: every subclass's extra pass runs off it); what this decides is whether anyone is offered it.
+    PUBLISHES_COLOR = True
 
     DEFAULT_CAMERA = "camera"
     DEFAULT_FRAME_ID = "camera_optical_frame"
@@ -237,6 +245,7 @@ class CameraPlugin(Plugin):
         self.frame_id = self.config.get("frame_id", self.DEFAULT_FRAME_ID)
         # A compressed companion to `image`, on by default: real camera drivers advertise both, and an
         # idle publisher costs nothing here because the endpoint is lazy (see configure()).
+        self.color = bool(self.config.get("color", self.PUBLISHES_COLOR))
         self.compressed = bool(self.config.get("compressed", True))
         self.jpeg_quality = int(self.config.get("jpeg_quality", DEFAULT_JPEG_QUALITY))
         self._width_cfg = self.config.get("width")
@@ -312,6 +321,34 @@ class CameraPlugin(Plugin):
         image_topic = self.topic_override("image") or join_topic(
             self.DEFAULT_TOPIC_PREFIX, "image_raw"
         )
+        if self.color:
+            self._register_color(ctx, ns, image_topic)
+        ctx.interface.add(
+            Endpoint(
+                name="camera_info",
+                direction="out",
+                owner=self.robot,
+                namespace=ns,
+                read=lambda: self._intr,
+                rate_hz=self.rate_hz,
+                backend={
+                    "ros2": {
+                        "type": "sensor_msgs.msg.CameraInfo",
+                        "topic": self.topic_override("camera_info")
+                        or join_topic(self.DEFAULT_TOPIC_PREFIX, "camera_info"),
+                        "frame_id": self.frame_id,
+                    }
+                },
+            )
+        )
+        self._configure_extra(ctx, prefix, ns)
+
+    def _register_color(self, ctx: SimContext, ns: str, image_topic: str) -> None:
+        """The colour stream: the raw frame, and its compressed companion.
+
+        ``camera_info`` is NOT here even though it describes this frame: it describes every stream
+        off this camera, and a label-only camera still has to publish it.
+        """
         self._image_ep = Endpoint(
             name="image",
             direction="out",
@@ -359,25 +396,6 @@ class CameraPlugin(Plugin):
                 },
             )
             ctx.interface.add(self._compressed_ep)
-        ctx.interface.add(
-            Endpoint(
-                name="camera_info",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._intr,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.CameraInfo",
-                        "topic": self.topic_override("camera_info")
-                        or join_topic(self.DEFAULT_TOPIC_PREFIX, "camera_info"),
-                        "frame_id": self.frame_id,
-                    }
-                },
-            )
-        )
-        self._configure_extra(ctx, prefix, ns)
 
     def _configure_extra(self, ctx: SimContext, prefix: str, ns: str) -> None:
         """Hook for subclasses to register additional endpoints (e.g. depth)."""

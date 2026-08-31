@@ -26,7 +26,7 @@ hand-assemble.
 
 ## Features
 
-- **One YAML file per world.** Robots, sensors, props and scene declared together; **50 plugins** hook
+- **One YAML file per world.** Robots, sensors, props and scene declared together; **51 plugins** hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
 - **18 robot models across 5 families** — 4 wheeled bases (TurtleBot 4, TurtleBot 3 Waffle, Husky A200,
   Jackal), 5 arms and 2 grippers (UR10e, UR5e, Panda, Gen3, OpenManipulator-X; Robotiq 2F-85, Schunk
@@ -35,8 +35,9 @@ hand-assemble.
 - **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with six
   vendor-CAD sensor models. The IMU reports proper acceleration, true attitude (or none, marked as
   such) and covariances built from its declared noise, so a `robot_localization` stack has the input
-  it expects. Coverage analysis answers the question that actually blocks you: *how many
-  cameras, and where?*
+  it expects; a segmentation camera adds per-pixel class and instance labels with tight 2D boxes,
+  measured from the mask, so a perception experiment has ground truth to be scored against. Coverage
+  analysis answers the question that actually blocks you: *how many cameras, and where?*
 - **Scenes from what you already have.** Import Gazebo SDF, USD or CAD — or draw a floorplan in a window
   and get a world back.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus

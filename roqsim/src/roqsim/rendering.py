@@ -549,7 +549,12 @@ class FrameRenderer:
         before rasterisation, so a caller can append transient marker geoms (e.g. via
         :func:`mujoco.mjv_initGeom`) that render in 3D and track the camera.
         """
-        self._renderer.update_scene(data, self.camera)
+        # The options built in __init__ -- passed, not merely held: without this the absent-geom
+        # mask there was dead code, and the colour path excluded an absent entity only because
+        # MuJoCo's own default happens to mask the same group. A contract this tree states in
+        # `presence` must not rest on another project's default. Behaviourally a no-op today
+        # (MjvOption() IS that default, plus our one line), which is why it is safe to make real.
+        self._renderer.update_scene(data, self.camera, scene_option=self._vopt)
         if decorate is not None:
             decorate(self._renderer.scene)
         return self._renderer.render()

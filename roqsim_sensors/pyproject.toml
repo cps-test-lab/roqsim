@@ -43,6 +43,10 @@ fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
 sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
 ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
 object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
+# The pixel-level counterpart of object_detector: that one says WHERE an object is in the robot's
+# frame, this says WHICH PIXELS are it -- the ground truth a segmentation or detection metric is
+# computed against, plus the 2D boxes that fall out of the same mask.
+segmentation_camera = "roqsim_sensors.plugins.segmentation_camera:SegmentationCameraPlugin"
 force_torque = "roqsim_sensors.plugins.force_torque:ForceTorquePlugin"
 # The one sensor every platform here carries in reality and none could publish: a strap-down IMU.
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
