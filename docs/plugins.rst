@@ -535,8 +535,8 @@ The two front wheels are steered by *different* angles and the two rear wheels d
 speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
 shared value would scrub the tyres. Both splits vanish as the curve straightens.
 
-``piracer`` ships with this plugin in its manifest, so a world that wants a car spawns one and
-declares none of the above::
+``piracer`` (``roqsim_mobile``) ships with this plugin in its manifest, so a world that wants a car
+spawns one and declares none of the above::
 
    components:
      - spawn_robot: {model: piracer}
