@@ -980,7 +980,7 @@ def main(argv: list | None = None) -> int:
         dest="overrides",
         action="append",
         metavar="PATH=VALUE",
-        help="override a world value, e.g. --set plugins.floorplan.size=4.0 (repeatable)",
+        help="override a world value, e.g. --set components.floorplan.size=4.0 (repeatable)",
     )
     parser.add_argument(
         "--check",
