@@ -11,6 +11,10 @@ components:
   # There is NO slip_factor and none is available: a car turns by steering, not by scrubbing its
   # wheels sideways as the skid-steer bases do, so the ICR compensation husky_a200 / panther /
   # warthog carry has nothing to correct here.
+  #
+  # Rear-wheel drive and Ackermann steering are the vendor's own description of this kit, not an
+  # inference from the source URDF; so is the absence of suspension, which is why the wheels hang
+  # rigidly off the chassis here with no spring or damper between them.
   - ackermann_drive:
       wheel_radius: 0.034            # the tyre collision cylinder, and the wheel mesh agrees
       wheelbase: 0.155               # the joint origins: front axle 0.179 - rear axle 0.024
@@ -19,10 +23,15 @@ components:
       # the tyres sit -- the front wheel centres are 0.148 apart and the rear pair 0.171, so no one
       # number is all three. See the port log: the drive split wants the rear track and takes this.
       track: 0.120
-      max_steer_angle: 0.5           # ASSUMPTION: the description declares no limit at all
-      steer_rate: 5.0                # ASSUMPTION: no servo slew figure published
+      max_steer_angle: 0.5           # ASSUMPTION: the description declares no limit at all, and the
+                                     # servo's own travel is not it -- the linkage sets the lock
+      # The vendor's MG996R at 0.17 s/60 degrees. NO-LOAD, so a rack turning loaded tyres is slower
+      # and this errs optimistic; a measurement should lower it, not raise it.
+      steer_rate: 6.16
       accel_limit: 2.0               # ASSUMPTION: none published
-      max_linear_vel: 2.0            # ASSUMPTION: no top speed published for this kit
+      # The vendor's 37-520 gearmotor, 1:10 reduction, 740 RPM idle, over this wheel radius. Also
+      # NO-LOAD: a ceiling the car cannot exceed rather than a speed it reaches on the ground.
+      max_linear_vel: 2.635
       steer_actuators: [left_steer_motor, right_steer_motor]
       steer_joints:    [left_steer_joint, right_steer_joint]
       drive_actuators: [rear_left_wheel_motor, rear_right_wheel_motor]

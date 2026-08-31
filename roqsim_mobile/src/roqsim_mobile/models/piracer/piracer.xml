@@ -152,9 +152,9 @@
          above that the servo overshoots. Under-tracking is left in rather than tuned away, because
          a driven tyre does slip. -->
     <velocity name="rear_left_wheel_motor" joint="rear_left_tire_joint" kv="0.5"
-              ctrlrange="-59 59" forcerange="-2 2"/>
+              ctrlrange="-77 77" forcerange="-2 2"/>
     <velocity name="rear_right_wheel_motor" joint="rear_right_tire_joint" kv="0.5"
-              ctrlrange="-59 59" forcerange="-2 2"/>
+              ctrlrange="-77 77" forcerange="-2 2"/>
   </actuator>
 
   <keyframe>

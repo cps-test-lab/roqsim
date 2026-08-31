@@ -54,13 +54,21 @@ ROOT = Path(__file__).resolve().parents[2]
 PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/piracer"
 
 #: Physical quantities the upstream description does not honestly supply, so they come from the
-#: hardware instead. Each carries how it was obtained: an ASSUMED value is a placeholder to be
-#: replaced by a measurement, and the manifest and port log must say so for as long as it is one.
+#: hardware instead. Each carries how it was obtained, and the manifest and port log repeat it for as
+#: long as it holds: ASSUMED is a placeholder awaiting a measurement, VENDOR is derived from a
+#: published component figure and is stated as the bound it is.
 MEASURED = {
     "total_mass": (1.5, "ASSUMED"),      # kg, car as run: chassis, electronics, battery, wheels
     "wheel_mass": (0.045, "ASSUMED"),    # kg per tyre+rim assembly
     "com_x": (0.118, "ASSUMED"),         # m from the chassis origin; the axle load split fixes it
     "max_steer": (0.5, "ASSUMED"),       # rad at full lock -- the description declares NO limit
+    # 37-520 gearmotor, 1:10 reduction, 740 RPM idle over a 0.034 m wheel. NO-LOAD, so it is a
+    # ceiling the car cannot exceed rather than a speed it reaches; the actuator's ctrlrange is set
+    # from it for exactly that reason -- a servo must be able to ask for anything physically possible.
+    "max_speed": (2.635, "VENDOR"),
+    # MG996R, 0.17 s/60 degrees at 4.8 V. Also NO-LOAD: a rack turning loaded tyres is slower, so
+    # this errs optimistic and a measurement should lower it.
+    "steer_rate": (6.16, "VENDOR"),
 }
 
 #: Mass of one steering knuckle -- the small body carrying a front wheel's steer joint. It is not a
@@ -138,6 +146,7 @@ def build(urdf: ET.Element, meshes: Path) -> str:
     # keyframe spawns a hair higher again so the tyres settle rather than start interpenetrating.
     rest_height = radius - wheel_z
 
+    max_speed, _ = MEASURED["max_speed"]
     total_mass, _ = MEASURED["total_mass"]
     wheel_mass, _ = MEASURED["wheel_mass"]
     com_x, _ = MEASURED["com_x"]
@@ -236,7 +245,7 @@ def build(urdf: ET.Element, meshes: Path) -> str:
         camera_pos=camera_xyz,
         wheel_pairs=wheel_pairs,
         max_steer=f"{max_steer:g}",
-        wheel_ctrl=f"{2.0 / radius:.0f}",
+        wheel_ctrl=f"{max_speed / radius:.0f}",
         rest_height=f"{rest_height:g}",
         spawn_height=f"{rest_height + 0.002:g}",
     )
@@ -386,8 +395,8 @@ def main() -> int:
     target.write_text(xml)
     print(f"wrote {target.relative_to(ROOT)}")
     for key, (value, provenance) in MEASURED.items():
-        if provenance == "ASSUMED":
-            print(f"  note: {key}={value} is ASSUMED, not measured -- see the port log")
+        if provenance != "MEASURED":
+            print(f"  note: {key}={value} is {provenance}, not measured -- see the port log")
     return 0
 
 
