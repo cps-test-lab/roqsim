@@ -317,6 +317,53 @@ def fill_detection3d_array(msg, payload, stamp: Time, hints: dict) -> None:
     msg.detections = detections
 
 
+@converter("sensor_msgs.msg.Imu")
+def fill_imu(msg, payload, stamp: Time, hints: dict) -> None:
+    """A strap-down IMU reading (``roqsim_sensors.plugins.imu.ImuReading``).
+
+    Two details are REP 145 conventions rather than choices made here. The acceleration is proper
+    acceleration -- gravity included -- which is what the producer reads out of MuJoCo and what every
+    subscriber of this message assumes. And ``orientation_covariance[0] = -1`` is the standard marker
+    for "this device does not report attitude"; a rate-only IMU must send that rather than an identity
+    quaternion, which a consumer cannot tell from a level robot.
+
+    The covariances are isotropic diagonals built from the producer's declared per-axis variance, so a
+    filter weights the channel by the noise the world actually configured. A perfect sensor reports
+    zeros, which is truthful: it is the producer's job to state a floor if its consumer needs one.
+    """
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "imu_link")
+    if getattr(payload, "orientation_valid", True):
+        w, x, y, z = payload.orientation
+        msg.orientation = Quaternion(x=float(x), y=float(y), z=float(z), w=float(w))
+        msg.orientation_covariance = _diag3(payload.orientation_variance)
+    else:
+        # Leave the quaternion at its default and mark the channel absent.
+        cov = _diag3(0.0)
+        cov[0] = -1.0
+        msg.orientation_covariance = cov
+    wx, wy, wz = payload.angular_velocity
+    msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z = (
+        float(wx),
+        float(wy),
+        float(wz),
+    )
+    ax, ay, az = payload.linear_acceleration
+    msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z = (
+        float(ax),
+        float(ay),
+        float(az),
+    )
+    msg.angular_velocity_covariance = _diag3(payload.angular_velocity_variance)
+    msg.linear_acceleration_covariance = _diag3(payload.linear_acceleration_variance)
+
+
+def _diag3(variance: float) -> list:
+    """A row-major 3x3 covariance with *variance* on the diagonal, as the nine floats ROS wants."""
+    v = float(variance)
+    return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
+
+
 @converter("sensor_msgs.msg.JointState")
 def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, positions, velocities[, efforts]). Effort is optional so the wheel/locomotion producers

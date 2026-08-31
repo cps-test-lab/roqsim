@@ -21,3 +21,8 @@ That repository (and this mesh) is licensed Apache License 2.0:
 The camera offset/orientation baked into roqsim_sensors/models/d435/d435.xml's `d435_color` camera
 is derived from the same repository's realsense2_description/urdf/_d435.urdf.xacro (mesh-to-link
 and color-optical-frame transforms), not measured off the mesh directly.
+
+The inertial module's mount pose in d435.manifest.yaml's `imu` component comes from the same place:
+realsense2_description/urdf/_d435i_imu_modules.urdf.xacro (the accel/gyro frame relative to
+camera_link) put through the same mesh-to-link transform. The frame name it is stamped in
+(camera_imu_optical_frame) is realsense2_camera's own, from that package's include/constants.h.
