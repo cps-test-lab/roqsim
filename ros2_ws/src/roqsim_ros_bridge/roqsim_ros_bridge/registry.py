@@ -364,6 +364,64 @@ def _diag3(variance: float) -> list:
     return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
 
 
+@converter("vision_msgs.msg.Detection2DArray")
+def fill_detection2d_array(msg, payload, stamp: Time, hints: dict) -> None:
+    """2D image-space detections from a mask.
+
+    payload: ``[(class_id, class_name, instance_id, cx, cy, w, h), ...]`` in pixels, with the box
+    inclusive of both edge rows (so a 1x1 instance has size 1, not 0). The standard message a 2D
+    detector publishes, so a real one replaces the simulated producer without anything downstream
+    changing.
+
+    ``Detection2D.id`` carries the INSTANCE and the hypothesis carries the CLASS, which is the split
+    the message intends and the reason both fields exist: two parcels in view are one class and two
+    ids, and collapsing them (as a class-only producer must) makes a tracker associate them as one
+    object. Score is 1.0 because these are ground-truth boxes -- a mask either covers a pixel or does
+    not, and inventing a confidence would let a consumer threshold on a number that means nothing.
+    """
+    from vision_msgs.msg import (
+        BoundingBox2D,
+        Detection2D,
+        ObjectHypothesis,
+        ObjectHypothesisWithPose,
+    )
+
+    frame_id = frame(hints, "frame_id", "camera_optical_frame")
+    detections = []
+    # The numeric class is deliberately not on the wire: vision_msgs' class_id is a STRING, so the
+    # declared name is what a consumer should read, and there is no field for the number that would
+    # not be an abuse of one. It stays in the payload for an in-process reader, and a consumer that
+    # needs to relate a box to the label image's pixel values reads the world's own `classes:` block
+    # -- one mapping, in the place that defines it.
+    for _class_id, class_name, instance_id, cx, cy, w, h in payload:
+        det = Detection2D()
+        det.header.stamp = stamp
+        det.header.frame_id = frame_id
+        det.id = str(instance_id)
+
+        hypothesis = ObjectHypothesis()
+        # The declared NAME, not the numeric id: vision_msgs' class_id is a string, and a consumer
+        # reading "parcel" needs no copy of the world's class table to know what it saw. The number
+        # is what the label image carries, and it is in the message too, as the instance's own row.
+        hypothesis.class_id = str(class_name)
+        hypothesis.score = 1.0
+        result = ObjectHypothesisWithPose()
+        result.hypothesis = hypothesis
+        det.results = [result]
+
+        bbox = BoundingBox2D()
+        bbox.center.position.x = float(cx)
+        bbox.center.position.y = float(cy)
+        bbox.size_x = float(w)
+        bbox.size_y = float(h)
+        det.bbox = bbox
+
+        detections.append(det)
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame_id
+    msg.detections = detections
+
+
 @converter("sensor_msgs.msg.JointState")
 def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, positions, velocities[, efforts]). Effort is optional so the wheel/locomotion producers
