@@ -130,14 +130,18 @@ class OmniDrivePlugin(Plugin):
         self._sa_names = list(self.config.get("steer_actuators", []))
         self._said: list[int] = []
         self._sjid: list[int] = []
+        #: What `joint_states` reports, in the order `post_step` fills the buffers: the rolls, then
+        #: the steers. A swerve base's steer joints are ACTUATED, so leaving them out published a
+        #: robot whose wheels never turn -- see read_joint_states.
+        self._js_names = self._wj_names + self._steer
         #: Corner offsets (x, y) in WHEEL_ORDER, for the swerve twist -> per-wheel velocity map.
         self._corner: list[tuple[float, float]] = []
 
         self._target = np.zeros(3)  # commanded body-frame [vx, vy, wz], clipped
         self._cmd = np.zeros(3)  # ramped body-frame command actually written
         self._odom = np.zeros(6)  # x, y, yaw, vx, vy, wz  (pose world, twist body)
-        self._jpos = np.zeros(len(self._wj_names))
-        self._jvel = np.zeros(len(self._wj_names))
+        self._jpos = np.zeros(len(self._js_names))
+        self._jvel = np.zeros(len(self._js_names))
         # resolved in configure()
         self._aid = [-1, -1, -1]
         self._waid: list[int] = []
@@ -306,7 +310,7 @@ class OmniDrivePlugin(Plugin):
                 },
             )
         )
-        if self._wj_names:
+        if self._js_names:
             ctx.interface.add(
                 Endpoint(
                     name="joint_states",
@@ -341,7 +345,15 @@ class OmniDrivePlugin(Plugin):
         return (x, y, yaw, vx, vy, w)
 
     def read_joint_states(self):
-        return (self._wj_names, self._jpos, self._jvel)
+        """``(names, positions, velocities)`` for every joint this plugin drives.
+
+        The steer joints are in here as well as the rolls, and on a swerve base that is the half
+        that matters: they are position-actuated, so a consumer left without them (a
+        robot_state_publisher, and therefore TF and any viewer reading it) holds every steering
+        link at zero and shows a base that strafes with its wheels pointing straight ahead. The
+        rolls alone are what a mecanum base has; a swerve base also aims.
+        """
+        return (self._js_names, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target[:] = 0.0
@@ -434,6 +446,6 @@ class OmniDrivePlugin(Plugin):
         o[2] = (o[2] + wz * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4], o[5] = vx_b, vy_b, wz
 
-        for k, jid in enumerate(self._wjid):
+        for k, jid in enumerate(self._wjid + self._sjid):
             self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
             self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]

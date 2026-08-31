@@ -248,3 +248,33 @@ def test_the_wheels_roll_at_the_right_rate():
                 f"{0.6 / WHEEL_RADIUS:.3f}")
     finally:
         engine.shutdown()
+
+
+def test_joint_states_carries_the_steer_joints_it_actuates():
+    """A swerve base AIMS its wheels, so the steer joints belong in the stream a
+    robot_state_publisher builds TF from.
+
+    Without them every steering link sits at zero downstream, and the robot renders strafing with
+    its wheels pointing straight ahead -- the one thing this port's steering exists to get right.
+    """
+    engine = _engine()
+    try:
+        ep = next(e for e in engine.ctx.interface.all() if e.name == "joint_states")
+        names, pos, vel = ep.read()
+        steers = [f"mpo_700_caster_{c}_joint" for c in CORNER_NAMES]
+        rolls = [f"mpo_700_wheel_{c}_joint" for c in CORNER_NAMES]
+        assert list(names) == rolls + steers
+        assert len(pos) == len(vel) == len(names)
+
+        # And they carry the joint's real value, not a placeholder: a pure spin puts the two
+        # diagonal pairs at different angles (see test_a_pure_spin_aims_each_wheel_tangentially).
+        _drive(engine, 0.0, 0.0, 0.6)
+        names, pos, _ = ep.read()
+        model, data = engine.ctx.model, engine.ctx.data
+        for name, reported in zip(names, pos, strict=True):
+            jid = named(model, mujoco.mjtObj.mjOBJ_JOINT, f"n_{name}")
+            assert reported == pytest.approx(float(data.qpos[model.jnt_qposadr[jid]]))
+        assert any(abs(p) > 0.1 for n, p in zip(names, pos, strict=True) if n in steers), (
+            "a spin must show up as a non-zero steer angle")
+    finally:
+        engine.shutdown()
