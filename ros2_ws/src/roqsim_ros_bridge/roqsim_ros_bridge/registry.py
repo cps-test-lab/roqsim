@@ -392,7 +392,11 @@ def fill_controller_state(msg, payload, stamp: Time, hints: dict) -> None:
     msg.reference.positions = _as_f64(desired)
     msg.feedback.positions = _as_f64(actual)
     msg.feedback.velocities = _as_f64(velocities)
-    msg.error.positions = _as_f64([a - c for a, c in zip(actual, desired, strict=True)])
+    # reference - feedback, the sign the message itself states ("essentially reference - feedback,
+    # for a regular PID implementation") and the one ros2_control's own JointTrajectoryController
+    # publishes. A consumer reads this as "how much further to go", so the inverse does not merely
+    # look odd: an arm lagging behind its setpoint reports as leading it.
+    msg.error.positions = _as_f64([d - a for d, a in zip(desired, actual, strict=True)])
 
 
 # Bytes per pixel for the encodings roqsim_sensors' camera plugins use. One converter serves

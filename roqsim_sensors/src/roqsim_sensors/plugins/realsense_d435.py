@@ -135,6 +135,10 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         if self.points:
             self._cloud = PointCloud(points=self._reproject(self._depth))
 
+    def _reset_extra(self, ctx: SimContext) -> None:
+        super()._reset_extra(ctx)
+        self._cloud = None
+
     def _reproject(self, depth: np.ndarray) -> np.ndarray:
         """Depth image -> (N, 3) float32 XYZ in the ROS optical frame (x right, y down, z forward).
 
