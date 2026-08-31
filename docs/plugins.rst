@@ -451,6 +451,41 @@ reading zero forever looks exactly like a robot that costs nothing to drive.
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
 
+Declaring a plugin's config
+---------------------------
+
+Every plugin validates its own config, and that stays. What a plugin may now also do is *declare*
+it, so the checks and the published description come from one place::
+
+   from roqsim.schema import Field
+
+   class PayloadPlugin(Plugin):
+       CONFIG_SCHEMA = {
+           "mass": Field(float, required=True, minimum=0.0, unit="kg", doc="added to the body's own"),
+           "body": Field(str, default="", static=True, doc="body to load (default: the root body)"),
+       }
+
+       def validate_config(self, config):
+           errors = self.validate_schema(config)     # types, ranges, required keys
+           ...                                        # and whatever only this plugin knows
+           return errors
+
+``roqsim plugins describe payload`` then carries a ``schema`` block beside the docstring-parsed
+``parameters``: the same keys with their **types, defaults, units and bounds**. That is what a caller
+generating a world needs and what prose cannot give it -- and unlike a comment it cannot drift from
+behaviour, because validation runs on it.
+
+It is opt-in and additive: a plugin without a declaration behaves exactly as before, and one with a
+declaration still owns ``validate_config``. The schema covers what is the same everywhere; a rule
+only one plugin has (two lists the same length, a file that must exist, a cut that must be finite)
+stays where it belongs rather than growing the shared vocabulary.
+
+``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
+``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
+opt-in because a component's config carries keys the world's author did not write (a manifest's
+``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
+complete.
+
 Degrading a sensor mid-run
 --------------------------
 
