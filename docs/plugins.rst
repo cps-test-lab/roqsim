@@ -451,6 +451,33 @@ reading zero forever looks exactly like a robot that costs nothing to drive.
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
 
+Carrying something, and letting go of it
+----------------------------------------
+
+``attachment`` is the transport half of manipulation without the manipulation: a forklift with a
+pallet, a deck with a parcel, a drone with a release hook. The trial's question is *did the load
+arrive*, and simulating the grasp that holds it is a different experiment with a different failure
+mode::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - attachment: {body: graspable_carton, attached: false}
+
+It is MuJoCo's weld equality switched at run time -- Gazebo's ``DetachableJoint``, expressed the way
+this simulator already offers it. Two properties are what make it usable rather than a curiosity.
+It attaches the load **where the load is**, rewriting the weld's relative pose from the current
+state, so "drive up to it and pick it up" works without the world spawning the parcel in its carried
+pose; activating the weld alone would snap it back to whatever the MJCF declared. And it releases the
+load **with the velocity it has**, so a parcel let go from a moving deck carries on and slides off
+it.
+
+Like ``model_override`` and a sensor's ``fault:``, it owns no trigger: ``robot/attachment/attach`` is
+a ``std_srvs/SetBool`` a scenario calls when its own condition says to, and the initial state is
+config -- so "does the robot start loaded" is an ordinary campaign factor rather than a second world
+file. ``robot/attachment/attached`` reports the state for a stack that only wants to watch.
+
 Degrading a sensor mid-run
 --------------------------
 
