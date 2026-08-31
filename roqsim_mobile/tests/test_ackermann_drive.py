@@ -305,3 +305,119 @@ def test_config_errors_are_reported_by_name(override, expected):
 def test_the_four_name_lists_are_required():
     errors = AckermannDrivePlugin({}, entity="robot", label="drive").validate_config({})
     assert sum("is required" in e for e in errors) == 4
+
+
+# -- the Ackermann command interface -------------------------------------------------------------
+#
+# `steer` is the direct form of what `drive` infers, and it exists for the one thing a twist cannot
+# say. A twist states a CURVATURE, w/v, which is undefined at rest; an Ackermann command states the
+# angle, so the rack can be turned while the car stands still -- what a real car does while parking,
+# and what a car-like stack sends when lining up before it moves off.
+
+
+def _steer_qpos(engine) -> tuple[float, float]:
+    """What the steer joints actually reached."""
+    m, d = engine.ctx.model, engine.ctx.data
+    return tuple(
+        float(d.qpos[m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, j)]])
+        for j in ("steer_left", "steer_right")
+    )
+
+
+def _steer_ctrl(engine) -> tuple[float, float]:
+    """What the plugin ASKED the two steering servos for.
+
+    The angles to assert geometry against. This test vehicle's servos are deliberately soft -- it
+    exists to exercise the plugin, not to be a calibrated car -- so its joints reach maybe a third of
+    what they are told, and asserting on `qpos` would measure the fixture's gains rather than the
+    plugin's arithmetic. That is why the suite tests `steer_angles` as a pure function; this is the
+    same discipline one layer out.
+    """
+    m, d = engine.ctx.model, engine.ctx.data
+    return tuple(
+        float(d.ctrl[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_ACTUATOR, a)])
+        for a in ("steer_left_motor", "steer_right_motor")
+    )
+
+
+def test_a_stationary_car_can_turn_its_wheels_but_still_does_not_move():
+    """The whole reason for the second interface, stated as one test.
+
+    `test_a_zero_speed_turn_command_does_nothing` pins that a TWIST cannot do this. Both are true at
+    once and neither is a contradiction: the car may point its wheels anywhere while stopped, and it
+    still goes nowhere until something drives the rear wheels.
+    """
+    engine = _engine()
+    plugin = _plugin(engine)
+    before = _pose(engine)
+    for _ in range(1500):
+        plugin.steer(0.5, 0.0)
+        engine.step()
+    asked_left, asked_right = _steer_ctrl(engine)
+    want_left, want_right = plugin.steer_angles(0.5)
+    assert asked_left == pytest.approx(want_left) and asked_right == pytest.approx(want_right)
+    # And the rack physically followed, which is the claim: not merely commanded while stopped.
+    left, right = _steer_qpos(engine)
+    assert left > 0.1 and right > 0.1, "the rack must actually turn with the car stopped"
+    # Same tolerance as `test_a_zero_speed_turn_command_moves_nothing`, and for the same reason: the
+    # claim is that it does not drive off, not that it is nailed down. Turning a loaded rack under a
+    # stopped car scrubs the tyres and nudges the chassis a millimetre or two -- a real one does that
+    # too, which is why dry steering is hard on tyres.
+    after = _pose(engine)
+    assert abs(after[0] - before[0]) < 0.02
+    assert abs(after[1] - before[1]) < 0.02
+    assert abs(after[2] - before[2]) < 0.05
+
+
+def test_a_twist_cannot_do_the_same():
+    """The contrast that makes the interface worth having, rather than an alias for `drive`."""
+    engine = _engine()
+    plugin = _plugin(engine)
+    for _ in range(1500):
+        plugin.drive(0.0, 0.0, 1.0)  # all the yaw rate in the world, at zero speed
+        engine.step()
+    left, right = _steer_ctrl(engine)
+    assert left == 0.0 and right == 0.0, "a curvature says nothing at rest"
+
+
+def test_a_commanded_angle_is_split_between_the_wheels_like_any_other():
+    """`steer` feeds the same geometry `drive` does -- it skips the curvature, not the linkage."""
+    engine = _engine()
+    plugin = _plugin(engine)
+    delta = 0.4
+    for _ in range(1500):
+        plugin.steer(delta, 0.5)
+        engine.step()
+    left, right = _steer_ctrl(engine)
+    want_left, want_right = plugin.steer_angles(delta)
+    assert left == pytest.approx(want_left)
+    assert right == pytest.approx(want_right)
+    assert left > right, "left is the inner wheel of a left turn"
+
+
+def test_the_commanded_angle_is_clipped_to_the_rack():
+    engine = _engine()
+    plugin = _plugin(engine)
+    plugin.steer(10.0, 0.0)
+    assert plugin._steer_cmd == pytest.approx(CONFIG["max_steer_angle"])
+
+
+def test_whichever_command_arrived_last_owns_the_angle():
+    """The two forms are not merged: a twist after an angle goes back to deriving one.
+
+    Averaging a stated angle with a curvature-derived one would obey neither, so `drive` drops the
+    direct command and `steer` replaces it.
+    """
+    engine = _engine()
+    plugin = _plugin(engine)
+    plugin.steer(0.5, 0.0)
+    assert plugin._steer_cmd is not None
+    plugin.drive(0.5, 0.0, 0.0)
+    assert plugin._steer_cmd is None
+    for _ in range(1500):
+        plugin.drive(0.5, 0.0, 0.0)
+        engine.step()
+    left, right = _steer_ctrl(engine)
+    assert left == pytest.approx(0.0, abs=1e-6) and right == pytest.approx(0.0, abs=1e-6), (
+        "a straight twist must re-centre the rack"
+    )

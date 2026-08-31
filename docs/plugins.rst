@@ -549,6 +549,27 @@ axes are inboard of its wheels (most of them, since a kingpin sits inside the hu
 kingpin separation and not the track it is measured across the tyres. Passing the widest of the three
 overstates the split at every radius.
 
+It also accepts the message a car-like stack already speaks. ``ackermann_cmd`` takes an
+``ackermann_msgs/AckermannDriveStamped`` on ``drive``, beside the ``cmd_vel`` every base here
+publishes::
+
+   ros2 topic pub /drive ackermann_msgs/msg/AckermannDriveStamped \
+     '{drive: {steering_angle: 0.3, speed: 0.6}}'
+
+The message's ``steering_angle`` is defined as *the yaw of a virtual wheel located at the center of
+the front axle*, which is exactly the centre angle this plugin splits into two, so nothing is
+converted on the way in. **That is what makes it more than an alias for a twist**: a twist states a
+curvature, ``w / v``, which says nothing at rest -- so through ``cmd_vel`` a stopped car's rack can
+only hold the angle it has. Through ``ackermann_cmd`` a stopped car can turn its wheels, which is
+what a real one does while parking, and what a car-like stack sends when lining up before it moves
+off. Whichever of the two commands arrived last owns the angle; they are never merged, because a
+stated angle and a curvature are two ways of saying the same thing and averaging them obeys neither.
+
+Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
+well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
+controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
+around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+
 Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
 is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a

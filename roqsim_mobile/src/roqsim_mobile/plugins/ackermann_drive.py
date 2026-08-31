@@ -114,6 +114,11 @@ class AckermannDrivePlugin(Plugin):
         self._target_w = 0.0
         self._cmd_v = 0.0  # ramped speed
         self._steer = 0.0  # slewed centre (bicycle) steering angle
+        #: Centre angle commanded directly (Ackermann), or None when the last command was a twist.
+        #: Which of the two arrived last decides where the angle comes from; they are not merged,
+        #: because a twist's curvature and a stated angle are two ways of saying the same thing and
+        #: averaging them would obey neither.
+        self._steer_cmd: float | None = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]  # x, y, yaw, v, w
         self._steer_aid: list[int] = []
         self._steer_jid: list[int] = []
@@ -218,6 +223,28 @@ class AckermannDrivePlugin(Plugin):
         )
         ctx.interface.add(
             Endpoint(
+                name="ackermann_cmd",
+                direction="in",
+                owner=self.robot,
+                namespace=ns,
+                write=lambda cmd: self.steer(cmd[0], cmd[1]),
+                backend={
+                    "ros2": {
+                        # The message's own steering_angle is documented as "the yaw of a virtual
+                        # wheel located at the center of the front axle", which is exactly the angle
+                        # this plugin splits into two. The representations line up field for field,
+                        # so nothing is converted on the way in.
+                        "type": "ackermann_msgs.msg.AckermannDriveStamped",
+                        # `drive` rather than the endpoint's own name: this interface exists to be
+                        # spoken to by stacks that already emit AckermannDriveStamped, and they emit
+                        # it there. A world that wants another topic says so with a topic override.
+                        "topic": self.topic_override("ackermann_cmd") or "drive",
+                    }
+                },
+            )
+        )
+        ctx.interface.add(
+            Endpoint(
                 name="odom",
                 direction="out",
                 owner=self.robot,
@@ -258,6 +285,24 @@ class AckermannDrivePlugin(Plugin):
         """Body-frame twist target (``vy`` dropped: a car cannot strafe either)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(w)
+        self._steer_cmd = None  # a twist states a curvature; the angle is derived from it again
+
+    def steer(self, delta: float, speed: float) -> None:
+        """Ackermann target: the centre (bicycle) steering angle, and a speed.
+
+        The direct form of what :meth:`drive` has to infer, and it can say one thing a twist cannot.
+        A twist states a *curvature*, which is ``w / v`` -- undefined at rest, so below ``_MIN_SPEED``
+        the rack simply holds whatever angle it has. An Ackermann command states the angle itself, so
+        **a stationary car can turn its wheels**, which is what a real one does while parking and what
+        a car-like stack sends when it is lining up before moving off.
+
+        ``delta`` is the angle of a virtual wheel at the centre of the front axle -- the same quantity
+        :meth:`steer_angles` splits into the two real ones, and the same one ``ackermann_msgs``
+        defines its ``steering_angle`` to be.
+        """
+        self._steer_cmd = float(np.clip(delta, -self.max_steer, self.max_steer))
+        self._target_v = float(np.clip(speed, -self.max_v, self.max_v))
+        self._target_w = 0.0
 
     def steer_angles(self, delta: float) -> tuple[float, float]:
         """(left, right) wheel angles for a centre (bicycle) angle -- the geometry the linkage does.
@@ -294,13 +339,21 @@ class AckermannDrivePlugin(Plugin):
         else:
             self._cmd_v = self._target_v
 
-        # Curvature, and the angle that produces it. A stationary car has no curvature: the command
-        # is not approximated, and the rack holds its angle rather than centring itself.
-        if abs(self._target_v) >= _MIN_SPEED:
+        # Where the target angle comes from, and the one place the two command forms differ.
+        #
+        # An Ackermann command states the angle, so it applies at any speed including zero -- the
+        # rack turns while the car stands still. A twist states a curvature, `w / v`, which says
+        # nothing at all at rest: there the command is not approximated and the rack holds its angle
+        # rather than centring itself, because a real one does.
+        target_steer = None
+        if self._steer_cmd is not None:
+            target_steer = self._steer_cmd
+        elif abs(self._target_v) >= _MIN_SPEED:
             curvature = self._target_w / self._target_v
             target_steer = float(
                 np.clip(np.arctan(self.wheelbase * curvature), -self.max_steer, self.max_steer)
             )
+        if target_steer is not None:
             if self.steer_rate > 0:
                 step = self.steer_rate * ctx.dt
                 self._steer += float(np.clip(target_steer - self._steer, -step, step))
