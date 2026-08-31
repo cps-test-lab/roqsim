@@ -422,6 +422,56 @@ def fill_detection2d_array(msg, payload, stamp: Time, hints: dict) -> None:
     msg.detections = detections
 
 
+@converter("sensor_msgs.msg.BatteryState")
+def fill_battery_state(msg, payload, stamp: Time, hints: dict) -> None:
+    """A robot's energy state (``roqsim.plugins.energy_monitor.EnergyReport``).
+
+    The message a real platform publishes, so a stack that already watches a battery needs no change.
+    Two of its conventions are load-bearing and easy to get wrong: an unknown value is ``NaN``, not
+    zero (a zero voltage reads as a dead pack), and ``percentage`` is a FRACTION in [0, 1] rather
+    than a percent. A producer with no configured capacity reports the charge fields as unknown
+    instead of inventing a full battery.
+
+    ``current`` is negative while discharging -- the sign REP 145's battery message uses for current
+    leaving the pack -- so a consumer plotting it sees a drain rather than a charge.
+    """
+    from sensor_msgs.msg import BatteryState
+
+    unknown = float("nan")
+    known_charge = payload.charge_fraction >= 0.0
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "base_link")
+    msg.voltage = float(payload.voltage) if payload.voltage > 0.0 else unknown
+    msg.current = -float(payload.current_a) if payload.voltage > 0.0 else unknown
+    msg.charge = (
+        float(payload.capacity_wh * payload.charge_fraction / payload.voltage)
+        if known_charge and payload.voltage > 0.0
+        else unknown
+    )
+    msg.capacity = (
+        float(payload.capacity_wh / payload.voltage)
+        if payload.capacity_wh > 0.0 and payload.voltage > 0.0
+        else unknown
+    )
+    msg.design_capacity = msg.capacity
+    msg.percentage = float(payload.charge_fraction) if known_charge else unknown
+    msg.power_supply_status = (
+        BatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING
+        if payload.depleted
+        else BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+    )
+    msg.power_supply_health = (
+        BatteryState.POWER_SUPPLY_HEALTH_DEAD
+        if payload.depleted
+        else BatteryState.POWER_SUPPLY_HEALTH_GOOD
+    )
+    msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN
+    msg.present = True
+    # The integral itself -- the number a paper actually quotes -- has no field here and is not
+    # smuggled into one that means something else. A consumer that needs joules reads the endpoint's
+    # payload in process, or the plugin's blackboard reader.
+
+
 @converter("sensor_msgs.msg.JointState")
 def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, positions, velocities[, efforts]). Effort is optional so the wheel/locomotion producers
