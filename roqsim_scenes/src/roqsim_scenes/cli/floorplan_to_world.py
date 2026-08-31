@@ -558,7 +558,8 @@ def main(argv: list | None = None) -> None:
         action="store_true",
         help="roof the building: a concrete slab over the whole plan, soffit at --ceiling-h. Off by "
         "default (an open plan reads better from above); the core `ceiling` plugin takes it back "
-        "off at run time (`- ceiling: {enabled: false, above_z: ...}`)",
+        "off at run time (`- ceiling: {keep: false, above_z: ...}`) -- `enabled:` is the reserved "
+        "sibling that switches a component OFF, which for this one would leave the roof standing",
     )
     ap.add_argument(
         "--bake-config",

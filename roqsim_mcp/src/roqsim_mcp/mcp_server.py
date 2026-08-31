@@ -14,10 +14,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""A real MCP server for ``roqsim.introspection`` -- for use without any surrounding harness.
+"""A real MCP server for roqsim's introspection -- for use without any surrounding harness.
 
-The JSON CLI (``roqsim plugins list --json`` / ``python -m roqsim.introspection list``)
-answers "what plugins does this container have" from a shell, but not from an MCP
+The JSON CLIs (``python -m roqsim.introspection list``, ``roqsim catalog models``) answer
+"what does this container have -- plugins, models, worlds" from a shell, but not from an MCP
 client. This registers the exact same functions as MCP tools -- no new logic, just a
 second, equally thin adapter, the same one-line pattern any MCP plugin uses to register
 theirs.
@@ -30,9 +30,13 @@ directly.
 
 from fastmcp import FastMCP
 
+from roqsim.catalog import get_model_details, list_models, list_worlds
 from roqsim.introspection import get_plugin_details, list_plugins
 
-_TOOLS = [list_plugins, get_plugin_details]
+#: Everything a caller needs to ask before writing a world: what plugins exist, what can be spawned,
+#: and what worlds are already there. Adding one is one line here, because each is already a plain
+#: function returning plain dicts -- the reason this server has no logic of its own.
+_TOOLS = [list_plugins, get_plugin_details, list_models, get_model_details, list_worlds]
 
 
 def create_server() -> FastMCP:

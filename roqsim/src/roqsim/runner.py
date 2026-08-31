@@ -6,7 +6,7 @@
     roqsim sim world.yaml --headless --pacing asap --steps 1000 --profile
     roqsim sim world.yaml --right-ui        # open MuJoCo's control panel
     roqsim sim world.yaml --manual-control  # ... and drive the robot with its sliders
-    roqsim sim world.yaml --set plugins.floorplan.size=4.0   # override world values
+    roqsim sim world.yaml --set components.floorplan.size=4.0   # override world values
     roqsim sim world.yaml --record run.npz                  # record state for later rendering
     roqsim sim world.yaml --video run.webm                  # ... and render it when the run ends
 
@@ -1035,7 +1035,8 @@ def main(argv: list | None = None) -> int:
         dest="overrides",
         action="append",
         metavar="PATH=VALUE",
-        help="override a world value, e.g. --set plugins.floorplan.floor.reflectance=0.3 (repeatable)",
+        help="override a world value, e.g. --set components.floorplan.floor.reflectance=0.3 "
+        "(repeatable)",
     )
     parser.add_argument(
         "--override",
