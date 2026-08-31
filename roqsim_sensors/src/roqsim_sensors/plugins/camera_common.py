@@ -438,6 +438,27 @@ class CameraPlugin(Plugin):
     def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:
         """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer."""
 
+    def on_reset(self, ctx: SimContext) -> None:
+        """Clear the capture gate and the payloads, because a reset restarts ``sim_time`` at 0.
+
+        Without this the gate holds the previous trial's capture time, which is now in the FUTURE:
+        ``_due`` stays false until sim time passes where the last trial ended, so a trial shorter
+        than its predecessor renders nothing at all. Nothing fails while that happens -- the
+        endpoints keep answering, with the previous trial's final frame, so the run publishes a
+        frozen image and a frozen depth map under this trial's timestamps. One process serving
+        several repetitions is the ordinary case, so this is every camera in every repetition after
+        the first. The ray-casting sensors clear their own gate for exactly this reason.
+
+        The payloads go with the gate: an endpoint read before the first capture of a new trial must
+        answer "nothing yet" rather than the last trial's pixels.
+        """
+        self._last_capture = float("-inf")
+        self._rgb = None
+        self._reset_extra(ctx)
+
+    def _reset_extra(self, ctx: SimContext) -> None:
+        """Hook for subclasses to clear the payloads ``_capture_extra`` produces."""
+
     def shutdown(self, ctx: SimContext) -> None:
         if self._frames is not None:
             self._frames.close()

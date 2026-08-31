@@ -250,3 +250,7 @@ class DepthCameraPlugin(CameraPlugin):
         depth[self._invalid] = np.inf
         self._depth = depth
         self._depth_wire = None  # a new frame invalidates the encoded copy of the last one
+
+    def _reset_extra(self, ctx: SimContext) -> None:
+        self._depth = None
+        self._depth_wire = None
