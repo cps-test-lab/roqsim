@@ -202,6 +202,27 @@ names the same eye position and renders the identical image, it just no longer r
 from the scene". And F8 needs a world YAML to write into — a run started from an MJCF scene or a bare
 model reference has none, and says so rather than picking a file.
 
+Checking a world before running it
+----------------------------------
+
+``roqsim check`` loads a world as far as it goes and reports **every** problem it found, in the order
+the loader would hit them -- so a world with three bad keys reports three, and a mount that does not
+exist is named rather than discovered by a run that dies quietly::
+
+   roqsim check world.yaml
+   roqsim check roqsim_mobile:husky_demo --json     # the same report, for a script
+
+It runs five stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure`` -- and says
+which one it reached, because "the config is wrong" and "the config is fine and the model refused the
+name a plugin asked for" send a reader to different files. It does not step the simulation: a world
+that passes can still behave wrongly, but it cannot fail to *start*, which is the failure worth
+catching before a campaign queues a thousand of them.
+
+With no problems it prints the inventory instead: the entities that registered, the endpoints they
+publish with their topics and types, and the model's totals. That is what the next thing gets written
+against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the
+world file and its manifests to work out what is in there.
+
 .. _recording-a-run:
 
 Recording a run
