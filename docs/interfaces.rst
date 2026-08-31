@@ -58,7 +58,7 @@ compiled when the engine is built, so mutating a built ``SimConfig`` has no effe
 The standalone runner exposes the same thing on the command line, where
 ``roqsim.overrides_from_dotlist`` parses the ``path=value`` form::
 
-   roqsim sim world.yaml --set plugins.floorplan.size=4.0
+   roqsim sim world.yaml --set components.floorplan.size=4.0
 
 ...and in a **file**, which is the same nested mapping kept somewhere a command line cannot keep
 it::
