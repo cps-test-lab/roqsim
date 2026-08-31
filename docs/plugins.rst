@@ -474,6 +474,41 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
 
+Bases: three geometries, one interface
+--------------------------------------
+
+``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
+``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
+something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
+place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
+that command is a planner that would not move the real vehicle, and approximating a car with a
+differential base and a small angular limit hides exactly the failure the experiment is looking for.
+
+``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
+right -- plus the wheelbase and track its geometry comes from::
+
+   components:
+     - spawn_robot: {model: my_car}
+       name: robot
+       components:
+         - ackermann_drive:
+             wheelbase: 0.32
+             track: 0.24
+             max_steer_angle: 0.5
+             steer_actuators: [left_steer_motor, right_steer_motor]
+             steer_joints:    [left_steer_joint, right_steer_joint]
+             drive_actuators: [rear_left_motor, rear_right_motor]
+             drive_joints:    [rear_left_joint, rear_right_joint]
+
+The two front wheels are steered by *different* angles and the two rear wheels driven at *different*
+speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
+shared value would scrub the tyres. Both splits vanish as the curve straightens.
+
+Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
+is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
+for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
+constant would only make the estimate look better than the sensor it stands for.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 
