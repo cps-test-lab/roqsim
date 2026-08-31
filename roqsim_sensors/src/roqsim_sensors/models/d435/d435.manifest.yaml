@@ -1,12 +1,56 @@
-# Default capture plugin shipped with the d435 mount.
+# What the d435 mount ships with: the capture plugin, and the D435i's integrated IMU.
 #
-# `spawn_sensor: {model: d435}` pulls this in automatically, so a world does not re-declare the
-# capture plugin. To override, declare realsense_d435 for the same mount in the world (it wins);
-# to opt out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
-# spawn_sensor `name`.
+# `spawn_sensor: {model: d435}` pulls both in automatically, so a world does not re-declare them.
+# To override one, declare it for the same mount in the world (it wins, and keeps this file's config
+# for every key it does not restate); to drop one, `enabled: false` on that component; to opt out of
+# all of them, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the
+# spawn_sensor `name`, and `prefix` is inherited from it.
 components:
   - realsense_d435:
       camera: d435_color
+
+  # The D435i's integrated inertial module (BMI055). It is part of the DEVICE, so it arrives with the
+  # model rather than being re-declared by every world that mounts one -- the same argument that puts
+  # the capture plugin above in this manifest. The bundled model has always been the D435i: its FOV
+  # and min-Z come from that datasheet and the plugin is named for it, so the IMU belongs here rather
+  # than in a second model folder that would duplicate a vendored mesh and the camera pose with it.
+  #
+  # Two ways out, because the real driver streams the IMU only when asked (`enable_gyro` and
+  # `enable_accel` default to false in realsense2_camera's own rs_launch.py):
+  #   * nothing is computed while nothing subscribes -- the endpoint is lazy (see the imu plugin)
+  #   * `enabled: false` on this component removes it, per world or as a campaign factor
+  #     (components: {<mount>.imu: {enabled: false}})
+  - imu:
+      body: mount
+      # Where the inertial module sits in this MJCF's mount frame. NOT measured off the mesh and not
+      # guessed: derived from realsense2_description's own extrinsics, the same source the
+      # `d435_color` camera pose above came from --
+      #   _d435i_imu_modules.urdf.xacro: accel and gyro frames are co-located at
+      #     xyz = (-0.01174, -0.00552, 0.0051) relative to camera_link, rpy = 0
+      #   _d435.urdf.xacro: the mesh sits in camera_link at
+      #     xyz = (zero_depth_to_glass + glass_to_front, -cam_depth_py, 0), rpy = (pi/2, 0, pi/2)
+      # so mesh_pos = R(pi/2,0,pi/2)^-1 * (imu_pos_link - mesh_offset). test_d435i_imu.py recomputes
+      # both from those constants and fails if either drifts -- including the camera's, which is what
+      # proves the same chain reproduces a number already in the model.
+      pos: [0.01198, 0.0051, -0.01604]
+      # The ROS optical convention (x right, y down, z forward), reached by the same derivation: the
+      # accel/gyro frame rotated by rpy(-pi/2, 0, -pi/2), expressed in the mesh frame, is a 180 deg
+      # turn about z. This is the frame the message is stamped in, so it has to be the frame the
+      # reading is measured in.
+      quat: [0.0, 0.0, 0.0, 1.0]
+      frame_id: camera_imu_optical_frame   # realsense2_camera constants.h / base_realsense_node.cpp
+      # One fused message carrying both channels, which is what the driver publishes with
+      # `unite_imu_method` set (its default of 0 leaves accel and gyro on separate topics instead).
+      topic: camera/imu
+      # 200 Hz: one of the D435i's supported gyro rates. Deliberately not "the driver's default" --
+      # its gyro_fps/accel_fps default to 0, meaning "whatever the device picks", so there is no
+      # number to copy. A world that reconstructs a specific run overrides it.
+      rate_hz: 200.0
+      # The hardware cannot report attitude: accelerometer + gyroscope, no magnetometer, and no
+      # fusion on board -- so a real driver publishes orientation_covariance[0] = -1 and that is what
+      # this must do. Turning it on would hand a stack a heading its sensor could not have measured,
+      # which is the difference between a reconstruction and a flattering one.
+      orientation: false
 
 # Valid detection range (m) the `spawn_sensor` show_fov cone is drawn to, and what the coverage
 # catalog reads for a hypothetical D435 placement.

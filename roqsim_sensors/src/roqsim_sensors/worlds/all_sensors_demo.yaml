@@ -14,7 +14,9 @@
 #
 # Covered here: livox_mid360 (3D lidar, 360° dome), seyond_robin_w1g (3D lidar, forward 120°×70°),
 # lidar (2D), realsense_d435, realsense_d415, realsense_d455, zivid (RGB-D), oakd_camera (RGB-D),
-# fiducial_marker, sensor_coverage_probe (coverage report/render).
+# fiducial_marker, sensor_coverage_probe (coverage report/render), and — from the d435's manifest,
+# not declared below — the D435i's integrated imu on camera/imu. Its mount is bolted to the world,
+# so it reads a steady 1 g and no rate; nothing is computed for it unless something subscribes.
 #
 # Every sensor shows its field of view (show_fov): the Mid-360 and Robin W1G get a synthesised angular
 # sector (dome / forward wedge), and every camera mount — the RealSenses, the Zivid and the OAK-D —

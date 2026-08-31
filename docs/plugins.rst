@@ -118,7 +118,11 @@ Model plugin manifests
 
 A robot's controller and sensors are intrinsic to the *model*, not the *world*, so they ship with
 the model in a ``<model>.manifest.yaml`` manifest next to its MJCF. A spawn plugin pulls them in
-automatically, so a world just spawns the robot:
+automatically, so a world just spawns the robot -- and the same applies to a *device* with more than
+one sensor in it: the bundled ``d435`` is a D435i, so its manifest carries the ``imu`` component with
+the inertial module's own extrinsic, and ``spawn_sensor: {model: d435}`` yields both ``camera/imu``
+and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
+component (which is also how "does this device have an IMU" becomes a campaign factor):
 
 .. code:: yaml
 

@@ -36,6 +36,20 @@ of ``sensor_msgs/Imu`` assumes (REP 145), so it is passed through untouched -- n
 removed here. ``tests/test_imu.py`` pins it, because it is the one property a reader cannot verify by
 looking at this file.
 
+**A device bolted to the world still reads 1 g.** MuJoCo's accelerometer is a proper-acceleration
+sensor computed from constraint forces, so a body resting on the floor reads ``+9.81`` (measured) and
+a body in free fall reads ``0`` (measured) -- but a body **welded to the worldbody**, which is what a
+fixed camera mount or a wall-mounted sensor is, reads ``0`` as well: it has no degrees of freedom, so
+no acceleration is ever computed for it. Left alone, a tripod-mounted D435i would tell a stack it was
+falling, forever.
+
+For that one case the answer is closed-form rather than a model of anything: a body that cannot move
+has proper acceleration exactly ``-g`` expressed in the sensor frame, so the plugin evaluates it
+(detected by ``body_weldid == 0``, which is precisely "welded to the world", nested fixed children
+included) and logs that it did. Nothing else is substituted: a body held by a *joint*, even a
+motionless one, has MuJoCo compute its acceleration properly, and that reading is used untouched.
+Gyro and attitude need no such handling -- a welded body cannot rotate, and ``0 rad/s`` is right.
+
 **Attitude is ground truth, and says so.** ``framequat`` is the site's true world orientation, not
 the output of an on-board fusion filter: there is no drift, no yaw bias, and no magnetometer.
 A real strap-down IMU without magnetic heading has *unobservable* yaw, so a stack fed this signal is
@@ -67,6 +81,9 @@ Config::
       pos: [0.0, 0.0, 0.0]      # mount offset in the body frame (m)
       rpy: [0.0, 0.0, 0.0]      # mount orientation, fixed-axis XYZ (rad); or `quat: [w, x, y, z]`
       frame_id: imu_link        # the frame the reading is stamped in (default: '<label>_link')
+      topic: imu/data           # the endpoint's RELATIVE topic, so a device can match its driver's
+                                #   layout (the D435i's IMU is `camera/imu`); `topics: {imu: /abs}`
+                                #   still hardwires an absolute one and wins over this
       rate_hz: 100.0            # endpoint publish rate
       orientation: true         # publish attitude; false -> orientation_covariance[0] = -1
       accel_stddev: 0.0         # m/s^2, additive Gaussian white noise, per axis
@@ -78,9 +95,21 @@ Config::
       fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (set_sensor_override)
 
 Endpoint ``imu`` (out) reads an :class:`ImuReading` and carries a ``sensor_msgs/Imu`` backend hint on
-``imu/data`` -- the topic ``robot_localization`` and every driver use -- plus the static
-``body -> frame_id`` transform. An :class:`ImuReader` is published on the blackboard under
+``imu/data`` -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
+static ``body -> frame_id`` transform. An :class:`ImuReader` is published on the blackboard under
 ``imu:<address>`` for in-process consumers.
+
+**Nothing is computed while nothing is listening.** The reading is assembled in the endpoint's
+``read()`` rather than in a ``post_step``, and the endpoint is ``lazy``, so a bridge does not even
+read it while the transport reports no subscriber (``BridgeBase._skip_unsubscribed``). That matters
+here because an IMU is the fastest sensor on the robot -- at 200 Hz, several of them, each drawing
+noise from a fresh counter-based generator, is real work to do for nobody -- and because a device
+whose manifest carries an IMU by default (the D435i does) must cost a world that ignores it nothing.
+Two properties make ``lazy`` safe for this endpoint, and both are why it is opt-in per endpoint:
+the publish has no side effect beyond the message (the mount transform is latched once at bind
+time, not derived per read), and an in-process consumer goes through the blackboard reader, which is
+not gated by anyone's subscriptions. Where no transport can report subscribers at all, the
+convention is "assume yes", so the endpoint stays live.
 
 **Covariances are the declared noise, squared, and nothing else.** The reported variance is
 ``stddev**2`` per channel (bias is systematic and deliberately not folded in: a covariance is what a
@@ -96,6 +125,7 @@ and the blackboard reader are two by construction), and repeatable across a rese
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -106,6 +136,8 @@ from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
 
 from ..live_config import FaultableSensorMixin
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -193,6 +225,11 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         self.site = self.config.get("site", "")
         self.rate_hz = float(self.config.get("rate_hz", 100.0))
         self.frame_id = self.config.get("frame_id") or f"{self.label}_link"
+        # A relative topic, namespaced by the bridge like every other endpoint's default. Distinct
+        # from `topics:`, which hardwires an ABSOLUTE topic and bypasses the namespace: a device that
+        # simply names its channels differently from a standalone IMU (`camera/imu`) should not have
+        # to give up the namespace to say so, which is what an absolute override would cost it.
+        self.topic = str(self.config.get("topic") or "imu/data")
         self.orientation = bool(self.config.get("orientation", True))
         self.accel_stddev = float(self.config.get("accel_stddev", 0.0))
         self.gyro_stddev = float(self.config.get("gyro_stddev", 0.0))
@@ -208,6 +245,9 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         self._quat_adr = -1
         self._site_id = -1
         self._mount_bid = -1  # body the static mount transform is published relative to
+        #: Is the sensor's body welded to the world? Then MuJoCo computes no acceleration for it and
+        #: the proper acceleration is exactly -g in the sensor frame (see the module docstring).
+        self._world_fixed = False
         self._resolved_site = ""  # set in build(), reused in configure()
         self._own_site = False  # did this plugin create the site?
 
@@ -217,6 +257,17 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         errors = self.validate_topics(config)
         if float(config.get("rate_hz", 100.0)) <= 0:
             errors.append("'rate_hz' must be > 0")
+        if "topic" in config and (
+            not isinstance(config["topic"], str) or not config["topic"].strip()
+        ):
+            errors.append("'topic' must be a non-empty relative topic, e.g. 'camera/imu'")
+        elif isinstance(config.get("topic"), str) and config["topic"].startswith("/"):
+            # An absolute value here would look like it worked while silently escaping the
+            # namespace, which is the one thing `topics:` exists to do deliberately.
+            errors.append(
+                "'topic' is relative (it is scoped by the entity's namespace); for an absolute "
+                "topic use topics: {imu: /your/topic}"
+            )
         for key in ("accel_stddev", "gyro_stddev", "orientation_stddev", "yaw_stddev"):
             if float(config.get(key, 0.0)) < 0:
                 errors.append(f"'{key}' must be >= 0")
@@ -359,6 +410,17 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # The site's own body is what the mount transform is relative to, whether this plugin built
         # the site or the model shipped it -- so the published frame cannot disagree with the reading.
         self._mount_bid = int(m.site_bodyid[self._site_id])
+        # weldid 0 is the world's weld group: this body has no degrees of freedom at all.
+        self._world_fixed = int(m.body_weldid[self._mount_bid]) == 0
+        if self._world_fixed:
+            # Logged, not silent: the reading no longer comes from the MJCF sensor, and a reader of
+            # the run's log should be able to see which branch produced it.
+            _log.info(
+                "imu[%s]: %s is welded to the world, so MuJoCo computes no acceleration for it; "
+                "reporting the closed-form proper acceleration (-gravity in the sensor frame)",
+                self.address,
+                mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, self._mount_bid),
+            )
 
         key = f"imu:{self.address}"
         if ctx.blackboard.get(key) is not None:
@@ -379,11 +441,14 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
                 namespace=ns,
                 read=self.read,
                 rate_hz=self.rate_hz,
+                # Read only while something subscribes -- see the module docstring.
+                lazy=True,
                 backend={
                     "ros2": {
                         "type": "sensor_msgs.msg.Imu",
-                        # `imu/data` is where robot_localization and every vendor driver look.
-                        "topic": self.topic_override("imu") or "imu/data",
+                        # `imu/data` by default, where robot_localization and a standalone driver
+                        # look; `topic:` is how a device states its own layout.
+                        "topic": self.topic_override("imu") or self.topic,
                         "frame_id": self.frame_id,
                         "static_tf": self._mount_tf(m),
                     }
@@ -424,9 +489,14 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
     def read(self) -> ImuReading:
         """The current reading. Runs on the physics thread; called once per due tick per reader."""
         d = self._ctx.data
-        accel = np.array(d.sensordata[self._accel_adr : self._accel_adr + 3], dtype=float)
         gyro = np.array(d.sensordata[self._gyro_adr : self._gyro_adr + 3], dtype=float)
         quat = np.array(d.sensordata[self._quat_adr : self._quat_adr + 4], dtype=float)
+        if self._world_fixed:
+            # site_xmat rotates sensor -> world, so its transpose takes -g into the sensor frame.
+            rot = np.array(d.site_xmat[self._site_id]).reshape(3, 3)
+            accel = rot.T @ -np.asarray(self._ctx.model.opt.gravity, dtype=float)
+        else:
+            accel = np.array(d.sensordata[self._accel_adr : self._accel_adr + 3], dtype=float)
 
         accel = accel + self.accel_bias
         gyro = gyro + self.gyro_bias

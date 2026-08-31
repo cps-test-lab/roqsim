@@ -32,12 +32,15 @@ class _RobotScene(Plugin):
     provides_entity = True
     #: Height the base spawns at. Above the floor by more than settling distance -> free fall.
     spawn_z = 0.15
+    #: Omit the free joint, so the body has no degrees of freedom at all.
+    welded = False
     #: Whether the scene ships its own IMU site + sensor triple (a vendor MJCF that already has one).
     ships_own_imu = False
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         base = spec.worldbody.add_body(name="base_link", pos=[0, 0, self.spawn_z])
-        base.add_freejoint()
+        if not self.welded:
+            base.add_freejoint()
         base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.15, 0.15, 0.1], mass=5.0)
         if self.ships_own_imu:
             base.add_site(name="vendor_imu", pos=[0, 0, 0.05])
@@ -63,6 +66,12 @@ class _RobotScene(Plugin):
         )
 
 
+class _FixedScene(_RobotScene):
+    """The same box WELDED to the world -- a wall bracket or a tripod, not a robot."""
+
+    welded = True
+
+
 class _FallingScene(_RobotScene):
     """The same robot dropped from high enough that it is still in free fall when read."""
 
@@ -73,8 +82,17 @@ class _VendorImuScene(_RobotScene):
     ships_own_imu = True
 
 
-def _engine(scene: str = f"{__name__}:_RobotScene", *, steps: int = 400, **imu_config):
-    """An engine with one IMU nested under the robot, stepped *steps* times."""
+def _engine(
+    scene: str = f"{__name__}:_RobotScene",
+    *,
+    steps: int = 400,
+    capture_only: bool = False,
+    **imu_config,
+):
+    """An engine with one IMU nested under the robot, stepped *steps* times.
+
+    ``capture_only`` skips the stepping for a check that only reads the declared endpoints.
+    """
     from roqsim.engine import Engine
 
     cfg = load_config_from_dict(
@@ -92,7 +110,7 @@ def _engine(scene: str = f"{__name__}:_RobotScene", *, steps: int = 400, **imu_c
     engine = Engine(cfg)
     engine.setup()
     engine.reset()
-    for _ in range(steps):
+    for _ in range(0 if capture_only else steps):
         engine.step()
     return engine
 
@@ -267,8 +285,88 @@ def test_an_imu_at_the_top_of_a_document_is_refused():
         ({"gyro_bias": [0, 0]}, "three numbers"),
         ({"fault": {"rate_hz": 50}}, "cannot be written"),
         ({"fault": {}}, "empty"),
+        ({"topic": ""}, "non-empty relative topic"),
+        ({"topic": "/abs/imu"}, "use topics:"),
     ],
 )
 def test_config_errors_are_reported_by_name(config, expected):
     errors = ImuPlugin(config, entity="robot", label="imu").validate_config(config)
     assert any(expected in e for e in errors), errors
+
+
+# -- a body that cannot move -----------------------------------------------------------------
+
+
+def test_a_body_welded_to_the_world_still_reads_one_g():
+    """MuJoCo computes no acceleration for a body with no dofs, so it would read free fall.
+
+    The substitute is not a model of anything: a body that cannot move has proper acceleration
+    exactly -g in the sensor frame. A fixed camera mount is the common case (every standalone
+    `spawn_sensor` is one), and reporting zero there tells a stack its sensor is falling.
+    """
+    reading = _plugin(_engine(f"{__name__}:_FixedScene", steps=20)).read()
+    accel = np.asarray(reading.linear_acceleration)
+    assert accel[2] == pytest.approx(GRAVITY, rel=1e-6)
+    assert np.linalg.norm(accel) == pytest.approx(GRAVITY, rel=1e-6)
+    # The mount's rotation still applies: rolled 90 deg, the same g lands on the sensor's y.
+    rolled = _plugin(_engine(f"{__name__}:_FixedScene", steps=20, rpy=[math.pi / 2, 0, 0])).read()
+    assert np.asarray(rolled.linear_acceleration)[1] == pytest.approx(GRAVITY, rel=1e-6)
+
+
+def test_a_jointed_body_is_left_to_mujoco():
+    """Only the zero-dof case is substituted -- a robot resting on the floor is MuJoCo's own reading,
+    which is what makes the substitution a closed form rather than a second physics."""
+    assert _plugin(_engine()).config is not None  # the free-jointed scene
+    assert _plugin(_engine())._world_fixed is False
+    assert _plugin(_engine(f"{__name__}:_FixedScene", steps=5))._world_fixed is True
+
+
+# -- nothing is computed for nobody -----------------------------------------------------------
+
+
+def test_the_endpoint_is_not_read_while_nothing_subscribes():
+    """An IMU is the fastest sensor on the robot, so `lazy` is what keeps an ignored one free.
+
+    The predicate under test is the bridge's own, not a copy of it -- a plugin that merely SET
+    `lazy` while the bridge decided otherwise would pass a test written against a local rule.
+    """
+    from roqsim.bridge import BridgeBase
+
+    endpoint = next(e for e in _engine(capture_only=True).ctx.interface.all() if e.name == "imu")
+    assert endpoint.lazy is True
+
+    endpoint.has_subscribers = lambda: False
+    assert BridgeBase._skip_unsubscribed(endpoint) is True
+    endpoint.has_subscribers = lambda: True
+    assert BridgeBase._skip_unsubscribed(endpoint) is False
+    # No transport able to answer => assume yes, or a sensor would go dark wherever the backend
+    # cannot introspect.
+    endpoint.has_subscribers = None
+    assert BridgeBase._skip_unsubscribed(endpoint) is False
+
+
+def test_the_reading_is_assembled_on_read_not_on_every_step():
+    """The other half of the same property: with the work in `post_step` it would be paid at the
+    physics rate no matter who was listening, and `lazy` could not undo that."""
+    assert "post_step" not in vars(ImuPlugin)
+
+
+def test_a_device_can_state_its_own_relative_topic():
+    """The D435i's IMU is `camera/imu`, not `imu/data` -- and it must stay namespaced."""
+    endpoint = next(
+        e
+        for e in _engine(topic="camera/imu", capture_only=True).ctx.interface.all()
+        if e.name == "imu"
+    )
+    assert endpoint.backend["ros2"]["topic"] == "camera/imu"
+
+
+def test_an_absolute_hardwire_still_wins():
+    endpoint = next(
+        e
+        for e in _engine(
+            topic="camera/imu", topics={"imu": "/hardware/imu"}, capture_only=True
+        ).ctx.interface.all()
+        if e.name == "imu"
+    )
+    assert endpoint.backend["ros2"]["topic"] == "/hardware/imu"
