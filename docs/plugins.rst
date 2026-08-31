@@ -451,6 +451,35 @@ reading zero forever looks exactly like a robot that costs nothing to drive.
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
 
+Ground that is not flat
+-----------------------
+
+Everything a robot could stand on here was a plane, while four of the ported platforms -- Spot, the
+Husky, the Jackal, the Warthog -- are outdoor machines whose papers are about what happens when it is
+not. ``heightfield`` is MuJoCo's own height field wired into a world::
+
+   components:
+     - heightfield: {size: [40, 40], height: 2.5, resolution: 128, seed: 3}
+     - spawn_robot: {model: husky_a200, pos: [0, 0]}
+       name: robot
+
+It provides the ground (``provides_world``), so ``sim.world`` is not also built underneath it -- a
+floor through the hills is what that would mean. Elevation comes from one of three places and is
+normalised the same way regardless: generated fractal noise (reproducible from ``seed``, so two cells
+of a campaign share their hills), a ``.npy`` array, or a greyscale ``.png``/``.tif`` read at its own
+bit depth. A GeoTIFF is converted by the tools that own reprojection --
+``gdal_translate -ot UInt16 -scale dem.tif dem.png`` -- rather than by a simulator pretending to know
+about coordinate systems.
+
+The vertical scale is stated in metres (``height:``), never inferred from the file: an image has no
+unit, and a guessed one would put a made-up gradient under every result. It is also the natural
+campaign factor -- "the same hills, half as steep" is one number.
+
+Contact is against the field's triangles, so the sample spacing is the resolution of every wheel and
+foot interaction: 128 samples over 40 m is a 31 cm grid, which a 10 cm wheel rides as facets. Raise
+``resolution`` for a small rough patch rather than a large smooth one; the cost is quadratic and buys
+nothing where the ground is flat.
+
 Degrading a sensor mid-run
 --------------------------
 
