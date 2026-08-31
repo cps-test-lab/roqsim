@@ -1,0 +1,29 @@
+# Default controller for the Waveshare PiRacer.
+#
+# `spawn_robot: {model: piracer}` pulls this in automatically, so a world does not re-declare the
+# robot's intrinsic kinematics.
+components:
+  # The first ACKERMANN base in this package, and the reason `ackermann_drive` exists: the front
+  # wheels steer and only the rear pair is driven, so unlike every diff_drive and omni_drive base
+  # here it cannot turn on the spot. A cmd_vel with v=0 and a yaw rate moves it nowhere, which is
+  # the constraint a car-like experiment is about rather than a limitation to work around.
+  #
+  # There is NO slip_factor and none is available: a car turns by steering, not by scrubbing its
+  # wheels sideways as the skid-steer bases do, so the ICR compensation husky_a200 / panther /
+  # warthog carry has nothing to correct here.
+  - ackermann_drive:
+      wheel_radius: 0.034            # the tyre collision cylinder, and the wheel mesh agrees
+      wheelbase: 0.155               # the joint origins: front axle 0.179 - rear axle 0.024
+      # The KINGPIN separation (2 x 0.060), not the wheel track. The plugin turns this into the
+      # inner/outer steer split, and that split is set by where the steering axes are, not by where
+      # the tyres sit -- the front wheel centres are 0.148 apart and the rear pair 0.171, so no one
+      # number is all three. See the port log: the drive split wants the rear track and takes this.
+      track: 0.120
+      max_steer_angle: 0.5           # ASSUMPTION: the description declares no limit at all
+      steer_rate: 5.0                # ASSUMPTION: no servo slew figure published
+      accel_limit: 2.0               # ASSUMPTION: none published
+      max_linear_vel: 2.0            # ASSUMPTION: no top speed published for this kit
+      steer_actuators: [left_steer_motor, right_steer_motor]
+      steer_joints:    [left_steer_joint, right_steer_joint]
+      drive_actuators: [rear_left_wheel_motor, rear_right_wheel_motor]
+      drive_joints:    [rear_left_tire_joint, rear_right_tire_joint]

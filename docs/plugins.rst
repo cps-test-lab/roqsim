@@ -535,6 +535,20 @@ The two front wheels are steered by *different* angles and the two rear wheels d
 speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
 shared value would scrub the tyres. Both splits vanish as the curve straightens.
 
+``piracer`` ships with this plugin in its manifest, so a world that wants a car spawns one and
+declares none of the above::
+
+   components:
+     - spawn_robot: {model: piracer}
+       name: robot
+
+**Which width is** ``track``. A real car has three, and they are not interchangeable: the separation
+of the two *steering axes*, the separation of the front wheel centres, and the rear axle's track. The
+steer split is set by the first -- that is where the geometry pivots -- so a model whose steering
+axes are inboard of its wheels (most of them, since a kingpin sits inside the hub) should pass the
+kingpin separation and not the track it is measured across the tyres. Passing the widest of the three
+overstates the split at every radius.
+
 Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
 is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
