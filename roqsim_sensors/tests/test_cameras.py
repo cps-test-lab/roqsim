@@ -674,3 +674,31 @@ def test_a_range_past_the_codec_s_own_limit_refuses_the_pair_rather_than_disagre
         plugin.validate_config({"depth_encoding": "16UC1", "clip_far": 30.0, "compressed": False})
         == []
     )
+
+
+# -- a reset is a new trial ---------------------------------------------------------------------
+
+
+def test_a_reset_lets_the_next_trial_render_again():
+    """The gate is sim-time-based and sim time restarts at 0, so a gate left holding the previous
+    trial's capture time sits in the future for the whole of the next one -- and every endpoint
+    keeps answering with that trial's last frame while it does."""
+    engine = Engine(_world(D435, depth=True, points=True, rate_hz=10.0))
+    engine.setup()
+    engine.reset()
+    for _ in range(400):  # 4 s at the default 100 Hz step, well past several 10 Hz captures
+        engine.step()
+    first = _endpoint(engine, "image").read().copy()
+    assert first.max() > 0
+
+    engine.reset()
+    # Nothing has been captured for this trial yet, so no endpoint may serve the last one's payload.
+    assert _endpoint(engine, "image").read() is None
+    assert _endpoint(engine, "depth").read() is None
+    assert _endpoint(engine, "points").read() is None
+
+    engine.step()
+    engine.step()
+    assert _endpoint(engine, "image").read() is not None, "the first step of a trial must capture"
+    assert _endpoint(engine, "depth").read() is not None
+    assert _endpoint(engine, "points").read() is not None
