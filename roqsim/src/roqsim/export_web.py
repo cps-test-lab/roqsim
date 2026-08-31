@@ -622,7 +622,7 @@ def main(argv: list | None = None) -> int:
         default=[],
         metavar="path.to.key=value",
         help="override a world value before compiling, e.g. "
-        "--set plugins.floorplan.mesh=/abs/rooms.stl (repeatable)",
+        "--set components.floorplan.mesh=/abs/rooms.stl (repeatable)",
     )
     parser.add_argument(
         "--override",
