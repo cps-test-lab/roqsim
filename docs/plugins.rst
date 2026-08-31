@@ -429,7 +429,9 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
 
 **Only keys the sensor reads per frame may be written.** Each sensor declares its own allowlist; on
 the ray-casting sensors that is ``range_stddev``, ``dropout_percent``, ``max_range``, ``range_min``
-and ``rate_hz``. Everything else is refused **at load**, by name, with the reason — ``rays``,
+and ``rate_hz``, and on the ``imu`` it is the noise, the biases and ``orientation`` -- so a trial can
+drop the attitude channel or triple the rate noise partway through, which is what an IMU failure
+looks like to a localisation filter. Everything else is refused **at load**, by name, with the reason — ``rays``,
 ``angle_min`` and ``angle_max`` because they change a ``LaserScan``'s length or the bearing its
 indices mean, and ``site``/``frame_id``/``exclude_body`` because they are consumed once at
 ``configure``. This is the ``geom_size`` lesson from the physics channel: a value that writes fine,
