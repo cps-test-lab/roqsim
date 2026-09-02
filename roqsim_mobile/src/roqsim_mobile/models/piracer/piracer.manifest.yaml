@@ -18,11 +18,12 @@ components:
   - ackermann_drive:
       wheel_radius: 0.034            # the tyre collision cylinder, and the wheel mesh agrees
       wheelbase: 0.155               # the joint origins: front axle 0.179 - rear axle 0.024
-      # The KINGPIN separation (2 x 0.060), not the wheel track. The plugin turns this into the
-      # inner/outer steer split, and that split is set by where the steering axes are, not by where
-      # the tyres sit -- the front wheel centres are 0.148 apart and the rear pair 0.171, so no one
-      # number is all three. See the port log: the drive split wants the rear track and takes this.
-      track: 0.120
+      # Two widths, because the two splits are measured across different ones. The drive split is
+      # across the driven rear pair (2 x 0.0855); the steer split pivots about the steering axes, so
+      # it is across the kingpin separation (2 x 0.060), inboard of the front wheel centres, which
+      # are 0.148 apart and are neither.
+      track: 0.171
+      steer_track: 0.120
       max_steer_angle: 0.5           # ASSUMPTION: the description declares no limit at all, and the
                                      # servo's own travel is not it -- the linkage sets the lock
       # The vendor's MG996R at 0.17 s/60 degrees. NO-LOAD, so a rack turning loaded tyres is slower

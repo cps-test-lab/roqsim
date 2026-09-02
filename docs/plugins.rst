@@ -516,7 +516,7 @@ that command is a planner that would not move the real vehicle, and approximatin
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
 ``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
-right -- plus the wheelbase and track its geometry comes from::
+right -- plus the wheelbase and the widths its geometry comes from::
 
    components:
      - spawn_robot: {model: my_car}
@@ -525,6 +525,7 @@ right -- plus the wheelbase and track its geometry comes from::
          - ackermann_drive:
              wheelbase: 0.32
              track: 0.24
+             steer_track: 0.20
              max_steer_angle: 0.5
              steer_actuators: [left_steer_motor, right_steer_motor]
              steer_joints:    [left_steer_joint, right_steer_joint]
@@ -535,12 +536,14 @@ The two front wheels are steered by *different* angles and the two rear wheels d
 speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
 shared value would scrub the tyres. Both splits vanish as the curve straightens.
 
-**Which width is** ``track``. A real car has three, and they are not interchangeable: the separation
-of the two *steering axes*, the separation of the front wheel centres, and the rear axle's track. The
-steer split is set by the first -- that is where the geometry pivots -- so a model whose steering
-axes are inboard of its wheels (most of them, since a kingpin sits inside the hub) should pass the
-kingpin separation and not the track it is measured across the tyres. Passing the widest of the three
-overstates the split at every radius.
+**Which width is which.** A real car has three and they are not interchangeable: the separation of
+the two *steering axes*, the separation of the front wheel centres, and the driven axle's track. The
+two splits are measured across different ones, so there are two keys. ``steer_track`` is the width
+the steer split pivots about -- the steering axes, which on most vehicles are inboard of the wheels
+since a kingpin sits inside the hub -- and ``track`` is the driven axle the drive split is measured
+across. ``steer_track`` defaults to ``track``, which is exact for a design whose steering axes sit at
+its wheel centres; anywhere else, leaving it out overstates the steer split at every radius, and the
+front wheel centres (neither of the two) overstate it whichever key they are passed as.
 
 It also accepts the message a car-like stack already speaks. ``ackermann_cmd`` takes an
 ``ackermann_msgs/AckermannDriveStamped`` on ``drive``, beside the ``cmd_vel`` every base here

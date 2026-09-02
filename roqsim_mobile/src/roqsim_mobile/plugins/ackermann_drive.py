@@ -32,10 +32,17 @@ is rather than centred, since a real rack holds its angle when the car stops.
 
 **Both front wheels are steered, and not by the same angle.** On a curve the inner wheel follows a
 tighter radius than the outer one, so a single shared angle scrubs both tyres; the plugin computes
-the pair from the geometry (``atan(L / (R -/+ track/2))``), which is what the linkage the mechanism is
-named after does mechanically. The driven wheels are split the same way: the outer wheel of a turn
-travels further, so a common speed on a rigid axle would scrub. Both splits vanish as the curve
-straightens, so a straight-line run is unaffected by either.
+the pair from the geometry (``atan(L / (R -/+ steer_track/2))``), which is what the linkage the
+mechanism is named after does mechanically. The driven wheels are split the same way, across the
+driven axle's own ``track``: the outer wheel of a turn travels further, so a common speed on a rigid
+axle would scrub. Both splits vanish as the curve straightens, so a straight-line run is unaffected
+by either.
+
+**The two splits are measured across different widths**, which is why there are two keys. The steer
+split pivots about the steering axes, so it is set by their separation -- the kingpin separation,
+inboard of the wheels on most vehicles; the drive split is measured across the driven axle. A model
+that gives only ``track`` gets that width for both, which is exact for a design whose steering axes
+sit at its wheel centres and an overstated steer split otherwise.
 
 Config::
 
@@ -43,7 +50,8 @@ Config::
       robot: robot                  # entity registered by spawn_robot (default: the owner)
       wheel_radius: 0.05
       wheelbase: 0.32               # front axle to rear axle -- what turns a curvature into an angle
-      track: 0.24                   # left-to-right wheel separation, for both splits above
+      track: 0.24                   # driven axle width, for the drive split (and the default below)
+      steer_track: 0.24             # steering-axis (kingpin) separation, for the steer split
       max_linear_vel: 2.0
       max_steer_angle: 0.5          # rad; the rack's mechanical limit, and the turning circle with it
       steer_rate: 4.0               # rad/s slew on the steering angle (0 = instant)
@@ -100,6 +108,7 @@ class AckermannDrivePlugin(Plugin):
         self.r = float(self.config.get("wheel_radius", 0.05))
         self.wheelbase = float(self.config.get("wheelbase", 0.32))
         self.track = float(self.config.get("track", 0.24))
+        self.steer_track = float(self.config.get("steer_track", self.track))
         self.max_v = float(self.config.get("max_linear_vel", 2.0))
         self.max_steer = float(self.config.get("max_steer_angle", 0.5))
         self.steer_rate = float(self.config.get("steer_rate", 4.0))
@@ -133,7 +142,14 @@ class AckermannDrivePlugin(Plugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors = self.validate_topics(config)
-        for key in ("wheel_radius", "wheelbase", "track", "max_linear_vel", "max_steer_angle"):
+        for key in (
+            "wheel_radius",
+            "wheelbase",
+            "track",
+            "steer_track",
+            "max_linear_vel",
+            "max_steer_angle",
+        ):
             if key in config and float(config[key]) <= 0:
                 errors.append(f"'{key}' must be > 0")
         for key in ("steer_rate", "accel_limit"):
@@ -308,16 +324,16 @@ class AckermannDrivePlugin(Plugin):
         """(left, right) wheel angles for a centre (bicycle) angle -- the geometry the linkage does.
 
         On a curve of radius ``R = L / tan(delta)`` the two front wheels ride circles that differ by
-        the track, so their angles are ``atan(L / (R -/+ track/2))``: the inner one turns MORE. A
-        single shared angle would scrub both tyres, and the difference is what the mechanism this
-        plugin is named after exists to produce.
+        the separation of their steering axes, so their angles are ``atan(L / (R -/+ steer_track/2))``:
+        the inner one turns MORE. A single shared angle would scrub both tyres, and the difference is
+        what the mechanism this plugin is named after exists to produce.
         """
         if abs(delta) < 1e-6:
             return 0.0, 0.0
         radius = self.wheelbase / np.tan(delta)
         # A left turn (delta > 0) has positive radius, and the left wheel is the inner one.
-        left = np.arctan2(self.wheelbase, radius - self.track / 2.0)
-        right = np.arctan2(self.wheelbase, radius + self.track / 2.0)
+        left = np.arctan2(self.wheelbase, radius - self.steer_track / 2.0)
+        right = np.arctan2(self.wheelbase, radius + self.steer_track / 2.0)
         # arctan2 returns the angle to the centre; for a right turn both come back near pi, so bring
         # them into (-pi/2, pi/2) where a steering angle lives.
         return (

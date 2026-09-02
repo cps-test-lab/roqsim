@@ -226,6 +226,29 @@ def test_the_inner_wheel_turns_more_than_the_outer_one():
     assert plugin.steer_angles(0.0) == (0.0, 0.0)
 
 
+def test_the_steer_split_is_measured_across_the_steering_axes():
+    """``steer_track`` is the kingpin separation, and it is the width the steer split pivots about.
+
+    On most vehicles the steering axes sit inboard of the wheels, so the two widths differ; using the
+    wider one overstates the split at every radius.
+    """
+    kingpin = TRACK * 0.7
+    plugin = _plugin(_engine(steer_track=kingpin))
+    assert plugin.track == TRACK  # the drive split still uses the driven axle
+    left, right = plugin.steer_angles(0.4)
+    radius = WHEELBASE / np.tan(0.4)
+    assert left == pytest.approx(np.arctan(WHEELBASE / (radius - kingpin / 2)))
+    assert right == pytest.approx(np.arctan(WHEELBASE / (radius + kingpin / 2)))
+    # Narrower axes, smaller split -- the default (track) would have claimed a wider one.
+    wide_left, wide_right = _plugin(_engine()).steer_angles(0.4)
+    assert left - right < wide_left - wide_right
+
+
+def test_steer_track_defaults_to_track():
+    """A model that states one width gets it for both splits, as before the key existed."""
+    assert _plugin(_engine()).steer_track == TRACK
+
+
 def test_the_driven_wheels_are_split_the_same_way():
     engine = _engine()
     plugin = _plugin(engine)
@@ -290,6 +313,7 @@ def test_it_belongs_to_a_robot():
     ("override", "expected"),
     [
         ({"wheelbase": 0}, "'wheelbase' must be > 0"),
+        ({"steer_track": 0}, "'steer_track' must be > 0"),
         ({"max_steer_angle": 1.6}, "must be < pi/2"),
         ({"steer_rate": -1}, "'steer_rate' must be >= 0"),
         ({"steer_joints": ["only_one"]}, "exactly two"),
