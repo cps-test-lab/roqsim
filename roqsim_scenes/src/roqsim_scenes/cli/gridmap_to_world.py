@@ -208,13 +208,16 @@ def obstacle_plugins(
     entries: list[dict] = []
     for index, (x, y, size_x, size_y) in enumerate(placements):
         name = f"{prefix}{index}"
-        cfg = {"name": name, "prefix": f"{name}_", "pos": [round(x, 6), round(y, 6)]}
+        cfg = {"prefix": f"{name}_", "pos": [round(x, 6), round(y, 6)]}
         if obstacle == "cylinder":
             cfg |= {"radius": radius, "height": height, "color": list(color)}
-            entries.append({"cylinder": cfg})
         else:
             cfg |= {"size": [round(size_x, 6), round(size_y, 6), height], "color": list(color)}
-            entries.append({"box": cfg})
+        # `name` is a SIBLING of the plugin ref, not one of its config keys: the label an entry
+        # answers to is a property of the entry, and a world whose obstacles all carry the plugin's
+        # default label is refused for duplicate labels. `prefix` stays in the config, because that
+        # one really is the plugin's -- it is what keeps the generated MJCF names distinct.
+        entries.append({obstacle: cfg, "name": name})
     return entries
 
 
@@ -372,7 +375,7 @@ def main(argv=None) -> int:
         raise SystemExit(str(exc)) from exc
     write_world(world, args.out_world, header=args.header)
 
-    n_props = sum(1 for entry in world["components"] if next(iter(entry)) in ("cylinder", "box"))
+    n_props = sum(1 for entry in world["components"] if {"cylinder", "box"} & set(entry))
     n_occ = int(grid.sum())
     if args.out_map:
         write_map(grid, args.out_map, cell_size=args.cell_size, origin=tuple(args.origin))

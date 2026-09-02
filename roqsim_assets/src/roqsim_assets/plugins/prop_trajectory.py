@@ -17,7 +17,7 @@ a belt-driven **CoreXY** stage executing g-code, i.e. two orthogonal prescribed 
 Config::
 
     prop_trajectory:
-      name: object_stage         # entity name (default: 'prop_trajectory')
+      name: object_stage         # the entry's OWN key, not the config's: names the entity (default 'prop_trajectory')
       prefix: ""                 # MJCF name prefix (distinct prefixes for >1 stage)
       path: trajectories/t1.csv  # 2-column "x,y" CSV, resolved relative to the world YAML
       units: mm                  # mm | m -- the CSV's units (default mm)

@@ -4,7 +4,8 @@ The same geometry as :mod:`roqsim_assets.plugins.box`, declared as a *list* rath
 entry per box::
 
     boxes:
-      name: obstacles      # prefix for the generated entity names (default 'boxes')
+      name: obstacles      # the entry's OWN key, not the config's: prefixes the generated
+                           #   entity names (default 'boxes')
       instances:
       - {pos: [2.1, -3.4], size: [0.5, 0.5, 1.0]}
       - {pos: [5.8, -1.2], size: [0.5, 0.5, 1.0], yaw: 0.4}
@@ -35,7 +36,7 @@ single box out of the population and ``on_reset`` restores each to its own decla
 Config::
 
     boxes:
-      name: obstacles     # prefix for the generated entity names (default: 'boxes')
+      name: obstacles     # the entry's OWN key, not the config's (default: 'boxes')
       instances: []       # list of box configs, each accepting every key `box` does (required)
 """
 

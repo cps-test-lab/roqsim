@@ -13,6 +13,7 @@ import numpy as np
 import pytest
 import yaml
 
+from roqsim.config import load_config
 from roqsim_scenes.cli import gridmap_to_world as g2w
 
 CELL = 0.15
@@ -314,3 +315,58 @@ def test_merged_and_plain_worlds_place_the_same_obstacles_for_a_wall():
     plain, merged = _boxes(grid, merge=False), _boxes(grid, merge=True)
     assert len(plain) == 5 and len(merged) == 1
     assert merged[0]["box"]["size"][0] == pytest.approx(5 * CELL)
+
+
+# -- entity labels ------------------------------------------------------------------------------
+#
+# A generated world is only useful if roqsim can load it, and a label is what an entry answers to:
+# it is what an override addresses, what the entity is registered under, and what the generated MJCF
+# name is built from. Two entries sharing one label is one prop silently standing in for the other,
+# so the loader refuses it -- which makes "does a multi-obstacle grid load?" the property to test,
+# not "does the YAML parse?".
+@pytest.mark.parametrize("obstacle", ["cylinder", "box"])
+def test_every_obstacle_gets_its_own_label(obstacle):
+    """`name:` is a sibling of the plugin ref; inside the config it never reaches the label."""
+    props = g2w.obstacle_plugins(
+        _grid(["##", "#."]),
+        cell_size=CELL,
+        origin=(0, 0),
+        obstacle=obstacle,
+        radius=CELL / 2,
+        height=0.5,
+        color=[1, 0, 0, 1],
+        shell_only=False,
+        prefix="obs_",
+    )
+    assert [entry["name"] for entry in props] == ["obs_0", "obs_1", "obs_2"]
+    for entry in props:
+        assert "name" not in entry[obstacle]
+
+
+@pytest.mark.parametrize("obstacle", ["cylinder", "box"])
+@pytest.mark.parametrize("n_obstacles", [1, 2, 7])
+def test_a_converted_grid_loads_however_many_obstacles_it_has(tmp_path, obstacle, n_obstacles):
+    """One obstacle is not evidence: duplicate labels only bite from the second one on."""
+    grid = np.zeros((1, n_obstacles), dtype=np.uint8)
+    grid[0, :] = 1
+    world = g2w.build_world(
+        grid,
+        cell_size=CELL,
+        origin=(0, 0),
+        obstacle=obstacle,
+        radius=CELL / 2,
+        height=0.5,
+        color=[1, 0, 0, 1],
+        shell_only=False,
+        prefix="obs_",
+        robot=None,
+        start=None,
+        yaw=0.0,
+        extra_plugins=None,
+    )
+    path = tmp_path / "w.yaml"
+    g2w.write_world(world, path)
+
+    config = load_config(path)
+    labels = [spec.label for spec in config.plugins if spec.ref == obstacle]
+    assert labels == [f"obs_{i}" for i in range(n_obstacles)]

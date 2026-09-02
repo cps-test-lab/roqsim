@@ -26,7 +26,7 @@ exactly.
 Config::
 
     moving_box:
-      name: cube_1              # entity name (default 'moving_box')
+      name: cube_1              # the entry's OWN key, not the config's: names the entity (default 'moving_box')
       prefix: "cube1_"          # MJCF name prefix (use distinct prefixes for >1 mover)
       size: [0.3, 0.3, 0.3]     # full extents, metres (REQUIRED)
       pos: [x, y]               # start; [x, y] sits it ON the floor, [x, y, z] sets its CENTRE

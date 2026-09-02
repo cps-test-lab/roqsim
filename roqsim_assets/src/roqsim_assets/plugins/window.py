@@ -23,7 +23,7 @@ configure, and asking for one means changing how the generator cuts openings, no
 Config::
 
     window:
-      name: window        # entity name (default 'window')
+      name: window        # the entry's OWN key, not the config's: names the entity (default 'window')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 window)
       pos: [0.0, 0.0, 0.0]  # opening CENTRE, [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation; yaw aligns the pane with its wall

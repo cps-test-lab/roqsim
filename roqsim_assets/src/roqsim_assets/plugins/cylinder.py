@@ -19,7 +19,7 @@ the map is generated from. For something physics should move, use ``spawn_model`
 Config::
 
     cylinder:
-      name: obstacle_1     # entity name (default 'cylinder')
+      name: obstacle_1     # the entry's OWN key, not the config's: names the entity (default 'cylinder')
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 cylinder)
       pos: [x, y]          # centre in world metres; [x, y] stands the cylinder ON the floor,
                            #   [x, y, z] places its CENTRE at z (REQUIRED)

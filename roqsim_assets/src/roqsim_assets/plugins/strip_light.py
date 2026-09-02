@@ -15,7 +15,7 @@ is along that direction and ``width`` across it.
 Config::
 
     strip_light:
-      name: strip         # entity name (default 'strip')
+      name: strip         # the entry's OWN key, not the config's: names the entity (default 'strip')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 batten)
       pos: [x, y, z]      # fixture centre, world (z = the underside of the ceiling it hangs on)
       yaw: 0.0            # direction of the run, rad
