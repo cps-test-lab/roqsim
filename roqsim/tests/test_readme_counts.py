@@ -111,6 +111,8 @@ def test_the_world_count_is_the_number_a_ref_can_name():
         worlds = Path(ep.load().WORLDS_DIR)
         if worlds.is_dir():
             total += sum(1 for w in worlds.glob("*.yaml") if not w.name.endswith("_demo.yaml"))
-    assert _stated(r"\*\*(\d+) ready-to-run worlds\*\*") == total, (
+    # `worlds?`: excluding the demos leaves a count that can reach one, and the README then has to
+    # write "world" -- a pattern that only matches the plural stops finding the sentence it checks.
+    assert _stated(r"\*\*(\d+) ready-to-run worlds?\*\*") == total, (
         f"the README says a different number of runnable worlds than are registered here ({total})"
     )
