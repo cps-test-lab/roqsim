@@ -3,11 +3,12 @@
 A demo world usually needs no test -- it loads or it does not. This one has a coupling no assertion
 about its YAML would catch, because both halves look fine on their own.
 
-``spawn_robot`` owns (x, y) and keeps the model's compiled rest height, which is measured against
-flat ground at z=0. A height field's ground at the spawn is whatever the terrain says, so a robot
-placed anywhere but the terrain's lowest sample starts *inside* the hill and is thrown clear on the
-first step. The world answers that by choosing a seed whose minimum is the grid centre -- a fact
-about generated noise, not about the world file, so editing either half silently breaks it.
+``spawn_robot`` places a robot at the rest height its model states, which is measured against flat
+ground at z=0. A height field's ground at the spawn is whatever the terrain says, and only its
+lowest sample is at z=0, so a robot placed anywhere else starts *inside* the hill and is thrown
+clear on the first step. The world answers that by choosing a seed whose minimum is the grid centre
+-- a fact about generated noise, not about the world file, so editing either half silently breaks
+it.
 
 The second is the point of the world at all: a terrain that compiles but is not driven over is
 indistinguishable from a plane in every structural check. So the robot is driven, and must climb and
@@ -46,7 +47,7 @@ def _terrain(engine):
 def test_spawn_sits_on_the_lowest_ground():
     """The world's seed must keep its minimum where the robot is put down.
 
-    Not "near" the minimum: the spawn keeps a rest height computed for z=0 ground, so any elevation
+    Not "near" the minimum: the spawn uses a rest height stated for z=0 ground, so any elevation
     under it is penetration. Asserting the *grid* rather than the settled pose is deliberate -- a
     robot dropped into a hill also ends up resting on top of it, a second later and several metres
     from where the world asked for it.

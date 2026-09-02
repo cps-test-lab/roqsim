@@ -20,10 +20,11 @@ components:
   - heightfield:
       source: generated
       # seed 25 at the default roughness puts the terrain's LOWEST sample exactly at the centre of
-      # the grid, which is where the robot spawns. spawn_robot owns (x, y) and keeps the model's
-      # compiled rest height, measured against flat ground at z=0: a robot placed over a hill would
-      # start inside it and be thrown clear on the first step. Change the seed and the spawn must
-      # move with it.
+      # the grid, which is where the robot spawns. spawn_robot places a robot at the rest height the
+      # model states, which is measured against flat ground at z=0 -- and the field's lowest sample
+      # IS z=0, so this is the one spot where that height is right. A spawn over a hill starts
+      # inside it and is thrown clear on the first step; change the seed and the spawn must move
+      # with it, or state a z in `pos`.
       seed: 25
       size: [24.0, 24.0]
       # 2.5 m over 24 m: slopes a 1.0 m/s skid-steer works to climb, not a wall it stops at.
