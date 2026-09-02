@@ -6,6 +6,7 @@ robot models themselves. ROS-free — ROS coupling lives in `roqsim_ros_bridge`.
 ```sh
 roqsim sim roqsim_mobile:turtlebot4_demo                     # each model has a demo world
 roqsim sim roqsim_mobile:turtlebot3_demo --manual-control    # ... and can be hand-driven
+roqsim sim roqsim_mobile:warthog_terrain_demo               # the outdoor base on ground that is not flat
 python -m pytest roqsim_mobile/tests
 ```
 

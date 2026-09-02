@@ -475,6 +475,13 @@ The vertical scale is stated in metres (``height:``), never inferred from the fi
 unit, and a guessed one would put a made-up gradient under every result. It is also the natural
 campaign factor -- "the same hills, half as steep" is one number.
 
+``roqsim sim roqsim_mobile:warthog_terrain_demo`` is this with a robot on it: 2.5 m of relief over
+24 m, which the skid-steer climbs at up to 23 deg of pitch. It also shows the one coupling a terrain
+world has to get right -- ``spawn_robot`` keeps the model's rest height, measured against flat ground
+at z=0, so the spawn belongs at the terrain's lowest sample or the robot starts inside a hill. The
+demo picks a seed whose minimum is the grid centre and pins that in a test, because a seed changed
+without moving the spawn looks like a world that simply throws its robot.
+
 Contact is against the field's triangles, so the sample spacing is the resolution of every wheel and
 foot interaction: 128 samples over 40 m is a 31 cm grid, which a 10 cm wheel rides as facets. Raise
 ``resolution`` for a small rough patch rather than a large smooth one; the cost is quadratic and buys
