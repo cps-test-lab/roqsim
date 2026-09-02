@@ -118,7 +118,11 @@ Model plugin manifests
 
 A robot's controller and sensors are intrinsic to the *model*, not the *world*, so they ship with
 the model in a ``<model>.manifest.yaml`` manifest next to its MJCF. A spawn plugin pulls them in
-automatically, so a world just spawns the robot:
+automatically, so a world just spawns the robot -- and the same applies to a *device* with more than
+one sensor in it: the bundled ``d435`` is a D435i, so its manifest carries the ``imu`` component with
+the inertial module's own extrinsic, and ``spawn_sensor: {model: d435}`` yields both ``camera/imu``
+and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
+component (which is also how "does this device have an IMU" becomes a campaign factor):
 
 .. code:: yaml
 
@@ -386,6 +390,103 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
 
+Perception ground truth
+-----------------------
+
+Two plugins answer two different questions about the same objects, and an experiment usually wants
+one of them, not both. ``object_detector`` reports an object's POSE in the robot's frame -- what a
+manipulation stack consumes, and what a real pose estimator would output. ``segmentation_camera``
+reports which PIXELS an object covers -- what an IoU, a mask AP or a training set is computed from::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - segmentation_camera:
+             camera: oakd_rgb
+             classes:
+               - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
+               - {class_id: 2, name: person, entities: [walker_1]}
+             instances: true
+
+That publishes a ``mono8`` class image, a ``16UC1`` instance image and a
+``vision_msgs/Detection2DArray`` of tight boxes, all off one render through the named MJCF camera.
+
+Three properties are worth knowing before a metric is built on it. Boxes measure the **visible**
+extent, because that is the only extent derivable from a mask and the only one a detector could have
+produced -- an occluded object shrinks and, below ``min_pixels``, is not reported at all. Instance ids
+are **body ids**, so they are stable across frames and runs rather than depending on the order things
+were seen in; they are correspondingly not contiguous, which is why the detections name them.
+And class id **0 is background**: a declared class with id 0 would be indistinguishable from an
+unlabelled geom, so it is refused at load.
+
+What a run cost
+---------------
+
+``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
+a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
+analysis fits::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - energy_monitor: {efficiency: 0.72, idle_w: 8.0, capacity_wh: 26.0, voltage: 14.4}
+
+The split between measurement and assumption is explicit, and the defaults assume nothing.
+``force * velocity`` per actuator is measured, every step, at the physics rate -- reconstructed from
+a recording afterwards it would be sampled at the recording's rate and need a drivetrain model to
+turn poses back into effort, which is a fitted constant between the simulator and the result.
+``efficiency``, ``idle_w`` and ``regenerative`` are the platform's own numbers; unset, the plugin
+reports mechanical work and nothing else. A state of charge exists only where a ``capacity_wh`` was
+given -- without one the fraction is reported as *unknown* rather than as a full battery.
+
+Which actuators count is derived, not configured: every actuator driving a body of the robot's
+kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
+joint does not need the world edited. An entity with no actuators is an error, because a meter
+reading zero forever looks exactly like a robot that costs nothing to drive.
+
+**It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
+driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
+collision -- a scenario reads the endpoint and stops the run itself.
+
+Ground that is not flat
+-----------------------
+
+Everything a robot could stand on here was a plane, while four of the ported platforms -- Spot, the
+Husky, the Jackal, the Warthog -- are outdoor machines whose papers are about what happens when it is
+not. ``heightfield`` is MuJoCo's own height field wired into a world::
+
+   components:
+     - heightfield: {size: [40, 40], height: 2.5, resolution: 128, seed: 3}
+     - spawn_robot: {model: husky_a200, pos: [0, 0]}
+       name: robot
+
+It provides the ground (``provides_world``), so ``sim.world`` is not also built underneath it -- a
+floor through the hills is what that would mean. Elevation comes from one of three places and is
+normalised the same way regardless: generated fractal noise (reproducible from ``seed``, so two cells
+of a campaign share their hills), a ``.npy`` array, or a greyscale ``.png``/``.tif`` read at its own
+bit depth. A GeoTIFF is converted by the tools that own reprojection --
+``gdal_translate -ot UInt16 -scale dem.tif dem.png`` -- rather than by a simulator pretending to know
+about coordinate systems.
+
+The vertical scale is stated in metres (``height:``), never inferred from the file: an image has no
+unit, and a guessed one would put a made-up gradient under every result. It is also the natural
+campaign factor -- "the same hills, half as steep" is one number.
+
+``roqsim sim roqsim_mobile:warthog_terrain_demo`` is this with a robot on it: 2.5 m of relief over
+24 m, which the skid-steer climbs at up to 23 deg of pitch. It also shows the one coupling a terrain
+world has to get right -- ``spawn_robot`` keeps the model's rest height, measured against flat ground
+at z=0, so the spawn belongs at the terrain's lowest sample or the robot starts inside a hill. The
+demo picks a seed whose minimum is the grid centre and pins that in a test, because a seed changed
+without moving the spawn looks like a world that simply throws its robot.
+
+Contact is against the field's triangles, so the sample spacing is the resolution of every wheel and
+foot interaction: 128 samples over 40 m is a 31 cm grid, which a 10 cm wheel rides as facets. Raise
+``resolution`` for a small rough patch rather than a large smooth one; the cost is quadratic and buys
+nothing where the ground is flat.
+
 Degrading a sensor mid-run
 --------------------------
 
@@ -429,7 +530,9 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
 
 **Only keys the sensor reads per frame may be written.** Each sensor declares its own allowlist; on
 the ray-casting sensors that is ``range_stddev``, ``dropout_percent``, ``max_range``, ``range_min``
-and ``rate_hz``. Everything else is refused **at load**, by name, with the reason — ``rays``,
+and ``rate_hz``, and on the ``imu`` it is the noise, the biases and ``orientation`` -- so a trial can
+drop the attitude channel or triple the rate noise partway through, which is what an IMU failure
+looks like to a localisation filter. Everything else is refused **at load**, by name, with the reason — ``rays``,
 ``angle_min`` and ``angle_max`` because they change a ``LaserScan``'s length or the bearing its
 indices mean, and ``site``/``frame_id``/``exclude_body`` because they are consumed once at
 ``configure``. This is the ``geom_size`` lesson from the physics channel: a value that writes fine,
@@ -437,6 +540,72 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
+
+Bases: three geometries, one interface
+--------------------------------------
+
+``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
+``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
+something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
+place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
+that command is a planner that would not move the real vehicle, and approximating a car with a
+differential base and a small angular limit hides exactly the failure the experiment is looking for.
+
+``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
+right -- plus the wheelbase and the widths its geometry comes from::
+
+   components:
+     - spawn_robot: {model: my_car}
+       name: robot
+       components:
+         - ackermann_drive:
+             wheelbase: 0.32
+             track: 0.24
+             steer_track: 0.20
+             max_steer_angle: 0.5
+             steer_actuators: [left_steer_motor, right_steer_motor]
+             steer_joints:    [left_steer_joint, right_steer_joint]
+             drive_actuators: [rear_left_motor, rear_right_motor]
+             drive_joints:    [rear_left_joint, rear_right_joint]
+
+The two front wheels are steered by *different* angles and the two rear wheels driven at *different*
+speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
+shared value would scrub the tyres. Both splits vanish as the curve straightens.
+
+**Which width is which.** A real car has three and they are not interchangeable: the separation of
+the two *steering axes*, the separation of the front wheel centres, and the driven axle's track. The
+two splits are measured across different ones, so there are two keys. ``steer_track`` is the width
+the steer split pivots about -- the steering axes, which on most vehicles are inboard of the wheels
+since a kingpin sits inside the hub -- and ``track`` is the driven axle the drive split is measured
+across. ``steer_track`` defaults to ``track``, which is exact for a design whose steering axes sit at
+its wheel centres; anywhere else, leaving it out overstates the steer split at every radius, and the
+front wheel centres (neither of the two) overstate it whichever key they are passed as.
+
+It also accepts the message a car-like stack already speaks. ``ackermann_cmd`` takes an
+``ackermann_msgs/AckermannDriveStamped`` on ``drive``, beside the ``cmd_vel`` every base here
+publishes::
+
+   ros2 topic pub /drive ackermann_msgs/msg/AckermannDriveStamped \
+     '{drive: {steering_angle: 0.3, speed: 0.6}}'
+
+The message's ``steering_angle`` is defined as *the yaw of a virtual wheel located at the center of
+the front axle*, which is exactly the centre angle this plugin splits into two, so nothing is
+converted on the way in. **That is what makes it more than an alias for a twist**: a twist states a
+curvature, ``w / v``, which says nothing at rest -- so through ``cmd_vel`` a stopped car's rack can
+only hold the angle it has. Through ``ackermann_cmd`` a stopped car can turn its wheels, which is
+what a real one does while parking, and what a car-like stack sends when lining up before it moves
+off. Whichever of the two commands arrived last owns the angle; they are never merged, because a
+stated angle and a curvature are two ways of saying the same thing and averaging them obeys neither.
+
+Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
+well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
+controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
+around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+
+Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
+is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
+for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
+constant would only make the estimate look better than the sensor it stands for.
 
 Manipulation: an arm on a linear axis
 -------------------------------------
@@ -534,6 +703,20 @@ that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. On
 lateral error against 12.2 mm of jaw clearance: MoveIt had satisfied the goal exactly, and the goal was
 about the wrong point. ``--tip-site pinch`` emits a frame link at the gripper's own grasp site (through
 a collapsed parent, where such a site usually sits), so a 3 mm position tolerance means 3 mm at the pads.
+
+**Two arms that must move at once.** ``--arm left,right`` describes both as one robot: one URDF with
+both chains under a common root, one group per arm, and a group spanning all of them. That last group
+is the point of it — a plan for it is a single trajectory through both arms' joint space, so each
+arm's motion is checked against where the other *is* at that instant rather than against where it was
+before it started. It deliberately gets **no** IK solver: KDL solves a single serial chain and this
+group is several, so a solver there would load and then fail every pose request; reach a pose through
+one arm's own group, and use the combined group for joint-space planning. One flat namespace has to
+hold both arms, so their links and joints keep each arm's MJCF prefix — and since joint names are the
+controller's, not the description's, each arm's ``arm_controller`` needs ``joint_prefix:`` set to that
+same prefix. An arm publishing unprefixed names is refused rather than renamed, because those names
+are what reaches ``/joint_states`` and what a trajectory point carries. Every check above runs per arm:
+a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
+loudly as the first.
 
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.

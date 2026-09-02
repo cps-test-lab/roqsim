@@ -35,6 +35,10 @@ from roqsim.plugin import Plugin
 
 from ..live_config import FaultableSensorMixin
 
+#: MuJoCo's own name for body 0, and the parent of a mount transform that has no body to hang from.
+#: See :meth:`RayCastSensorPlugin._mount_tf`.
+WORLD_FRAME = "world"
+
 
 class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`."""
@@ -252,7 +256,17 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # the worldbody -- the transform is then simply the site's world pose. Not a fallback for
         # tidiness: ``self._bodyexclude`` of -1 used to index ``xpos[-1]``, the *last* body in the
         # model, and publish that unrelated body's transform under the declared parent's name.
-        ref = max(self._bodyexclude, 0)
+        #
+        # The PARENT NAME has to follow the reference, and did not. ``_bodyexclude`` is -1 whenever
+        # nothing was excluded: either the world said so (``exclude_body: ''``) or the class default
+        # ``base_link`` is absent, which is the ordinary case for a scanner on a tripod or a mast.
+        # Naming the parent after ``exclude_body`` regardless published numbers measured from the
+        # world under the header of a frame that does not exist -- an orphaned sensor frame, and in
+        # a world where some OTHER robot does have a ``base_link``, one bolted onto that robot at a
+        # pose measured from somewhere else entirely. For the explicit ``''`` spelling it published
+        # an empty ``frame_id``, which tf2 drops outright, so the frame never appeared at all.
+        world_mounted = self._bodyexclude < 0
+        ref = 0 if world_mounted else self._bodyexclude
         base_pos = d0.xpos[ref]
         base_mat = d0.xmat[ref].reshape(3, 3)
         site_pos = d0.site_xpos[self._site_id]
@@ -261,7 +275,8 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         rel_quat = np.zeros(4)
         mujoco.mju_mat2Quat(rel_quat, np.ascontiguousarray(base_mat.T @ site_mat).reshape(-1))
         return {
-            "parent": self.exclude_body,  # bare name; the bridge applies any namespace prefix
+            # Bare name; the bridge applies any namespace prefix.
+            "parent": WORLD_FRAME if world_mounted else self.exclude_body,
             "translation": [float(v) for v in rel_pos],
             "rotation": [float(v) for v in rel_quat],  # (w, x, y, z)
         }

@@ -10,7 +10,7 @@ Config::
       model: turtlebot4     # bundled model name, filename, or absolute path
       namespace: ""         # optional transport scope; the robot's endpoints inherit it
       prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
-      pos: [0.0, 0.0]       # world XY spawn
+      pos: [0.0, 0.0]       # world XY spawn ([x, y, z] to override the model's rest height)
       yaw: 0.0              # spawn heading (rad)
       base_joint: base_free # free joint used to place the base
 
@@ -31,6 +31,33 @@ from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+
+
+def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
+    """The base's resting height, as the model's own keyframe states it -- or ``None``.
+
+    A wheeled model is authored with ``base_link`` at the origin and its wheels hanging below it, so
+    the compiled rest height of the base free joint is 0 and spawning at it buries the robot by a
+    wheel radius. What the model actually knows about its own stance is in its ``<key>``: every
+    model in this package states one, from a couple of millimetres of tyre squash to the Warthog's
+    0.288 m. That height is read here because :func:`_strip_keyframes` is about to discard the rest
+    of it, and a robot dropped into the floor is not merely ugly -- it is ejected on the first step,
+    so the trial begins with a pose and a velocity nobody asked for.
+
+    The address is resolved by compiling a copy rather than assuming the free joint comes first: a
+    keyframe's qpos is the whole robot's, and reading the wrong three numbers out of it would put
+    a wheel angle in the z of the spawn.
+    """
+    if not spec.keys:
+        return None
+    key = next((k for k in spec.keys if k.name == "home"), spec.keys[0])
+    model = spec.copy().compile()
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, base_joint)
+    if jid < 0 or model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+        return None
+    adr = int(model.jnt_qposadr[jid])
+    qpos = list(key.qpos)
+    return float(qpos[adr + 2]) if len(qpos) > adr + 2 else None
 
 
 def _strip_keyframes(spec: mujoco.MjSpec) -> None:
@@ -70,6 +97,11 @@ class SpawnRobotPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         pos = self.config.get("pos", [0.0, 0.0])
         self.initial_pose = (float(pos[0]), float(pos[1]), float(self.config.get("yaw", 0.0)))
+        #: An explicit z in ``pos``, which a world states when the ground under the spawn is not at
+        #: z=0 -- a height field, a ramp, a shelf. Without one the model's own rest height is used.
+        self.spawn_z = float(pos[2]) if len(pos) > 2 else None
+        #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
+        self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
 
     def validate_config(self, config: dict) -> list[str]:
@@ -82,8 +114,8 @@ class SpawnRobotPlugin(Plugin):
             except ModelError as exc:
                 errors.append(str(exc))
         pos = config.get("pos", [0.0, 0.0])
-        if len(pos) != 2:
-            errors.append("'pos' must be [x, y]")
+        if len(pos) not in (2, 3):
+            errors.append("'pos' must be [x, y], or [x, y, z] to override the model's rest height")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -92,6 +124,7 @@ class SpawnRobotPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
@@ -157,6 +190,10 @@ class SpawnRobotPlugin(Plugin):
         q = ctx.model.jnt_qposadr[jid]
         ctx.data.qpos[q] = x
         ctx.data.qpos[q + 1] = y
-        # qpos[q+2] keeps the compiled rest height.
+        # z: the world's if it states one, else the model's own stance. Only a model that states
+        # neither keeps the compiled qpos0, which for a base_link authored at the origin is 0.
+        z = self.spawn_z if self.spawn_z is not None else self.rest_z
+        if z is not None:
+            ctx.data.qpos[q + 2] = z
         h = yaw / 2.0
         ctx.data.qpos[q + 3 : q + 7] = (np.cos(h), 0.0, 0.0, np.sin(h))

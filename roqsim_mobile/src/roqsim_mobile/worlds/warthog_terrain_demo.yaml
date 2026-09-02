@@ -1,0 +1,53 @@
+# Clearpath Warthog W200 on rough outdoor ground -- standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:warthog_terrain_demo
+#
+# The Warthog is an outdoor machine, and warthog_demo puts it in a 10 m room on a plane -- the one
+# ground its own literature is never about. This is the same robot on ground that is not flat: a
+# generated height field with 2.5 m of relief over 24 m, which the skid-steer climbs at a pitch, a
+# roll and a wheel slip that no floor produces.
+#
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+  # A chase camera low behind the robot: the pitch and roll ARE the demo, and a top-down free camera
+  # over 24 m of ground shows none of them.
+  view: {track: robot, follow_heading: true, distance: 9.0, elevation: -12.0}
+
+components:
+  # The ground. `heightfield` provides the world, so no floor plane is built through the hills.
+  - heightfield:
+      source: generated
+      # seed 25 at the default roughness puts the terrain's LOWEST sample exactly at the centre of
+      # the grid, which is where the robot spawns. spawn_robot places a robot at the rest height the
+      # model states, which is measured against flat ground at z=0 -- and the field's lowest sample
+      # IS z=0, so this is the one spot where that height is right. A spawn over a hill starts
+      # inside it and is thrown clear on the first step; change the seed and the spawn must move
+      # with it, or state a z in `pos`.
+      seed: 25
+      size: [24.0, 24.0]
+      # 2.5 m over 24 m: slopes a 1.0 m/s skid-steer works to climb, not a wall it stops at.
+      height: 2.5
+      # 128 samples over 24 m is a 19 cm grid. Contact is against the triangles, so this is the
+      # resolution of every wheel contact; the Warthog's 0.6 m wheels ride it as ground.
+      resolution: 128
+      # Dry soil rather than the default floor: a skid-steer on a slope is a friction experiment,
+      # so the number the terrain is driven with belongs in the world that states the terrain.
+      friction: [1.1, 0.01, 0.001]
+      rgba: [0.38, 0.42, 0.28, 1.0]
+
+  # diff_drive (outdoor skid-steer, 4 driven wheels, and the calibrated slip_factor of 5.25) and the
+  # lidar come from the warthog model manifest. The lidar sweeps the terrain here, so what it returns
+  # is the hills -- the ground itself is an obstacle, which is the whole point of the world.
+  - spawn_robot:
+      model: warthog
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - diff_drive:
+          # v/w gives a 6.7 m arc: out of the valley, over the surrounding slopes, and back, well
+          # inside the 24 m ground at any heading.
+          test_cmd: [1.0, 0.15]   # remove once the ros2_bridge drives /cmd_vel

@@ -15,7 +15,7 @@ what a caller holding an override needs to know::
      "dropped_transport": [], "errors": null}
 
 Why a command and not an import, for the same reason ``inputs`` is one: the caller is usually
-*not* a roqsim process. A campaign runner validating ``plugins.floorplan.frixion`` before it
+*not* a roqsim process. A campaign runner validating ``components.floorplan.frixion`` before it
 spends an image pull has no reason to have roqsim installed, and cannot resolve a world's
 ``extends`` chain without it -- so it asks the image that does.
 
@@ -97,7 +97,7 @@ from roqsim.config import drop_transport, load_config, world_sources
 from roqsim.world import resolve_world_yaml_ref
 
 #: Depth at which a dotted path stops being a *destination* and starts being data. A campaign
-#: overrides ``plugins.floorplan.floor.reflectance``; it does not address individual members of
+#: overrides ``components.floorplan.floor.reflectance``; it does not address individual members of
 #: a list of obstacle instances, and listing those would bury the keys that matter.
 _MAX_DEPTH = 4
 

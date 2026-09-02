@@ -11,7 +11,14 @@ colour info      ``<ns>/camera/color/camera_info``            ``camera_color_opt
 depth            ``<ns>/camera/depth/image_rect_raw``         ``camera_depth_optical_frame``
 depth info       ``<ns>/camera/depth/camera_info``            ``camera_depth_optical_frame``
 point cloud      ``<ns>/camera/depth/color/points``           ``camera_depth_optical_frame``
+IMU (D435i)      ``<ns>/camera/imu``                          ``camera_imu_optical_frame``
 ===============  ==========================================  =============================
+
+The IMU is not this plugin's: the D435i's inertial module is a separate device inside the same
+housing, so it is an ``imu`` component in ``d435.manifest.yaml`` (with the vendor's extrinsic) rather
+than another stream rendered here. It arrives with ``spawn_sensor: {model: d435}`` and is switched off
+per world with ``enabled: false``; the row is listed because a consumer looking for the device's
+topics should find all of them in one table.
 
 Depth and the cloud are both **opt-in** (``depth:``/``points:``), and ``points`` implies ``depth``.
 The reason the cloud is not free: it reprojects every valid pixel, so a 640x480 frame is up to 307k
@@ -127,6 +134,10 @@ class RealsenseD435Plugin(DepthCameraPlugin):
         super()._capture_extra(ctx, renderer)
         if self.points:
             self._cloud = PointCloud(points=self._reproject(self._depth))
+
+    def _reset_extra(self, ctx: SimContext) -> None:
+        super()._reset_extra(ctx)
+        self._cloud = None
 
     def _reproject(self, depth: np.ndarray) -> np.ndarray:
         """Depth image -> (N, 3) float32 XYZ in the ROS optical frame (x right, y down, z forward).

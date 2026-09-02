@@ -259,7 +259,7 @@ overhead light under it, since a light left above a solid slab leaves the room b
 back off at run time with the core `ceiling` plugin, which deletes by height rather than by name:
 
 ```yaml
-- ceiling: {enabled: true, above_z: 2.6}   # --set plugins.ceiling.enabled=false opens the roof
+- ceiling: {keep: true, above_z: 2.6}   # --set components.ceiling.keep=false opens the roof
 ```
 
 List that plugin **last**: it can only remove what the plugins before it built, and what hangs under

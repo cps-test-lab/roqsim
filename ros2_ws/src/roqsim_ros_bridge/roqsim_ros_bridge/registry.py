@@ -317,6 +317,161 @@ def fill_detection3d_array(msg, payload, stamp: Time, hints: dict) -> None:
     msg.detections = detections
 
 
+@converter("sensor_msgs.msg.Imu")
+def fill_imu(msg, payload, stamp: Time, hints: dict) -> None:
+    """A strap-down IMU reading (``roqsim_sensors.plugins.imu.ImuReading``).
+
+    Two details are REP 145 conventions rather than choices made here. The acceleration is proper
+    acceleration -- gravity included -- which is what the producer reads out of MuJoCo and what every
+    subscriber of this message assumes. And ``orientation_covariance[0] = -1`` is the standard marker
+    for "this device does not report attitude"; a rate-only IMU must send that rather than an identity
+    quaternion, which a consumer cannot tell from a level robot.
+
+    The covariances are isotropic diagonals built from the producer's declared per-axis variance, so a
+    filter weights the channel by the noise the world actually configured. A perfect sensor reports
+    zeros, which is truthful: it is the producer's job to state a floor if its consumer needs one.
+    """
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "imu_link")
+    if getattr(payload, "orientation_valid", True):
+        w, x, y, z = payload.orientation
+        msg.orientation = Quaternion(x=float(x), y=float(y), z=float(z), w=float(w))
+        msg.orientation_covariance = _diag3(payload.orientation_variance)
+    else:
+        # Leave the quaternion at its default and mark the channel absent.
+        cov = _diag3(0.0)
+        cov[0] = -1.0
+        msg.orientation_covariance = cov
+    wx, wy, wz = payload.angular_velocity
+    msg.angular_velocity.x, msg.angular_velocity.y, msg.angular_velocity.z = (
+        float(wx),
+        float(wy),
+        float(wz),
+    )
+    ax, ay, az = payload.linear_acceleration
+    msg.linear_acceleration.x, msg.linear_acceleration.y, msg.linear_acceleration.z = (
+        float(ax),
+        float(ay),
+        float(az),
+    )
+    msg.angular_velocity_covariance = _diag3(payload.angular_velocity_variance)
+    msg.linear_acceleration_covariance = _diag3(payload.linear_acceleration_variance)
+
+
+def _diag3(variance: float) -> list:
+    """A row-major 3x3 covariance with *variance* on the diagonal, as the nine floats ROS wants."""
+    v = float(variance)
+    return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
+
+
+@converter("vision_msgs.msg.Detection2DArray")
+def fill_detection2d_array(msg, payload, stamp: Time, hints: dict) -> None:
+    """2D image-space detections from a mask.
+
+    payload: ``[(class_id, class_name, instance_id, cx, cy, w, h), ...]`` in pixels, with the box
+    inclusive of both edge rows (so a 1x1 instance has size 1, not 0). The standard message a 2D
+    detector publishes, so a real one replaces the simulated producer without anything downstream
+    changing.
+
+    ``Detection2D.id`` carries the INSTANCE and the hypothesis carries the CLASS, which is the split
+    the message intends and the reason both fields exist: two parcels in view are one class and two
+    ids, and collapsing them (as a class-only producer must) makes a tracker associate them as one
+    object. Score is 1.0 because these are ground-truth boxes -- a mask either covers a pixel or does
+    not, and inventing a confidence would let a consumer threshold on a number that means nothing.
+    """
+    from vision_msgs.msg import (
+        BoundingBox2D,
+        Detection2D,
+        ObjectHypothesis,
+        ObjectHypothesisWithPose,
+    )
+
+    frame_id = frame(hints, "frame_id", "camera_optical_frame")
+    detections = []
+    # The numeric class is deliberately not on the wire: vision_msgs' class_id is a STRING, so the
+    # declared name is what a consumer should read, and there is no field for the number that would
+    # not be an abuse of one. It stays in the payload for an in-process reader, and a consumer that
+    # needs to relate a box to the label image's pixel values reads the world's own `classes:` block
+    # -- one mapping, in the place that defines it.
+    for _class_id, class_name, instance_id, cx, cy, w, h in payload:
+        det = Detection2D()
+        det.header.stamp = stamp
+        det.header.frame_id = frame_id
+        det.id = str(instance_id)
+
+        hypothesis = ObjectHypothesis()
+        # The declared NAME, not the numeric id: vision_msgs' class_id is a string, and a consumer
+        # reading "parcel" needs no copy of the world's class table to know what it saw. The number
+        # is what the label image carries, and it is in the message too, as the instance's own row.
+        hypothesis.class_id = str(class_name)
+        hypothesis.score = 1.0
+        result = ObjectHypothesisWithPose()
+        result.hypothesis = hypothesis
+        det.results = [result]
+
+        bbox = BoundingBox2D()
+        bbox.center.position.x = float(cx)
+        bbox.center.position.y = float(cy)
+        bbox.size_x = float(w)
+        bbox.size_y = float(h)
+        det.bbox = bbox
+
+        detections.append(det)
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame_id
+    msg.detections = detections
+
+
+@converter("sensor_msgs.msg.BatteryState")
+def fill_battery_state(msg, payload, stamp: Time, hints: dict) -> None:
+    """A robot's energy state (``roqsim.plugins.energy_monitor.EnergyReport``).
+
+    The message a real platform publishes, so a stack that already watches a battery needs no change.
+    Two of its conventions are load-bearing and easy to get wrong: an unknown value is ``NaN``, not
+    zero (a zero voltage reads as a dead pack), and ``percentage`` is a FRACTION in [0, 1] rather
+    than a percent. A producer with no configured capacity reports the charge fields as unknown
+    instead of inventing a full battery.
+
+    ``current`` is negative while discharging -- the sign REP 145's battery message uses for current
+    leaving the pack -- so a consumer plotting it sees a drain rather than a charge.
+    """
+    from sensor_msgs.msg import BatteryState
+
+    unknown = float("nan")
+    known_charge = payload.charge_fraction >= 0.0
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "base_link")
+    msg.voltage = float(payload.voltage) if payload.voltage > 0.0 else unknown
+    msg.current = -float(payload.current_a) if payload.voltage > 0.0 else unknown
+    msg.charge = (
+        float(payload.capacity_wh * payload.charge_fraction / payload.voltage)
+        if known_charge and payload.voltage > 0.0
+        else unknown
+    )
+    msg.capacity = (
+        float(payload.capacity_wh / payload.voltage)
+        if payload.capacity_wh > 0.0 and payload.voltage > 0.0
+        else unknown
+    )
+    msg.design_capacity = msg.capacity
+    msg.percentage = float(payload.charge_fraction) if known_charge else unknown
+    msg.power_supply_status = (
+        BatteryState.POWER_SUPPLY_STATUS_NOT_CHARGING
+        if payload.depleted
+        else BatteryState.POWER_SUPPLY_STATUS_DISCHARGING
+    )
+    msg.power_supply_health = (
+        BatteryState.POWER_SUPPLY_HEALTH_DEAD
+        if payload.depleted
+        else BatteryState.POWER_SUPPLY_HEALTH_GOOD
+    )
+    msg.power_supply_technology = BatteryState.POWER_SUPPLY_TECHNOLOGY_UNKNOWN
+    msg.present = True
+    # The integral itself -- the number a paper actually quotes -- has no field here and is not
+    # smuggled into one that means something else. A consumer that needs joules reads the endpoint's
+    # payload in process, or the plugin's blackboard reader.
+
+
 @converter("sensor_msgs.msg.JointState")
 def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, positions, velocities[, efforts]). Effort is optional so the wheel/locomotion producers
@@ -345,7 +500,11 @@ def fill_controller_state(msg, payload, stamp: Time, hints: dict) -> None:
     msg.reference.positions = _as_f64(desired)
     msg.feedback.positions = _as_f64(actual)
     msg.feedback.velocities = _as_f64(velocities)
-    msg.error.positions = _as_f64([a - c for a, c in zip(actual, desired, strict=True)])
+    # reference - feedback, the sign the message itself states ("essentially reference - feedback,
+    # for a regular PID implementation") and the one ros2_control's own JointTrajectoryController
+    # publishes. A consumer reads this as "how much further to go", so the inverse does not merely
+    # look odd: an arm lagging behind its setpoint reports as leading it.
+    msg.error.positions = _as_f64([d - a for d, a in zip(desired, actual, strict=True)])
 
 
 # Bytes per pixel for the encodings roqsim_sensors' camera plugins use. One converter serves
@@ -479,6 +638,24 @@ def decode_twist(msg) -> tuple[float, float, float]:
 @decoder("geometry_msgs.msg.TwistStamped")
 def decode_twist_stamped(msg) -> tuple[float, float, float]:
     return decode_twist(msg.twist)
+
+
+@decoder("ackermann_msgs.msg.AckermannDrive")
+def decode_ackermann(msg) -> tuple[float, float]:
+    """Car-like command -> neutral ``(steering_angle, speed)``.
+
+    Not converted to a twist on the way through, which would be the obvious thing and is wrong here.
+    A twist states a curvature, and turning a steering angle into one needs the wheelbase -- robot
+    geometry, which this module deliberately does not know. It also loses the case the message
+    exists to carry: at zero speed a curvature says nothing, while a steering angle still says which
+    way the wheels point. The consumer knows its own wheelbase and can do neither badly.
+    """
+    return (msg.steering_angle, msg.speed)
+
+
+@decoder("ackermann_msgs.msg.AckermannDriveStamped")
+def decode_ackermann_stamped(msg) -> tuple[float, float]:
+    return decode_ackermann(msg.drive)
 
 
 @decoder("geometry_msgs.msg.PoseStamped")

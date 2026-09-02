@@ -68,7 +68,9 @@ def test_cloud_endpoint_declares_pointcloud2_and_frame():
     hints = _endpoint(engine).backend["ros2"]
     assert hints["type"] == "sensor_msgs.msg.PointCloud2"
     assert hints["frame_id"] == "livox_frame"
-    assert hints["static_tf"]["parent"] == "base_link"  # child is frame_id, applied by the bridge
+    # The child is that frame_id, applied by the bridge. The parent is the world: this scene has no
+    # base_link, and the transform is measured from the world -- see test_lidar's mount-TF tests.
+    assert hints["static_tf"]["parent"] == "world"
 
 
 def test_frame_id_defaults_to_the_site():
