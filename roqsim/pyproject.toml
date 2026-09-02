@@ -44,6 +44,10 @@ payload = "roqsim.plugins.payload:PayloadPlugin"
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 
+# Ground that is not flat. Everything this substrate could stand a robot on was a plane, while four
+# of its ported platforms are outdoor machines whose papers are about what happens when it is not.
+heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
+
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of
 # `roqsim export *` because they are already written into other people's configs and scripts.
