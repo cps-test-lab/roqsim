@@ -541,6 +541,72 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
 
+Bases: three geometries, one interface
+--------------------------------------
+
+``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
+``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
+something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
+place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
+that command is a planner that would not move the real vehicle, and approximating a car with a
+differential base and a small angular limit hides exactly the failure the experiment is looking for.
+
+``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
+right -- plus the wheelbase and the widths its geometry comes from::
+
+   components:
+     - spawn_robot: {model: my_car}
+       name: robot
+       components:
+         - ackermann_drive:
+             wheelbase: 0.32
+             track: 0.24
+             steer_track: 0.20
+             max_steer_angle: 0.5
+             steer_actuators: [left_steer_motor, right_steer_motor]
+             steer_joints:    [left_steer_joint, right_steer_joint]
+             drive_actuators: [rear_left_motor, rear_right_motor]
+             drive_joints:    [rear_left_joint, rear_right_joint]
+
+The two front wheels are steered by *different* angles and the two rear wheels driven at *different*
+speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
+shared value would scrub the tyres. Both splits vanish as the curve straightens.
+
+**Which width is which.** A real car has three and they are not interchangeable: the separation of
+the two *steering axes*, the separation of the front wheel centres, and the driven axle's track. The
+two splits are measured across different ones, so there are two keys. ``steer_track`` is the width
+the steer split pivots about -- the steering axes, which on most vehicles are inboard of the wheels
+since a kingpin sits inside the hub -- and ``track`` is the driven axle the drive split is measured
+across. ``steer_track`` defaults to ``track``, which is exact for a design whose steering axes sit at
+its wheel centres; anywhere else, leaving it out overstates the steer split at every radius, and the
+front wheel centres (neither of the two) overstate it whichever key they are passed as.
+
+It also accepts the message a car-like stack already speaks. ``ackermann_cmd`` takes an
+``ackermann_msgs/AckermannDriveStamped`` on ``drive``, beside the ``cmd_vel`` every base here
+publishes::
+
+   ros2 topic pub /drive ackermann_msgs/msg/AckermannDriveStamped \
+     '{drive: {steering_angle: 0.3, speed: 0.6}}'
+
+The message's ``steering_angle`` is defined as *the yaw of a virtual wheel located at the center of
+the front axle*, which is exactly the centre angle this plugin splits into two, so nothing is
+converted on the way in. **That is what makes it more than an alias for a twist**: a twist states a
+curvature, ``w / v``, which says nothing at rest -- so through ``cmd_vel`` a stopped car's rack can
+only hold the angle it has. Through ``ackermann_cmd`` a stopped car can turn its wheels, which is
+what a real one does while parking, and what a car-like stack sends when lining up before it moves
+off. Whichever of the two commands arrived last owns the angle; they are never merged, because a
+stated angle and a curvature are two ways of saying the same thing and averaging them obeys neither.
+
+Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
+well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
+controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
+around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+
+Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
+is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
+for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
+constant would only make the estimate look better than the sensor it stands for.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 
@@ -637,6 +703,20 @@ that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. On
 lateral error against 12.2 mm of jaw clearance: MoveIt had satisfied the goal exactly, and the goal was
 about the wrong point. ``--tip-site pinch`` emits a frame link at the gripper's own grasp site (through
 a collapsed parent, where such a site usually sits), so a 3 mm position tolerance means 3 mm at the pads.
+
+**Two arms that must move at once.** ``--arm left,right`` describes both as one robot: one URDF with
+both chains under a common root, one group per arm, and a group spanning all of them. That last group
+is the point of it — a plan for it is a single trajectory through both arms' joint space, so each
+arm's motion is checked against where the other *is* at that instant rather than against where it was
+before it started. It deliberately gets **no** IK solver: KDL solves a single serial chain and this
+group is several, so a solver there would load and then fail every pose request; reach a pose through
+one arm's own group, and use the combined group for joint-space planning. One flat namespace has to
+hold both arms, so their links and joints keep each arm's MJCF prefix — and since joint names are the
+controller's, not the description's, each arm's ``arm_controller`` needs ``joint_prefix:`` set to that
+same prefix. An arm publishing unprefixed names is refused rather than renamed, because those names
+are what reaches ``/joint_states`` and what a trajectory point carries. Every check above runs per arm:
+a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
+loudly as the first.
 
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.

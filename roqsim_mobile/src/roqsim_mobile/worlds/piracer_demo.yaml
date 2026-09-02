@@ -1,0 +1,37 @@
+# Waveshare PiRacer — standalone demo world (roqsim_mobile).
+#
+# Standalone:  roqsim sim roqsim_mobile:piracer_demo
+# For ROS 2 / nav2, see the roqsim_ros_bridge and roqsim_nav2_example packages.
+
+sim:
+  pacing: realtime
+  # A 1.5 kg car on 34 mm wheels carrying its whole weight on four small contact patches; the
+  # default 2 ms step is coarse for tyre contacts this size, as it is for the raspimouse.
+  timestep: 0.001
+  # The smallest footprint in roqsim_mobile inside a 10 m room: auto-framing puts the whole room in
+  # view and the car is a speck. Ride with it instead, which is also the only way to see a car-like
+  # base do the thing that distinguishes it -- the body rotating only while it is moving forward.
+  view:
+    track: robot
+    follow_heading: true
+    distance: 1.2
+    elevation: -20.0
+
+components:
+  # ackermann_drive comes from the piracer model manifest. It is the only car-like base here, so
+  # this is the one demo whose robot cannot drive itself out of a corner by spinning: a test_cmd
+  # with v = 0 would leave it sitting still however large the yaw rate, because curvature is w/v.
+  - spawn_robot:
+      model: piracer
+      pos: [0.0, 0.0]
+      yaw: 0.0
+    name: robot
+
+    components:
+      - ackermann_drive:
+          # A 0.4 m circle (v/w). The bicycle angle for it is 0.37 rad, which puts the INNER wheel
+          # at 0.43 against a 0.5 rad lock — hard cornering rather than a gentle arc, so the split
+          # between the two front wheels is wide enough to see. The car cannot be asked for much
+          # tighter: its minimum radius is wheelbase / tan(max_steer) = 0.28 m, and a command below
+          # that is simply unreachable rather than merely slower.
+          test_cmd: [0.6, 1.5]   # [v, w]; remove once the ros2_bridge drives /cmd_vel

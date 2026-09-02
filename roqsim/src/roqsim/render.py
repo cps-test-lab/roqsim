@@ -672,6 +672,13 @@ def _render_recording(
     # The world's own sim.view is the baseline, so a replay of world X looks like a render of world X.
     # A recorded camera track (below) wins over it, and --view/--focus/--camera win over both.
     world_view = rec.view
+    # A live render gets --view through the world config, which is loaded with `merged`. A recording
+    # rebuilds its world from its own provenance instead and never sees those overrides, so they are
+    # applied to the baseline here -- without this the flag is accepted and silently does nothing.
+    # Only the camera keys are taken: a recording's model must stay the one its provenance names.
+    stated_view = (merged or {}).get("sim", {}).get("view")
+    if stated_view:
+        world_view = {**(world_view or {}), **stated_view}
 
     if check:
         record = rec.describe()
@@ -980,7 +987,7 @@ def main(argv: list | None = None) -> int:
         dest="overrides",
         action="append",
         metavar="PATH=VALUE",
-        help="override a world value, e.g. --set plugins.floorplan.size=4.0 (repeatable)",
+        help="override a world value, e.g. --set components.floorplan.size=4.0 (repeatable)",
     )
     parser.add_argument(
         "--check",

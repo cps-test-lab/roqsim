@@ -26,12 +26,14 @@ hand-assemble.
 
 ## Features
 
-- **One YAML file per world.** Robots, sensors, props and scene declared together; **51 plugins** hook
+- **One YAML file per world.** Robots, sensors, props and scene declared together; **53 plugins** hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **18 robot models across 5 families** — 4 wheeled bases (TurtleBot 4, TurtleBot 3 Waffle, Husky A200,
-  Jackal), 5 arms and 2 grippers (UR10e, UR5e, Panda, Gen3, OpenManipulator-X; Robotiq 2F-85, Schunk
-  PG+70), 2 mobile manipulators (Tiago Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli,
-  AgiBot G2), and Boston Dynamics Spot — each vendored with pinned upstream provenance.
+- **35 robot models across 6 families** — 16 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+  Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, LGDXRobot2, MakerSpet Mini,
+  Raspimouse, OOMWOO ONE, PiRacer), 9 arms and 2 grippers (UR10e, UR5e, Panda, Gen3, xArm7, M1013,
+  OpenManipulator-X, ViperX 300s, WidowX 250s; Robotiq 2F-85, Schunk PG+70), 2 mobile manipulators
+  (TIAGo Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli, AgiBot G2), Boston Dynamics
+  Spot, and the Crazyflie 2 — each vendored with pinned upstream provenance.
 - **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with six
   vendor-CAD sensor models. The IMU reports proper acceleration, true attitude (or none, marked as
   such) and covariances built from its declared noise, so a `robot_localization` stack has the input
@@ -62,8 +64,9 @@ make help     # list all targets
 .venv/bin/roqsim sim roqsim_mobile:turtlebot4_demo      # a viewer opens
 ```
 
-**21 ready-to-run worlds** ship in the box — robot demos, a warehouse scene, sensor rigs and nav2
-setups. `roqsim --help` lists the command groups; `roqsim <group> --help` gives one line per tool.
+**1 ready-to-run world** ships in the box — the Depot warehouse — named by a `<package>:<world>`
+ref that `roqsim sim` takes. Every robot model also registers a `<name>_demo` world that shows that
+one robot in an empty room, which is how the commands above run. `roqsim --help` lists the command groups; `roqsim <group> --help` gives one line per tool.
 
 Headless, as fast as the machine allows, with timings:
 
