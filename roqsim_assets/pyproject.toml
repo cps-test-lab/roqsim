@@ -43,6 +43,10 @@ box = "roqsim_assets.plugins.box:BoxPlugin"
 boxes = "roqsim_assets.plugins.boxes:BoxesPlugin"
 moving_box = "roqsim_assets.plugins.moving_box:MovingBoxPlugin"
 cylinder = "roqsim_assets.plugins.cylinder:CylinderPlugin"
+# The round population, for the same reason `boxes` exists: the count becomes one config value a
+# campaign can override, and the entries are heterogeneous -- a family of round workpieces differs
+# in diameter at a shared height, which `spawn_model`'s uniform scaling cannot express.
+cylinders = "roqsim_assets.plugins.cylinders:CylindersPlugin"
 conveyor = "roqsim_assets.plugins.conveyor:ConveyorPlugin"
 # Carries a prop along a prescribed 2-D path. Distinct from `moving_box` (mocap) on purpose: a mocap
 # body has no velocity in MuJoCo's dynamics, so friction against it sees zero relative slip and it
