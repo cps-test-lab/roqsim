@@ -128,13 +128,16 @@ class QuadrotorControllerPlugin(Plugin):
 
         self._aid_thrust = actuator(self.cfg("thrust_actuator"))
         self._aid_moments = [actuator(n) for n in self.cfg("moment_actuators")]
-        body = self.config.get("body") or (entity.meta.get("root_body") if entity else None)
-        self._bid = (
-            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + body) if body else -1
-        )
+        # `entity.body` is the root body spawn_robot resolved against the compiled model, so it is
+        # already prefixed; a config `body:` is in the model's own namespace and takes the prefix.
+        configured = self.config.get("body")
+        body = (prefix + str(configured)) if configured else (entity.body if entity else None)
+        self._bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) if body else -1
         if self._bid < 0:
             # Fall back to the body owning the thrust actuator's site, which is where the force is
-            # applied and therefore the body being flown by construction.
+            # applied and therefore the body being flown by construction. Still earns its place: a
+            # drone declared without spawn_robot (a bare MJCF world, a test harness) has an entity
+            # with no body at all, and the actuator's site names the flown body without being told.
             site = model.actuator_trnid[self._aid_thrust, 0]
             self._bid = int(model.site_bodyid[site]) if site >= 0 else -1
 

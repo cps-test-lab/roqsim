@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_aerial"
 version = "0.1.0"
-description = "Aerial-vehicle plugins and assets for roqsim (Bitcraze Crazyflie 2 + quadrotor controller)."
+description = "Aerial-vehicle plugins and assets for roqsim (Crazyflie 2, Holybro X500 V2, quadrotor control and a PX4 SITL bridge)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -17,7 +17,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+# The PX4 bridge speaks MAVLink. pymavlink is the reference encoder for it; a hand-rolled
+# serialiser for a versioned wire protocol is a maintenance liability, not a saved dependency.
+# Extra rather than a hard dependency so a world that only flies `quadrotor_controller` -- the
+# majority -- does not pull it in; `px4_sitl` imports it lazily and fails by name if it is absent.
+px4 = ["pymavlink>=2.4"]
+test = ["pytest>=7.0", "pymavlink>=2.4"]
 
 # Aerial controller plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
@@ -25,6 +30,16 @@ quadrotor_controller = "roqsim_aerial.plugins.quadrotor_controller:QuadrotorCont
 # Wind is a world plugin and any body with drag feels it, but disturbance rejection is what flies
 # a vehicle off course, so it lives with the family that needs it.
 wind_field = "roqsim_aerial.plugins.wind_field:WindFieldPlugin"
+# Per-rotor actuation. `quadrotor_controller` above is the abstraction a *controller* wants
+# (collective thrust + three body moments); this is the one a flight stack's mixer emits (four
+# normalized motor commands). An airframe needs the second before any external autopilot can fly it.
+multirotor_motors = "roqsim_aerial.plugins.multirotor_motors:MultirotorMotorsPlugin"
+# The seam to PX4: roqsim stands in for Gazebo as the physics behind PX4 SITL, over PX4's
+# documented simulator-agnostic MAVLink HIL interface rather than gz's native transport.
+px4_sitl = "roqsim_aerial.plugins.px4_sitl:Px4SitlPlugin"
+# Its own plugin rather than part of px4_sitl: the datum is a property of the world, and GNSS
+# denial is a first-class experiment factor, not a flight-stack detail.
+gnss = "roqsim_aerial.plugins.gnss:GnssPlugin"
 
 # Bundled aerial models (crazyflie_2), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]
