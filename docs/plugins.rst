@@ -668,6 +668,20 @@ lateral error against 12.2 mm of jaw clearance: MoveIt had satisfied the goal ex
 about the wrong point. ``--tip-site pinch`` emits a frame link at the gripper's own grasp site (through
 a collapsed parent, where such a site usually sits), so a 3 mm position tolerance means 3 mm at the pads.
 
+**Two arms that must move at once.** ``--arm left,right`` describes both as one robot: one URDF with
+both chains under a common root, one group per arm, and a group spanning all of them. That last group
+is the point of it — a plan for it is a single trajectory through both arms' joint space, so each
+arm's motion is checked against where the other *is* at that instant rather than against where it was
+before it started. It deliberately gets **no** IK solver: KDL solves a single serial chain and this
+group is several, so a solver there would load and then fail every pose request; reach a pose through
+one arm's own group, and use the combined group for joint-space planning. One flat namespace has to
+hold both arms, so their links and joints keep each arm's MJCF prefix — and since joint names are the
+controller's, not the description's, each arm's ``arm_controller`` needs ``joint_prefix:`` set to that
+same prefix. An arm publishing unprefixed names is refused rather than renamed, because those names
+are what reaches ``/joint_states`` and what a trajectory point carries. Every check above runs per arm:
+a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
+loudly as the first.
+
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.
 
