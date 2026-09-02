@@ -47,6 +47,16 @@ Usage::
 ``--prefix`` selects the robot: every body whose MJCF name starts with it. The prefix is stripped from
 the emitted names, so the URDF carries the model's own names (``shoulder_pan_joint``) and matches the
 joint names ``arm_controller`` publishes in ``/joint_states``.
+
+Several robots in one description
+=================================
+``--prefix a_,b_`` exports several robots into ONE URDF, each hanging off a common ``--root-link`` by
+a fixed joint at the pose the compiled model puts it at (``combine_urdfs``). That is what a planner
+needs to plan two arms *together* rather than one after the other: MoveIt reasons over a single robot
+description, so two chains it must check against each other have to be in the same one. Names are
+then KEPT rather than stripped -- one URDF is one flat namespace, and two arms of the same model
+would otherwise both claim ``base``, ``shoulder_link``, ``shoulder_pan_joint``. A name two parts both
+claim is refused rather than resolved.
 """
 
 from __future__ import annotations
@@ -132,6 +142,7 @@ class UrdfExporter:
         mesh_package: str = "",
         tip_site: str = "",
         tip_link: str = "tcp",
+        link_strip: str | None = None,
     ):
         self.m = model
         self.prefix = prefix
@@ -143,6 +154,12 @@ class UrdfExporter:
         # unstripped URDF leaves every arm link frozen at zero and MoveIt plans from a pose the arm is
         # not in. Defaults to `prefix`, which is the single-robot case.
         self.strip_prefix = prefix if strip is None else strip
+        # What is removed from emitted LINK names. Defaults to the selection prefix, so one robot's
+        # URDF carries the model's own link names. Set to "" when several robots go into ONE
+        # description: a URDF is a flat namespace, and two arms of the same model would otherwise
+        # both claim `base`, `shoulder_link`, ... Keeping each arm's MJCF prefix is what makes those
+        # names unique, and `collapse` is then read in that same (unstripped) spelling.
+        self.link_strip = self.prefix if link_strip is None else link_strip
         self.name = name
         self.root_link = root_link
         # Parent for a root body that is itself jointed (a rail carriage, a gantry). Only emitted
@@ -180,8 +197,9 @@ class UrdfExporter:
         return f"file://{path}"
 
     def _strip(self, s: str) -> str:
-        """Strip the SELECTION prefix. Used for link names, which only have to be unique."""
-        return s[len(self.prefix) :] if self.prefix and s.startswith(self.prefix) else s
+        """Strip the LINK naming prefix. Used for link names, which only have to be unique."""
+        sp = self.link_strip
+        return s[len(sp) :] if sp and s.startswith(sp) else s
 
     def _strip_joint(self, s: str) -> str:
         """Strip the naming prefix. Used for JOINT names, which have to match /joint_states.
@@ -706,6 +724,106 @@ class UrdfExporter:
             self.mesh_files[mesh_id] = out.resolve()
 
 
+class _MergedExporters:
+    """The exported parts' totals, so one combined export reports like a single one."""
+
+    def __init__(self, exporters: list[UrdfExporter]):
+        self.mesh_files = {k: v for e in exporters for k, v in e.mesh_files.items()}
+        self.dropped_dofs = [d for e in exporters for d in e.dropped_dofs]
+        self.mesh_dir = exporters[0].mesh_dir
+        self.strip_prefix = ""
+
+
+def _first_body(model: mujoco.MjModel, prefix: str) -> int:
+    """The first (topmost) body whose name carries ``prefix`` -- that robot's root."""
+    for b in range(1, model.nbody):
+        if _name(model, mujoco.mjtObj.mjOBJ_BODY, b).startswith(prefix):
+            return b
+    raise ValueError(f"no bodies match prefix {prefix!r}")
+
+
+def body_reference_pose(model: mujoco.MjModel, body: int) -> tuple[np.ndarray, np.ndarray]:
+    """``(pos, quat)`` of ``body`` in the world, in the model's REFERENCE configuration.
+
+    Composed from ``body_pos``/``body_quat`` up to the world body, not from ``MjData``: a URDF joint
+    origin is the pose at zero, so this needs no simulator state and cannot drift with it.
+    """
+    rot = np.eye(3)
+    pos = np.zeros(3)
+    cur = body
+    while cur > 0:
+        r = _quat_to_mat(model.body_quat[cur])
+        pos = r @ pos + np.asarray(model.body_pos[cur], dtype=float)
+        rot = r @ rot
+        cur = int(model.body_parentid[cur])
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, rot.reshape(9))
+    return pos, quat
+
+
+def combine_urdfs(
+    model: mujoco.MjModel,
+    parts: list[tuple[ET.ElementTree, int]],
+    *,
+    name: str,
+    root_link: str,
+) -> ET.ElementTree:
+    """Join several exported robots into ONE URDF hanging off a common root link.
+
+    A URDF is a single tree with a single root, so two robots that must be planned for TOGETHER --
+    two arms whose motions have to be checked against each other -- need one description with one
+    root. ``root_link`` is that root: a pure frame with no geometry, and each part's own root link
+    becomes its fixed child at the pose the compiled model puts it at, so the two robots stand in the
+    URDF exactly where they stand in the simulated cell.
+
+    ``parts`` pairs each part's tree with the MuJoCo body its root link represents. Link and joint
+    names must already be unique across the parts (that is what ``link_strip=""`` is for); a name two
+    parts both claim is refused here rather than silently keeping one of them, because a URDF that
+    parses with a link missing plans against a robot that is not there.
+    """
+    if len(parts) < 2:
+        raise ValueError("combine_urdfs needs at least two parts; export the single robot directly")
+
+    robot = ET.Element("robot", name=name)
+    ET.SubElement(ET.SubElement(robot, "mujoco"), "compiler", discardvisual="false")
+    ET.SubElement(robot, "link", name=root_link)
+
+    seen: dict[str, str] = {}
+    for tree, body in parts:
+        part = tree.getroot()
+        part_name = part.get("name") or "?"
+        for element in part:
+            if element.tag not in ("link", "joint"):
+                continue  # the <mujoco> compiler hint; one copy is emitted above
+            ename = element.get("name")
+            if ename in seen:
+                raise ValueError(
+                    f"{element.tag} {ename!r} is claimed by both {seen[ename]!r} and {part_name!r}. "
+                    "One URDF is one flat namespace, so the robots going into it must carry distinct "
+                    "link and joint names -- keep each one's MJCF prefix instead of stripping it."
+                )
+            seen[ename] = part_name
+            robot.append(element)
+
+        # Which link is this part's root: the one no joint in the part has as its child.
+        children = {j.find("child").get("link") for j in part.findall("joint")}
+        roots = [
+            link.get("name") for link in part.findall("link") if link.get("name") not in children
+        ]
+        if len(roots) != 1:
+            raise ValueError(
+                f"part {part_name!r} has {len(roots)} root links ({sorted(roots)}); each part joined "
+                "into a combined URDF must itself be a single tree"
+            )
+        pos, quat = body_reference_pose(model, body)
+        joint = ET.SubElement(robot, "joint", name=f"{roots[0]}_mount", type="fixed")
+        ET.SubElement(joint, "parent", link=root_link)
+        ET.SubElement(joint, "child", link=roots[0])
+        _origin(joint, pos, quat)
+
+    return ET.ElementTree(robot)
+
+
 def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
     """Dump a compiled mesh as binary STL.
 
@@ -861,7 +979,12 @@ def main(argv: list | None = None) -> int:
     source.add_argument("--mjcf", help="path to a bare MJCF file (compiled directly)")
     parser.add_argument("--out", required=True, help="output .urdf path")
     parser.add_argument(
-        "--prefix", default="", help="MJCF name prefix selecting the robot (stripped in the output)"
+        "--prefix",
+        default="",
+        help="MJCF name prefix selecting the robot (stripped in the output). Several prefixes, "
+        "comma-separated, export several robots into ONE description hanging off --root-link -- "
+        "what a planner needs to reason about two arms at once. Their names are then KEPT rather "
+        "than stripped, since one URDF is one flat namespace",
     )
     parser.add_argument("--name", default="robot", help="robot name in the URDF")
     parser.add_argument(
@@ -954,21 +1077,55 @@ def main(argv: list | None = None) -> int:
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     mesh_dir = Path(args.mesh_dir) if args.mesh_dir else out.parent / "meshes"
-    exporter = UrdfExporter(
-        model,
-        prefix=args.prefix,
-        name=args.name,
-        root_link=args.root_link,
-        collapse=tuple(s.strip() for s in args.collapse.split(",") if s.strip()),
-        mesh_dir=mesh_dir,
-        world_link=args.world_link,
-        gripper_joint=args.gripper_joint,
-        strip=args.strip,
-        mesh_package=args.mesh_package,
-        tip_site=args.tip_site,
-        tip_link=args.tip_link,
-    )
-    tree = exporter.export()
+    prefixes = [s.strip() for s in args.prefix.split(",") if s.strip()] or [args.prefix]
+    collapse = tuple(s.strip() for s in args.collapse.split(",") if s.strip())
+    if len(prefixes) == 1:
+        exporter = UrdfExporter(
+            model,
+            prefix=prefixes[0],
+            name=args.name,
+            root_link=args.root_link,
+            collapse=collapse,
+            mesh_dir=mesh_dir,
+            world_link=args.world_link,
+            gripper_joint=args.gripper_joint,
+            strip=args.strip,
+            mesh_package=args.mesh_package,
+            tip_site=args.tip_site,
+            tip_link=args.tip_link,
+        )
+        tree = exporter.export()
+    else:
+        if args.strip is not None:
+            raise SystemExit(
+                "roqsim export urdf: --strip cannot be used with several --prefix values. Each "
+                "robot keeps its own MJCF prefix there, which is what makes the combined "
+                "description's link and joint names unique."
+            )
+        parts, exporters = [], []
+        for prefix in prefixes:
+            root_body = _first_body(model, prefix)
+            exporter = UrdfExporter(
+                model,
+                prefix=prefix,
+                name=f"{args.name}_{prefix.rstrip('_')}",
+                # Names are kept, so the root link keeps the model's own (prefixed) body name and
+                # --root-link names the COMMON root the parts hang off instead.
+                root_link=_name(model, mujoco.mjtObj.mjOBJ_BODY, root_body),
+                collapse=tuple(prefix + c for c in collapse),
+                mesh_dir=mesh_dir,
+                world_link=f"{prefix}{args.world_link}",
+                gripper_joint=f"{prefix}{args.gripper_joint}" if args.gripper_joint else "",
+                strip="",
+                link_strip="",
+                mesh_package=args.mesh_package,
+                tip_site=args.tip_site,
+                tip_link=f"{prefix}{args.tip_link}",
+            )
+            parts.append((exporter.export(), root_body))
+            exporters.append(exporter)
+        tree = combine_urdfs(model, parts, name=args.name, root_link=args.root_link)
+        exporter = _MergedExporters(exporters)
     ET.indent(tree, space="  ")
     tree.write(out, encoding="utf-8", xml_declaration=True)
     log.info(
@@ -983,7 +1140,9 @@ def main(argv: list | None = None) -> int:
     )
 
     if args.check:
-        err, where = round_trip_error(out, model, exporter.strip_prefix, mesh_dir=mesh_dir)
+        err, where = round_trip_error(
+            out, model, exporter.strip_prefix if len(prefixes) == 1 else "", mesh_dir=mesh_dir
+        )
         log.info("round-trip FK error: %.3e m (worst link: %s)", err, where)
         if err > args.tolerance:
             log.error(

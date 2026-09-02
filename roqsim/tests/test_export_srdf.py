@@ -21,9 +21,11 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_srdf import (
+    ArmGroup,
     base_free_joint,
     build_srdf,
     collision_matrix,
+    exported_root_bodies,
     exported_root_body,
     links_from_urdf,
     resolve_base_joint,
@@ -520,3 +522,122 @@ def test_srdf_is_parseable_xml(collapsed, tmp_path):
     ).write(out, encoding="utf-8", xml_declaration=True)
     reparsed = ET.parse(out).getroot()  # raises if the comment or any attribute is malformed
     assert reparsed.tag == "robot"
+
+
+# -- several robots in one description -----------------------------------------------------------
+#
+# A dual-arm cell is one description with two trees. The checks that guard a single robot must
+# generalise rather than be dropped: they are what catches `links` reaching into the wrong subtree,
+# and that mistake does not get less likely with two robots in the file.
+
+_TWO_ARMS = """
+<mujoco>
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="a_base" pos="0 -0.4 0">
+      <geom name="a_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="a_link" pos="0 0 0.2">
+        <joint name="a_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="a_g2" type="box" size="0.05 0.5 0.05" mass="1"/>
+      </body>
+    </body>
+    <body name="b_base" pos="0 0.4 0">
+      <geom name="b_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="b_link" pos="0 0 0.2">
+        <joint name="b_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="b_g2" type="box" size="0.05 0.5 0.05" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.fixture(scope="module")
+def two_arms():
+    model = mujoco.MjModel.from_xml_string(_TWO_ARMS)
+    return model, _ids(model, "a_base", "a_link", "b_base", "b_link")
+
+
+def test_two_robots_have_two_roots_and_that_is_asked_for_explicitly(two_arms):
+    """The count is an argument, not an assumption: it is what still catches a link name matching a
+    body in some other subtree, which is the mistake the single-root check exists for."""
+    model, links = two_arms
+    assert [links[b] for b in exported_root_bodies(model, links, 2)] == ["a_base", "b_base"]
+    with pytest.raises(ValueError, match="exactly one root link"):
+        exported_root_bodies(model, links, 1)
+    with pytest.raises(ValueError, match="exactly 3 root links"):
+        exported_root_bodies(model, links, 3)
+
+
+def test_the_matrix_covers_pairs_across_the_two_robots(two_arms):
+    """The whole reason for one description: the arms swing into each other's space, and a pair that
+    is not in the matrix at all is a pair MoveIt keeps checking rather than one it may ignore."""
+    model, links = two_arms
+    matrix = {(a, b): r for a, b, r in collision_matrix(model, links, samples=200)}
+    assert _reason(matrix, "a_base", "b_base") == "Never"
+    # The two long links sweep through the same volume, so they touch in some configurations and not
+    # in others -- exactly the pair that must stay checked.
+    assert ("a_link", "b_link") not in matrix and ("b_link", "a_link") not in matrix
+
+
+def test_a_group_per_robot_plus_one_spanning_both(two_arms):
+    model, links = two_arms
+    tree = build_srdf(
+        model,
+        links,
+        name="pair",
+        arms=[
+            ArmGroup(name="a", base_link="a_base", tip_link="a_link", home={"a_j": 0.1}),
+            ArmGroup(name="b", base_link="b_base", tip_link="b_link", home={"b_j": 0.2}),
+        ],
+        combined_group="both_arms",
+        urdf_root_link="base_link",
+        samples=20,
+    )
+    root = tree.getroot()
+    assert [g.get("name") for g in root.findall("group")] == [
+        "a",
+        "a_gripper",
+        "b",
+        "b_gripper",
+        "both_arms",
+    ]
+    assert [
+        (c.get("base_link"), c.get("tip_link"))
+        for c in root.findall("group[@name='both_arms']/chain")
+    ] == [("a_base", "a_link"), ("b_base", "b_link")]
+    assert {s.get("group") for s in root.findall("group_state[@name='home']")} == {"a", "b"}
+
+
+def test_a_combined_group_for_a_single_robot_is_refused(two_arms):
+    """It exists to plan several chains at once; over one chain it is the arm group under a second
+    name, and MoveIt would then have two groups nothing tells apart."""
+    model, links = two_arms
+    with pytest.raises(ValueError, match="exists to plan several chains"):
+        build_srdf(
+            model,
+            links,
+            name="pair",
+            arms=[ArmGroup(name="a", base_link="a_base", tip_link="a_link")],
+            combined_group="both_arms",
+            urdf_root_link="base_link",
+            samples=5,
+        )
+
+
+def test_two_groups_of_the_same_name_are_refused(two_arms):
+    model, links = two_arms
+    with pytest.raises(ValueError, match="called the same thing"):
+        build_srdf(
+            model,
+            links,
+            name="pair",
+            arms=[
+                ArmGroup(name="a", base_link="a_base", tip_link="a_link"),
+                ArmGroup(name="a", base_link="b_base", tip_link="b_link"),
+            ],
+            combined_group="",
+            urdf_root_link="base_link",
+            samples=5,
+        )
