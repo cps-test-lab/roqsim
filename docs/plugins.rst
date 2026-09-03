@@ -147,9 +147,10 @@ in its ``realsense_d435`` capture plugin.
   your entry wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is
   duplicated. Matching is on the **label**: the entry's ``name:``, else its plugin ref, among that
   owner's components. There is no entity key to name — an entry belongs to the entity whose block it
-  sits in — so the mistake this used to invite is not expressible: omitting ``robot:`` gave a *second*
-  controller running alongside the manifest default rather than replacing it, two controllers fighting
-  over the same actuators, and a config that silently had no effect.
+  sits in — which is what makes an override an override: a controller that named its robot instead
+  could sit anywhere, and one declared outside the block would run *alongside* the manifest default
+  rather than replacing it, leaving two controllers on the same actuators and a config with no
+  visible effect.
   The override is **partial**: keys you do not mention keep the model's manifest values, so adding a
   ``test_cmd`` does not cost you the model's wheel geometry or actuator names. Per key, what the
   world says wins; nested values (e.g. ``topics:``) replace the manifest's mapping outright rather
