@@ -92,7 +92,7 @@ def _ctx(model, data) -> SimContext:
 
 
 def _drive(ctx, **overrides):
-    p = DiffDrivePlugin({**_manifest("diff_drive"), "robot": "robot", **overrides})
+    p = DiffDrivePlugin({**_manifest("diff_drive"), **overrides}, entity="robot")
     p.configure(ctx)
     p.on_reset(ctx)
     return p

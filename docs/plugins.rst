@@ -323,7 +323,8 @@ inertia about its own centre. An ``offset`` is refused rather than approximated 
 shifts the centre of mass and adds a parallel-axis term, which is a different body, not a heavier
 one. ``mass: 0`` leaves the model untouched, so the unloaded cell of a sweep is identical to a world
 that never declared a payload. Load a body other than the root with ``body:`` (the entity's spawn
-prefix is applied for you), and a robot other than the owning entity with ``robot:``.
+prefix is applied for you); which robot is loaded is the entry this one sits in, so there is nothing
+to point with.
 
 Where thrust is bounded this is the flight envelope rather than a detail: see
 ``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight
