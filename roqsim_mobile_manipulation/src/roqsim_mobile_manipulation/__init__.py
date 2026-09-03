@@ -2,8 +2,8 @@
 
 Composite platforms only. `roqsim_mobile` holds wheeled bases, `roqsim_manipulation` holds arms and their
 controllers, and a robot that is both belongs to neither -- so it lives here, in the one package that
-may legitimately depend on both. Keeping these two models in `roqsim_mobile` is what previously forced
-that package to depend on `roqsim_manipulation`, inverting its own documented contract.
+may legitimately depend on both. In `roqsim_mobile` these two models would force a wheeled-base
+package to depend on `roqsim_manipulation`, inverting its own documented contract.
 
 Shipped models (one folder each, ``models/<name>/``):
 

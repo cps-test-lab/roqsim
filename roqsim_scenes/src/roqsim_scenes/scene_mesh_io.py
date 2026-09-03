@@ -17,8 +17,8 @@ is uniformly a mesh — ``scene.json`` has no primitive representation.
 **Materials.** A reader returns a list of :class:`Submesh`, one **per material**, carrying UVs and the
 resolved diffuse-texture path. The split is not cosmetic bookkeeping: a MuJoCo geom has exactly one
 material, so a warehouse DAE binding 8 materials across 13 triangle groups can only be textured as 8
-geoms. Merging it into one mesh — as this module used to — throws the UVs and the material binding
-away and leaves the untextured grey shell that no `scene.yaml` can repaint.
+geoms. Merging it into one mesh throws the UVs and the material binding away and leaves an
+untextured grey shell that no `scene.yaml` can repaint.
 
 UVs force **de-indexing**: Collada and OBJ index position and texcoord *separately* (one corner is a
 ``(pos_idx, uv_idx)`` pair), while MuJoCo wants one flat vertex array. So a corner whose position is

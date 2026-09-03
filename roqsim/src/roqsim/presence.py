@@ -148,15 +148,15 @@ def _restore(model, entity, geoms) -> None:
 def visible_geomgroup_mask(include_absent: bool = False):
     """A ``mj_multiRay`` ``geomgroup`` mask that excludes absent entities.
 
-    Raycasting sensors pass this instead of ``None``. ``None`` means "every group", which is
-    why an absent entity was still a lidar return before this existed.
+    Raycasting sensors pass this instead of ``None``. ``None`` means "every group", and an absent
+    entity is still a return under it.
 
-    Every raycaster in the tree now gets it *by default*, because they all go through
-    :func:`roqsim.raycast.cast` and that is the default there -- so passing "every group, absent
-    entities included" takes an explicit ``geomgroup=None``. It used to be the other way round: the
-    2D ``lidar`` passed this mask and the 3D lidars, ``roqsim.rendering``'s line-of-sight probe and
-    ``roqsim_assets``' ``moving_box`` all passed ``None``, so an absent entity was still a return for
-    them.
+    Every raycaster in the tree gets it *by default*, because they all go through
+    :func:`roqsim.raycast.cast` and that is the default there -- so "every group, absent entities
+    included" takes an explicit ``geomgroup=None``. The default is that way round because the
+    raycasters are many (the 2D ``lidar``, the 3D lidars, ``roqsim.rendering``'s line-of-sight probe,
+    ``roqsim_assets``' ``moving_box``) and each one that forgot the mask would report an absent
+    entity as present, with nothing downstream able to tell.
 
     The alpha zeroing in :func:`set_present` remains the first field written rather than a backstop,
     and the two are complementary rather than redundant: alpha covers a caller that legitimately

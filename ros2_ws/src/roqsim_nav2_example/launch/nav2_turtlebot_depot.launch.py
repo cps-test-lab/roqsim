@@ -143,9 +143,9 @@ def generate_launch_description():
             # our replacement for the gz half, and this include is the other half, unmodified. It
             # brings up the composed nav2_container with the standard twelve servers under
             # lifecycle_manager_localization (map_server, amcl) + lifecycle_manager_navigation (the
-            # rest). This used to be twelve hand-listed Nodes under a single manager -- the node
-            # set matched, but the process structure and the manager topology did not, so a
-            # comparison of the two backends still compared two different nav2 deployments.
+            # rest). Included rather than hand-listed as twelve Nodes under a single manager: that
+            # matches the node set while leaving the process structure and the manager topology
+            # different, so a comparison of the two backends compares two nav2 deployments.
             #
             # use_composition / use_respawn / namespace are deliberately NOT passed: taking
             # bringup_launch.py's defaults is what keeps the two backends identical by

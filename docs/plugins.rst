@@ -110,8 +110,8 @@ It is not the render path's rule with a flag on it. Two differences, both becaus
 than silently ordered.
 
 Nothing is required to know the flag exists, either. When a world's *only* unresolvable plugins are
-its bridges, the failure says so and names both ways out — the bare "unknown plugin ``ros2_bridge``"
-used to send the reader hunting for a typo that was never there.
+its bridges, the failure says so and names both ways out; a bare "unknown plugin ``ros2_bridge``"
+sends the reader hunting for a typo that is not there.
 
 Model plugin manifests
 ----------------------
@@ -164,8 +164,8 @@ in its ``realsense_d435`` capture plugin.
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
 - **Opt out** entirely: set ``default_plugins: false`` on the ``spawn_*`` config.
 - **Derive one manifest from another** with ``extends:``. ``unitree_g1_dex1`` is a ``unitree_g1``
-  plus hands, and used to say so by repeating the base's locomotion and lidar blocks verbatim --
-  two copies that then had to be kept in step by hand. It now inherits them::
+  plus hands, and says exactly that -- rather than repeating the base's locomotion and lidar blocks
+  as a second copy for someone to keep in step by hand::
 
      extends: unitree_g1        # a roqsim.models ref, or a path beside this manifest
      components:
