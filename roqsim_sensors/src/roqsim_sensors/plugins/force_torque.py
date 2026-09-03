@@ -15,11 +15,11 @@ physics. It is the plumbing that was missing.
 whatever touches the world — exactly where a real FT sensor is bolted. Put it on the flange itself
 and the tool's own contacts are on the wrong side of the cut, and the sensor reads nothing.
 
-Config::
+Config -- a component of the entry that spawns the arm whose prefix and namespace it inherits, since ownership is where the entry
+sits rather than a config key::
 
     force_torque:
       site: fts_site            # REQUIRED: MJCF site to measure at (prefixed with the arm's prefix)
-      arm: ur5e                 # entity whose prefix/namespace to inherit (or `robot:`)
       frame: base               # sensor | base | world -- the frame the wrench is REPORTED in
       invert: true              # negate the reading (report the force the ENVIRONMENT applies to the
                                 #   tool, the sign convention a real FT sensor and its users assume;

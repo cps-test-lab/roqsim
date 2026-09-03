@@ -30,10 +30,10 @@ sudden force spike -- a physics artefact indistinguishable, in the metrics, from
 ``ArmHandle`` that ``arm_controller`` publishes, and ``arm_controller`` remains the only writer of
 that arm's actuators. Declare it AFTER the arm in the world YAML.
 
-Config::
+Config -- a component of the entry that spawns the arm, whose ``ArmHandle`` it drives, since ownership is where the entry
+sits rather than a config key::
 
     cartesian_admittance:
-      arm: ur5e                # entity name (the ArmHandle at `arm:<name>` is required)
       site: tool_site          # site whose pose is controlled (prefixed with the arm's prefix)
       ft: ft                   # blackboard key suffix of the force_torque sensor (`ft:<key>`);
                                #   required for law: admittance, ignored for law: position
