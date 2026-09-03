@@ -26,7 +26,7 @@ hand-assemble.
 
 ## Features
 
-- **One YAML file per world.** Robots, sensors, props and scene declared together; **54 plugins** hook
+- **One YAML file per world.** Robots, sensors, props and scene declared together; **55 plugins** hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
 - **35 robot models across 6 families** — 16 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
   Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, LGDXRobot2, MakerSpet Mini,

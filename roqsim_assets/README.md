@@ -85,7 +85,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   two are shape and position and nothing else, which is what a navigation experiment's scenery
   usually is. Both take `pos` as `[x, y]` to sit on the floor or `[x, y, z]` for an explicit centre,
   plus `color` / `collide` / `friction` / `prefix`; `box` additionally takes `yaw` (a cylinder is
-  rotationally symmetric, so it has none). Declared in the world YAML rather than baked into a scene,
+  rotationally symmetric, so it has none), and `cylinder` additionally takes `mass` (kg — unset means
+  MuJoCo's default 1000 kg/m³ density, several times too heavy for anything hollow). Declared in the world YAML rather than baked into a scene,
   deliberately: a scene is what an occupancy grid gets generated *from*, so a baked obstacle lands in
   the map — and an experiment about *unknown* obstacles then has none. Round vs square is not
   cosmetic where clearance is the subject: two diagonally adjacent boxes of the cell pitch seal the
@@ -103,6 +104,11 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   populations are heterogeneous: a generator scales the count by path length and gives each obstacle
   its own pose and size, and it — not the substrate — knows the map and the clearance rule. Names are
   `<name>_<index>` unless an entry names itself, so `SetEntityState` can still address one of them.
+- **`cylinders`** — the round counterpart of `boxes`, entry for entry (`instances: [{pos, radius,
+  height, …}, …]`, each accepting every `cylinder` key). It exists for the same override reason, and
+  for one that is specific to round objects: a population of graspable cylinders differs in
+  *diameter* at a shared height, and a modelled asset scaled uniformly cannot change one without the
+  other — so a family of radii is only expressible as a list of parametric entries.
 - **`moving_box`** — the same anonymous box, but **moving**: a mocap body the plugin drives at a
   constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a seeded
   `random_walk` that ray-casts the compiled model ahead of itself and picks a new heading before it
