@@ -23,7 +23,8 @@ Config::
         fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
         intrinsics:            # this UNIT's measured lens, rendered as well as published
           {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
-      name: camera_1           # the entry's OWN key, not the config's: this mount's entity
+      name: camera_1           # the entry's label -- a sibling of the ref -- names this mount's
+                               #   entity, which a capture plugin's `robot:` then points at
 
 ``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see

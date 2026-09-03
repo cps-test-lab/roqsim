@@ -24,7 +24,10 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
      - "./plugins/x.py:Foo": { ... }    # (3) path to a .py file (relative to this YAML)
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling. The plugin ref has three resolution forms:
+plus an optional reserved ``name:`` sibling, which defaults to the ref. Writing ``name:`` *inside* the
+config map is refused with the corrected spelling: no plugin reads it there, and a document that
+placed it there would load with every entry answering to the plugin's ref. The plugin ref has three
+resolution forms:
 
 #. **short name** — a registered ``roqsim.plugins`` entry-point.
 #. **module.path:Class** — imported off ``PYTHONPATH``.

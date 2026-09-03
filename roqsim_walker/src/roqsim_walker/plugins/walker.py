@@ -10,7 +10,6 @@ Config::
 
     walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      name: pedestrian         # the entry's OWN key, not the config's: names the entity (default 'pedestrian')
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals instead of the character mesh

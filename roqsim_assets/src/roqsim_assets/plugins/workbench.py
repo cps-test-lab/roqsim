@@ -33,7 +33,6 @@ uprights are at the back (+Y), the drawer fronts and the power strip face the op
 Config::
 
     workbench:
-      name: workbench       # the entry's OWN key, not the config's: names the entity (default 'workbench')
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 bench)
       pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)

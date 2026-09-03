@@ -76,16 +76,16 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}},
+                {"spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]}, "name": "husky"},
                 {
                     "spawn_arm": {
                         "model": "ur10e",
-                        "name": "arm",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
                         "pos": [0.25, 0.0, 0.2587],
                         "end_effector": {"model": gripper, "replaces": ["ee_plate"]},
-                    }
+                    },
+                    "name": "arm",
                 },
             ],
         },
@@ -172,7 +172,7 @@ def test_round_trip_survives_a_rotated_root_body(tmp_path):
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_arm": {"model": "ur5e", "name": "arm", "prefix": "ur5e_"}}],
+            "plugins": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "arm"}],
         },
         base_dir=tmp_path,
     )

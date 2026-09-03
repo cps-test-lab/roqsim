@@ -14,7 +14,7 @@ from roqsim.engine import Engine
 
 
 def _door(tmp_path, extra=None):
-    plugins = [{"door": {"name": "door", **(extra or {})}}]
+    plugins = [{"door": dict(extra or {}), "name": "door"}]
     return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
 
 
@@ -199,24 +199,24 @@ def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
     plugins = [
         {
             "door": {
-                "name": "door",
                 "width": 0.9,
                 "height": 2.0,
                 "hinge_side": "left",
                 "max_torque": 15.0,
                 "stall_timeout": 2.0,
-            }
+            },
+            "name": "door",
         },
         {
             # A parametric box, not a modelled prop: this test needs an obstacle of a known size in
             # the leaf's swing, and stating the size here beats inheriting it from some asset's
             # dimensions (which a mesh swap could then quietly change).
             "box": {
-                "name": "obs",
                 "prefix": "obs_",
                 "pos": [0.45, 0.5],
                 "size": [0.45, 0.30, 0.45],
-            }
+            },
+            "name": "obs",
         },
     ]
     engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))

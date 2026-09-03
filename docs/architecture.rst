@@ -146,7 +146,9 @@ Single world YAML, two sections; ``plugins`` order = execution order:
      - "./plugins/x.py:Foo": { ... }  # (3) file path:Class (relative to this YAML)
 
 Each entry is a mapping with exactly one plugin-ref key (its value is the ``config`` map) plus an
-optional reserved ``name:`` sibling. Three plugin-ref resolution forms (``resolve_plugin``):
+optional reserved ``name:`` sibling, defaulting to the ref. ``name:`` or ``components:`` found inside
+the config map is refused (``parse_plugin_entry``), because no plugin reads either from its config.
+Three plugin-ref resolution forms (``resolve_plugin``):
 
 1. **Short name** → ``roqsim.plugins`` entry-point group.
 2. **``module.path:Class``** → ``importlib.import_module`` (any package on ``PYTHONPATH``).

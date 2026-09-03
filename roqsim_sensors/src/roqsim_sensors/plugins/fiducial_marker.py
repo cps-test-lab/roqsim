@@ -34,7 +34,6 @@ Config::
       quiet_zone: 0.15         # white margin around the tag, as a fraction of `size` (default 0.15)
       emission: 0.0            # material emission; RAISE ONLY FOR VISIBILITY, NOT FOR DETECTION (see below)
       thickness: 0.002         # box half-thickness behind the marker face (m)
-      name: null               # texture/material/geom base name (default: "<family>_<id>")
       vflip: false             # flip the texture rows / cols if the render comes out mirrored
       hflip: false             #   (a mirrored tag will NOT decode)
       # --- placement: EXACTLY ONE of the following two forms ---
@@ -47,6 +46,9 @@ Config::
                                #   inherited automatically when this plugin ships in a model manifest
       rel_pose: [x, y, z]      # marker position in that body's frame (default [0, 0, 0])
       rel_quat: [w, x, y, z]   # marker orientation in that body's frame (or `rel_rpy`); default identity
+
+The texture, material and geom this builds are named after the entry's label (its ``name:``
+sibling, else ``fiducial_marker``), so a world carrying several markers gives each entry a label.
 """
 
 from __future__ import annotations

@@ -18,7 +18,6 @@ and the tool's own contacts are on the wrong side of the cut, and the sensor rea
 Config::
 
     force_torque:
-      name: ft                  # sensor id; also the endpoint / blackboard key suffix
       site: fts_site            # REQUIRED: MJCF site to measure at (prefixed with the arm's prefix)
       arm: ur5e                 # entity whose prefix/namespace to inherit (or `robot:`)
       frame: base               # sensor | base | world -- the frame the wrench is REPORTED in
@@ -33,7 +32,7 @@ Config::
 
 Endpoint ``wrench`` (out) reads ``(force[3], torque[3])`` and carries a
 ``geometry_msgs/WrenchStamped`` backend hint. A ``WrenchReader`` is published on the blackboard
-under ``ft:<name>`` for in-process consumers — the admittance controller is one — exposing
+under ``ft:<entry label>`` for in-process consumers — the admittance controller is one — exposing
 ``read()`` and the resolved ``frame``.
 
 **Frames.** ``sensor`` returns MuJoCo's raw site-frame reading. ``base`` rotates it into the owning
@@ -91,9 +90,9 @@ class ForceTorquePlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # No config `name:` of its own: this instance is identified by its label, like every other
-        # entry. It used to overwrite `Plugin.name` from config, which meant a force_torque could be
-        # called one thing by the document and another by its blackboard key and its topic.
+        # No config `name:` of its own: this instance is identified by its label, like every
+        # other entry, so the document, the blackboard key and the topic cannot disagree about
+        # what this sensor is called.
         self.site = self.config.get("site", "")
         self.owner = self.entity
         self.frame = self.config.get("frame", "sensor")

@@ -50,8 +50,8 @@ def _engine(model, *, rest=None, gripper_ctrl=None, box=None, grasping=True):
         arm["components"] = [{"arm_controller": {"rest": rest, "gripper_ctrl": gripper_ctrl}}]
     components = [arm]
     if box is not None:
-        components.append({"spawn_model": {"model": "graspable_box", "name": "box", "free": True,
-                                           "pos": box}})
+        components.append({"spawn_model": {"model": "graspable_box", "free": True, "pos": box},
+                           "name": "box"})
     engine = Engine(load_config_from_dict({"sim": sim, "components": components},
                                           base_dir=Path(".")))
     engine.setup()

@@ -3,12 +3,11 @@
 The same geometry as :mod:`roqsim_assets.plugins.box`, declared as a *list* rather than as one plugin
 entry per box::
 
-    boxes:
-      name: obstacles      # the entry's OWN key, not the config's: prefixes the generated
-                           #   entity names (default 'boxes')
-      instances:
-      - {pos: [2.1, -3.4], size: [0.5, 0.5, 1.0]}
-      - {pos: [5.8, -1.2], size: [0.5, 0.5, 1.0], yaw: 0.4}
+    - boxes:
+        instances:
+        - {pos: [2.1, -3.4], size: [0.5, 0.5, 1.0]}
+        - {pos: [5.8, -1.2], size: [0.5, 0.5, 1.0], yaw: 0.4}
+      name: obstacles      # the entry's label, which every generated box is named after
 
 Each entry accepts every key ``box`` does (``pos``, ``size``, ``yaw``, ``color``, ``collide``,
 ``friction``, ``free``, and an optional ``name``), because each one *is* a box: this plugin owns the
@@ -30,13 +29,14 @@ in-plugin layout sampling would serve only the uniform case, and would move pose
 substrate -- which does not know the map, the robot's path, or the clearance rule the experiment
 cares about. The generator does.
 
-Entity names are ``<name>_<index>`` unless an entry names itself, so ``SetEntityState`` can address a
-single box out of the population and ``on_reset`` restores each to its own declared pose.
+Entity names are ``<entry label>_<index>`` unless an instance names itself, so ``SetEntityState``
+can address a single box out of the population and ``on_reset`` restores each to its own declared
+pose. An instance's ``name`` is one of the list's own values, not a plugin entry's reserved sibling:
+this plugin owns the list, so it reads the key itself.
 
 Config::
 
     boxes:
-      name: obstacles     # the entry's OWN key, not the config's (default: 'boxes')
       instances: []       # list of box configs, each accepting every key `box` does (required)
 """
 

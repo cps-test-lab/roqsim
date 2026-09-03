@@ -33,7 +33,6 @@ drivers (scripts, tests) that bypass any transport.
 Config::
 
     door:
-      name: door_1          # the entry's OWN key, not the config's: names the entity (default 'door')
       prefix: door_1_        # MJCF name prefix (distinct per door)
       pos: [x, y, 0]         # opening CENTRE, [x, y] or [x, y, z] world placement
       rpy: [0, 0, yaw]       # orientation; yaw aligns the closed leaf along its wall

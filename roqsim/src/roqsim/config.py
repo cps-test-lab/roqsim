@@ -26,8 +26,12 @@ The YAML has two top-level sections::
       - "./plugins/custom.py:Foo": {}             # empty config; file refs are quoted too
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one). An
-empty config is written ``<ref>: {}`` (or ``<ref>:``).
+plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one), which
+defaults to the ref. An empty config is written ``<ref>: {}`` (or ``<ref>:``).
+
+``name:`` or ``components:`` written one level down, *inside* the config map, is refused rather than
+ignored: no plugin reads either out of its own config, so there it can only be a misplaced sibling --
+and one that would otherwise leave every entry answering to the plugin's ref.
 
 A plugin ref containing a colon -- the ``module.path:Class`` and ``path/to/file.py:Class`` forms
 (see :func:`roqsim.registry.resolve_plugin`) -- **must be quoted** when used as the key, e.g.
@@ -139,6 +143,12 @@ _CHILDREN_KEY = "components"
 _ENABLED_KEY = "enabled"
 _RESERVED_SIBLINGS = frozenset({_NAME_KEY, _CHILDREN_KEY, _ENABLED_KEY})
 
+#: Reserved siblings that are refused when found INSIDE a plugin's config, where no plugin reads
+#: them. ``enabled`` is deliberately not one: a plugin may intercept it in its own config and say
+#: something better than "move it out one level" -- for a SUBTRACTIVE plugin such as ``ceiling``,
+#: the sibling means the opposite of what a reader writing it into the config intends.
+_MISPLACED_IN_CONFIG = frozenset({_NAME_KEY, _CHILDREN_KEY})
+
 
 def entry_ref(entry: dict) -> str:
     """The plugin ref of a components-list ``entry`` -- its single non-reserved key.
@@ -157,6 +167,29 @@ def entry_ref(entry: dict) -> str:
     return refs[0]
 
 
+def _refuse_reserved_in_config(ref: str, config: dict | None, where: str) -> None:
+    """Refuse a reserved sibling key written one level too deep, inside the plugin's config.
+
+    No plugin reads one -- what an entry says about *itself* is a sibling of the ref -- so the key
+    can only be a mistake. Ignoring it would leave the document looking accepted and move the
+    failure far from its cause: every component keeps the plugin's default label, and what is
+    reported is a duplicate label, or an override that matches nothing, or nothing at all.
+    """
+    misplaced = sorted(_MISPLACED_IN_CONFIG & set(config or {}))
+    if not misplaced:
+        return
+    key = misplaced[0]
+    keys = ", ".join(repr(k) for k in misplaced)
+    one = len(misplaced) == 1
+    raise PluginError(
+        f"{where}: {keys} {'is a reserved sibling key' if one else 'are reserved sibling keys'} "
+        f"of the plugin ref, not config for '{ref}'. Move {'it' if one else 'them'} out one "
+        f"level:\n"
+        f"  - {ref}: {{...}}\n"
+        f"    {key}: {(config or {})[key]!r}"
+    )
+
+
 def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
     """Parse one ``components:`` entry -- ``<ref>: {config}`` plus its reserved siblings -- to a spec.
 
@@ -173,6 +206,7 @@ def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
         raise PluginError(
             f"{where}: config for '{ref}' must be a mapping, got {type(config).__name__}"
         )
+    _refuse_reserved_in_config(ref, config, where)
     enabled = entry.get(_ENABLED_KEY, True)
     if not isinstance(enabled, bool):
         raise PluginError(f"{where}: '{_ENABLED_KEY}:' must be true or false, got {enabled!r}")
