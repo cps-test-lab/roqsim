@@ -221,12 +221,12 @@ _TARGET_MARKS = ("/", ".yaml", ".yml", ".xml", ":", "\\")
 
 
 class RootGroup(click.Group):
-    """The root group, with one courtesy: it recognises what used to be `roqsim <world>`.
+    """The root group, with one courtesy: it recognises the bare `roqsim <world>` form.
 
-    Running a world was the whole of this command once, so that spelling is written into other
-    people's notes, scripts and muscle memory. `No such command 'worlds/x.yaml'` is a true but
-    useless answer to it, and a stale invocation that fails obscurely is how a broken command line
-    survives in a checked-in Makefile for months.
+    That spelling lives in other people's notes, scripts and muscle memory, and it is what a reader
+    reaches for first, `sim` being the obvious thing a simulator does. `No such command
+    'worlds/x.yaml'` is a true but useless answer to it -- and an invocation that fails obscurely is
+    how a broken command line survives in a checked-in Makefile.
     """
 
     def resolve_command(self, ctx, args):

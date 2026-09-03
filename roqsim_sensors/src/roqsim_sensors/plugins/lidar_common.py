@@ -96,8 +96,8 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # ROS frame the payload is stamped in, and the child of the static mount TF (one value, so
         # the two cannot disagree). Defaults to the site the rays are actually cast from; a model
         # whose real description names the frame differently declares it in its manifest (e.g. the
-        # TurtleBot 4's URDF calls it `rplidar_link`, Livox's driver `livox_frame`). It used to be
-        # hardwired per plugin, which published a Husky's scan in a TurtleBot's frame.
+        # TurtleBot 4's URDF calls it `rplidar_link`, Livox's driver `livox_frame`). Hardwired per
+        # plugin instead, one robot's scan goes out stamped in another robot's frame.
         self.frame_id = self.config.get("frame_id", self.site)
         self.range_min = float(self.config.get("range_min", self.DEFAULT_RANGE_MIN))
         self.range_max = float(self.config.get("max_range", self.DEFAULT_MAX_RANGE))
@@ -254,10 +254,11 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         mujoco.mj_forward(m, d0)
         # Body 0 is ``world`` (origin, identity), which is the right reference for a site mounted on
         # the worldbody -- the transform is then simply the site's world pose. Not a fallback for
-        # tidiness: ``self._bodyexclude`` of -1 used to index ``xpos[-1]``, the *last* body in the
-        # model, and publish that unrelated body's transform under the declared parent's name.
+        # tidiness: read as an index, ``self._bodyexclude`` of -1 selects ``xpos[-1]``, the *last*
+        # body in the model, and publishes that unrelated body's transform under the declared
+        # parent's name.
         #
-        # The PARENT NAME has to follow the reference, and did not. ``_bodyexclude`` is -1 whenever
+        # The PARENT NAME follows the reference. ``_bodyexclude`` is -1 whenever
         # nothing was excluded: either the world said so (``exclude_body: ''``) or the class default
         # ``base_link`` is absent, which is the ordinary case for a scanner on a tripod or a mast.
         # Naming the parent after ``exclude_body`` regardless published numbers measured from the

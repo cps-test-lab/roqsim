@@ -25,9 +25,9 @@ with the dotted paths into its config that already exist. ``addresses`` is that 
 it is exactly what resolution accepts: a caller can check a sweep key against it before spending an
 image pull.
 
-That equality is the point. The payload used to be built from the document's own entries, so the set
-published and the set an override could reach were the same -- and both excluded everything a model
-manifest supplied, which is precisely what a campaign wants to vary. A path not listed is still not
+That equality is the point, and it is why the payload is read off the EFFECTIVE list rather than the
+document's own entries: the two differ exactly where a model manifest supplies a component, which is
+precisely what a campaign wants to vary. A path not listed is still not
 necessarily invalid: a plugin may accept a key its world leaves at the default, so a caller reports
 an unlisted *path* as unverifiable rather than as wrong. What the list settles is the expensive
 mistake -- an *address* matching nothing, refused at load time inside the container, after the pull
@@ -69,7 +69,7 @@ tree with no indication it was cut.
 **The build has no transport in it**, and ``dropped_transport`` names what went. A describe publishes
 nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim render`` and the exporters
 -- and since the ROS bridge ships in a colcon package, in a pip-only environment it does not even
-resolve, which used to fail the build over plugins that contribute no geometry. Only *identified*
+resolve at all, so requiring it would fail a describe over plugins that contribute no geometry. Only *identified*
 transport goes (:func:`roqsim.config.drop_transport`, not the lenient ``drop_transport_plugins``): a
 misspelt geometry plugin must stay the loud failure it is, because dropping it would leave an entity
 missing and let a caller conclude the world does not have it. The ``components`` list above is computed
@@ -116,9 +116,9 @@ def _describe_components(config) -> list:
     """Every component that will RUN, under the address an override names it by.
 
     Read off the effective list, so a sensor a model's manifest supplies is here even though no entry
-    in the document mentions it. It used to be zipped against the document's own entries, which meant
-    the set this command published and the set an override could reach were the same -- and both
-    excluded everything a manifest contributed, which is exactly what a campaign wants to sweep.
+    in the document mentions it. Zipped against the document's own entries instead, this would publish
+    a set an override cannot reach -- one missing everything a manifest contributes, which is exactly
+    what a campaign wants to sweep.
     """
     return [
         {

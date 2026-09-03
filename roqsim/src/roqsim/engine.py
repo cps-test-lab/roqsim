@@ -184,7 +184,8 @@ class Engine:
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
         # jaws at millimetres per second under an under-solved contact -- measured, and it responds to
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
-        # not one. There was previously no way to ask for a tighter solve from a world.
+        # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
+        # than in whatever code happens to build it.
         for key, attr in (
             ("solver", "solver"),
             ("iterations", "iterations"),

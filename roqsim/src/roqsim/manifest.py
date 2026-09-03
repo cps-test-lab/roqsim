@@ -48,8 +48,9 @@ def load_manifest(
     """The manifest's ``components:`` list for a resolved model file, or ``[]`` when it has none.
 
     A manifest is a document like any other, so it may ``extends:`` another model's manifest and
-    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and said that by
-    repeating the base's ``g1_locomotion`` and ``lidar`` blocks verbatim until it could say it once.
+    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and says exactly that
+    instead of repeating the base's ``g1_locomotion`` and ``lidar`` blocks for someone to keep in
+    step by hand.
     It inherits **components, not geometry** -- a derived model keeps its own MJCF; ``extends:`` never
     carried geometry, ``sim.world`` did, and a manifest may not carry ``sim:`` at all (see below).
 

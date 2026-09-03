@@ -273,8 +273,8 @@ A trial that knows it is finished -- the goal was reached, the episode failed, t
 complete -- can say so with ``ctx.request_stop(reason)``. The standalone driver polls
 ``ctx.stop_requested`` and leaves its loop cleanly, so ``shutdown`` still runs and files still flush.
 
-Before this, a world was padded out to a wall-clock ``--seconds`` that had to be guessed high enough
-for the slowest cell and was then wasted on every faster one. It is a *request*: the engine does not
+Without it a world is padded out to a wall-clock ``--seconds``, guessed high enough for the slowest
+cell and then wasted on every faster one. It is a *request*: the engine does not
 act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
 stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
 
@@ -316,12 +316,11 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
-     This merge was previously a plain skip (the manifest entry was dropped whole), which meant a
-     partial override silently fell back to the *plugin's* generic defaults for everything the world
-     did not restate — e.g. a Husky's ``diff_drive`` inheriting TurtleBot wheel radius and actuator
-     names, then failing to resolve them against its MJCF. ``husky_demo.yaml`` crashed on exactly
-     that, while ``plugins.rst`` documented the merge. If you rely on a world entry starting from the
-     plugin's defaults rather than the model's, use ``default_plugins: false`` and declare it fully.
+     Skipping the manifest entry whole instead of merging under it would make a partial override
+     fall back to the *plugin's* generic defaults for everything the world does not restate — a
+     Husky's ``diff_drive`` inheriting TurtleBot wheel radius and actuator names, then failing to
+     resolve them against its own MJCF. If you rely on a world entry starting from the plugin's
+     defaults rather than the model's, use ``default_plugins: false`` and declare it fully.
 - Opt out per spawn with ``default_plugins: false``; a model with no manifest yields nothing.
 
 Any new spawn plugin reuses this by calling ``expand_manifest`` with the config key its downstream plugins use to name the entity.
@@ -485,8 +484,8 @@ go through it. Three things live there because they must be decided once:
 
 -  **The visibility mask is the default.** ``mj_multiRay``'s ``geomgroup=None`` means *every* group,
    including :data:`roqsim.presence.ABSENT_GEOM_GROUP`, so a caller who omits the mask sees entities
-   that have been made absent. Every raycaster except the 2D lidar used to omit it. Making the mask
-   the default turns "forgot the mask" into an explicit ``geomgroup=None``.
+   that have been made absent — an absent entity reported as a return, with nothing downstream able
+   to tell. Making the mask the default turns "forgot the mask" into an explicit ``geomgroup=None``.
 -  **It is single-threaded on purpose, and that is measured.** Splitting a batch across threads looks
    free — rays are independent, ``mj_multiRay`` releases the GIL, and the output is bit-identical
    (1.5x at 360 rays, 3.1x at 20160). It is not: ``mj_multiRay`` **allocates from ``mjData``'s
