@@ -42,10 +42,41 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``clock_rate_hz`` (default ``step`` — one ``/clock`` per physics step; a **rate** must
        divide every gated publish period or that publisher's stamps alias, and ``configure()``
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides), ``owner``
-       (optional endpoint filter for multi-transport splits).
+       (optional endpoint filter for multi-transport splits), ``merged_joint_states``
+       (see the note below).
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
        required config; reuses the bridge's node when co-loaded.
+
+.. note::
+
+   **When to set** ``merged_joint_states``. A robot with several controllers declares one
+   ``joint_states`` endpoint *per controller* (``arm_controller`` does), and where those are scoped
+   apart by namespace nothing publishes the plain topic a ``robot_state_publisher`` or MoveIt's
+   planning-scene monitor over their **combined** ``robot_description`` subscribes to — so that
+   description gets no TF and ``move_group`` never learns a current state, silently: it still logs
+   that planning is ready. The bridge closes that with one extra merged publisher per group, carrying
+   every member endpoint's names/positions/velocities/efforts in registration order, alongside each
+   endpoint's own topic, which is unchanged.
+
+   Which endpoints form a group is a fact about the *stack* — how many ``robot_description``\ s it
+   runs — that the world cannot answer, so it is declared::
+
+       components:
+         - ros2_bridge: {}                                # "auto" (default): group by entity
+         - ros2_bridge: {merged_joint_states: true}       # one /joint_states across all entities
+         - ros2_bridge: {merged_joint_states: false}      # never merge
+         - ros2_bridge:                                   # groups stated outright
+             merged_joint_states:
+               - {topic: /cell/joint_states, owners: [ur10e_left, ur10e_right]}
+
+   ``"auto"`` merges each **entity**'s controllers into the scope they share (``dual/left`` +
+   ``dual/right`` → ``/dual/joint_states``) and keeps separate robots separate — right without any
+   declaration, because one entity is one physical robot however the stack is arranged. Two arms that
+   are two entities but *one* description (what ``arm_controller``'s ``joint_prefix`` exists for) need
+   ``true`` or an explicit group; ``auto`` warns when more than one entity publishes joint states here
+   so that case is not silent. Controllers already sharing one topic get no merged publisher: they
+   meet on the wire, and both ``robot_state_publisher`` and MoveIt accumulate partial joint states.
 
 .. note::
 

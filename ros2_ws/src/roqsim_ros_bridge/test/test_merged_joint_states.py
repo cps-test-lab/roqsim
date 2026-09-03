@@ -1,6 +1,6 @@
 """Merged ``/joint_states``: one ``robot_description`` implies one merged joint-state stream.
 
-Guards the gap this closed. A world with two arms declares one ``joint_states`` endpoint PER arm
+Guards the gap this closed. A robot with two controllers declares one ``joint_states`` endpoint each
 (``arm_controller``), each scoped under its own namespace so their individual topics don't collide --
 e.g. ``/r1/joint_states`` and ``/r2/joint_states``. Nothing published the unqualified, unnamespaced
 ``/joint_states`` that ``robot_state_publisher`` and MoveIt's planning-scene/current-state monitor
@@ -79,23 +79,88 @@ def test_merge_omits_effort_when_no_source_reports_it():
     assert len(payload) == 3, "no source reported effort, so the merged payload carries none either"
 
 
-# -- wiring: a bridge serving two joint-state endpoints --------------------------------------------
+# -- grouping: what belongs on ONE merged topic ----------------------------------------------------
 
 
-def test_two_arms_get_one_merged_publisher_in_registration_order():
+def test_two_controllers_on_one_robot_merge_into_that_robots_scope():
+    """A dual-arm robot is ONE entity: its controllers describe one physical robot whatever the stack
+    above does, so they merge without anything having to be declared."""
     ctx = SimContext(config={})
-    ctx.interface.add(_joint_endpoint("r1", "r1", ["r1_shoulder", "r1_elbow"], [0.1, 0.2]))
-    ctx.interface.add(_joint_endpoint("r2", "r2", ["r2_shoulder", "r2_elbow"], [0.3, 0.4]))
+    ctx.interface.add(_joint_endpoint("dual", "dual/left", ["l_shoulder"], [0.1]))
+    ctx.interface.add(_joint_endpoint("dual", "dual/right", ["r_shoulder"], [0.2]))
 
     bridge = _bridge_with_fake_node()
     bridge._setup_merged_joint_states(ctx)
 
-    assert bridge._merged_joint_states is not None, "two arms must get a merged /joint_states"
-    assert [topic for topic, _ in bridge._node.created] == ["joint_states"]
-    assert [ep.owner for ep in bridge._joint_state_sources] == ["r1", "r2"]
+    assert [topic for topic, _ in bridge._node.created] == ["dual/joint_states"], (
+        "the merged stream sits in the scope the two controllers share -- the robot's own"
+    )
+    bridge._publish_merged_joint_states(stamp=0, t=1.0)
+    msg = bridge._merged_joint_states[0][0].publisher.published[0]
+    assert list(msg.name) == ["l_shoulder", "r_shoulder"]
 
-    bridge._publish_merged_joint_states(stamp=0)
-    published = bridge._merged_joint_states.publisher.published
+
+def test_disconnected_robots_are_not_merged_with_each_other_by_default():
+    """Two arms in one world are two robots until something says otherwise. Merging them by default
+    would put one robot's joints on the other's ``/joint_states``."""
+    ctx = SimContext(config={})
+    ctx.interface.add(_joint_endpoint("r1", "r1", ["r1_j1"], [0.1]))
+    ctx.interface.add(_joint_endpoint("r1", "r1/wrist", ["r1_j2"], [0.2]))
+    ctx.interface.add(_joint_endpoint("r2", "r2", ["r2_j1"], [0.3]))
+    ctx.interface.add(_joint_endpoint("r2", "r2/wrist", ["r2_j2"], [0.4]))
+
+    bridge = _bridge_with_fake_node()
+    bridge._setup_merged_joint_states(ctx)
+
+    assert len(bridge._merged_joint_states) == 2, "one merged stream per robot, not one per world"
+    assert sorted(topic for topic, _ in bridge._node.created) == [
+        "r1/joint_states",
+        "r2/joint_states",
+    ]
+    bridge._publish_merged_joint_states(stamp=0, t=1.0)
+    per_robot = [
+        list(handle.publisher.published[0].name) for handle, _, _ in bridge._merged_joint_states
+    ]
+    assert per_robot == [["r1_j1", "r1_j2"], ["r2_j1", "r2_j2"]], (
+        "each robot's merged stream carries only its own joints"
+    )
+
+
+def test_controllers_already_sharing_one_topic_get_no_extra_publisher():
+    """Several controllers under one namespace already meet on the wire -- both robot_state_publisher
+    and MoveIt's current-state monitor accumulate partial joint states -- so a merged publisher there
+    would only duplicate them."""
+    ctx = SimContext(config={})
+    ctx.interface.add(_joint_endpoint("dual", "dual", ["l_shoulder"], [0.1]))
+    ctx.interface.add(_joint_endpoint("dual", "dual", ["r_shoulder"], [0.2]))
+
+    bridge = _bridge_with_fake_node()
+    bridge._setup_merged_joint_states(ctx)
+
+    assert bridge._merged_joint_states == []
+    assert bridge._node.created == []
+
+
+# -- wiring:# -- wiring: a bridge serving two joint-state endpoints --------------------------------------------
+
+
+def test_two_arms_get_one_merged_publisher_in_registration_order():
+    """``merged_joint_states: true`` is how a world states that its two arms are two planning groups
+    of ONE robot_description (what arm_controller's ``joint_prefix`` exists for)."""
+    ctx = SimContext(config={})
+    ctx.interface.add(_joint_endpoint("r1", "r1", ["r1_shoulder", "r1_elbow"], [0.1, 0.2]))
+    ctx.interface.add(_joint_endpoint("r2", "r2", ["r2_shoulder", "r2_elbow"], [0.3, 0.4]))
+
+    bridge = _bridge_with_fake_node(merged_joint_states=True)
+    bridge._setup_merged_joint_states(ctx)
+
+    assert len(bridge._merged_joint_states) == 1, "two arms must get one merged /joint_states"
+    handle, _, members = bridge._merged_joint_states[0]
+    assert [topic for topic, _ in bridge._node.created] == ["joint_states"]
+    assert [ep.owner for ep in members] == ["r1", "r2"]
+
+    bridge._publish_merged_joint_states(stamp=0, t=1.0)
+    published = handle.publisher.published
     assert len(published) == 1
     msg = published[0]
     assert list(msg.name) == ["r1_shoulder", "r1_elbow", "r2_shoulder", "r2_elbow"], (
@@ -112,10 +177,10 @@ def test_owner_filter_keeps_a_scoped_bridge_from_merging_a_robot_it_does_not_ser
     ctx.interface.add(_joint_endpoint("r1", "r1", ["r1_j1"], [0.1]))
     ctx.interface.add(_joint_endpoint("r2", "r2", ["r2_j1"], [0.2]))
 
-    bridge = _bridge_with_fake_node(owner="r1")
+    bridge = _bridge_with_fake_node(owner="r1", merged_joint_states=True)
     bridge._setup_merged_joint_states(ctx)
 
-    assert bridge._merged_joint_states is None
+    assert bridge._merged_joint_states == []
     assert bridge._node.created == []
 
 
@@ -129,9 +194,36 @@ def test_single_arm_world_gets_no_merged_publisher():
     bridge = _bridge_with_fake_node()
     bridge._setup_merged_joint_states(ctx)
 
-    assert bridge._merged_joint_states is None, (
+    assert bridge._merged_joint_states == [], (
         "a single joint-state endpoint's own topic already IS /joint_states in the common "
         "unnamespaced case -- a second, merged publisher there would be a pointless duplicate"
     )
-    assert bridge._joint_state_sources == []
     assert bridge._node.created == [], "no publisher beyond the endpoint's own must be created"
+
+
+def test_explicit_groups_state_which_robots_share_a_description():
+    """A world whose descriptions cut across entities names its groups outright."""
+    ctx = SimContext(config={})
+    ctx.interface.add(_joint_endpoint("r1", "r1", ["r1_j1"], [0.1]))
+    ctx.interface.add(_joint_endpoint("r2", "r2", ["r2_j1"], [0.2]))
+    ctx.interface.add(_joint_endpoint("r3", "r3", ["r3_j1"], [0.3]))
+
+    bridge = _bridge_with_fake_node(
+        merged_joint_states=[{"topic": "/cell/joint_states", "owners": ["r1", "r2"]}]
+    )
+    bridge._setup_merged_joint_states(ctx)
+
+    assert [topic for topic, _ in bridge._node.created] == ["/cell/joint_states"]
+    _, _, members = bridge._merged_joint_states[0]
+    assert [ep.owner for ep in members] == ["r1", "r2"], "r3 is its own robot and stays out"
+
+
+def test_merging_can_be_disabled():
+    ctx = SimContext(config={})
+    ctx.interface.add(_joint_endpoint("dual", "dual/left", ["l"], [0.1]))
+    ctx.interface.add(_joint_endpoint("dual", "dual/right", ["r"], [0.2]))
+
+    bridge = _bridge_with_fake_node(merged_joint_states=False)
+    bridge._setup_merged_joint_states(ctx)
+
+    assert bridge._merged_joint_states == []
