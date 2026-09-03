@@ -65,6 +65,57 @@ def test_multiple_plugin_keys_error():
         load_config_from_dict({"plugins": [{REF: {}, "other_ref": {}}]})
 
 
+def test_a_reserved_sibling_written_inside_the_config_is_refused():
+    """The near miss the shape check alone lets through.
+
+    A `name` inside the config reaches no plugin, so without this the document loads with every
+    entry keeping the plugin's ref as its label -- and the mistake surfaces far from its cause, as a
+    duplicate label, as an override that matches nothing, or not at all.
+    """
+    with pytest.raises(PluginError) as exc:
+        load_config_from_dict({"plugins": [{REF: {"required_key": 1, "name": "obs_3"}}]})
+    msg = str(exc.value)
+    assert "'name'" in msg and "reserved sibling key" in msg
+    assert "components[0]" in msg  # which entry
+    assert "obs_3" in msg  # ... spelled the way it should have been written
+
+
+def test_the_refusal_names_every_misplaced_reserved_key():
+    with pytest.raises(PluginError) as exc:
+        load_config_from_dict({"plugins": [{REF: {"name": "x", "components": []}}]})
+    msg = str(exc.value)
+    assert "'components', 'name'" in msg and "are reserved sibling keys" in msg
+
+
+def test_enabled_inside_a_config_is_left_to_the_plugin():
+    """The one reserved sibling a plugin may intercept itself, because for a subtractive plugin
+    (``ceiling``) the sibling means the opposite of what writing it into the config intends -- so a
+    generic "move it out one level" would be wrong advice. Here it reaches validate_config."""
+    cfg = load_config_from_dict({"plugins": [{REF: {"required_key": 1, "enabled": False}}]})
+    assert cfg.plugins[0].config["enabled"] is False
+
+
+def test_a_reserved_sibling_inside_a_nested_entrys_config_is_refused():
+    """Children are entries too, and the address in the message says which one."""
+    with pytest.raises(PluginError) as exc:
+        load_config_from_dict(
+            {
+                "plugins": [
+                    {REF: {"required_key": 1}, "components": [{REF: {"name": "inner"}}]},
+                ]
+            }
+        )
+    assert "components[0].components[0]" in str(exc.value)
+
+
+def test_the_sibling_spelling_is_what_labels_the_entry():
+    cfg = load_config_from_dict(
+        {"plugins": [{REF: {"required_key": 1}, "name": "obs_3"}, {REF: {"required_key": 1}}]}
+    )
+    # An entry that omits it answers to its ref -- here the class part of a `module:Class` ref.
+    assert [spec.label for spec in cfg.plugins] == ["obs_3", "Strict"]
+
+
 def test_view_accepts_the_camera_keys():
     view = {
         "lookat": [0, 0, 1],

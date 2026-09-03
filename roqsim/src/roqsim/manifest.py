@@ -100,8 +100,8 @@ def expand_manifest(
     When the owner already declares a component with the same **label**, the manifest default is not
     injected -- the world's entry is the one that runs -- but the manifest's config is **merged
     underneath it** (per key: the world's value always wins, missing keys are filled from the
-    manifest). That is what lets a world override *part* of a default: ``diff_drive: {robot: robot,
-    test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
+    manifest). That is what lets a world override *part* of a default: ``diff_drive:
+    {test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
     calibration and actuator names.
 
     The merge is shallow, deliberately: a nested value the world sets (``topics: {scan: /s}``)

@@ -17,7 +17,6 @@ exposing ``set_speed(float)`` (m/s, sign = direction) for in-process/standalone 
 Config::
 
     conveyor:
-      name: conveyor        # entity name (default 'conveyor')
       namespace: ""         # optional transport scope for the speed endpoint (/<ns>/speed)
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 belt)
       model: conveyor       # bundled model name / path

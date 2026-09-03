@@ -191,10 +191,10 @@ def sibling_topic(topic: str, name: str) -> str:
 class CameraPlugin(Plugin):
     """Base for a ``post_step`` RGB(-D) camera rendered from a named MuJoCo ``<camera>``.
 
-    Config::
+    Config -- a component of the entry that spawns the robot or sensor mount it rides
+    on, since ownership is where the entry sits rather than a config key::
 
         <plugin short name>:
-          robot: robot
           namespace: ""          # transport scope (default: inherited from spawn_robot's namespace)
           camera: <DEFAULT_CAMERA>
           width: null            # override the MJCF's resolution

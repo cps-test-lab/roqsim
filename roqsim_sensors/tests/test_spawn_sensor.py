@@ -361,14 +361,14 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
             {
                 "spawn_sensor": {
                     "model": "d435",
-                    "name": "d435",
                     "pos": [0.0, 0.0, 1.0],  # mount looks along +y (toward the wall) at rpy 0
                     "show_fov": True,
                     "fov_near": 0.2,
                     "fov_range": 3.0,
                     "fov_rays": [16, 12],
                     **spawn,
-                }
+                },
+                "name": "d435",
             }
         ],
     }

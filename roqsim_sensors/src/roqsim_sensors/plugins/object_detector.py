@@ -24,10 +24,10 @@ configurable error model, with noise drawn from ``ctx.rng_for`` so it is reprodu
 **ROS-free**, like every plugin: it emits a neutral payload on an ``Endpoint`` and only the bridge
 knows the message type.
 
-Config::
+Config -- a component of the entry that spawns the robot the detections are reported
+from, since ownership is where the entry sits rather than a config key::
 
     object_detector:
-      robot: robot                    # whose frame detections are reported in
       frame: base_footprint           # body whose frame the poses are expressed in
       rate_hz: 10.0
       objects:                        # body name -> what a detector would call it

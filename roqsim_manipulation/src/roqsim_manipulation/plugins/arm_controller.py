@@ -16,10 +16,10 @@ It also registers an :class:`ArmHandle` on the blackboard under ``arm:<name>`` e
 ``joint_names``, ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers;
 a scripted ``test_target`` drives the arm standalone.
 
-Config::
+Config -- a component of the entry that spawns the arm, since ownership is where the entry
+sits rather than a config key::
 
     arm_controller:
-      arm: ur10e                 # entity name registered by spawn_arm
       joints: [shoulder_pan_joint, ...]  # optional: the joints this controller owns. Omitted, the
                                  #   plugin claims every joint actuator sharing the entity's prefix,
                                  #   which is right for a standalone arm and wrong for an arm that

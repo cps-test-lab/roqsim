@@ -30,7 +30,6 @@ scenery, no free joint), like ``shelf`` / ``workbench``.
 Config::
 
     palm_tree:
-      name: palm            # entity name (default 'palm')
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 tree)
       pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement of the trunk base
       rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)

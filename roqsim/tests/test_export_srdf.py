@@ -226,11 +226,10 @@ def _composed(tmp_path):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}},
+                {"spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]}, "name": "husky"},
                 {
                     "spawn_arm": {
                         "model": "ur10e",
-                        "name": "arm",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
                         "pos": [0.25, 0.0, 0.2587],
@@ -238,7 +237,8 @@ def _composed(tmp_path):
                             "model": "robotiq_2f85",
                             "replaces": ["ee_plate"],
                         },
-                    }
+                    },
+                    "name": "arm",
                 },
             ],
         },
@@ -277,11 +277,11 @@ def bolted(tmp_path_factory):
                 {
                     "spawn_arm": {
                         "model": "ur5e",
-                        "name": "ur5e",
                         "prefix": "ur5e_",
                         "pos": [0.0, 0.0, 0.30],
                         "pedestal": True,
-                    }
+                    },
+                    "name": "ur5e",
                 }
             ],
         },

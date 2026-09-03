@@ -11,7 +11,7 @@ from roqsim.engine import Engine
 
 
 def _window(tmp_path, extra=None):
-    plugins = [{"window": {"name": "window", **(extra or {})}}]
+    plugins = [{"window": dict(extra or {}), "name": "window"}]
     return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
 
 

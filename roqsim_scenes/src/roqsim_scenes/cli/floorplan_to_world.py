@@ -291,8 +291,8 @@ def door_placements(
         )  # keep the opening inside the wall
         cx, cy = x0 + ux * t_m, y0 + uy * t_m
         yaw = math.atan2(uy, ux)
+        label = entry.get("name", f"door_{did}")
         door = {
-            "name": entry.get("name", f"door_{did}"),
             "prefix": entry.get("prefix", f"door_{did}_"),
             "pos": [round(cx, 3), round(cy, 3), 0.0],
             "rpy": [0.0, 0.0, round(yaw, 5)],
@@ -316,7 +316,10 @@ def door_placements(
         ):
             if key in entry:
                 door[key] = entry[key]
-        out.append({"door": door})
+        # `name` is the entry's reserved SIBLING, not one of the door plugin's config keys. Inside
+        # the config it never reaches the label, so every door would answer to the plugin default
+        # and a floorplan with two of them is refused for duplicate labels.
+        out.append({"door": door, "name": label})
     return out
 
 
@@ -351,13 +354,13 @@ def world_doc(
             yaw_deg = m.get("yaw_deg")
         spawn = {
             "model": model,
-            "name": f"marker_{mid}",
             "prefix": f"marker_{mid}_",
             "pos": [round(float(m["x_m"]), 3), round(float(m["y_m"]), 3), 0.0],
         }
         if yaw_deg:
             spawn["rpy"] = [0.0, 0.0, round(math.radians(float(yaw_deg)), 5)]
-        plugins.append({"spawn_model": spawn})
+        # `name` is a sibling of the plugin ref, not part of its config -- see the door entries.
+        plugins.append({"spawn_model": spawn, "name": f"marker_{mid}"})
     # Doors first (structural), then the marker props.
     plugins = list(doors or []) + plugins
     return {

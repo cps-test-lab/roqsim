@@ -15,7 +15,6 @@ moment.
 Config::
 
     box:
-      name: obstacle_1     # entity name (default 'box')
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 box)
       pos: [x, y]          # centre in world metres; [x, y] sits the box ON the floor,
                            #   [x, y, z] places its CENTRE at z (REQUIRED)
