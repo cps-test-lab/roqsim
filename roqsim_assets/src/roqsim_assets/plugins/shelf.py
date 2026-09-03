@@ -15,7 +15,6 @@ boards fall back to a plain wood ``rgba`` and a warning is logged.
 Config::
 
     shelf:
-      name: shelf         # entity name (default 'shelf')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 shelf)
       pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)

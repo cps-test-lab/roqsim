@@ -42,8 +42,8 @@ def _pos(engine, gid):
 
 
 def _panels(tmp_path, **extra):
-    cfg = {"name": "panels", "prefix": "p_", "area": [0.0, 0.0, 10.0, 6.0], "z": 3.5, **extra}
-    return _built(tmp_path, [{"ceiling_panels": cfg}])
+    cfg = {"prefix": "p_", "area": [0.0, 0.0, 10.0, 6.0], "z": 3.5, **extra}
+    return _built(tmp_path, [{"ceiling_panels": cfg, "name": "panels"}])
 
 
 def test_panels_hang_below_the_soffit_and_stay_inside_the_area(tmp_path):
@@ -101,7 +101,6 @@ def test_duct_runs_between_its_endpoints_with_drops_hanging_below(tmp_path):
         [
             {
                 "duct": {
-                    "name": "duct",
                     "prefix": "d_",
                     "start": [1.0, 2.0],
                     "end": [9.0, 2.0],
@@ -109,7 +108,8 @@ def test_duct_runs_between_its_endpoints_with_drops_hanging_below(tmp_path):
                     "radius": 0.15,
                     "branches": [2.0, 6.0],
                     "branch_length": 0.4,
-                }
+                },
+                "name": "duct",
             }
         ],
     )
@@ -143,7 +143,7 @@ def test_duct_rejects_a_branch_past_the_end(tmp_path):
 def test_batten_is_a_fixture_and_emit_adds_a_light(tmp_path):
     # The default empty room already carries its own light, so what is tested is the difference.
     plain = _built(
-        tmp_path, [{"strip_light": {"name": "s", "prefix": "s_", "pos": [2.0, 3.0, 3.5]}}]
+        tmp_path, [{"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5]}, "name": "s"}]
     )
     fixture = next(g for n, g in _geoms(plain, "s_").items() if n.endswith("fixture"))
     assert _pos(plain, fixture)[2] < 3.5  # hangs below its mounting height
@@ -151,7 +151,7 @@ def test_batten_is_a_fixture_and_emit_adds_a_light(tmp_path):
 
     lit = _built(
         tmp_path,
-        [{"strip_light": {"name": "s", "prefix": "s_", "pos": [2.0, 3.0, 3.5], "emit": True}}],
+        [{"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5], "emit": True}, "name": "s"}],
     )
     assert lit.ctx.model.nlight == plain.ctx.model.nlight + 1
     added = lit.ctx.model.light_pos[lit.ctx.model.nlight - 1]
@@ -176,9 +176,9 @@ def test_opening_the_roof_removes_every_fitting_but_keeps_its_light(tmp_path):
     still lit. This is the ordering the fittings' docstrings promise, so it is tested end to end.
     """
     fittings = [
-        {"ceiling_panels": {"name": "p", "prefix": "p_", "area": [0.0, 0.0, 8.0, 6.0], "z": 3.5}},
-        {"duct": {"name": "d", "prefix": "d_", "start": [1.0, 1.0], "end": [7.0, 1.0], "z": 3.2}},
-        {"strip_light": {"name": "s", "prefix": "s_", "pos": [4.0, 3.0, 3.5], "emit": True}},
+        {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 8.0, 6.0], "z": 3.5}, "name": "p"},
+        {"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [7.0, 1.0], "z": 3.2}, "name": "d"},
+        {"strip_light": {"prefix": "s_", "pos": [4.0, 3.0, 3.5], "emit": True}, "name": "s"},
     ]
     closed = _built(tmp_path, fittings)
     opened = _built(tmp_path, [*fittings, {"ceiling": {"keep": False, "above_z": 2.6}}])

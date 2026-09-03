@@ -374,14 +374,14 @@ def package_versions() -> dict:
 
 
 def _npz_path(path: str | Path) -> Path:
-    """The recording's path, carrying the ``.npz`` numpy used to append behind our backs.
+    """The recording's path, carrying the ``.npz`` suffix ``np.savez`` appends on its own.
 
-    The archive is written here by name now, so the suffix has to be settled up front: what
+    The archive is written here by name, so the suffix has to be settled up front: what
     :meth:`StateRecorder.close` returns, what the clock record is named after, and what the sample
-    stream is named after all have to agree with what lands on disk. ``np.savez`` appending it for us
-    meant ``--record out`` wrote ``out.npz`` while ``close()`` handed back ``out``, a path that does
-    not exist -- and ``roqsim health`` already assumed the normalised name when it looked for the
-    archive belonging to a clock record.
+    stream is named after all have to agree with what lands on disk. Left to ``np.savez``,
+    ``--record out`` writes ``out.npz`` while ``close()`` hands back ``out``, a path that does not
+    exist -- and ``roqsim health`` looks for the archive belonging to a clock record by the
+    normalised name.
     """
     path = Path(path)
     return path if path.suffix == ".npz" else path.with_name(path.name + ".npz")

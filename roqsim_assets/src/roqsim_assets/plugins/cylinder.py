@@ -24,7 +24,6 @@ change its diameter without changing its height.
 Config::
 
     cylinder:
-      name: obstacle_1     # entity name (default 'cylinder')
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 cylinder)
       pos: [x, y]          # centre in world metres; [x, y] stands the cylinder ON the floor,
                            #   [x, y, z] places its CENTRE at z (REQUIRED)

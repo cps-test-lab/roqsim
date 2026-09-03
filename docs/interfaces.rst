@@ -24,7 +24,10 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
      - "./plugins/x.py:Foo": { ... }    # (3) path to a .py file (relative to this YAML)
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling. The plugin ref has three resolution forms:
+plus an optional reserved ``name:`` sibling, which defaults to the ref. Writing ``name:`` *inside* the
+config map is refused with the corrected spelling: no plugin reads it there, and a document that
+placed it there would load with every entry answering to the plugin's ref. The plugin ref has three
+resolution forms:
 
 #. **short name** — a registered ``roqsim.plugins`` entry-point.
 #. **module.path:Class** — imported off ``PYTHONPATH``.
@@ -251,8 +254,8 @@ That build has **no transport in it**, and ``dropped_transport`` names what went
 
 A describe publishes nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim
 render`` and the exporters -- and since the ROS bridge ships in a colcon package, a pip-only
-environment cannot resolve it at all, which used to fail the build over plugins that contribute no
-geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
+environment cannot resolve it at all, so requiring it would fail a describe over plugins that
+contribute no geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
 ``drop_transport_plugins``): a misspelt geometry plugin has to stay fatal, because dropping it would
 leave an entity missing from a list a caller reads as complete. The bridge is still in ``plugins``,
 so ``plugins.ros2_bridge.*`` remains a checkable override.

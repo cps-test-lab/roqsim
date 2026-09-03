@@ -110,8 +110,8 @@ It is not the render path's rule with a flag on it. Two differences, both becaus
 than silently ordered.
 
 Nothing is required to know the flag exists, either. When a world's *only* unresolvable plugins are
-its bridges, the failure says so and names both ways out — the bare "unknown plugin ``ros2_bridge``"
-used to send the reader hunting for a typo that was never there.
+its bridges, the failure says so and names both ways out; a bare "unknown plugin ``ros2_bridge``"
+sends the reader hunting for a typo that is not there.
 
 Model plugin manifests
 ----------------------
@@ -147,9 +147,10 @@ in its ``realsense_d435`` capture plugin.
   your entry wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is
   duplicated. Matching is on the **label**: the entry's ``name:``, else its plugin ref, among that
   owner's components. There is no entity key to name — an entry belongs to the entity whose block it
-  sits in — so the mistake this used to invite is not expressible: omitting ``robot:`` gave a *second*
-  controller running alongside the manifest default rather than replacing it, two controllers fighting
-  over the same actuators, and a config that silently had no effect.
+  sits in — which is what makes an override an override: a controller that named its robot instead
+  could sit anywhere, and one declared outside the block would run *alongside* the manifest default
+  rather than replacing it, leaving two controllers on the same actuators and a config with no
+  visible effect.
   The override is **partial**: keys you do not mention keep the model's manifest values, so adding a
   ``test_cmd`` does not cost you the model's wheel geometry or actuator names. Per key, what the
   world says wins; nested values (e.g. ``topics:``) replace the manifest's mapping outright rather
@@ -163,8 +164,8 @@ in its ``realsense_d435`` capture plugin.
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
 - **Opt out** entirely: set ``default_plugins: false`` on the ``spawn_*`` config.
 - **Derive one manifest from another** with ``extends:``. ``unitree_g1_dex1`` is a ``unitree_g1``
-  plus hands, and used to say so by repeating the base's locomotion and lidar blocks verbatim --
-  two copies that then had to be kept in step by hand. It now inherits them::
+  plus hands, and says exactly that -- rather than repeating the base's locomotion and lidar blocks
+  as a second copy for someone to keep in step by hand::
 
      extends: unitree_g1        # a roqsim.models ref, or a path beside this manifest
      components:
@@ -323,7 +324,8 @@ inertia about its own centre. An ``offset`` is refused rather than approximated 
 shifts the centre of mass and adds a parallel-axis term, which is a different body, not a heavier
 one. ``mass: 0`` leaves the model untouched, so the unloaded cell of a sweep is identical to a world
 that never declared a payload. Load a body other than the root with ``body:`` (the entity's spawn
-prefix is applied for you), and a robot other than the owning entity with ``robot:``.
+prefix is applied for you); which robot is loaded is the entry this one sits in, so there is nothing
+to point with.
 
 Where thrust is bounded this is the flight envelope rather than a detail: see
 ``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight

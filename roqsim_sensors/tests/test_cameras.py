@@ -322,7 +322,7 @@ def test_d455_model_fov_matches_datasheet():
 
     MuJoCo stores only fovy (vertical); the horizontal FOV falls out of fovy + the resolution
     aspect, so this locks BOTH: fovy == 62 and the derived horizontal FOV ~= 87 deg."""
-    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455", "name": "d455"}}]}
+    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455"}, "name": "d455"}]}
     engine = Engine(load_config_from_dict(cfg))
     engine.setup()
     engine.reset()

@@ -648,8 +648,8 @@ def run(
         # Before setup(): configure() may read it, and pre_step certainly does.
         engine.ctx.manual_control = manual_control
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
-        # recorded, so it can be repeated. Before this the sensors read a ctx.rng nothing ever set, so a
-        # noisy run could not be reproduced at all.
+        # recorded, so it can be repeated. A seed nothing sets and nothing reports is the case where
+        # a noisy run cannot be reproduced at all.
         engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:

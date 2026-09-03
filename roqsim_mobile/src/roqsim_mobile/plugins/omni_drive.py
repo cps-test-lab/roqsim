@@ -6,10 +6,10 @@ that can translate in any direction while holding, or independently changing, it
 for PAL Robotics' OMNI base (TIAGo Pro), whose ROS 2 stack uses
 ``omni_drive_controller/OmniDriveController``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     omni_drive:
-      robot: robot                  # entity name registered by spawn_robot
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       base_joint: base_free         # the base's free joint
       vx_actuator: base_vx          # planar drive actuators (see "Planar drive" below)

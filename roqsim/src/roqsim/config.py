@@ -26,8 +26,12 @@ The YAML has two top-level sections::
       - "./plugins/custom.py:Foo": {}             # empty config; file refs are quoted too
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one). An
-empty config is written ``<ref>: {}`` (or ``<ref>:``).
+plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one), which
+defaults to the ref. An empty config is written ``<ref>: {}`` (or ``<ref>:``).
+
+``name:`` or ``components:`` written one level down, *inside* the config map, is refused rather than
+ignored: no plugin reads either out of its own config, so there it can only be a misplaced sibling --
+and one that would otherwise leave every entry answering to the plugin's ref.
 
 A plugin ref containing a colon -- the ``module.path:Class`` and ``path/to/file.py:Class`` forms
 (see :func:`roqsim.registry.resolve_plugin`) -- **must be quoted** when used as the key, e.g.
@@ -139,6 +143,12 @@ _CHILDREN_KEY = "components"
 _ENABLED_KEY = "enabled"
 _RESERVED_SIBLINGS = frozenset({_NAME_KEY, _CHILDREN_KEY, _ENABLED_KEY})
 
+#: Reserved siblings that are refused when found INSIDE a plugin's config, where no plugin reads
+#: them. ``enabled`` is deliberately not one: a plugin may intercept it in its own config and say
+#: something better than "move it out one level" -- for a SUBTRACTIVE plugin such as ``ceiling``,
+#: the sibling means the opposite of what a reader writing it into the config intends.
+_MISPLACED_IN_CONFIG = frozenset({_NAME_KEY, _CHILDREN_KEY})
+
 
 def entry_ref(entry: dict) -> str:
     """The plugin ref of a components-list ``entry`` -- its single non-reserved key.
@@ -157,6 +167,29 @@ def entry_ref(entry: dict) -> str:
     return refs[0]
 
 
+def _refuse_reserved_in_config(ref: str, config: dict | None, where: str) -> None:
+    """Refuse a reserved sibling key written one level too deep, inside the plugin's config.
+
+    No plugin reads one -- what an entry says about *itself* is a sibling of the ref -- so the key
+    can only be a mistake. Ignoring it would leave the document looking accepted and move the
+    failure far from its cause: every component keeps the plugin's default label, and what is
+    reported is a duplicate label, or an override that matches nothing, or nothing at all.
+    """
+    misplaced = sorted(_MISPLACED_IN_CONFIG & set(config or {}))
+    if not misplaced:
+        return
+    key = misplaced[0]
+    keys = ", ".join(repr(k) for k in misplaced)
+    one = len(misplaced) == 1
+    raise PluginError(
+        f"{where}: {keys} {'is a reserved sibling key' if one else 'are reserved sibling keys'} "
+        f"of the plugin ref, not config for '{ref}'. Move {'it' if one else 'them'} out one "
+        f"level:\n"
+        f"  - {ref}: {{...}}\n"
+        f"    {key}: {(config or {})[key]!r}"
+    )
+
+
 def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
     """Parse one ``components:`` entry -- ``<ref>: {config}`` plus its reserved siblings -- to a spec.
 
@@ -173,6 +206,7 @@ def parse_plugin_entry(entry: dict, where: str = "plugin entry") -> PluginSpec:
         raise PluginError(
             f"{where}: config for '{ref}' must be a mapping, got {type(config).__name__}"
         )
+    _refuse_reserved_in_config(ref, config, where)
     enabled = entry.get(_ENABLED_KEY, True)
     if not isinstance(enabled, bool):
         raise PluginError(f"{where}: '{_ENABLED_KEY}:' must be true or false, got {enabled!r}")
@@ -255,9 +289,9 @@ def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
     """Refuse two components of one owner answering to the same label.
 
     A label is what an override addresses, what an entity is registered under, and what a generated
-    MJCF name is built from -- so two of them is one instance silently standing in for the other. It
-    is not hypothetical: three model manifests shipped duplicates, and a world stub written against
-    one of them collapsed a robot's two lidars into a single sensor without a word.
+    MJCF name is built from -- so two of them is one instance silently standing in for the other: a
+    robot's second lidar collapses into the first, and the document that declared both says nothing
+    about it.
     """
     seen: dict[str, PluginSpec] = {}
     for spec in specs:
@@ -460,9 +494,9 @@ def _resolve_extends_target(ext: Any, base_dir: Path) -> Path:
 def _entry_identities(entry: dict) -> set[str]:
     """The name a ``disable`` selector addresses an entry by: its **label**.
 
-    There used to be two -- the reserved ``name:`` sibling *and* a ``name`` inside the plugin's own
-    config -- because a spawn carried its entity name in its config. They are one key now, so
-    ``disable:`` and an override finally address a component by the same string.
+    The label is the only name an entry has, so ``disable:`` and an override address a component by
+    the same string. A ``name`` inside the plugin's own config is not a second one: the loader
+    refuses it (:func:`_refuse_reserved_in_config`), which is what keeps that single spelling true.
     """
     reserved = entry.get(_NAME_KEY)
     if isinstance(reserved, str):
@@ -476,8 +510,8 @@ def _apply_disable(plugins: list, selectors: list) -> list:
 
     Sugar for ``enabled: false`` at that label, which is what makes it one mechanism rather than two:
     the entry stays in the document, so it is still addressable, still in the record, and a later
-    override can turn it back on. It used to be deleted, which left no trace that a base world had
-    ever contributed it.
+    override can turn it back on. Deleting it instead leaves no trace that the base world
+    contributed it at all.
 
     Selectors are labels (see :func:`_entry_identities`). A selector matching **no** inherited entry
     is a hard error -- a typo must not silently keep something the document meant to drop.
@@ -1351,12 +1385,11 @@ def expand_document(
 def _check_ownership(spec: PluginSpec, cls: type[Plugin]) -> None:
     """Refuse an entry whose position contradicts what its plugin says it is.
 
-    Both mistakes used to be silent and both cost a debugging session. A sensor declared at the top
-    of a document has no entity to attach to, and used to fall back to the literal name ``robot`` --
-    running alongside the default it meant to replace rather than instead of it, so two controllers
-    fought over the same actuators and the config appeared to have no effect. A ``components:`` block
-    on something that registers no entity has nothing to own, and would silently wire its children to
-    a label that no entity answers to.
+    Both mistakes are otherwise silent. A sensor declared at the top of a document has no entity to
+    attach to: it resolves unprefixed names and runs alongside the default it meant to replace
+    rather than instead of it, so two controllers drive the same actuators and the config appears to
+    have no effect. A ``components:`` block on something that registers no entity has nothing to
+    own, and would wire its children to a label no entity answers to.
     """
     if spec.children and not cls.provides_entity:
         raise PluginError(

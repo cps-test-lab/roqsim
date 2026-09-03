@@ -14,7 +14,7 @@ from roqsim_assets.plugins.shelf import ShelfPlugin
 
 
 def _shelf(tmp_path, extra=None):
-    plugins = [{"shelf": {"name": "shelf", **(extra or {})}}]
+    plugins = [{"shelf": dict(extra or {}), "name": "shelf"}]
     return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
 
 

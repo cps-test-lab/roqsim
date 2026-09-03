@@ -16,8 +16,8 @@ class Parent(Plugin):
 
     @classmethod
     def expand(cls, spec: PluginSpec, world, base_dir):
-        name = spec.config.get("name", "robot")
-        return [PluginSpec(ref=CHILD, name=None, config={"robot": name})]
+        # Wired to the entry's LABEL, the way a real spawn plugin names the entity it registers.
+        return [PluginSpec(ref=CHILD, name=None, config={"robot": spec.label})]
 
 
 PARENT = f"{__name__}:Parent"
@@ -29,7 +29,7 @@ def _kinds(plugins):
 
 
 def test_expand_injects_spec_after_parent():
-    cfg = load_config_from_dict({"plugins": [{PARENT: {"name": "r1"}}]})
+    cfg = load_config_from_dict({"plugins": [{PARENT: {}, "name": "r1"}]})
     plugins = instantiate_plugins(cfg)
     assert _kinds(plugins) == ["Parent", "Child"]
     assert plugins[1].config == {"robot": "r1"}  # wired to the parent's entity
@@ -44,8 +44,8 @@ def test_each_parent_injects_its_own_child():
     cfg = load_config_from_dict(
         {
             "plugins": [
-                {PARENT: {"name": "alice"}, "name": "a"},
-                {PARENT: {"name": "bob"}, "name": "b"},
+                {PARENT: {}, "name": "alice"},
+                {PARENT: {}, "name": "bob"},
             ]
         }
     )

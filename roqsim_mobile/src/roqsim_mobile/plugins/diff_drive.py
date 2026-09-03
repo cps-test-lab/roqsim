@@ -4,10 +4,10 @@ Ported from our earlier in-house nav prototype's ``TurtleBot4``. Consumes a body
 :class:`RobotHandle` — e.g. by the ROS bridge — or a scripted ``test_cmd`` for standalone demos),
 writes wheel velocity-servo targets in ``pre_step``, and integrates encoder odometry in ``post_step``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     diff_drive:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       wheel_radius: 0.03575
       wheel_separation: 0.233
@@ -164,11 +164,10 @@ class DiffDrivePlugin(Plugin):
         # wheel carries the base forward when it spins about the base's +y, and sign = +axis_y.
         #
         # Derived rather than assumed, because a source URDF may express the same wheel about either
-        # y direction and both are correct: the Neobotix MP-400's are -y. This plugin previously
-        # wrote the commanded rate straight to the actuator, which silently required +y -- a
-        # convention every model here satisfied only because our own generators wrote them, and which
-        # drove the MP-400 backwards until its axis was flipped to suit. omni_drive has always
-        # derived this; it simply had the sign inverted until 2026-08-28.
+        # y direction and both are correct: the Neobotix MP-400's are -y. Writing the commanded rate
+        # straight to the actuator would silently require +y, and a model that states the other
+        # convention then drives backwards -- a fault visible only in the base's motion, which is
+        # where it is hardest to attribute to a sign.
         base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
         if base_b < 0:
             raise RuntimeError(

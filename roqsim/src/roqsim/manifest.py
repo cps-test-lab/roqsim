@@ -48,8 +48,9 @@ def load_manifest(
     """The manifest's ``components:`` list for a resolved model file, or ``[]`` when it has none.
 
     A manifest is a document like any other, so it may ``extends:`` another model's manifest and
-    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and said that by
-    repeating the base's ``g1_locomotion`` and ``lidar`` blocks verbatim until it could say it once.
+    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and says exactly that
+    instead of repeating the base's ``g1_locomotion`` and ``lidar`` blocks for someone to keep in
+    step by hand.
     It inherits **components, not geometry** -- a derived model keeps its own MJCF; ``extends:`` never
     carried geometry, ``sim.world`` did, and a manifest may not carry ``sim:`` at all (see below).
 
@@ -100,8 +101,8 @@ def expand_manifest(
     When the owner already declares a component with the same **label**, the manifest default is not
     injected -- the world's entry is the one that runs -- but the manifest's config is **merged
     underneath it** (per key: the world's value always wins, missing keys are filled from the
-    manifest). That is what lets a world override *part* of a default: ``diff_drive: {robot: robot,
-    test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
+    manifest). That is what lets a world override *part* of a default: ``diff_drive:
+    {test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
     calibration and actuator names.
 
     The merge is shallow, deliberately: a nested value the world sets (``topics: {scan: /s}``)

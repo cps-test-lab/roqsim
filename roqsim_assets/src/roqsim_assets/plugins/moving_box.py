@@ -26,7 +26,6 @@ exactly.
 Config::
 
     moving_box:
-      name: cube_1              # entity name (default 'moving_box')
       prefix: "cube1_"          # MJCF name prefix (use distinct prefixes for >1 mover)
       size: [0.3, 0.3, 0.3]     # full extents, metres (REQUIRED)
       pos: [x, y]               # start; [x, y] sits it ON the floor, [x, y, z] sets its CENTRE
@@ -70,7 +69,8 @@ _ROOT_BODY = "moving_box"
 _DEFAULT_TURN_DEG = (60.0, 300.0)
 
 
-#: Effectively "no culling", matching the `mj_ray` this plugin used to call.
+#: Effectively "no culling": a cutoff no scene reaches, so the raycast is bounded by geometry
+#: rather than by distance.
 _NO_CUTOFF = 1e6
 
 

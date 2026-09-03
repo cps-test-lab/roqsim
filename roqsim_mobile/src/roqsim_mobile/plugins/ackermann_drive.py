@@ -47,7 +47,6 @@ sit at its wheel centres and an overstated steer split otherwise.
 Config::
 
     ackermann_drive:
-      robot: robot                  # entity registered by spawn_robot (default: the owner)
       wheel_radius: 0.05
       wheelbase: 0.32               # front axle to rear axle -- what turns a curvature into an angle
       track: 0.24                   # driven axle width, for the drive split (and the default below)
@@ -104,7 +103,7 @@ class AckermannDrivePlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        self.robot = self.config.get("robot") or self.entity
+        self.robot = self.entity
         self.r = float(self.config.get("wheel_radius", 0.05))
         self.wheelbase = float(self.config.get("wheelbase", 0.32))
         self.track = float(self.config.get("track", 0.24))
