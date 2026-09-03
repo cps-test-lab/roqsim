@@ -13,10 +13,10 @@ JointTrajectoryController exposes, so one config drives sim and hardware alike).
 It also registers a handle on the blackboard under ``robot_body:<name>`` exposing ``joint_names``,
 ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers (tests, teleop).
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     agibot_g2_controller:
-      robot: robot            # entity name registered by spawn_robot (prefix taken from it)
       namespace: ""           # transport scope (default: inherited from spawn_robot)
       rest: {idx21_arm_l_joint1: 1.6, ...}   # {joint: angle} spawn+hold stance (default: manifest)
       test_target: {idx31_gripper_l_inner_joint1: -0.6}   # optional {joint: pos} held every tick

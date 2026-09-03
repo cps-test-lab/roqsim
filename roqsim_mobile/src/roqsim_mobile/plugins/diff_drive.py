@@ -4,10 +4,10 @@ Ported from our earlier in-house nav prototype's ``TurtleBot4``. Consumes a body
 :class:`RobotHandle` — e.g. by the ROS bridge — or a scripted ``test_cmd`` for standalone demos),
 writes wheel velocity-servo targets in ``pre_step``, and integrates encoder odometry in ``post_step``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     diff_drive:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       wheel_radius: 0.03575
       wheel_separation: 0.233
