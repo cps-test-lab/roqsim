@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_walker"
 version = "0.1.0"
-description = "Kinematic pedestrian walkers for roqsim (CARLA characters, A* + behaviour tree navigation)."
+description = "Kinematic pedestrian walkers for roqsim: a skinned humanoid on mocap bodies, navigated by roqsim_nav."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
