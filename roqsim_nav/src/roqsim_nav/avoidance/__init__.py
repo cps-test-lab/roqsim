@@ -12,6 +12,7 @@ replacement rather than to fit the implementation that happens to ship.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
@@ -19,7 +20,18 @@ import numpy as np
 
 from .._resolve import RegistryError, registered, resolve
 
+logger = logging.getLogger(__name__)
+
 ENTRY_POINT_GROUP = "roqsim_nav.avoidance"
+
+#: The model a world gets without asking for one. Pure Python, so it needs no compiler and every
+#: install has working avoidance -- which is the whole reason it, rather than the better `orca`, is
+#: the default. A navigator names another with `avoidance: {model: ...}`.
+DEFAULT_MODEL = "sidestep"
+
+#: Where the world's shared model lives. Shared by necessity rather than by preference: agents can
+#: only avoid each other inside one solver, so a world has exactly one.
+SERVICE_KEY = "nav:avoidance"
 
 #: The id returned for an agent when no model is loaded. Every call is then a no-op and ``result``
 #: is the identity, so a world without an avoidance model behaves as one where nobody yields.
@@ -131,9 +143,13 @@ class AvoidanceService:
     difference nobody thinks to look for.
     """
 
-    def __init__(self, model: AvoidanceModel):
+    def __init__(self, model: AvoidanceModel, *, ref: str = "", params: dict | None = None):
         self.model = model
+        #: What was asked for, so a second navigator asking for something else can be refused.
+        self.ref = ref
+        self.params = dict(params or {})
         self._solved_step = -1
+        self._reset_episode = -1
 
     def ensure_solved(self, ctx) -> None:
         step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
@@ -141,6 +157,19 @@ class AvoidanceService:
             return
         self._solved_step = step
         self.model.solve(float(ctx.dt))
+
+    def ensure_reset(self, ctx) -> None:
+        """Reset the model once per episode, whichever mover gets here first.
+
+        Stamped like the solve, and for the same reason: every navigator resets, and the shared
+        model must be cleared exactly once -- not once per mover, which would wipe the state of the
+        movers that reset before it.
+        """
+        episode = int(getattr(ctx, "episode", 0))
+        if episode == self._reset_episode:
+            return
+        self._reset_episode = episode
+        self.reset()
 
     def reset(self) -> None:
         self._solved_step = -1
@@ -160,6 +189,58 @@ class AvoidanceService:
         return self.model.result(aid)
 
 
+def service_for(ctx, spec, base_dir=None) -> AvoidanceService:
+    """The world's shared avoidance model, created on first use.
+
+    There is no world-level entry to declare: a navigator that wants to yield says so, and the model
+    appears. That is what makes avoidance a property of the mover rather than a checklist item --
+    the alternative shipped an example with the model commented out and every mover politely
+    yielding to nobody.
+
+    ``spec`` is one navigator's ``avoidance:`` value: the NAME of a model, or a mapping naming one
+    with its parameters. A name rather than a boolean because there is more than one model, and
+    "yes" does not say which -- a world should read as what it is actually using. The model itself is shared, because agents can only avoid
+    each other inside one solver, so **two navigators asking for different models is refused** --
+    silently giving the second one its own solver would make the two invisible to each other, which
+    looks exactly like avoidance that does not work.
+    """
+    if isinstance(spec, dict):
+        wanted = dict(spec)
+        ref = str(wanted.pop("model", DEFAULT_MODEL))
+    else:
+        wanted, ref = {}, str(spec)
+    service = ctx.blackboard.get(SERVICE_KEY)
+    if service is not None:
+        if service.ref != ref:
+            raise RegistryError(
+                f"this world asks for two different avoidance models, {service.ref!r} and {ref!r}. "
+                f"Agents can only avoid each other inside one model, so the movers using one would "
+                f"be invisible to the movers using the other. Pick one."
+            )
+        if wanted and service.params and wanted != service.params:
+            raise RegistryError(
+                f"avoidance model {ref!r} is configured twice with different parameters "
+                f"({service.params} and {wanted}). It is one shared model, so there is one setting."
+            )
+        return service
+    model = resolve_model(ref, base_dir)()
+    model.configure(ctx, wanted)
+    # The planner's own wall footprints, so a model that reasons about static geometry cannot push an
+    # agent through a wall the plan carefully went around. Fed here rather than by each mover: the
+    # walls belong to the world, and adding them once per mover would stack duplicates.
+    import mujoco  # noqa: PLC0415 - only needed when a model is actually created
+
+    from ..obstacles import wall_polygons  # noqa: PLC0415 - avoids an import cycle at module load
+
+    if ctx is not None and getattr(ctx, "model", None) is not None:
+        mujoco.mj_forward(ctx.model, ctx.data)  # geom_xpos must be valid to read footprints
+        model.add_static(wall_polygons(ctx.model, ctx.data))
+    service = AvoidanceService(model, ref=ref, params=wanted)
+    ctx.blackboard.set(SERVICE_KEY, service)
+    logger.info("avoidance: %s%s", ref, f" {wanted}" if wanted else "")
+    return service
+
+
 def resolve_model(ref: str, base_dir: Path | None = None) -> type[AvoidanceModel]:
     """Resolve ``ref`` to an :class:`AvoidanceModel` subclass."""
     return resolve(
@@ -173,11 +254,14 @@ def available() -> list[str]:
 
 
 __all__ = [
+    "DEFAULT_MODEL",
     "NO_AGENT",
+    "SERVICE_KEY",
     "AvoidanceModel",
     "AvoidanceService",
     "NullAvoidance",
     "RegistryError",
     "available",
     "resolve_model",
+    "service_for",
 ]

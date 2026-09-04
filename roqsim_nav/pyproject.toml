@@ -36,7 +36,17 @@ test = ["pytest>=7.0"]
 #
 # It gates the `orca` model ONLY: this package stays wheel-installable, and a world using a
 # pure-Python avoidance model needs no toolchain at all.
-avoidance = ["rvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
+# The DISTRIBUTION is `pyrvo2`; the module it installs is `rvo2`. Naming it `rvo2` here made pip
+# resolve metadata for one project against a requirement for another and refuse the install
+# outright, so the extra could not be installed at all -- which is worth knowing, because it is the
+# reason `sidestep` above is the default rather than a fallback.
+#
+# It also needs its build dependency present, and pip's build isolation hides one that is merely
+# installed. An extra cannot express that, so the install is two commands:
+#
+#   pip install Cython
+#   pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
+avoidance = ["pyrvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
 
 # Entry points are declared by the step that implements what they point at, so that every step
 # leaves an installable package: a group naming a module that does not exist yet turns `roqsim
@@ -45,14 +55,15 @@ avoidance = ["rvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
 [project.entry-points."roqsim.plugins"]
 # Moves the entity of the entry it is nested under, along a planned or given route.
 navigator = "roqsim_nav.plugins.navigator:NavigatorPlugin"
-# World-level, declared once: which local-avoidance model this world's navigators share.
-avoidance = "roqsim_nav.plugins.avoidance:AvoidancePlugin"
 
 # How a navigator's motion reaches the physics. `roqsim_walker` registers `walker` into this same
 # group, which is what keeps the dependency running walker -> nav and never back.
 # Local-avoidance models, resolved the way plugins and outputs are. ORCA is one implementation and
 # is named nowhere in this package's own code -- see avoidance/__init__.py.
 [project.entry-points."roqsim_nav.avoidance"]
+# The default, and pure Python: a world gets working avoidance from `pip install roqsim_nav`, with
+# no compiler. `orca` is the better model where the encounter itself is the experiment.
+sidestep = "roqsim_nav.avoidance.sidestep:SidestepModel"
 orca = "roqsim_nav.avoidance.orca:OrcaModel"
 
 [project.entry-points."roqsim_nav.outputs"]

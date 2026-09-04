@@ -13,6 +13,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import PluginError
 
 WAYPOINTS = [[-2.0, -2.0], [2.0, -2.0], [2.0, 2.0]]
 
@@ -286,3 +287,64 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
         assert 0.0 < report.current < 1.0
     finally:
         engine.shutdown()
+
+
+def test_a_world_may_write_the_walkers_navigator_itself(tmp_path):
+    """The escape hatch from the compatibility expansion, for the navigator's newer options.
+
+    It builds the humanoid exactly once. `expand` contributes entries *beside* the walker, and the
+    caller keeps the walker -- so returning it from the branch that steps aside built the skeleton
+    twice and MuJoCo refused the duplicate body names.
+    """
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {"pacing": "asap"},
+                "components": [
+                    {
+                        "walker": {"walker": "MaleVisitorWalk", "skin": False, "pos": [0.0, 0.0]},
+                        "name": "pedestrian",
+                        "components": [
+                            {
+                                "navigator": {
+                                    "output": "walker",
+                                    "speed": 1.0,
+                                    "goals": [[2.0, 0.0]],
+                                    "traffic": "respect",  # a walker's own default is `ignore`
+                                }
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        navigator = next(p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin")
+        assert navigator._caution.enabled, "the world's own policy did not take effect"
+        for _ in range(int(6.0 / engine.ctx.dt)):
+            engine.step()
+        assert np.linalg.norm(_xy(engine) - np.array([2.0, 0.0])) < 0.4
+    finally:
+        engine.shutdown()
+
+
+def test_writing_navigation_in_both_places_is_refused(tmp_path):
+    """One place or the other, so a reader does not have to guess which one won."""
+    with pytest.raises(PluginError, match="both in its own block and in a nested"):
+        Engine(
+            load_config_from_dict(
+                {
+                    "sim": {},
+                    "components": [
+                        {
+                            "walker": {"walker": "MaleVisitorWalk", "speed": 1.0},
+                            "name": "pedestrian",
+                            "components": [{"navigator": {"output": "walker", "speed": 2.0}}],
+                        }
+                    ],
+                }
+            )
+        )

@@ -79,11 +79,18 @@ class CautionProbe:
 
     def __init__(self, config: dict | None = None):
         cfg = config or {}
+        # Set by the navigator from its `traffic:` policy, not written in a world directly.
         self.enabled = bool(cfg.get("enabled", True))
         self.on_blocked = str(cfg.get("on_blocked", "stop"))
         self.lookahead = float(cfg.get("lookahead", 1.2))
         self.width = float(cfg.get("width", 0.6))
         self.rays = int(cfg.get("rays", 5))
+        #: Height above the floor to look at, like a scanning plane -- NOT the mover's body origin.
+        #: The origin means something different on every platform: a TurtleBot's is 3 cm up, an
+        #: omni base's is a centimetre BELOW the floor, and a walker's pelvis is at 0.9 m. Casting
+        #: from the walker's origin sent its rays straight over the top of a 0.88 m robot, which it
+        #: then walked into and knocked over. A fixed height sees the things that stand on floors.
+        self.height = float(cfg.get("height", 0.30))
         self.clear_time = float(cfg.get("clear_time", 0.5))
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
@@ -106,7 +113,7 @@ class CautionProbe:
             )
         elif mode not in ON_BLOCKED:
             errors.append(f"'caution.on_blocked' must be one of: {', '.join(ON_BLOCKED)}")
-        for key in ("lookahead", "width", "rays"):
+        for key in ("lookahead", "width", "rays", "height"):
             if key in cfg and float(cfg[key]) <= 0:
                 errors.append(f"'caution.{key}' must be > 0")
         if "clear_time" in cfg and float(cfg["clear_time"]) < 0:
@@ -168,7 +175,7 @@ class CautionProbe:
             return False
 
         heading = math.atan2(float(pref_vel[1]), float(pref_vel[0]))
-        hit = self._nearest_hit(ctx, origin_xy, z, heading)
+        hit = self._nearest_hit(ctx, origin_xy, self.height, heading)
         now = float(ctx.sim_time)
         if hit is not None and hit < self.lookahead:
             self._clear_since = None

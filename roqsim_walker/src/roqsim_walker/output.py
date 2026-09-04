@@ -64,6 +64,21 @@ class WalkerOutput(NavOutput):
     def pose(self, ctx) -> tuple[float, float, float]:
         return float(self._st.pos[0]), float(self._st.pos[1]), float(self._st.yaw)
 
+    def hold(self, ctx, dt: float, facing) -> None:
+        """Stand, and turn toward where it will go.
+
+        Real ``dt`` rather than zero, which is the whole difference from :meth:`stop`: the gait is
+        blended on a low-passed *speed*, so letting time pass with no travel is what decays it out of
+        the walk clip and into the idle one. The feet do not slide while it does, because the walk
+        phase advances by distance travelled and that is zero.
+
+        ``facing`` goes in as the intent the blendspace reads, so a waiting walker turns on the spot
+        toward the way it is about to leave instead of standing at whatever angle it stopped at.
+        """
+        st = self._st
+        st.pref_vel = np.asarray(facing, dtype=float) if facing is not None else np.zeros(2)
+        animate(ctx.data, st, st.pos.copy(), float(dt))
+
     def stop(self, ctx) -> None:
         """Stand still: re-pose the body where it is, without advancing any clock.
 

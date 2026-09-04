@@ -34,11 +34,10 @@ ROOM = HERE / "data" / "open_room.xml"  # walls, but nothing to plan around
 
 
 def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subject=False):
+    """``avoidance`` is what each mover names -- there is no world-level entry to declare."""
     crate = tmp_path / "crate.xml"
     crate.write_text(CRATE)
     components = []
-    if avoidance is not None:
-        components.append({"avoidance": avoidance, "name": "avoid"})
     for i in range(movers):
         components.append(
             {
@@ -54,8 +53,11 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
                         "navigator": {
                             "speed": 0.5,
                             "goals": [[2.0, float(i)]],
-                            "avoidance": yields,
-                            "caution": {"enabled": False},
+                            # With `yields=False` the FIRST mover opts out and the rest still name
+                            # the model -- a world where nobody names one has no model at all, which
+                            # is a different case and has its own test.
+                            "avoidance": ("none" if (not yields and i == 0) else avoidance),
+                            "traffic": "ignore",
                         }
                     }
                 ],
@@ -76,7 +78,8 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
 
 def _stub(engine):
     """The stub model itself, behind the service that owns the once-per-step solve."""
-    return engine.ctx.blackboard.get("nav:avoidance").model
+    service = engine.ctx.blackboard.get("nav:avoidance")
+    return service.model if service is not None else None
 
 
 def _run(engine, seconds):
@@ -144,32 +147,25 @@ def test_solve_runs_once_per_step_and_before_any_result(tmp_path):
         engine.shutdown()
 
 
-def test_document_order_does_not_change_the_outcome(tmp_path):
-    """The avoidance entry may be declared before or after the movers that use it.
+def test_a_mover_that_does_not_yield_still_joins_the_model(tmp_path):
+    """Opting out of yielding is not opting out of existing.
 
-    Without care this is false in a subtle way: the model is solved in a plugin's own ``pre_step``,
-    so an entry declared *after* the movers would serve them a result one step staler than one
-    declared before. A world author would then get a slightly different trajectory for moving a line
-    in a file, which is exactly the kind of difference nobody thinks to look for. The solve is
-    therefore stamped with the step it ran for and triggered by whichever party reaches it first.
+    A mover the others cannot see is one they drive into. "One stops and the other goes around it"
+    needs the stopping one to be *in* the model as something that must be gone around -- which is
+    exactly what broke when a non-yielding mover skipped joining: two robots meeting head-on bumped,
+    because the one with avoidance could not see the one without.
     """
-    positions = []
-    for avoid_first in (True, False):
-        cfg = _world(tmp_path, movers=2, avoidance={"model": STUB})
-        if not avoid_first:
-            cfg.plugins.append(cfg.plugins.pop(0))
-        engine = Engine(cfg)
-        engine.setup()
-        engine.reset()
-        try:
-            _run(engine, 3.0)
-            model = engine.ctx.model
-            body = engine.ctx.entities.get("mover0").body
-            mid = int(model.body_mocapid[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)])
-            positions.append(engine.ctx.data.mocap_pos[mid][:2].copy())
-        finally:
-            engine.shutdown()
-    assert positions[0] == pytest.approx(positions[1], abs=1e-9)
+    engine = Engine(_world(tmp_path, movers=2, avoidance={"model": STUB}))
+    engine.setup()
+    engine.reset()
+    try:
+        navigators = [p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin"]
+        engine.step()
+        stub = _stub(engine)
+        assert len(stub.agents) == len(navigators), "not every mover registered"
+        assert all(n._agent != NO_AGENT for n in navigators)
+    finally:
+        engine.shutdown()
 
 
 # -- semantics -----------------------------------------------------------------------------------
@@ -191,8 +187,12 @@ def test_a_yielding_agent_executes_what_the_model_returned(tmp_path):
 
 
 def test_a_non_yielding_agent_gets_exactly_what_it_asked_for(tmp_path):
-    """`yields=False` means this model may never move it -- not "it is deflected slightly less"."""
-    engine = Engine(_world(tmp_path, avoidance={"model": STUB}, yields=False))
+    """`avoidance: none` means this model may never move it -- not "deflected slightly less".
+
+    Two movers, because one that yields has to exist for the model to be created at all: a world
+    where nobody asks for avoidance has no model, which is a different case (below).
+    """
+    engine = Engine(_world(tmp_path, movers=2, avoidance={"model": STUB}, yields=False))
     engine.setup()
     engine.reset()
     try:
@@ -233,7 +233,7 @@ def test_ground_truth_state_is_submitted_not_the_last_command(tmp_path):
 
 
 def test_reset_clears_the_models_state(tmp_path):
-    engine = Engine(_world(tmp_path, avoidance={"model": STUB}))
+    engine = Engine(_world(tmp_path, movers=2, avoidance={"model": STUB}))
     engine.setup()
     engine.reset()
     try:
@@ -264,14 +264,18 @@ def test_a_param_in_the_schema_reaches_the_model(tmp_path):
 
 
 # -- no model at all ---------------------------------------------------------------------------------
-def test_a_world_with_no_avoidance_entry_still_runs(tmp_path):
-    """Everyone executes what they wanted. One code path, not a None to test for."""
-    engine = Engine(_world(tmp_path, avoidance=None))
+def test_a_world_where_nobody_asks_for_avoidance_creates_no_model(tmp_path):
+    """No model is built at all, and every mover simply executes what it wanted.
+
+    Worth pinning as its own case: the cost of avoidance should be paid by worlds that use it, and a
+    world of movers that only ever stop should not be carrying a solver.
+    """
+    engine = Engine(_world(tmp_path, avoidance=None, yields=False))
     engine.setup()
     engine.reset()
     try:
         navigator = next(p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin")
-        assert isinstance(navigator._avoid, NullAvoidance)
+        assert engine.ctx.blackboard.get("nav:avoidance") is None
         assert navigator._agent == NO_AGENT
         _run(engine, 6.0)
         model = engine.ctx.model

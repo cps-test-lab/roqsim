@@ -67,7 +67,8 @@ from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
 from .._resolve import RegistryError
-from ..avoidance import NO_AGENT, NullAvoidance
+from ..avoidance import NO_AGENT, SERVICE_KEY, resolve_model, service_for
+from ..avoidance import available as avoidance_models
 from ..behavior import NavCore, NavParams, build_tree
 from ..caution import CautionProbe
 from ..control import LAWS
@@ -76,7 +77,6 @@ from ..handle import NavHandle, Sequencer
 from ..outputs import available, resolve_output
 from ..planner import GridPlanner
 from ..state import NavState
-from .avoidance import MODEL_KEY
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +85,23 @@ logger = logging.getLogger(__name__)
 _AUTO_ORDER = ("drive", "mocap")
 
 ROUTE_MODES = ("plan", "exact")
+
+#: What a mover does about traffic -- the things the planner's grid cannot contain, because they
+#: move: another robot, a pedestrian, a driven prop.
+#:
+#: ``respect`` looks ahead and stops for them. ``ignore`` does not look, and drives on.
+#:
+#: Both are legitimate and the choice is the experiment's. An opponent that must be at the same
+#: place at the same time in every repetition should ignore traffic, because stopping for the robot
+#: under test makes its trajectory a function of that robot's behaviour. One sharing a corridor
+#: should respect it. Naming them is the point: "does not stop" is a decision, and leaving it as the
+#: absence of a probe made it look like an oversight -- which is exactly how a walker, whose default
+#: is ``ignore``, came to walk through a robot and flip it over.
+#:
+#: A mover that ignores traffic is not thereby harmless to it. A mocap body has no degrees of
+#: freedom, so the solver treats it as immovable: it will shove anything free that it touches,
+#: however politely that thing stopped.
+TRAFFIC = ("respect", "ignore")
 
 #: How the planned path is turned into motion.
 #:
@@ -125,8 +142,10 @@ class NavigatorPlugin(Plugin):
         self._bid = -1
         self._seq = Sequencer()
         self._plan_pending = True
-        self._avoid = NullAvoidance()
+        self._radius: float | None = None
+        self._avoid = None
         self._agent = NO_AGENT
+        self._yields = False
         self._configured_goals: list[tuple] = []
         self._commanded = False
         self._pose_snapshot = (0.0, 0.0, 0.0)
@@ -194,6 +213,48 @@ class NavigatorPlugin(Plugin):
             if value is not None and float(value) <= 0.0:
                 errors.append(f"'{key}' must be > 0")
 
+        spec = config.get("avoidance", "none")
+        if isinstance(spec, bool):
+            # A bool says whether but not WHICH, and there is more than one model. Refused rather
+            # than mapped to a default, so a world states what it is actually using.
+            errors.append(
+                f"'avoidance' names a model, not a yes/no: 'none', or one of "
+                f"{', '.join(avoidance_models()) or '(none registered)'}, or a mapping like "
+                f"{{model: orca, neighbor_dist: 4.0}}"
+            )
+        elif isinstance(spec, str):
+            if spec != "none" and spec not in avoidance_models() and ":" not in spec:
+                errors.append(
+                    f"unknown avoidance model {spec!r}: use 'none', one of "
+                    f"{', '.join(avoidance_models()) or '(none registered)'}, or a "
+                    f"'module:Class' / 'file.py:Class' reference"
+                )
+        elif isinstance(spec, dict):
+            ref = str(spec.get("model", "sidestep"))
+            try:
+                cls = resolve_model(ref, self.base_dir)
+            except RegistryError as exc:
+                errors.append(str(exc))
+            else:
+                schema = getattr(cls, "params_schema", ())
+                unknown = sorted(set(spec) - {"model"} - set(schema)) if schema else []
+                if unknown:
+                    errors.append(
+                        f"avoidance model {ref!r} does not accept {', '.join(unknown)}. It accepts: "
+                        f"{', '.join(schema)}. (A key left over from another model is refused rather "
+                        f"than ignored.)"
+                    )
+        else:
+            errors.append("'avoidance' must be 'none', a model name, or a mapping naming one")
+
+        traffic = config.get("traffic", "respect")
+        if traffic not in TRAFFIC:
+            errors.append(f"'traffic' must be one of: {', '.join(TRAFFIC)}")
+        if "enabled" in (config.get("caution") or {}):
+            errors.append(
+                "'caution.enabled' has moved to 'traffic': respect (look ahead and stop) or ignore "
+                "(drive on). The `caution:` block is the tuning for how it looks, not whether."
+            )
         errors += CautionProbe.validate(config.get("caution"))
 
         if (config.get("recovery") or {}).get("enabled") and mode == "exact":
@@ -264,7 +325,20 @@ class NavigatorPlugin(Plugin):
             ),
         )
 
-        self._caution = CautionProbe(cfg.get("caution"))
+        # `avoidance:` is 'none' (the default -- do not give way), the NAME of a model, or a
+        # mapping naming one with its parameters. There is no world-level entry to declare: the
+        # model appears when a mover asks to yield, and the first to ask fixes it for the world.
+        spec = cfg.get("avoidance", "none")
+        self._yields = spec != "none" and spec is not None
+        if self._yields:
+            # Created here, joined at reset. Configure order is deterministic and every configure
+            # precedes every reset, so a mover that only opts OUT still finds the model at reset
+            # time and can register as something the others must avoid.
+            service_for(ctx, spec, self.base_dir)
+
+        self._caution = CautionProbe(
+            {**(cfg.get("caution") or {}), "enabled": cfg.get("traffic", "respect") == "respect"}
+        )
         self._caution.attach(ctx, entity)
 
         # Joining the avoidance model is deferred to on_reset, not done here: components are
@@ -351,9 +425,8 @@ class NavigatorPlugin(Plugin):
             # Not an error: with no static geometry the behaviour tree walks straight legs.
             logger.info("navigator %s: no walls to plan around; legs are straight", self.entity)
             return None
-        return GridPlanner(
-            grid, NavParams.from_spec(cfg, float(cfg.get("radius", 0.3))).inflation_radius
-        )
+        # Inflated by the mover's own footprint, so the path it plans is one it fits through.
+        return GridPlanner(grid, NavParams.from_spec(cfg, self.radius(ctx)).inflation_radius)
 
     def on_reset(self, ctx: SimContext) -> None:
         """The owner's ``on_reset`` ran first (owners flatten before their components), so the body
@@ -378,6 +451,8 @@ class NavigatorPlugin(Plugin):
         # carried over from the last one would route around whichever were present then.
         self._plan_pending = True
         self._join_avoidance(ctx)
+        if self._avoid is not None:
+            self._avoid.ensure_reset(ctx)
         self._output.stop(ctx)
 
     def pre_step(self, ctx: SimContext) -> None:
@@ -409,43 +484,41 @@ class NavigatorPlugin(Plugin):
         # is atomic where writing into a shared array is not.
         self._pose_snapshot = (x, y, yaw)
 
-        # Caution runs against the velocity we WOULD command, which is last tick's -- the current one
-        # is not known until the tree ticks, and ticking it is exactly what must not happen while
-        # blocked. At 20 Hz that is a 50 ms old heading for a mover on a planned path, which does not
-        # change direction abruptly.
-        z = float(ctx.data.xpos[self._bid][2]) if self._bid >= 0 else 0.0
-        if self._caution.check(ctx, self._state.pos, z, self._core.pref_vel):
-            # Hold everything: do NOT tick the tree, so `FollowPath` cannot advance a waypoint and
-            # `EnsurePath` cannot re-plan. The mover resumes on the leg it was already on.
-            #
-            # Rebasing the progress clock is what keeps yielding from decaying into re-routing. The
-            # recovery branch declares a stall after `stuck_time` of no movement, and a mover waiting
-            # for the robot to pass is not moving -- so without this, "wait for it to go by" turns
-            # itself into "back up and plan around it" after a second and a half, silently defeating
-            # the stop. It matters because recovery is ON by default.
-            self._core.observe(ctx.sim_time, self._state.pos, None)
-            self._core.forget_progress()
-            self._output.stop(ctx)
-            return
-
+        # Order: plan, then AVOID, then decide whether to stop. Caution used to run first, against
+        # the raw preferred velocity, and that made steering impossible: it stopped the mover, a
+        # stopped mover has no velocity to steer, so the avoidance model saw nothing to shape and two
+        # movers meeting head-on stopped nose to nose however good the model was. Stopping is the
+        # fallback for what steering cannot clear, so it has to judge the steered velocity.
         self._core.observe(ctx.sim_time, self._state.pos, None)
         self._tree.tick()
         if self._state.done and not self._seq.finished:
             self._seq.finish()
             self._resume_configured_route()
-        # Submit what we want, then execute what the model says we may. `result` precedes this tick's
-        # `submit` by one step -- the plugin solves at the top of the step -- which is 2 ms and well
-        # under the nav period. Doing it this way is what makes plugin order in the world irrelevant.
-        entity = ctx.entities.get(self.entity)
-        self._ensure_solved(ctx)
-        self._avoid.submit(
-            self._agent,
-            self._state.pos,
-            self._velocity(ctx),
-            self._core.pref_vel,
-            present=bool(entity.present) if entity is not None else True,
-        )
-        self._output.emit(ctx, self._avoid.result(self._agent), yaw, step_dt)
+
+        wanted = self._core.pref_vel
+        if self._avoid is not None:
+            entity = ctx.entities.get(self.entity)
+            self._ensure_solved(ctx)
+            self._avoid.submit(
+                self._agent,
+                self._state.pos,
+                self._velocity(ctx),
+                wanted,
+                present=bool(entity.present) if entity is not None else True,
+            )
+            wanted = self._avoid.result(self._agent)
+
+        if self._caution.check(ctx, self._state.pos, 0.0, wanted):
+            # Hold everything: do NOT advance along the path, and rebase the progress clock so a
+            # mover that is yielding rather than stuck never talks itself into a recovery.
+            self._core.forget_progress()
+            # `hold`, not `stop`: time is passing and the mover is still in the scene, so an
+            # embodiment that is watched can settle -- a walker stands rather than freezing
+            # mid-stride -- and turns toward the way it will leave.
+            self._output.hold(ctx, step_dt, wanted)
+            return
+
+        self._output.emit(ctx, wanted, yaw, step_dt)
 
     def _resume_configured_route(self) -> None:
         """After a commanded route finishes, go back to the route the world configured.
@@ -515,20 +588,55 @@ class NavigatorPlugin(Plugin):
         else:
             self._apply_start(self._seq.next())
 
+    def radius(self, ctx) -> float:
+        """This mover's footprint radius: configured, or MEASURED from its own geometry.
+
+        Measured by default, because a declared one is a number a world has to get right about a
+        robot it did not build -- and getting it wrong is quiet. An mpo_500 is 0.64 m across the
+        diagonal; declaring the 0.35 that looks right made the avoidance model believe two of them
+        cleared at 0.70 m when they need 1.29, and they ground past each other in contact for the
+        whole pass. The model already computes this for the caution probe, so the default costs
+        nothing and cannot be wrong.
+        """
+        if self._radius is None:
+            # `geom_xpos` is only refreshed by a forward pass, and this runs during `on_reset` --
+            # after the owner has written the body's new pose but before anything has stepped.
+            # Measuring without this read the PREVIOUS positions: a walker's skeleton still parked
+            # where the model compiled it, which came out as a 4.2 m radius and was then cached for
+            # the run.
+            mujoco.mj_forward(ctx.model, ctx.data)
+            configured = self.config.get("radius")
+            self._radius = (
+                float(configured)
+                if configured is not None
+                else self._caution.footprint_radius(ctx, self._state.pos)
+            )
+        return self._radius
+
     def _join_avoidance(self, ctx) -> None:
-        """Join the world's avoidance model, once every plugin has configured. Idempotent."""
+        """Join the world's avoidance model, once every plugin has configured. Idempotent.
+
+        Deferred to ``on_reset`` rather than done in ``configure`` so that a mover declared before
+        another still shares its model: the first to arrive creates it, and order does not decide
+        who gets one.
+        """
         if self._agent != NO_AGENT:
             return
-        self._avoid = ctx.blackboard.get(MODEL_KEY) or NullAvoidance()
+        # EVERY mover joins, including one that never gives way. Opting out of yielding is not
+        # opting out of existing: a mover the others cannot see is one they drive into, and
+        # "one stops, the other goes around it" needs the stopping one to be there to go around.
+        self._avoid = ctx.blackboard.get(SERVICE_KEY)
+        if self._avoid is None:
+            return  # nobody in this world asked for avoidance at all
         cfg = self.config
         self._agent = self._avoid.add_agent(
             self.entity,
-            radius=float(cfg.get("radius", 0.3)),
+            radius=self.radius(ctx),
             max_speed=float(cfg.get("max_speed", max(1.0, 2.0 * self._state.speed))),
             # Apparatus yields; the subject does not. Opting out still occupies an agent, so others
             # go round this mover -- it simply never gives way itself, which is what keeps a
             # strictly reproducible opponent reproducible.
-            yields=bool(cfg.get("avoidance", False)),
+            yields=self._yields,
             params=cfg.get("params") or {},
         )
 

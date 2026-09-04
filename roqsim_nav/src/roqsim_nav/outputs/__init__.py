@@ -68,8 +68,26 @@ class NavOutput(ABC):
         """
 
     def stop(self, ctx) -> None:
-        """Come to rest: blocked by traffic, reset between episodes, or shutting down."""
+        """Come to rest with no time passing: a reset, or a shutdown.
+
+        Deliberately timeless. A reset has just placed the body where the episode starts, and
+        advancing an embodiment's own clocks here would move it off that pose -- by a millimetre for
+        a walker, which is enough to make two runs of the same world differ.
+        """
         self.emit(ctx, np.zeros(2), self.pose(ctx)[2], 0.0)
+
+    def hold(self, ctx, dt: float, facing) -> None:
+        """Stay put for ``dt`` while still *being* something -- blocked by traffic, not reset.
+
+        Distinct from :meth:`stop` because time is passing and the mover is still in the scene. An
+        embodiment with a pose to hold has nothing extra to do, and the default does exactly that.
+        One that is *watched* does: a walker frozen mid-stride reads as a bug, where a walker that
+        settles into a stand and turns to face where it will go reads as waiting.
+
+        ``facing`` is the direction it would travel if it could -- so it ends up pointing the way it
+        is about to leave, rather than the way it happened to be pointing when it stopped.
+        """
+        self.stop(ctx)
 
 
 class OutputUnavailable(RegistryError):

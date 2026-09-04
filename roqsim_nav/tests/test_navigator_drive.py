@@ -18,7 +18,7 @@ from roqsim.engine import Engine
 
 
 def _world(*, model="turtlebot4", nav=None, pos=(-3.0, 0.0), extra=None):
-    navigator = {"speed": 0.25, "goals": [[3.0, 0.0]], "caution": {"enabled": False}}
+    navigator = {"speed": 0.25, "goals": [[3.0, 0.0]], "traffic": "ignore"}
     navigator.update(nav or {})
     components = [
         {

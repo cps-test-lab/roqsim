@@ -25,7 +25,7 @@ CRATE = """<mujoco model="crate">
 def _engine(tmp_path, **nav):
     crate = tmp_path / "crate.xml"
     crate.write_text(CRATE)
-    navigator = {"speed": 1.0, "caution": {"enabled": False}}
+    navigator = {"speed": 1.0, "traffic": "ignore"}
     navigator.update(nav)
     return Engine(
         load_config_from_dict(

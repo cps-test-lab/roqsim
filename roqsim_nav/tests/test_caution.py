@@ -256,7 +256,7 @@ def test_it_resumes_on_the_same_path_when_the_way_clears(tmp_path):
 
 def test_caution_can_be_turned_off(tmp_path):
     """Off, it drives into the blocker -- which is the evidence that on, it was caution stopping it."""
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"enabled": False}}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
     engine.setup()
     engine.reset()
     try:
@@ -307,7 +307,7 @@ def test_an_absent_obstacle_is_not_planned_around(tmp_path):
     """
     from roqsim import presence
 
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"enabled": False}}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
     engine.setup()
     engine.reset()
     try:
@@ -321,7 +321,7 @@ def test_an_absent_obstacle_is_not_planned_around(tmp_path):
 
 def test_a_present_obstacle_is_still_planned_around(tmp_path):
     """The other half: deferring the grid must not stop it seeing what IS there."""
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"enabled": False}}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
     engine.setup()
     engine.reset()
     try:
@@ -334,3 +334,37 @@ def test_a_present_obstacle_is_still_planned_around(tmp_path):
         assert navigator._core.planner.grid is not None
     finally:
         engine.shutdown()
+
+
+# -- the traffic policy ---------------------------------------------------------------------------
+def test_traffic_ignore_drives_on_and_respect_stops(tmp_path):
+    """Both are first-class choices, and the difference is the whole of the policy.
+
+    ``ignore`` is for an opponent that must be in the same place at the same time in every
+    repetition: stopping for the robot under test would make its trajectory a function of that
+    robot's behaviour, which is the coupling a controlled trial removes. ``respect`` is for one
+    sharing a corridor.
+    """
+    outcomes = {}
+    for policy in ("ignore", "respect"):
+        engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": policy}))
+        engine.setup()
+        engine.reset()
+        try:
+            _run(engine, 12.0)
+            outcomes[policy] = float(_xy(engine)[0])
+        finally:
+            engine.shutdown()
+    assert outcomes["ignore"] > -0.5, "it stopped although it was told not to care"
+    assert outcomes["respect"] < -0.5, "it drove on although it was told to stop"
+
+
+def test_caution_enabled_is_refused_and_points_at_traffic(tmp_path):
+    """The old spelling must not be silently ignored -- it would read as "off" and drive on."""
+    with pytest.raises(PluginError, match="has moved to 'traffic'"):
+        Engine(_world(tmp_path, nav={"caution": {"enabled": False}}))
+
+
+def test_an_unknown_traffic_policy_is_refused(tmp_path):
+    with pytest.raises(PluginError, match="'traffic' must be one of"):
+        Engine(_world(tmp_path, nav={"traffic": "swerve"}))

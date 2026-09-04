@@ -111,10 +111,17 @@ class OrcaModel(AvoidanceModel):
         agent = self._agents[aid]
         agent["pref"] = np.asarray(pref_vel, dtype=float)
         agent["present"] = present
-        # Ground truth in, every step: an agent this model does not move (the robot under test, a
-        # scripted prop) must be where it really is, not where ORCA last integrated it to.
+        # Position, every step: an agent must be where it really is, not where ORCA last integrated
+        # it to.
         self._sim.setAgentPosition(aid, (float(pos[0]), float(pos[1])))
-        self._sim.setAgentVelocity(aid, (float(vel[0]), float(vel[1])))
+        if not agent.get("yields", True):
+            # Velocity too, but ONLY for an agent this model may not move -- the robot under test, a
+            # scripted prop. For a yielding one it would be catastrophic and silent: `doStep` writes
+            # its answer into the agent's velocity and `getAgentVelocity` is how we read it back, so
+            # overwriting that with the body's measured velocity discards the answer. Every mover
+            # then executed zero and the whole world stood still, while ORCA reported no error and
+            # the agents were plainly registered.
+            self._sim.setAgentVelocity(aid, (float(vel[0]), float(vel[1])))
         if not present:
             # Absent entities deflect nobody, exactly as they are seen by no raycaster. Parking the
             # agent far away is how rvo2 expresses that without deleting and renumbering agents.

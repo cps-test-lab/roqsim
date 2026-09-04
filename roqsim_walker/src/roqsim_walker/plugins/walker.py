@@ -50,6 +50,7 @@ import numpy as np
 from roqsim.config import PluginSpec
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.plugin import Plugin, PluginError
+from roqsim_nav.avoidance import DEFAULT_MODEL
 from roqsim_walker.blueprint import BlueprintError, resolve_walker
 from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.nav.controller import (
@@ -131,7 +132,10 @@ class WalkerPlugin(Plugin):
                     f"walker {spec.name!r} configures navigation both in its own block and in a "
                     f"nested `navigator`. Put it in one place -- the navigator, for anything new."
                 )
-            return [spec]
+            # NOTHING, not this spec: `expand` contributes entries *beside* the one it was called
+            # for, and the caller keeps that one. Returning it here builds the humanoid twice and
+            # MuJoCo refuses the duplicate body names.
+            return []
 
         nav = {dst: cfg[src] for src, dst in cls._NAV_KEYS.items() if src in cfg}
         nav["output"] = "walker"
@@ -145,13 +149,22 @@ class WalkerPlugin(Plugin):
             nav["goals"] = wps[1:]
         elif wps:
             nav["goals"] = wps
+        if isinstance(nav.get("avoidance"), bool):
+            # A walker's own block has always spelled this as a yes/no. The navigator names a model
+            # instead, because there is more than one and "yes" does not say which -- so the legacy
+            # spelling is translated here rather than a world being asked to change.
+            nav["avoidance"] = DEFAULT_MODEL if nav["avoidance"] else "none"
         if "goals" not in nav:
             # A goal-driven-only walker has no patrol, so there is nothing to cycle through.
             nav.pop("loop", None)
         nav.setdefault("speed", 1.0)
-        # A walker never had a forward caution probe: it yields through local avoidance or not at
-        # all. Adding one on the compatibility path would change how every existing walker behaves.
-        nav.setdefault("caution", {"enabled": False})
+        # A walker has never looked ahead: it yields through local avoidance or not at all, so the
+        # compatibility path keeps `traffic: ignore` -- turning it on here would change how every
+        # existing walker behaves. It is a default worth knowing about rather than one to rely on:
+        # a walker is a mocap body, so the solver treats it as immovable and it will shove anything
+        # free it walks into, however politely that thing stopped. A world that puts a walker in a
+        # room with a robot should write a `navigator` for it and say `traffic: respect`.
+        nav.setdefault("traffic", "ignore")
         # A walker's own footprint, so it presents the same disc to avoidance it always did.
         nav.setdefault("radius", float((cfg.get("orca") or {}).get("radius", 0.26)))
         if (cfg.get("orca") or {}).get("max_speed") is not None:
