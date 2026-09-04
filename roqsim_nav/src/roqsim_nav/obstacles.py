@@ -1,7 +1,7 @@
 """Static wall footprints for the walker planner and ORCA, read from the compiled MuJoCo model --
 the single source of truth.
 
-Ported from our earlier in-house nav prototype's ``mujoco_nav.pedestrian.obstacles``.
+Ported from an earlier in-house navigation prototype.
 
 Walls live in the model as *collidable, static, non-floor* geoms: the ``floorplan`` plugin's wall
 colliders, and any environment MJCF attached as welded bodies -- so reading the model needs no
@@ -32,7 +32,7 @@ def wall_polygons(model, data, z_lo: float = 0.1, z_hi: float = 1.8):
         b = int(model.geom_bodyid[g])
         if model.body_weldid[b] != 0:  # has DOFs (e.g. robot)
             continue
-        if model.body_mocapid[b] >= 0:  # mocap (e.g. pedestrian)
+        if model.body_mocapid[b] >= 0:  # mocap (a walker, a navigated prop)
             continue
         if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE:
             continue  # the floor
@@ -88,16 +88,15 @@ def _footprint(model, data, g):
 
 def dynamic_obstacle_bodies(model, exclude_mocapids):
     """``[(body_id, radius), ...]`` for every collidable **mocap** body that is
-    not one of ``exclude_mocapids`` (the pedestrians' own articulated parts).
+    not one of ``exclude_mocapids`` (the caller's own articulated parts).
 
-    These are the runtime-teleported pool obstacles -- the ``spawnable_objects``
-    spawned via ``/spawn_entity`` and the ``initial_objects`` placed at startup
-    (see :mod:`roqsim_walker.pool`). Being mocap bodies, :func:`wall_polygons`
-    deliberately skips them, and ORCA's *static* obstacles can't represent them
-    because they move (spawned in/out, parked off-map when idle). The controller
-    instead refreshes each one's xy into ORCA as an immovable agent every step --
-    the same ground-truth-overwrite trick it uses for the robot -- so pedestrians
-    walk around spawned/initial props too.
+    These are the things that move without having DOFs: a navigated prop, a
+    walker's peers, a prop teleported in at runtime via ``/spawn_entity``.
+    :func:`wall_polygons` deliberately skips them because they are not walls,
+    and a local-avoidance model's *static* geometry cannot represent them
+    because they move. A caller instead refreshes each one's xy into the model
+    as an immovable agent every step -- the same ground-truth-overwrite a
+    non-yielding participant gets -- so navigating agents steer around them too.
 
     ``radius`` is the geom's circumscribed xy radius, which is yaw-invariant, so a
     rotating box keeps a footprint that never shrinks below its true extent."""

@@ -31,6 +31,8 @@ import numpy as np
 
 from . import (
     AccessError,
+    NavCall,
+    NavOutcome,
     OverrideCall,
     OverrideOutcome,
     Pose,
@@ -38,6 +40,52 @@ from . import (
     TeleportOutcome,
     WorldAccess,
 )
+
+
+class _RosRoute(NavCall):
+    """A NavigateThroughPoses goal in flight.
+
+    Three stages, none of which may block: wait for the server to appear (the stack and the simulator
+    come up concurrently, so "not there yet" means wait, never fail), then for the goal to be
+    accepted, then for the result. ``wait=False`` stops after acceptance.
+    """
+
+    def __init__(self, client, goal, name: str, *, wait: bool):
+        self._client, self._goal, self._name, self._wait = client, goal, name, wait
+        self._send = None
+        self._handle = None
+        self._result = None
+
+    def poll(self):
+        if self._send is None:
+            if not self._client.server_is_ready():
+                return None  # the simulator may still be starting: waiting is not failing
+            self._send = self._client.send_goal_async(self._goal)
+            return None
+        if self._handle is None:
+            if not self._send.done():
+                return None
+            self._handle = self._send.result()
+            if not self._handle.accepted:
+                return NavOutcome(False, f"{self._name}: the navigator rejected the route")
+            if not self._wait:
+                return NavOutcome(True, "route accepted")
+            self._result = self._handle.get_result_async()
+            return None
+        if self._result is None or not self._result.done():
+            return None
+        status = getattr(self._result.result(), "status", None)
+        # 4 == STATUS_SUCCEEDED in action_msgs/GoalStatus; anything else is preemption or a give-up,
+        # which is a trial fact rather than an authoring one.
+        return (
+            NavOutcome(True, "arrived")
+            if status == 4
+            else NavOutcome(False, f"{self._name}: route ended with status {status}")
+        )
+
+    def cancel(self) -> None:
+        if self._handle is not None:
+            self._handle.cancel_goal_async()
 
 
 class RosAccess(WorldAccess):
@@ -66,6 +114,11 @@ class RosAccess(WorldAccess):
         self._get_state_type = GetEntityState
         self._set_state_type = SetEntityState
         self._set_bool_type = SetBool
+        # nav2_msgs and geometry_msgs are imported lazily in `navigate`, not here: a world with no
+        # navigator never needs nav2 installed, and requiring it at construction would make every
+        # ROS scenario depend on the stack a subset of them command.
+        self._nav_clients: dict = {}
+        self._pose_stamped_type = None
         self._group = ReentrantCallbackGroup()
         self._state_client = node.create_client(
             GetEntityState, self.ENTITY_STATE_SERVICE, callback_group=self._group
@@ -153,6 +206,55 @@ class RosAccess(WorldAccess):
         req = self._set_bool_type.Request()
         req.data = bool(active)
         return _RosCall(client, req, instance, bool(active))
+
+    # -- navigation --------------------------------------------------------------------------------
+    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        """Send an action goal to the simulator's own ``NavigateThroughPoses`` server.
+
+        The same endpoint the in-process path reaches directly -- the bridge serves the navigator's
+        goal endpoint as an action, so the two transports command one mover through one seam.
+
+        The default name follows the convention the rest of this backend uses: the entity's own
+        namespace, then the endpoint (``<entity>/navigate_through_poses``), exactly as
+        ``apply_override`` reaches ``<instance>/override``. ``action_name`` is the escape hatch for a
+        deployment that scoped it differently; leaving it empty is what keeps a scenario identical on
+        both transports.
+
+        Not ``simulation_interfaces``: that control plane has no navigation service, and inventing
+        one there would put the same capability behind two different names.
+        """
+        try:
+            from geometry_msgs.msg import PoseStamped  # noqa: PLC0415
+            from nav2_msgs.action import NavigateThroughPoses  # noqa: PLC0415
+            from rclpy.action import ActionClient  # noqa: PLC0415
+        except ImportError as err:  # pragma: no cover - only without nav2 installed
+            raise AccessError(
+                f"entity_navigate over ROS needs nav2_msgs, which is not importable ({err}). The "
+                "simulator serves its navigator as a nav2 NavigateThroughPoses action, so the "
+                "scenario side needs those message types -- source a workspace with nav2, or run "
+                "the stepped runner, where no ROS types are involved at all."
+            ) from None
+        self._pose_stamped_type = PoseStamped
+
+        topic = action_name or f"{name}/navigate_through_poses"
+        client = self._nav_clients.get(topic)
+        if client is None:
+            client = ActionClient(
+                self._node, NavigateThroughPoses, topic, callback_group=self._group
+            )
+            self._nav_clients[topic] = client
+        goal = NavigateThroughPoses.Goal()
+        for point in goal_poses:
+            pose = self._pose_stamped_type()
+            pose.header.frame_id = "map"
+            pose.pose.position.x = float(point[0])
+            pose.pose.position.y = float(point[1])
+            # Identity orientation, always: the navigator drives to a position and stops facing the
+            # way it arrived. `entity_navigate` refuses a goal orientation rather than sending one
+            # that would be ignored at the far end, so there is never a heading to encode here.
+            pose.pose.orientation.w = 1.0
+            goal.poses.append(pose)
+        return _RosRoute(client, goal, name, wait=wait)
 
     # -- teleport ---------------------------------------------------------------------------------
     def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:

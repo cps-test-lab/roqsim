@@ -1,5 +1,14 @@
 # roqsim_walker_ros
 
+> **The action handler moved.** `NavigateThroughPoses` is served by `roqsim_nav_ros`, which serves it
+> for every mover roqsim navigates -- a walker, an opponent robot, a driven prop -- because one action
+> type must have exactly one handler: the bridge's registry overwrites silently and extension load
+> order is unspecified, so two would let install order decide. Nothing a user sees changed: the same
+> endpoint, the same action type, the same action name. A walker now also answers `NavigateToPose`,
+> which it never did before.
+>
+> This package keeps the demo launch file and its world.
+
 ROS 2 goal interface for [`roqsim_walker`](../../../roqsim_walker): serves nav2's
 **`NavigateThroughPoses`** action so a pedestrian can be commanded through a list of poses.
 

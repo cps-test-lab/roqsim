@@ -88,15 +88,22 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
 
     assert ctx.blackboard.get("walker:pedestrian") is not None
 
-    # The walker registers two endpoints: the body_poses TF stream (out) and the goal action (in).
+    # The walker itself registers the body_poses TF stream; its navigator registers the goal
+    # interface, as it does for a robot or a prop -- which is why there are now TWO goal endpoints
+    # rather than one. `navigate_through_poses` is unchanged in name and type, so an existing client
+    # and an existing world are unaffected; `navigate_to_pose` is new surface a walker never had.
     endpoints = {e.name: e for e in ctx.interface.all() if e.owner == "pedestrian"}
-    assert set(endpoints) == {"body_poses", "navigate_through_poses"}
+    assert set(endpoints) == {"body_poses", "navigate_through_poses", "navigate_to_pose"}
     assert endpoints["body_poses"].direction == "out"
-    endpoint = endpoints["navigate_through_poses"]
-    assert endpoint.direction == "in"
-    hints = endpoint.backend["ros2"]
-    assert hints["action"] == "nav2_msgs.action.NavigateThroughPoses"
-    assert hints["name"] == "navigate_through_poses"
+
+    through = endpoints["navigate_through_poses"]
+    assert through.direction == "in"
+    assert through.backend["ros2"]["action"] == "nav2_msgs.action.NavigateThroughPoses"
+    assert through.backend["ros2"]["name"] == "navigate_through_poses"
+
+    single = endpoints["navigate_to_pose"]
+    assert single.direction == "in"
+    assert single.backend["ros2"]["action"] == "nav2_msgs.action.NavigateToPose"
 
 
 def test_walker_spawns_at_the_first_waypoint(sim):
@@ -222,6 +229,7 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
     decoration the robot passes straight through.
     """
     import mujoco
+
     from roqsim.config import load_config_from_dict
     from roqsim.engine import Engine
 

@@ -16,7 +16,7 @@
   <buildtool_depend>ament_python</buildtool_depend>
 
   <exec_depend>rclpy</exec_depend>
-  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>roqsim_nav_ros</exec_depend>  <!-- serves this walker's goal actions -->
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>roqsim_ros_bridge</exec_depend>

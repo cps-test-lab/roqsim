@@ -16,6 +16,7 @@ Config::
       rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
+      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
       mass: 0.5                      # override the root body's total geom mass (kg)
       friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
@@ -31,6 +32,18 @@ variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescal
 masses in proportion, keeping the mass distribution of a multi-geom prop; ``friction`` accepts a single
 sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
 has nothing to scale, rather than silently doing nothing.
+
+A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
+a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
+two non-default ones.
+
+``mocap: true`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
+it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
+and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
+component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
+``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
+rather than a joint), so a repetition never inherits where the last one left it.
 
 ``free: true`` adds a ``<freejoint/>`` to the prop's root body, turning it from welded scenery into a
 body physics moves -- a box a robot can pick up. It also registers the joint as the entity's
@@ -142,6 +155,7 @@ class SpawnModelPlugin(Plugin):
         self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         self.scale = float(self.config.get("scale", 1.0))
         self.free = bool(self.config.get("free", False))
+        self.mocap = bool(self.config.get("mocap", False))
         self.mass = self.config.get("mass")
         friction = self.config.get("friction")
         if friction is not None and not isinstance(friction, (list, tuple)):
@@ -149,6 +163,7 @@ class SpawnModelPlugin(Plugin):
         self.friction = [float(v) for v in friction] if friction is not None else None
         self._base_joint = ""
         self._spawn_qpos: list[float] = []
+        self._mocapid = -1
         # publish_tf: false | "dynamic" | "static"; `true` is an alias for "dynamic".
         mode = self.config.get("publish_tf", False)
         self.publish_tf = "dynamic" if mode is True else mode
@@ -199,6 +214,19 @@ class SpawnModelPlugin(Plugin):
                 errors.append("'friction' must be a number or [sliding, torsional, rolling]")
             elif any(float(v) < 0.0 for v in values):
                 errors.append("'friction' components must be >= 0")
+        if config.get("free") and config.get("mocap"):
+            # A mocap body has no DOFs, so a free joint on it is not a stricter version of the same
+            # thing -- it is the opposite claim about who moves the prop. MuJoCo would accept the
+            # combination and then ignore one of them.
+            errors.append(
+                "'free' and 'mocap' are mutually exclusive: 'free' hands the prop to physics, "
+                "'mocap' hands it to a plugin. Pick the one that owns its pose."
+            )
+        if config.get("mocap") and ("dynamic" if mode is True else mode) == "static":
+            errors.append(
+                "'publish_tf: static' contradicts 'mocap: true' -- a driven body's pose is not "
+                "model-fixed; use publish_tf: dynamic"
+            )
         if config.get("free") and ("dynamic" if mode is True else mode) == "static":
             # A latched one-shot pose for a body that moves is a frame frozen at the spawn pose.
             errors.append(
@@ -231,6 +259,8 @@ class SpawnModelPlugin(Plugin):
             self._apply_physics_overrides(bodies, asset)
         if self.free:
             self._add_freejoint(child, bodies, asset)
+        if self.mocap:
+            self._make_mocap(child, bodies, asset)
         if not self.entity_name:
             self.entity_name = asset.path.stem
         frame = spec.worldbody.add_frame()
@@ -279,6 +309,24 @@ class SpawnModelPlugin(Plugin):
         root.add_freejoint(name="free")
         self._base_joint = f"{self.prefix}free"
 
+    def _make_mocap(self, child: mujoco.MjSpec, bodies, asset) -> None:
+        """Make the prop's root body a mocap body, refusing the cases that go silently wrong."""
+        if not bodies:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mocap: true needs a root body to drive, but "
+                f"{asset.path} declares none (its geoms sit directly on worldbody)."
+            )
+        root = bodies[0]
+        if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
+            # MuJoCo compiles a jointed mocap body without complaint and then never moves the joints,
+            # so an articulated prop would arrive looking correct and be frozen.
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mocap: true, but {asset.path} gives its root body "
+                f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
+                f"inert -- spawn it without `mocap`."
+            )
+        root.mocap = True
+
     def configure(self, ctx: SimContext) -> None:
         self._body_frame = self.prefix + self._root_body
         meta = {"prefix": self.prefix, "model": self.model_ref}
@@ -286,14 +334,31 @@ class SpawnModelPlugin(Plugin):
             # simulation_interfaces' SetEntityState only accepts an entity whose base_joint is a free
             # joint, so without this a movable prop could not be teleported or reset between episodes.
             meta["base_joint"] = self._base_joint
+        if self.mocap:
+            # `mocap` in the meta is how a component nested under this entry -- a `navigator`, say --
+            # discovers that it may write this body's pose, without having to re-derive it from the
+            # compiled model.
+            meta["mocap"] = True
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if self.free else "prop",
+                # Not "prop": a prop is scenery, and both of the other two states MOVE. What differs
+                # is who moves them, which `meta` says.
+                kind="object" if (self.free or self.mocap) else "prop",
                 body=self._body_frame,
                 meta=meta,
             )
         )
+        if self.mocap:
+            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, self._body_frame)
+            if bid < 0:
+                raise RuntimeError(f"spawn_model: body {self._body_frame!r} not found for mocap")
+            self._mocapid = int(ctx.model.body_mocapid[bid])
+            if self._mocapid < 0:
+                raise RuntimeError(
+                    f"spawn_model: body {self._body_frame!r} is not a mocap body after compile"
+                )
+
         if self.free:
             jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
             if jid < 0:
@@ -358,10 +423,19 @@ class SpawnModelPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
 
-        Only for ``free: true``: a welded prop cannot drift, but a movable one is wherever the last
-        episode left it -- on the floor, if the robot knocked it off the table. Repetitions of a trial
-        would then not be repetitions. ``mj_resetData`` restores ``qpos0``, which already holds the
-        spawn pose, but velocity is cleared per-joint here so a prop reset mid-flight does not keep it.
+        A welded prop cannot drift, but a ``free`` one is wherever the last episode left it -- on the
+        floor, if the robot knocked it off the table -- so repetitions of a trial would not be
+        repetitions.
+
+        Only ``free`` needs anything done here. ``mj_resetData`` restores ``qpos0``, which already
+        holds the spawn pose, so all that is left is clearing velocity per-joint, so a prop reset
+        mid-flight does not keep it.
+
+        A ``mocap`` prop needs nothing, and that is worth stating because it looks like it should:
+        ``mj_resetData`` re-initialises ``mocap_pos``/``mocap_quat`` from the body's ``body_pos`` /
+        ``body_quat``, which *is* the spawn pose (this plugin attaches the prop at a frame there).
+        So a driven prop is already back where it started before any ``on_reset`` runs, and an
+        explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
         if not self.free or not self._spawn_qpos:
             return

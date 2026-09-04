@@ -44,6 +44,7 @@ known-first-party = [
     "roqsim_assets",
     "roqsim_scenes",
     "roqsim_mobile",
+    "roqsim_nav",
     "roqsim_ros_bridge",
     "roqsim_walker",
     "roqsim_walker_ros",

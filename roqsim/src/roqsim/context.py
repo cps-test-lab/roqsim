@@ -49,11 +49,28 @@ class RobotHandle:
 
     ``drive`` takes body-frame velocities (vx forward, vy left, w yaw-rate). ``read_odom`` returns
     the latest ``(x, y, yaw, vx, vy, w)`` estimate. Both run on the physics thread.
+
+    ``kinematics`` says which of those three components the base can actually realise, so a consumer
+    that must *shape* a command -- a planner turning a direction into a twist, a teleop mapping a
+    stick -- can do so without a list of robot names. Declared by the controller for the same reason
+    ``transport_only`` is declared by the plugin: a name list in the core would silently serve only
+    the drives we happen to ship, and an out-of-tree one would be shaped wrongly and in silence.
+
+    * ``unicycle`` -- drives and turns, cannot strafe. Differential and skid-steer bases, and the
+      legged platforms, whose locomotion controllers take the same twist.
+    * ``holonomic`` -- any planar velocity, including sideways. Mecanum, omni-wheel and swerve.
+    * ``ackermann`` -- cannot turn in place, and a twist states a *curvature*: the steering angle is
+      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A consumer that
+      commands a stop-and-pivot leaves a car sitting still with its wheels straight.
+
+    It defaults to ``unicycle`` because that is the largest family here and because a default lets
+    every existing publisher stay as it is; a base that is not one declares it.
     """
 
     name: str
     drive: Callable[[float, float, float], None]
     read_odom: Callable[[], tuple[float, float, float, float, float, float]]
+    kinematics: str = "unicycle"
 
 
 @dataclass

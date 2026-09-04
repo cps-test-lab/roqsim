@@ -260,6 +260,87 @@ Note the envelope is recorded, not enforced: outside it a policy does not fail, 
 it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
 port log to be read.
 
+Navigation: a mover the simulator drives itself
+-----------------------------------------------
+
+A trial usually needs more than the robot it is measuring: a second robot in the aisle, a pedestrian
+crossing, a cart that goes somewhere rather than along a fixed polyline. Those are *apparatus*, and
+``navigator`` drives them from inside the simulator -- it plans with A\* over a grid rasterized from
+the world's own wall geoms, so there is no map file, no localisation, and nothing on the ROS graph
+but the robot under test.
+
+It builds no geometry. It moves the entity of the entry it is nested under, and how that motion
+reaches the physics is its ``output``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 20 68
+
+   * - output
+     - moves
+     - cost and what it is for
+   * - ``drive``
+     - a ``spawn_robot``
+     - Calls the ``RobotHandle.drive(vx, vy, w)`` the entity's controller published -- the *same*
+       entry point the ROS bridge writes ``/cmd_vel`` into. ``diff_drive`` still does its own inverse
+       kinematics, acceleration ramp and wheel-encoder odometry, so the wheels really turn and the
+       thing can slip. A full articulated robot in the solver: use it when the opponent's dynamics
+       are part of the experiment.
+   * - ``mocap``
+     - ``spawn_model: {mocap: true}``
+     - Writes the body's pose. **Zero solver DOFs** -- collision geometry the robot's lidar and
+       contacts see, and nothing for the physics to integrate. The cheap default for any opponent
+       whose wheel dynamics do not matter.
+   * - ``walker``
+     - a ``walker``
+     - The pedestrian: seventeen mocap bodies and a gait, also zero DOFs. Registered by
+       ``roqsim_walker``, not listed here -- outputs resolve from an entry-point group, so an
+       out-of-tree embodiment needs no edit to ``roqsim_nav``.
+
+.. code-block:: yaml
+
+   components:
+     - spawn_robot: {model: turtlebot4, pos: [4, -3]}
+       name: cart
+       components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
+
+     - spawn_model: {model: graspable_box, pos: [2, 1], mocap: true}
+       name: pallet
+       components: [ {navigator: {speed: 0.3, goals: [[-2, 1]]}} ]
+
+``roqsim sim roqsim_nav:nav_opponents`` runs all three in one scene beside a TurtleBot 4 that nothing
+drives.
+
+**Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
+``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
+the route at load and holds the mover at its first point until something starts it, so a world can
+own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
+scenario owns only its timing (``entity_navigate_start``).
+
+**Caution, and why it never re-routes.** The planner's grid holds static walls and nothing else, so
+each mover also looks ahead along the corridor it is about to occupy. What it sees is exactly the
+complement of the grid: a body with degrees of freedom, or a mocap body -- precisely what
+``wall_polygons`` refuses to rasterize. A wall at a corner is the planner's business and never
+caution's. The response is to **stop**, never to plan around: a stopped mover is still on its path
+and resumes on the leg it was on, while a re-routing one has quietly changed a trajectory the
+experiment was holding fixed. ``recovery`` is the separate, deliberate knob that *can* change a path
+mid-route (on by default, as it has always been for walkers); its draws come from ``ctx.rng_for``, so
+an opponent that recovers differently under a different ``sim.seed`` replays exactly under the same
+one -- controlled variability rather than noise.
+
+**Avoidance is a second registry.** A world declares one model, once
+(``avoidance: {model: orca, ...}``), and every navigator in it shares that. Who yields is *derived,
+not configured*: an entity with a navigator is apparatus and gives way; an entity without one is the
+subject, and joins as a non-yielding agent whose state is overwritten from ground truth, so the
+others go round it and it is never pushed by them. ORCA is one implementation, behind the
+``[avoidance]`` extra; with no model declared, everyone simply executes what they wanted.
+
+**It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
+zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
+must not become a function of wheel slip, hence of contacts with the robot under test). A mover with
+realistic localisation error is a different experiment.
+
 Navigation: detecting a collision
 ---------------------------------
 

@@ -47,12 +47,23 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   1.32, so core roqsim's `payload` plugin is what sets an aerial flight envelope: the hover boundary
   sits at ~9 g. `wind_field` is the one plugin that owns an `opt.*` global (`opt.wind`), so it
   refuses to load beside a `sim.wind` — see `docs/architecture.rst` §9.2.
-- `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
-  behaviour-tree navigation with optional ORCA, character blueprints (`models/people/`) and CARLA
-  locomotion clips (`models/anims/`). Depends on `roqsim` only — it is a *dynamic obstacle*, not a robot
-  family, so no robot package depends on it and it depends on none. Zero DOFs (mocap bodies), but its
-  per-limb capsules are what a robot's lidar and contacts see. **Its assets are CC-BY** (CARLA), so
-  attribution travels with anything that ships them — see `roqsim_walker/THIRD_PARTY.md`.
+- `roqsim_nav/` — 2D navigation, shared by everything that moves under its own control: A\* over a
+  grid rasterized from the model's own wall geoms (no map file), a py-trees behaviour tree that
+  follows it, a forward caution probe, and the `navigator` plugin. Depends on `roqsim` only and
+  ships **no geometry** — which is what lets a robot family depend on it. Two entry-point registries
+  keep it that way: `roqsim_nav.outputs` (how motion reaches the physics — a `RobotHandle`'s twist, a
+  mocap pose, a walker's skeleton) and `roqsim_nav.avoidance` (the local model; `orca` is one
+  implementation, behind the `[avoidance]` extra). Nothing in the package branches on the name of an
+  output or a model, so an out-of-tree embodiment or local planner needs no edit here. py-trees lives
+  here rather than in core for the same reason the package exists.
+- `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid,
+  the character blueprints (`models/people/`) and CARLA locomotion clips (`models/anims/`), and the
+  `walker` **output** it registers into `roqsim_nav`. Navigation is not here: a walker is one
+  embodiment of the shared navigator, so a pedestrian, a robot and a prop are moved by the same
+  plugin and differ only in what the motion is written into. Depends on `roqsim` + `roqsim_nav`;
+  no robot package depends on it. Zero DOFs (mocap bodies), but its per-limb capsules are what a
+  robot's lidar and contacts see. **Its assets are CC-BY** (CARLA), so attribution travels with
+  anything that ships them — see `roqsim_walker/THIRD_PARTY.md`.
 
 **Plugins and geometry are separate packages.** Every family with an actuated limb needs
 `arm_controller` — a humanoid's arms, a mobile manipulator's arm, a gantry — and almost none needs

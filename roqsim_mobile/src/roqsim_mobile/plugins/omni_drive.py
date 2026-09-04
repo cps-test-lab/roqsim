@@ -272,7 +272,12 @@ class OmniDrivePlugin(Plugin):
 
         ctx.blackboard.set(
             f"robot:{self.robot}",
-            RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
+            RobotHandle(
+                name=self.robot,
+                drive=self.drive,
+                read_odom=self.read_odom,
+                kinematics="holonomic",
+            ),
         )
         ctx.interface.add(
             Endpoint(
