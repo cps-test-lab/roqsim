@@ -1,4 +1,5 @@
 <mujoco model="panda">
+  <!-- Franka Emika Panda (7-DoF arm + Franka Hand parallel gripper) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
 

@@ -1,4 +1,5 @@
 <mujoco model="unitree_g1_dex1">
+  <!-- Unitree G1, 29-DoF manipulation variant: the 12-DoF walking legs plus waist, arms and a Dex1 parallel gripper per side. -->
   <compiler angle="radian" meshdir="meshes/unitree_g1_dex1/" />
   <default>
     <joint damping="0.001" armature="0.01" frictionloss="0.1" />

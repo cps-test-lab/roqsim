@@ -1,4 +1,5 @@
 <mujoco model="frankie_base">
+  <!-- Frankie - a Franka Emika Panda on an Omron LD-60 differential-drive base - for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" />
   <default>
     <default class="frankie">

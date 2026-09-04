@@ -42,6 +42,37 @@ def manifest_fov(model_file: Path) -> dict:
     return data.get("fov", {}) or {}
 
 
+def manifest_license(model_file: Path) -> list[Path]:
+    """The licence sidecars a model's manifest declares (``license:``), as existing paths.
+
+    Which licence covers a model is only self-evident in the folder-per-model layout, where the
+    sidecar sits alone beside the MJCF. A provider that ships its models flat has one directory
+    holding every model and every vendored licence, and "the file next to it" then attributes one
+    vendor's terms to another vendor's robot -- a wrong answer of the worst kind. So a model whose
+    licence is not obvious from the layout names it::
+
+        license: LICENSE.unitree_ros        # one, or a list when several apply
+
+    A name is relative to the model's own directory and must exist -- a declaration pointing at
+    nothing raises here rather than quietly dropping the model's licence from the catalog. A model
+    that declares none is normal (a hand-authored one carries no vendor terms), and its readers fall
+    back to what ships beside it.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text()) or {}
+    declared = data.get("license")
+    names = [declared] if isinstance(declared, str) else list(declared or [])
+    paths = []
+    for name in names:
+        sidecar = model_file.parent / name
+        if not sidecar.is_file():
+            raise PluginError(f"{path}: license: {name!r} is not a file beside the model")
+        paths.append(sidecar)
+    return paths
+
+
 def load_manifest(
     model_file: Path, base_dir: Path | None = None, seen: frozenset[Path] = frozenset()
 ) -> list[dict]:

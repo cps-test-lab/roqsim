@@ -24,6 +24,7 @@ from pathlib import Path
 import pytest
 
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
+from roqsim.manifest import manifest_license
 from roqsim.models import ModelError, resolve_model
 from roqsim.world import _resolve_world_ref, available_worlds, resolve_world_yaml_ref
 
@@ -140,6 +141,31 @@ def test_a_model_row_names_the_components_its_manifest_brings():
     row = next(r for r in _rows(list_models()) if r["name"] == "turtlebot4")
     assert {"diff_drive", "lidar"} <= set(row["components"])
     assert row["provenance"], "a vendored model ships its licence beside it"
+
+
+def test_a_model_sharing_its_directory_with_several_licences_names_its_own():
+    """Attribution cannot be left to "the file next to it" where several vendors' terms sit there.
+
+    A flat provider keeps every model and every vendored licence in one directory, so a model there
+    says which one covers it (``license:`` in its manifest). Without that the catalog reports one
+    vendor's terms for another vendor's robot, which is a wrong answer nobody would notice.
+    """
+    undeclared = []
+    for row in _rows(list_models()):
+        model_file = Path(row["path"])
+        if manifest_license(model_file):
+            continue
+        sidecars = [
+            p for p in model_file.parent.glob("*") if p.is_file() and "LICENSE" in p.name.upper()
+        ]
+        if len(sidecars) > 1 and not any(
+            model_file.stem.lower() in p.name.lower() for p in sidecars
+        ):
+            undeclared.append(row["ref"])
+    assert not undeclared, (
+        "these models share a directory with several licences and name none, so nothing can say "
+        f"which one covers them: {undeclared}"
+    )
 
 
 def test_model_details_add_the_config_a_spawn_actually_injects():

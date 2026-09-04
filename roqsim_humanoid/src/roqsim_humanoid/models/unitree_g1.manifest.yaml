@@ -8,6 +8,12 @@
 #
 # lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so the
 # G1 publishes /scan for nav2 exactly like the turtlebot does.
+
+# The models directory is flat, so the licence this model carries is named rather than guessed
+# from what sits beside it: the 12-DoF model comes from unitree_rl_gym, the dex1 variant from
+# unitree_ros, and the two ship separate BSD-3-Clause texts (THIRD_PARTY.md).
+license: LICENSE.unitree_rl_gym
+
 components:
   - g1_locomotion: {}                              # RL walking policy + PD; gains/config bundled
   - lidar:

@@ -50,9 +50,15 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import mujoco
+from model_headline import with_headline
 from sources import resolve_source
 
 # Pinned upstream revision -- must match the table in roqsim_humanoid/THIRD_PARTY.md.
+HEADLINE = (
+    "Unitree G1, 29-DoF manipulation variant: the 12-DoF walking legs plus waist, arms and a "
+    "Dex1 parallel gripper per side."
+)
+
 UNITREE_ROS_COMMIT = "f3772ce54c56ef2d34c6aee8100bc768896c7d19"
 UNITREE_ROS_URL = "https://github.com/unitreerobotics/unitree_ros"
 URDF_NAME = "g1_29dof_mode_15_with_dex1_1.urdf"
@@ -450,7 +456,7 @@ def main() -> None:
     root.find("compiler").set("meshdir", "meshes/unitree_g1_dex1/")
     n_meshes = copy_meshes(root, src / "meshes", mesh_dst)
     tree.write(out_xml, encoding="unicode")
-    out_xml.write_text(out_xml.read_text() + "\n")
+    out_xml.write_text(with_headline(out_xml.read_text(), HEADLINE) + "\n")
 
     # Compile the emitted model: an MJCF that does not load is worse than no MJCF at all.
     model = mujoco.MjModel.from_xml_path(str(out_xml))
