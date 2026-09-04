@@ -1,9 +1,10 @@
 name: ci
 
-# Two jobs on purpose. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` --
-# every check is a make target, so a contributor reproduces CI exactly with one command and the two
-# cannot drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
-# separate so a formatting mistake does not wait behind a robot driving to a goal.
+# Three jobs. `core` is the PR gate: no ROS, no nav2, ~minutes, and it runs `make ci` -- every check
+# is a make target, so a contributor reproduces CI exactly with one command and the two cannot
+# drift. `ros` carries the heavy integration (colcon build + the nav2 goal test) and is kept
+# separate so a formatting mistake does not wait behind a robot driving to a goal. `pages` publishes
+# the documentation `make ci` already built, from main only.
 
 on:
   push:
@@ -39,6 +40,15 @@ jobs:
       - name: make ci
         run: make ci
 
+      # The site is the docs `make ci` just built, from the same run that linted, tested and
+      # scrubbed this commit -- so a published page cannot come from a build that failed. The
+      # artifact is produced on pull requests too, where it is downloadable for review; only the
+      # `pages` job below publishes it, and only from main.
+      - name: Package the docs for GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/html
+
   ros:
     name: ros (bridge + nav2 integration)
     runs-on: ubuntu-latest
@@ -72,3 +82,31 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           make test
+
+  pages:
+    name: pages (publish docs)
+    needs: core
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+
+    # Deployments are serialised rather than cancelled: a superseded run that is already writing the
+    # site would otherwise leave it half-updated.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      # Publishes the artifact the core job uploaded; it builds nothing itself. This needs the
+      # repository's Pages source set to GitHub Actions -- with the legacy branch source the site is
+      # whatever Jekyll makes of the repository root, and this step fails rather than overwriting it.
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
