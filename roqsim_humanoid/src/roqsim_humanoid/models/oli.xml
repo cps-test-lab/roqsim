@@ -1,4 +1,5 @@
 <mujoco model="oli">
+  <!-- LimX Oli (HU_D04_01) humanoid for MuJoCo, in the serial PR-space form the vendor walk policy expects. -->
   <compiler angle="radian" meshdir="meshes/oli/"/>
 
   <size nkey="1"/>

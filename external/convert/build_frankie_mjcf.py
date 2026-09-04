@@ -35,8 +35,11 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+from model_headline import with_headline
 
 from roqsim.models import resolve_model
+
+HEADLINE = "Frankie - a Franka Emika Panda on an Omron LD-60 differential-drive base - for MuJoCo."
 
 HERE = Path(__file__).resolve()
 # external/ is a sibling of the family packages, so anchor back through parents[2] (see robot-porting
@@ -551,7 +554,7 @@ def main() -> int:
             assert abs(half[0] - WHEEL_R) < 1e-9, f"{w} radius wrong"
         print("  round-trip: XML reads back with an identical model")
 
-    args.out.write_text(xml)
+    args.out.write_text(with_headline(xml, HEADLINE))
     print(f"\nwrote {args.out.relative_to(ROOT)}  ({len(xml.splitlines())} lines)")
     return 0
 

@@ -14,8 +14,11 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 from xml.dom import minidom
 
+from model_headline import with_headline
+
 SRC = "g2_base.xml"
 OUT = "agibot_g2.xml"
+HEADLINE = "AgiBot G2 (wheeled dual-arm mobile manipulator) for MuJoCo."
 MATERIALS = "materials_flat.json"
 
 WHEEL_ROLL = ["idx112_chassis_lwheel_front_joint2", "idx132_chassis_rwheel_front_joint2",
@@ -288,7 +291,7 @@ def main():
     xml = ET.tostring(root, encoding="unicode")
     pretty = minidom.parseString(xml).toprettyxml(indent="  ")
     pretty = "\n".join(line for line in pretty.splitlines() if line.strip())
-    open(OUT, "w").write(pretty)
+    open(OUT, "w").write(with_headline(pretty, HEADLINE))
     print("wrote", OUT)
 
 
