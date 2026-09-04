@@ -4,13 +4,17 @@
 
 """The README's numbers, checked against the registries they describe.
 
-Every one of them was wrong when this was written -- 48 plugins against 49, 18 robot models against
-34, 21 worlds against 25 -- and each had been right once. A number in a README is a claim that decays
-silently: nobody recounts, the drift is invisible in review, and the first reader to notice is
-someone who trusted it.
+A number in a README is a claim that decays silently: nobody recounts, the drift is invisible in
+review, and the first reader to notice is someone who trusted it. So the totals the README does
+state are asserted here rather than maintained by hand.
 
-So the counts are asserted rather than maintained. The failure message says what to write, because a
-test that only says "51 != 52" makes the reader do the arithmetic that the test just did.
+A count the README is better off not making is deleted from both sides instead. The number of
+registered plugins was one: it depends on which packages are installed, so it read differently in a
+full checkout than in an install of the public packages alone, and the README now describes what
+plugins do rather than how many there are.
+
+The failure message says what to write, because a test that only says "51 != 52" makes the reader do
+the arithmetic that the test just did.
 
 Scope, deliberately: this checks the totals the README states, not the prose around them. A new robot
 that lands without being named in the family list is caught by the total moving; whether the sentence
@@ -27,7 +31,6 @@ import pytest
 
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
 from roqsim.models import _entry_points, _provider_dirs
-from roqsim.registry import ENTRY_POINT_GROUP as PLUGINS_GROUP
 from roqsim.world import _world_entry_points
 
 #: The packages whose models are ROBOTS. Props, sensors and pedestrian blueprints are models too and
@@ -64,14 +67,6 @@ def _installed(names) -> list[str]:
             continue
         present.append(name)
     return present
-
-
-def test_the_plugin_count_is_the_number_of_registered_plugins():
-    actual = len(list(_entry_points(PLUGINS_GROUP)))
-    assert _stated(r"\*\*(\d+) plugins\*\*") == actual, (
-        f"the README says a different number of plugins than are registered here ({actual}). "
-        "Adding one means updating that line in the same commit."
-    )
 
 
 def test_the_robot_model_count_is_the_number_of_shipped_robot_models():
