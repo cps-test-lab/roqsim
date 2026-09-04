@@ -486,3 +486,62 @@ def test_one_arm_still_gets_the_group_called_arm(tmp_path):
     ), "one arm keeps the model's own joint names, unprefixed"
     ompl = yaml.safe_load((out / "ompl_planning.yaml").read_text(encoding="utf-8"))
     assert "both_arms" not in ompl
+
+
+# -- selecting the pipelines ---------------------------------------------------------------------
+
+
+def test_one_pipeline_is_the_default_and_writes_no_selector(tmp_path):
+    """A configuration that asked for nothing new must be what it always was: OMPL alone, and no
+    planning_pipelines.yaml, which with one pipeline would only restate the directory."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    assert (out / "ompl_planning.yaml").is_file()
+    assert not (out / "chomp_planning.yaml").exists()
+    assert not (out / "planning_pipelines.yaml").exists()
+
+
+def test_two_pipelines_are_offered_and_move_group_is_told_which_is_default(tmp_path):
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    body = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert body == {
+        "planning_pipelines": ["ompl", "chomp"],
+        "default_planning_pipeline": "ompl",
+    }
+
+
+def test_only_ompl_gets_a_parameter_file(tmp_path):
+    """Its projection_evaluator names joints this model has, which is what makes it derivable. An
+    optimizer's cost weights are the operating point of a minimisation -- an experiment decision -- so
+    writing a table of them here would be the exporter choosing the experiment. MoveIt's packaged
+    config stands in until the experiment supplies its own."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    assert (out / "ompl_planning.yaml").is_file()
+    assert not (out / "chomp_planning.yaml").exists()
+
+
+def test_a_pipeline_this_export_never_heard_of_is_accepted(tmp_path):
+    """The list is open: a name is offered to move_group, which loads the plugin and the parameters.
+    Refusing an unknown one would only mean this file has to learn every planner MoveIt ships."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,stomp")
+    listed = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert listed["planning_pipelines"] == ["ompl", "stomp"]
+
+
+def test_the_first_named_pipeline_is_the_default(tmp_path):
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "chomp,ompl")
+    listed = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert listed["default_planning_pipeline"] == "chomp"
+
+
+def test_a_joint_space_only_pipeline_says_so_in_the_file(tmp_path):
+    """CHOMP rejects any goal carrying a position or orientation constraint. A comparison that sends
+    pose targets would lose every CHOMP trial to that, and read it as the planner performing badly."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    text = (out / "planning_pipelines.yaml").read_text(encoding="utf-8")
+    assert "JOINT SPACE only" in text
+    assert "pose target" in text
+
+
+def test_a_repeated_pipeline_name_is_refused(tmp_path):
+    with pytest.raises(SystemExit, match="repeats"):
+        _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,ompl")

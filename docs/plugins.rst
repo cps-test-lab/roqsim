@@ -753,6 +753,30 @@ are what reaches ``/joint_states`` and what a trajectory point carries. Every ch
 a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
 loudly as the first.
 
+**More than one planning pipeline.** ``--pipelines ompl,chomp`` writes a ``planning_pipelines.yaml``
+naming them for ``move_group`` and saying which one a request that names none gets; with the default
+single pipeline neither that file nor the selector is written, because there is nothing to select. Any
+name MoveIt can load is allowed — the list is open, so a pipeline this exporter has never heard of
+costs nothing — but each one's planner package has to be installed where ``move_group`` runs, or the
+pipeline fails to *load* at start-up rather than failing the request that uses it.
+
+Only ``ompl_planning.yaml`` is written. Its ``projection_evaluator`` names joints this model has,
+which is what makes it derivable; an optimizer's cost weights are not — they are the operating point
+of a minimisation, which is the experiment's decision, and a table of them emitted here would be the
+exporter making it. Every other pipeline therefore takes MoveIt's own packaged config (the config
+builder falls back to ``moveit_configs_utils/default_configs/<name>_planning.yaml``) until the
+experiment puts a file of that name on the config path it reads.
+
+Use this for a comparison **across** pipelines, where the planners are different plugins with
+unrelated parameter files and a trial picks one per request through ``MotionPlanRequest.pipeline_id``;
+comparing planners *inside* OMPL is another entry in ``ompl_planning.yaml`` and needs none of it. One
+thing to settle before designing such a comparison: **CHOMP accepts joint-space goals only.** It
+rejects a goal with no joint constraints, or with any position or orientation constraint, as
+``INVALID_GOAL_CONSTRAINTS``, so a trial that sets a pose target fails every CHOMP request outright —
+which reads like a planner performing badly rather than one that was never given a goal it could take.
+Solve the IK and send joint goals, or leave that pipeline out of a pose-goal comparison. The export
+warns about it, and ``planning_pipelines.yaml`` says so in a comment.
+
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.
 
