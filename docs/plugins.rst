@@ -724,11 +724,13 @@ Four more answers come off the model rather than from flags, each because gettin
 * **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
   A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
   the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
-* **``start_state_max_bounds_error``** — emitted only for an arm that has a *continuous* joint. MoveIt
-  maps such a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start
-  state that has drifted a hair outside it, which surfaces as a phase failing instantly with
-  ``START_STATE_INVALID`` right after a phase that succeeded — at a different phase each run. A
-  range-limited arm has no such problem and gets no such setting.
+* **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
+  ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
+  it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
+  a hair past pi is therefore refused rather than wrapped, which surfaces as a phase failing instantly
+  right after a phase that succeeded — at a different phase each run. True writes the normalized state
+  back into the request; a joint genuinely outside its limits is still refused, by a separate bounds
+  check this flag does not relax. A range-limited arm has no such problem and gets no such setting.
 
 **Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
 fingertips has to be written as an offset from there — which multiplies every orientation tolerance by

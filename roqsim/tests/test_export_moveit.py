@@ -164,15 +164,15 @@ def test_equalities_outside_the_robot_are_ignored(ur5e):
 # -- ompl_planning: the one derived value in the file that is otherwise the experiment's ----------
 
 
-def test_a_range_limited_arm_gets_no_start_state_bounds_slack(ur5e):
+def test_a_range_limited_arm_gets_no_start_state_normalization(ur5e):
     """The UR joints are range-limited, so the setting would be noise -- and a reader who sees it on
     every arm learns nothing from its presence."""
     body = yaml.safe_load(ompl_planning_yaml(arm_facts(ur5e)))
-    assert "start_state_max_bounds_error" not in body
+    assert "fix_start_state" not in body
     assert arm_facts(ur5e).continuous_joints == []
 
 
-def test_a_continuous_joint_arm_gets_the_slack_and_is_told_why(tmp_path):
+def test_a_continuous_joint_arm_gets_normalization_and_is_told_why(tmp_path):
     """The expensive failure this prevents: a phase failing instantly with START_STATE_INVALID
     (-26) right after a phase that succeeded, at a different phase each run."""
     engine = Engine(_cell(tmp_path, model="gen3", gripper=None, name="gen3"))
@@ -181,7 +181,7 @@ def test_a_continuous_joint_arm_gets_the_slack_and_is_told_why(tmp_path):
     # Read off the model, and these four are exactly the ones a hand-written config named.
     assert facts.continuous_joints == ["joint_1", "joint_3", "joint_5", "joint_7"]
     text = ompl_planning_yaml(facts)
-    assert yaml.safe_load(text)["start_state_max_bounds_error"] == 0.1
+    assert yaml.safe_load(text)["fix_start_state"] is True
     assert "joint_1" in text, "the file should say WHICH joints made it necessary"
 
 

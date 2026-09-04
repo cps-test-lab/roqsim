@@ -36,11 +36,11 @@ What "derived" means, file by file
   disagree with the action the trajectory is executed against.
 * the collapse root -- the lowest common ancestor of every body an ``equality`` constraint touches.
   A closed linkage is what URDF cannot express, and MuJoCo says exactly where one is.
-* ``start_state_max_bounds_error`` -- present only if the arm has a CONTINUOUS joint. MoveIt maps such
-  a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start state that
-  has drifted a hair outside; the symptom is the next phase failing instantly with
-  START_STATE_INVALID (-26) after a phase that succeeded, at a different phase each run. A
-  range-limited arm has no such problem and gets no such setting.
+* ``fix_start_state`` -- present only if the arm has a CONTINUOUS joint. ``CheckStartStateBounds``
+  normalizes such a joint onto [-pi, pi] and, with this false by default, refuses the request because
+  it had to; the symptom is the next phase failing instantly with START_STATE_INVALID (-26) after a
+  phase that succeeded, at a different phase each run. A range-limited arm has no such problem and
+  gets no such setting.
 
 Several arms in one configuration
 =================================
@@ -618,16 +618,18 @@ def ompl_planning_yaml(facts, combined_group: str = "") -> str:
     if continuous:
         # Only for an arm that has one. On a range-limited arm the setting is noise, and a reader who
         # sees it everywhere learns nothing from it being there.
-        body["start_state_max_bounds_error"] = 0.1
+        body["fix_start_state"] = True
         note = (
             "#\n"
-            "# start_state_max_bounds_error is set because this arm has CONTINUOUS joints "
+            "# fix_start_state is set because this arm has CONTINUOUS joints "
             f"({', '.join(continuous)}).\n"
-            "# MoveIt maps such a joint onto [-pi, pi], so after any motion one can sit a hair\n"
-            "# outside, and CheckStartStateBounds' default of 0.0 then REFUSES to plan from it. The\n"
-            "# symptom is a phase failing instantly with START_STATE_INVALID (-26) right after a phase\n"
-            "# that succeeded, at a different phase each run. 0.1 rad wraps that drift and is far less\n"
-            "# than a real configuration error.\n"
+            "# CheckStartStateBounds normalizes such a joint onto [-pi, pi] and then, with this FALSE\n"
+            "# by default, reports START_STATE_INVALID precisely BECAUSE it had to normalize -- so a\n"
+            "# start state that drifted a hair past pi after a motion is refused rather than wrapped.\n"
+            "# The symptom is a phase failing instantly with START_STATE_INVALID (-26) right after a\n"
+            "# phase that succeeded, at a different phase each run. True writes the normalized state\n"
+            "# back into the request; a joint genuinely outside its limits is still refused, since\n"
+            "# that is a separate bounds check the flag does not relax.\n"
         )
     return (
         _GENERATED
