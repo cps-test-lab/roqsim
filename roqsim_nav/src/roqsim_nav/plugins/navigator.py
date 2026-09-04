@@ -256,6 +256,18 @@ class NavigatorPlugin(Plugin):
                 "(drive on). The `caution:` block is the tuning for how it looks, not whether."
             )
         errors += CautionProbe.validate(config.get("caution"))
+        if (config.get("caution") or {}).get("on_blocked") == "replan":
+            if config.get("route_mode", "plan") == "exact":
+                errors.append(
+                    "'caution.on_blocked: replan' cannot be used with 'route_mode: exact'. An exact "
+                    "route IS the given polyline, so routing around something means not walking it; "
+                    "stopping is the only response that keeps the promise. Use on_blocked: stop."
+                )
+            if config.get("traffic", "respect") != "respect":
+                errors.append(
+                    "'caution.on_blocked: replan' needs 'traffic: respect'. With traffic: ignore "
+                    "nothing looks ahead, so there is never a blockage to route around."
+                )
 
         if (config.get("recovery") or {}).get("enabled") and mode == "exact":
             # Backing up and re-planning is, by definition, leaving the path that was given.
@@ -406,7 +418,8 @@ class NavigatorPlugin(Plugin):
         band = cfg.get("obstacle_height") or (0.1, 1.8)
         z_lo, z_hi = float(band[0]), float(band[1])
         resolution = float(cfg.get("resolution", DEFAULT_RESOLUTION))
-        key = f"{grid_key(resolution, z_lo, z_hi)}:{ctx.episode}"
+        resting = self._parked_props(ctx)
+        key = f"{grid_key(resolution, z_lo, z_hi, resting)}:{ctx.episode}"
         grid = ctx.blackboard.get(key)
         if grid is None:
             mujoco.mj_forward(ctx.model, ctx.data)  # geom_xpos must be valid to read footprints
@@ -417,6 +430,7 @@ class NavigatorPlugin(Plugin):
                 z_lo=z_lo,
                 z_hi=z_hi,
                 resolution=resolution,
+                resting_roots=resting,
             )
             ctx.blackboard.set(key, grid if grid is not None else False)
         elif grid is False:
@@ -427,6 +441,31 @@ class NavigatorPlugin(Plugin):
             return None
         # Inflated by the mover's own footprint, so the path it plans is one it fits through.
         return GridPlanner(grid, NavParams.from_spec(cfg, self.radius(ctx)).inflation_radius)
+
+    def _parked_props(self, ctx) -> tuple[int, ...]:
+        """Weld roots of the free props nobody is driving, for the grid to treat as walls.
+
+        A prop with a free joint and no navigator is scenery that happens to be movable -- a crate
+        somebody left in a doorway. Planning through it and then stopping in front of it wastes the
+        whole route, so while it is standing still it is a wall.
+
+        Robots are NOT in this set even when they are motionless, and that is the distinction that
+        matters: the subject stands still at spawn because nothing is driving it *yet*. Baking it
+        into the grid would make every opponent plan around where the robot under test was parked at
+        t = 0, for the whole episode. Traffic is the business of caution and avoidance, which can
+        watch it move; the grid only gets what will still be true in a minute.
+        """
+        model = ctx.model
+        roots = set()
+        for entity in ctx.entities.all():
+            if entity.kind != "object" or not entity.body:
+                continue
+            if ctx.blackboard.get(f"nav:{entity.name}:handle") is not None:
+                continue  # driven, so it is traffic rather than scenery
+            bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+            if bid >= 0 and int(model.body_weldid[bid]) != 0:
+                roots.add(int(model.body_weldid[bid]))
+        return tuple(sorted(roots))
 
     def on_reset(self, ctx: SimContext) -> None:
         """The owner's ``on_reset`` ran first (owners flatten before their components), so the body
@@ -489,7 +528,10 @@ class NavigatorPlugin(Plugin):
         # stopped mover has no velocity to steer, so the avoidance model saw nothing to shape and two
         # movers meeting head-on stopped nose to nose however good the model was. Stopping is the
         # fallback for what steering cannot clear, so it has to judge the steered velocity.
-        self._core.observe(ctx.sim_time, self._state.pos, None)
+        # The blocker is last tick's, which is what there is: caution runs after the tree, because
+        # it has to judge the velocity avoidance produced rather than the raw one. A tick of lag is
+        # nothing next to the seconds recovery waits for before it acts.
+        self._core.observe(ctx.sim_time, self._state.pos, self._caution.blocker_xy)
         self._tree.tick()
         if self._state.done and not self._seq.finished:
             self._seq.finish()
@@ -512,6 +554,7 @@ class NavigatorPlugin(Plugin):
             # Hold everything: do NOT advance along the path, and rebase the progress clock so a
             # mover that is yielding rather than stuck never talks itself into a recovery.
             self._core.forget_progress()
+            self._remember_blockage(ctx)
             # `hold`, not `stop`: time is passing and the mover is still in the scene, so an
             # embodiment that is watched can settle -- a walker stands rather than freezing
             # mid-stride -- and turns toward the way it will leave.
@@ -519,6 +562,36 @@ class NavigatorPlugin(Plugin):
             return
 
         self._output.emit(ctx, wanted, yaw, step_dt)
+
+    def _remember_blockage(self, ctx) -> None:
+        """Under ``on_blocked: replan``, mark what stopped us and route around it.
+
+        Only under `replan`: the default is to hold position and keep the path, because a mover that
+        re-routes has changed the trajectory an experiment may have been holding fixed.
+
+        Dropping ``path`` is what makes the mark take effect -- the behaviour tree re-plans whenever
+        there is no path, and the next plan is the one that sees the mark. The mover still holds this
+        tick; it leaves on the next one, along a route that goes round.
+        """
+        probe = self._caution
+        if probe.on_blocked != "replan" or not probe.blocker_points:
+            return
+        planner = self._core.planner
+        if planner is None:
+            return  # nothing to route around with: straight legs, and caution is the only answer
+        expires = float(ctx.sim_time) + probe.forget_after
+        # EVERY hit, not just the nearest: the rays fan across the corridor, so a wall in front
+        # produces several hits spread along it, and marking the lot outlines how far the obstacle
+        # reaches across the way. Marking only the nearest point leaves a disc narrower than the
+        # thing it stands for -- the next plan rounds the disc, drives into the same wall half a
+        # metre along, and reports a point already inside the mark, so nothing new is learnt and the
+        # mover holds there for good.
+        fresh = [
+            planner.add_blockage(p, probe.blockage_radius, expires) for p in probe.blocker_points
+        ]
+        if any(fresh):
+            self._state.path = None
+            self._state.path_idx = 0
 
     def _resume_configured_route(self) -> None:
         """After a commanded route finishes, go back to the route the world configured.

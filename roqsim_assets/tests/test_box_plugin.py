@@ -166,3 +166,25 @@ def test_on_reset_returns_a_teleported_box_to_its_declared_pose():
 def test_validation_rejects_non_boolean_free():
     errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.4, 0.8], "free": "yes"})
     assert any("'free' must be a boolean" in e for e in errs)
+
+
+# -- mocap: the third body state -------------------------------------------------------------------
+def test_a_mocap_box_has_no_dofs_and_is_a_mocap_body():
+    """Immovable to the solver.
+
+    Being a mocap body is also what keeps it out of a navigator's planner grid -- that filter is
+    ``roqsim_nav``'s and is tested there; this package does not depend on it.
+    """
+    model, _, _, ctx = _build(pos=[1.0, 0.0], size=[0.4, 0.4, 0.5], mocap=True)
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, ctx.entities.get("box").body)
+    assert int(model.body_mocapid[bid]) >= 0
+    assert int(model.body_dofnum[bid]) == 0
+    assert ctx.entities.get("box").kind == "object"
+    assert ctx.entities.get("box").meta["mocap"] is True
+
+
+def test_free_and_mocap_together_are_refused():
+    from roqsim_assets.plugins.box import BoxPlugin
+
+    cfg = {"pos": [0.0, 0.0], "size": [1.0, 1.0, 1.0], "free": True, "mocap": True}
+    assert any("mutually exclusive" in e for e in BoxPlugin(cfg).validate_config(cfg))

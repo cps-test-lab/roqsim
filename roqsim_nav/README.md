@@ -66,12 +66,27 @@ makes the path *be* the polyline: straight legs, no planner, for replaying a scr
 `autostart: false` plans at load and holds the mover until something starts it, so a world can own
 the trajectory while a scenario owns its timing (`entity_navigate_start`).
 
-**Caution stops; it never re-routes.** The planner's grid holds static walls only, so each mover also
-looks ahead: a blocker is a body with DOFs or a mocap body — exactly the complement of what
-`wall_polygons` rasterizes, so a wall at a corner is never caution's problem. A stopped mover is
-still on its path; a re-routing one has changed a trajectory the experiment was holding fixed.
-`recovery` is the separate knob that *can* change a path (on by default, as for walkers); its draws
-come from `ctx.rng_for`, so opponent variability is a seed you can sweep rather than noise.
+**Caution stops by default; `on_blocked: replan` is how it re-routes.** The planner's grid holds
+static walls only, so each mover also looks ahead: a blocker is a body with DOFs or a mocap body —
+exactly the complement of what `wall_polygons` rasterizes, so a wall at a corner is never caution's
+problem. A stopped mover is still on its path; a re-routing one has changed a trajectory the
+experiment may have been holding fixed, which is why stopping is the default and re-routing is asked
+for.
+
+`replan` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
+around it. The memory is what makes it work at all: the grid is static, so a mover that only
+re-planned would compute the same path and drive into the same obstacle again. It is deliberately
+not a costmap — a handful of discs, stamped onto a copy of the raster at plan time and nowhere else.
+
+`recovery` is a third knob, for a mover that is wedged rather than merely blocked: after
+`stuck_time` without progress it backs away from the blocker and re-plans. **Nothing in the
+navigator's path is random** — sidestep, caution, recovery and the planner are all deterministic
+functions of the world, and the only draw anywhere here is a walker's dwell at a waypoint. Two runs
+of the same world are identical to the bit. What an opponent's path is *not* independent of is the
+robot under test: any mover with `traffic: respect` stops for it and any mover with an `avoidance`
+model steers around it. That coupling is the point of having opponents at all, and
+`traffic: ignore` + `avoidance: none` + `route_mode: exact` is the configuration for a mover that
+must ignore the subject entirely.
 
 `tracker: pure_pursuit` follows the path rather than chasing goal endpoints. It is **not** an
 improvement for a pose-written body and the numbers say so — round a right-angle corner it cuts by

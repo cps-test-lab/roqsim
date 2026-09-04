@@ -113,6 +113,10 @@ class NavCore:
         self._dwell_until = 0.0  # standing-idle-at-goal until this sim time
         self._hist = []  # list[(t, x, y)] for stuck detection
         self.pref_vel = np.zeros(2)
+        self._blocker = None
+        if self.planner is not None:
+            # An episode plans against the world as built, never against what the last one ran into.
+            self.planner.forget_blockages()
 
     def observe(self, t, pos, blocker) -> None:
         """Feed the current sim time, world position and nearest blocker (xy or None) before
@@ -197,7 +201,9 @@ class NavCore:
             return True
         goal = st.waypoints[st.goal_idx]
         if self.planner is not None:
-            path = self.planner.plan((self._pos[0], self._pos[1]), (float(goal[0]), float(goal[1])))
+            path = self.planner.plan(
+                (self._pos[0], self._pos[1]), (float(goal[0]), float(goal[1])), now=self._t
+            )
         else:
             path = None
         # No planner, or unreachable -> straight line to the goal (ORCA/recovery then cope locally).

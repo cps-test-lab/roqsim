@@ -8,6 +8,13 @@ colliders, and any environment MJCF attached as welded bodies -- so reading the 
 external map files. "Static" means welded to the world (``body_weldid == 0``); the robot has DOFs
 (excluded) and walkers are mocap bodies (excluded).
 
+A body with DOFs that is **standing still and nobody is driving** is the one exception, and the
+caller opts into it by naming those bodies in ``resting_roots``: a crate someone parked in a doorway
+is a wall for as long as it stays there, and planning through it and then stopping in front of it is
+worse than planning around it. The caller decides which bodies qualify -- see
+:func:`~roqsim_nav.grid.build_grid` -- because "nobody is driving it" is knowledge about the world's
+components, not about the model.
+
 Each such geom is reduced to a 2D convex **footprint** (counter-clockwise, solid inside -- ORCA's
 convention for an obstacle agents stay outside). The same polygons rasterize the planner grid and
 feed ORCA, so global plan and local avoidance always agree. Geoms whose height doesn't overlap a
@@ -24,14 +31,33 @@ import numpy as np
 _CIRCLE_SEG = 12  # polygon segments approximating a round footprint
 
 
-def wall_polygons(model, data, z_lo: float = 0.1, z_hi: float = 1.8):
+#: Linear speed (m/s) below which a body in ``resting_roots`` counts as parked rather than moving.
+#: Well under a walking pace, and above the jitter of a settled contact.
+RESTING_SPEED = 0.05
+
+
+def wall_polygons(
+    model,
+    data,
+    z_lo: float = 0.1,
+    z_hi: float = 1.8,
+    *,
+    resting_roots=(),
+):
     """CCW ``[(x, y), ...]`` footprints for every static collidable wall geom
-    whose vertical extent overlaps ``[z_lo, z_hi]`` (a walking body)."""
+    whose vertical extent overlaps ``[z_lo, z_hi]`` (a walking body).
+
+    ``resting_roots`` are weld-root body ids the caller has judged to be undriven props; each is
+    included as a wall for this call only while it is moving slower than :data:`RESTING_SPEED`. The
+    test is per call, so the same prop is a wall in one episode's grid and not in the next.
+    """
+    resting = frozenset(int(b) for b in resting_roots)
     polys = []
     for g in range(model.ngeom):
         b = int(model.geom_bodyid[g])
         if model.body_weldid[b] != 0:  # has DOFs (e.g. robot)
-            continue
+            if int(model.body_weldid[b]) not in resting or not _at_rest(model, data, b):
+                continue
         if model.body_mocapid[b] >= 0:  # mocap (a walker, a navigated prop)
             continue
         if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_PLANE:
@@ -45,6 +71,15 @@ def wall_polygons(model, data, z_lo: float = 0.1, z_hi: float = 1.8):
         if len(hull) >= 3:
             polys.append([(float(x), float(y)) for x, y in _ccw(hull)])
     return polys
+
+
+def _at_rest(model, data, body_id: int) -> bool:
+    """Whether ``body_id`` is moving slower than :data:`RESTING_SPEED`.
+
+    Reads ``cvel``, which is only meaningful after a forward pass -- every caller here runs one
+    before rasterizing, for the same reason ``geom_xpos`` needs it.
+    """
+    return float(np.linalg.norm(data.cvel[int(body_id)][3:6])) < RESTING_SPEED
 
 
 def _footprint(model, data, g):

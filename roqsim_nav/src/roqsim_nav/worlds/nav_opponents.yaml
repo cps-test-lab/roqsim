@@ -1,36 +1,34 @@
-# One robot under test, three opponents the simulator drives itself.
+# Movers the simulator drives itself: one navigator, four embodiments, four encounters.
 #
 #   roqsim sim roqsim_nav:nav_opponents
 #
-# `robot` is the SUBJECT: a TurtleBot 4 with the sensors its manifest brings, and nothing driving it.
-# Left alone it stands still; give it a stack and it is the thing being measured.
+# Everything that moves here has a `navigator` component, so each plans with A* over a grid read off
+# this world's own wall geoms, follows it, and stops for whatever the planner could not have known
+# about. They differ in how their motion reaches the physics -- the navigator's `output`:
 #
-# The other three are APPARATUS. Each has a `navigator` component, so each plans with A* over a grid
-# read off this world's own wall geoms, follows it, and stops for anything the planner could not have
-# known about. They differ only in how their motion reaches the physics -- the navigator's `output`:
+#   walker  a pedestrian: 17 mocap bodies and a gait, zero solver DOFs
+#   drive   a robot whose wheels really turn, under physics, through its own `RobotHandle`
+#   mocap   a prop whose pose is written: collision geometry, zero solver DOFs
 #
-#   visitor  walker  a pedestrian: 17 mocap bodies and a gait, zero solver DOFs
-#   cart     drive   a second TurtleBot 4 whose wheels really turn, under physics
-#   crate    mocap   a prop whose pose is written: collision geometry, zero solver DOFs
+# There is no robot under test in this world, and that is the point: these are APPARATUS, and each
+# encounter below is a thing apparatus has to do. Add a subject -- a `spawn_robot` with a stack, or
+# `roqsim sim ... --ros` and drive it over the bridge -- and they carry on around it as they do here.
 #
-# `robot` stands still, and that is the point rather than a fault: it is the subject, so nothing in
-# this world drives it. Run it under a stack -- or `roqsim sim ... --ros` and drive it over the
-# bridge -- and the three opponents carry on around it exactly as they do here.
+# The encounters, north to south:
 #
-# Between them they also cover both route modes and both start modes:
-#
-#   visitor  patrols a loop, planning around the walls, and yields to the others
-#   cart     runs an EXACT polyline up and down the aisle -- the given points ARE its path, and no
-#            planner routes around anything
-#   crate    crosses the room once and stops
+#   visitor              a walker patrolling a loop, planning around the walls, yielding to traffic
+#   runner / pedestrian  a robot and a walker 5 m apart, each heading for where the other started
+#   omni_a / omni_b      two omnidirectional bases head-on, both with full avoidance
+#   stopper / dodger     the same encounter, asymmetric: both LOOK, only one YIELDS
+#   explorer             a robot that drives into an obstacle its planner cannot see, and gets out
+#   crate                a driven prop shuttling along the east wall, scenery to everyone else
 #
 # Three ways to run it, from one file. The bridge is never written into a world: `roqsim sim --ros`
 # injects it, which is why this one file covers the ROS cases too.
 #
-#   roqsim sim roqsim_nav:nav_opponents                 # no ROS anywhere; the opponents navigate
-#   roqsim sim roqsim_nav:nav_opponents --ros           # the TB4 is on the ROS graph; opponents not
+#   roqsim sim roqsim_nav:nav_opponents                 # no ROS anywhere; everything navigates
+#   roqsim sim roqsim_nav:nav_opponents --ros           # the movers are on the ROS graph
 #   ros2 launch roqsim_nav2_example nav2_turtlebot.launch.py world:=<this file>
-#                                                       # nav2 drives the TB4; opponents run inside
 #
 # Avoidance is named per mover -- `none` (the default) or a model. `sidestep` is pure Python and
 # needs nothing to build; `orca` is better and reciprocal, once you have the extra:
@@ -45,20 +43,33 @@
 # Everything here starts on its own. To hand the timing to a trial instead, give a mover
 # `autostart: false` and start it from a scenario, over either transport:
 #
-#   entity_navigate_start(entity: 'cart')
+#   entity_navigate_start(entity: 'explorer')
 #
 # `roqsim_nav` depends on `roqsim` and nothing else in this tree, so this world names plugins from
-# packages it does NOT depend on: `spawn_robot` (roqsim_mobile), `walker` (roqsim_walker) and the
-# props (roqsim_assets). In a dev checkout `make venv` installs them all. A missing one fails at
-# load, by plugin name.
+# packages it does NOT depend on: `spawn_robot` (roqsim_mobile), `walker` (roqsim_walker) and `box`
+# (roqsim_assets). In a dev checkout `make venv` installs them all. A missing one fails at load, by
+# plugin name.
 
 sim:
   pacing: realtime
-  # Far enough back and steep enough to hold the whole 10 x 10 room: every lane below is somewhere
-  # in this frame, which is the point of a demo you are meant to watch rather than measure.
-  view: {lookat: [0.0, 0.0, 0.0], distance: 15.0, azimuth: 90.0, elevation: -70.0}
+  # Far enough back and steep enough to hold the whole room: every lane below is somewhere in this
+  # frame, which is the point of a demo you are meant to watch rather than measure.
+  view: {lookat: [0.0, -2.5, 0.0], distance: 22.0, azimuth: 90.0, elevation: -74.0}
 
 components:
+  # -- the room ------------------------------------------------------------------------------------
+  # Four welded slabs, which is all a planner needs: `wall_polygons` reads the compiled model, so
+  # walls are whatever is static and collidable and there is no map file to keep in step. Everything
+  # below plans against these.
+  - box: {prefix: 'wall_n_', pos: [0.0, 4.5], size: [10.4, 0.2, 1.0]}
+    name: wall_n
+  - box: {prefix: 'wall_s_', pos: [0.0, -9.5], size: [10.4, 0.2, 1.0]}
+    name: wall_s
+  - box: {prefix: 'wall_e_', pos: [5.1, -2.5], size: [0.2, 14.2, 1.0]}
+    name: wall_e
+  - box: {prefix: 'wall_w_', pos: [-5.1, -2.5], size: [0.2, 14.2, 1.0]}
+    name: wall_w
+
   # -- opponents -----------------------------------------------------------------------------------
   # A walker is a MOCAP body: no degrees of freedom, so the solver treats it as immovable and it
   # shoves anything free that it touches -- a 3 kg robot goes over. A walker gets no forward caution
@@ -123,6 +134,45 @@ components:
     name: dodger
     components:
       - navigator: {speed: 0.35, goals: [[-2.5, -4.2]], avoidance: sidestep}
+
+  # -- an obstacle the planner could not have known about ------------------------------------------
+  # `explorer` is given a goal on the far side of a U it has no idea is there, and has to get itself
+  # out. The U is made of MOCAP boxes, and that is the whole trick: a mocap body has no degrees of
+  # freedom, so nothing can shove it, and it is excluded from the planner's grid by the same rule
+  # that excludes walkers and driven props -- that grid holds only what cannot move. Welded scenery
+  # would not do: it lands in the grid and gets routed around before the robot ever sets off.
+  #
+  # So the plan goes straight through the U's mouth. What happens next is `on_blocked: replan`:
+  #
+  #   1. the forward probe stops it at the back wall  (`stop` would end the story here)
+  #   2. it remembers WHERE it was stopped, as a disc that expires after `forget_after`
+  #   3. the next plan routes around that disc -- into a side wall, which it also remembers
+  #   4. with the inside of the U marked out, the only route left is back out of the mouth
+  #
+  # The memory is what makes step 3 possible at all. The grid is static, so a mover that merely
+  # re-planned would compute the identical path and drive back into the same wall for ever. It is
+  # deliberately not a costmap: a handful of discs, stamped onto a copy of the raster at plan time
+  # and nowhere else.
+  #
+  # `forget_after` is the knob that matters here. Too short and it forgets the back wall before it
+  # has rounded the side; too long and a room it has crossed once is permanently narrower to it.
+  - box: {prefix: 'trap_back_', pos: [1.4, -6.5], size: [0.2, 1.8, 0.8], mocap: true}
+    name: trap_back
+  - box: {prefix: 'trap_n_', pos: [0.6, -5.6], size: [1.8, 0.2, 0.8], mocap: true}
+    name: trap_n
+  - box: {prefix: 'trap_s_', pos: [0.6, -7.4], size: [1.8, 0.2, 0.8], mocap: true}
+    name: trap_s
+
+  - spawn_robot: {model: turtlebot4, prefix: 'explorer_', namespace: explorer, pos: [-3.5, -6.5]}
+    name: explorer
+    components:
+      - navigator:
+          speed: 0.4
+          goals: [[4.0, -6.5]]
+          caution:
+            on_blocked: replan   # `stop` is the default: hold position and keep the path
+            forget_after: 25.0
+            lookahead: 0.9
 
   # Shuttling along the far wall, out of everyone else's lanes: a driven prop that is scenery to the
   # rest of the room rather than another thing to negotiate with.

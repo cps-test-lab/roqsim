@@ -267,9 +267,27 @@ def test_caution_can_be_turned_off(tmp_path):
 
 
 # -- configuration -------------------------------------------------------------------------------
-def test_replan_is_refused_by_name_rather_than_ignored(tmp_path):
-    with pytest.raises(PluginError, match="not implemented"):
-        Engine(_world(tmp_path, nav={"caution": {"on_blocked": "replan"}}))
+def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
+    """Both modes see the same thing; they differ only in what they do about it.
+
+    The routing half is ``test_navigator_replan.py``. What matters here is that turning it on does
+    not change what counts as a blocker -- so a world can switch modes without re-tuning the probe.
+    """
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"on_blocked": "replan"}}))
+    engine.setup()
+    engine.reset()
+    try:
+        seen = []
+        for _ in range(int(12.0 / engine.ctx.dt)):
+            engine.step()
+            probe = _navigator(engine)._caution
+            if probe.blocked:
+                seen.extend(probe.blocker_points)
+        assert seen, "the blocker went unseen"
+        # It reports a point per ray that found something, not one point for the whole corridor.
+        assert any(not np.allclose(p, seen[0]) for p in seen)
+    finally:
+        engine.shutdown()
 
 
 def test_an_unknown_on_blocked_is_refused(tmp_path):

@@ -25,13 +25,18 @@ from .occupancy import OccupancyGrid
 DEFAULT_RESOLUTION = 0.05
 
 
-def grid_key(resolution: float, z_lo: float, z_hi: float) -> str:
+def grid_key(resolution: float, z_lo: float, z_hi: float, resting_roots=()) -> str:
     """The blackboard key of a shareable grid: agents agreeing on these share one raster.
 
     A string, because that is what ``Blackboard`` declares its keys to be. The rounding is what makes
     two agents that wrote the same numbers different ways land on the same raster.
+
+    ``resting_roots`` is in the key because it changes what the raster contains. Every navigator in a
+    world derives the same set -- the undriven props -- so in practice they still share one grid, and
+    the key is what makes that a fact rather than an assumption.
     """
-    return f"nav:grid:{float(resolution):.6f}:{float(z_lo):.6f}:{float(z_hi):.6f}"
+    roots = ",".join(str(int(b)) for b in sorted(resting_roots))
+    return f"nav:grid:{float(resolution):.6f}:{float(z_lo):.6f}:{float(z_hi):.6f}:{roots}"
 
 
 def build_grid(
@@ -42,6 +47,7 @@ def build_grid(
     z_lo: float = 0.1,
     z_hi: float = 1.8,
     resolution: float = DEFAULT_RESOLUTION,
+    resting_roots=(),
 ) -> OccupancyGrid | None:
     """An occupancy grid covering the world's walls and ``extra_points``, or ``None``.
 
@@ -51,8 +57,14 @@ def build_grid(
     ``extra_points`` are world xy the grid must cover even if they sit outside the walls' extent --
     an agent's spawn and its goals, which would otherwise fall off a grid sized to the walls alone
     and be clamped to its edge.
+
+    ``resting_roots`` names bodies that have DOFs but nothing driving them -- a free prop somebody
+    parked. Each is rasterized as a wall while it is standing still, so a crate left in a doorway is
+    routed around rather than planned through and stopped in front of. Anything under a navigator, and
+    the robot under test, are deliberately NOT in that set: they are traffic, and traffic is the
+    business of the layers that can react to it.
     """
-    polys = wall_polygons(model, data, z_lo=z_lo, z_hi=z_hi)
+    polys = wall_polygons(model, data, z_lo=z_lo, z_hi=z_hi, resting_roots=resting_roots)
     if not polys:
         return None
     pts = [p for poly in polys for p in poly]

@@ -13,10 +13,16 @@ The invariant, and it is the complement of the grid's:
     refuses to rasterize. A wall ahead at a corner is the planner's problem and never this layer's,
     or a mover would stop dead every time its path hugged one.
 
-The response is to **stop**, never to re-route. A stopped mover is still on its path and resumes on
-the waypoint it was heading for; a re-routing one has quietly changed the trajectory an experiment
-was holding fixed. ``on_blocked`` exists so that a future ``replan`` is a new value rather than a
-config break.
+The response is to **stop** by default. A stopped mover is still on its path and resumes on the
+waypoint it was heading for; a re-routing one has quietly changed the trajectory an experiment was
+holding fixed, so which of the two you want is the experiment's call and ``on_blocked`` is where you
+say it.
+
+``on_blocked: replan`` records the blocker's position and routes around it. What makes that more than
+a re-plan of the same path is that the record **persists and decays**: the planner's grid is static,
+so a mover that merely re-planned would compute the identical path and drive back into the same
+obstacle. A remembered blockage is temporary on purpose -- an obstacle that moved on must stop being
+a wall, or a mover would inherit a map of everything that ever got in its way.
 
 Cost matters here, because this runs on the same thread as everything else: it is a handful of rays
 at the navigator's tick rate, and none at all when the mover is not moving. :mod:`roqsim.raycast` is
@@ -35,10 +41,9 @@ from roqsim import raycast
 
 from .control import STOPPED
 
-#: Values ``on_blocked`` accepts. Only one is implemented; the other is named so that adding it
-#: later is a new value rather than a change of shape.
-ON_BLOCKED = ("stop",)
-FUTURE_ON_BLOCKED = ("replan",)
+#: Values ``on_blocked`` accepts. ``stop`` holds position and keeps the path; ``replan`` remembers
+#: the blocker for ``forget_after`` seconds and routes around it.
+ON_BLOCKED = ("stop", "replan")
 
 
 def subtree_geoms(model, body_id: int) -> set[int]:
@@ -92,6 +97,13 @@ class CautionProbe:
         #: then walked into and knocked over. A fixed height sees the things that stand on floors.
         self.height = float(cfg.get("height", 0.30))
         self.clear_time = float(cfg.get("clear_time", 0.5))
+        #: `replan` only: how long a remembered blockage keeps steering the planner away. Long
+        #: enough to get round what is there, short enough that a mover forgets an obstacle which
+        #: has since moved on rather than treating the world as permanently narrower.
+        self.forget_after = float(cfg.get("forget_after", 5.0))
+        #: Radius of the disc a remembered blockage marks out. Defaults to the corridor's own half
+        #: width, so a mark is as wide as the gap the mover just failed to fit through.
+        self.blockage_radius = float(cfg.get("blockage_radius", 0.0)) or self.width / 2.0
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
         self._ignored: set[int] = set()
@@ -100,24 +112,29 @@ class CautionProbe:
         self._clear_since: float | None = None
         #: Last verdict, for status reporting and tests.
         self.blocked = False
+        #: World xy of the NEAREST blocking hit of the last :meth:`check`, or ``None``. What
+        #: recovery backs away from -- without it a wedged mover reverses along its own heading,
+        #: which is only the right way out when it drove in head-on.
+        self.blocker_xy: np.ndarray | None = None
+        #: World xy of EVERY blocking hit of the last check, one per ray that found something.
+        #: `replan` marks all of them, and that is what lets it discover an obstacle wider than a
+        #: single ray: one point tells a planner where the mover stopped, a fan of them outlines how
+        #: far the thing that stopped it extends across the corridor.
+        self.blocker_points: list = []
 
     @staticmethod
     def validate(cfg: dict | None) -> list[str]:
         cfg = cfg or {}
         errors = []
         mode = cfg.get("on_blocked", "stop")
-        if mode in FUTURE_ON_BLOCKED:
-            errors.append(
-                f"'caution.on_blocked: {mode}' is not implemented; only "
-                f"{', '.join(ON_BLOCKED)} is. Traffic is handled by stopping."
-            )
-        elif mode not in ON_BLOCKED:
+        if mode not in ON_BLOCKED:
             errors.append(f"'caution.on_blocked' must be one of: {', '.join(ON_BLOCKED)}")
-        for key in ("lookahead", "width", "rays", "height"):
+        for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
             if key in cfg and float(cfg[key]) <= 0:
                 errors.append(f"'caution.{key}' must be > 0")
-        if "clear_time" in cfg and float(cfg["clear_time"]) < 0:
-            errors.append("'caution.clear_time' must be >= 0")
+        for key in ("clear_time", "forget_after"):
+            if key in cfg and float(cfg[key]) < 0:
+                errors.append(f"'caution.{key}' must be >= 0")
         return errors
 
     def attach(self, ctx, entity) -> None:
@@ -158,6 +175,8 @@ class CautionProbe:
     def reset(self) -> None:
         self._clear_since = None
         self.blocked = False
+        self.blocker_xy = None
+        self.blocker_points = []
 
     def check(self, ctx, origin_xy, z: float, pref_vel) -> bool:
         """Whether the mover should hold still this tick.
@@ -172,15 +191,21 @@ class CautionProbe:
             # Nothing to run into if we are not going anywhere, and no direction to cast along.
             self.blocked = False
             self._clear_since = None
+            self.blocker_xy = None
+            self.blocker_points = []
             return False
 
         heading = math.atan2(float(pref_vel[1]), float(pref_vel[0]))
-        hit = self._nearest_hit(ctx, origin_xy, self.height, heading)
+        nearest, points = self._hits(ctx, origin_xy, self.height, heading)
         now = float(ctx.sim_time)
-        if hit is not None and hit < self.lookahead:
+        if nearest is not None and nearest[0] < self.lookahead:
             self._clear_since = None
             self.blocked = True
+            self.blocker_xy = nearest[1]
+            self.blocker_points = points
             return True
+        self.blocker_xy = None
+        self.blocker_points = []
         if self._clear_since is None:
             self._clear_since = now
         self.blocked = (now - self._clear_since) < self.clear_time
@@ -202,8 +227,11 @@ class CautionProbe:
                 self._radius = max(self._radius, d + float(model.geom_rbound[g]))
         return self._radius
 
-    def _nearest_hit(self, ctx, origin_xy, z: float, heading: float) -> float | None:
-        """Distance to the nearest blocking hit ahead of the mover's own footprint, or ``None``.
+    def _hits(self, ctx, origin_xy, z: float, heading: float):
+        """``((distance, world_xy) | None, [world_xy, ...])`` for the corridor ahead.
+
+        The first is the nearest blocking hit; the second is every one of them, one per ray that
+        found something.
 
         **The ray starts at the front of the footprint, not at the body origin, and that is load
         bearing.** ``mj_multiRay`` reports only the *nearest* hit per ray, so a ray cast from inside
@@ -237,13 +265,15 @@ class CautionProbe:
         # The default geomgroup mask excludes entities made absent, so a prop nothing can collide
         # with does not stop the mover -- the same rule every other raycaster here follows.
         hits = raycast.cast(model, data, origin, dirs, cutoff=self.lookahead)
-        nearest = None
-        for dist, gid in zip(hits.dist, hits.geomid, strict=False):
+        nearest, points = None, []
+        for i, (dist, gid) in enumerate(zip(hits.dist, hits.geomid, strict=False)):
             dist, gid = float(dist), int(gid)
             if dist < 0 or gid < 0 or gid in self._own or gid in self._ignored:
                 continue
             if not is_dynamic_body(model, int(model.geom_bodyid[gid])):
                 continue  # a wall: the planner's business, not ours
-            if nearest is None or dist < nearest:
-                nearest = dist
-        return nearest
+            point = origin[:2] + dirs[i][:2] * dist
+            points.append(point)
+            if nearest is None or dist < nearest[0]:
+                nearest = (dist, point)
+        return nearest, points
