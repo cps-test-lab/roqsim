@@ -1,6 +1,11 @@
 # The dex1 IS a unitree_g1 plus hands: the same 12 leg actuators, the same walking policy, the same
 # lidar. Inheriting them says that once, instead of repeating two blocks that must then be kept in
 # step by hand. `extends:` carries COMPONENTS, not geometry -- this model keeps its own MJCF.
+
+# The models directory is flat, and this variant's description comes from a different Unitree
+# upstream than unitree_g1's, so the licence is named rather than guessed (THIRD_PARTY.md).
+license: LICENSE.unitree_ros
+
 extends: unitree_g1
 
 components:

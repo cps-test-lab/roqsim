@@ -8,6 +8,11 @@
 #
 # lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so Spot
 # publishes /scan for nav2 exactly like the turtlebot and G1 do.
+
+# The models directory is flat, so the licence this model carries is named rather than guessed
+# from what sits beside it (THIRD_PARTY.md).
+license: LICENSE.mujoco_menagerie
+
 components:
   - spot_locomotion: {}                            # RL flat-terrain walking policy; config bundled
   - lidar:

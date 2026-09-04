@@ -33,9 +33,15 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import yaml
+from model_headline import with_headline
 from sources import resolve_source
 
 # Pinned upstream revisions -- must match the table in roqsim_humanoid/THIRD_PARTY.md.
+HEADLINE = (
+    "LimX Oli (HU_D04_01) humanoid for MuJoCo, in the serial PR-space form the vendor walk "
+    "policy expects."
+)
+
 OLI_DESC_COMMIT = "a90f734c153aa3ecffc8b674af1e0a323cb55d1a"  # humanoid-description 1.0.0.20260706
 OLI_DEPLOY_COMMIT = "6d8771cd2b5599e90e7598cfad3623dce66d1218"  # humanoid-rl-deploy 1.0.0.20260330
 
@@ -370,7 +376,7 @@ def main() -> None:
     xml = spec.to_xml().replace(f'meshdir="{abs_meshdir}"', 'meshdir="meshes/oli/"')
     xml = xml.replace(f'meshdir="{abs_meshdir}/"', 'meshdir="meshes/oli/"')
     out_xml = models / "oli.xml"
-    out_xml.write_text(xml)
+    out_xml.write_text(with_headline(xml, HEADLINE))
 
     total_mass = float(model.body_mass.sum())
     print(f"wrote {out_xml}")
