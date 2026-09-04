@@ -724,11 +724,13 @@ Four more answers come off the model rather than from flags, each because gettin
 * **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
   A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
   the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
-* **``start_state_max_bounds_error``** — emitted only for an arm that has a *continuous* joint. MoveIt
-  maps such a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start
-  state that has drifted a hair outside it, which surfaces as a phase failing instantly with
-  ``START_STATE_INVALID`` right after a phase that succeeded — at a different phase each run. A
-  range-limited arm has no such problem and gets no such setting.
+* **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
+  ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
+  it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
+  a hair past pi is therefore refused rather than wrapped, which surfaces as a phase failing instantly
+  right after a phase that succeeded — at a different phase each run. True writes the normalized state
+  back into the request; a joint genuinely outside its limits is still refused, by a separate bounds
+  check this flag does not relax. A range-limited arm has no such problem and gets no such setting.
 
 **Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
 fingertips has to be written as an offset from there — which multiplies every orientation tolerance by
@@ -750,6 +752,30 @@ same prefix. An arm publishing unprefixed names is refused rather than renamed, 
 are what reaches ``/joint_states`` and what a trajectory point carries. Every check above runs per arm:
 a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
 loudly as the first.
+
+**More than one planning pipeline.** ``--pipelines ompl,chomp`` writes a ``planning_pipelines.yaml``
+naming them for ``move_group`` and saying which one a request that names none gets; with the default
+single pipeline neither that file nor the selector is written, because there is nothing to select. Any
+name MoveIt can load is allowed — the list is open, so a pipeline this exporter has never heard of
+costs nothing — but each one's planner package has to be installed where ``move_group`` runs, or the
+pipeline fails to *load* at start-up rather than failing the request that uses it.
+
+Only ``ompl_planning.yaml`` is written. Its ``projection_evaluator`` names joints this model has,
+which is what makes it derivable; an optimizer's cost weights are not — they are the operating point
+of a minimisation, which is the experiment's decision, and a table of them emitted here would be the
+exporter making it. Every other pipeline therefore takes MoveIt's own packaged config (the config
+builder falls back to ``moveit_configs_utils/default_configs/<name>_planning.yaml``) until the
+experiment puts a file of that name on the config path it reads.
+
+Use this for a comparison **across** pipelines, where the planners are different plugins with
+unrelated parameter files and a trial picks one per request through ``MotionPlanRequest.pipeline_id``;
+comparing planners *inside* OMPL is another entry in ``ompl_planning.yaml`` and needs none of it. One
+thing to settle before designing such a comparison: **CHOMP accepts joint-space goals only.** It
+rejects a goal with no joint constraints, or with any position or orientation constraint, as
+``INVALID_GOAL_CONSTRAINTS``, so a trial that sets a pose target fails every CHOMP request outright —
+which reads like a planner performing badly rather than one that was never given a goal it could take.
+Solve the IK and send joint goals, or leave that pipeline out of a pose-goal comparison. The export
+warns about it, and ``planning_pipelines.yaml`` says so in a comment.
 
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.

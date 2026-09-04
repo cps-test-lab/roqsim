@@ -23,6 +23,9 @@ WORKDIR /ws
 #    simulation_interfaces the bridge needs, plus GL libs for headless MuJoCo. BOTH offscreen
 #    backends: egl needs a DRI render device and a CPU-only node has none, so the choice belongs to
 #    the node (roqsim.gl.select_offscreen_gl) and the image must be able to satisfy either answer.
+#    The MoveIt planner plugins are named alongside the metapackage rather than left to it:
+#    `roqsim export moveit --pipelines` can offer move_group more than one planning pipeline, and a
+#    pipeline whose plugin is absent makes move_group fail at START-UP rather than fail the request.
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -42,6 +45,8 @@ RUN apt-get update && \
         ros-${ROS_DISTRO}-simulation-interfaces \
         ros-${ROS_DISTRO}-vision-msgs \
         ros-${ROS_DISTRO}-moveit \
+        ros-${ROS_DISTRO}-moveit-planners-ompl \
+        ros-${ROS_DISTRO}-moveit-planners-chomp \
         ros-${ROS_DISTRO}-ros2-control \
         ros-${ROS_DISTRO}-ros2-controllers \
         ros-${ROS_DISTRO}-controller-manager \
