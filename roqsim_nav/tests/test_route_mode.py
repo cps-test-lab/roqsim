@@ -187,13 +187,24 @@ def test_autostart_false_holds_at_the_start_until_started(tmp_path):
         engine.shutdown()
 
 
-def test_a_route_that_cannot_be_planned_fails_at_load_not_at_start(tmp_path):
-    """Planning happens in `configure`, so a broken route is a load error rather than a trial that
-    dies halfway through when a scenario finally triggers it."""
+def test_the_route_is_planned_before_anything_triggers_it(tmp_path):
+    """An armed route is planned on the first tick, not when it is started.
+
+    So a route the planner cannot solve surfaces at the start of the episode rather than at the
+    moment a scenario finally triggers it, minutes in. Planning is deliberately NOT done in
+    `configure`: that runs before any presence has been applied, so the grid would contain the
+    obstacles a world compiled in precisely so they could appear mid-trial, and the mover would route
+    around things nothing can see or touch.
+    """
     engine = _engine(tmp_path, autostart=False)
-    engine.setup()  # would raise here if planning were deferred and broken
+    engine.setup()
+    engine.reset()
     try:
-        assert _navigator(engine)._core.planner is not None
+        nav = _navigator(engine)
+        assert nav._core.planner is None, "planned before presence could be applied"
+        engine.step()
+        assert nav._core.planner is not None, "not planned until something started it"
+        assert not nav.started, "planning should not have started the route"
     finally:
         engine.shutdown()
 

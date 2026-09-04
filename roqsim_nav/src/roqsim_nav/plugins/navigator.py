@@ -124,6 +124,7 @@ class NavigatorPlugin(Plugin):
         self._caution: CautionProbe | None = None
         self._bid = -1
         self._seq = Sequencer()
+        self._plan_pending = True
         self._avoid = NullAvoidance()
         self._agent = NO_AGENT
         self._configured_goals: list[tuple] = []
@@ -243,13 +244,12 @@ class NavigatorPlugin(Plugin):
             yaw=yaw,
         )
 
-        # `route_mode: exact` is the absence of a planner, not a second mechanism: with none,
-        # `NavCore.ensure_path` joins consecutive goals by straight legs, so the path IS the given
-        # polyline -- no search, no string-pulling, nothing that could route around anything. That
-        # is what makes the mode honest rather than approximately exact.
+        # The planner is built on the first tick, not here. `configure` runs before any presence has
+        # been applied, so a grid rasterized now contains every obstacle the world COMPILED --
+        # including the ones compiled in precisely so they can appear mid-trial, which are absent at
+        # the start. The mover would then route around a thing nothing can see or touch. Deferring to
+        # the first tick puts it after every plugin's `on_reset`, which is where presence is settled.
         planner = None
-        if cfg.get("route_mode", "plan") == "plan":
-            planner = self._planner(ctx, waypoints)
 
         params = NavParams.from_spec(cfg, float(cfg.get("radius", 0.3)))
         rng = ctx.rng_for(f"navigator:{self.entity}")
@@ -332,7 +332,7 @@ class NavigatorPlugin(Plugin):
         band = cfg.get("obstacle_height") or (0.1, 1.8)
         z_lo, z_hi = float(band[0]), float(band[1])
         resolution = float(cfg.get("resolution", DEFAULT_RESOLUTION))
-        key = grid_key(resolution, z_lo, z_hi)
+        key = f"{grid_key(resolution, z_lo, z_hi)}:{ctx.episode}"
         grid = ctx.blackboard.get(key)
         if grid is None:
             mujoco.mj_forward(ctx.model, ctx.data)  # geom_xpos must be valid to read footprints
@@ -374,11 +374,23 @@ class NavigatorPlugin(Plugin):
         st.waypoints = np.asarray([(x, y), *self._configured_goals], dtype=float)
         st.loop = bool(self.config.get("loop", False))
         self._seq.apply(0)
+        # Re-plan next tick: an episode may make a different set of obstacles present, and a grid
+        # carried over from the last one would route around whichever were present then.
+        self._plan_pending = True
         self._join_avoidance(ctx)
         self._output.stop(ctx)
 
     def pre_step(self, ctx: SimContext) -> None:
-        # Decimate FIRST, before reading anything: at 20 Hz inside a 500 Hz loop this hook is a float
+        # Ahead of the decimation gate, and only ever true once per episode: the route must be
+        # planned on the FIRST tick rather than a decimation period later, so that a route the
+        # planner cannot solve surfaces at the start of the episode instead of whenever the mover
+        # happens to first be ticked. One boolean test on the hot path, False ever after.
+        if self._plan_pending:
+            self._plan_pending = False
+            if self.config.get("route_mode", "plan") == "plan":
+                self._core.planner = self._planner(ctx, self._state.waypoints)
+
+        # Decimate, before reading anything else: at 20 Hz inside a 500 Hz loop this hook is a float
         # comparison on 24 steps out of 25, and it shares the one thread with the stack under test.
         self._accum += ctx.dt
         if self._accum < self._period:

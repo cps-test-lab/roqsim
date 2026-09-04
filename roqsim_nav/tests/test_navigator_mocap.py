@@ -142,6 +142,8 @@ def test_two_movers_share_one_rasterized_grid(tmp_path):
         )
     )
     engine.setup()
+    engine.reset()
+    engine.step()  # the grid is rasterized on the first tick, once presence has settled
     try:
         navigators = [p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin"]
         assert len(navigators) == 2

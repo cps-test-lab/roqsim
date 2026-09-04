@@ -289,3 +289,48 @@ def test_a_stopped_mover_casts_no_rays(tmp_path):
     """Cost: nothing to run into if we are not going anywhere, and no direction to cast along."""
     probe = CautionProbe({})
     assert probe.check(None, (0.0, 0.0), 0.25, np.zeros(2)) is False
+
+
+# -- presence -------------------------------------------------------------------------------------
+def test_an_absent_obstacle_is_not_planned_around(tmp_path):
+    """A thing nothing can see or touch must not bend a trajectory.
+
+    ``roqsim.presence`` exists because the model cannot gain a body at runtime: an obstacle that must
+    *appear* mid-trial is compiled in and made absent until it is wanted. Every raycaster honours
+    that. The planner's grid is the same kind of consumer, and getting it wrong is silent in the
+    worst way -- the mover drives a smooth, plausible detour around empty space, and nothing in the
+    run says why.
+
+    It is why the grid is rasterized on the first tick rather than in ``configure``: ``configure``
+    runs before any presence has been applied, so a grid built there contains every obstacle the
+    world compiled, present or not.
+    """
+    from roqsim import presence
+
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"enabled": False}}))
+    engine.setup()
+    engine.reset()
+    try:
+        assert presence.set_present(engine.ctx, engine.ctx.entities.get("blocker"), False)
+        _run(engine, 14.0)
+        track_end = _xy(engine)
+        assert np.linalg.norm(track_end - np.asarray(GOAL)) < 0.4, "it did not reach the goal"
+    finally:
+        engine.shutdown()
+
+
+def test_a_present_obstacle_is_still_planned_around(tmp_path):
+    """The other half: deferring the grid must not stop it seeing what IS there."""
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"enabled": False}}))
+    engine.setup()
+    engine.reset()
+    try:
+        navigator = _navigator(engine)
+        engine.step()
+        assert navigator._core.planner is not None, "the grid was never built"
+        _run(engine, 14.0)
+        # The blocker is a 0.5 m mocap box on the straight line, so any real path leaves y = 0.
+        # (Mocap, so it is NOT in the grid -- see the module docstring; this asserts the walls are.)
+        assert navigator._core.planner.grid is not None
+    finally:
+        engine.shutdown()

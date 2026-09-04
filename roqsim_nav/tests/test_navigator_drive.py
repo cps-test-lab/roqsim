@@ -207,3 +207,80 @@ def test_each_base_geometry_navigates_with_its_own_law(model, kinematics, goal):
         assert np.linalg.norm(_base_xy(engine) - np.asarray(goal)) < 0.4
     finally:
         engine.shutdown()
+
+
+# -- several at once ------------------------------------------------------------------------------
+def test_three_robots_navigate_at_once_and_stop_for_each_other():
+    """Nothing about the navigator is per-world singular, and this is what says so.
+
+    Three TurtleBot 4s on paths that all cross the origin. Each gets its own goal handle and its own
+    caution probe; they share one rasterized grid, because the walls are the same walls. They must
+    each arrive, and they must do it by *stopping* for one another rather than by happening to miss
+    each other in time -- so the test asserts both that they came close and that caution fired.
+    """
+    routes = [
+        ("r0", (-4.0, 0.0), (4.0, 0.0)),
+        ("r1", (0.0, -4.0), (0.0, 4.0)),
+        ("r2", (-3.0, -3.0), (3.0, 3.0)),
+    ]
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {"pacing": "asap"},
+                "components": [
+                    {
+                        "spawn_robot": {
+                            "model": "turtlebot4",
+                            "prefix": f"{name}_",
+                            "namespace": name,
+                            "pos": list(start),
+                        },
+                        "name": name,
+                        "components": [
+                            {
+                                "navigator": {
+                                    "speed": 0.4,
+                                    "goals": [list(goal)],
+                                    "caution": {"lookahead": 0.8},
+                                }
+                            }
+                        ],
+                    }
+                    for name, start, goal in routes
+                ],
+            }
+        )
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        navigators = {p.entity: p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin"}
+        assert sorted(navigators) == ["r0", "r1", "r2"]
+        for name in navigators:
+            assert engine.ctx.blackboard.get(f"nav:{name}:handle") is not None
+
+        def xy(name):
+            model = engine.ctx.model
+            bid = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, engine.ctx.entities.get(name).body
+            )
+            return engine.ctx.data.xpos[bid][:2].copy()
+
+        engine.step()
+        grids = {id(n._core.planner.grid) for n in navigators.values()}
+        assert len(grids) == 1, "each robot rasterized its own copy of the same walls"
+
+        pairs = [("r0", "r1"), ("r0", "r2"), ("r1", "r2")]
+        closest, blocked = float("inf"), 0
+        for i in range(int(60.0 / engine.ctx.dt)):
+            engine.step()
+            if i % 25 == 0:
+                closest = min(closest, min(np.linalg.norm(xy(a) - xy(b)) for a, b in pairs))
+                blocked += sum(1 for n in navigators.values() if n._caution.blocked)
+
+        for name, _start, goal in routes:
+            assert np.linalg.norm(xy(name) - np.asarray(goal)) < 0.4, f"{name} never arrived"
+        assert closest < 1.0, "they never came near each other, so nothing was tested"
+        assert blocked > 0, "they passed without ever yielding -- caution never engaged"
+    finally:
+        engine.shutdown()
