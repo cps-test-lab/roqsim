@@ -44,6 +44,8 @@ OUT = (
 #: `gripper` note in the port log: the fingers are welded at their URDF-zero pose because the arm's
 #: only consumer (the palm-harvesting benchmark) states the gripper is out of scope, and an
 #: unactuated prismatic joint is a numerical nuisance that buys nothing.
+HEADLINE = "ROBOTIS OpenMANIPULATOR-X (4-joint serial arm + parallel gripper) for MuJoCo."
+
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4"]
 
 #: Welded finger links: (link name, parent joint name whose URDF origin places it).
@@ -192,6 +194,7 @@ def build(urdf: Path, srdf: Path) -> str:
 
     L = []
     L.append('<mujoco model="open_manipulator_x">')
+    L.append(f"  <!-- {HEADLINE} -->")
     # roqsim_manipulation_assets is one folder per model, so the model's meshes are its own subdir.
     L.append('  <compiler angle="radian" meshdir="meshes" autolimits="true"/>')
     L.append("")

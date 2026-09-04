@@ -1,5 +1,6 @@
 <?xml version="1.0" ?>
 <mujoco model="tiago_pro">
+  <!-- PAL Robotics TIAGo Pro (omnidirectional base, SEA arm, head and PRO gripper) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
   <default>
     <default class="tiago_pro_visual">
