@@ -76,7 +76,9 @@ Headless, as fast as the machine allows, with timings:
 
 ## Documentation
 
-Start with [getting started](docs/getting_started.rst), then:
+The documentation is published at **<https://cps-test-lab.github.io/roqsim/>**, rebuilt from
+`main` — read the model catalog there, where each model shows its preview. The sources:
+start with [getting started](docs/getting_started.rst), then:
 
 | | |
 | --- | --- |
