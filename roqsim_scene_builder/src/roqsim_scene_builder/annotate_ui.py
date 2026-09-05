@@ -11,7 +11,8 @@ module owns those shared parts so neither window re-implements them:
 * :func:`build_point_rows`, :func:`build_comment_box`, :func:`build_button_row` -- the right-panel
   widgets, driven by whatever items the window holds,
 * :func:`build_scrollable`, the panel's one scrolling region -- what keeps a long ``message`` from
-  pushing the submit buttons out of the window.
+  pushing the submit buttons out of the window,
+* :func:`set_window_icon`, so both windows wear the roqsim mark rather than the desktop placeholder.
 
 Everything here is either pure (theme/colours/renumber, tested headless) or a thin tkinter widget
 factory; the window-specific left canvas, picking, and result assembly stay in each window module.
@@ -19,8 +20,11 @@ factory; the window-specific left canvas, picking, and result assembly stay in e
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Protocol
+
+log = logging.getLogger(__name__)
 
 # Dark palette shared by every widget (tkinter has no real theming; we colour widgets by hand).
 BG = "#1e1e1e"
@@ -319,3 +323,27 @@ def build_button_row(tk, parent, buttons: Sequence[tuple[str, Callable[[], None]
             relief="flat",
             font=("TkDefaultFont", 13, "bold"),
         ).pack(side="left", expand=True, fill="x", padx=pad, ipady=8)
+
+
+def set_window_icon(root) -> None:
+    """Give a toplevel (and every later one, via ``default``) the roqsim mark.
+
+    Tk keeps only a weak reference to an icon image, so the ``PhotoImage`` is stashed on the widget
+    -- collected, it leaves the window icon-less again. Best-effort like the viewer's own X11
+    branding (:mod:`roqsim.window_branding`): an unreadable or missing mark leaves the desktop's
+    placeholder in place rather than failing a review window nobody could then open.
+    """
+    import tkinter as tk
+
+    from roqsim.window_branding import icon_path
+
+    path = icon_path()
+    if path is None:
+        return
+    try:
+        image = tk.PhotoImage(master=root, file=path)  # Tk 8.6 reads PNG natively
+        root.iconphoto(True, image)
+    except tk.TclError as err:
+        log.debug("window icon skipped: %s", err)
+        return
+    root._roqsim_icon = image

@@ -51,7 +51,7 @@ import numpy as np
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
 from .rendering import set_orbit_radius, walk_delta
-from .window_title import retitle_window_async
+from .window_branding import brand_window_async
 
 log = logging.getLogger(__name__)
 
@@ -717,7 +717,7 @@ class PassiveViewer:
             self._handle = launch_viewer(ctx.model, ctx.data, left_ui=left_ui, right_ui=right_ui)
         except Exception as err:  # noqa: BLE001 — any GL init failure maps to the same guidance
             raise DisplayError(GL_HELP.format(err=err)) from err
-        retitle_window_async(ctx.model, name=name)
+        brand_window_async(ctx.model, name=name)
         self._camera = setup_camera(self._handle, view, ctx)
 
     def is_running(self) -> bool:

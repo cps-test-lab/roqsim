@@ -80,6 +80,7 @@ from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 # color_for / rgba_hex are re-exported here so callers (and tests) can import the whole annotation
@@ -464,6 +465,7 @@ class _ReviewApp:
 
         root = tk.Tk()
         root.title("roqsim scene review")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root = root
