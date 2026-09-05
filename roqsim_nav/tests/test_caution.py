@@ -47,7 +47,7 @@ def _write(tmp_path, name, text):
     return str(path)
 
 
-def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True):
+def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half_height=None):
     """The mover, plus optionally a second prop sitting in its way at the origin."""
     crate = _write(tmp_path, "crate.xml", CRATE)
     navigator = {
@@ -67,12 +67,18 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True):
         }
     ]
     if blocker is not None:
+        half = 0.25 if blocker_half_height is None else blocker_half_height
+        low = _write(
+            tmp_path,
+            "low.xml",
+            CRATE.replace('size=".25 .25 .25"', f'size=".25 .25 {half}"'),
+        )
         components.append(
             {
                 "spawn_model": {
-                    "model": crate,
+                    "model": crate if blocker_half_height is None else low,
                     "prefix": "b_",
-                    "pos": [blocker[0], blocker[1], 0.25],
+                    "pos": [blocker[0], blocker[1], half],
                     **({"mocap": True} if blocker_mocap else {"free": True}),
                 },
                 "name": "blocker",
@@ -386,3 +392,30 @@ def test_caution_enabled_is_refused_and_points_at_traffic(tmp_path):
 def test_an_unknown_traffic_policy_is_refused(tmp_path):
     with pytest.raises(PluginError, match="'traffic' must be one of"):
         Engine(_world(tmp_path, nav={"traffic": "swerve"}))
+
+
+def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
+    """A fixed scan height is a guess about other people's robots, and it was wrong.
+
+    0.30 m was chosen so a walker's rays would not pass over a tall base. It is above the roof of a
+    TurtleBot 4, whose collision geometry stops at 0.25 m -- so in a world of them every probe saw
+    nothing and nothing ever stopped for anything. Taking the height from the band the planner
+    already rasterizes ties it to what this mover treats as an obstacle.
+    """
+    probe = CautionProbe({"band": (0.1, 1.8)})
+    assert probe.height == pytest.approx(0.15)
+    low = CautionProbe({"band": (0.05, 0.6)})
+    assert low.height == pytest.approx(0.10)
+    assert CautionProbe({"band": (0.1, 1.8), "height": 0.9}).height == pytest.approx(0.9)
+
+
+def test_a_short_robot_is_seen_by_another_short_robot(tmp_path):
+    """The regression itself: two movers no taller than the old fixed scan height."""
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), blocker_half_height=0.12))
+    engine.setup()
+    engine.reset()
+    try:
+        _run(engine, 12.0)
+        assert _xy(engine)[0] < -0.5, "it drove over something it should have stopped for"
+    finally:
+        engine.shutdown()

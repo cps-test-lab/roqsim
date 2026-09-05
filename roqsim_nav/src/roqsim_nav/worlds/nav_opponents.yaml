@@ -54,35 +54,22 @@ sim:
   pacing: realtime
   # Far enough back and steep enough to hold the whole room: every lane below is somewhere in this
   # frame, which is the point of a demo you are meant to watch rather than measure.
-  view: {lookat: [0.0, -2.5, 0.0], distance: 22.0, azimuth: 90.0, elevation: -74.0}
+  view: {lookat: [0.0, 0.0, 0.0], distance: 16.0, azimuth: 90.0, elevation: -72.0}
 
 components:
-  # -- the room ------------------------------------------------------------------------------------
-  # Four welded slabs, which is all a planner needs: `wall_polygons` reads the compiled model, so
-  # walls are whatever is static and collidable and there is no map file to keep in step. Everything
-  # below plans against these.
-  - box: {prefix: 'wall_n_', pos: [0.0, 4.5], size: [10.4, 0.2, 1.0]}
-    name: wall_n
-  - box: {prefix: 'wall_s_', pos: [0.0, -9.5], size: [10.4, 0.2, 1.0]}
-    name: wall_s
-  - box: {prefix: 'wall_e_', pos: [5.1, -2.5], size: [0.2, 14.2, 1.0]}
-    name: wall_e
-  - box: {prefix: 'wall_w_', pos: [-5.1, -2.5], size: [0.2, 14.2, 1.0]}
-    name: wall_w
-
   # -- opponents -----------------------------------------------------------------------------------
   # A walker is a MOCAP body: no degrees of freedom, so the solver treats it as immovable and it
   # shoves anything free that it touches -- a 3 kg robot goes over. A walker gets no forward caution
   # probe unless it is asked for, because turning one on by default would change how every existing
   # walker behaves. So this one is given a navigator of its own with `traffic: respect`, and it stops
   # for the traffic instead of walking through it. Worth knowing before putting a walker near a robot.
-  - walker: {walker: MaleVisitorWalk, pos: [-3.0, 2.5]}
+  - walker: {walker: MaleVisitorWalk, pos: [-4.2, 2.0]}
     name: visitor
     components:
       - navigator:
           output: walker
           speed: 1.1
-          goals: [[3.0, 2.5], [3.0, -1.0], [-3.0, -1.0]]
+          goals: [[-4.2, -4.2], [1.5, -4.2], [-4.2, 2.0]]
           loop: true
           traffic: respect     # look ahead and stop; a walker's default is `ignore`
           avoidance: sidestep  # and gives way; `none` (the default) looks but never yields
@@ -91,18 +78,18 @@ components:
   # A robot and a walker, five metres apart, each driving to where the other started. Nothing plans
   # around the other -- the planner's grid holds walls, not traffic -- so what unpicks it is the
   # avoidance model, and without one they stop nose to nose.
-  - spawn_robot: {model: turtlebot4, prefix: 'runner_', namespace: runner, pos: [-2.5, 3.2]}
+  - spawn_robot: {model: turtlebot4, prefix: 'runner_', namespace: runner, pos: [-2.5, 4.0]}
     name: runner
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 3.2]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: sidestep}
 
-  - walker: {walker: MaleVisitorWalk, pos: [2.5, 3.2]}
+  - walker: {walker: MaleVisitorWalk, pos: [2.5, 4.0]}
     name: pedestrian
     components:
       - navigator:
           output: walker
           speed: 0.9
-          goals: [[-2.5, 3.2]]
+          goals: [[-2.5, 4.0]]
           traffic: respect
           avoidance: sidestep
 
@@ -110,30 +97,30 @@ components:
   # omni base can move sideways without turning first, so its way round an encounter is not a
   # wheeled base's -- one navigator, and the control law comes from what each drive declares itself
   # to be (`RobotHandle.kinematics`), not from anything written here.
-  - spawn_robot: {model: mpo_500, prefix: 'omni_a_', namespace: omni_a, pos: [-2.5, 0.0]}
+  - spawn_robot: {model: mpo_500, prefix: 'omni_a_', namespace: omni_a, pos: [-2.5, 2.2]}
     name: omni_a
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 0.0]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[2.5, 2.2]], avoidance: sidestep}
 
-  - spawn_robot: {model: mpo_500, prefix: 'omni_b_', namespace: omni_b, pos: [2.5, 0.0], yaw: 3.1416}
+  - spawn_robot: {model: mpo_500, prefix: 'omni_b_', namespace: omni_b, pos: [2.5, 2.2], yaw: 3.1416}
     name: omni_b
     components:
-      - navigator: {speed: 0.4, goals: [[-2.5, 0.0]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[-2.5, 2.2]], avoidance: sidestep}
 
   # The same encounter between two robots, and the asymmetry is the point: both LOOK (traffic:
   # respect), only one of them YIELDS. `stopper` has no avoidance, so it drives until its caution
   # probe sees something and then simply holds. `dodger` joins the avoidance model, so it steers
   # around the stationary one and carries on. Neither knows anything about the other in advance --
   # the planner's grid holds walls, not traffic.
-  - spawn_robot: {model: turtlebot4, prefix: 'stopper_', namespace: stopper, pos: [-2.5, -4.2]}
+  - spawn_robot: {model: turtlebot4, prefix: 'stopper_', namespace: stopper, pos: [-2.5, 0.4]}
     name: stopper
     components:
-      - navigator: {speed: 0.35, goals: [[2.5, -4.2]], avoidance: none, traffic: respect}
+      - navigator: {speed: 0.35, goals: [[2.5, 0.4]], avoidance: none, traffic: respect}
 
-  - spawn_robot: {model: turtlebot4, prefix: 'dodger_', namespace: dodger, pos: [2.5, -4.2], yaw: 3.1416}
+  - spawn_robot: {model: turtlebot4, prefix: 'dodger_', namespace: dodger, pos: [2.5, 0.4], yaw: 3.1416}
     name: dodger
     components:
-      - navigator: {speed: 0.35, goals: [[-2.5, -4.2]], avoidance: sidestep}
+      - navigator: {speed: 0.35, goals: [[-2.5, 0.4]], avoidance: sidestep}
 
   # -- an obstacle the planner could not have known about ------------------------------------------
   # `explorer` is given a goal on the far side of a U it has no idea is there, and has to get itself
@@ -156,19 +143,19 @@ components:
   #
   # `forget_after` is the knob that matters here. Too short and it forgets the back wall before it
   # has rounded the side; too long and a room it has crossed once is permanently narrower to it.
-  - box: {prefix: 'trap_back_', pos: [1.4, -6.5], size: [0.2, 1.8, 0.8], mocap: true}
+  - box: {prefix: 'trap_back_', pos: [0.25, -2.3], size: [0.2, 2.0, 0.8], mocap: true}
     name: trap_back
-  - box: {prefix: 'trap_n_', pos: [0.6, -5.6], size: [1.8, 0.2, 0.8], mocap: true}
+  - box: {prefix: 'trap_n_', pos: [-0.65, -1.4], size: [1.7, 0.2, 0.8], mocap: true}
     name: trap_n
-  - box: {prefix: 'trap_s_', pos: [0.6, -7.4], size: [1.8, 0.2, 0.8], mocap: true}
+  - box: {prefix: 'trap_s_', pos: [-0.65, -3.2], size: [1.7, 0.2, 0.8], mocap: true}
     name: trap_s
 
-  - spawn_robot: {model: turtlebot4, prefix: 'explorer_', namespace: explorer, pos: [-3.5, -6.5]}
+  - spawn_robot: {model: turtlebot4, prefix: 'explorer_', namespace: explorer, pos: [-3.0, -2.3]}
     name: explorer
     components:
       - navigator:
           speed: 0.4
-          goals: [[4.0, -6.5]]
+          goals: [[3.5, -2.3]]
           caution:
             on_blocked: replan   # `stop` is the default: hold position and keep the path
             forget_after: 25.0

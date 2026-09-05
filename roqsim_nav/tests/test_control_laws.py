@@ -62,11 +62,22 @@ def test_unicycle_pivots_in_place_past_the_threshold():
     assert w != 0.0
 
 
-def test_unicycle_never_commands_reverse():
-    """Backing up belongs to recovery, the one layer that knows why it is reversing."""
+def test_unicycle_reverses_only_when_the_command_points_nearly_backwards():
+    """Forward, pivot, reverse -- three bands, and only the last one is negative.
+
+    Reversing exists because recovery expresses "back away from the blocker" as a world velocity,
+    and a law that always turned to face it could never retreat at all. It must stay confined to
+    that band, or a mover would reverse its way around ordinary corners.
+    """
     for yaw in [i * math.pi / 32 for i in range(-32, 33)]:
         v, _, _ = unicycle(EAST, yaw, gain=2.0, max_w=9.0, turn_in_place=0.8)
-        assert v >= 0.0
+        err = abs(wrap_angle(-yaw))  # EAST is heading 0, so the error is -yaw
+        if err <= 0.8:
+            assert v > 0.0, "should drive forward"
+        elif err >= math.pi - 0.8:
+            assert v < 0.0, "should reverse rather than pivot through 180 degrees"
+        else:
+            assert v == 0.0, "should pivot on the spot"
 
 
 def test_unicycle_clamps_yaw_to_the_configured_cap():
@@ -116,3 +127,27 @@ def test_ackermann_floors_a_crawl_but_does_not_cap_a_cruise():
         0.15
     )
     assert ackermann((2.0, 0.0), 0.0, gain=2.0, max_w=1.5, min_speed=0.15)[0] == pytest.approx(2.0)
+
+
+def test_a_unicycle_reverses_rather_than_pivoting_through_180_degrees():
+    """Recovery commands a world velocity pointing away from the blocker; a law that always turned
+    to face it would spin for the whole backup window and never retreat."""
+    v, vy, w = unicycle(
+        (-1.0, 0.0), yaw=0.0, gain=2.0, max_w=1.5, turn_in_place=0.8
+    )  # straight back
+    assert v == pytest.approx(-1.0)
+    assert vy == 0.0
+    assert w == pytest.approx(0.0, abs=1e-9)
+
+
+def test_a_unicycle_still_pivots_for_a_sideways_command():
+    """Between the two thresholds it is neither: turn on the spot."""
+    v, _, w = unicycle((0.0, 1.0), yaw=0.0, gain=2.0, max_w=1.5, turn_in_place=0.8)
+    assert v == 0.0
+    assert w > 0.0
+
+
+def test_a_unicycle_still_drives_forward_for_a_forward_command():
+    v, _, w = unicycle((1.0, 0.0), yaw=0.0, gain=2.0, max_w=1.5, turn_in_place=0.8)
+    assert v == pytest.approx(1.0)
+    assert w == pytest.approx(0.0, abs=1e-9)

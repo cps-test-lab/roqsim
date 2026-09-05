@@ -349,7 +349,13 @@ class NavigatorPlugin(Plugin):
             service_for(ctx, spec, self.base_dir)
 
         self._caution = CautionProbe(
-            {**(cfg.get("caution") or {}), "enabled": cfg.get("traffic", "respect") == "respect"}
+            {
+                **(cfg.get("caution") or {}),
+                "enabled": cfg.get("traffic", "respect") == "respect",
+                # The probe scans inside the same band the planner rasterizes, so "what counts as an
+                # obstacle" is declared once for this mover rather than twice.
+                "band": cfg.get("obstacle_height") or (0.1, 1.8),
+            }
         )
         self._caution.attach(ctx, entity)
 
@@ -551,9 +557,20 @@ class NavigatorPlugin(Plugin):
             wanted = self._avoid.result(self._agent)
 
         if self._caution.check(ctx, self._state.pos, 0.0, wanted):
-            # Hold everything: do NOT advance along the path, and rebase the progress clock so a
-            # mover that is yielding rather than stuck never talks itself into a recovery.
-            self._core.forget_progress()
+            # Hold: do NOT advance along the path. Whether the progress clock is rebased with it
+            # depends on what is in the way. Traffic will move, so waiting for it must never look
+            # like being stuck -- that is what would turn "wait for the robot to pass" into "back up
+            # and re-route around it". Something that has not moved in `yield_time` will not move,
+            # and then the opposite is true: the clock has to run, or recovery can never engage. A
+            # mover in a pocket needs it, because the way out is toward the obstacle beside it, so
+            # every plan it makes is refused by this same probe until it has backed off.
+            #
+            # Under `stop` the clock never runs at all, whatever is in the way. That mode's promise
+            # is that being blocked cannot change the path, and a recovery is a change of path --
+            # letting one fire after a while would turn "it stopped" into "it went round", which is
+            # the failure this whole layer exists to prevent. Re-routing is what `replan` is for.
+            if self._caution.on_blocked == "stop" or self._caution.yielding(ctx.sim_time):
+                self._core.forget_progress()
             self._remember_blockage(ctx)
             # `hold`, not `stop`: time is passing and the mover is still in the scene, so an
             # embodiment that is watched can settle -- a walker stands rather than freezing
@@ -586,9 +603,8 @@ class NavigatorPlugin(Plugin):
         # thing it stands for -- the next plan rounds the disc, drives into the same wall half a
         # metre along, and reports a point already inside the mark, so nothing new is learnt and the
         # mover holds there for good.
-        fresh = [
-            planner.add_blockage(p, probe.blockage_radius, expires) for p in probe.blocker_points
-        ]
+        radius = probe.blockage_radius_for(ctx, self._state.pos)
+        fresh = [planner.add_blockage(p, radius, expires) for p in probe.blocker_points]
         if any(fresh):
             self._state.path = None
             self._state.path_idx = 0

@@ -110,6 +110,7 @@ class NavCore:
         self._recover_until = 0.0
         self._recover_count = 0
         self._backup_vel = np.zeros(2)
+        self._recover_from = None  # where the last recovery started, for the progress reset
         self._dwell_until = 0.0  # standing-idle-at-goal until this sim time
         self._hist = []  # list[(t, x, y)] for stuck detection
         self.pref_vel = np.zeros(2)
@@ -124,9 +125,25 @@ class NavCore:
         self._t = float(t)
         self._pos = np.asarray(pos, dtype=float)
         self._blocker = None if blocker is None else np.asarray(blocker, dtype=float)
+        # `max_recovery` bounds CONSECUTIVE recoveries, so getting somewhere has to clear the
+        # count. Resetting only on goal arrival made that false for the case it matters in: a mover
+        # working its way out of a pocket takes several recover-and-replan cycles to get free, and
+        # would exhaust its budget and abandon the goal while it was still making progress. The
+        # threshold is the distance a backup itself covers -- having moved further than the last
+        # manoeuvre pushed it is the evidence that this is not the same wedge.
+        if self._recover_count and self._recover_from is not None:
+            moved = float(np.linalg.norm(self._pos - self._recover_from))
+            if moved > self.p.backup_speed * self.p.backup_time:
+                self._recover_count = 0
+                self._recover_from = None
         self._hist.append((self._t, self._pos[0], self._pos[1]))
+        # Keep ONE sample older than the cutoff, not none. Dropping every sample older than
+        # `t - stuck_time` leaves a window that always spans slightly LESS than stuck_time, and
+        # `is_stuck` requires at least that much -- so with samples arriving at a fixed rate the
+        # test could never pass and no mover could ever detect itself stuck. Trimming on the SECOND
+        # sample keeps the window spanning stuck_time or more, which is what the check reads.
         cutoff = self._t - self.p.stuck_time
-        while len(self._hist) > 2 and self._hist[0][0] < cutoff:
+        while len(self._hist) > 2 and self._hist[1][0] < cutoff:
             self._hist.pop(0)
 
     def forget_progress(self) -> None:
@@ -161,6 +178,7 @@ class NavCore:
         self._recover_count += 1
         if self._recover_count > self.p.max_recovery:
             self._recover_count = 0
+            self._recover_from = None
             self._recover_until = 0.0
             self._backup_vel = np.zeros(2)
             self._advance_goal()  # skip the unreachable goal
@@ -175,6 +193,7 @@ class NavCore:
         n = float(np.linalg.norm(away))
         away = away / n if n > 1e-6 else np.array([-math.cos(st.yaw), -math.sin(st.yaw)])
         self._backup_vel = away * self.p.backup_speed
+        self._recover_from = self._pos.copy()
         self._recover_until = self._t + self.p.backup_time
         st.path = None
         st.path_idx = 0

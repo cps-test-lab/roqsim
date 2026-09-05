@@ -59,16 +59,33 @@ def unicycle(
     consistent with each other. Past ``turn_in_place`` the error is too large to drive out of, so it
     pivots on the spot instead of carving a long arc through whatever is beside it.
 
-    Reversing is never commanded here. Backing up is a recovery behaviour, and it belongs to the one
-    layer that knows *why* it is going backwards.
+    Asked to go almost exactly backwards, it **reverses** rather than pivoting through 180 degrees.
+    That is the mirror of the pivot rule and uses the same threshold: within ``turn_in_place`` of
+    straight ahead, drive; within ``turn_in_place`` of straight back, reverse; in between, pivot.
+
+    Reversing is not a special case bolted on for one caller -- it is the only way a differential
+    base can honour a command to go backwards at all. Recovery expresses "back away from what stopped
+    you" as a world-frame velocity pointing away from the blocker, and a law that always turned to
+    face it would spend the whole backup window spinning on the spot and never actually retreat,
+    which makes recovery inert on exactly the base that most needs it. Ordinary navigation cannot
+    trigger it: a path point is never that far behind unless the mover has been sent back the way it
+    came, where reversing is also the right answer.
     """
     speed = float(math.hypot(pref_vel[0], pref_vel[1]))
     if speed < STOPPED:
         return 0.0, 0.0, 0.0
     err = wrap_angle(math.atan2(float(pref_vel[1]), float(pref_vel[0])) - yaw)
-    w = float(np.clip(gain * err, -max_w, max_w))
-    v = 0.0 if abs(err) > turn_in_place else speed * math.cos(err)
-    return v, 0.0, w
+    if abs(err) <= turn_in_place:
+        w = float(np.clip(gain * err, -max_w, max_w))
+        return speed * math.cos(err), 0.0, w
+    back = wrap_angle(err - math.pi)
+    if abs(back) <= turn_in_place:
+        # Reverse: steer on the error to the REVERSED heading and drive backwards along it. Forward
+        # is tested first, so a `turn_in_place` above 90 degrees -- where the two windows overlap --
+        # keeps driving forwards rather than flipping to reverse.
+        w = float(np.clip(gain * back, -max_w, max_w))
+        return -speed * math.cos(back), 0.0, w
+    return 0.0, 0.0, float(np.clip(gain * err, -max_w, max_w))
 
 
 def holonomic(

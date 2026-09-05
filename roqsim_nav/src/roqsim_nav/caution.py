@@ -88,28 +88,49 @@ class CautionProbe:
         self.enabled = bool(cfg.get("enabled", True))
         self.on_blocked = str(cfg.get("on_blocked", "stop"))
         self.lookahead = float(cfg.get("lookahead", 1.2))
+        #: Corridor width. ``0`` means "measure it" -- the mover's own footprint, so the corridor
+        #: cannot be narrower than the body it protects. NOT the default: the corridor is also what
+        #: decides how early a mover stops for traffic, and on a wide base measuring it more than
+        #: doubles that distance, which turns encounters that used to resolve by steering into
+        #: stand-offs. A wide base that must not clip anything says `width: 0`; the default stays a
+        #: fixed corridor so that changing a robot's geometry cannot silently re-tune its manners.
         self.width = float(cfg.get("width", 0.6))
         self.rays = int(cfg.get("rays", 5))
         #: Height above the floor to look at, like a scanning plane -- NOT the mover's body origin.
         #: The origin means something different on every platform: a TurtleBot's is 3 cm up, an
         #: omni base's is a centimetre BELOW the floor, and a walker's pelvis is at 0.9 m. Casting
-        #: from the walker's origin sent its rays straight over the top of a 0.88 m robot, which it
-        #: then walked into and knocked over. A fixed height sees the things that stand on floors.
-        self.height = float(cfg.get("height", 0.30))
+        #: from the walker's origin sent its rays straight over the top of a 0.88 m robot.
+        #:
+        #: The height is taken from the bottom of the mover's own ``obstacle_height`` band, the same
+        #: declaration the planner rasterizes: scan where the things that stand on floors actually
+        #: are. Any *fixed* height is a guess about other people's robots and will be wrong for some
+        #: of them -- 0.30 m looked reasonable and was above the roof of a TurtleBot 4, whose
+        #: collision geometry stops at 0.25 m, so every probe in a world of them saw nothing at all.
+        #: Scanning low cannot have that failure: a mover that cannot pass over something must have
+        #: geometry near the floor, or it would not be an obstacle.
+        band = cfg.get("band") or (0.1, 1.8)
+        self.height = float(cfg.get("height", 0.0)) or float(band[0]) + 0.05
         self.clear_time = float(cfg.get("clear_time", 0.5))
+        #: How long a blockage is treated as traffic that will clear. While the mover is inside
+        #: this window it holds AND its progress clock is rebased, so waiting for a robot to pass
+        #: never talks it into a recovery. Past it, the blockage is treated as something that is not
+        #: going to move, the clock runs, and recovery becomes reachable -- which is the only way out
+        #: of a pocket whose exit the mover must drive toward an obstacle to reach.
+        self.yield_time = float(cfg.get("yield_time", 3.0))
         #: `replan` only: how long a remembered blockage keeps steering the planner away. Long
         #: enough to get round what is there, short enough that a mover forgets an obstacle which
         #: has since moved on rather than treating the world as permanently narrower.
         self.forget_after = float(cfg.get("forget_after", 5.0))
         #: Radius of the disc a remembered blockage marks out. Defaults to the corridor's own half
         #: width, so a mark is as wide as the gap the mover just failed to fit through.
-        self.blockage_radius = float(cfg.get("blockage_radius", 0.0)) or self.width / 2.0
+        self._blockage_radius = float(cfg.get("blockage_radius", 0.0))
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
         self._ignored: set[int] = set()
         self._resolved = False
         self._radius: float | None = None
         self._clear_since: float | None = None
+        self._blocked_since: float | None = None
         #: Last verdict, for status reporting and tests.
         self.blocked = False
         #: World xy of the NEAREST blocking hit of the last :meth:`check`, or ``None``. What
@@ -129,10 +150,12 @@ class CautionProbe:
         mode = cfg.get("on_blocked", "stop")
         if mode not in ON_BLOCKED:
             errors.append(f"'caution.on_blocked' must be one of: {', '.join(ON_BLOCKED)}")
-        for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
+        for key in ("lookahead", "rays", "height", "blockage_radius"):
             if key in cfg and float(cfg[key]) <= 0:
                 errors.append(f"'caution.{key}' must be > 0")
-        for key in ("clear_time", "forget_after"):
+        if "width" in cfg and float(cfg["width"]) < 0:
+            errors.append("'caution.width' must be >= 0 (0 = the mover's measured footprint)")
+        for key in ("clear_time", "forget_after", "yield_time"):
             if key in cfg and float(cfg[key]) < 0:
                 errors.append(f"'caution.{key}' must be >= 0")
         return errors
@@ -174,9 +197,18 @@ class CautionProbe:
 
     def reset(self) -> None:
         self._clear_since = None
+        self._blocked_since = None
         self.blocked = False
         self.blocker_xy = None
         self.blocker_points = []
+
+    def blocked_for(self, now: float) -> float:
+        """How long the way has been blocked without a break, in seconds. ``0.0`` when clear."""
+        return 0.0 if self._blocked_since is None else max(0.0, float(now) - self._blocked_since)
+
+    def yielding(self, now: float) -> bool:
+        """Whether this block should still be read as traffic rather than as an obstacle."""
+        return self.blocked_for(now) < self.yield_time
 
     def check(self, ctx, origin_xy, z: float, pref_vel) -> bool:
         """Whether the mover should hold still this tick.
@@ -191,6 +223,7 @@ class CautionProbe:
             # Nothing to run into if we are not going anywhere, and no direction to cast along.
             self.blocked = False
             self._clear_since = None
+            self._blocked_since = None
             self.blocker_xy = None
             self.blocker_points = []
             return False
@@ -200,6 +233,8 @@ class CautionProbe:
         now = float(ctx.sim_time)
         if nearest is not None and nearest[0] < self.lookahead:
             self._clear_since = None
+            if self._blocked_since is None:
+                self._blocked_since = now
             self.blocked = True
             self.blocker_xy = nearest[1]
             self.blocker_points = points
@@ -209,7 +244,20 @@ class CautionProbe:
         if self._clear_since is None:
             self._clear_since = now
         self.blocked = (now - self._clear_since) < self.clear_time
+        if not self.blocked:
+            # Only once the way is open AND has stayed open: a clear ray during the settle is not
+            # the same as being through, and treating it as such re-arms the yield window on every
+            # flicker -- which is exactly the state a mover stuttering against an obstacle is in.
+            self._blocked_since = None
         return self.blocked
+
+    def corridor_half_width(self, ctx, origin_xy) -> float:
+        """Half the corridor to sweep: the configured width, or the measured footprint."""
+        return self.width / 2.0 if self.width > 0.0 else self.footprint_radius(ctx, origin_xy)
+
+    def blockage_radius_for(self, ctx, origin_xy) -> float:
+        """Radius of the disc a remembered blockage marks out, defaulting to the corridor's own."""
+        return self._blockage_radius or self.corridor_half_width(ctx, origin_xy)
 
     def footprint_radius(self, ctx, origin_xy) -> float:
         """The mover's own circumscribed xy radius, measured once from its geoms.
@@ -245,34 +293,35 @@ class CautionProbe:
         clear space in front of the mover, not from its centre.
         """
         model, data = ctx.model, ctx.data
-        half = self.width / 2.0
-        # Rays fan across the corridor's width at `lookahead`, so the swept band is the footprint
-        # rather than a single centre line -- a robot clipping the edge is still a blocker.
-        spread = math.atan2(half, max(self.lookahead, 1e-6))
-        offsets = [0.0] if self.rays < 2 else np.linspace(-spread, spread, self.rays)
-        dirs = np.array(
-            [[math.cos(heading + a), math.sin(heading + a), 0.0] for a in offsets], dtype=float
-        )
+        half = self.corridor_half_width(ctx, origin_xy)
+        # PARALLEL rays offset across the corridor, not a fan diverging from one point. A fan only
+        # spans the full width at `lookahead` and pinches to nothing at the nose, so it is blind to
+        # exactly what a body scrapes against: something beside the mover's shoulder, a few
+        # centimetres ahead. Offsetting instead sweeps the true rectangle the body is about to
+        # occupy, at every distance along it.
         nose = self.footprint_radius(ctx, origin_xy) + 1e-3
-        origin = np.array(
-            [
-                float(origin_xy[0]) + math.cos(heading) * nose,
-                float(origin_xy[1]) + math.sin(heading) * nose,
-                float(z),
-            ],
-            dtype=float,
-        )
+        ahead = np.array([math.cos(heading), math.sin(heading)])
+        side = np.array([-ahead[1], ahead[0]])
+        lateral = [0.0] if self.rays < 2 else np.linspace(-half, half, self.rays)
+        base = np.asarray(origin_xy, dtype=float) + ahead * nose
+        origins = np.array([[*(base + side * o), float(z)] for o in lateral], dtype=float)
+        direction = np.array([[ahead[0], ahead[1], 0.0]], dtype=float)
         # The default geomgroup mask excludes entities made absent, so a prop nothing can collide
         # with does not stop the mover -- the same rule every other raycaster here follows.
-        hits = raycast.cast(model, data, origin, dirs, cutoff=self.lookahead)
+        # One `mj_multiRay` per origin -- `cast_many`'s docstring records that the API takes a
+        # single origin, so a swept corridor is irreducibly one call per lateral offset. At five
+        # rays on a 20 Hz tick that is well inside the budget, and it is only paid while moving.
+        hits = raycast.cast_many(model, data, origins, direction, cutoff=self.lookahead)
         nearest, points = None, []
-        for i, (dist, gid) in enumerate(zip(hits.dist, hits.geomid, strict=False)):
+        for i, (dist, gid) in enumerate(
+            zip(hits.dist.reshape(-1), hits.geomid.reshape(-1), strict=False)
+        ):
             dist, gid = float(dist), int(gid)
             if dist < 0 or gid < 0 or gid in self._own or gid in self._ignored:
                 continue
             if not is_dynamic_body(model, int(model.geom_bodyid[gid])):
                 continue  # a wall: the planner's business, not ours
-            point = origin[:2] + dirs[i][:2] * dist
+            point = origins[i][:2] + ahead * dist
             points.append(point)
             if nearest is None or dist < nearest[0]:
                 nearest = (dist, point)
