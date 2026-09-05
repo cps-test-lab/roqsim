@@ -156,10 +156,9 @@ components:
       - navigator:
           speed: 0.4
           goals: [[3.5, -2.3]]
-          caution:
-            on_blocked: replan   # `stop` is the default: hold position and keep the path
-            forget_after: 25.0
-            lookahead: 0.9
+          # Everything else is left at its default, deliberately: an example that needs its probe
+          # re-tuned to get out of a trap is demonstrating the tuning, not the mechanism.
+          caution: {on_blocked: replan}   # `stop` is the default: hold position and keep the path
 
   # Shuttling along the far wall, out of everyone else's lanes: a driven prop that is scenery to the
   # rest of the room rather than another thing to negotiate with.

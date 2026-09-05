@@ -419,3 +419,35 @@ def test_a_short_robot_is_seen_by_another_short_robot(tmp_path):
         assert _xy(engine)[0] < -0.5, "it drove over something it should have stopped for"
     finally:
         engine.shutdown()
+
+
+# -- yielding to traffic vs being held by something that will not move ------------------------------
+def test_a_block_stops_reading_as_traffic_after_yield_time():
+    """Waiting for a robot to pass must not look like being stuck; a wall is not going to pass.
+
+    The navigator rebases its progress clock for as long as this says the block is traffic, so this
+    is what decides whether recovery can ever engage. Without the second half a mover in a pocket
+    can never get out, because leaving means driving toward the obstacle beside it and every plan it
+    makes is refused by this same probe. That `on_blocked: stop` ignores it entirely -- being blocked
+    must not change the path in that mode -- is asserted end to end by
+    `test_blocked_it_holds_its_path_instead_of_recovering`.
+    """
+    probe = CautionProbe({"yield_time": 2.0})
+    probe._blocked_since = 10.0
+    assert probe.blocked_for(11.0) == pytest.approx(1.0)
+    assert probe.yielding(11.0), "a fresh blockage reads as traffic"
+    assert not probe.yielding(12.5), "one that outlasts yield_time does not"
+    probe.reset()
+    assert probe.blocked_for(12.5) == 0.0 and probe.yielding(12.5)
+
+
+def test_a_momentary_gap_does_not_re_arm_the_yield_window(tmp_path):
+    """A clear ray during the settle is not the same as being through.
+
+    Treating it as such re-arms the window on every flicker, which is exactly the state a mover
+    stuttering against an obstacle is in -- so it would yield for ever and never recover.
+    """
+    probe = CautionProbe({"yield_time": 1.0, "clear_time": 5.0})
+    probe._blocked_since = 0.0
+    probe._clear_since = 2.0  # rays came up clear, but the settle has not elapsed
+    assert probe.blocked_for(3.0) == pytest.approx(3.0), "the counter was reset by a flicker"

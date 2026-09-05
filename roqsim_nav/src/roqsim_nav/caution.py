@@ -41,6 +41,10 @@ from roqsim import raycast
 
 from .control import STOPPED
 
+#: How far above the bottom of a mover's obstacle band to scan. Off the boundary itself, so that a
+#: geom whose extent starts exactly at the band's edge is hit rather than grazed.
+_SCAN_MARGIN = 0.05
+
 #: Values ``on_blocked`` accepts. ``stop`` holds position and keeps the path; ``replan`` remembers
 #: the blocker for ``forget_after`` seconds and routes around it.
 ON_BLOCKED = ("stop", "replan")
@@ -88,12 +92,11 @@ class CautionProbe:
         self.enabled = bool(cfg.get("enabled", True))
         self.on_blocked = str(cfg.get("on_blocked", "stop"))
         self.lookahead = float(cfg.get("lookahead", 1.2))
-        #: Corridor width. ``0`` means "measure it" -- the mover's own footprint, so the corridor
-        #: cannot be narrower than the body it protects. NOT the default: the corridor is also what
-        #: decides how early a mover stops for traffic, and on a wide base measuring it more than
-        #: doubles that distance, which turns encounters that used to resolve by steering into
-        #: stand-offs. A wide base that must not clip anything says `width: 0`; the default stays a
-        #: fixed corridor so that changing a robot's geometry cannot silently re-tune its manners.
+        #: Width of the corridor swept ahead. It is deliberately NOT the mover's measured
+        #: footprint: this width also decides how early the mover stops for traffic, so deriving it
+        #: from geometry would mean a wider robot silently acquiring more cautious manners, and on a
+        #: base of half a metre's radius it turns encounters that resolve by steering into
+        #: stand-offs. Set it to the body plus the clearance the mover should keep.
         self.width = float(cfg.get("width", 0.6))
         self.rays = int(cfg.get("rays", 5))
         #: Height above the floor to look at, like a scanning plane -- NOT the mover's body origin.
@@ -109,7 +112,7 @@ class CautionProbe:
         #: Scanning low cannot have that failure: a mover that cannot pass over something must have
         #: geometry near the floor, or it would not be an obstacle.
         band = cfg.get("band") or (0.1, 1.8)
-        self.height = float(cfg.get("height", 0.0)) or float(band[0]) + 0.05
+        self.height = float(cfg.get("height", 0.0)) or float(band[0]) + _SCAN_MARGIN
         self.clear_time = float(cfg.get("clear_time", 0.5))
         #: How long a blockage is treated as traffic that will clear. While the mover is inside
         #: this window it holds AND its progress clock is rebased, so waiting for a robot to pass
@@ -123,7 +126,9 @@ class CautionProbe:
         self.forget_after = float(cfg.get("forget_after", 5.0))
         #: Radius of the disc a remembered blockage marks out. Defaults to the corridor's own half
         #: width, so a mark is as wide as the gap the mover just failed to fit through.
-        self._blockage_radius = float(cfg.get("blockage_radius", 0.0))
+        #: Radius of the disc a remembered blockage marks out, defaulting to the corridor's own
+        #: half width -- a mark as wide as the gap the mover just failed to fit through.
+        self.blockage_radius = float(cfg.get("blockage_radius", 0.0)) or self.width / 2.0
         self.ignore = tuple(cfg.get("ignore") or ())
         self._own: set[int] = set()
         self._ignored: set[int] = set()
@@ -150,11 +155,9 @@ class CautionProbe:
         mode = cfg.get("on_blocked", "stop")
         if mode not in ON_BLOCKED:
             errors.append(f"'caution.on_blocked' must be one of: {', '.join(ON_BLOCKED)}")
-        for key in ("lookahead", "rays", "height", "blockage_radius"):
+        for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
             if key in cfg and float(cfg[key]) <= 0:
                 errors.append(f"'caution.{key}' must be > 0")
-        if "width" in cfg and float(cfg["width"]) < 0:
-            errors.append("'caution.width' must be >= 0 (0 = the mover's measured footprint)")
         for key in ("clear_time", "forget_after", "yield_time"):
             if key in cfg and float(cfg[key]) < 0:
                 errors.append(f"'caution.{key}' must be >= 0")
@@ -251,14 +254,6 @@ class CautionProbe:
             self._blocked_since = None
         return self.blocked
 
-    def corridor_half_width(self, ctx, origin_xy) -> float:
-        """Half the corridor to sweep: the configured width, or the measured footprint."""
-        return self.width / 2.0 if self.width > 0.0 else self.footprint_radius(ctx, origin_xy)
-
-    def blockage_radius_for(self, ctx, origin_xy) -> float:
-        """Radius of the disc a remembered blockage marks out, defaulting to the corridor's own."""
-        return self._blockage_radius or self.corridor_half_width(ctx, origin_xy)
-
     def footprint_radius(self, ctx, origin_xy) -> float:
         """The mover's own circumscribed xy radius, measured once from its geoms.
 
@@ -293,7 +288,7 @@ class CautionProbe:
         clear space in front of the mover, not from its centre.
         """
         model, data = ctx.model, ctx.data
-        half = self.corridor_half_width(ctx, origin_xy)
+        half = self.width / 2.0
         # PARALLEL rays offset across the corridor, not a fan diverging from one point. A fan only
         # spans the full width at `lookahead` and pinches to nothing at the nose, so it is blind to
         # exactly what a body scrapes against: something beside the mover's shoulder, a few

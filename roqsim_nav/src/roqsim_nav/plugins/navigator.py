@@ -603,8 +603,9 @@ class NavigatorPlugin(Plugin):
         # thing it stands for -- the next plan rounds the disc, drives into the same wall half a
         # metre along, and reports a point already inside the mark, so nothing new is learnt and the
         # mover holds there for good.
-        radius = probe.blockage_radius_for(ctx, self._state.pos)
-        fresh = [planner.add_blockage(p, radius, expires) for p in probe.blocker_points]
+        fresh = [
+            planner.add_blockage(p, probe.blockage_radius, expires) for p in probe.blocker_points
+        ]
         if any(fresh):
             self._state.path = None
             self._state.path_idx = 0
