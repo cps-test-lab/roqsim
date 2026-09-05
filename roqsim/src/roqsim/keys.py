@@ -232,8 +232,6 @@ def _order(binding: KeyBinding) -> tuple[int, int]:
 #: Names the list, because Simulate's own help is on screen at the same time in the other corner.
 HELP_TITLE = "roqsim keys"
 
-#: Gap between the key column and what it does, in :func:`help_block`.
-_GUTTER = 2
 #: Indent under a heading.
 _INDENT = "  "
 
@@ -256,12 +254,3 @@ def help_columns(bindings) -> tuple[str, str]:
     """The two columns ``set_texts`` aligns line by line: key labels, and what they do."""
     lines = _lines(bindings)
     return "\n".join(label for label, _ in lines), "\n".join(text for _, text in lines)
-
-
-def help_block(bindings) -> str:
-    """The same list as one padded block -- for the docs, where there are no two columns."""
-    lines = _lines(bindings)
-    width = max((len(label) for label, text in lines if text), default=0) + _GUTTER
-    return "\n".join(
-        (f"{label:<{width}}{text}" if text else label).rstrip() for label, text in lines
-    )

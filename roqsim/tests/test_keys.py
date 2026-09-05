@@ -5,8 +5,8 @@
 """The key catalogue: what the handlers fly on, and what the window says they do, are one thing.
 
 The point of `roqsim.keys` is that the F1 list cannot drift from the keys. These tests are where that
-is actually held: the maps `WalkKeys` polls are pinned to the values it used to carry literally, and
-the rendered list is pinned to the docs (in `test_docs_keys.py`).
+is actually held -- above all by pinning the maps `WalkKeys` polls to the values it used to carry
+literally, so a catalogue edit cannot quietly change how the camera flies.
 """
 
 from types import SimpleNamespace
@@ -119,12 +119,13 @@ def test_a_key_the_catalogue_does_not_name_sorts_last():
 
 
 def test_the_list_names_only_what_it_was_given():
-    block = keys.help_block(keys.merge(_source(*keys.CAMERA, keys.SHOW_HELP)))
-    assert "F10" in block and "F8" not in block and "F9" not in block
+    labels, _ = keys.help_columns(keys.merge(_source(*keys.CAMERA, keys.SHOW_HELP)))
+    assert "F10" in labels and "F8" not in labels and "F9" not in labels
 
 
 def test_a_group_with_nothing_left_in_it_is_not_a_heading_over_nothing():
-    assert "RUN" not in keys.help_block(keys.merge(_source(keys.CAMERA_MODE)))
+    labels, _ = keys.help_columns(keys.merge(_source(keys.CAMERA_MODE)))
+    assert "RUN" not in labels
 
 
 def test_both_columns_have_the_same_number_of_lines():
@@ -140,7 +141,7 @@ def test_the_list_says_which_list_it_is():
 
 def test_every_line_is_ascii():
     # The overlay is drawn with MuJoCo's built-in bitmap font, where a multi-byte glyph is rubbish.
-    assert keys.help_block(keys.CATALOGUE).isascii()
+    assert all(column.isascii() for column in keys.help_columns(keys.CATALOGUE))
 
 
 def test_every_line_is_short_enough_to_read_in_a_corner():

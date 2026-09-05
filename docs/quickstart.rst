@@ -60,34 +60,8 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer h
 Keys in the window
 ~~~~~~~~~~~~~~~~~~
 
-**F1** lists the keys roqsim adds, in the window's top-right corner, and leaves the list up until F1
-comes again:
-
-.. code-block:: text
-
-   roqsim keys
-
-   CAMERA
-     F10         mouse / fly
-     Up/Down     fly forward / back
-     Left/Right  strafe level
-     PgUp/PgDn   rise / drop
-     Shift       hold to fly faster
-
-   RUN
-     F9          recording take on / off
-     F8          save camera into the world
-     F1          this list on / off
-
-MuJoCo's own help opens on the same press, in the *other* corner: the passive viewer's key callback
-runs in addition to Simulate's own handling rather than instead of it, so no key can be taken away
-from Simulate — F1 is the one roqsim deliberately shares, because it means help in both. That list is
-Simulate's own keys (visualization flags, the side panels, stepping a paused run); this one is what
-roqsim added.
-
-The list names only what *this* run has. A run started from an MJCF scene or a bare model reference
-has no world YAML to save a view into, so it does not offer F8; a window opened by the
-scenario-execution adapter has neither F8 nor F9.
+**F1** lists the keys roqsim adds to the window, and leaves the list up until F1 comes again. MuJoCo's
+own help opens with it, in the opposite corner, listing Simulate's keys rather than these.
 
 Moving the camera
 ~~~~~~~~~~~~~~~~~
