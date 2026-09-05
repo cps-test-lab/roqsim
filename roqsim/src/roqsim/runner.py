@@ -74,7 +74,7 @@ from .viewer import (
     prepare_viewer_gl,
     setup_camera,
 )
-from .window_title import retitle_window_async
+from .window_branding import brand_window_async
 from .world import resolve_world_yaml_ref
 
 log = logging.getLogger(__name__)
@@ -253,13 +253,19 @@ def _run_headless(
                 recorder.sample(engine.ctx)
 
 
-def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_callback=None):
+def open_loading_viewer(
+    *, name: str | None = None, left_ui: bool = False, right_ui: bool = False, key_callback=None
+):
     """Open the viewer on an empty placeholder and draw the splash overlay immediately.
 
     An empty model compiles and opens in ~1 ms (no meshes/textures to build), so the window and the
     splash come up as fast as MuJoCo can create the GL context -- *before* the real world compiles,
     so the splash covers the whole load. The real world is swapped into this same window later by
     :func:`adopt_world`; the splash (full-bleed navy art) stays up until then.
+
+    The window is branded here too, not only in :func:`adopt_world`: a world that takes half a minute
+    to compile is half a minute of taskbar and title bar, and the placeholder carries MuJoCo's name
+    and no icon at all.
 
     Returns ``(handle, open_seconds)``, or ``(None, 0.0)`` if the window could not be opened -- the
     caller then falls back to opening on the real model, where the GL error is reported properly.
@@ -277,6 +283,7 @@ def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_ca
         log.debug("loading window skipped: %s", err)
         return None, 0.0
     show_loading_overlay(handle)
+    brand_window_async(model, name=name)
     return handle, time.perf_counter() - started
 
 
@@ -294,7 +301,7 @@ def adopt_world(viewer, engine: Engine, *, name: str | None = None) -> float:
     started = time.perf_counter()
     sim.load(engine.ctx.model, engine.ctx.data, "")
     mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
-    retitle_window_async(engine.ctx.model, name=name)
+    brand_window_async(engine.ctx.model, name=name)
     return time.perf_counter() - started
 
 
@@ -344,7 +351,7 @@ def _run_windowed(
             if profile:
                 print(f"[loading] world swap-in: {swap_s * 1e3:.0f} ms", file=sys.stderr)
         else:
-            retitle_window_async(engine.ctx.model, name=name)
+            brand_window_async(engine.ctx.model, name=name)
         camera = setup_camera(viewer, view, engine.ctx, preview=preview)
         if loading:
             # Scene loaded and camera framed under the splash: reveal it in one clean cut.
@@ -363,7 +370,7 @@ def _run_windowed(
             # pose being saved cannot move while the question is on screen.
             if toggle is not None and toggle.take_pending():
                 recorder.toggle()
-                retitle_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
+                brand_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
             if saver is not None and saver.take_pending():
                 save_current_view(
                     _live_camera(viewer),
@@ -415,7 +422,7 @@ def _rec_name(name: str | None, recording: bool) -> str | None:
     """Append a recording marker to the window title, so the state is visible where the person looks.
 
     A toggle you cannot see is a toggle you will get wrong -- and the window title is the one piece of
-    chrome roqsim already owns (:mod:`roqsim.window_title` retitles through ctypes libX11).
+    chrome roqsim already owns (:mod:`roqsim.window_branding` sets title and icon through ctypes libX11).
     """
     base = name or ""
     return f"{base} [REC]" if recording else base or None
@@ -634,6 +641,7 @@ def run(
     loading_view, open_s = (None, 0.0)
     if not headless and has_display():
         loading_view, open_s = open_loading_viewer(
+            name=cfg.name,
             left_ui=left_ui,
             right_ui=right_ui,
             key_callback=_key_callback(toggle, saver),

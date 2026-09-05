@@ -58,6 +58,7 @@ from roqsim_scene_builder.annotate_ui import (
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 _DEFAULT_SIZE = (760, 760)
@@ -840,6 +841,7 @@ class _SketchApp:
 
         root = tk.Tk()
         root.title("roqsim floorplan sketch")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.geometry(f"900x{self.height + 24}")  # start at a sensible width; resize keeps the 2:1
         root.protocol("WM_DELETE_WINDOW", self._on_close)
