@@ -414,3 +414,29 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.npz"))
     assert closed == [True], "close() did not complete -- the flush was outside the signal window"
+
+
+# -- the window's keys are the window's ------------------------------------------------------------
+
+
+def test_a_headless_run_does_no_key_work(tmp_path, monkeypatch):
+    """No handlers, no key list, and not even the question F8 would need answered.
+
+    The F1 list, the hotkeys and the camera-mode notice all belong to a window. A headless run has
+    none, so none of it may be built, and the world YAML -- resolved only to decide whether F8 has
+    somewhere to save to -- must not be looked up either.
+    """
+    called = []
+    monkeypatch.setattr(
+        "roqsim.runner._hotkeys", lambda **kw: called.append("hotkeys") or (None, None)
+    )
+    monkeypatch.setattr(
+        "roqsim.runner.world_yaml_path", lambda t: called.append("world_yaml") or None
+    )
+    monkeypatch.setattr("roqsim.runner.launch_viewer", lambda *a, **k: called.append("viewer"))
+    monkeypatch.setattr("roqsim.runner.open_loading_viewer", lambda **k: called.append("loading"))
+    monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
+    scene = tmp_path / "s.xml"
+    scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
+    runner.run(str(scene), headless=True, max_steps=1)
+    assert called == []

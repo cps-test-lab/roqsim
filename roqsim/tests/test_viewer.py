@@ -13,11 +13,13 @@ import mujoco
 import numpy as np
 import pytest
 
+from roqsim import keys as key_catalogue
 from roqsim.context import Entity, SimContext
 from roqsim.rendering import view_forward
 from roqsim.viewer import (
     DEFAULT_MUJOCO_GL,
     KEY_F10,
+    HelpKeys,
     TrackingCamera,
     ViewError,
     WalkKeys,
@@ -393,6 +395,19 @@ def test_close_viewer_gives_up_on_a_wedged_thread(monkeypatch, capsys):
 _UP, _DOWN, _LEFT, _PAGE_UP = 265, 264, 263, 266  # GLFW keycodes, as MuJoCo reports them
 
 
+class _Handle:
+    """A stand-in viewer handle: the free camera and lock() WalkKeys touches, and nothing else.
+
+    A class rather than a ``SimpleNamespace`` because the overlay text, like the walk state and the
+    viewer's threads, is held against the handle in a ``WeakKeyDictionary`` -- as MuJoCo's own handle
+    can be, and a ``SimpleNamespace`` cannot.
+    """
+
+    def __init__(self, camera):
+        self.cam = camera
+        self.lock = contextlib.nullcontext
+
+
 def _walk_handle(**cam):
     """A stand-in viewer handle exposing just the free camera and lock() that WalkKeys touches."""
     camera = SimpleNamespace(
@@ -404,7 +419,7 @@ def _walk_handle(**cam):
     )
     for k, v in cam.items():
         setattr(camera, k, v)
-    return SimpleNamespace(cam=camera, lock=contextlib.nullcontext)
+    return _Handle(camera)
 
 
 class _Clock:
@@ -427,7 +442,11 @@ def _held_frame(walk, handle, keycode):
 
 
 def test_walk_keys_fly_the_free_camera_at_a_speed():
-    handle, walk, clock = _walk_handle(), WalkKeys(speed=2.0, keys=False, pivot_radius=0, fly=True), _Clock()
+    handle, walk, clock = (
+        _walk_handle(),
+        WalkKeys(speed=2.0, keys=False, pivot_radius=0, fly=True),
+        _Clock(),
+    )
     with mock.patch("roqsim.viewer.time.monotonic", clock):
         _held_frame(walk, handle, _UP)  # first frame only starts the clock
         clock.advance(0.25)
@@ -477,7 +496,11 @@ def test_walk_keys_ignore_other_keys_and_non_free_cameras():
 
 
 def test_walk_keys_normalise_two_directions_at_once():
-    handle, walk, clock = _walk_handle(), WalkKeys(speed=2.0, keys=False, pivot_radius=0, fly=True), _Clock()
+    handle, walk, clock = (
+        _walk_handle(),
+        WalkKeys(speed=2.0, keys=False, pivot_radius=0, fly=True),
+        _Clock(),
+    )
     with mock.patch("roqsim.viewer.time.monotonic", clock):
         for code in (_UP, _LEFT):
             walk.key_callback(code)
@@ -565,7 +588,9 @@ def test_walk_keys_re_anchor_the_pivot_after_a_zoom():
 def test_walk_keys_leave_a_tracking_cameras_pivot_alone():
     handle = _walk_handle(type=int(mujoco.mjtCamera.mjCAMERA_TRACKING), distance=8.0)
     WalkKeys(keys=False, pivot_radius=1.5, fly=True).apply(handle)
-    assert handle.cam.distance == pytest.approx(8.0)  # MuJoCo drives lookat; the radius is the framing
+    assert handle.cam.distance == pytest.approx(
+        8.0
+    )  # MuJoCo drives lookat; the radius is the framing
 
 
 def test_the_window_opens_in_mujocos_own_mouse_mode():
@@ -586,10 +611,14 @@ def test_f10_switches_into_flight_and_back_out_without_moving_the_view():
     with mock.patch("roqsim.viewer.time.monotonic", clock):
         walk.key_callback(KEY_F10)
         walk.apply(handle)
-        assert handle.cam.distance == pytest.approx(1.5)  # flight pulls the pivot in front of the eye
+        assert handle.cam.distance == pytest.approx(
+            1.5
+        )  # flight pulls the pivot in front of the eye
         clock.advance(0.25)
         _held_frame(walk, handle, _UP)
-        assert handle.cam.lookat[0] == pytest.approx(eye[0] + 1.5 + 0.5)  # ... and the arrows travel
+        assert handle.cam.lookat[0] == pytest.approx(
+            eye[0] + 1.5 + 0.5
+        )  # ... and the arrows travel
 
         flown = np.array(handle.cam.lookat) - 1.5 * view_forward(0.0, 0.0)
         clock.advance(1.0)  # past the debounce, so this is a second switch and not a repeat
@@ -655,19 +684,21 @@ def test_the_mode_is_shown_in_the_window_and_taken_back_down():
     # sit in every screenshot, so the notice announces the mode and then clears itself.
     texts, cleared = [], []
     handle = _walk_handle()
-    handle.set_texts = lambda t: texts.append(t)
+    # The overlay is written a slot at a time, so a payload is a list of them; the notice is the one
+    # slot up here, and its text2 is what the window shows on the right.
+    handle.set_texts = lambda t: texts.append(t[-1][-1])
     handle.clear_texts = lambda: cleared.append(True)
     walk, clock = WalkKeys(keys=False), _Clock()
     with mock.patch("roqsim.viewer.time.monotonic", clock):
         walk.apply(handle)  # the opening notice: F10 is not a key anyone guesses
-        assert len(texts) == 1 and "F10" in texts[0][-1]
+        assert len(texts) == 1 and "F10" in texts[0]
         clock.advance(10.0)
         walk.apply(handle)
         assert cleared == [True]
 
         walk.key_callback(KEY_F10)
         walk.apply(handle)
-        assert len(texts) == 2 and "fly" in texts[1][-1]
+        assert len(texts) == 2 and "fly" in texts[1]
 
 
 def test_a_window_without_the_overlay_api_still_navigates():
@@ -681,3 +712,133 @@ def test_a_window_without_the_overlay_api_still_navigates():
         clock.advance(0.25)
         _held_frame(walk, handle, _UP)
     assert handle.cam.lookat[0] == pytest.approx(0.5)
+
+
+# -- the F1 key list ------------------------------------------------------------------------------
+
+
+def _help_handle():
+    """A stand-in window recording the overlay it is handed, one payload per change."""
+    handle = _walk_handle()
+    handle.payloads = []
+    handle.set_texts = handle.payloads.append
+    handle.clear_texts = lambda: handle.payloads.append([])
+    return handle
+
+
+def _last(handle):
+    """The text of the last payload, both columns of every slot run together."""
+    return " ".join(part for entry in handle.payloads[-1] for part in entry[2:])
+
+
+def _press_f1(helper, handle, clock=None):
+    helper.key_callback(key_catalogue.KEY_F1)
+    if clock is not None:
+        clock.advance(key_catalogue.DEBOUNCE_S * 2)  # past the auto-repeat guard
+    helper.apply(handle)
+
+
+def _helper(*bindings):
+    return HelpKeys(bindings=bindings or key_catalogue.CATALOGUE)
+
+
+def test_f1_lists_the_keys_and_leaves_the_list_up():
+    # Unlike the mode notice, which clears itself: a list you cannot keep open is one you cannot fly
+    # with. Simulate's own help is on screen at the same time, in the other corner.
+    handle, clock = _help_handle(), _Clock()
+    helper = _helper()
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        _press_f1(helper, handle, clock)
+        assert "F10" in _last(handle) and "mouse / fly" in _last(handle)
+        clock.advance(10.0)
+        helper.apply(handle)
+    assert "F10" in _last(handle), "the list took itself down"
+
+
+def test_a_second_f1_takes_the_list_down():
+    handle, clock = _help_handle(), _Clock()
+    helper = _helper()
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        _press_f1(helper, handle, clock)
+        _press_f1(helper, handle, clock)
+    assert handle.payloads[-1] == []
+
+
+def test_a_held_f1_is_one_toggle():
+    # Auto-repeat delivers several presses from one held key; the list must not strobe.
+    handle, clock = _help_handle(), _Clock()
+    helper = _helper()
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        for _ in range(5):
+            helper.key_callback(key_catalogue.KEY_F1)
+            clock.advance(0.2)
+        helper.apply(handle)
+    assert "F10" in _last(handle)
+
+
+def test_the_list_and_the_mode_notice_are_on_screen_together():
+    # set_texts replaces the whole overlay, so this is the regression the slot channel exists for:
+    # switching camera mode with the list open must not wipe the list explaining the switch.
+    handle, clock = _help_handle(), _Clock()
+    helper, walk = _helper(), WalkKeys(keys=False)
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        _press_f1(helper, handle, clock)
+        walk.apply(handle)  # the opening mode notice
+    shown = _last(handle)
+    assert "F10" in shown and "mouse  ·  F10 to fly" in shown
+
+
+def test_f1_reaches_the_callers_key_callback_too():
+    seen = []
+    HelpKeys(bindings=key_catalogue.CATALOGUE, chain=seen.append).key_callback(key_catalogue.KEY_F1)
+    assert seen == [key_catalogue.KEY_F1]  # the chain runs first, so no handler downstream loses it
+
+
+def test_the_list_names_only_the_keys_this_run_has():
+    # A scenario-adapter window has no recorder and no view-save; a run from an MJCF scene has no
+    # world YAML to save into. Neither may advertise a key it does not have.
+    handle, clock = _help_handle(), _Clock()
+    helper = _helper(*key_catalogue.CAMERA, key_catalogue.SHOW_HELP)
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        _press_f1(helper, handle, clock)
+    shown = _last(handle)
+    assert "F10" in shown and "F1" in shown
+    assert "F9" not in shown and "F8" not in shown
+
+
+def test_a_window_without_the_overlay_api_still_takes_the_key():
+    # Cosmetic and best-effort, like the splash and the notice.
+    handle, clock = _help_handle(), _Clock()
+    handle.set_texts = mock.Mock(side_effect=AttributeError("no overlay here"))
+    helper = _helper()
+    with mock.patch("roqsim.viewer.time.monotonic", clock):
+        _press_f1(helper, handle, clock)
+    assert helper.shown  # the state is sane, so a second press still turns it off
+
+
+def test_a_window_lists_the_camera_keys_it_wired_up():
+    """What ``launch_viewer`` assembles, not what a test hands in.
+
+    The keys the window's own navigation mode is *for* went missing from the list once, because the
+    handler that implements them declared nothing and every test until this one passed its bindings
+    in by hand. The merge is the thing to pin: whatever a run wires, the list names.
+    """
+    listed = key_catalogue.merge(HelpKeys, WalkKeys())
+    labels = [b.label for b in listed]
+    assert "F10" in labels and "Up/Down" in labels and "Shift" in labels
+    assert "F1" in labels
+
+
+def test_a_window_with_a_recorder_and_a_saver_lists_those_too():
+    from roqsim.capture import RecordToggle
+    from roqsim.view_save import SaveViewKey
+
+    listed = key_catalogue.merge(HelpKeys, WalkKeys(), RecordToggle(), SaveViewKey())
+    assert {"F10", "F9", "F8", "F1"} <= {b.label for b in listed}
+
+
+def test_a_run_with_nowhere_to_save_a_view_does_not_offer_the_key():
+    from roqsim.view_save import SaveViewKey
+
+    listed = key_catalogue.merge(HelpKeys, WalkKeys(), SaveViewKey(savable=False))
+    assert "F8" not in {b.label for b in listed}

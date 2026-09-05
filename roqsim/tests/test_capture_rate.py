@@ -258,7 +258,6 @@ def test_a_rate_is_hashable_and_comparable():
 # -- the F9 toggle ---------------------------------------------------------------------------------
 
 
-
 def test_the_callback_only_sets_a_flag(monkeypatch):
     """UI thread work must be a debounce and a counter -- no sampling, no file I/O, no rendering.
 
@@ -310,12 +309,26 @@ def test_other_keys_are_ignored_and_chained():
 
 def test_f9_is_not_one_of_simulates_own_keys():
     """F1-F7 are Simulate's; the arrows/PageUp/Shift are WalkKeys'; letters are visualization flags."""
+    from roqsim import keys
+
     assert RecordToggle.KEY_F9 == 298  # GLFW_KEY_F1 == 290
-    simulate_function_keys = range(290, 297)  # F1..F7
-    assert RecordToggle.KEY_F9 not in simulate_function_keys
+    assert RecordToggle.KEY_F9 not in keys.SIMULATE_FUNCTION_KEYS
     from roqsim.viewer import _WALK_KEYCODES
 
     assert RecordToggle.KEY_F9 not in _WALK_KEYCODES
+
+
+def test_f1_is_the_one_key_shared_with_simulate_on_purpose():
+    """The exception to the rule above, so nobody later reads it as a break of it.
+
+    roqsim cannot take a key away from Simulate -- the passive viewer's callback runs in addition to
+    its handling -- so a shared key means both act. F1 is the only one worth that: it opens Simulate's
+    help and roqsim's key list together, which is what a person pressing it wanted from either.
+    """
+    from roqsim import keys
+
+    shared = [b for b in keys.CATALOGUE if set(b.codes) & keys.SIMULATE_FUNCTION_KEYS]
+    assert shared == [keys.SHOW_HELP]
 
 
 # -- numbered takes --------------------------------------------------------------------------------
