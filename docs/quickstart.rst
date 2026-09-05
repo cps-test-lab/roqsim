@@ -55,6 +55,14 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer h
    the same process as MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with
    ``undefined symbol: eglQueryString``. If you see that, clear it with ``export -n LD_PRELOAD``.
 
+.. _viewer-keys:
+
+Keys in the window
+~~~~~~~~~~~~~~~~~~
+
+**F1** lists the keys roqsim adds to the window, and leaves the list up until F1 comes again. MuJoCo's
+own help opens with it, in the opposite corner, listing Simulate's keys rather than these.
+
 Moving the camera
 ~~~~~~~~~~~~~~~~~
 
@@ -243,6 +251,13 @@ from any camera, at any resolution, as a still or a video — without re-running
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
 same way: one line rewritten in place at a terminal, and a handful of lines when the output is a log.
+
+**F9 records a take**, in any windowed run — with or without ``--record``. Press it once to start
+and again to stop; the window title carries ``[REC]`` while one is running, and takes are numbered
+(``run.npz``, ``run-2.npz``, …) beside the ``--record`` path, or beside the default when the run was
+started without one. It is the way to capture the interesting minute of a long run rather than all
+of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
+same way.
 
 ``--capture-fps`` is **samples per simulated second**, so a recording plays back at 1× sim time
 whatever pacing the run used. Samples can only be taken on a physics step, so the rate is snapped onto
