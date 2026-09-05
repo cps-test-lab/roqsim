@@ -647,7 +647,9 @@ def run(
     # Built before the window, because the window opens on an empty placeholder *before* the world
     # compiles -- so the key callback has to exist first. Both are pointed at their targets below: the
     # toggle at the recorder, the saver at the world YAML this run came out of.
-    world_yaml = world_yaml_path(target)
+    # Windowed only, both of them: the hotkeys are the window's, and the world YAML is resolved here
+    # only to answer whether F8 has anywhere to save to. A headless run has neither question.
+    world_yaml = world_yaml_path(target) if not headless else None
     toggle, saver = _hotkeys(can_save_view=world_yaml is not None) if not headless else (None, None)
 
     loading_view, open_s = (None, 0.0)
