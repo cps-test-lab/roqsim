@@ -27,7 +27,7 @@ ENTRY_POINT_GROUP = "roqsim_nav.avoidance"
 #: The model a world gets without asking for one. Pure Python, so it needs no compiler and every
 #: install has working avoidance -- which is the whole reason it, rather than the better `orca`, is
 #: the default. A navigator names another with `avoidance: {model: ...}`.
-DEFAULT_MODEL = "sidestep"
+DEFAULT_MODEL = "give_way"
 
 #: Where the world's shared model lives. Shared by necessity rather than by preference: agents can
 #: only avoid each other inside one solver, so a world has exactly one.

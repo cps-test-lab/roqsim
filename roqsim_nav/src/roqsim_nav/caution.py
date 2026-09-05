@@ -136,6 +136,7 @@ class CautionProbe:
         self._radius: float | None = None
         self._clear_since: float | None = None
         self._blocked_since: float | None = None
+        self._was_blocked = False
         #: Last verdict, for status reporting and tests.
         self.blocked = False
         #: World xy of the NEAREST blocking hit of the last :meth:`check`, or ``None``. What
@@ -201,6 +202,7 @@ class CautionProbe:
     def reset(self) -> None:
         self._clear_since = None
         self._blocked_since = None
+        self._was_blocked = False
         self.blocked = False
         self.blocker_xy = None
         self.blocker_points = []
@@ -238,6 +240,7 @@ class CautionProbe:
             self._clear_since = None
             if self._blocked_since is None:
                 self._blocked_since = now
+            self._was_blocked = True
             self.blocked = True
             self.blocker_xy = nearest[1]
             self.blocker_points = points
@@ -245,7 +248,13 @@ class CautionProbe:
         self.blocker_xy = None
         self.blocker_points = []
         if self._clear_since is None:
+            # Never blocked, so there is nothing to settle after. Without this a mover holds for
+            # `clear_time` at the start of every episode -- the timer would start from a cold
+            # `None` and read as "the way only just cleared" when in fact it was never shut.
             self._clear_since = now
+            if not self._was_blocked:
+                self.blocked = False
+                return False
         self.blocked = (now - self._clear_since) < self.clear_time
         if not self.blocked:
             # Only once the way is open AND has stayed open: a clear ray during the settle is not

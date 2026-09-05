@@ -13,11 +13,11 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from roqsim_nav.avoidance.sidestep import SidestepModel
+from roqsim_nav.avoidance.give_way import GiveWayModel
 
 
-def _model(**params) -> SidestepModel:
-    model = SidestepModel()
+def _model(**params) -> GiveWayModel:
+    model = GiveWayModel()
     model.configure(None, params)
     return model
 
@@ -41,7 +41,7 @@ def test_a_head_on_pair_is_pushed_to_opposite_sides():
     model = _model()
     a, b = _pair(model)
     lat_a, lat_b = float(model.result(a)[1]), float(model.result(b)[1])
-    assert lat_a != pytest.approx(0.0, abs=1e-6), "the encounter produced no sidestep at all"
+    assert lat_a != pytest.approx(0.0, abs=1e-6), "the encounter produced no course change at all"
     assert lat_a * lat_b < 0.0, "both were pushed the same way in the world -- they still collide"
 
 
@@ -58,7 +58,7 @@ def test_an_unknown_side_is_refused():
         _model(side="middle")
 
 
-def test_speed_is_preserved_by_the_sidestep():
+def test_speed_is_preserved_by_the_course_change():
     """It changes where a mover is going, not how fast: the follower assumes a constant speed, and
     a push that added to it would read as accelerating out of a conflict."""
     model = _model()

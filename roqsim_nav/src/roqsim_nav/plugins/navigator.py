@@ -230,7 +230,7 @@ class NavigatorPlugin(Plugin):
                     f"'module:Class' / 'file.py:Class' reference"
                 )
         elif isinstance(spec, dict):
-            ref = str(spec.get("model", "sidestep"))
+            ref = str(spec.get("model", "give_way"))
             try:
                 cls = resolve_model(ref, self.base_dir)
             except RegistryError as exc:

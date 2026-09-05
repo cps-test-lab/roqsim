@@ -39,7 +39,7 @@ test = ["pytest>=7.0"]
 # The DISTRIBUTION is `pyrvo2`; the module it installs is `rvo2`. Naming it `rvo2` here made pip
 # resolve metadata for one project against a requirement for another and refuse the install
 # outright, so the extra could not be installed at all -- which is worth knowing, because it is the
-# reason `sidestep` above is the default rather than a fallback.
+# reason `give_way` above is the default rather than a fallback.
 #
 # It also needs its build dependency present, and pip's build isolation hides one that is merely
 # installed. An extra cannot express that, so the install is two commands:
@@ -63,7 +63,7 @@ navigator = "roqsim_nav.plugins.navigator:NavigatorPlugin"
 [project.entry-points."roqsim_nav.avoidance"]
 # The default, and pure Python: a world gets working avoidance from `pip install roqsim_nav`, with
 # no compiler. `orca` is the better model where the encounter itself is the experiment.
-sidestep = "roqsim_nav.avoidance.sidestep:SidestepModel"
+give_way = "roqsim_nav.avoidance.give_way:GiveWayModel"
 orca = "roqsim_nav.avoidance.orca:OrcaModel"
 
 [project.entry-points."roqsim_nav.outputs"]

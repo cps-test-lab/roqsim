@@ -30,7 +30,7 @@
 #   roqsim sim roqsim_nav:nav_opponents --ros           # the movers are on the ROS graph
 #   ros2 launch roqsim_nav2_example nav2_turtlebot.launch.py world:=<this file>
 #
-# Avoidance is named per mover -- `none` (the default) or a model. `sidestep` is pure Python and
+# Avoidance is named per mover -- `none` (the default) or a model. `give_way` is pure Python and
 # needs nothing to build; `orca` is better and reciprocal, once you have the extra:
 #
 #   pip install Cython
@@ -54,7 +54,7 @@ sim:
   pacing: realtime
   # Far enough back and steep enough to hold the whole room: every lane below is somewhere in this
   # frame, which is the point of a demo you are meant to watch rather than measure.
-  view: {lookat: [0.0, 0.0, 0.0], distance: 16.0, azimuth: 90.0, elevation: -72.0}
+  view: {lookat: [0.0, 0.0, 0.0], distance: 12.504, azimuth: 90.0, elevation: -58.9}
 
 components:
   # -- opponents -----------------------------------------------------------------------------------
@@ -63,16 +63,16 @@ components:
   # probe unless it is asked for, because turning one on by default would change how every existing
   # walker behaves. So this one is given a navigator of its own with `traffic: respect`, and it stops
   # for the traffic instead of walking through it. Worth knowing before putting a walker near a robot.
-  - walker: {walker: MaleVisitorWalk, pos: [-4.2, 2.0]}
+  - walker: {walker: MaleVisitorWalk, pos: [-4.3, 3.5]}
     name: visitor
     components:
       - navigator:
           output: walker
           speed: 1.1
-          goals: [[-4.2, -4.2], [1.5, -4.2], [-4.2, 2.0]]
+          goals: [[-4.3, -1.0], [-4.3, 3.5]]
           loop: true
           traffic: respect     # look ahead and stop; a walker's default is `ignore`
-          avoidance: sidestep  # and gives way; `none` (the default) looks but never yields
+          avoidance: give_way  # and gives way; `none` (the default) looks but never yields
           caution: {lookahead: 1.2, width: 0.8, clear_time: 0.5}
 
   # A robot and a walker, five metres apart, each driving to where the other started. Nothing plans
@@ -81,7 +81,7 @@ components:
   - spawn_robot: {model: turtlebot4, prefix: 'runner_', namespace: runner, pos: [-2.5, 4.0]}
     name: runner
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: give_way}
 
   - walker: {walker: MaleVisitorWalk, pos: [2.5, 4.0]}
     name: pedestrian
@@ -91,7 +91,7 @@ components:
           speed: 0.9
           goals: [[-2.5, 4.0]]
           traffic: respect
-          avoidance: sidestep
+          avoidance: give_way
 
   # Two omnidirectional bases, head-on in the middle of the room, both with full avoidance. An
   # omni base can move sideways without turning first, so its way round an encounter is not a
@@ -100,12 +100,12 @@ components:
   - spawn_robot: {model: mpo_500, prefix: 'omni_a_', namespace: omni_a, pos: [-2.5, 2.2]}
     name: omni_a
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 2.2]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[2.5, 2.2]], avoidance: give_way}
 
   - spawn_robot: {model: mpo_500, prefix: 'omni_b_', namespace: omni_b, pos: [2.5, 2.2], yaw: 3.1416}
     name: omni_b
     components:
-      - navigator: {speed: 0.4, goals: [[-2.5, 2.2]], avoidance: sidestep}
+      - navigator: {speed: 0.4, goals: [[-2.5, 2.2]], avoidance: give_way}
 
   # The same encounter between two robots, and the asymmetry is the point: both LOOK (traffic:
   # respect), only one of them YIELDS. `stopper` has no avoidance, so it drives until its caution
@@ -115,12 +115,22 @@ components:
   - spawn_robot: {model: turtlebot4, prefix: 'stopper_', namespace: stopper, pos: [-2.5, 0.4]}
     name: stopper
     components:
-      - navigator: {speed: 0.35, goals: [[2.5, 0.4]], avoidance: none, traffic: respect}
+      - navigator:
+          speed: 0.35
+          goals: [[2.5, 0.4]]
+          avoidance: none
+          traffic: respect
+          # A short probe, because this encounter is about where it stops. `lookahead` is clear
+          # corridor measured from the front of the mover, and the 1.2 m default is sized for
+          # something faster and larger than a TurtleBot 4 ambling at 0.35 m/s -- at that speed it
+          # halts a metre and a half short, which reads as stopping for nothing. 0.6 m leaves it
+          # about a hand's breadth from the other robot, with the same zero contacts.
+          caution: {lookahead: 0.6}
 
   - spawn_robot: {model: turtlebot4, prefix: 'dodger_', namespace: dodger, pos: [2.5, 0.4], yaw: 3.1416}
     name: dodger
     components:
-      - navigator: {speed: 0.35, goals: [[-2.5, 0.4]], avoidance: sidestep}
+      - navigator: {speed: 0.35, goals: [[-2.5, 0.4]], avoidance: give_way}
 
   # -- an obstacle the planner could not have known about ------------------------------------------
   # `explorer` is given a goal on the far side of a U it has no idea is there, and has to get itself

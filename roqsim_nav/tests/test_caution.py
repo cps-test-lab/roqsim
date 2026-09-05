@@ -451,3 +451,21 @@ def test_a_momentary_gap_does_not_re_arm_the_yield_window(tmp_path):
     probe._blocked_since = 0.0
     probe._clear_since = 2.0  # rays came up clear, but the settle has not elapsed
     assert probe.blocked_for(3.0) == pytest.approx(3.0), "the counter was reset by a flicker"
+
+
+def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
+    """`clear_time` settles a way that has REOPENED, so it must not run from a cold start.
+
+    Otherwise every mover holds for `clear_time` at the beginning of every episode, having never
+    met anything -- the timer starts from an unset value and reads as "the way only just cleared".
+    """
+    engine = Engine(_world(tmp_path))  # nothing in the way at all
+    engine.setup()
+    engine.reset()
+    try:
+        probe = _navigator(engine)._caution
+        for _ in range(int(1.0 / engine.ctx.dt)):
+            engine.step()
+            assert not probe.blocked, "it held despite never having been blocked"
+    finally:
+        engine.shutdown()

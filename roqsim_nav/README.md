@@ -80,7 +80,7 @@ not a costmap — a handful of discs, stamped onto a copy of the raster at plan 
 
 `recovery` is a third knob, for a mover that is wedged rather than merely blocked: after
 `stuck_time` without progress it backs away from the blocker and re-plans. **Nothing in the
-navigator's path is random** — sidestep, caution, recovery and the planner are all deterministic
+navigator's path is random** — give_way, caution, recovery and the planner are all deterministic
 functions of the world, and the only draw anywhere here is a walker's dwell at a waypoint. Two runs
 of the same world are identical to the bit. What an opponent's path is *not* independent of is the
 robot under test: any mover with `traffic: respect` stops for it and any mover with an `avoidance`

@@ -1,4 +1,4 @@
-"""Reciprocal sidestepping: enough to get two movers past each other, with no compiler.
+"""Reciprocal give-way: enough to get two movers past each other, with no compiler.
 
 The default, and it exists because the alternative was not one. ORCA is the better model and it
 needs ``rvo2``, which publishes no wheel and is built from source -- so a plain ``pip install
@@ -11,14 +11,22 @@ What it does, per agent, per solve:
 * for each, extrapolate the straight-line closest approach at the current velocities, and treat it
   as a conflict when that approach falls inside both radii plus ``margin``, within ``horizon``
   seconds;
-* push the preferred velocity **sideways**, more strongly the sooner and the tighter the conflict.
+* alter course to one side, more strongly the sooner and the tighter the conflict.
+
+**What comes out is a course change, not a lateral step.** The lateral push is an intermediate: the
+result is renormalised back to the commanded speed, so the model emits the same speed on a rotated
+heading and never asks a body to translate sideways. That matters because the avoidance layer is
+shared by everything that moves -- a wheeled base cannot strafe, and a model that told it to would
+be unusable on the majority of what this package drives. How the course change is realised is the
+embodiment's business: a differential base turns and drives, a car steers, a walker or an
+omnidirectional base may strafe if it likes.
 
 Two properties are what make it work rather than merely move things about:
 
-**It picks a side by a rule, not by chance.** Both agents steer to their own right, so a head-on pair
-resolves into a pass rather than into the mirror-image dance two greedy avoiders fall into. The rule
-is the one road traffic and warehouse AGVs use, and it is the whole reason a symmetric encounter has
-an asymmetric outcome. ``side: left`` mirrors it for a left-hand-traffic world; every agent in a
+**It picks a side by a rule, not by chance.** Both agents give way to their own right, so a head-on
+pair resolves into a pass rather than into the mirror-image dance two greedy avoiders fall into. The
+rule is the one road traffic and warehouse AGVs use, and it is the whole reason a symmetric encounter
+has an asymmetric outcome. ``side: left`` mirrors it for a left-hand-traffic world; every agent in a
 world must agree, which is why it is set once on the model rather than per agent.
 
 **It is deterministic.** No sampling, no state carried between solves, no iteration order
@@ -27,7 +35,7 @@ dependence -- the same encounter replays identically, which is the point of an o
 What it is not: it does not reason about who yields to whom, it cannot squeeze through a gap it does
 not fit, and it will not resolve a crowd the way a proper velocity-obstacle solver does. It is a
 lower bound on useful, and ``orca`` is there when the encounter is the experiment rather than the
-traffic around it. The forward caution probe still backs it up: sidestepping shapes a velocity, and
+traffic around it. The forward caution probe still backs it up: giving way shapes a velocity, and
 stopping is what happens when shaping is not enough.
 """
 
@@ -41,8 +49,8 @@ from . import NO_AGENT, AvoidanceModel
 _STILL = 1e-6
 
 
-class SidestepModel(AvoidanceModel):
-    """Deterministic reciprocal sidestepping, in pure numpy."""
+class GiveWayModel(AvoidanceModel):
+    """Deterministic reciprocal give-way, in pure numpy."""
 
     params_schema = ("neighbor_dist", "horizon", "margin", "strength", "side")
 
@@ -84,7 +92,7 @@ class SidestepModel(AvoidanceModel):
         """Walls are the planner's business here.
 
         Deliberately ignored rather than approximated: this model shapes a velocity around *movers*,
-        and a sidestep that pushed an agent into a wall the planner had carefully routed around
+        and a course change that pushed an agent into a wall the planner had carefully routed around
         would be worse than none. The caution probe stops for anything this does not handle.
         """
 
@@ -116,7 +124,9 @@ class SidestepModel(AvoidanceModel):
                 self._result[aid] = pref
                 continue
             shaped = pref + push * speed
-            # Keep the commanded SPEED: sidestepping changes where the mover is going, not how fast.
+            # Keep the commanded SPEED: giving way changes where the mover is going, not how fast.
+            # This is also what makes the result embodiment-neutral -- same speed, rotated heading,
+            # which every base can execute, rather than a sideways translation only some can.
             # Letting the push add speed would make an agent accelerate out of a conflict, which
             # reads as panic and breaks the constant-speed assumption the follower is built on.
             norm = float(np.linalg.norm(shaped))
@@ -144,7 +154,7 @@ class SidestepModel(AvoidanceModel):
         clearance = me["radius"] + they["radius"] + self.margin
         if miss >= clearance:
             return np.zeros(2)
-        # Steer to our own right (or left), consistently: both sides of a head-on encounter then
+        # Give way to our own right (or left), consistently: both sides of a head-on encounter then
         # choose opposite directions in the world and the pair parts, where a "steer away from them"
         # rule leaves them mirroring each other.
         heading = pref / float(np.linalg.norm(pref))
