@@ -396,7 +396,7 @@ class SimConfig:
     @property
     def name(self) -> str | None:
         """Display name for the viewer window (``Roqsim: <name>``); ``None`` keeps MuJoCo's
-        model-derived name. Cosmetic, windowed-only (see :func:`roqsim.window_title.retitle_window_async`)."""
+        model-derived name. Cosmetic, windowed-only (see :func:`roqsim.window_branding.brand_window_async`)."""
         n = self.sim.get("name")
         return None if n is None else str(n)
 
