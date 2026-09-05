@@ -56,8 +56,19 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
                             # With `yields=False` the FIRST mover opts out and the rest still name
                             # the model -- a world where nobody names one has no model at all, which
                             # is a different case and has its own test.
-                            "avoidance": ("none" if (not yields and i == 0) else avoidance),
-                            "traffic": "ignore",
+                            "avoidance": {
+                                "stop": False,
+                                **(
+                                    {"steer": "none"}
+                                    if (not yields and i == 0) or avoidance is None
+                                    else {
+                                        "steer": avoidance["model"],
+                                        "params": {
+                                            k: v for k, v in avoidance.items() if k != "model"
+                                        },
+                                    }
+                                ),
+                            },
                         }
                     }
                 ],

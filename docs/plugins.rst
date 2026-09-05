@@ -318,23 +318,39 @@ the route at load and holds the mover at its first point until something starts 
 own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
 scenario owns only its timing (``entity_navigate_start``).
 
-**Caution, and why it never re-routes.** The planner's grid holds static walls and nothing else, so
-each mover also looks ahead along the corridor it is about to occupy. What it sees is exactly the
-complement of the grid: a body with degrees of freedom, or a mocap body -- precisely what
-``wall_polygons`` refuses to rasterize. A wall at a corner is the planner's business and never
-caution's. The response is to **stop**, never to plan around: a stopped mover is still on its path
-and resumes on the leg it was on, while a re-routing one has quietly changed a trajectory the
-experiment was holding fixed. ``recovery`` is the separate, deliberate knob that *can* change a path
-mid-route (on by default, as it has always been for walkers); its draws come from ``ctx.rng_for``, so
-an opponent that recovers differently under a different ``sim.seed`` replays exactly under the same
-one -- controlled variability rather than noise.
+**One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
+three independent capabilities, each one question with one answer:
 
-**Avoidance is a second registry.** A world declares one model, once
-(``avoidance: {model: orca, ...}``), and every navigator in it shares that. Who yields is *derived,
-not configured*: an entity with a navigator is apparatus and gives way; an entity without one is the
-subject, and joins as a non-yielding agent whose state is overwritten from ground truth, so the
-others go round it and it is never pushed by them. ORCA is one implementation, behind the
-``[avoidance]`` extra; with no model declared, everyone simply executes what they wanted.
+.. code-block:: yaml
+
+   avoidance:
+     stop: true          # look ahead and hold until the way is clear      (default)
+     steer: give_way     # which shared model gives way for it, or `none`  (default: none)
+     reroute: false      # remember what stopped it and plan around it     (needs `stop`)
+     lookahead: 0.6      # ...and the probe's tuning, in the same block
+
+They are deliberately not a ladder. A walker steers without ever stopping -- which is how every
+existing pedestrian world behaves -- and an ordered scale from "ignore" to "reroute" cannot express
+that. Keeping them separate also means there is no combination table to learn.
+
+``stop`` is the forward probe. The planner's grid holds static walls and nothing else, so a mover
+also looks ahead along the corridor it is about to occupy, and what it sees is exactly the complement
+of the grid: a body with degrees of freedom, or a mocap body -- precisely what ``wall_polygons``
+refuses to rasterize. A wall at a corner is the planner's business and never the probe's. Holding is
+the default response, because a stopped mover is still on its path and resumes on the leg it was on,
+while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
+
+``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
+expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
+merely re-planned would return the same path and drive into the same obstacle for ever. It is
+deliberately not a costmap: a handful of discs, stamped onto a copy of the raster at plan time and
+nowhere else. ``recovery`` is separate again, for a mover that is wedged rather than merely blocked.
+
+``steer`` names the local model, resolved from the ``roqsim_nav.avoidance`` registry -- ORCA is one
+implementation, behind the ``[avoidance]`` extra. Every mover joins the model whether or not it
+steers, because opting out of yielding is not opting out of existing: a mover the others cannot see
+is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
+whose state is overwritten from ground truth, so the others go round it and it is never pushed.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory

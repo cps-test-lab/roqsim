@@ -1,6 +1,6 @@
 """Remembered blockages: the planner's only knowledge its grid does not have.
 
-The grid is static, so `on_blocked: replan` on its own would compute the identical path and drive
+The grid is static, so `avoidance.reroute` on its own would compute the identical path and drive
 into the same obstacle again. What makes it work is that a blockage is *remembered*, and what keeps
 it honest is that the memory *expires* -- a mover must not accumulate a private map of everything
 that ever got in its way.

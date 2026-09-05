@@ -86,22 +86,35 @@ _AUTO_ORDER = ("drive", "mocap")
 
 ROUTE_MODES = ("plan", "exact")
 
-#: What a mover does about traffic -- the things the planner's grid cannot contain, because they
-#: move: another robot, a pedestrian, a driven prop.
+#: The three things a mover can do about what its planner could not know about -- another robot, a
+#: pedestrian, a driven prop. They are **independent capabilities, not a ladder**, and each is one
+#: question with one answer:
 #:
-#: ``respect`` looks ahead and stops for them. ``ignore`` does not look, and drives on.
+#:   ``stop``     look ahead and hold until the way is clear.
+#:   ``steer``    which shared model gives way for it, or ``none`` to never deviate.
+#:   ``reroute``  remember what stopped it and plan around it. Needs ``stop`` to have something to
+#:                remember, and is the only one of the three that can change the planned path.
 #:
-#: Both are legitimate and the choice is the experiment's. An opponent that must be at the same
-#: place at the same time in every repetition should ignore traffic, because stopping for the robot
-#: under test makes its trajectory a function of that robot's behaviour. One sharing a corridor
-#: should respect it. Naming them is the point: "does not stop" is a decision, and leaving it as the
-#: absence of a probe made it look like an oversight -- which is exactly how a walker, whose default
-#: is ``ignore``, came to walk through a robot and flip it over.
+#: A ladder was the obvious shape and it does not fit: a walker steers without ever stopping, which
+#: is how every existing pedestrian world behaves, and an ordered scale cannot say that. Keeping the
+#: three separate also means there is no combination table to learn -- each key stands alone.
 #:
-#: A mover that ignores traffic is not thereby harmless to it. A mocap body has no degrees of
-#: freedom, so the solver treats it as immovable: it will shove anything free that it touches,
-#: however politely that thing stopped.
-TRAFFIC = ("respect", "ignore")
+#: Not stopping is a decision rather than an oversight. An opponent that must be in the same place
+#: at the same time in every repetition should not stop, because stopping for the robot under test
+#: makes its trajectory a function of that robot's behaviour. One sharing a corridor should. And a
+#: mover that does neither is not thereby harmless: a mocap body has no degrees of freedom, so the
+#: solver treats it as immovable and it shoves anything free it touches, however politely that thing
+#: stopped for it.
+AVOIDANCE_KEYS = ("steer", "stop", "reroute", "params")
+
+#: Keys that used to say this, and where each went. Refused by name rather than quietly ignored: a
+#: world that still spells it the old way is asking for behaviour it will not get.
+_RETIRED_KEYS = {
+    "traffic": "`traffic: respect` is `avoidance: {stop: true}` (the default); `traffic: ignore` "
+    "is `avoidance: {stop: false}`.",
+    "caution": "Its tuning keys (lookahead, width, rays, height, clear_time, ignore, ...) are now "
+    "keys of `avoidance:` directly, and `caution.on_blocked: replan` is `avoidance: {reroute: true}`.",
+}
 
 #: How the planned path is turned into motion.
 #:
@@ -121,6 +134,61 @@ TRAFFIC = ("respect", "ignore")
 #: written has no steering to constrain, so the simpler follower is already doing the best available
 #: thing. Reach for this when the embodiment has wheels, not by default.
 TRACKERS = ("waypoint", "pure_pursuit")
+
+
+def _validate_avoidance(config: dict, base_dir) -> list[str]:
+    """Check the `avoidance:` block: its three capabilities, its model, and the probe's tuning."""
+    spec = config.get("avoidance")
+    if spec is None:
+        return []
+    if not isinstance(spec, dict):
+        return [
+            "'avoidance' is a block, not a value. It carries three independent capabilities -- "
+            "`stop` (look ahead and hold), `steer` (which model gives way for this mover, or none) "
+            "and `reroute` (remember a blockage and plan around it) -- plus the probe's tuning. "
+            "For example: avoidance: {steer: give_way, stop: true, lookahead: 0.6}"
+        ]
+    errors = []
+    for key in ("stop", "reroute"):
+        if key in spec and not isinstance(spec[key], bool):
+            errors.append(f"'avoidance.{key}' must be true or false")
+    if spec.get("reroute") and not spec.get("stop", True):
+        errors.append(
+            "'avoidance.reroute' needs 'stop': a blockage is only ever discovered by looking ahead "
+            "and stopping for it, so there is nothing to plan around without it."
+        )
+    steer = spec.get("steer", "none")
+    if isinstance(steer, bool):
+        errors.append(
+            f"'avoidance.steer' names a model, not a yes/no -- there is more than one and 'yes' "
+            f"does not say which. Use 'none' or one of: "
+            f"{', '.join(avoidance_models()) or '(none registered)'}."
+        )
+    elif not isinstance(steer, str):
+        errors.append("'avoidance.steer' must be 'none' or a model name")
+    elif steer != "none":
+        try:
+            cls = resolve_model(steer, base_dir)
+        except RegistryError as exc:
+            errors.append(str(exc))
+        else:
+            schema = set(getattr(cls, "params_schema", ()) or ())
+            params = spec.get("params") or {}
+            unknown = sorted(set(params) - schema) if schema else []
+            if unknown:
+                errors.append(
+                    f"avoidance model {steer!r} does not accept {', '.join(unknown)}. It accepts: "
+                    f"{', '.join(sorted(schema))}. (A key left over from another model is refused "
+                    f"rather than ignored.)"
+                )
+    probe = {k: v for k, v in spec.items() if k not in AVOIDANCE_KEYS}
+    unknown = sorted(set(probe) - set(CautionProbe.KEYS))
+    if unknown:
+        errors.append(
+            f"'avoidance' does not accept {', '.join(unknown)}. Its keys are "
+            f"{', '.join(AVOIDANCE_KEYS)} plus the probe's: {', '.join(CautionProbe.KEYS)}."
+        )
+    return errors + CautionProbe.validate(probe)
 
 
 class NavigatorPlugin(Plugin):
@@ -213,61 +281,18 @@ class NavigatorPlugin(Plugin):
             if value is not None and float(value) <= 0.0:
                 errors.append(f"'{key}' must be > 0")
 
-        spec = config.get("avoidance", "none")
-        if isinstance(spec, bool):
-            # A bool says whether but not WHICH, and there is more than one model. Refused rather
-            # than mapped to a default, so a world states what it is actually using.
+        for gone, guidance in _RETIRED_KEYS.items():
+            if gone in config:
+                errors.append(f"'{gone}' has moved into the `avoidance:` block. {guidance}")
+        errors += _validate_avoidance(config, self.base_dir)
+        avoid_spec = config.get("avoidance")
+        avoid_spec = avoid_spec if isinstance(avoid_spec, dict) else {}
+        if avoid_spec.get("reroute") and config.get("route_mode") == "exact":
             errors.append(
-                f"'avoidance' names a model, not a yes/no: 'none', or one of "
-                f"{', '.join(avoidance_models()) or '(none registered)'}, or a mapping like "
-                f"{{model: orca, neighbor_dist: 4.0}}"
+                "'avoidance.reroute' cannot be used with 'route_mode: exact'. An exact route IS the "
+                "given polyline, so planning around something means not walking it; stopping is the "
+                "only response that keeps that promise."
             )
-        elif isinstance(spec, str):
-            if spec != "none" and spec not in avoidance_models() and ":" not in spec:
-                errors.append(
-                    f"unknown avoidance model {spec!r}: use 'none', one of "
-                    f"{', '.join(avoidance_models()) or '(none registered)'}, or a "
-                    f"'module:Class' / 'file.py:Class' reference"
-                )
-        elif isinstance(spec, dict):
-            ref = str(spec.get("model", "give_way"))
-            try:
-                cls = resolve_model(ref, self.base_dir)
-            except RegistryError as exc:
-                errors.append(str(exc))
-            else:
-                schema = getattr(cls, "params_schema", ())
-                unknown = sorted(set(spec) - {"model"} - set(schema)) if schema else []
-                if unknown:
-                    errors.append(
-                        f"avoidance model {ref!r} does not accept {', '.join(unknown)}. It accepts: "
-                        f"{', '.join(schema)}. (A key left over from another model is refused rather "
-                        f"than ignored.)"
-                    )
-        else:
-            errors.append("'avoidance' must be 'none', a model name, or a mapping naming one")
-
-        traffic = config.get("traffic", "respect")
-        if traffic not in TRAFFIC:
-            errors.append(f"'traffic' must be one of: {', '.join(TRAFFIC)}")
-        if "enabled" in (config.get("caution") or {}):
-            errors.append(
-                "'caution.enabled' has moved to 'traffic': respect (look ahead and stop) or ignore "
-                "(drive on). The `caution:` block is the tuning for how it looks, not whether."
-            )
-        errors += CautionProbe.validate(config.get("caution"))
-        if (config.get("caution") or {}).get("on_blocked") == "replan":
-            if config.get("route_mode", "plan") == "exact":
-                errors.append(
-                    "'caution.on_blocked: replan' cannot be used with 'route_mode: exact'. An exact "
-                    "route IS the given polyline, so routing around something means not walking it; "
-                    "stopping is the only response that keeps the promise. Use on_blocked: stop."
-                )
-            if config.get("traffic", "respect") != "respect":
-                errors.append(
-                    "'caution.on_blocked: replan' needs 'traffic: respect'. With traffic: ignore "
-                    "nothing looks ahead, so there is never a blockage to route around."
-                )
 
         if (config.get("recovery") or {}).get("enabled") and mode == "exact":
             # Backing up and re-planning is, by definition, leaving the path that was given.
@@ -337,12 +362,14 @@ class NavigatorPlugin(Plugin):
             ),
         )
 
-        # `avoidance:` is 'none' (the default -- do not give way), the NAME of a model, or a
-        # mapping naming one with its parameters. There is no world-level entry to declare: the
-        # model appears when a mover asks to yield, and the first to ask fixes it for the world.
-        spec = cfg.get("avoidance", "none")
-        self._yields = spec != "none" and spec is not None
+        avoid = cfg.get("avoidance") or {}
+        # `avoidance.steer` names the model that gives way for this mover, or 'none' to never
+        # deviate. There is no world-level entry to declare: the model appears when a mover asks to
+        # be steered, and the first to ask fixes it for the world.
+        steer = str(avoid.get("steer", "none"))
+        self._yields = steer != "none"
         if self._yields:
+            spec = {"model": steer, **(avoid.get("params") or {})}
             # Created here, joined at reset. Configure order is deterministic and every configure
             # precedes every reset, so a mover that only opts OUT still finds the model at reset
             # time and can register as something the others must avoid.
@@ -350,8 +377,11 @@ class NavigatorPlugin(Plugin):
 
         self._caution = CautionProbe(
             {
-                **(cfg.get("caution") or {}),
-                "enabled": cfg.get("traffic", "respect") == "respect",
+                # The probe's tuning lives in the same block as the capabilities it serves, so it is
+                # passed through whole; the navigator has already refused any key neither reads.
+                **{k: v for k, v in avoid.items() if k not in AVOIDANCE_KEYS},
+                "enabled": bool(avoid.get("stop", True)),
+                "reroute": bool(avoid.get("reroute", False)),
                 # The probe scans inside the same band the planner rasterizes, so "what counts as an
                 # obstacle" is declared once for this mover rather than twice.
                 "band": cfg.get("obstacle_height") or (0.1, 1.8),
@@ -565,11 +595,11 @@ class NavigatorPlugin(Plugin):
             # mover in a pocket needs it, because the way out is toward the obstacle beside it, so
             # every plan it makes is refused by this same probe until it has backed off.
             #
-            # Under `stop` the clock never runs at all, whatever is in the way. That mode's promise
-            # is that being blocked cannot change the path, and a recovery is a change of path --
-            # letting one fire after a while would turn "it stopped" into "it went round", which is
-            # the failure this whole layer exists to prevent. Re-routing is what `replan` is for.
-            if self._caution.on_blocked == "stop" or self._caution.yielding(ctx.sim_time):
+            # Without `reroute` the clock never runs at all, whatever is in the way: that mover's
+            # promise is that being blocked cannot change its path, and a recovery is a change of
+            # path -- letting one fire after a while would turn "it stopped" into "it went round",
+            # which is the failure this whole layer exists to prevent.
+            if not self._caution.reroute or self._caution.yielding(ctx.sim_time):
                 self._core.forget_progress()
             self._remember_blockage(ctx)
             # `hold`, not `stop`: time is passing and the mover is still in the scene, so an
@@ -581,9 +611,9 @@ class NavigatorPlugin(Plugin):
         self._output.emit(ctx, wanted, yaw, step_dt)
 
     def _remember_blockage(self, ctx) -> None:
-        """Under ``on_blocked: replan``, mark what stopped us and route around it.
+        """Under ``avoidance.reroute``, mark what stopped us and plan around it.
 
-        Only under `replan`: the default is to hold position and keep the path, because a mover that
+        Only when asked for: the default is to hold position and keep the path, because a mover that
         re-routes has changed the trajectory an experiment may have been holding fixed.
 
         Dropping ``path`` is what makes the mark take effect -- the behaviour tree re-plans whenever
@@ -591,7 +621,7 @@ class NavigatorPlugin(Plugin):
         tick; it leaves on the next one, along a route that goes round.
         """
         probe = self._caution
-        if probe.on_blocked != "replan" or not probe.blocker_points:
+        if not probe.reroute or not probe.blocker_points:
             return
         planner = self._core.planner
         if planner is None:

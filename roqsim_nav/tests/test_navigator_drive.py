@@ -18,7 +18,7 @@ from roqsim.engine import Engine
 
 
 def _world(*, model="turtlebot4", nav=None, pos=(-3.0, 0.0), extra=None):
-    navigator = {"speed": 0.25, "goals": [[3.0, 0.0]], "traffic": "ignore"}
+    navigator = {"speed": 0.25, "goals": [[3.0, 0.0]], "avoidance": {"stop": False}}
     navigator.update(nav or {})
     components = [
         {
@@ -241,7 +241,7 @@ def test_three_robots_navigate_at_once_and_stop_for_each_other():
                                 "navigator": {
                                     "speed": 0.4,
                                     "goals": [list(goal)],
-                                    "caution": {"lookahead": 0.8},
+                                    "avoidance": {"stop": True, "lookahead": 0.8},
                                 }
                             }
                         ],

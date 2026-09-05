@@ -1,4 +1,4 @@
-"""`caution.on_blocked: replan` -- routing around what the planner could not have known about.
+"""`avoidance.reroute` -- planning around what the planner could not have known about.
 
 The fixture is the whole argument. The room is open, so A* plans straight through the middle; the
 barrier across that line is a **mocap** body, which is exactly what the planner's grid refuses to
@@ -8,14 +8,14 @@ something about it.
 
 The two modes are tested against the same fixture on purpose, because the contrast IS the feature:
 
-* ``stop``    -- drives up to the barrier and holds. Never arrives, and that is correct: it is still
-                 on the path it was given, and an experiment holding that path fixed gets it.
-* ``replan``  -- remembers where it was stopped, plans around it, and arrives.
+* off -- drives up to the barrier and holds. Never arrives, and that is correct: it is still on the
+  path it was given, and an experiment holding that path fixed gets it.
+* on  -- remembers where it was stopped, plans around it, and arrives.
 
-Without the memory, ``replan`` would be indistinguishable from ``stop``: the grid is static, so
+Without the memory, ``reroute`` would be indistinguishable from stopping: the grid is static, so
 re-planning from the same place to the same goal returns the same path.
 
-What ``replan`` does NOT promise is clearance. A mark is a disc where the mover was stopped, not an
+What ``reroute`` does NOT promise is clearance. A mark is a disc where the mover was stopped, not an
 outline of what stopped it, so the route it finds rounds the *mark* and can still pass close to a
 long obstacle's far end. Caution is what keeps that from becoming a collision -- it is still looking
 ahead the whole way -- and these tests assert arrival and which side it went, never a gap.
@@ -46,7 +46,7 @@ START = (-2.5, 0.0)
 GOAL = (2.5, 0.0)
 
 
-def _world(tmp_path, on_blocked):
+def _world(tmp_path, reroute):
     (tmp_path / "crate.xml").write_text(CRATE)
     (tmp_path / "barrier.xml").write_text(BARRIER)
     return load_config_from_dict(
@@ -74,8 +74,8 @@ def _world(tmp_path, on_blocked):
                                 "speed": 0.8,
                                 "goals": [list(GOAL)],
                                 "obstacle_height": [0.05, 0.6],
-                                "caution": {
-                                    "on_blocked": on_blocked,
+                                "avoidance": {
+                                    "reroute": reroute,
                                     "lookahead": 0.8,
                                     "forget_after": 30.0,
                                     "blockage_radius": 0.6,
@@ -90,8 +90,8 @@ def _world(tmp_path, on_blocked):
     )
 
 
-def _run(tmp_path, on_blocked, steps=12000):
-    engine = Engine(_world(tmp_path, on_blocked))
+def _run(tmp_path, reroute, steps=12000):
+    engine = Engine(_world(tmp_path, reroute))
     engine.setup()
     engine.reset()
     model = engine.ctx.model
@@ -108,8 +108,8 @@ def _run(tmp_path, on_blocked, steps=12000):
     return np.array(track)
 
 
-def test_stop_holds_at_the_barrier_and_never_arrives(tmp_path):
-    track = _run(tmp_path, "stop")
+def test_without_reroute_it_holds_at_the_barrier_and_never_arrives(tmp_path):
+    track = _run(tmp_path, False)
     end = track[-1]
     assert end[0] < 0.0, "it should be held on the near side of the barrier"
     assert np.hypot(*(end - np.array(GOAL))) > 1.0, "stopping must not report itself past the wall"
@@ -117,8 +117,8 @@ def test_stop_holds_at_the_barrier_and_never_arrives(tmp_path):
     assert np.linalg.norm(track[-1] - track[-20]) < 0.05
 
 
-def test_replan_routes_around_the_barrier_and_arrives(tmp_path):
-    track = _run(tmp_path, "replan")
+def test_reroute_plans_around_the_barrier_and_arrives(tmp_path):
+    track = _run(tmp_path, True)
     assert np.hypot(*(track[-1] - np.array(GOAL))) < 0.4, "it should reach the goal the long way"
     # It rounds an END of the 3 m barrier rather than crossing anywhere near the middle. Not a
     # clearance assertion: marks are discs where the mover was stopped, so the route hugs the end it
@@ -127,13 +127,14 @@ def test_replan_routes_around_the_barrier_and_arrives(tmp_path):
     assert abs(crossing[1]) > 1.0, f"crossed the barrier's plane at y={crossing[1]:.2f}"
 
 
-def test_replan_is_refused_where_there_is_nothing_to_replan(tmp_path):
+def test_reroute_is_refused_where_there_is_nothing_to_plan(tmp_path):
     """An exact route IS the given polyline, so routing around something means not walking it."""
     from roqsim_nav.plugins.navigator import NavigatorPlugin
 
     def check(**extra):
-        cfg = {"speed": 1.0, "goals": [[1.0, 0.0]], "caution": {"on_blocked": "replan"}, **extra}
+        cfg = {"speed": 1.0, "goals": [[1.0, 0.0]], "avoidance": {"reroute": True}, **extra}
         return NavigatorPlugin(cfg).validate_config(cfg)
 
     assert any("route_mode: exact" in e for e in check(route_mode="exact"))
-    assert any("traffic: respect" in e for e in check(traffic="ignore"))
+    cfg = {"speed": 1.0, "goals": [[1.0, 0.0]], "avoidance": {"reroute": True, "stop": False}}
+    assert any("needs 'stop'" in e for e in NavigatorPlugin(cfg).validate_config(cfg))

@@ -34,15 +34,32 @@ Outputs resolve from the **`roqsim_nav.outputs`** entry-point group (or `module:
 this package branches on the name of one. The base geometry a `drive` output shapes its command for
 is declared by the drive itself (`RobotHandle.kinematics`), never keyed on a robot's name.
 
-## Local avoidance is a second registry
+## One block says how a mover behaves around what its plan did not contain
 
-ORCA is *an* answer, not the answer. A world declares one model, once:
+Three capabilities, each one question with one answer, and no combination table to learn:
 
 ```yaml
-- avoidance: {model: orca, neighbor_dist: 4.0, time_horizon: 3.0}
+avoidance:
+  stop: true            # look ahead and hold until the way is clear      (default)
+  steer: give_way       # which shared model gives way for it, or `none`  (default: none)
+  reroute: false        # remember what stopped it and plan around it     (needs `stop`)
+  lookahead: 0.6        # ...and the probe's tuning, in the same block
+  params: {neighbor_dist: 4.0}   # anything the chosen model accepts
 ```
 
-resolved from **`roqsim_nav.avoidance`** the same three ways. The interface is
+They are deliberately **not** a ladder. A walker steers without ever stopping — that is how every
+existing pedestrian world behaves — and an ordered scale from "ignore" to "reroute" cannot say it.
+Keeping them separate also means each key stands alone: `stop` is the forward probe, `steer` is the
+local model, `reroute` is the only one that can change the planned path.
+
+Not stopping is a decision rather than an oversight. An opponent that must be in the same place at
+the same time in every repetition should not stop, because stopping for the robot under test makes
+its trajectory a function of that robot's behaviour.
+
+## Local avoidance is a second registry
+
+ORCA is *an* answer, not the answer. `steer:` names one, resolved from
+**`roqsim_nav.avoidance`** the same three ways as a plugin. The interface is
 *preferred velocity in, achievable velocity out* — forces, accelerations and sampled rollouts stay
 inside an implementation. `submit`/`solve`/`result` are three phases rather than one call, so a
 batched model can compute every agent at once and the order plugins appear in a world cannot matter.
@@ -66,26 +83,25 @@ makes the path *be* the polyline: straight legs, no planner, for replaying a scr
 `autostart: false` plans at load and holds the mover until something starts it, so a world can own
 the trajectory while a scenario owns its timing (`entity_navigate_start`).
 
-**Caution stops by default; `on_blocked: replan` is how it re-routes.** The planner's grid holds
-static walls only, so each mover also looks ahead: a blocker is a body with DOFs or a mocap body —
-exactly the complement of what `wall_polygons` rasterizes, so a wall at a corner is never caution's
-problem. A stopped mover is still on its path; a re-routing one has changed a trajectory the
-experiment may have been holding fixed, which is why stopping is the default and re-routing is asked
-for.
+**`stop` holds; `reroute` is how it plans around.** The planner's grid holds static walls only, so
+each mover also looks ahead: a blocker is a body with DOFs or a mocap body — exactly the complement
+of what `wall_polygons` rasterizes, so a wall at a corner is never the probe's problem. A stopped
+mover is still on its path; a re-routing one has changed a trajectory the experiment may have been
+holding fixed, which is why stopping is the default and re-routing is asked for.
 
-`replan` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
+`reroute` remembers where it was stopped, as a disc that expires after `forget_after`, and plans
 around it. The memory is what makes it work at all: the grid is static, so a mover that only
 re-planned would compute the same path and drive into the same obstacle again. It is deliberately
 not a costmap — a handful of discs, stamped onto a copy of the raster at plan time and nowhere else.
 
-`recovery` is a third knob, for a mover that is wedged rather than merely blocked: after
+`recovery` is separate again, for a mover that is wedged rather than merely blocked: after
 `stuck_time` without progress it backs away from the blocker and re-plans. **Nothing in the
-navigator's path is random** — give_way, caution, recovery and the planner are all deterministic
+navigator's path is random** — give_way, the probe, recovery and the planner are all deterministic
 functions of the world, and the only draw anywhere here is a walker's dwell at a waypoint. Two runs
 of the same world are identical to the bit. What an opponent's path is *not* independent of is the
-robot under test: any mover with `traffic: respect` stops for it and any mover with an `avoidance`
-model steers around it. That coupling is the point of having opponents at all, and
-`traffic: ignore` + `avoidance: none` + `route_mode: exact` is the configuration for a mover that
+robot under test: a mover that stops will stop for it, and one that steers will steer around it.
+That coupling is the point of having opponents at all, and
+`avoidance: {stop: false, steer: none}` + `route_mode: exact` is the configuration for a mover that
 must ignore the subject entirely.
 
 `tracker: pure_pursuit` follows the path rather than chasing goal endpoints. It is **not** an

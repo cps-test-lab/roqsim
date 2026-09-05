@@ -13,6 +13,7 @@ these run with recovery ENABLED; asserting them with it off would test nothing.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import mujoco
@@ -56,7 +57,7 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half
         "obstacle_height": [0.05, 0.6],
         # ON: these tests are about the interaction, not about avoiding it.
         "recovery": {"enabled": True, "stuck_time": 0.5},
-        "caution": {"lookahead": 1.0, "clear_time": 0.0},
+        "avoidance": {"lookahead": 1.0, "clear_time": 0.0},
     }
     navigator.update(nav or {})
     components = [
@@ -188,7 +189,9 @@ def test_its_own_geoms_are_never_blockers(tmp_path):
 
 
 def test_an_ignored_entity_is_not_a_blocker(tmp_path):
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"ignore": ["blocker"]}}))
+    engine = Engine(
+        _world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"ignore": ["blocker"]}})
+    )
     engine.setup()
     engine.reset()
     try:
@@ -262,7 +265,7 @@ def test_it_resumes_on_the_same_path_when_the_way_clears(tmp_path):
 
 def test_caution_can_be_turned_off(tmp_path):
     """Off, it drives into the blocker -- which is the evidence that on, it was caution stopping it."""
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"stop": False}}))
     engine.setup()
     engine.reset()
     try:
@@ -279,7 +282,7 @@ def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
     The routing half is ``test_navigator_replan.py``. What matters here is that turning it on does
     not change what counts as a blocker -- so a world can switch modes without re-tuning the probe.
     """
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"caution": {"on_blocked": "replan"}}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"reroute": True}}))
     engine.setup()
     engine.reset()
     try:
@@ -296,14 +299,15 @@ def test_replan_reports_a_blocker_the_same_way_stop_does(tmp_path):
         engine.shutdown()
 
 
-def test_an_unknown_on_blocked_is_refused(tmp_path):
-    with pytest.raises(PluginError, match="on_blocked"):
-        Engine(_world(tmp_path, nav={"caution": {"on_blocked": "swerve"}}))
+def test_an_unknown_avoidance_key_is_refused(tmp_path):
+    """A typo must not read as a default. The block names what it accepts."""
+    with pytest.raises(PluginError, match="does not accept"):
+        Engine(_world(tmp_path, nav={"avoidance": {"on_blocked": "replan"}}))
 
 
 def test_ignoring_an_entity_that_does_not_exist_is_refused(tmp_path):
     """Raised at the first reset, not at setup: `ignore` may name an entity declared later."""
-    engine = Engine(_world(tmp_path, nav={"caution": {"ignore": ["ghost"]}}))
+    engine = Engine(_world(tmp_path, nav={"avoidance": {"ignore": ["ghost"]}}))
     engine.setup()
     with pytest.raises(RuntimeError, match="not an entity"):
         engine.reset()
@@ -331,7 +335,7 @@ def test_an_absent_obstacle_is_not_planned_around(tmp_path):
     """
     from roqsim import presence
 
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"stop": False}}))
     engine.setup()
     engine.reset()
     try:
@@ -345,7 +349,7 @@ def test_an_absent_obstacle_is_not_planned_around(tmp_path):
 
 def test_a_present_obstacle_is_still_planned_around(tmp_path):
     """The other half: deferring the grid must not stop it seeing what IS there."""
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": "ignore"}))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"stop": False}}))
     engine.setup()
     engine.reset()
     try:
@@ -370,8 +374,8 @@ def test_traffic_ignore_drives_on_and_respect_stops(tmp_path):
     sharing a corridor.
     """
     outcomes = {}
-    for policy in ("ignore", "respect"):
-        engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"traffic": policy}))
+    for policy, stop in (("ignore", False), ("respect", True)):
+        engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), nav={"avoidance": {"stop": stop}}))
         engine.setup()
         engine.reset()
         try:
@@ -383,15 +387,34 @@ def test_traffic_ignore_drives_on_and_respect_stops(tmp_path):
     assert outcomes["respect"] < -0.5, "it drove on although it was told to stop"
 
 
-def test_caution_enabled_is_refused_and_points_at_traffic(tmp_path):
-    """The old spelling must not be silently ignored -- it would read as "off" and drive on."""
-    with pytest.raises(PluginError, match="has moved to 'traffic'"):
-        Engine(_world(tmp_path, nav={"caution": {"enabled": False}}))
+@pytest.mark.parametrize(
+    ("old", "points_at"),
+    [
+        ({"traffic": "ignore"}, "avoidance: {stop: false}"),
+        ({"caution": {"lookahead": 1.0}}, "keys of `avoidance:` directly"),
+    ],
+)
+def test_a_retired_spelling_is_refused_and_says_where_it_went(tmp_path, old, points_at):
+    """Silently ignoring one would give the world the opposite of what it asked for."""
+    with pytest.raises(PluginError, match=re.escape(points_at)):
+        Engine(_world(tmp_path, nav=old))
 
 
-def test_an_unknown_traffic_policy_is_refused(tmp_path):
-    with pytest.raises(PluginError, match="'traffic' must be one of"):
-        Engine(_world(tmp_path, nav={"traffic": "swerve"}))
+def test_avoidance_as_a_bare_value_is_refused(tmp_path):
+    """It used to name a model; it is a block now, and the message has to say so."""
+    with pytest.raises(PluginError, match="is a block, not a value"):
+        Engine(_world(tmp_path, nav={"avoidance": "give_way"}))
+
+
+def test_steer_needs_a_model_name_not_a_yes_or_no(tmp_path):
+    with pytest.raises(PluginError, match="names a model, not a yes/no"):
+        Engine(_world(tmp_path, nav={"avoidance": {"steer": True}}))
+
+
+def test_reroute_without_stopping_is_refused(tmp_path):
+    """A blockage is only ever discovered by looking ahead and stopping for it."""
+    with pytest.raises(PluginError, match="reroute"):
+        Engine(_world(tmp_path, nav={"avoidance": {"reroute": True, "stop": False}}))
 
 
 def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
@@ -428,7 +451,7 @@ def test_a_block_stops_reading_as_traffic_after_yield_time():
     The navigator rebases its progress clock for as long as this says the block is traffic, so this
     is what decides whether recovery can ever engage. Without the second half a mover in a pocket
     can never get out, because leaving means driving toward the obstacle beside it and every plan it
-    makes is refused by this same probe. That `on_blocked: stop` ignores it entirely -- being blocked
+    makes is refused by this same probe. That a mover without `reroute` ignores it -- being blocked
     must not change the path in that mode -- is asserted end to end by
     `test_blocked_it_holds_its_path_instead_of_recovering`.
     """

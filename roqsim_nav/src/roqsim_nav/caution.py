@@ -15,10 +15,10 @@ The invariant, and it is the complement of the grid's:
 
 The response is to **stop** by default. A stopped mover is still on its path and resumes on the
 waypoint it was heading for; a re-routing one has quietly changed the trajectory an experiment was
-holding fixed, so which of the two you want is the experiment's call and ``on_blocked`` is where you
+holding fixed, so which of the two you want is the experiment's call and ``reroute`` is where you
 say it.
 
-``on_blocked: replan`` records the blocker's position and routes around it. What makes that more than
+``reroute`` records the blocker's position and plans around it. What makes that more than
 a re-plan of the same path is that the record **persists and decays**: the planner's grid is static,
 so a mover that merely re-planned would compute the identical path and drive back into the same
 obstacle. A remembered blockage is temporary on purpose -- an obstacle that moved on must stop being
@@ -45,9 +45,20 @@ from .control import STOPPED
 #: geom whose extent starts exactly at the band's edge is hit rather than grazed.
 _SCAN_MARGIN = 0.05
 
-#: Values ``on_blocked`` accepts. ``stop`` holds position and keeps the path; ``replan`` remembers
-#: the blocker for ``forget_after`` seconds and routes around it.
-ON_BLOCKED = ("stop", "replan")
+#: The probe's own tuning, as it appears in a navigator's ``avoidance:`` block. Named so the
+#: navigator can tell a probe setting from one of the three capabilities and refuse a typo in
+#: either, rather than silently accepting a key nothing reads.
+_TUNING = (
+    "lookahead",
+    "width",
+    "rays",
+    "height",
+    "clear_time",
+    "yield_time",
+    "forget_after",
+    "blockage_radius",
+    "ignore",
+)
 
 
 def subtree_geoms(model, body_id: int) -> set[int]:
@@ -90,7 +101,7 @@ class CautionProbe:
         cfg = config or {}
         # Set by the navigator from its `traffic:` policy, not written in a world directly.
         self.enabled = bool(cfg.get("enabled", True))
-        self.on_blocked = str(cfg.get("on_blocked", "stop"))
+        self.reroute = bool(cfg.get("reroute", False))
         self.lookahead = float(cfg.get("lookahead", 1.2))
         #: Width of the corridor swept ahead. It is deliberately NOT the mover's measured
         #: footprint: this width also decides how early the mover stops for traffic, so deriving it
@@ -149,19 +160,19 @@ class CautionProbe:
         #: far the thing that stopped it extends across the corridor.
         self.blocker_points: list = []
 
+    #: What this probe reads out of an ``avoidance:`` block, for the navigator to validate against.
+    KEYS = _TUNING
+
     @staticmethod
     def validate(cfg: dict | None) -> list[str]:
         cfg = cfg or {}
         errors = []
-        mode = cfg.get("on_blocked", "stop")
-        if mode not in ON_BLOCKED:
-            errors.append(f"'caution.on_blocked' must be one of: {', '.join(ON_BLOCKED)}")
         for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
             if key in cfg and float(cfg[key]) <= 0:
-                errors.append(f"'caution.{key}' must be > 0")
+                errors.append(f"'avoidance.{key}' must be > 0")
         for key in ("clear_time", "forget_after", "yield_time"):
             if key in cfg and float(cfg[key]) < 0:
-                errors.append(f"'caution.{key}' must be >= 0")
+                errors.append(f"'avoidance.{key}' must be >= 0")
         return errors
 
     def attach(self, ctx, entity) -> None:

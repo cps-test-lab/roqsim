@@ -21,7 +21,10 @@ Config::
       loop: true               # cycle the patrol forever
       dwell: 0.0               # default dwell applied to every waypoint
       arrival_radius: 0.25
-      avoidance: false         # true -> ORCA local avoidance (needs the [avoidance] extra)
+      avoidance: false         # true -> the shared local model gives way for it. A walker
+                               #   steers or does nothing; it has never looked ahead, so this
+                               #   never makes it stop. Write a `navigator` with
+                               #   `avoidance: {stop: true}` for one that should.
       robot_body: base_link    # body the walker yields to (default: the robot entity's base)
       robot_radius: 0.25
       goal_endpoint: true      # false -> patrol only; declares no goal endpoint, so a bridge needs
@@ -153,18 +156,26 @@ class WalkerPlugin(Plugin):
             # A walker's own block has always spelled this as a yes/no. The navigator names a model
             # instead, because there is more than one and "yes" does not say which -- so the legacy
             # spelling is translated here rather than a world being asked to change.
-            nav["avoidance"] = DEFAULT_MODEL if nav["avoidance"] else "none"
+            #
+            # `stop: false` is the load-bearing half. A walker has never looked ahead: it gives way
+            # through the local model or not at all, and `avoidance: true` has always meant "steers,
+            # never stops". Letting it acquire a forward probe here would change how every existing
+            # pedestrian world behaves, which is exactly what this compatibility path exists to
+            # prevent -- and it is why the three capabilities are independent rather than a ladder.
+            nav["avoidance"] = {
+                "steer": DEFAULT_MODEL if nav["avoidance"] else "none",
+                "stop": False,
+            }
         if "goals" not in nav:
             # A goal-driven-only walker has no patrol, so there is nothing to cycle through.
             nav.pop("loop", None)
         nav.setdefault("speed", 1.0)
-        # A walker has never looked ahead: it yields through local avoidance or not at all, so the
-        # compatibility path keeps `traffic: ignore` -- turning it on here would change how every
-        # existing walker behaves. It is a default worth knowing about rather than one to rely on:
-        # a walker is a mocap body, so the solver treats it as immovable and it will shove anything
-        # free it walks into, however politely that thing stopped. A world that puts a walker in a
-        # room with a robot should write a `navigator` for it and say `traffic: respect`.
-        nav.setdefault("traffic", "ignore")
+        # Same reason, for a walker that named no avoidance at all. It is a default worth knowing
+        # about rather than one to rely on: a walker is a mocap body, so the solver treats it as
+        # immovable and it will shove anything free it walks into, however politely that thing
+        # stopped. A world that puts a walker in a room with a robot should write a `navigator` for
+        # it and ask for `avoidance: {stop: true}`.
+        nav.setdefault("avoidance", {"stop": False})
         # A walker's own footprint, so it presents the same disc to avoidance it always did.
         nav.setdefault("radius", float((cfg.get("orca") or {}).get("radius", 0.26)))
         if (cfg.get("orca") or {}).get("max_speed") is not None:

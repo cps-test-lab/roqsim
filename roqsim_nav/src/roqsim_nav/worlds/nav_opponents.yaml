@@ -16,9 +16,9 @@
 #
 # The encounters, north to south:
 #
-#   visitor              a walker patrolling a loop, planning around the walls, yielding to traffic
+#   visitor              a walker patrolling a loop, planning around the walls, giving way
 #   runner / pedestrian  a robot and a walker 5 m apart, each heading for where the other started
-#   omni_a / omni_b      two omnidirectional bases head-on, both with full avoidance
+#   omni_a / omni_b      two omnidirectional bases head-on, both steering around each other
 #   stopper / dodger     the same encounter, asymmetric: both LOOK, only one YIELDS
 #   explorer             a robot that drives into an obstacle its planner cannot see, and gets out
 #   crate                a driven prop shuttling along the east wall, scenery to everyone else
@@ -30,15 +30,24 @@
 #   roqsim sim roqsim_nav:nav_opponents --ros           # the movers are on the ROS graph
 #   ros2 launch roqsim_nav2_example nav2_turtlebot.launch.py world:=<this file>
 #
-# Avoidance is named per mover -- `none` (the default) or a model. `give_way` is pure Python and
-# needs nothing to build; `orca` is better and reciprocal, once you have the extra:
+# `avoidance:` carries three independent capabilities, and each is one question:
+#
+#   stop     look ahead and hold until the way is clear                      (default: true)
+#   steer    which shared model gives way for this mover, or `none`          (default: none)
+#   reroute  remember what stopped it and plan around it -- needs `stop`     (default: false)
+#
+# Not a ladder: a walker steers without ever stopping, which no ordered scale can say. The probe's
+# tuning (lookahead, width, clear_time, ...) lives in the same block.
+#
+# `give_way` is pure Python and needs nothing to build; `orca` is better and reciprocal, once you
+# have the extra:
 #
 #   pip install Cython
 #   pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
 #
 # The first mover to name one fixes it for the world, because agents can only avoid each other
-# inside one model. A mover with `avoidance: none` still STOPS for traffic through its own caution
-# probe -- it simply never gives way, so two of those meeting head-on stop nose to nose.
+# inside one model. A mover with no `steer` still stops for traffic through its own probe -- it
+# simply never gives way, so two of those meeting head-on stop nose to nose.
 #
 # Everything here starts on its own. To hand the timing to a trial instead, give a mover
 # `autostart: false` and start it from a scenario, over either transport:
@@ -59,10 +68,10 @@ sim:
 components:
   # -- opponents -----------------------------------------------------------------------------------
   # A walker is a MOCAP body: no degrees of freedom, so the solver treats it as immovable and it
-  # shoves anything free that it touches -- a 3 kg robot goes over. A walker gets no forward caution
-  # probe unless it is asked for, because turning one on by default would change how every existing
-  # walker behaves. So this one is given a navigator of its own with `traffic: respect`, and it stops
-  # for the traffic instead of walking through it. Worth knowing before putting a walker near a robot.
+  # shoves anything free that it touches -- a 3 kg robot goes over. A walker gets no forward probe
+  # unless it is asked for, because turning one on by default would change how every existing walker
+  # behaves. So this one is given a navigator of its own asking for `stop`, and it holds for the
+  # traffic instead of walking through it. Worth knowing before putting a walker near a robot.
   - walker: {walker: MaleVisitorWalk, pos: [-4.3, 3.5]}
     name: visitor
     components:
@@ -71,17 +80,17 @@ components:
           speed: 1.1
           goals: [[-4.3, -1.0], [-4.3, 3.5]]
           loop: true
-          traffic: respect     # look ahead and stop; a walker's default is `ignore`
-          avoidance: give_way  # and gives way; `none` (the default) looks but never yields
-          caution: {lookahead: 1.2, width: 0.8, clear_time: 0.5}
+          # A walker's default is to steer or not at all -- it has never looked ahead. This one
+          # does both, because it shares a room with robots it would otherwise walk through.
+          avoidance: {steer: give_way, stop: true, width: 0.8}
 
   # A robot and a walker, five metres apart, each driving to where the other started. Nothing plans
   # around the other -- the planner's grid holds walls, not traffic -- so what unpicks it is the
-  # avoidance model, and without one they stop nose to nose.
+  # model named by `steer`, and without one they stop nose to nose.
   - spawn_robot: {model: turtlebot4, prefix: 'runner_', namespace: runner, pos: [-2.5, 4.0]}
     name: runner
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: give_way}
+      - navigator: {speed: 0.4, goals: [[2.5, 4.0]], avoidance: {steer: give_way}}
 
   - walker: {walker: MaleVisitorWalk, pos: [2.5, 4.0]}
     name: pedestrian
@@ -90,8 +99,7 @@ components:
           output: walker
           speed: 0.9
           goals: [[-2.5, 4.0]]
-          traffic: respect
-          avoidance: give_way
+          avoidance: {steer: give_way, stop: true}
 
   # Two omnidirectional bases, head-on in the middle of the room, both with full avoidance. An
   # omni base can move sideways without turning first, so its way round an encounter is not a
@@ -100,37 +108,35 @@ components:
   - spawn_robot: {model: mpo_500, prefix: 'omni_a_', namespace: omni_a, pos: [-2.5, 2.2]}
     name: omni_a
     components:
-      - navigator: {speed: 0.4, goals: [[2.5, 2.2]], avoidance: give_way}
+      - navigator: {speed: 0.4, goals: [[2.5, 2.2]], avoidance: {steer: give_way}}
 
   - spawn_robot: {model: mpo_500, prefix: 'omni_b_', namespace: omni_b, pos: [2.5, 2.2], yaw: 3.1416}
     name: omni_b
     components:
-      - navigator: {speed: 0.4, goals: [[-2.5, 2.2]], avoidance: give_way}
+      - navigator: {speed: 0.4, goals: [[-2.5, 2.2]], avoidance: {steer: give_way}}
 
-  # The same encounter between two robots, and the asymmetry is the point: both LOOK (traffic:
-  # respect), only one of them YIELDS. `stopper` has no avoidance, so it drives until its caution
-  # probe sees something and then simply holds. `dodger` joins the avoidance model, so it steers
-  # around the stationary one and carries on. Neither knows anything about the other in advance --
-  # the planner's grid holds walls, not traffic.
+  # The same encounter between two robots, and the asymmetry is the point: both LOOK (`stop`), only
+  # one of them STEERS. `stopper` names no model, so it drives until its probe sees something and
+  # then simply holds. `dodger` names one, so it steers around the stationary one and carries on.
+  # Neither knows anything about the other in advance -- the planner's grid holds walls, not traffic.
   - spawn_robot: {model: turtlebot4, prefix: 'stopper_', namespace: stopper, pos: [-2.5, 0.4]}
     name: stopper
     components:
       - navigator:
           speed: 0.35
           goals: [[2.5, 0.4]]
-          avoidance: none
-          traffic: respect
+          # Stops, and only ever stops: no `steer`, so it never leaves its line.
           # A short probe, because this encounter is about where it stops. `lookahead` is clear
           # corridor measured from the front of the mover, and the 1.2 m default is sized for
           # something faster and larger than a TurtleBot 4 ambling at 0.35 m/s -- at that speed it
           # halts a metre and a half short, which reads as stopping for nothing. 0.6 m leaves it
           # about a hand's breadth from the other robot, with the same zero contacts.
-          caution: {lookahead: 0.6}
+          avoidance: {stop: true, lookahead: 0.6}
 
   - spawn_robot: {model: turtlebot4, prefix: 'dodger_', namespace: dodger, pos: [2.5, 0.4], yaw: 3.1416}
     name: dodger
     components:
-      - navigator: {speed: 0.35, goals: [[-2.5, 0.4]], avoidance: give_way}
+      - navigator: {speed: 0.35, goals: [[-2.5, 0.4]], avoidance: {steer: give_way}}
 
   # -- an obstacle the planner could not have known about ------------------------------------------
   # `explorer` is given a goal on the far side of a U it has no idea is there, and has to get itself
@@ -139,9 +145,9 @@ components:
   # that excludes walkers and driven props -- that grid holds only what cannot move. Welded scenery
   # would not do: it lands in the grid and gets routed around before the robot ever sets off.
   #
-  # So the plan goes straight through the U's mouth. What happens next is `on_blocked: replan`:
+  # So the plan goes straight through the U's mouth. What happens next is `reroute`:
   #
-  #   1. the forward probe stops it at the back wall  (`stop` would end the story here)
+  #   1. the forward probe stops it at the back wall  (without `reroute` that is the whole story)
   #   2. it remembers WHERE it was stopped, as a disc that expires after `forget_after`
   #   3. the next plan routes around that disc -- into a side wall, which it also remembers
   #   4. with the inside of the U marked out, the only route left is back out of the mouth
@@ -168,7 +174,7 @@ components:
           goals: [[3.5, -2.3]]
           # Everything else is left at its default, deliberately: an example that needs its probe
           # re-tuned to get out of a trap is demonstrating the tuning, not the mechanism.
-          caution: {on_blocked: replan}   # `stop` is the default: hold position and keep the path
+          avoidance: {reroute: true}   # remember what stopped it and plan around it
 
   # Shuttling along the far wall, out of everyone else's lanes: a driven prop that is scenery to the
   # rest of the room rather than another thing to negotiate with.

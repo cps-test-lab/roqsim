@@ -74,7 +74,7 @@ def sim(tmp_path_factory):
                         "navigator": {
                             "speed": 1.0,
                             "namespace": "cart",
-                            "traffic": "ignore",
+                            "avoidance": {"stop": False},
                         }
                     }
                 ],

@@ -310,7 +310,8 @@ def test_a_world_may_write_the_walkers_navigator_itself(tmp_path):
                                     "output": "walker",
                                     "speed": 1.0,
                                     "goals": [[2.0, 0.0]],
-                                    "traffic": "respect",  # a walker's own default is `ignore`
+                                    # A walker's own default is to look ahead at nothing.
+                                    "avoidance": {"stop": True},
                                 }
                             }
                         ],

@@ -9,7 +9,7 @@ of sparse world waypoints the behaviour tree / ORCA can chase. The two layers ar
 the textbook "global planner + local controller" split.
 
 The grid itself holds static walls and never changes. **Blockages are the one thing a planner knows
-that its grid does not**: a mover with ``caution.on_blocked: replan`` reports where it was stopped,
+that its grid does not**: a mover with ``avoidance.reroute`` reports where it was stopped,
 and those discs are treated as occupied until they expire. They live on the planner rather than in
 the grid for two reasons -- the grid is shared by every mover in the world, and one mover's
 experience is not another's; and a blockage is temporary, while everything in the grid is not.
