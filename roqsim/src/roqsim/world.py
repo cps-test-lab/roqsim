@@ -7,7 +7,8 @@ scene plugins. It is chosen with the ``sim.world`` key in the world YAML::
       world: empty_room      # a named built-in world definition
 
 When ``sim.world`` is unset the engine builds :data:`DEFAULT_WORLD` (``empty_room``): a checker
-ground plane named ``floor``, a ceiling light, and four perimeter walls -- a bounded, lit room.
+ground plane named ``floor``, a ceiling light, a gradient sky and four perimeter walls -- a bounded
+room lit to daylight brightness, light enough that a robot in it reads without a lamp of its own.
 
 ``sim.world`` may instead be a **path to an MJCF file** (see :func:`world_file`), loaded as the base
 scene -- e.g. a baked scene like ``depot/depot.xml`` -- or a **package-qualified reference**
@@ -53,24 +54,51 @@ WORLDS_ENTRY_POINT_GROUP = "roqsim.worlds"
 #: Half-extent (m) of the default ground plane; a generous square that covers a tabletop-scale cell.
 _DEFAULT_GROUND_HALF_EXTENT = 5.0
 
+#: Height (m) of the room's overhead light -- above the walls, and high enough that its shadow cone
+#: still covers their top edge (see :func:`_add_ground_and_light`).
+_LIGHT_HEIGHT = 5.0
+
+#: The room's palette: the two greys of the checker floor, and the sky gradient over it (horizon
+#: first). Public because a preview that stands a model on its own ground (a thumbnail) is meant to be
+#: the same picture as that model standing in this room.
+FLOOR_RGB1 = [0.70, 0.71, 0.72]
+FLOOR_RGB2 = [0.60, 0.61, 0.63]
+SKY_RGB1 = [0.62, 0.74, 0.9]
+SKY_RGB2 = [0.95, 0.96, 0.98]
+
 
 def _add_ground_and_light(spec: mujoco.MjSpec, size: float) -> None:
-    """Add a checker ground plane named ``floor`` and a top-down ceiling light to ``spec``."""
+    """Add a checker ground plane named ``floor``, a bright sky, and a top-down ceiling light."""
     import mujoco
 
+    # A gradient skybox, so what is above the walls is daylight rather than the black void a
+    # skybox-less model renders. It is backdrop only: MuJoCo's skybox lights nothing, so the room's
+    # brightness comes from the light and the global ambient below.
+    sky = spec.add_texture()
+    sky.name = "sky"
+    sky.type = mujoco.mjtTexture.mjTEXTURE_SKYBOX
+    sky.builtin = mujoco.mjtBuiltin.mjBUILTIN_GRADIENT
+    sky.width = sky.height = 512
+    sky.rgb1 = SKY_RGB1
+    sky.rgb2 = SKY_RGB2
+
+    # A light floor in a light room: a dark ground absorbs the light and reads as dim however hard
+    # it is lit, so the checker is a pale grey pair that keeps the scale cue without the darkness.
     tex = spec.add_texture()
     tex.name = "grid"
     tex.type = mujoco.mjtTexture.mjTEXTURE_2D
     tex.builtin = mujoco.mjtBuiltin.mjBUILTIN_CHECKER
     tex.width = tex.height = 512
-    tex.rgb1 = [0.2, 0.3, 0.4]
-    tex.rgb2 = [0.1, 0.15, 0.2]
+    tex.rgb1 = FLOOR_RGB1
+    tex.rgb2 = FLOOR_RGB2
 
     mat = spec.add_material()
     mat.name = "floor_mat"
     mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "grid"
     mat.texrepeat = [max(1, int(size * 4)), max(1, int(size * 4))]
-    mat.reflectance = 0.1
+    # Not reflective: on a light floor even a little reflectance mirrors the ceiling light into a
+    # white hotspot around whatever stands on it.
+    mat.reflectance = 0.0
 
     floor = spec.worldbody.add_geom()
     floor.name = "floor"
@@ -79,15 +107,36 @@ def _add_ground_and_light(spec: mujoco.MjSpec, size: float) -> None:
     floor.material = "floor_mat"
     floor.friction = [2.0, 0.005, 0.0001]
 
-    # A single top-down ceiling light. Give it an ambient term and a fuller diffuse (MuJoCo's
-    # default light has ambient 0, which leaves surfaces facing away from the light near-black) so
-    # the walled room reads as evenly, generally bright rather than dim — matching the softer,
-    # ambient-lit look of the baked scene worlds (e.g. depot's `top_soft`).
+    # Daylight, not a single lamp in the dark. MuJoCo's headlight ambient is the only truly global
+    # term (a light's own ambient is added per light, so it scales with how many a scene has), and it
+    # is what keeps a surface facing away from the ceiling out of the near-black MuJoCo defaults it
+    # to. The ceiling light then carries the direction: enough diffuse to model shape and cast a
+    # readable contact shadow on top of that fill.
+    spec.visual.headlight.ambient = [0.25, 0.25, 0.25]
+    spec.visual.headlight.diffuse = [0.3, 0.3, 0.3]
+    spec.visual.headlight.specular = [0.0, 0.0, 0.0]
+
+    # A wide, flat overhead spot rather than MuJoCo's default cone: the default 45-degree cutoff with
+    # exponent 10 burns a bright pool into the middle of the floor and leaves the corners dim, which
+    # is the opposite of an evenly daylit room. Straight down, as `roqsim.render` documents -- it
+    # keys the model-preview tilt on a light pointing that way.
+    #
+    # Height and cutoff are set by what the SHADOWS need, not by where a lamp would hang. A spot's
+    # shadow map only covers `shadowscale` x its cutoff cone, so geometry outside that cone is lit
+    # but casts nothing: with the frustum too tight, a shadow thrown against a wall stops dead partway
+    # up it. At full scale, the cone from `_LIGHT_HEIGHT` has to still reach the far top corner of the
+    # room -- `(height - wall) * tan(cutoff) >= half-diagonal` -- which is what these numbers satisfy
+    # for a room of `_DEFAULT_GROUND_HALF_EXTENT`.
+    spec.visual.map.shadowscale = 1.0
+
     light = spec.worldbody.add_light()
-    light.pos = [0, 0, 2.5]
+    light.pos = [0, 0, _LIGHT_HEIGHT]
     light.dir = [0, 0, -1]
-    light.ambient = [0.35, 0.35, 0.35]
-    light.diffuse = [0.8, 0.8, 0.8]
+    light.cutoff = 70.0
+    light.exponent = 0.0
+    light.ambient = [0.12, 0.12, 0.12]
+    light.diffuse = [0.48, 0.48, 0.48]
+    light.specular = [0.1, 0.1, 0.1]
 
 
 #: Wall thickness (m) and height (m). Walls are tall enough to sit above a standing humanoid's lidar
@@ -116,11 +165,11 @@ def _add_walls(spec: mujoco.MjSpec, half: float) -> None:
         wall.type = mujoco.mjtGeom.mjGEOM_BOX
         wall.pos = pos
         wall.size = size
-        wall.rgba = [0.6, 0.6, 0.62, 1.0]
+        wall.rgba = [0.76, 0.76, 0.78, 1.0]
 
 
 def _empty_room(spec: mujoco.MjSpec) -> None:
-    """The default world: a ground plane + light, enclosed by four perimeter walls.
+    """The default world: a daylit ground plane + light, enclosed by four perimeter walls.
 
     The walls sit at the floor's edge (same half-extent) so the room is fully enclosed, giving robots
     a bounded room and the lidar something to see, so a plugin-less world isn't an infinite empty plane.
