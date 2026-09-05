@@ -29,6 +29,10 @@ from scenario_execution.model.osc2_parser import OpenScenario2Parser  # noqa: E4
 from scenario_execution.utils.logging import Logger  # noqa: E402
 
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: E402
+from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
+    EntityNavigate,
+    EntityNavigateStart,
+)
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
@@ -59,6 +63,10 @@ def _entry_points(group):
             EntryPointStub("entity_moved", EntityMoved, "scenario_execution_roqsim"),
             EntryPointStub("entity_rotated", EntityRotated, "scenario_execution_roqsim"),
             EntryPointStub("set_model_override", SetModelOverride, "scenario_execution_roqsim"),
+            EntryPointStub("entity_navigate", EntityNavigate, "scenario_execution_roqsim"),
+            EntryPointStub(
+                "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
+            ),
         ]
     return []
 
@@ -180,3 +188,45 @@ def test_omitting_every_optional_argument_still_parses():
     assert len(_nodes(tree, EntityMoved)) == 1
     assert len(_nodes(tree, EntityRotated)) == 1
     assert len(_nodes(tree, SetModelOverride)) == 1
+
+
+# -- entity_navigate ---------------------------------------------------------------------------
+def test_entity_navigate_parses_and_binds_to_its_action():
+    """Catches `.osc` <-> `execute()` signature drift at parse time, before any run does."""
+    _build(
+        """
+import osc.roqsim
+scenario test:
+    do serial:
+        entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 2.0, y: 1.0))])
+"""
+    )
+
+
+def test_entity_navigate_takes_several_goals_and_the_optional_arguments():
+    _build(
+        """
+import osc.roqsim
+scenario test:
+    do serial:
+        entity_navigate(
+            entity: 'cart',
+            goal_poses: [
+                pose_3d(position: position_3d(x: 2.0, y: 0.0)),
+                pose_3d(position: position_3d(x: 2.0, y: 2.0))],
+            success_on_acceptance: true,
+            action_name: '/traffic/navigate_through_poses')
+"""
+    )
+
+
+def test_entity_navigate_start_needs_only_the_entity():
+    """The route lives in the world; the scenario supplies only the trigger."""
+    _build(
+        """
+import osc.roqsim
+scenario test:
+    do serial:
+        entity_navigate_start(entity: 'cart')
+"""
+    )

@@ -16,15 +16,13 @@ setup(
     zip_safe=True,
     maintainer="Frederik Pasch",
     maintainer_email="frederik.pasch@h-ka.de",
-    description="ROS 2 goal interface for roqsim walkers: nav2 NavigateThroughPoses.",
+    description="A walker driven over ROS 2: the demo launch and world. Handlers live in roqsim_nav_ros.",
     license="Apache-2.0",
-    entry_points={
-        # Imported once by roqsim_ros_bridge at start-up; the import registers this package's
-        # action handler(s) into the bridge's registry. This is the generic seam by which any
-        # package teaches the bridge a new action or message type -- no bridge edits, and no
-        # nav2_msgs dependency in the core bridge.
-        "roqsim_ros_bridge.extensions": [
-            "walker_nav = roqsim_walker_ros.actions",
-        ],
-    },
+    # No `roqsim_ros_bridge.extensions` entry point any more. The NavigateThroughPoses handler this
+    # package used to register moved to `roqsim_nav_ros`, which serves it for EVERY mover -- a
+    # walker, an opponent robot, a driven prop -- from one place. Two packages registering one action
+    # type would let install order decide which handler runs, silently: the bridge's registry
+    # overwrites without complaint and extension load order is unspecified.
+    #
+    # Nothing a user sees changed: the endpoint, the action type and the action name are the same.
 )

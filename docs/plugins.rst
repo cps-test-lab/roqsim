@@ -260,6 +260,206 @@ Note the envelope is recorded, not enforced: outside it a policy does not fail, 
 it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
 port log to be read.
 
+Navigation: a mover the simulator drives itself
+-----------------------------------------------
+
+A trial usually needs more than the robot it is measuring: a second robot in the aisle, a pedestrian
+crossing, a cart that goes somewhere rather than along a fixed polyline. Those are *apparatus*, and
+``navigator`` drives them from inside the simulator -- it plans with A\* over a grid rasterized from
+the world's own wall geoms, so there is no map file, no localisation, and nothing on the ROS graph
+but the robot under test.
+
+It builds no geometry. It moves the entity of the entry it is nested under, and how that motion
+reaches the physics is its ``output``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 20 68
+
+   * - output
+     - moves
+     - cost and what it is for
+   * - ``drive``
+     - a ``spawn_robot``
+     - Calls the ``RobotHandle.drive(vx, vy, w)`` the entity's controller published -- the *same*
+       entry point the ROS bridge writes ``/cmd_vel`` into. ``diff_drive`` still does its own inverse
+       kinematics, acceleration ramp and wheel-encoder odometry, so the wheels really turn and the
+       thing can slip. A full articulated robot in the solver: use it when the opponent's dynamics
+       are part of the experiment.
+   * - ``mocap``
+     - ``spawn_model: {mocap: true}``
+     - Writes the body's pose. **Zero solver DOFs** -- collision geometry the robot's lidar and
+       contacts see, and nothing for the physics to integrate. The cheap default for any opponent
+       whose wheel dynamics do not matter.
+   * - ``walker``
+     - a ``walker``
+     - The pedestrian: seventeen mocap bodies and a gait, also zero DOFs. Registered by
+       ``roqsim_walker``, not listed here -- outputs resolve from an entry-point group, so an
+       out-of-tree embodiment needs no edit to ``roqsim_nav``.
+
+.. code-block:: yaml
+
+   components:
+     - spawn_robot: {model: turtlebot4, pos: [4, -3]}
+       name: cart
+       components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
+
+     - spawn_model: {model: graspable_box, pos: [2, 1], mocap: true}
+       name: pallet
+       components: [ {navigator: {speed: 0.3, goals: [[-2, 1]]}} ]
+
+``roqsim sim roqsim_nav:nav_opponents`` is the worked example: five encounters in one room, every
+mover navigated by the simulator itself -- a robot and a pedestrian swapping places, two
+omnidirectional bases head-on, two robots where both look and only one steers, a patrolling walker,
+and a robot given a goal beyond an obstacle its planner cannot see. Add a ``spawn_robot`` with a
+stack of its own and they carry on around it.
+
+**Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
+``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
+the route at load and holds the mover at its first point until something starts it, so a world can
+own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
+scenario owns only its timing (``entity_navigate_start``).
+
+**One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
+three independent capabilities, each one question with one answer:
+
+.. code-block:: yaml
+
+   avoidance:
+     stop: true          # look ahead and hold until the way is clear      (default)
+     steer: give_way     # which shared model gives way for it, or `none`  (default: none)
+     reroute: false      # remember what stopped it and plan around it     (needs `stop`)
+     lookahead: 0.6      # ...and the probe's tuning, in the same block
+
+They are deliberately not a ladder. A walker steers without ever stopping -- which is how every
+existing pedestrian world behaves -- and an ordered scale from "ignore" to "reroute" cannot express
+that. Keeping them separate also means there is no combination table to learn.
+
+Which you want follows from what the mover is *for*:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 34 32
+
+   * - the mover is...
+     - write
+     - because
+   * - a scripted obstacle that must be in the same place at the same time in every repetition
+     - ``{stop: false, steer: none}``
+     - Reacting to the robot under test makes its trajectory a function of that robot's behaviour,
+       which is the coupling a controlled trial removes. Pair it with ``route_mode: exact``.
+   * - traffic that should not be driven into, but whose path must not change
+     - ``{stop: true}`` (the default)
+     - It holds and resumes on the leg it was on. Nothing it meets can alter where it goes.
+   * - traffic sharing a corridor, which should get past
+     - ``{stop: true, steer: give_way}``
+     - Both sides of a head-on encounter alter course to their own right, so the pair parts instead
+       of stopping nose to nose.
+   * - a mover that must reach its goal whatever is parked in the way
+     - ``{stop: true, steer: give_way, reroute: true}``
+     - It remembers what stopped it and plans around. The only setting that lets an encounter change
+       the planned path -- do not use it for a mover whose route is the experiment.
+   * - a pedestrian, behaving as pedestrians always have here
+     - nothing; the ``walker`` entry's own ``avoidance: true|false`` still works
+     - It expands to ``{steer: ..., stop: false}``: a walker steers or does nothing, and has never
+       looked ahead. Give it a ``navigator`` asking for ``stop: true`` to change that.
+
+Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
+from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
+sized for a fast or large mover and will look like stopping for nothing on a small slow one.
+``width`` is the corridor swept, and it is not read from the model: it is the body **plus the
+clearance the mover should keep**, and widening it makes the mover stop earlier for everything, not
+just fit better.
+
+``stop`` is the forward probe. The planner's grid holds static walls and nothing else, so a mover
+also looks ahead along the corridor it is about to occupy, and what it sees is exactly the complement
+of the grid: a body with degrees of freedom, or a mocap body -- precisely what ``wall_polygons``
+refuses to rasterize. A wall at a corner is the planner's business and never the probe's. Holding is
+the default response, because a stopped mover is still on its path and resumes on the leg it was on,
+while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
+
+``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
+expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
+merely re-planned would return the same path and drive into the same obstacle for ever. It is
+deliberately not a costmap: a handful of discs, stamped onto a copy of the raster at plan time and
+nowhere else. ``recovery`` is separate again, for a mover that is wedged rather than merely blocked.
+
+``steer`` names the local model, resolved from the ``roqsim_nav.avoidance`` registry -- ORCA is one
+implementation, behind the ``[avoidance]`` extra. Every mover joins the model whether or not it
+steers, because opting out of yielding is not opting out of existing: a mover the others cannot see
+is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
+whose state is overwritten from ground truth, so the others go round it and it is never pushed.
+
+**Every key, and its default.** ``python -m pydoc roqsim_nav.plugins.navigator`` prints the
+annotated original beside the code it configures, which is the copy that cannot go stale.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 14 62
+
+   * - key
+     - default
+     - what it does
+   * - ``speed``
+     - *required*
+     - m/s the route is followed at.
+   * - ``goals``
+     - ``[]``
+     - The route, world metres: ``[x, y]`` or ``[x, y, yaw]``. Empty means "wait to be told".
+   * - ``output``
+     - ``auto``
+     - ``drive`` | ``mocap`` | ``walker`` | ``module:Class``. ``auto`` probes in a fixed order.
+   * - ``route_mode``
+     - ``plan``
+     - ``plan`` runs A\* between the points; ``exact`` makes the polyline *be* the path.
+   * - ``tracker``
+     - ``waypoint``
+     - ``waypoint`` steers at the goal; ``pure_pursuit`` steers at a carrot along the route, which
+       bounds cross-track error by ``lookahead`` rather than by ``arrival_radius``.
+   * - ``autostart``
+     - ``true``
+     - ``false`` plans at load and holds at the first point until something starts it.
+   * - ``loop``
+     - ``false``
+     - Cycle the route forever rather than stopping at the last point.
+   * - ``arrival_radius``
+     - ``0.25``
+     - m within which a goal counts as reached.
+   * - ``avoidance``
+     - ``{stop: true}``
+     - The block above: ``stop``, ``steer``, ``reroute``, ``params``, and the probe's tuning
+       (``lookahead``, ``width``, ``rays``, ``height``, ``clear_time``, ``yield_time``,
+       ``forget_after``, ``blockage_radius``, ``ignore``).
+   * - ``recovery``
+     - ``{enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}``
+     - For a mover that is wedged rather than merely blocked: it backs away from what stopped it and
+       re-plans. Refused with ``route_mode: exact``, which by definition cannot leave its path.
+   * - ``obstacle_height``
+     - ``[0.1, 1.8]``
+     - The z band a geom must span to be a wall **for this mover**, and the band its probe scans in.
+   * - ``resolution``
+     - ``0.05``
+     - m per planner grid cell. Movers agreeing on this and on ``obstacle_height`` share one raster.
+   * - ``planner``
+     - ``{inflation_radius: <measured>, waypoint_radius: 0.3}``
+     - Inflation defaults to the mover's own measured footprint, so it plans a path it fits through.
+   * - ``update_hz``
+     - ``20`` (``60`` for ``walker``)
+     - The nav pipeline's rate. Physics steps far faster; the output declares what it needs.
+   * - ``namespace``, ``goal_endpoint``, ``actions``
+     - the owner's, ``true``, both
+     - The goal interface: which nav2 actions this mover answers, and under what scope.
+
+Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
+``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
+``drive``; ``yaw_rate`` to ``mocap`` and ``walker``.
+
+**It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
+zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
+must not become a function of wheel slip, hence of contacts with the robot under test). A mover with
+realistic localisation error is a different experiment.
+
 Navigation: detecting a collision
 ---------------------------------
 

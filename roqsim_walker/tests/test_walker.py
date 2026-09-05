@@ -1,4 +1,7 @@
-"""Unit tests for the walker: skeleton FK, clips, planner, blueprint, and the plugin end-to-end."""
+"""Unit tests for the walker: skeleton FK, clips, blueprint, and the plugin end-to-end.
+
+The planner and occupancy-grid tests live with the code, in ``roqsim_nav/tests/test_planner.py``.
+"""
 
 from __future__ import annotations
 
@@ -20,8 +23,6 @@ from roqsim_walker.humanoid import (
     to_skeleton,
 )
 from roqsim_walker.motion import Clip, procedural_idle, procedural_walk, smoothstep
-from roqsim_walker.nav.occupancy import OccupancyGrid
-from roqsim_walker.nav.planner import GridPlanner
 
 IDENT = {n: np.array([1.0, 0.0, 0.0, 0.0]) for n in JOINT_NAMES}
 
@@ -89,49 +90,6 @@ def test_smoothstep_edges():
     assert smoothstep(1.5, 1.0, 2.0) == pytest.approx(0.5)
 
 
-# -- planner -----------------------------------------------------------------------------------
-_BOUNDS = (-2.0, -2.0, 2.0, 2.0)  # OccupancyGrid.from_polygons pads this by 1 m on every side
-
-
-def _wall_grid(top: float = 1.0):
-    """A room bisected by a wall at x=0 running from below the padded floor up to ``top``, so the
-    only way across is over the gap at the top."""
-    wall = [(-0.1, -3.5), (0.1, -3.5), (0.1, top), (-0.1, top)]
-    return OccupancyGrid.from_polygons([wall], resolution=0.05, bounds=_BOUNDS)
-
-
-def test_planner_routes_around_a_wall():
-    planner = GridPlanner(_wall_grid(), inflation_radius=0.2)
-    path = planner.plan((-1.0, -1.0), (1.0, -1.0))
-    assert path, "goal should be reachable via the gap above the wall"
-    assert path[-1] == pytest.approx((1.0, -1.0))
-    # The straight line would cross x=0 at y=-1 (solid); the plan must detour over the wall's top.
-    assert max(y for _, y in path) > 1.0
-
-
-def test_planner_returns_none_when_the_goal_is_walled_off():
-    # A wall spanning the whole padded grid seals the two halves apart.
-    sealed = _wall_grid(top=3.5)
-    planner = GridPlanner(sealed, inflation_radius=0.0)
-    assert planner.plan((-1.0, 0.0), (1.0, 0.0)) is None
-
-
-def test_planner_simplifies_a_clear_run_to_a_straight_shot():
-    grid = OccupancyGrid.from_polygons([[(9.0, 9.0), (9.1, 9.0), (9.1, 9.1)]], bounds=_BOUNDS)
-    planner = GridPlanner(grid, inflation_radius=0.0)
-    path = planner.plan((-1.5, -1.5), (1.5, 1.5))
-    assert path is not None
-    assert len(path) <= 2, f"line-of-sight string-pulling should collapse the path, got {path}"
-
-
-def test_occupancy_inflation_grows_obstacles():
-    grid = _wall_grid()
-    base = grid.inflate(0.0).sum()
-    grown = grid.inflate(0.3).sum()
-    assert grown > base
-
-
-# -- blueprint ---------------------------------------------------------------------------------
 def test_obj_groups_key_by_material_name():
     # Regression: trimesh only keys the OBJ groups by their material names when the blueprint's .mtl
     # sits next to the OBJ. Without it every group falls back to a generic name, materials.get()
@@ -277,9 +235,7 @@ def test_a_foreign_package_can_ship_a_blueprint(tmp_path, monkeypatch):
         if f.is_file():
             shutil.copy(f, actor / f.name)
 
-    monkeypatch.setattr(
-        blueprint, "_providers", lambda: [("foreign", foreign)], raising=False
-    )
+    monkeypatch.setattr(blueprint, "_providers", lambda: [("foreign", foreign)], raising=False)
     monkeypatch.setattr(
         "roqsim.models.providers",
         lambda: [("foreign", foreign, foreign / "meshes", foreign)],

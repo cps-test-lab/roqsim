@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_walker"
 version = "0.1.0"
-description = "Kinematic pedestrian walkers for roqsim (CARLA characters, A* + behaviour tree navigation)."
+description = "Kinematic pedestrian walkers for roqsim: a skinned humanoid on mocap bodies, navigated by roqsim_nav."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "roqsim",
+    "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
     "mujoco>=3.0",
     "numpy>=1.24",
     "py_trees>=2.2",   # the navigate / stuck-recovery behaviour tree
@@ -49,6 +50,12 @@ import = ["pycollada>=0.7"]
 
 [project.entry-points."roqsim.plugins"]
 walker = "roqsim_walker.plugins.walker:WalkerPlugin"
+
+# The pedestrian embodiment of `roqsim_nav`'s navigator. Registered from THIS package, so the
+# dependency runs roqsim_walker -> roqsim_nav and never back: the navigator serves a walker without
+# roqsim_nav knowing walkers exist.
+[project.entry-points."roqsim_nav.outputs"]
+walker = "roqsim_walker.output:WalkerOutput"
 
 # Bundled walker blueprints (people/<Walker>/) + locomotion clips (anims/<set>/).
 [project.entry-points."roqsim.models"]

@@ -1,0 +1,15 @@
+<mujoco model="walled_room_with_divider">
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" rgb1=".2 .3 .4" rgb2=".1 .15 .2" width="300" height="300"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance=".2"/>
+  </asset>
+  <worldbody>
+    <light pos="0 0 4" dir="0 0 -1" diffuse=".8 .8 .8"/>
+    <geom name="floor" type="plane" size="8 8 .05" material="grid"/>
+    <geom name="wall_n" type="box" pos="0  4 1" size="4 .1 1"/>
+    <geom name="wall_s" type="box" pos="0 -4 1" size="4 .1 1"/>
+    <geom name="wall_e" type="box" pos=" 4 0 1" size=".1 4 1"/>
+    <geom name="wall_w" type="box" pos="-4 0 1" size=".1 4 1"/>
+    <geom name="divider" type="box" pos="0 0 1" size=".15 2.5 1"/>
+  </worldbody>
+</mujoco>

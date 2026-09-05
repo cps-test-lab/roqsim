@@ -1,6 +1,6 @@
 """Walkers that follow a route, yield to the robot (ORCA), and animate (mocap).
 
-Ported from our earlier in-house nav prototype's ``mujoco_nav.pedestrian.controller``, with two additions for roqsim:
+Ported from an earlier in-house navigation prototype, with two additions for roqsim:
 a runtime **goal route** interface (:meth:`WalkerController.set_route`, driving the
 ``NavigateThroughPoses`` endpoint) and a per-walker **avoidance toggle**.
 
@@ -42,6 +42,10 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
+from roqsim_nav import obstacles
+from roqsim_nav.behavior import NavCore, NavParams, build_tree
+from roqsim_nav.grid import build_grid
+from roqsim_nav.planner import GridPlanner
 from roqsim_walker.humanoid import (
     JOINT_NAMES,
     forward_kinematics,
@@ -55,10 +59,6 @@ from roqsim_walker.motion import (
     procedural_walk,
     smoothstep,
 )
-from roqsim_walker.nav import obstacles
-from roqsim_walker.nav.behavior import NavCore, NavParams, build_tree
-from roqsim_walker.nav.occupancy import OccupancyGrid
-from roqsim_walker.nav.planner import GridPlanner
 
 logger = logging.getLogger(__name__)
 
@@ -192,6 +192,102 @@ def _approach_angle(cur, target, max_step) -> float:
     return cur + math.copysign(max_step, d)
 
 
+def animate(data, st, new_pos, dt):
+    """Ease the body toward the new nav position along CARLA's 2D blendspace: a speed axis
+    (idle->short->walk->run) and a direction axis (turn-in-place when stopped / lean when moving,
+    plus strafe) -- then FK + write the pose."""
+    delta = new_pos - st.pos
+    dist = float(np.linalg.norm(delta))
+    raw_speed = dist / max(dt, 1e-9)
+    st.disp_speed += (1.0 - math.exp(-dt / _SPEED_TAU)) * (raw_speed - st.disp_speed)
+    # Face where the walker *wants* to go (nav preferred velocity), not the instantaneous ORCA
+    # push: avoidance side-steps then become a strafe/lean (direction axis) rather than the body
+    # whipping around, and a walker that is blocked (~0 displacement) still turns in place to
+    # face its goal.
+    pref = st.pref_vel
+    if float(np.hypot(pref[0], pref[1])) > 1e-3:
+        target = math.atan2(float(pref[1]), float(pref[0]))
+    elif dist > 1e-4:
+        target = math.atan2(float(delta[1]), float(delta[0]))
+    else:
+        target = st.yaw
+    new_yaw = _approach_angle(st.yaw, target, _MAX_TURN_RATE * dt)
+    d_yaw = math.atan2(math.sin(new_yaw - st.yaw), math.cos(new_yaw - st.yaw))
+    yaw_rate = d_yaw / max(dt, 1e-9)
+    st.yaw = new_yaw
+    st.phase += dist / st.walk.stride_len  # gait phases by distance (no slide)
+    st.phase_run += dist / st.run.stride_len
+    st.phase_short += dist / st.short.stride_len
+    st.t_idle += dt  # idle by time
+    # -- speed axis: idle -> short -> walk -> run (each takes over in turn) --
+    qi, zi = st.idle.sample_array(st.t_idle / st.idle.duration)
+    qs, zs = st.short.sample_array(st.phase_short)
+    qw, zw = st.walk.sample_array(st.phase)
+    qr, zr = st.run.sample_array(st.phase_run)
+    w_short = smoothstep(st.disp_speed, *_IDLE_SHORT)
+    w_walk = smoothstep(st.disp_speed, *_SHORT_WALK)
+    w_run = smoothstep(st.disp_speed, *_WALK_RUN)
+    q = blend_quats(qi, qs, w_short)
+    root_z = (1 - w_short) * zi + w_short * zs
+    q = blend_quats(q, qw, w_walk)
+    root_z = (1 - w_walk) * root_z + w_walk * zw
+    q = blend_quats(q, qr, w_run)
+    root_z = (1 - w_run) * root_z + w_run * zr
+    q = _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
+    joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
+    poses = forward_kinematics(
+        [new_pos[0], new_pos[1], st.skeleton.root_height + root_z],
+        st.yaw,
+        joint_rot,
+        skeleton=st.skeleton,
+    )
+    write_pose(data, st, _foot_ground(poses, st))
+    st.pos = new_pos
+
+
+def _direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
+    """CARLA's BS_GEN3 ``Direction`` parameter, in two parts.
+
+    **Turn:** the in-place turn clip, played through (its cycle advanced by the actual heading
+    change so the steps don't slide). When the walker is standing (``w_short`` ~ 0) it fully
+    takes over -> a real turn-in-place; when walking it is capped to ``_TURN_MAX`` so it only
+    leans the gait into the turn.
+
+    **Strafe:** when travel is not aligned with facing (the walker re-faced toward its goal while
+    ORCA pushes it sideways), blend the matching side / back walk clip by the travel-vs-facing
+    angle. These clips are optional; absent, the body simply translates along the small residual
+    deviation.
+    """
+    turning = min(abs(yaw_rate) / _TURN_REF, 1.0)
+    turn = st.turn_l if d_yaw > 0 else st.turn_r
+    if turn is not None and turning > 1e-3:
+        st.phase_turn += abs(d_yaw) / _TURN_STRIDE
+        w_turn = turning * ((1.0 - w_short) + w_short * _TURN_MAX)
+        q = blend_quats(q, turn.sample_array(st.phase_turn)[0], w_turn)
+    if dist > 1e-4 and w_walk > 1e-3:
+        travel = math.atan2(float(delta[1]), float(delta[0]))
+        direction = math.atan2(math.sin(travel - st.yaw), math.cos(travel - st.yaw))
+        a = abs(direction)
+        side = st.walk_l if direction > 0 else st.walk_r
+        if side is not None:
+            w_side = smoothstep(a, _STRAFE_FWD, _STRAFE_SIDE) * w_walk
+            if w_side > 1e-3:
+                q = blend_quats(q, side.sample_array(st.phase)[0], w_side)
+        if st.walk_back is not None:
+            w_back = smoothstep(a, _STRAFE_SIDE, _STRAFE_BACK) * w_walk
+            if w_back > 1e-3:
+                q = blend_quats(q, st.walk_back.sample_array(st.phase)[0], w_back)
+    return q
+
+
+def write_pose(data, st, poses):
+    d = data
+    for part, (pos, quat) in poses.items():  # per-limb collision rides the joints
+        mid = st.mocap[part]
+        d.mocap_pos[mid] = pos
+        d.mocap_quat[mid] = quat
+
+
 @dataclass
 class _Walker:
     name: str
@@ -244,6 +340,97 @@ class _Walker:
     agent: int = None  # ORCA agent id
 
 
+def spec_waypoints(spec) -> list:
+    """The spec's patrol waypoints, or a single spawn point when it is goal-driven only."""
+    wps = list(spec.get("waypoints") or [])
+    if wps:
+        return wps
+    return [list(spec.get("pos") or (0.0, 0.0))]
+
+
+def make_anim_state(model, spec) -> _Walker:
+    default_dwell = spec.get("dwell", 0.0)
+    raw = spec_waypoints(spec)
+    wps = np.array([_wp_xy(p) for p in raw], dtype=float)
+    dwell = [_wp_dwell(p, default_dwell) for p in raw]
+    orca = spec.get("orca") or {}
+    speed = float(spec.get("speed", 1.0))
+    skel = to_skeleton(spec.get("skeleton"))
+    loop = bool(spec.get("loop", True)) and len(wps) > 1
+    st = _Walker(
+        name=spec["name"],
+        waypoints=wps,
+        speed=speed,
+        loop=loop,
+        arrival_radius=float(spec.get("arrival_radius", 0.25)),
+        radius=float(orca.get("radius", 0.26)),
+        max_speed=float(orca.get("max_speed", round(max(speed * 1.5, 1.0), 3))),
+        neighbor_dist=float(orca.get("neighbor_dist", 4.0)),
+        time_horizon=float(orca.get("time_horizon", 3.0)),
+        avoid=bool(spec.get("avoidance", False)),
+        walk=_load_clip(spec, "walk", procedural_walk, skel),
+        idle=_load_clip(spec, "idle", procedural_idle, skel),
+        run=_load_clip(spec, "run", procedural_walk, skel),
+        short=_load_clip(spec, "short", procedural_walk, skel),
+        turn_l=_opt_clip(spec, "turn_l", skel),
+        turn_r=_opt_clip(spec, "turn_r", skel),
+        walk_l=_opt_clip(spec, "walk_l", skel),
+        walk_r=_opt_clip(spec, "walk_r", skel),
+        walk_back=_opt_clip(spec, "walk_back", skel),
+        mocap=_mocap_ids(model, spec["name"]),
+        skeleton=skel,
+        foot_rest=_foot_rest(skel),
+        sole=spec.get("sole"),
+        dwell=dwell,
+        patrol_wps=wps.copy(),
+        patrol_dwell=list(dwell),
+        patrol_loop=loop,
+    )
+    st.pos = wps[0].copy()
+    st.yaw = _heading(wps[0], wps[1]) if len(wps) > 1 else 0.0
+    return st
+
+
+def _load_clip(spec, kind, fallback, skel) -> Clip:
+    path = (spec.get("motion") or {}).get(kind)
+    if path:
+        try:
+            return _ground_clip(Clip.load(path), skel)
+        except Exception as e:  # noqa: BLE001 -- fall back, log why
+            logger.warning(
+                "walker %s: could not load %s clip %s (%s); using procedural",
+                spec.get("name"),
+                kind,
+                path,
+                e,
+            )
+    return _ground_clip(fallback(), skel)
+
+
+def _opt_clip(spec, kind, skel):
+    """Load an optional clip (e.g. a turn) -> grounded Clip or None."""
+    path = (spec.get("motion") or {}).get(kind)
+    if not path:
+        return None
+    try:
+        return _ground_clip(Clip.load(path), skel)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("walker %s: could not load %s clip %s (%s)", spec.get("name"), kind, path, e)
+        return None
+
+
+def _mocap_ids(model, name) -> dict:
+    ids = {}
+    for part in JOINT_NAMES:
+        bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{name}/{part}")
+        if bid < 0:
+            raise ValueError(
+                f"humanoid body {name}/{part} not in model (was build_humanoid run before compile?)"
+            )
+        ids[part] = int(model.body_mocapid[bid])
+    return ids
+
+
 class WalkerController:
     """Drives every walker humanoid each physics step: nav root + clip body.
 
@@ -261,7 +448,13 @@ class WalkerController:
         # One obstacle source for both layers: the model's static wall geoms.
         mujoco.mj_forward(model, data)  # ensure geom_xpos is valid
         self._wall_polys = obstacles.wall_polygons(model, data)
-        self._grid = self._build_grid(self._wall_polys, specs)
+        # Every walker's waypoints must be inside the grid, or a route to one outside the walls'
+        # extent would be clamped to the grid edge.
+        self._grid = build_grid(
+            model,
+            data,
+            extra_points=[_wp_xy(p) for spec in specs for p in spec_waypoints(spec)],
+        )
         if self._grid is not None:
             logger.info(
                 "walker planner grid %dx%d from %d wall footprint(s)",
@@ -269,7 +462,7 @@ class WalkerController:
                 self._grid.height,
                 len(self._wall_polys),
             )
-        self._states = [self._make_state(s) for s in specs]
+        self._states = [make_anim_state(model, s) for s in specs]
         self._by_name = {st.name: st for st in self._states}
         self._navs = {
             st.name: self._make_nav(st, s) for st, s in zip(self._states, specs, strict=True)
@@ -289,114 +482,12 @@ class WalkerController:
         self.reset()  # pose humanoids at start
 
     # -- setup ---------------------------------------------------------------------------------
-    def _build_grid(self, wall_polys, specs):
-        """An occupancy grid covering the walls and every waypoint, or ``None`` when there are no
-        walls to plan around (-> straight-line goals)."""
-        if not wall_polys:
-            return None
-        pts = [p for poly in wall_polys for p in poly]
-        for spec in specs:
-            pts.extend(_wp_xy(p) for p in self._spec_waypoints(spec))
-        arr = np.asarray(pts, dtype=float)
-        bounds = (arr[:, 0].min(), arr[:, 1].min(), arr[:, 0].max(), arr[:, 1].max())
-        return OccupancyGrid.from_polygons(wall_polys, bounds=bounds)
-
-    @staticmethod
-    def _spec_waypoints(spec) -> list:
-        """The spec's patrol waypoints, or a single spawn point when it is goal-driven only."""
-        wps = list(spec.get("waypoints") or [])
-        if wps:
-            return wps
-        return [list(spec.get("pos") or (0.0, 0.0))]
-
     def _make_nav(self, st, spec) -> NavCore:
         params = NavParams.from_spec(spec, st.radius)
         planner = (
             GridPlanner(self._grid, params.inflation_radius) if self._grid is not None else None
         )
         return NavCore(st, planner, params)
-
-    def _make_state(self, spec) -> _Walker:
-        default_dwell = spec.get("dwell", 0.0)
-        raw = self._spec_waypoints(spec)
-        wps = np.array([_wp_xy(p) for p in raw], dtype=float)
-        dwell = [_wp_dwell(p, default_dwell) for p in raw]
-        orca = spec.get("orca") or {}
-        speed = float(spec.get("speed", 1.0))
-        skel = to_skeleton(spec.get("skeleton"))
-        loop = bool(spec.get("loop", True)) and len(wps) > 1
-        st = _Walker(
-            name=spec["name"],
-            waypoints=wps,
-            speed=speed,
-            loop=loop,
-            arrival_radius=float(spec.get("arrival_radius", 0.25)),
-            radius=float(orca.get("radius", 0.26)),
-            max_speed=float(orca.get("max_speed", round(max(speed * 1.5, 1.0), 3))),
-            neighbor_dist=float(orca.get("neighbor_dist", 4.0)),
-            time_horizon=float(orca.get("time_horizon", 3.0)),
-            avoid=bool(spec.get("avoidance", False)),
-            walk=self._load_clip(spec, "walk", procedural_walk, skel),
-            idle=self._load_clip(spec, "idle", procedural_idle, skel),
-            run=self._load_clip(spec, "run", procedural_walk, skel),
-            short=self._load_clip(spec, "short", procedural_walk, skel),
-            turn_l=self._opt_clip(spec, "turn_l", skel),
-            turn_r=self._opt_clip(spec, "turn_r", skel),
-            walk_l=self._opt_clip(spec, "walk_l", skel),
-            walk_r=self._opt_clip(spec, "walk_r", skel),
-            walk_back=self._opt_clip(spec, "walk_back", skel),
-            mocap=self._mocap_ids(spec["name"]),
-            skeleton=skel,
-            foot_rest=_foot_rest(skel),
-            sole=spec.get("sole"),
-            dwell=dwell,
-            patrol_wps=wps.copy(),
-            patrol_dwell=list(dwell),
-            patrol_loop=loop,
-        )
-        st.pos = wps[0].copy()
-        st.yaw = _heading(wps[0], wps[1]) if len(wps) > 1 else 0.0
-        return st
-
-    def _load_clip(self, spec, kind, fallback, skel) -> Clip:
-        path = (spec.get("motion") or {}).get(kind)
-        if path:
-            try:
-                return _ground_clip(Clip.load(path), skel)
-            except Exception as e:  # noqa: BLE001 -- fall back, log why
-                logger.warning(
-                    "walker %s: could not load %s clip %s (%s); using procedural",
-                    spec.get("name"),
-                    kind,
-                    path,
-                    e,
-                )
-        return _ground_clip(fallback(), skel)
-
-    def _opt_clip(self, spec, kind, skel):
-        """Load an optional clip (e.g. a turn) -> grounded Clip or None."""
-        path = (spec.get("motion") or {}).get(kind)
-        if not path:
-            return None
-        try:
-            return _ground_clip(Clip.load(path), skel)
-        except Exception as e:  # noqa: BLE001
-            logger.warning(
-                "walker %s: could not load %s clip %s (%s)", spec.get("name"), kind, path, e
-            )
-            return None
-
-    def _mocap_ids(self, name) -> dict:
-        ids = {}
-        for part in JOINT_NAMES:
-            bid = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_BODY, f"{name}/{part}")
-            if bid < 0:
-                raise ValueError(
-                    f"humanoid body {name}/{part} not in model "
-                    "(was build_humanoid run before compile?)"
-                )
-            ids[part] = int(self.model.body_mocapid[bid])
-        return ids
 
     def _build_orca(self, robot_radius):
         try:
@@ -535,7 +626,7 @@ class WalkerController:
                 self._warned = True
             for st in self._states:
                 pref = self._navigate(st, t)
-                self._animate(st, st.pos + pref * step_dt, step_dt)
+                animate(self.data, st, st.pos + pref * step_dt, step_dt)
                 self._finish_route(st)
             return
 
@@ -572,7 +663,7 @@ class WalkerController:
                 new_pos = np.array([px, py])
             else:
                 new_pos = st.pos + prefs[st.name] * step_dt
-            self._animate(st, new_pos, step_dt)
+            animate(self.data, st, new_pos, step_dt)
             self._finish_route(st)
 
     def _finish_route(self, st) -> None:
@@ -605,99 +696,6 @@ class WalkerController:
                 best, best_d = (other.pos[0], other.pos[1]), d
         return best
 
-    def _animate(self, st, new_pos, dt):
-        """Ease the body toward the new nav position along CARLA's 2D blendspace: a speed axis
-        (idle->short->walk->run) and a direction axis (turn-in-place when stopped / lean when moving,
-        plus strafe) -- then FK + write the pose."""
-        delta = new_pos - st.pos
-        dist = float(np.linalg.norm(delta))
-        raw_speed = dist / max(dt, 1e-9)
-        st.disp_speed += (1.0 - math.exp(-dt / _SPEED_TAU)) * (raw_speed - st.disp_speed)
-        # Face where the walker *wants* to go (nav preferred velocity), not the instantaneous ORCA
-        # push: avoidance side-steps then become a strafe/lean (direction axis) rather than the body
-        # whipping around, and a walker that is blocked (~0 displacement) still turns in place to
-        # face its goal.
-        pref = st.pref_vel
-        if float(np.hypot(pref[0], pref[1])) > 1e-3:
-            target = math.atan2(float(pref[1]), float(pref[0]))
-        elif dist > 1e-4:
-            target = math.atan2(float(delta[1]), float(delta[0]))
-        else:
-            target = st.yaw
-        new_yaw = _approach_angle(st.yaw, target, _MAX_TURN_RATE * dt)
-        d_yaw = math.atan2(math.sin(new_yaw - st.yaw), math.cos(new_yaw - st.yaw))
-        yaw_rate = d_yaw / max(dt, 1e-9)
-        st.yaw = new_yaw
-        st.phase += dist / st.walk.stride_len  # gait phases by distance (no slide)
-        st.phase_run += dist / st.run.stride_len
-        st.phase_short += dist / st.short.stride_len
-        st.t_idle += dt  # idle by time
-        # -- speed axis: idle -> short -> walk -> run (each takes over in turn) --
-        qi, zi = st.idle.sample_array(st.t_idle / st.idle.duration)
-        qs, zs = st.short.sample_array(st.phase_short)
-        qw, zw = st.walk.sample_array(st.phase)
-        qr, zr = st.run.sample_array(st.phase_run)
-        w_short = smoothstep(st.disp_speed, *_IDLE_SHORT)
-        w_walk = smoothstep(st.disp_speed, *_SHORT_WALK)
-        w_run = smoothstep(st.disp_speed, *_WALK_RUN)
-        q = blend_quats(qi, qs, w_short)
-        root_z = (1 - w_short) * zi + w_short * zs
-        q = blend_quats(q, qw, w_walk)
-        root_z = (1 - w_walk) * root_z + w_walk * zw
-        q = blend_quats(q, qr, w_run)
-        root_z = (1 - w_run) * root_z + w_run * zr
-        q = self._direction_axis(st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist)
-        joint_rot = {name: q[j] for j, name in enumerate(JOINT_NAMES)}
-        poses = forward_kinematics(
-            [new_pos[0], new_pos[1], st.skeleton.root_height + root_z],
-            st.yaw,
-            joint_rot,
-            skeleton=st.skeleton,
-        )
-        self._write(st, _foot_ground(poses, st))
-        st.pos = new_pos
-
-    def _direction_axis(self, st, q, d_yaw, yaw_rate, w_short, w_walk, delta, dist):
-        """CARLA's BS_GEN3 ``Direction`` parameter, in two parts.
-
-        **Turn:** the in-place turn clip, played through (its cycle advanced by the actual heading
-        change so the steps don't slide). When the walker is standing (``w_short`` ~ 0) it fully
-        takes over -> a real turn-in-place; when walking it is capped to ``_TURN_MAX`` so it only
-        leans the gait into the turn.
-
-        **Strafe:** when travel is not aligned with facing (the walker re-faced toward its goal while
-        ORCA pushes it sideways), blend the matching side / back walk clip by the travel-vs-facing
-        angle. These clips are optional; absent, the body simply translates along the small residual
-        deviation.
-        """
-        turning = min(abs(yaw_rate) / _TURN_REF, 1.0)
-        turn = st.turn_l if d_yaw > 0 else st.turn_r
-        if turn is not None and turning > 1e-3:
-            st.phase_turn += abs(d_yaw) / _TURN_STRIDE
-            w_turn = turning * ((1.0 - w_short) + w_short * _TURN_MAX)
-            q = blend_quats(q, turn.sample_array(st.phase_turn)[0], w_turn)
-        if dist > 1e-4 and w_walk > 1e-3:
-            travel = math.atan2(float(delta[1]), float(delta[0]))
-            direction = math.atan2(math.sin(travel - st.yaw), math.cos(travel - st.yaw))
-            a = abs(direction)
-            side = st.walk_l if direction > 0 else st.walk_r
-            if side is not None:
-                w_side = smoothstep(a, _STRAFE_FWD, _STRAFE_SIDE) * w_walk
-                if w_side > 1e-3:
-                    q = blend_quats(q, side.sample_array(st.phase)[0], w_side)
-            if st.walk_back is not None:
-                w_back = smoothstep(a, _STRAFE_SIDE, _STRAFE_BACK) * w_walk
-                if w_back > 1e-3:
-                    q = blend_quats(q, st.walk_back.sample_array(st.phase)[0], w_back)
-        return q
-
-    def _write(self, st, poses):
-        d = self.data
-        for part, (pos, quat) in poses.items():  # per-limb collision rides the joints
-            mid = st.mocap[part]
-            d.mocap_pos[mid] = pos
-            d.mocap_quat[mid] = quat
-
     # -- lifecycle -----------------------------------------------------------------------------
     def reset(self):
         """Return every walker to its patrol start and pose it standing."""
@@ -729,7 +727,7 @@ class WalkerController:
                 joint_rot,
                 skeleton=st.skeleton,
             )
-            self._write(st, _foot_ground(poses, st))
+            write_pose(self.data, st, _foot_ground(poses, st))
 
     # -- helpers -------------------------------------------------------------------------------
     def _robot_state(self):
