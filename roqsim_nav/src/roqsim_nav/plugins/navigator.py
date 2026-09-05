@@ -32,6 +32,25 @@ entry sits rather than a config key::
       loop: false             # cycle the route forever rather than stopping at the last point
       arrival_radius: 0.25
 
+      # -- what it does about what the plan did not contain -----------------------------------
+      # Three independent capabilities, not a ladder. See AVOIDANCE_KEYS for why.
+      avoidance:
+        stop: true            # look ahead and hold until the way is clear
+        steer: none           # none | give_way | orca | module:Class -- which model gives way
+        reroute: false        # remember what stopped it and plan around it (needs `stop`)
+        params: {}            # per-agent keys the chosen model accepts, checked at load
+
+        # the probe's own tuning, in the same block
+        lookahead: 1.2        # m of clear corridor needed, measured from the mover's FRONT
+        width: 0.6            # m of corridor swept: the body, plus the clearance it should keep
+        rays: 5               # how finely that width is sampled
+        height: 0             # m above the floor to scan; 0 -> just above obstacle_height's floor
+        clear_time: 0.5       # s the way must stay open before setting off again
+        yield_time: 3.0       # s a blockage reads as traffic before recovery may engage
+        forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
+        blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
+        ignore: []            # entities this mover never stops for
+
       # -- output: drive ---------------------------------------------------------------------
       kinematics: auto        # auto | unicycle | holonomic | ackermann (auto asks the output)
       heading_gain: 2.0       # rad/s of yaw command per rad of heading error
