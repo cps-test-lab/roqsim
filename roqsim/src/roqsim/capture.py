@@ -42,6 +42,7 @@ import mujoco
 import numpy as np
 from numpy.lib import format as npy_format
 
+from . import keys
 from .kinematics import body_twist
 
 log = logging.getLogger(__name__)
@@ -966,14 +967,17 @@ class RecordToggle:
     state change on the physics thread is what preserves the single-writer rule.
     """
 
-    #: GLFW keycode for F9. F1-F7 are Simulate's own (help/info/profiler/sensor/fullscreen/frame/label);
-    #: F8 and F9 are unbound. The arrows, Page Up/Down and Shift belong to :class:`~roqsim.viewer.WalkKeys`,
-    #: and letters are unsafe because Simulate claims W/A/S/D/E/Q for visualization flags.
-    KEY_F9 = 298
+    #: What this handler answers to, and what the window's F1 list says of it. Declared in
+    #: :mod:`roqsim.keys`, with every other key roqsim binds and why these are the ones it may take.
+    key_bindings = (keys.RECORD_TAKE,)
+
+    #: GLFW keycode for F9, from the binding above -- so the key that records and the key the list
+    #: names cannot become two different keys.
+    KEY_F9 = keys.KEY_F9
 
     #: Auto-repeat means a held key delivers several press events (~0.2 s apart), which would toggle
     #: several times. Above that interval, below a deliberate double-press.
-    DEBOUNCE_S = 0.4
+    DEBOUNCE_S = keys.DEBOUNCE_S
 
     def __init__(self, chain=None) -> None:
         self._chain = chain

@@ -67,7 +67,7 @@ from .viewer import (
     GL_HELP,
     DisplayError,
     ViewError,
-    apply_walk,
+    apply_viewer_keys,
     close_viewer,
     has_display,
     launch_viewer,
@@ -254,7 +254,12 @@ def _run_headless(
 
 
 def open_loading_viewer(
-    *, name: str | None = None, left_ui: bool = False, right_ui: bool = False, key_callback=None
+    *,
+    name: str | None = None,
+    left_ui: bool = False,
+    right_ui: bool = False,
+    key_callback=None,
+    key_sources=(),
 ):
     """Open the viewer on an empty placeholder and draw the splash overlay immediately.
 
@@ -277,7 +282,12 @@ def open_loading_viewer(
         model = mujoco.MjSpec().compile()  # empty world (worldbody only); compiles in ~1 ms
         data = mujoco.MjData(model)
         handle = launch_viewer(
-            model, data, left_ui=left_ui, right_ui=right_ui, key_callback=key_callback
+            model,
+            data,
+            left_ui=left_ui,
+            right_ui=right_ui,
+            key_callback=key_callback,
+            key_sources=key_sources,
         )
     except Exception as err:  # noqa: BLE001 — no pre-window is fine; the real launch reports GL errors
         log.debug("loading window skipped: %s", err)
@@ -337,6 +347,7 @@ def _run_windowed(
                 left_ui=left_ui,
                 right_ui=right_ui,
                 key_callback=_key_callback(toggle, saver),
+                key_sources=(toggle, saver),
             )
         except Exception as err:  # noqa: BLE001 — any GL init failure maps to the same guidance
             raise DisplayError(GL_HELP.format(err=err)) from err
@@ -392,14 +403,14 @@ def _run_windowed(
             if now - last_render >= render_period:
                 if camera is not None:
                     camera.update(viewer)
-                apply_walk(viewer)  # arrow-key camera travel, integrated per rendered frame
+                apply_viewer_keys(viewer)  # arrow-key travel and the F1 list, per rendered frame
                 viewer.sync()
                 last_render = now
     finally:
         close_viewer(viewer)
 
 
-def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
+def _hotkeys(*, can_save_view: bool = True) -> tuple[RecordToggle, SaveViewKey]:
     """roqsim's own viewer hotkeys, chained: F9 starts/stops a recording take, F8 saves the camera view.
 
     ``launch_passive`` accepts exactly one key callback, so each handler takes a ``chain`` it forwards
@@ -408,7 +419,7 @@ def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
     outermost of them (:func:`_key_callback`).
     """
     toggle = RecordToggle()
-    return toggle, SaveViewKey(chain=toggle.key_callback)
+    return toggle, SaveViewKey(chain=toggle.key_callback, savable=can_save_view)
 
 
 def _key_callback(toggle: RecordToggle | None, saver: SaveViewKey | None):
@@ -636,7 +647,8 @@ def run(
     # Built before the window, because the window opens on an empty placeholder *before* the world
     # compiles -- so the key callback has to exist first. Both are pointed at their targets below: the
     # toggle at the recorder, the saver at the world YAML this run came out of.
-    toggle, saver = _hotkeys() if not headless else (None, None)
+    world_yaml = world_yaml_path(target)
+    toggle, saver = _hotkeys(can_save_view=world_yaml is not None) if not headless else (None, None)
 
     loading_view, open_s = (None, 0.0)
     if not headless and has_display():
@@ -645,6 +657,7 @@ def run(
             left_ui=left_ui,
             right_ui=right_ui,
             key_callback=_key_callback(toggle, saver),
+            key_sources=(toggle, saver),
         )
         if open_s:
             log.debug("loading window: opened in %.3fs", open_s)
@@ -756,7 +769,7 @@ def run(
                     recorder=recorder,
                     toggle=toggle,
                     saver=saver,
-                    world_yaml=world_yaml_path(target),
+                    world_yaml=world_yaml,
                 )
         finally:
             # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or
