@@ -114,3 +114,33 @@ def test_a_yaw_inside_the_orientation_is_refused():
     )
     with pytest.raises(Exception, match="not a yaw"):
         instantiate_plugins(cfg)
+
+
+def test_a_disabled_entry_never_reads_its_pose():
+    """``enabled: false`` is the removal, so there is no pose to state.
+
+    It matters for a campaign that sweeps an entry's ``enabled`` and writes its pose on the same
+    channel: the cells that switch the entry off must not have to supply a pose for a body nothing
+    builds. Nothing here special-cases that -- a disabled entry is never constructed, so its
+    validator never runs -- and this is what keeps it true.
+    """
+    cfg = load_config_from_dict(
+        {
+            "sim": {"world": "empty_room"},
+            "plugins": [
+                {
+                    SPAWN_ROBOT: {
+                        "model": "turtlebot4",
+                        # Refused outright on an enabled entry (the test above); read by nobody here.
+                        "pose": {"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.57}},
+                    },
+                    "name": "robot",
+                    "enabled": False,
+                }
+            ],
+        }
+    )
+    # Nothing at all, not merely no spawn_robot: disabling an entry that registers an entity
+    # disables the components it owns, which is resolved when the document loads rather than
+    # when a plugin is built.
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == []
