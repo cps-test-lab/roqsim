@@ -510,6 +510,32 @@ Three things about it:
   current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
   use, and the one a per-step control law needs.
 
+**Whose friction is it?** ``contact_pair`` answers the question per-geom friction cannot. MuJoCo
+combines two geoms' values by taking the **maximum**, so a geom's friction is a floor on every
+contact it takes part in and never a statement about one of them. Two consequences follow::
+
+   - contact_pair: {entities: [robot, crate], friction: 0.35}
+     name: robot_on_crate
+   - contact_pair: {geoms: [crate_g, floor], friction: 0.3}
+     name: crate_on_floor
+
+* A pair cannot be made *less* frictional than either side already is -- lowering one geom does
+  nothing while the other stays high. A robot whose model leaves its body geoms at MuJoCo's default
+  1.0 pins every contact it makes to at least that.
+* Two different pair frictions sharing one object are not expressible at all. A crate sliding on a
+  floor at 0.3 while a robot pushes it at 0.35 has no per-geom assignment, because the crate's own
+  value is a floor on both.
+
+An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
+answer and what this plugin declares. Naming ``entities`` or ``bodies`` pairs every geom of both
+subtrees -- a robot base with twenty collision geoms against a five-geom crate is a hundred pairs,
+and asking a world to enumerate them is how a pair silently misses the one that actually touches.
+
+Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
+sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
+than resolved -- MuJoCo keeps both and uses one, and which is not something a world should have to
+know.
+
 **How close did it come?** ``clearance_monitor`` is the companion, and deliberately its opposite
 number. Contact is a bit: every configuration that does not touch scores identically, which is the
 right failure criterion and a poor thing to optimise. Distance is the same question asked

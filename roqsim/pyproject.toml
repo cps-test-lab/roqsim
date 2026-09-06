@@ -34,6 +34,10 @@ contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
 # (a failed trial is not un-failed), while a tactile reading is only useful while it is current and
 # is replaced every step. This is what a bumper-driven or tactile controller reads in its loop.
 contact_location = "roqsim.plugins.contact_location:ContactLocationPlugin"
+# The friction of ONE pair, which per-geom values cannot express: MuJoCo combines them by MAX, so a
+# geom's friction is a floor on every contact it takes part in. Two different pair frictions sharing
+# one object -- a box sliding on a floor while a robot pushes it -- need an explicit <pair>.
+contact_pair = "roqsim.plugins.contact_pair:ContactPairPlugin"
 # The gradient beside that verdict: contact_monitor says whether it touched, this says how
 # close it came. Same geometry, one owner each.
 clearance_monitor = "roqsim.plugins.clearance_monitor:ClearanceMonitorPlugin"
