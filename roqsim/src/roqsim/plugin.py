@@ -35,9 +35,13 @@ class Plugin:
 
     #: This plugin's config, declared once: ``{key: roqsim.schema.Field(...)}``. Optional -- a
     #: plugin without one behaves exactly as before. Declaring it gets two things from one place:
-    #: :meth:`validate_schema` checks the mechanical part (types, ranges, required keys, unknown
-    #: keys), and ``roqsim plugins describe`` publishes the fields WITH their types and defaults
-    #: instead of a docstring's prose. See :mod:`roqsim.schema`.
+    #: the mechanical checks (types, ranges, required keys, unknown keys) run against it, and
+    #: ``roqsim plugins describe`` publishes the fields WITH their types and defaults instead of a
+    #: docstring's prose. See :mod:`roqsim.schema`.
+    #:
+    #: **Declaring it is what enforces it.** ``instantiate_plugins`` runs the check for every plugin
+    #: that has one, beside its ``validate_config``; there is no call to remember. A schema the
+    #: catalog publishes and nothing checks would be exactly the docstring this replaces.
     CONFIG_SCHEMA: dict | None = None
 
     #: With a schema, whether a key it does not mention is an error. Opt-in: a component's config
@@ -149,15 +153,32 @@ class Plugin:
     def validate_schema(cls, config: dict) -> list[str]:
         """Config errors from :data:`CONFIG_SCHEMA`, or ``[]`` when none is declared.
 
-        Called from a plugin's own ``validate_config``, not instead of it: the schema covers what is
-        the same everywhere (a required key, a type, a range) and the plugin keeps what only it
-        knows (that two lists must be the same length, that a site must exist in the model).
+        Run by ``instantiate_plugins`` for every plugin that declares a schema, *beside* its
+        ``validate_config`` rather than instead of it: the schema covers what is the same everywhere
+        (a required key, a type, a range) and the plugin keeps what only it knows (that two lists
+        must be the same length, that a site must exist in the model). A plugin does not call this
+        itself -- doing so reports each error twice.
         """
         if not cls.CONFIG_SCHEMA:
             return []
         from .schema import validate
 
         return validate(cls.CONFIG_SCHEMA, config, strict_keys=cls.STRICT_KEYS)
+
+    def config_errors(self, config: dict) -> list[str]:
+        """Every error for *config*: the declared schema's, then this plugin's own.
+
+        What ``instantiate_plugins`` asks, and therefore what a world is actually held to. It is one
+        method rather than two calls at the call site so that "a schema is checked because it is
+        declared" has a single place to be true -- including for a test, which would otherwise reach
+        for ``validate_config`` and quietly check less than a run does.
+        """
+        errors = list(type(self).validate_schema(config))
+        try:
+            errors += self.validate_config(config) or []
+        except Exception as exc:  # a plugin's validator itself blew up
+            errors.append(f"validate_config raised: {exc}")
+        return errors
 
     @staticmethod
     def validate_topics(config: dict) -> list[str]:

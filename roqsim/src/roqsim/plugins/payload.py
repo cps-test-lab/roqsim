@@ -68,7 +68,7 @@ class PayloadPlugin(Plugin):
 
     def validate_config(self, config: dict) -> list[str]:
         # The mechanical half from the declaration; the rest is what only this plugin knows.
-        errors = self.validate_schema(config)
+        errors: list[str] = []
         if "offset" in config:
             # Loud rather than approximate: an offset payload moves the centre of mass and adds a
             # parallel-axis term, which this plugin does not model. Ignoring the key would report a

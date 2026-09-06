@@ -28,10 +28,13 @@ the declaration into the same error strings the hand-written checks produce, and
 API publishes the fields with their types, defaults, units and bounds.
 
 Opt-in, and additive. A plugin without a schema behaves exactly as before, and a plugin WITH one
-still owns ``validate_config`` -- it calls :func:`validate` for the mechanical part and keeps
-whatever else it knows (that two lists must be the same length, that a file must exist). The schema
-is not a validation framework growing to cover every rule; it is the part that is the same
-everywhere, written once instead of forty times.
+still owns ``validate_config`` for whatever else it knows (that two lists must be the same length,
+that a file must exist). The schema is not a validation framework growing to cover every rule; it is
+the part that is the same everywhere, written once instead of forty times.
+
+**Declaring a schema is what enforces it**: ``instantiate_plugins`` checks it, so there is no call
+for a plugin author to remember and no way to publish a contract through the catalog that nothing
+verifies -- which would leave the schema exactly as trustworthy as the docstring it replaces.
 
 Declaring it::
 

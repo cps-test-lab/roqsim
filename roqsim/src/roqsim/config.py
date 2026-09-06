@@ -1431,11 +1431,13 @@ def instantiate_plugins(cfg: SimConfig) -> list[Plugin]:
 
     errors: list[str] = []
     for inst, (spec, _cls) in zip(instances, resolved, strict=True):
-        try:
-            found = inst.validate_config(inst.config) or []
-        except Exception as exc:  # a plugin's validator itself blew up
-            found = [f"validate_config raised: {exc}"]
-        errors.extend(f"[{inst.name} ({spec.ref})] {msg}" for msg in found)
+        # `config_errors`, not `validate_config`: a declared CONFIG_SCHEMA is checked because it is
+        # declared. Leaving that call to each plugin made the schema exactly as reliable as the
+        # docstring it replaces -- a plugin could publish a contract through `roqsim plugins
+        # describe` and check none of it, with nothing to say so.
+        errors.extend(
+            f"[{inst.name} ({spec.ref})] {msg}" for msg in inst.config_errors(inst.config)
+        )
 
     if errors:
         raise PluginError("plugin config validation failed:\n  - " + "\n  - ".join(errors))

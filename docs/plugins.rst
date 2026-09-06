@@ -466,9 +466,12 @@ it, so the checks and the published description come from one place::
        }
 
        def validate_config(self, config):
-           errors = self.validate_schema(config)     # types, ranges, required keys
-           ...                                        # and whatever only this plugin knows
-           return errors
+           return [...]                               # whatever only this plugin knows
+
+**Declaring it is what enforces it.** The types, ranges, required keys and -- with ``STRICT_KEYS``
+-- unknown keys are checked when the world's plugins are built, beside whatever ``validate_config``
+adds; there is no call to remember. A schema the catalog published and nothing checked would be the
+docstring this replaces, wearing a type.
 
 ``roqsim plugins describe payload`` then carries a ``schema`` block beside the docstring-parsed
 ``parameters``: the same keys with their **types, defaults, units and bounds**. That is what a caller

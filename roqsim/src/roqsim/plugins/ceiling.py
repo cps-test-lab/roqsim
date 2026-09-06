@@ -73,7 +73,7 @@ class CeilingPlugin(Plugin):
     STRICT_KEYS = True
 
     def validate_config(self, config: dict) -> list[str]:
-        errors = self.validate_schema(config)
+        errors: list[str] = []
         if "enabled" in config:
             errors.append(
                 "'enabled' is now a reserved sibling meaning 'run this component at all', and this "

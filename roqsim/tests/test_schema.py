@@ -11,6 +11,8 @@ only an error where a plugin says its list is complete, and every message names 
 
 from __future__ import annotations
 
+import pytest
+
 from roqsim.plugin import Plugin
 from roqsim.schema import INJECTED_KEYS, Field, describe, validate
 
@@ -131,9 +133,9 @@ class _Undeclared(Plugin):
     pass
 
 
-def test_a_plugin_without_a_schema_is_unaffected():
+def test_a_plugin_without_a_schema_is_unaffected_by_the_rule():
     assert _Undeclared({}).validate_schema({"anything": 1}) == []
-    assert _Undeclared({}).validate_config({"anything": 1}) == []
+    assert _Undeclared({}).config_errors({"anything": 1}) == []
 
 
 def test_a_plugin_with_one_gets_the_checks_and_its_strictness():
@@ -169,12 +171,12 @@ def test_a_plugin_without_one_publishes_no_schema_key_at_all():
 def test_payload_still_refuses_what_only_it_knows_about():
     from roqsim.plugins.payload import PayloadPlugin
 
-    errors = PayloadPlugin({"mass": 1.0, "offset": [0, 0, 1]}).validate_config(
+    errors = PayloadPlugin({"mass": 1.0, "offset": [0, 0, 1]}).config_errors(
         {"mass": 1.0, "offset": [0, 0, 1]}
     )
     assert any("'offset' is not supported" in e for e in errors)
-    assert PayloadPlugin({"mass": 1.0}).validate_config({"mass": 1.0}) == []
-    assert any("required" in e for e in PayloadPlugin({}).validate_config({}))
+    assert PayloadPlugin({"mass": 1.0}).config_errors({"mass": 1.0}) == []
+    assert any("required" in e for e in PayloadPlugin({}).config_errors({}))
 
 
 def test_ceiling_catches_a_misspelt_key_now():
@@ -182,18 +184,83 @@ def test_ceiling_catches_a_misspelt_key_now():
     and look like the plugin not working."""
     from roqsim.plugins.ceiling import CeilingPlugin
 
-    errors = CeilingPlugin({}).validate_config({"keep": False, "above_Z": 2.0})
+    errors = CeilingPlugin({}).config_errors({"keep": False, "above_Z": 2.0})
     assert any("did you mean 'above_z'?" in e for e in errors)
 
 
 def test_ceiling_keeps_the_rule_the_schema_has_no_word_for():
     from roqsim.plugins.ceiling import CeilingPlugin
 
-    assert any("finite" in e for e in CeilingPlugin({}).validate_config({"above_z": float("inf")}))
+    assert any("finite" in e for e in CeilingPlugin({}).config_errors({"above_z": float("inf")}))
 
 
 def test_ceiling_still_explains_the_reserved_enabled_key():
     from roqsim.plugins.ceiling import CeilingPlugin
 
-    errors = CeilingPlugin({}).validate_config({"enabled": False})
+    errors = CeilingPlugin({}).config_errors({"enabled": False})
     assert any("reserved sibling" in e for e in errors)
+
+
+# -- declaring a schema is what enforces it ---------------------------------------------------
+
+
+class _Forgetful(Plugin):
+    """A plugin that declares a schema and writes no validator of its own.
+
+    The case the rule exists for: nothing here calls the checker, and a world is still held to the
+    declaration. Before, this plugin published a contract through the catalog and checked none of
+    it -- which is the docstring the schema replaces, wearing a type.
+    """
+
+    CONFIG_SCHEMA = {"mass": Field(float, required=True, minimum=0.0, unit="kg")}
+
+
+def test_a_declared_schema_is_checked_without_the_plugin_asking():
+    assert _Forgetful({}).config_errors({}) == ["'mass' is required"]
+    assert _Forgetful({}).config_errors({"mass": -1.0}) == ["'mass' must be >= 0.0 kg, got -1.0"]
+    assert _Forgetful({}).config_errors({"mass": 2.0}) == []
+
+
+def test_the_schema_and_the_plugin_s_own_rules_are_both_reported():
+    """One run finds both, in that order -- the schema's mechanical error first."""
+
+    class _Both(Plugin):
+        CONFIG_SCHEMA = {"above_z": Field(float, default=2.0)}
+
+        def validate_config(self, config):
+            return ["a rule only this plugin knows"]
+
+    assert _Both({}).config_errors({"above_z": "high"}) == [
+        "'above_z' must be float, got str ('high')",
+        "a rule only this plugin knows",
+    ]
+
+
+def test_a_validator_that_raises_is_reported_rather_than_escaping():
+    """The schema's errors survive it: a broken validator must not hide the ones already found."""
+
+    class _Broken(Plugin):
+        CONFIG_SCHEMA = {"mass": Field(float, required=True)}
+
+        def validate_config(self, config):
+            raise RuntimeError("boom")
+
+    errors = _Broken({}).config_errors({})
+    assert errors[0] == "'mass' is required"
+    assert "validate_config raised: boom" in errors[1]
+
+
+def test_the_whole_path_raises_for_a_world():
+    """Through instantiate_plugins, which is what a world actually meets.
+
+    A misspelt key rather than a mistyped one, because a plugin reads its config in ``__init__``
+    and instances are built before anything is validated -- so ``above_z: high`` raises out of
+    ``float()`` first, and never reaches the checker that would have named it.
+    """
+    from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
+
+    cfg = load_config_from_dict(
+        {"sim": {}, "plugins": [{"ceiling": {"above_Z": 2.0}, "name": "roof"}]}
+    )
+    with pytest.raises(PluginError, match="did you mean 'above_z'"):
+        instantiate_plugins(cfg)
