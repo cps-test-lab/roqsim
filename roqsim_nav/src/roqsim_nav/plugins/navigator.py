@@ -21,6 +21,10 @@ entry sits rather than a config key::
       goals:                  # the route, world metres
         - [4.0, 3.0]          #   [x, y] or [x, y, yaw]
         - [0.0, 3.0]
+      dwell: 0.0              # seconds to stand still on reaching a goal: one number, `[lo, hi]`
+                              #   for a random pause, or a list of either -- one per route point,
+                              #   the mover's own start included, so it lines up with `goals`
+                              #   preceded by where the mover began
       route_mode: plan        # plan -> A* between the points; exact -> the points ARE the path
       tracker: waypoint       # waypoint -> steer at the goal, advance within `arrival_radius`
                               # pure_pursuit -> steer at a carrot `lookahead` along the route and
@@ -210,6 +214,44 @@ def _validate_avoidance(config: dict, base_dir) -> list[str]:
     return errors + CautionProbe.validate(probe)
 
 
+def _dwell_pair(d) -> tuple[float, float]:
+    """One dwell entry: ``s`` seconds, or ``[lo, hi]`` for a random pause, as a ``(lo, hi)`` pair."""
+    if isinstance(d, (list, tuple)):
+        if len(d) != 2:
+            raise ValueError(f"a random pause is [lo, hi], got {list(d)!r}")
+        lo, hi = float(d[0]), float(d[1])
+        if lo > hi:
+            raise ValueError(f"[lo, hi] must be ordered, got [{lo}, {hi}]")
+    else:
+        lo = hi = float(d)
+    if lo < 0.0:
+        raise ValueError(f"a dwell cannot be negative, got {lo}")
+    return lo, hi
+
+
+def _dwell_list(spec, n: int) -> list[tuple[float, float]]:
+    """`n` dwell pairs from a scalar, a ``[lo, hi]`` pair, or one entry per route point.
+
+    Entries may be scalars, ``[lo, hi]`` pairs, or a mix of the two.
+
+    One case is genuinely ambiguous: two bare numbers on a two-point route are either a random pause
+    or one dwell per point. It is read as the random pause, which is the form a world writes far more
+    often; nesting (``[[1, 1], [2, 2]]``) says the other thing. Anything with a nested entry, or a
+    length other than two, is unambiguous and read as per-point.
+    """
+    if isinstance(spec, (list, tuple)):
+        # A per-point list may mix the two forms -- `[0, [2, 4], 0, [1, 3]]` is what a patrol with a
+        # pause at only some of its waypoints looks like -- so ANY nested entry makes it per-point.
+        # Requiring every entry to be nested would reject exactly that, the commonest shape there is.
+        nested = any(isinstance(e, (list, tuple)) for e in spec)
+        if not nested and len(spec) == 2:
+            return [_dwell_pair(spec)] * n  # the documented tie-break, below
+        if len(spec) != n:
+            raise ValueError(f"one dwell per route point: expected {n}, got {len(spec)}")
+        return [_dwell_pair(e) for e in spec]
+    return [_dwell_pair(spec)] * n
+
+
 class NavigatorPlugin(Plugin):
     #: It drives an entity somebody else provided and builds nothing, so it belongs inside that
     #: entity's ``components:`` block -- in every output mode, which is why this is a class
@@ -272,6 +314,10 @@ class NavigatorPlugin(Plugin):
         for i, g in enumerate(config.get("goals") or []):
             if not (isinstance(g, (list, tuple)) and 2 <= len(g) <= 3):
                 errors.append(f"goals[{i}] must be [x, y] or [x, y, yaw] in world metres")
+        try:
+            _dwell_list(config.get("dwell", 0.0), 1 + len(config.get("goals") or []))
+        except (TypeError, ValueError) as exc:
+            errors.append(f"'dwell': {exc}")
         if config.get("loop") and not (config.get("goals") or []):
             # The route is the mover's start plus its goals, so ONE goal is already a two-point
             # shuttle -- which is exactly what a two-waypoint patrol is. Counting goals rather than
@@ -350,10 +396,15 @@ class NavigatorPlugin(Plugin):
         self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
         goals = [tuple(g)[:2] for g in (cfg.get("goals") or [])]
         waypoints = np.asarray([(x, y), *goals] if goals else [(x, y)], dtype=float)
+        # `dwell` is indexed by `goal_idx`, which indexes `waypoints` -- so it is built to that
+        # length here rather than to the length of `goals`, and the mover's own start point gets an
+        # entry like every other route point.
+        dwell = _dwell_list(cfg.get("dwell", 0.0), len(waypoints))
 
         self._state = NavState(
             name=self.entity,
             waypoints=waypoints,
+            dwell=dwell,
             speed=float(cfg.get("speed", 0.5)),
             loop=bool(cfg.get("loop", False)),
             arrival_radius=float(cfg.get("arrival_radius", 0.25)),
@@ -421,6 +472,9 @@ class NavigatorPlugin(Plugin):
         self._started = bool(cfg.get("autostart", True))
 
         self._configured_goals = list(goals)
+        # Kept, not just applied once: `st.dwell` is indexed by `goal_idx` against
+        # `st.waypoints`, so every route rebuild below has to resize it too.
+        self._dwell_spec = cfg.get("dwell", 0.0)
         self._ctx = ctx
         self._declare_endpoints(ctx, entity)
         ctx.blackboard.set(f"nav:{self.entity}", self)
@@ -539,6 +593,7 @@ class NavigatorPlugin(Plugin):
         # Episode N must not inherit episode N-1's route, nor its completion latch.
         st = self._state
         st.waypoints = np.asarray([(x, y), *self._configured_goals], dtype=float)
+        st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
         st.loop = bool(self.config.get("loop", False))
         self._seq.apply(0)
         # Re-plan next tick: an episode may make a different set of obstacles present, and a grid
@@ -673,6 +728,7 @@ class NavigatorPlugin(Plugin):
         self._commanded = False
         st = self._state
         st.waypoints = np.asarray([tuple(st.pos), *self._configured_goals], dtype=float)
+        st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
         st.loop = bool(self.config.get("loop", False))
         self._core.reset()
 
@@ -859,6 +915,10 @@ class NavigatorPlugin(Plugin):
         x, y, _yaw = self._output.pose(self._ctx)
         st = self._state
         st.waypoints = np.asarray([(x, y), *route], dtype=float)
+        # A commanded route is a one-off goal sequence, not the configured patrol, so
+        # it carries no dwell -- and clearing it also keeps `dwell` the same length as
+        # `waypoints`, which `goal_idx` indexes both of.
+        st.dwell = None
         st.loop = False  # a commanded route runs once; looping is a property of the configured one
         self._commanded = True
         self._core.reset()
@@ -869,6 +929,7 @@ class NavigatorPlugin(Plugin):
     def _apply_cancel(self, seq: int) -> None:
         x, y, _yaw = self._output.pose(self._ctx)
         self._state.waypoints = np.asarray([(x, y)], dtype=float)
+        self._state.dwell = None
         self._core.reset()
         self._state.done = True
         self._output.stop(self._ctx)
