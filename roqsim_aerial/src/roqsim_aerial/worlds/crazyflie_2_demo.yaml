@@ -22,7 +22,8 @@ components:
   - spawn_robot:
       model: crazyflie_2
       prefix: "cf2_"
-      pos: [0.0, 0.0]           # spawn_robot places on the floor (it takes [x, y]); the drone takes off
+      pose:
+        position:    {x: 0.0, y: 0.0}
     name: drone
 
     components:

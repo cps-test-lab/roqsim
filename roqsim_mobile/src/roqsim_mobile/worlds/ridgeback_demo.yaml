@@ -11,8 +11,9 @@ components:
   # ridgeback model manifest.
   - spawn_robot:
       model: ridgeback
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # A strafing command, which is the whole point of this platform: no other base in roqsim_mobile

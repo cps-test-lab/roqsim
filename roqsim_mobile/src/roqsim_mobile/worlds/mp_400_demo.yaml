@@ -11,8 +11,9 @@ components:
   # vendor's single front SICK S300 come from the mp_400 model manifest.
   - spawn_robot:
       model: mp_400
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

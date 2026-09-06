@@ -13,8 +13,9 @@ components:
   # driven via /cmd_vel, so no test_cmd override here.
   - spawn_robot:
       model: turtlebot4
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # The bridge reads the robot's declared endpoints (cmd_vel in; odom+tf, scan, joint_states out)

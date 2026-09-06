@@ -67,7 +67,7 @@ sim:
   pacing: realtime          # realtime | asap | {factor: N}
 
 components:
-  - spawn_robot: {model: husky_a200, pos: [0, 0], yaw: 0}
+  - spawn_robot: {model: husky_a200, pose: {position: {x: 0, y: 0}, orientation: {yaw: 0}}}
     name: robot                              # names the entry, and so the entity it spawns
     components:                              # what belongs to that robot
       - diff_drive: {test_cmd: [0.5, 0.4]}

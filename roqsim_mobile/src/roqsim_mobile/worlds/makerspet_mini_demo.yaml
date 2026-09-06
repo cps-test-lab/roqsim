@@ -11,8 +11,9 @@ components:
   # come from the makerspet_mini model manifest. Every value in it is the vendor's own.
   - spawn_robot:
       model: makerspet_mini
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

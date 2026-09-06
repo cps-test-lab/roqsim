@@ -19,7 +19,7 @@ from roqsim.engine import Engine
 
 def _world(tmp_path, loco=None):
     robot = {
-        "spawn_robot": {"model": "unitree_g1_dex1", "pos": [0, 0]},
+        "spawn_robot": {"model": "unitree_g1_dex1", "pose": {"position": {"x": 0, "y": 0}}},
         "name": "robot",
     }
     if loco is not None:

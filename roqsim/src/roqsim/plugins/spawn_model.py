@@ -14,6 +14,7 @@ Config::
       prefix: ""                     # MJCF name prefix (use distinct prefixes for >1 of the model)
       pos: [0.0, 0.0, 0.0]           # [x, y] or [x, y, z]
       rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
+      pose: {...}                    # the whole pose as SpawnEntity states one; replaces pos + rpy
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
       mocap: false                   # make it a mocap body: moved by a plugin, not by physics
@@ -102,13 +103,12 @@ gets the frame. It has no effect on the baked web scene, which already seats the
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose, rpy_to_quat
 from roqsim.presence import set_present
 
 _TF_MODES = (False, "dynamic", "static")
@@ -139,19 +139,6 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
         joint.pos = [c * factor for c in joint.pos]
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
-
-
 class SpawnModelPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -162,10 +149,17 @@ class SpawnModelPlugin(Plugin):
         self.model_ref = self.config.get("model", "")
         self.prefix = self.config.get("prefix", "")
         self.entity_name = self.address
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            # A prop is attached at a frame, so an unstated z is the frame's own -- 0.0, which is
+            # what `pos: [x, y]` already means here. (spawn_robot reads the same omission as the
+            # model's resting height, because a wheeled base has one and a prop does not.)
+            self.pos = [position[0], position[1], position[2] or 0.0]
+        else:
+            pos = self.config.get("pos", [0.0, 0.0, 0.0])
+            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
+            rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
+            self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         self.scale = float(self.config.get("scale", 1.0))
         self.free = bool(self.config.get("free", False))
         self.mocap = bool(self.config.get("mocap", False))
@@ -196,10 +190,23 @@ class SpawnModelPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        if "pose" in config:
+            # Refused rather than resolved: which one wins is a guess about what the author meant,
+            # and the wrong guess puts the prop somewhere plausible instead of failing.
+            if {"pos", "rpy"} & set(config):
+                errors.append(
+                    "'pose' states the whole spawn pose, so it cannot be combined with "
+                    "'pos'/'rpy'. Use one or the other."
+                )
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
+        else:
+            if "rpy" in config and len(config["rpy"]) != 3:
+                errors.append("'rpy' must be [roll, pitch, yaw] in radians")
+            if len(config.get("pos", [0, 0, 0])) not in (2, 3):
+                errors.append("'pos' must be [x, y] or [x, y, z]")
         scale = config.get("scale", 1.0)
         if isinstance(scale, (list, tuple)):
             errors.append(

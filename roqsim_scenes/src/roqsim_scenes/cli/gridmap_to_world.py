@@ -268,9 +268,16 @@ def build_world(
 ) -> dict:
     plugins: list[dict] = []
     if robot:
-        spawn = {"model": robot, "name": "robot", "yaw": yaw}
-        if start is not None:
-            spawn["pos"] = [round(start[0], 6), round(start[1], 6)]
+        position = (
+            {"x": round(start[0], 6), "y": round(start[1], 6)}
+            if start is not None
+            else {"x": 0.0, "y": 0.0}
+        )
+        spawn = {
+            "model": robot,
+            "name": "robot",
+            "pose": {"position": position, "orientation": {"yaw": yaw}},
+        }
         plugins.append({"spawn_robot": spawn})
     plugins.extend(
         obstacle_plugins(

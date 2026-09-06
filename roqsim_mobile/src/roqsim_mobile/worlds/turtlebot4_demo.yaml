@@ -11,8 +11,9 @@ components:
   # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml).
   - spawn_robot:
       model: turtlebot4
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this

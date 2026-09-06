@@ -10,14 +10,23 @@ quaternion, under an optional ``header.frame_id``::
 
 That shape rather than a friendlier one because the same pose reaches an entity two ways -- a world
 declaring where it starts, and a ``SpawnEntity`` call placing it during a trial -- and the two must
-be the same pose written the same way. A world spelling orientation as a yaw and the service
-spelling it as a quaternion means every producer of poses needs a conversion whose direction depends
-on which door it came in at, and a value that reads correctly in the wrong one is the failure that
-follows: ``orientation: {yaw: 1.57}`` is a *valid-looking* quaternion message with x, y, z and w all
-defaulted to zero, so it would arrive as a rotation nobody asked for rather than as an error. It is
-rejected by name here for exactly that reason.
+be the same pose. A world whose spelling differs from the service's means every producer of poses
+needs a conversion whose direction depends on which door it came in at.
 
-Two deliberate departures, both because a document can express something a message cannot:
+**Orientation may also be written as Euler angles**, which is the one place a document is allowed to
+be friendlier than the message::
+
+    pose:
+      position:    {x: 1.5, y: 2.0}
+      orientation: {yaw: 0.785}          # roll and pitch default to 0
+
+Nobody hand-authors a quaternion for a robot facing along a wall, and a world is written by hand.
+The two are told apart by the keys present, never by a mode flag, and mixing them is refused --
+there is no reading under which both apply. What a *producer* writes is still the quaternion: the
+permissive half is reading.
+
+Three deliberate departures from the message, each because a document can express something it
+cannot:
 
 ``header.frame_id``
     optional, and only the world frame is accepted -- the same answer the bridge's spawn service
@@ -27,6 +36,11 @@ Two deliberate departures, both because a document can express something a messa
     (a default-constructed request carries the origin), but a wheeled robot authored with its base
     at the origin and its wheels below it needs the model's own resting height, and z=0 buries it by
     a wheel radius. A caller that means the floor says ``z: 0.0`` and gets it.
+``orientation``
+    accepts ``roll``/``pitch``/``yaw`` beside the quaternion, as above. Every unset component is
+    zero, except the quaternion's ``w``, which is 1 -- the default ``geometry_msgs/Quaternion``
+    itself declares, and what keeps an empty orientation the identity rather than a zero-length
+    quaternion.
 """
 
 from __future__ import annotations
@@ -100,32 +114,72 @@ def parse_pose(value) -> tuple[list[float | None], list[float]]:
     return pos, _parse_orientation(outer.get("orientation"))
 
 
+def rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
+    """``[w, x, y, z]`` from roll/pitch/yaw (rad), fixed-axis XYZ -- the ROS/URDF convention.
+
+    Here rather than in each plugin that offers Euler angles, so two of them cannot drift apart on
+    which convention they mean. There are twelve, they agree on nothing but the identity, and a
+    second implementation is a second convention waiting to be a bug.
+    """
+    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
+    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
+    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
+    return [
+        cr * cp * cy + sr * sp * sy,
+        sr * cp * cy - cr * sp * sy,
+        cr * sp * cy + sr * cp * sy,
+        cr * cp * sy - sr * sp * cy,
+    ]
+
+
 def _parse_orientation(value) -> list[float]:
-    """``[w, x, y, z]``, normalised. Absent means the identity, as the message's defaults do."""
+    """``[w, x, y, z]``, normalised, from either spelling of a rotation.
+
+    A ``geometry_msgs/Quaternion`` (``x``/``y``/``z``/``w``) is the message's own, and what a
+    producer writes. ``roll``/``pitch``/``yaw`` is what a person writes, and it is accepted because
+    this is a document: nobody hand-authors a quaternion for a robot facing along a wall. Which one
+    is meant is read from the keys that are present, so neither has to announce itself.
+
+    An unset component is zero in both, with one exception that is not really one: ``w`` defaults to
+    **1**, because ``geometry_msgs/Quaternion`` declares it so. That default is what makes an absent
+    or empty orientation the identity instead of the zero-length quaternion, which is no rotation.
+    """
     if value is None:
         return [1.0, 0.0, 0.0, 0.0]
     orientation = _mapping(value, "'pose.orientation'")
-    if extra := set(orientation) - {"x", "y", "z", "w"}:
-        # Named rather than lumped in with any other stray key: a yaw is what a reader reaches for,
-        # and every component of the quaternion it is not defaults to zero -- so accepting it would
-        # apply a rotation of (0, 0, 0, 0) instead of the heading that was written.
-        if "yaw" in extra:
-            raise PoseError(
-                "'pose.orientation' is a quaternion (x/y/z/w), not a yaw -- this is the pose "
-                "SpawnEntity states. For a heading about z, write "
-                "{x: 0, y: 0, z: sin(yaw/2), w: cos(yaw/2)}, or use the 'yaw' key beside 'pos'."
+
+    quaternion_keys = set(orientation) & {"x", "y", "z", "w"}
+    euler_keys = set(orientation) & {"roll", "pitch", "yaw"}
+    if extra := set(orientation) - quaternion_keys - euler_keys:
+        raise PoseError(
+            f"'pose.orientation' has no key(s) {sorted(extra)!r}; it is either a quaternion "
+            "(x/y/z/w) or roll/pitch/yaw in radians"
+        )
+    if quaternion_keys and euler_keys:
+        # Refused rather than composed: there is no reading under which both apply, so a value
+        # carrying each is a document mid-edit, and composing them would pick one silently.
+        raise PoseError(
+            f"'pose.orientation' mixes a quaternion ({sorted(quaternion_keys)}) with Euler angles "
+            f"({sorted(euler_keys)}); write one or the other."
+        )
+
+    if euler_keys:
+        return rpy_to_quat(
+            *(
+                _number(orientation.get(key, 0.0), f"'pose.orientation.{key}'")
+                for key in ("roll", "pitch", "yaw")
             )
-        raise PoseError(f"'pose.orientation' has no key(s) {sorted(extra)!r}; it is x, y, z and w")
+        )
 
     quat = [
-        _number(orientation.get(key, 0.0), f"'pose.orientation.{key}'")
+        _number(orientation.get(key, 1.0 if key == "w" else 0.0), f"'pose.orientation.{key}'")
         for key in ("w", "x", "y", "z")
     ]
     norm = math.sqrt(sum(c * c for c in quat))
     if norm < _MIN_QUAT_NORM:
         raise PoseError(
-            "'pose.orientation' is a zero-length quaternion, which is not a rotation. "
-            "The identity is {x: 0, y: 0, z: 0, w: 1}."
+            "'pose.orientation' is a zero-length quaternion, which is not a rotation. The identity "
+            "is {x: 0, y: 0, z: 0, w: 1}, which is also what an omitted orientation gives."
         )
     # Normalised because MuJoCo reads a free joint's quaternion as a unit one; a near-unit value
     # would otherwise scale the body's orientation.

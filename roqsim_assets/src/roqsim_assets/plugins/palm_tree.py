@@ -62,6 +62,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 _TRUNK_H = 1.60
 _TRUNK_R = 0.030
@@ -82,19 +83,6 @@ _TRUNK_RGBA = [0.42, 0.31, 0.20, 1.0]  # brown pole
 _POT_RGBA = [0.12, 0.12, 0.13, 1.0]  # black plastic pot
 _FROND_RGBA = [0.16, 0.45, 0.16, 1.0]  # plastic palm green
 _FRUIT_RGBA = [0.30, 0.12, 0.06, 1.0]  # ripe bunch, dark red-brown
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
 
 
 def _euler_zy_quat(yaw: float, pitch: float) -> list[float]:
@@ -125,9 +113,7 @@ class PalmTreePlugin(Plugin):
         else:
             self.pos = [0.0, 0.0, 0.0]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = (
-            _rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
-        )
+        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
         # Bad values are tolerated here (kept as the default) so validate_config reports them with a
         # friendly message rather than crashing construction.
         self.trunk_height = self._float(self.config.get("trunk_height"), _TRUNK_H)

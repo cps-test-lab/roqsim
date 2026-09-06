@@ -54,21 +54,24 @@ def test_a_pose_places_the_base():
     assert (w, qx, qy, qz) == pytest.approx((math.cos(0.375), 0.0, 0.0, math.sin(0.375)), abs=1e-9)
 
 
-def test_a_pose_and_pos_yaw_agree_on_the_same_placement():
-    """The two spellings are one pose, so a world converted from one to the other does not move."""
-    by_pose = _base_qpos(
+def test_the_two_spellings_of_a_rotation_agree():
+    """A world may write the heading either way, so both must land the robot the same."""
+    by_euler = _base_qpos(
+        _engine({"pose": {"position": {"x": 1.0, "y": 2.0}, "orientation": {"yaw": -0.4}}})
+    )
+    by_quat = _base_qpos(
         _engine({"pose": {"position": {"x": 1.0, "y": 2.0}, "orientation": _quat(-0.4)}})
     )
-    by_keys = _base_qpos(_engine({"pos": [1.0, 2.0], "yaw": -0.4}))
-    assert by_pose == pytest.approx(by_keys, abs=1e-9)
+    assert by_euler == pytest.approx(by_quat, abs=1e-9)
 
 
 def test_an_omitted_z_still_uses_the_model_s_resting_height():
     """A TurtleBot's base_link is authored at the origin with its wheels below it, so a pose that
-    left z unstated must not bury it -- the same rule ``pos: [x, y]`` already follows."""
+    left z unstated must not bury it."""
     z = _base_qpos(_engine({"pose": {"position": {"x": 0.0, "y": 0.0}}}))[2]
-    assert z == pytest.approx(_base_qpos(_engine({"pos": [0.0, 0.0]}))[2])
     assert z > 0.0
+    # And a world that states no pose at all lands the same way, at the origin.
+    assert _base_qpos(_engine({}))[2] == pytest.approx(z)
 
 
 def test_a_stated_z_overrides_it():
@@ -95,24 +98,28 @@ def test_the_entity_meta_still_advertises_a_heading():
     assert yaw == pytest.approx(1.2)
 
 
-@pytest.mark.parametrize("other", [{"pos": [1.0, 2.0]}, {"yaw": 0.5}])
-def test_pose_cannot_be_combined_with_pos_or_yaw(other):
-    """Refused rather than resolved: the wrong guess puts the robot somewhere plausible."""
-    cfg = _cfg({"model": "turtlebot4", "pose": {"position": {"x": 0.0, "y": 0.0}}, **other})
-    with pytest.raises(Exception, match="cannot be combined with"):
+@pytest.mark.parametrize("retired", [{"pos": [1.0, 2.0]}, {"yaw": 0.5}])
+def test_the_keys_a_pose_replaced_are_named_rather_than_ignored(retired):
+    """A world written against the old keys must say so.
+
+    A key that quietly stops being read spawns every robot at the origin and reports nothing,
+    which is the one outcome a removal must not have.
+    """
+    cfg = _cfg({"model": "turtlebot4", **retired})
+    with pytest.raises(Exception, match="no longer a key here"):
         instantiate_plugins(cfg)
 
 
-def test_a_yaw_inside_the_orientation_is_refused():
-    """The one mistake the shared shape exists to catch, checked through the plugin's validator so
-    it is reported before compute is spent rather than at compile."""
+def test_a_pose_that_is_not_one_is_reported_by_the_validator():
+    """Before compute is spent, rather than at compile: mixing the two spellings of a rotation is
+    a document mid-edit."""
     cfg = _cfg(
         {
             "model": "turtlebot4",
-            "pose": {"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.57}},
+            "pose": {"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.0, "w": 1.0}},
         }
     )
-    with pytest.raises(Exception, match="not a yaw"):
+    with pytest.raises(Exception, match="mixes a quaternion"):
         instantiate_plugins(cfg)
 
 

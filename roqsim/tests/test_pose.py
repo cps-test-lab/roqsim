@@ -16,7 +16,7 @@ import math
 
 import pytest
 
-from roqsim.pose import PoseError, parse_pose, yaw_of
+from roqsim.pose import PoseError, parse_pose, rpy_to_quat, yaw_of
 
 IDENTITY = {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0}
 
@@ -56,12 +56,49 @@ def test_an_absent_orientation_is_the_identity():
     assert quat == [1.0, 0.0, 0.0, 0.0]
 
 
-def test_a_yaw_is_refused_by_name():
-    """The value this shape exists to catch. Every component of the quaternion a yaw is not
-    defaults to zero, so accepting it applies (0,0,0,0) -- a rotation nobody asked for, from a
-    line that reads correctly."""
-    with pytest.raises(PoseError, match="quaternion .x/y/z/w., not a yaw"):
-        parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.57}})
+def test_a_heading_may_be_written_as_a_yaw():
+    """The spelling a person reaches for. Nobody hand-authors a quaternion for a robot facing
+    along a wall, and a world is written by hand."""
+    _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.0}})
+    assert yaw_of(quat) == pytest.approx(1.0)
+
+
+def test_the_two_spellings_of_one_rotation_agree():
+    """Whichever a document uses, the entity ends up at the same orientation."""
+    by_euler = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 0.75}})[1]
+    by_quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": _quat(0.75)})[1]
+    assert by_euler == pytest.approx(by_quat)
+
+
+def test_unset_euler_components_are_zero():
+    """A yaw alone is a heading, not a rotation with two thirds of it missing."""
+    _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 0.4}})
+    assert quat == pytest.approx(rpy_to_quat(0.0, 0.0, 0.4))
+
+
+def test_roll_and_pitch_are_read_too():
+    _, quat = parse_pose(
+        {"position": {"x": 0.0, "y": 0.0}, "orientation": {"roll": 0.1, "pitch": 0.2, "yaw": 0.3}}
+    )
+    assert quat == pytest.approx(rpy_to_quat(0.1, 0.2, 0.3))
+
+
+def test_the_two_spellings_cannot_be_mixed():
+    """No reading has both applying, so a value carrying each is a document mid-edit."""
+    with pytest.raises(PoseError, match="mixes a quaternion"):
+        parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": 1.0, "w": 1.0}})
+
+
+def test_an_unset_w_is_one_not_zero():
+    """geometry_msgs/Quaternion declares w=1, and that default is what keeps a partly-written
+    quaternion a rotation instead of a zero-length one."""
+    _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"x": 0.0}})
+    assert quat == [1.0, 0.0, 0.0, 0.0]
+
+
+def test_an_empty_orientation_is_the_identity():
+    _, quat = parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {}})
+    assert quat == [1.0, 0.0, 0.0, 0.0]
 
 
 def test_a_zero_length_quaternion_is_refused():
@@ -95,6 +132,11 @@ def test_a_missing_coordinate_is_refused():
 def test_a_stray_key_names_itself():
     with pytest.raises(PoseError, match=r"no key\(s\) \['rpy'\]"):
         parse_pose({"position": {"x": 0.0, "y": 0.0}, "rpy": [0, 0, 0]})
+
+
+def test_a_stray_orientation_key_names_both_spellings():
+    with pytest.raises(PoseError, match="quaternion .x/y/z/w. or roll/pitch/yaw"):
+        parse_pose({"position": {"x": 0.0, "y": 0.0}, "orientation": {"heading": 1.0}})
 
 
 def test_a_non_numeric_coordinate_is_refused():
