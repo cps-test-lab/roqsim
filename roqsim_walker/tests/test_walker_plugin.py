@@ -349,3 +349,54 @@ def test_writing_navigation_in_both_places_is_refused(tmp_path):
                 }
             )
         )
+
+
+# -- the per-waypoint dwell reaches the navigator --------------------------------------------------
+
+
+def _walker_navigator(engine):
+    return next(p for p in engine.plugins if type(p).__name__ == "NavigatorPlugin")
+
+
+def _engine_with_waypoints(waypoints, **walker):
+    cfg = {"walker": "MaleVisitorWalk", "skin": False, "speed": 1.0, "loop": True}
+    cfg["waypoints"] = waypoints
+    cfg.update(walker)
+    engine = Engine(
+        load_config_from_dict(
+            {"sim": {"pacing": "asap"}, "components": [{"walker": cfg, "name": "pedestrian"}]}
+        )
+    )
+    engine.ctx.seed = 5  # before setup: the navigator draws its generator in `configure`
+    return engine
+
+
+def test_a_per_waypoint_dwell_reaches_the_navigator():
+    """`[x, y, dwell]` is what the walker's config block documents and its validator accepts.
+
+    It used to be truncated to `(x, y)` on the way to the navigator, so a world asking for a pause
+    got none and the crowd simply never stopped walking -- with no warning, because nothing had
+    rejected the value. It cannot ride along as a goal's third element (that position is the goal's
+    yaw), so it travels as the navigator's own `dwell`.
+    """
+    engine = _engine_with_waypoints([[0.0, 0.0, [0.0, 3.0]], [2.0, 0.0, [1.0, 2.0]]])
+    engine.setup()
+    engine.reset()
+    # One entry per route point, in order, starting with where the walker stands.
+    assert _walker_navigator(engine)._core.st.dwell == [(0.0, 3.0), (1.0, 2.0)]
+
+
+def test_the_walkers_default_dwell_applies_to_every_waypoint():
+    """`dwell:` on the walker block is the other half of the same feature."""
+    engine = _engine_with_waypoints([[0.0, 0.0], [2.0, 0.0]], dwell=1.5)
+    engine.setup()
+    engine.reset()
+    assert _walker_navigator(engine)._core.st.dwell == [(1.5, 1.5), (1.5, 1.5)]
+
+
+def test_a_walker_with_no_dwell_says_nothing_about_it():
+    """The common case must not start carrying a dwell of zeros into every navigator's config."""
+    engine = _engine_with_waypoints([[0.0, 0.0], [2.0, 0.0]])
+    engine.setup()
+    engine.reset()
+    assert _walker_navigator(engine)._core.st.dwell == [(0.0, 0.0), (0.0, 0.0)]

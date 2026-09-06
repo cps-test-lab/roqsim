@@ -144,14 +144,28 @@ class WalkerPlugin(Plugin):
         nav["output"] = "walker"
         # `waypoints` become the navigator's `goals`, minus the first: a walker starts *at* its first
         # waypoint, and the navigator's route already begins wherever the body is.
-        wps = [
-            list(w)[:2] if not isinstance(w, dict) else list(w["pos"])[:2]
-            for w in (cfg.get("waypoints") or [])
-        ]
+        raw = cfg.get("waypoints") or []
+        wps = [list(w)[:2] if not isinstance(w, dict) else list(w["pos"])[:2] for w in raw]
         if len(wps) > 1:
             nav["goals"] = wps[1:]
         elif wps:
             nav["goals"] = wps
+        # ...and the per-waypoint dwell travels with them. It cannot ride along as a third element
+        # of a goal, because there that position is the goal's YAW -- so it goes as the navigator's
+        # own `dwell`, one entry per route point in the same order. Truncating the waypoints to
+        # (x, y) and stopping there dropped every pause a world asked for, silently: the walker
+        # still validated `[x, y, dwell]` and still documented it, and the crowd simply never
+        # stopped walking.
+        default = cfg.get("dwell", 0.0)
+        dwells = [
+            (w.get("dwell", default) if isinstance(w, dict) else (w[2] if len(w) > 2 else default))
+            for w in raw
+        ]
+        if dwells and dwells != [0.0] * len(dwells):
+            # The navigator's route is the mover's start followed by `goals`, and a walker starts at
+            # its first waypoint -- so the two lists already line up entry for entry. The values are
+            # passed through as written and coerced there, so the dwell format has one owner.
+            nav["dwell"] = [list(d) if isinstance(d, (list, tuple)) else d for d in dwells]
         if isinstance(nav.get("avoidance"), bool):
             # A walker's own block has always spelled this as a yes/no. The navigator names a model
             # instead, because there is more than one and "yes" does not say which -- so the legacy
