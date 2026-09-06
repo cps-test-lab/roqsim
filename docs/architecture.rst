@@ -720,4 +720,11 @@ unchanged.
    creating it: see :mod:`roqsim.presence`. An absent entity keeps its pose and is excluded from
    raycasts, rendering and contacts, and from what ``GetEntities`` lists. Parking it out of sight
    instead is the obvious alternative and is worse -- a free body accelerates under gravity for as
-   long as it is away, so it returns with whatever velocity it accumulated.
+   long as it is away, so it returns with whatever velocity it accumulated. An entry that registers
+   an entity (``spawn_model``, ``spawn_robot``) takes ``present: false`` to start it absent, which is
+   how a world provides the spares for something that appears mid-trial; the declared value is
+   re-applied on reset, because presence is a ``model`` field and ``mj_resetData`` restores ``data``.
+   Absence also freezes the entity — compensated gravity, zeroed velocity — since taking a free body
+   out of the contact set otherwise puts it in the very free fall the parking trick was rejected for.
+   The gravity half is armed once per world, before compile, because MuJoCo decides there whether
+   ``body_gravcomp`` is live at all.

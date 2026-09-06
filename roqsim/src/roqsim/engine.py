@@ -39,6 +39,7 @@ from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
 from .plugin import Plugin
+from .presence import arm_gravity_compensation
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -226,6 +227,11 @@ class Engine:
             spec.modelname = str(sim_name)
         elif not spec.modelname or spec.modelname == "MuJoCo Model":
             spec.modelname = "Roqsim"
+
+        # Presence freezes an absent entity by compensating its gravity, and MuJoCo decides whether
+        # that field is live at all when the model compiles. Armed for every world rather than for
+        # the ones that declare an absent entity: any entity can be deleted at run time.
+        arm_gravity_compensation(spec)
 
         with self._span("compile"):
             self.ctx.model = spec.compile()
