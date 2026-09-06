@@ -191,3 +191,94 @@ def test_extent_is_a_distance_not_a_coordinate():
     r = _drive(ctx, plugin, 2.0, vx=0.4)
     assert r.extent >= 0.0
     assert not math.isnan(r.extent)
+
+
+# -- cost -----------------------------------------------------------------------------------------
+
+CROWDED = """
+<mujoco model="contact_location_crowd">
+  <worldbody>
+    <geom name="floor" type="plane" size="30 30 0.05"/>
+    <geom name="wall_front" type="box" size="0.1 2 0.5" pos="0.6 0 0.5"/>
+    <body name="base_link" pos="0 0 0.2">
+      <freejoint/>
+      <geom name="chassis" type="box" size="0.2 0.15 0.1" mass="10"/>
+    </body>
+    {props}
+  </worldbody>
+</mujoco>
+"""
+
+
+def _crowded(n_props=60):
+    """A scene whose contacts are overwhelmingly NOT the robot's: props resting on the floor."""
+    props = "".join(
+        f'<body name="p{i}" pos="{-6 + (i % 10) * 0.5} {-3 + (i // 10) * 0.5} 0.06">'
+        f'<freejoint/><geom name="pg{i}" type="box" size="0.2 0.2 0.05" mass="1"/></body>'
+        for i in range(n_props)
+    )
+    model = mujoco.MjModel.from_xml_string(CROWDED.format(props=props))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def test_a_contact_force_is_queried_only_for_the_robots_own_contacts(monkeypatch):
+    """The scan must cost the robot's contacts, not the world's.
+
+    A trial's contacts are overwhelmingly pairs the robot is not in -- props on the floor, a
+    crowd's feet -- and `mj_contactForce` is a C call per contact. Querying every one of them made
+    this plugin cost more than the physics step that produced the contacts. The geom filter runs
+    first, over the whole contact array at once, and only survivors are priced.
+    """
+    ctx, plugin = _plugin(*_crowded())
+    _drive(ctx, plugin, 1.0)  # let the props settle so the world is full of contacts
+    calls = []
+    real = mujoco.mj_contactForce
+    monkeypatch.setattr(
+        mujoco, "mj_contactForce", lambda m, d, i, r: (calls.append(i), real(m, d, i, r))[1]
+    )
+    plugin.post_step(ctx)
+    assert ctx.data.ncon > 50, f"the fixture should be contact-heavy, got {ctx.data.ncon}"
+    # The robot touches only the floor here, which is ignored, so nothing should be priced at all.
+    assert len(calls) <= 4, f"queried {len(calls)} contact forces out of {ctx.data.ncon}"
+
+
+def test_the_reading_is_correct_in_a_contact_heavy_world(monkeypatch):
+    """The filter must not be a shortcut that loses the robot's own contact among the crowd."""
+    ctx, plugin = _plugin(*_crowded())
+    r = _drive(ctx, plugin, 3.0, vx=0.4)
+    assert ctx.data.ncon > 50
+    assert r.in_contact is True, "the wall contact was lost among the props' contacts"
+    assert r.x == pytest.approx(0.2, abs=0.05)
+
+
+def test_compute_rate_hz_decimates_the_whole_computation():
+    """The escape hatch for a world where even the filtered scan is too much.
+
+    Counted by how often the reading is refreshed, not by what it says: decimation is about how
+    much work is done, and a reading that happens to be the same either way would hide it. Default
+    is 0 (every step), because unlike a latching monitor this plugin cannot recover a contact it
+    did not look at -- one shorter than the interval is simply missed, and that trade is the
+    caller's to make rather than a default imposed on them.
+    """
+
+    def refreshes(seconds, **cfg):
+        ctx, plugin = _plugin(*_build(front_x=0.6), **cfg)
+        stamps = set()
+        for _ in range(int(seconds / ctx.model.opt.timestep)):
+            ctx.data.qvel[0] = 0.4
+            mujoco.mj_step(ctx.model, ctx.data)
+            plugin.post_step(ctx)
+            stamps.add(plugin.read_state().time)
+        return len(stamps), plugin.read_state()
+
+    every_step, r_full = refreshes(2.0)
+    decimated, r_dec = refreshes(2.0, compute_rate_hz=10.0)
+
+    assert every_step > 900, f"undecimated should refresh once per step, got {every_step}"
+    assert decimated <= 25, f"10 Hz over 2 s should refresh ~20 times, got {decimated}"
+    # Both still see the contact: decimating trades resolution in time, not the signal itself.
+    assert r_full.in_contact is True
+    assert r_dec.in_contact is True
+    assert r_dec.x == pytest.approx(r_full.x, abs=0.05)

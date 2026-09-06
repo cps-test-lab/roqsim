@@ -28,7 +28,8 @@ Config::
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       merge_radius: 0.02     # m; contacts closer than this count as one sensing area
       frame: base            # 'base' -> report in the watched body's frame; 'world' -> world frame
-      rate_hz: 30.0          # endpoint publish rate
+      compute_rate_hz: 0.0   # how often the reading is COMPUTED; 0 = every physics step
+      rate_hz: 30.0          # how often the endpoint is PUBLISHED
 
 Endpoint ``contact_location`` (out) reads a :class:`ContactLocation`:
 ``(in_contact, kind, x, y, z, extent, count, time)``. ``kind`` is ``"none"``, ``"point"`` or
@@ -38,8 +39,15 @@ backend hint publishes the centre as a ``geometry_msgs/PointStamped`` on ``conta
 
 **Read it through the blackboard, not the endpoint, inside a control loop.** The endpoint is
 rate-limited for logging; ``ctx.blackboard.get(f"contact_location:{address}")`` returns a callable
-giving the current reading at full step rate, the same convention ``contact_monitor`` and
-``force_torque`` use.
+giving the current reading, the same convention ``contact_monitor`` and ``force_torque`` use.
+
+Cost. The per-step work is a vectorised pass over ``data.contact`` -- a mask lookup per contact and
+an xor -- and a contact force query only for the handful that survive it. That matters because a
+world's contacts are overwhelmingly pairs the robot is not in (props resting on the floor, a
+crowd's feet), and touching each of them from Python costs more than the physics step that produced
+them. ``compute_rate_hz`` decimates the whole computation for the case where even that is too much;
+it defaults to 0, meaning every step, because unlike a latching monitor this plugin cannot recover a
+contact it did not look at -- one shorter than the interval is simply missed.
 
 Frames. ``frame: base`` (the default) rotates the position into the watched body's own frame, which
 is what a controller reasoning about "contact on my left" wants and what makes a reading independent
@@ -49,6 +57,7 @@ of where the robot happens to be standing. ``frame: world`` leaves it in world c
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
 
 import mujoco
@@ -92,9 +101,19 @@ class ContactLocationPlugin(Plugin):
         self.merge_radius = float(self.config.get("merge_radius", 0.02))
         self.frame = str(self.config.get("frame", "base"))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
+        # 0 = every physics step, which is the default because the scan is a vectorised pass over
+        # the contact array and costs a few per cent of a step. Raise the interval only if a
+        # contact-heavy world makes even that matter; the trade is that a contact shorter than one
+        # interval can be missed entirely, which a latching monitor cannot do to you.
+        self.compute_rate_hz = float(self.config.get("compute_rate_hz", 0.0))
+        self._period = 1.0 / self.compute_rate_hz if self.compute_rate_hz > 0 else 0.0
+        self._accum = 0.0
+        # Reused across steps: mj_contactForce writes into it, and allocating a 6-vector per
+        # contact per step is exactly the kind of cost this plugin must not add.
+        self._force_scratch = np.zeros(6)
         self._ctx: SimContext | None = None
-        self._watched: set[int] = set()
-        self._ignored: set[int] = set()
+        self._watched: np.ndarray | None = None  # per-geom mask; see configure()
+        self._ignored: np.ndarray | None = None
         self._root = -1
         self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, 0.0)
 
@@ -133,21 +152,22 @@ class ContactLocationPlugin(Plugin):
             # controller cannot distinguish from open space and would drive straight through.
             raise RuntimeError(f"contact_location: base body {body_name!r} not found")
 
-        self._watched = {
-            gid
-            for gid in range(model.ngeom)
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), self._root)
-        }
-        if not self._watched:
+        # Boolean masks indexed by geom id, not Python sets: the per-step filter is then one
+        # vectorised lookup over the contact array instead of a membership test per contact.
+        self._watched = np.zeros(model.ngeom, dtype=bool)
+        for gid in range(model.ngeom):
+            if self._in_subtree(model, int(model.geom_bodyid[gid]), self._root):
+                self._watched[gid] = True
+        if not self._watched.any():
             raise RuntimeError(
                 f"contact_location: body {body_name!r} and its subtree carry no geoms to watch"
             )
 
-        self._ignored = set()
+        self._ignored = np.zeros(model.ngeom, dtype=bool)
         for gid in range(model.ngeom):
             name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
             if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
-                self._ignored.add(gid)
+                self._ignored[gid] = True
         missing = [
             n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
         ]
@@ -177,10 +197,10 @@ class ContactLocationPlugin(Plugin):
         )
         _log.info(
             "contact_location: watching %d geoms of %r in the %s frame, ignoring %d",
-            len(self._watched),
+            int(self._watched.sum()),
             body_name,
             self.frame,
-            len(self._ignored),
+            int(self._ignored.sum()),
         )
 
     def read_state(self) -> ContactLocation:
@@ -201,63 +221,95 @@ class ContactLocationPlugin(Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         data, model = ctx.data, ctx.model
-        force = np.zeros(6)
-        points: list[np.ndarray] = []
-        for i in range(data.ncon):
-            c = data.contact[i]
-            g1, g2 = int(c.geom1), int(c.geom2)
-            if (g1 in self._watched) == (g2 in self._watched):
-                continue  # neither side watched, or a self-contact
-            if g1 in self._ignored or g2 in self._ignored:
-                continue
-            if self.min_force > 0:
-                mujoco.mj_contactForce(model, data, i, force)
-                if abs(float(force[0])) < self.min_force:
-                    continue
-            points.append(np.array(c.pos, dtype=float))
 
-        if not points:
+        # Decimate the whole computation, not just the publish. See `compute_rate_hz`.
+        if self._period > 0.0:
+            self._accum += model.opt.timestep
+            if self._accum < self._period:
+                return
+            self._accum = 0.0
+
+        n = data.ncon
+        if n == 0:
             self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, float(data.time))
             return
+
+        # Filter the whole contact array at once. A world's contacts are dominated by pairs the
+        # robot is not in -- props resting on the floor, a crowd's feet -- and touching each of
+        # them from Python costs more than the physics step that produced them. `data.contact` is
+        # a struct of arrays, so the geom test is two mask lookups and an xor.
+        con = data.contact
+        g1, g2 = con.geom1[:n], con.geom2[:n]
+        w1, w2 = self._watched[g1], self._watched[g2]
+        # Exactly one side watched: neither is nothing to do with us, both is a self-contact.
+        keep = (w1 ^ w2) & ~(self._ignored[g1] | self._ignored[g2])
+        idx = np.flatnonzero(keep)
+
+        if idx.size and self.min_force > 0:
+            # Only now, and only for the handful that survived: this is a C call per contact.
+            force = self._force_scratch
+            strong = []
+            for i in idx:
+                mujoco.mj_contactForce(model, data, int(i), force)
+                if abs(float(force[0])) >= self.min_force:
+                    strong.append(i)
+            idx = np.asarray(strong, dtype=int)
+
+        if not idx.size:
+            self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, float(data.time))
+            return
+        # `.tolist()` once, rather than iterating the array: looping a numpy array yields a numpy
+        # scalar per element, and at these sizes that conversion is most of the remaining cost.
+        points = con.pos[idx].tolist()
 
         # Merge solver contacts a real sensing area could not tell apart. MuJoCo often solves
         # several contacts across one flat face touching another; a skin with 2 cm taxels reports
         # that as one area, and counting them separately would classify every flat push as a line.
-        areas: list[np.ndarray] = []
-        for p in points:
-            for a in areas:
-                if float(np.linalg.norm(a - p)) <= self.merge_radius:
+        #
+        # Kept as plain arithmetic on floats rather than a numpy call per pair: after the filter
+        # above there are typically one to a handful of contacts, and at that size numpy's
+        # per-call overhead is most of the cost of the whole plugin.
+        r2 = self.merge_radius * self.merge_radius
+        areas: list[tuple[float, float, float]] = []
+        for px, py, pz in points:
+            for ax, ay, az in areas:
+                if (ax - px) ** 2 + (ay - py) ** 2 + (az - pz) ** 2 <= r2:
                     break
             else:
-                areas.append(p)
+                areas.append((px, py, pz))
 
-        arr = np.array(areas)
-        centre = arr.mean(axis=0)
-        if len(arr) > 1:
-            # Widest separation in the set: the region's extent, and what distinguishes a corner
-            # touch from a whole face resting against something.
-            d = np.linalg.norm(arr[:, None, :] - arr[None, :, :], axis=-1)
-            extent = float(d.max())
-        else:
-            extent = 0.0
+        k = len(areas)
+        cx = sum(a[0] for a in areas) / k
+        cy = sum(a[1] for a in areas) / k
+        cz = sum(a[2] for a in areas) / k
+        # Widest separation in the set: the region's extent, and what distinguishes a corner touch
+        # from a whole face resting against something. O(k^2) over the MERGED areas, which is the
+        # sensing-area count and not the solver's contact count.
+        extent = 0.0
+        for i in range(k):
+            ax, ay, az = areas[i]
+            for j in range(i + 1, k):
+                bx, by, bz = areas[j]
+                d2 = (ax - bx) ** 2 + (ay - by) ** 2 + (az - bz) ** 2
+                if d2 > extent:
+                    extent = d2
+        extent = math.sqrt(extent)
         # The rule a taxel array implements: one sensing area in contact is a point, more than one
         # is a line.
-        kind = "point" if len(arr) == 1 else "line"
+        kind = "point" if k == 1 else "line"
 
         if self.frame == "base":
             # Into the watched body's own frame: what a controller reasoning about "contact on my
             # left" needs, and what makes the reading independent of where the robot is standing.
-            origin = np.array(data.xpos[self._root], dtype=float)
-            rot = np.array(data.xmat[self._root], dtype=float).reshape(3, 3)
-            centre = rot.T @ (centre - origin)
+            # xmat is row-major 3x3, so the transpose is a column read -- written out rather than
+            # built as a matrix, to keep this allocation-free.
+            ox, oy, oz = data.xpos[self._root].tolist()
+            m = data.xmat[self._root].tolist()
+            dx, dy, dz = cx - ox, cy - oy, cz - oz
+            cx = m[0] * dx + m[3] * dy + m[6] * dz
+            cy = m[1] * dx + m[4] * dy + m[7] * dz
+            cz = m[2] * dx + m[5] * dy + m[8] * dz
 
         self._reading = ContactLocation(
-            True,
-            kind,
-            float(centre[0]),
-            float(centre[1]),
-            float(centre[2]),
-            extent,
-            len(arr),
-            float(data.time),
+            True, kind, float(cx), float(cy), float(cz), extent, k, float(data.time)
         )
