@@ -1,4 +1,8 @@
-"""Scene plugin: give ONE pair of things its own contact friction.
+"""Scene plugin: override the contact between ONE pair of things.
+
+Named for what it does relative to the two things beside it: ``sim.contact_override`` sets the same
+three parameters for EVERY contact in the world, and this sets them for one pair. (``model_override``
+is the third of the family, and changes named model fields mid-run on a trigger.)
 
 Per-geom friction cannot express a pair. MuJoCo combines two geoms' values by taking the **maximum**
 of each component, so a geom's friction is a floor on every contact it takes part in and never a
@@ -13,7 +17,7 @@ statement about one of them. Two consequences follow, and the second is why this
 MuJoCo's own answer is an explicit ``<pair>``, which carries its own friction and wins over the
 combination rule. This plugin declares one from world config::
 
-    contact_pair:
+    contact_pair_override:
       a: {entity: robot}     # each side is named ONE of: entity, body, geom
       b: {entity: crate}
       friction: 0.35         # sliding, or the full [slide, slide, spin, roll, roll]
@@ -24,6 +28,13 @@ combination rule. This plugin declares one from world config::
 The two sides are named separately, and independently, because a real pair often mixes kinds: the
 floor is a geom while the thing sliding on it is an entity, and requiring both to be the same kind
 would make the commonest pair in a pushing experiment inexpressible.
+
+**A declared pair also FORCES the contact to exist**, which is the part to be careful with. MuJoCo
+adds explicit pairs to its contact list without consulting ``contype``/``conaffinity``, so overriding
+the friction between two geoms that were deliberately non-colliding *makes them collide*. Measured:
+two boxes with ``contype=0 conaffinity=0`` generate no contacts, and four the moment a pair between
+them is declared. So this plugin overrides two things at once -- whether the pair touches, and how --
+and a world using it on a decorative or sensor-only geom will find that geom has become solid.
 
 Every geom of side A is paired with every geom of side B, so a robot base with twenty collision
 geoms touching a five-geom object declares a hundred pairs -- MuJoCo handles that as a list, and the
@@ -52,7 +63,7 @@ _log = logging.getLogger(__name__)
 _DEFAULT_SPIN_ROLL = (0.005, 0.005, 0.0001, 0.0001)
 
 
-class ContactPairPlugin(Plugin):
+class ContactPairOverridePlugin(Plugin):
     #: It names both sides itself, so it sits at the top of a document rather than under an entity.
     requires_owner = False
 
@@ -121,7 +132,7 @@ class ContactPairPlugin(Plugin):
         """
         root = spec.body(body_name)
         if root is None:
-            raise RuntimeError(f"contact_pair: body {body_name!r} not found")
+            raise RuntimeError(f"contact_pair_override: body {body_name!r} not found")
         out, stack = [], [root]
         while stack:
             b = stack.pop()
@@ -139,7 +150,7 @@ class ContactPairPlugin(Plugin):
         entity = ctx.entities.get(name)
         if entity is None or not entity.body:
             raise RuntimeError(
-                f"contact_pair: no entity named {name!r} with a base body. Entities are registered "
+                f"contact_pair_override: no entity named {name!r} with a base body. Entities are registered "
                 "by the plugin that spawns them, so this pair must be declared AFTER both -- one "
                 "naming a robot listed below it finds nothing."
             )
@@ -152,7 +163,7 @@ class ContactPairPlugin(Plugin):
         a, b = self._sides(spec, ctx)
         if not a or not b:
             raise RuntimeError(
-                f"contact_pair: one side carries no named geoms (got {len(a)} and {len(b)}). "
+                f"contact_pair_override: one side carries no named geoms (got {len(a)} and {len(b)}). "
                 "An unnamed geom cannot be paired, because a pair is declared by name."
             )
         seen = {(p.geomname1, p.geomname2) for p in spec.pairs}
@@ -164,7 +175,7 @@ class ContactPairPlugin(Plugin):
                     continue  # a geom cannot be paired with itself
                 if (g1, g2) in seen or (g2, g1) in seen:
                     raise RuntimeError(
-                        f"contact_pair: {g1!r} <-> {g2!r} is already an explicit pair. MuJoCo keeps "
+                        f"contact_pair_override: {g1!r} <-> {g2!r} is already an explicit pair. MuJoCo keeps "
                         "both and uses one, and which is not something a world should have to know."
                     )
                 pair = spec.add_pair()
@@ -180,7 +191,7 @@ class ContactPairPlugin(Plugin):
                 seen.add((g1, g2))
                 added += 1
         _log.info(
-            "contact_pair %r: %d pair(s) over %d x %d geoms%s",
+            "contact_pair_override %r: %d pair(s) over %d x %d geoms%s",
             self.address,
             added,
             len(a),

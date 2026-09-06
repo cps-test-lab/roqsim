@@ -510,13 +510,15 @@ Three things about it:
   current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
   use, and the one a per-step control law needs.
 
-**Whose friction is it?** ``contact_pair`` answers the question per-geom friction cannot. MuJoCo
+**Whose friction is it?** ``contact_pair_override`` answers the question per-geom friction
+cannot. It is the pair-scoped member of a family: ``sim.contact_override`` sets the same three
+parameters for every contact in the world, and ``model_override`` changes named model fields mid-run. MuJoCo
 combines two geoms' values by taking the **maximum**, so a geom's friction is a floor on every
 contact it takes part in and never a statement about one of them. Two consequences follow::
 
-   - contact_pair: {a: {entity: robot}, b: {entity: crate}, friction: 0.35}
+   - contact_pair_override: {a: {entity: robot}, b: {entity: crate}, friction: 0.35}
      name: robot_on_crate
-   - contact_pair: {a: {entity: crate}, b: {geom: floor}, friction: 0.3}
+   - contact_pair_override: {a: {entity: crate}, b: {geom: floor}, friction: 0.3}
      name: crate_on_floor
 
 * A pair cannot be made *less* frictional than either side already is -- lowering one geom does
@@ -532,6 +534,12 @@ or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the 
 is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
 subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
 asking a world to enumerate them is how a pair silently misses the one that actually touches.
+
+One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
+contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
+two geoms that were deliberately non-colliding *makes them collide*. Two boxes with
+``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
+declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
 
 Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
 sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather

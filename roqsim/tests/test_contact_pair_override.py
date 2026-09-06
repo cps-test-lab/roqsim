@@ -1,4 +1,4 @@
-"""contact_pair: the friction of ONE pair, which per-geom values cannot express.
+"""contact_pair_override: the friction of ONE pair, which per-geom values cannot express.
 
 The load-bearing test is not that pairs appear in the model -- it is that a block slides further on
 the SAME floor when only its pair with that floor is changed, and that a second pair sharing the
@@ -43,10 +43,10 @@ def _engine(tmp_path, *pairs):
             {
                 "sim": {"pacing": "asap", "world": str(world)},
                 # A distinct `name:` per entry: a label addresses one component, so two unnamed
-                # `contact_pair`s in one document are refused -- which is the substrate being
+                # `contact_pair_override`s in one document are refused -- which is the substrate being
                 # right, and is why a world declaring several pairs must name them.
                 "components": [
-                    {"contact_pair": p, "name": f"pair_{i}"} for i, p in enumerate(pairs)
+                    {"contact_pair_override": p, "name": f"pair_{i}"} for i, p in enumerate(pairs)
                 ],
             },
             base_dir=tmp_path,
@@ -126,7 +126,7 @@ def test_entities_pair_every_geom_of_both_subtrees(tmp_path):
                 "sim": {"pacing": "asap", "world": str(world)},
                 "components": [
                     {
-                        "contact_pair": {
+                        "contact_pair_override": {
                             "a": {"body": "slider"},
                             "b": {"body": "other"},
                             "friction": 0.4,
@@ -154,7 +154,7 @@ def test_the_two_sides_may_be_different_kinds(tmp_path):
                 "sim": {"pacing": "asap", "world": str(world)},
                 "components": [
                     {
-                        "contact_pair": {
+                        "contact_pair_override": {
                             "a": {"body": "slider"},
                             "b": {"geom": "floor"},
                             "friction": 0.05,
@@ -168,6 +168,58 @@ def test_the_two_sides_may_be_different_kinds(tmp_path):
     engine.setup()
     assert engine.ctx.model.npair == 1
     assert float(engine.ctx.model.pair_friction[0][0]) == pytest.approx(0.05)
+
+
+def test_a_declared_pair_forces_the_contact_to_exist(tmp_path):
+    """The sharp edge. MuJoCo adds explicit pairs without consulting contype/conaffinity, so
+    overriding the friction of a deliberately non-colliding pair MAKES it collide. Worth a test
+    because a world that did this to a sensor-only or decorative geom would find it solid, and
+    nothing would report it."""
+    world = tmp_path / "w.xml"
+    world.write_text(
+        SCENE.replace(
+            'name="slider_g" type="box" size="0.1 0.1 0.1" mass="1"',
+            'name="slider_g" type="box" size="0.1 0.1 0.1" mass="1" contype="0" conaffinity="0"',
+        )
+    )
+
+    def contacts(with_pair):
+        components = []
+        if with_pair:
+            components = [
+                {
+                    "contact_pair_override": {
+                        "a": {"geom": "slider_g"},
+                        "b": {"geom": "floor"},
+                        "friction": 0.5,
+                    }
+                }
+            ]
+        engine = Engine(
+            load_config_from_dict(
+                {"sim": {"pacing": "asap", "world": str(world)}, "components": components},
+                base_dir=tmp_path,
+            )
+        )
+        engine.setup()
+        engine.reset()
+        for _ in range(50):
+            engine.step()
+        # Only THIS pair's contacts: `ncon` counts the whole scene, and the second block resting on
+        # the same floor supplies four of its own.
+        ctx = engine.ctx
+        n = 0
+        for i in range(ctx.data.ncon):
+            c = ctx.data.contact[i]
+            names = {
+                mujoco.mj_id2name(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, int(c.geom1)),
+                mujoco.mj_id2name(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, int(c.geom2)),
+            }
+            n += names == {"slider_g", "floor"}
+        return n
+
+    assert contacts(False) == 0, "a contype=0 geom should generate no contacts on its own"
+    assert contacts(True) > 0, "declaring a pair should force the contact into existence"
 
 
 # -- validation -----------------------------------------------------------------------------------
