@@ -33,6 +33,7 @@ import mujoco
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
+from roqsim.schema import Field
 
 logger = logging.getLogger(__name__)
 
@@ -46,18 +47,27 @@ class PayloadPlugin(Plugin):
         self.robot = self.entity
         self._bid = -1
 
+    #: Declared once, so `roqsim plugins describe payload` publishes the same keys the checks run
+    #: on -- with their types, units and bounds, which a docstring cannot give a caller.
+    CONFIG_SCHEMA = {
+        "mass": Field(
+            float,
+            required=True,
+            minimum=0.0,
+            unit="kg",
+            doc="added to the body's own mass; a payload plugin with no mass is not a payload",
+        ),
+        "body": Field(
+            str, default="", static=True, doc="body to load (default: the entity's root body)"
+        ),
+        "robot": Field(
+            str, default="", static=True, doc="entity that carries it (default: the owning entity)"
+        ),
+    }
+
     def validate_config(self, config: dict) -> list[str]:
-        errors = []
-        if "mass" not in config:
-            errors.append("'mass' is required (kg): a payload plugin with no mass is not a payload")
-        else:
-            try:
-                mass = float(config["mass"])
-            except (TypeError, ValueError):
-                errors.append("'mass' must be a number (kg)")
-            else:
-                if mass < 0:
-                    errors.append("'mass' must be >= 0 kg")
+        # The mechanical half from the declaration; the rest is what only this plugin knows.
+        errors: list[str] = []
         if "offset" in config:
             # Loud rather than approximate: an offset payload moves the centre of mass and adds a
             # parallel-axis term, which this plugin does not model. Ignoring the key would report a

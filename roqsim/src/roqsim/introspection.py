@@ -202,6 +202,22 @@ def list_plugins() -> dict:
     return {"items": items}
 
 
+def _declared_schema(cls) -> list[dict] | None:
+    """The plugin's own ``CONFIG_SCHEMA``, published -- or ``None`` when it declares none.
+
+    Published BESIDE the docstring-parsed ``config`` rather than instead of it: the parsed block is
+    all most plugins have, and a caller that can read only one of the two should get the one that is
+    always there. Where both exist the declared one is authoritative -- it is what validation runs
+    on, so it cannot drift from behaviour the way a comment can.
+    """
+    schema = getattr(cls, "CONFIG_SCHEMA", None)
+    if not schema:
+        return None
+    from roqsim.schema import describe
+
+    return describe(schema)
+
+
 def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
@@ -209,6 +225,11 @@ def get_plugin_details(name: str) -> dict:
     ``parameters`` is :func:`_parse_config_block`'s output (empty if the plugin has
     no ``Config::`` block, whether because it takes no config or because nobody
     wrote one) -- or ``{"error": "..."}``.
+
+    A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
+    keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
+    needs and what prose cannot give it. It is authoritative where it exists, because validation
+    runs on it -- unlike a docstring, it cannot drift from behaviour.
     """
     matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -225,7 +246,7 @@ def get_plugin_details(name: str) -> dict:
         if not ln.strip():
             break
         summary_lines.append(ln)
-    return {
+    details = {
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
@@ -234,6 +255,11 @@ def get_plugin_details(name: str) -> dict:
         "package": _dist_name(ep),
         "class": ep.value,
     }
+    schema = _declared_schema(cls)
+    if schema is not None:
+        details["schema"] = schema
+        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+    return details
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────

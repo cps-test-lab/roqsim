@@ -43,6 +43,7 @@ import numpy as np
 
 from ..context import SimContext
 from ..plugin import Plugin
+from ..schema import Field
 
 _log = logging.getLogger(__name__)
 
@@ -57,23 +58,33 @@ class CeilingPlugin(Plugin):
         self.keep = bool(self.config.get("keep", True))
         self.above_z = float(self.config.get("above_z", 2.5))
 
+    #: Two keys, both with defaults, and nothing else -- which is why this plugin can afford
+    #: `STRICT_KEYS`: a misspelt `above_Z` would otherwise leave the ceiling standing and look like
+    #: the plugin not working.
+    CONFIG_SCHEMA = {
+        "keep": Field(bool, default=True, doc="false removes the ceiling; true is a no-op"),
+        "above_z": Field(
+            float,
+            default=2.5,
+            unit="m",
+            doc="a geom is 'ceiling' iff its whole world-space AABB is above this height",
+        ),
+    }
+    STRICT_KEYS = True
+
     def validate_config(self, config: dict) -> list[str]:
-        errors = []
+        errors: list[str] = []
         if "enabled" in config:
             errors.append(
                 "'enabled' is the reserved sibling meaning 'run this component at all', and this "
                 "plugin works by REMOVING geometry -- so `enabled: false` leaves the ceiling "
                 "standing, the opposite of what you are asking for. Use `keep:` instead."
             )
-        if "keep" in config and not isinstance(config["keep"], bool):
-            errors.append("'keep' must be a boolean")
-        if "above_z" in config:
-            try:
-                z = float(config["above_z"])
-                if not np.isfinite(z):
-                    errors.append("'above_z' must be finite")
-            except (TypeError, ValueError):
-                errors.append("'above_z' must be a number")
+        if "above_z" in config and not np.isfinite(float(config.get("above_z", 0.0) or 0.0)):
+            # The schema has no "finite" rule and should not grow one for a single caller: an
+            # infinite cut is legal as a float and means "remove nothing", which is not what anyone
+            # writing it meant.
+            errors.append("'above_z' must be finite")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
