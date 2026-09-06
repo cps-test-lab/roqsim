@@ -15,7 +15,7 @@ from roqsim.window_branding import _ICON_SIZES, _display_title, _icon_property
 @pytest.mark.parametrize(
     "name,expected",
     [
-        ("robolab", "Roqsim: robolab"),
+        ("depot", "Roqsim: depot"),
         ("MuJoCo Model", "Roqsim"),  # MuJoCo's default name is never shown
         ("", "Roqsim"),
     ],
