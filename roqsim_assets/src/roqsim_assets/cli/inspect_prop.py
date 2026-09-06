@@ -111,12 +111,22 @@ def _obj_geometry(obj_path: str) -> dict:
     return {"lo": lo, "hi": hi, "faces": n_faces, "objects": n_objects, "usemtl": n_usemtl}
 
 
+def _without_comments(xml_path: str) -> str:
+    """The MJCF's text with every comment removed.
+
+    MuJoCo's parser accepts ``--`` inside a comment and the models here use it freely as a dash;
+    XML forbids it, so :mod:`xml.etree` rejects a file the simulator loads happily. Reading the
+    structure past the prose keeps this check as tolerant as the thing it is checking for.
+    """
+    return re.sub(r"<!--.*?-->", "", open(xml_path, encoding="utf-8").read(), flags=re.DOTALL)
+
+
 def _mjcf_info(prop_dir: str, name: str) -> dict:
     """Read the finalized ``<name>.xml``: mesh scale + whether the geom is textured. Absent => not finalized."""
     xml = os.path.join(prop_dir, f"{name}.xml")
     if not os.path.isfile(xml):
         return {"exists": False, "scale": 1.0, "textured": False, "pos": [0.0, 0.0, 0.0]}
-    root = ET.parse(xml).getroot()
+    root = ET.fromstring(_without_comments(xml))
     scale = 1.0
     mesh = root.find(".//asset/mesh")
     if mesh is not None and mesh.get("scale"):
