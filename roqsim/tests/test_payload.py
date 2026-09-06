@@ -47,7 +47,7 @@ def _ctx(scene=SCENE, *, seed=7, body="cart"):
 def _plugin(cls, config, *, name="p", entity="robot"):
     """A configured plugin. Config errors are raised rather than returned."""
     plugin = cls(config, name=name, entity=entity)
-    errors = plugin.validate_config(config)
+    errors = plugin.config_errors(config)
     if errors:
         raise ValueError("; ".join(errors))
     return plugin
@@ -66,9 +66,9 @@ def test_the_added_mass_reaches_the_dynamics():
     for mass in (0.0, 1.0):
         ctx = _ctx()
         _plugin(PayloadPlugin, {"mass": mass}).configure(ctx)
-        ctx.data.xfrc_applied[
-            mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart"), 0
-        ] = 1.0
+        ctx.data.xfrc_applied[mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart"), 0] = (
+            1.0
+        )
         mujoco.mj_forward(ctx.model, ctx.data)
         accelerations[mass] = float(ctx.data.qacc[0])
     # 1 N on 1 kg, then on 2 kg.
