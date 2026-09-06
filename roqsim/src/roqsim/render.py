@@ -528,6 +528,7 @@ def render_target(
     stop: float | None = None,
     fps: str | None = None,
     speed: float | None = None,
+    geomgroup: list[int] | None = None,
 ) -> dict:
     """Render ``target`` (or a recording) to ``out`` and return the result record the CLI prints.
 
@@ -581,6 +582,7 @@ def render_target(
             fps,
             speed,
             video,
+            geomgroup,
         )
 
     # --no-ceiling is applied to the parsed config, not merged in here; see _disable_ceiling.
@@ -595,7 +597,7 @@ def render_target(
     if check:
         record["rendered"] = False
         return record
-    _render_one(model, data, cam, width, height, out)
+    _render_one(model, data, cam, width, height, out, geomgroup)
     record["rendered"] = True
     return record
 
@@ -629,9 +631,9 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
     }
 
 
-def _render_one(model, data, cam, width: int, height: int, out: Path) -> None:
+def _render_one(model, data, cam, width: int, height: int, out: Path, geomgroup=None) -> None:
     try:
-        frame = FrameRenderer(model, width, height, camera=cam)
+        frame = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
     except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
         raise RenderError(GL_HELP.format(err=err)) from err
     try:
@@ -659,6 +661,7 @@ def _render_recording(
     fps,
     speed,
     video,
+    geomgroup=None,
 ):
     """Render one moment, or a range, from a recording. The world comes from its provenance."""
     from .recording import RecordingError, open_recording
@@ -689,7 +692,20 @@ def _render_recording(
 
     if video:
         return _render_video(
-            rec, model, ctx, out, size, view, focus, camera, start, stop, fps, speed, world_view
+            rec,
+            model,
+            ctx,
+            out,
+            size,
+            view,
+            focus,
+            camera,
+            start,
+            stop,
+            fps,
+            speed,
+            world_view,
+            geomgroup,
         )
 
     sample = rec.at(at)
@@ -706,7 +722,7 @@ def _render_recording(
     cam = _recorded_camera(model, sample, ctx, world_view, view, focus, camera, width, height)
     record = _base_record(out, width, height, model, cam)
     record.update(rec.at_record(at, sample))
-    _render_one(model, sample.data, cam, width, height, out)
+    _render_one(model, sample.data, cam, width, height, out, geomgroup)
     record["rendered"] = True
     return record
 
@@ -730,7 +746,20 @@ def _recorded_camera(model, sample, ctx, world_view, view, focus, camera, width,
 
 
 def _render_video(
-    rec, model, ctx, out, size, view, focus, camera, start, stop, fps, speed, world_view=None
+    rec,
+    model,
+    ctx,
+    out,
+    size,
+    view,
+    focus,
+    camera,
+    start,
+    stop,
+    fps,
+    speed,
+    world_view=None,
+    geomgroup=None,
 ):
     """Render every sample in range and pipe it to ffmpeg. One sample is always exactly one frame.
 
@@ -762,7 +791,7 @@ def _render_video(
             )
             if renderer is None:
                 try:
-                    renderer = FrameRenderer(model, width, height, camera=cam)
+                    renderer = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
                 except Exception as err:  # noqa: BLE001
                     raise RenderError(GL_HELP.format(err=err)) from err
             else:
@@ -945,6 +974,19 @@ def _open_in_viewer(path: Path) -> None:
         log.warning("--show: could not open %s: %s", path, err)
 
 
+def _parse_geomgroup(parser, value: str | None) -> list[int] | None:
+    """``"2,3"`` -> ``[2, 3]``. Refuses a group MuJoCo has no slot for, rather than masking nothing."""
+    if value is None:
+        return None
+    try:
+        groups = [int(part) for part in value.replace(",", " ").split()]
+    except ValueError:
+        parser.error(f"--geomgroup wants integers, got {value!r}")
+    if not groups or any(not 0 <= g < mujoco.mjNGROUP for g in groups):
+        parser.error(f"--geomgroup takes group numbers 0..{mujoco.mjNGROUP - 1}, got {value!r}")
+    return groups
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(prog="roqsim render", description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -993,6 +1035,14 @@ def main(argv: list | None = None) -> int:
         "--check",
         action="store_true",
         help="validate and report what would be rendered, without rendering it",
+    )
+    parser.add_argument(
+        "--geomgroup",
+        metavar="N[,N...]",
+        help="draw only these geom groups. A model separates what it SHOWS (group 2, the visual "
+        "meshes) from what it COLLIDES (group 3, the primitives physics uses), and MuJoCo's default "
+        "draws neither 3 nor above -- so a collision model is invisible until it is asked for. "
+        "`--geomgroup 3` is the collider alone; `--geomgroup 2,3` is the collider over the mesh",
     )
     parser.add_argument(
         "--camera",
@@ -1059,6 +1109,7 @@ def main(argv: list | None = None) -> int:
             stop=args.stop,
             fps=args.fps,
             speed=args.speed,
+            geomgroup=_parse_geomgroup(parser, args.geomgroup),
         )
     except RenderError as err:
         print(f"roqsim render: {err}", file=sys.stderr)
