@@ -240,3 +240,79 @@ def test_effort_is_an_upper_bound_not_the_answer(tmp_path):
     ]
     measured = collision.effort(trimesh, ring, 0.05)
     assert measured["boxes_upper"] >= len(ring)
+
+
+# -- what the two surfaces must NOT be scored on --------------------------------------------------
+
+# A prop modelled the way artwork usually is: an open shell with no underside, standing on the floor.
+OPEN_BOTTOM = """
+<mujoco model="open_bottom">
+  <asset>
+    <!-- four walls and a lid, no floor face: the box is open where it stands -->
+    <mesh name="shell" vertex="-0.2 -0.2 0  0.2 -0.2 0  0.2 0.2 0  -0.2 0.2 0
+                               -0.2 -0.2 0.4  0.2 -0.2 0.4  0.2 0.2 0.4  -0.2 0.2 0.4"
+          face="0 1 5  0 5 4  1 2 6  1 6 5  2 3 7  2 7 6  3 0 4  3 4 7  4 5 6  4 6 7"/>
+  </asset>
+  <worldbody>
+    <body name="p">
+      <geom name="shell" type="mesh" mesh="shell" contype="0" conaffinity="0" group="2"/>
+      <geom name="solid" type="box" size="0.2 0.2 0.2" pos="0 0 0.2" group="3"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_the_patch_a_prop_stands_on_is_not_overreach(tmp_path):
+    # The collider has a bottom face; the artwork has none, because nobody models the underside of a
+    # cabinet. Scoring that difference would charge every floor-standing prop for its own footprint.
+    path = tmp_path / "open_bottom.xml"
+    path.write_text(OPEN_BOTTOM)
+    report = collision.diff(str(path), samples=8000)
+    assert report["overreach"]["max_mm"] < 5
+    assert report["verdict"] == "ok"
+
+
+def test_enclosed_geometry_counts_as_covered(tmp_path):
+    # A solid primitive standing in for a hollow shell encloses the shell's inner faces. Measured to
+    # the collider's outer SURFACE those read as uncovered, and a prop can report metres of holes
+    # while being completely enclosed -- so containment is the test and distance the fallback.
+    path = tmp_path / "hollow.xml"
+    path.write_text(
+        """
+        <mujoco model="hollow">
+          <worldbody><body name="p">
+            <geom name="inner" type="box" size="0.10 0.10 0.10" pos="0 0 0.10"
+                  contype="0" conaffinity="0" group="2"/>
+            <geom name="outer" type="box" size="0.20 0.20 0.20" pos="0 0 0.20" group="3"/>
+          </body></worldbody>
+        </mujoco>
+        """
+    )
+    report = collision.diff(str(path), samples=8000)
+    assert report["coverage"]["max_mm"] == pytest.approx(0.0, abs=1e-9)
+    assert report["coverage"]["beyond_tol"] == 0.0
+
+
+def test_containment_is_analytic_per_shape(tmp_path):
+    import mujoco as mj
+
+    path = tmp_path / "shapes.xml"
+    path.write_text(
+        """
+        <mujoco><worldbody><body name="p">
+          <geom name="b" type="box" size=".1 .1 .1" pos="0 0 0"/>
+          <geom name="s" type="sphere" size=".1" pos="1 0 0"/>
+          <geom name="c" type="cylinder" size=".1 .1" pos="2 0 0"/>
+          <geom name="k" type="capsule" size=".1 .1" pos="3 0 0"/>
+        </body></worldbody></mujoco>
+        """
+    )
+    model = mj.MjModel.from_xml_path(str(path))
+    data = mj.MjData(model)
+    mj.mj_forward(model, data)
+    ids = list(range(model.ngeom))
+    centres = np.array([[0, 0, 0], [1, 0, 0], [2, 0, 0], [3, 0, 0]], float)
+    outside = centres + np.array([0, 0.5, 0])
+    assert collision.inside_any(model, data, ids, centres).all()
+    assert not collision.inside_any(model, data, ids, outside).any()

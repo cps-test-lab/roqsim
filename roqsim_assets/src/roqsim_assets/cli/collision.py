@@ -162,7 +162,27 @@ def split_geoms(model) -> tuple[list[int], list[int]]:
     return visual, collision
 
 
-def sample_surfaces(trimesh, meshes: list, total: int, seed: int = DEFAULT_SEED):
+#: A face this close to the model's lowest point, pointing down, is where the prop meets the floor.
+BASE_EPS = 0.002
+
+
+def drop_base_faces(trimesh, meshes: list, points, owners, normals, z_floor: float):
+    """Discard samples on a downward face at the prop's base -- the patch it stands on.
+
+    Artwork is an open shell far more often than not: of the props here, most have NO downward area
+    at the base at all, the underside simply not being modelled. A collision primitive resting on the
+    floor does have a bottom face, so measured naively every such box reports its own footprint as
+    obstacle standing where the prop is not -- on one table that alone was a third of the overreach.
+    The absence is a modelling convention, not a claim about the shape, so neither surface is scored
+    on it.
+    """
+    keep = ~((points[:, 2] <= z_floor + BASE_EPS) & (normals[:, 2] < -0.9))
+    return points[keep], owners[keep]
+
+
+def sample_surfaces(
+    trimesh, meshes: list, total: int, seed: int = DEFAULT_SEED, normals: bool = False
+):
     """``total`` points over ``meshes`` in proportion to area, plus which mesh each point came from.
 
     Seeded, because the numbers are meant to be COMPARED: an unseeded sampling moves the reported
@@ -174,14 +194,22 @@ def sample_surfaces(trimesh, meshes: list, total: int, seed: int = DEFAULT_SEED)
     the NAME of the geom responsible for it.
     """
     if not meshes:
-        return np.zeros((0, 3)), np.zeros(0, int)
+        empty = (np.zeros((0, 3)), np.zeros(0, int))
+        return (*empty, np.zeros((0, 3))) if normals else empty
     areas = np.array([max(float(m.area), 1e-12) for m in meshes])
     share = areas / areas.sum()
-    points, owners = [], []
+    points, owners, face_normals = [], [], []
     for i, (mesh, frac) in enumerate(zip(meshes, share, strict=True)):
         count = max(int(total * frac), 1)
-        points.append(mesh.sample(count, seed=seed + i))
-        owners.append(np.full(count, i))
+        if normals:
+            pts, faces = mesh.sample(count, return_index=True, seed=seed + i)
+            face_normals.append(np.asarray(mesh.face_normals)[faces])
+        else:
+            pts = mesh.sample(count, seed=seed + i)
+        points.append(pts)
+        owners.append(np.full(len(pts), i))
+    if normals:
+        return np.vstack(points), np.concatenate(owners), np.vstack(face_normals)
     return np.vstack(points), np.concatenate(owners)
 
 
@@ -202,6 +230,40 @@ def distance_to(
     area = sum(float(m.area) for m in meshes)
     resolution = float(np.sqrt(area / max(len(cloud), 1)))
     return cKDTree(cloud).query(points)[0], resolution
+
+
+def inside_any(model, data, gids: list[int], points: np.ndarray) -> np.ndarray:
+    """Which points lie INSIDE one of the collision primitives.
+
+    Coverage asks whether a bit of the prop is backed by something solid, and a distance to the
+    collider's outer SURFACE cannot answer that: a hollow shell standing in for a solid panel has its
+    inner faces enclosed by the primitive, metres of them, every one reading as uncovered. Enclosed
+    is covered, so containment is the test and the distance is only the fallback outside.
+
+    Analytic per shape rather than a mesh query, since the primitives are exactly the shapes MuJoCo
+    collides. A mesh collision geom has no cheap inside, so it contributes none -- and a mesh geom
+    that collides is the FAIL this tool exists to report anyway.
+    """
+    hit = np.zeros(len(points), bool)
+    for gid in gids:
+        kind, size = model.geom_type[gid], model.geom_size[gid]
+        local = (points - data.geom_xpos[gid]) @ data.geom_xmat[gid].reshape(3, 3)
+        if kind == mujoco.mjtGeom.mjGEOM_BOX:
+            hit |= np.all(np.abs(local) <= size[:3], axis=1)
+        elif kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+            hit |= np.linalg.norm(local, axis=1) <= size[0]
+        elif kind == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+            hit |= np.sum((local / size[:3]) ** 2, axis=1) <= 1.0
+        elif kind == mujoco.mjtGeom.mjGEOM_CYLINDER:
+            hit |= (np.linalg.norm(local[:, :2], axis=1) <= size[0]) & (
+                np.abs(local[:, 2]) <= size[1]
+            )
+        elif kind == mujoco.mjtGeom.mjGEOM_CAPSULE:
+            axial = np.clip(local[:, 2], -size[1], size[1])
+            hit |= (
+                np.linalg.norm(local - np.c_[np.zeros((len(local), 2)), axial], axis=1) <= size[0]
+            )
+    return hit
 
 
 def _stats(distance: np.ndarray, tol: float) -> dict:
@@ -376,9 +438,21 @@ def diff(
         )
         return report
 
-    visual_pts, visual_owner = sample_surfaces(trimesh, visual, samples, seed)
-    collision_pts, collision_owner = sample_surfaces(trimesh, collision, samples, seed)
+    z_floor = min(float(m.vertices[:, 2].min()) for m in visual + collision)
+    visual_pts, visual_owner, visual_n = sample_surfaces(
+        trimesh, visual, samples, seed, normals=True
+    )
+    collision_pts, collision_owner, collision_n = sample_surfaces(
+        trimesh, collision, samples, seed, normals=True
+    )
+    visual_pts, visual_owner = drop_base_faces(
+        trimesh, visual, visual_pts, visual_owner, visual_n, z_floor
+    )
+    collision_pts, collision_owner = drop_base_faces(
+        trimesh, collision, collision_pts, collision_owner, collision_n, z_floor
+    )
     coverage, res_a = distance_to(trimesh, cKDTree, collision, visual_pts, seed)
+    coverage = np.where(inside_any(model, data, collision_ids, visual_pts), 0.0, coverage)
     overreach, res_b = distance_to(trimesh, cKDTree, visual, collision_pts, seed)
     report["coverage"] = _stats(coverage, tol)
     report["overreach"] = _stats(overreach, tol)
