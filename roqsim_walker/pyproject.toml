@@ -43,7 +43,7 @@ test = ["pytest>=7.0"]
 # with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
 # air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
 # degrades to planned paths without local avoidance and logs why, it does not fail.
-avoidance = ["rvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
+avoidance = ["pyrvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
 # `roqsim walker import-actor` only: reads a rigged COLLADA actor to author a new blueprint offline. Not
 # needed to *run* a walker, so it stays out of the runtime deps.
 import = ["pycollada>=0.7"]
