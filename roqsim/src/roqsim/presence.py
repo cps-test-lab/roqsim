@@ -6,7 +6,7 @@ made **absent** until it is wanted: nothing can see it, nothing can touch it, an
 plane does not list it.
 
 A world declares which entities start that way (``present: false`` on the entry that registers the
-entity); a scenario moves them either way at run time through ``SpawnEntity``/``DeleteEntity``.
+entity); ``SpawnEntity`` and ``DeleteEntity`` move them either way at run time.
 
 Presence is not position
 -------------------------

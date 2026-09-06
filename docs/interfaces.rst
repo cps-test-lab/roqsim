@@ -468,9 +468,6 @@ this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ign
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
 
-An absent entity is also inert: nothing moves it while it is away, gravity included, so it is still
-at its pose whenever the trial calls for it.
-
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
 

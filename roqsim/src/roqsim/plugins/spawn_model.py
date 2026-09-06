@@ -17,7 +17,7 @@ Config::
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
       mocap: false                   # make it a mocap body: moved by a plugin, not by physics
-      present: true                  # false: compiled in but absent until a scenario spawns it
+      present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the root body's total geom mass (kg)
       friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
@@ -73,12 +73,11 @@ be stretched on one axis needs a purpose-built plugin instead (as ``door`` does 
 scenery this plugin places (there is no free joint) and not a dynamic body.
 
 ``present: false`` compiles the prop in and starts it **absent**: nothing sees or touches it, and the
-control plane does not list it, until a scenario's ``SpawnEntity`` brings it in at the pose that call
-states. This is how a world provides the spares for an obstacle that must *appear* mid-trial --
-roqsim never recompiles, so everything a trial may bring in is declared up front (see
-:mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so a spare spawned in one
-episode is a spare again in the next; without that, repetitions after the first would begin with an
-obstacle already in the room.
+control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
+is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
+recompiles, so everything a trial may bring in is declared up front (see :mod:`roqsim.presence`). The
+declared value is restored on ``on_reset``, so a spare spawned in one episode is a spare again in the
+next; without that, repetitions after the first would begin with an obstacle already in the room.
 
 It is not a way to leave a prop out: ``enabled: false`` does that, and does it properly, by never
 building the body at all. An absent prop still costs its geometry in the compiled model -- that is

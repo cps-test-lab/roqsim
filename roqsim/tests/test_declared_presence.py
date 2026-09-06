@@ -6,7 +6,7 @@
 
 roqsim never recompiles, so an obstacle that must *appear* mid-trial is compiled in up front and
 started absent. This is the declaration half of that; :mod:`test_presence` covers what absence does
-to a body, and the ``simulation_interfaces`` services are what move an entity either way at run time.
+to a body, and the ``simulation_interfaces`` services move an entity either way at run time.
 
 The distinction the key has to keep is against ``enabled: false``, which is a different question with
 a similar spelling: that one never builds the body, so there is nothing left to spawn.
@@ -100,7 +100,7 @@ def test_a_declared_spare_is_a_spare_again_after_a_reset(make_engine):
     engine.setup()
     entity = _entity(engine)
 
-    set_present(engine.ctx, entity, True)  # what a scenario's SpawnEntity does
+    set_present(engine.ctx, entity, True)  # what SpawnEntity does
     assert entity.present is True
 
     engine.reset()

@@ -13,7 +13,7 @@ Config::
       pos: [0.0, 0.0]       # world XY spawn ([x, y, z] to override the model's rest height)
       yaw: 0.0              # spawn heading (rad)
       base_joint: base_free # free joint used to place the base
-      present: true         # false: compiled in but absent until a scenario spawns it
+      present: true         # false: compiled in, but absent until it is spawned
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -23,15 +23,14 @@ The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
 
 ``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
-the control plane does not list it -- until a scenario's ``SpawnEntity`` brings it in at the pose
-that call states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so
-what a trial spawned does not carry into the next repetition.
+the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
+states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so what one
+trial spawned does not carry into the next.
 
 Absence hides the robot's BODY, not its software: its controller and sensor plugins keep running,
 so an absent robot still publishes and still responds to a twist -- and being out of the contact
-set, a twist drives it through walls. For a start pose the campaign decides per run, teleport the
-robot instead (``osc.roqsim``'s ``entity_teleport``); absence is for a machine that is not meant to
-be in the trial yet.
+set, a twist drives it through walls. For a start pose decided per run, move the robot with
+``SetEntityState`` instead; absence is for a machine that is not meant to be in the trial yet.
 """
 
 from __future__ import annotations

@@ -4,10 +4,10 @@
 
 """``present: false`` on a robot: compiled in, but not in the trial yet.
 
-The same declaration ``spawn_model`` takes, on the plugin that places a robot -- for a machine a
-scenario brings in partway through (a second robot that arrives, a unit under test that must not
-exist during a warm-up). It is NOT how a per-run start pose is applied: that is ``entity_teleport``,
-which moves a robot that is present the whole time.
+The same declaration ``spawn_model`` takes, on the plugin that places a robot -- for a machine that
+arrives partway through a trial (a second robot, a unit under test that must not exist during a
+warm-up). It is NOT how a per-run start pose is applied: that is ``SetEntityState``, which moves a
+robot present the whole time.
 """
 
 from __future__ import annotations
