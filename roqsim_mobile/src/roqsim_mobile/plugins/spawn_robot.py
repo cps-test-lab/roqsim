@@ -12,6 +12,7 @@ Config::
       prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
       pos: [0.0, 0.0]       # world XY spawn ([x, y, z] to override the model's rest height)
       yaw: 0.0              # spawn heading (rad)
+      pose: {...}           # the whole spawn pose as SpawnEntity states one; replaces pos + yaw
       base_joint: base_free # free joint used to place the base
       present: true         # false: compiled in, but absent until it is spawned
 
@@ -21,6 +22,24 @@ to that entity by position, and are addressed ``<name>.<label>``.
 
 The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix``, ``model``, and
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
+
+``pose:`` is ``pos``/``yaw`` written as one value, in the shape ``SpawnEntity.srv`` gives its
+``initial_pose`` -- a ``geometry_msgs/PoseStamped``::
+
+    - spawn_robot: {model: turtlebot4, pose: {position: {x: 1.5, y: 2.0},
+                                              orientation: {x: 0, y: 0, z: 0.383, w: 0.924}}}
+
+It exists so a producer of poses has ONE shape to write, whichever door the pose comes in at: a
+world declaring where the robot starts and a ``SpawnEntity`` call placing it mid-trial are the same
+pose, and a campaign sweeping the start pose per configuration writes it here rather than teleporting
+the robot after the fact. ``pos``/``yaw`` stay for a world that states a heading by hand, and setting
+both is refused rather than resolved -- see :mod:`roqsim.pose` for the shape and its two documented
+departures from the message (an optional world-frame ``header``, and an omitted ``z`` meaning the
+model's own resting height rather than zero).
+
+Unlike ``pos``/``yaw`` it carries a full rotation, because the service does: a robot can be spawned
+tilted. Nothing here refuses that -- the base has a free joint and MuJoCo will hold whatever
+orientation it is given -- so a quaternion that is not a heading is taken at its word.
 
 ``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
 the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
@@ -35,13 +54,15 @@ set, a twist drives it through walls. For a start pose decided per run, move the
 
 from __future__ import annotations
 
+import math
+
 import mujoco
-import numpy as np
 
 from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose, yaw_of
 from roqsim.presence import set_present
 
 
@@ -107,11 +128,26 @@ class SpawnRobotPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.robot_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0])
-        self.initial_pose = (float(pos[0]), float(pos[1]), float(self.config.get("yaw", 0.0)))
-        #: An explicit z in ``pos``, which a world states when the ground under the spawn is not at
-        #: z=0 -- a height field, a ramp, a shelf. Without one the model's own rest height is used.
-        self.spawn_z = float(pos[2]) if len(pos) > 2 else None
+        #: The base orientation as a quaternion ``[w, x, y, z]``. ``pos``/``yaw`` can only state a
+        #: heading, so for those it is built from the yaw; a ``pose:`` carries whatever rotation it
+        #: was given, which is what makes it the same value the spawn service accepts.
+        self.quat = [1.0, 0.0, 0.0, 0.0]
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            x, y, z = position
+        else:
+            pos = self.config.get("pos", [0.0, 0.0])
+            x, y = float(pos[0]), float(pos[1])
+            z = float(pos[2]) if len(pos) > 2 else None
+            yaw = float(self.config.get("yaw", 0.0))
+            self.quat = [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
+        #: ``(x, y, yaw)``: what the entity's ``meta`` advertises, and what a consumer that can only
+        #: act on a heading reads. A tilted spawn keeps its full rotation in :attr:`quat`; this is
+        #: the heading part of it.
+        self.initial_pose = (x, y, yaw_of(self.quat))
+        #: An explicit z, which a world states when the ground under the spawn is not at z=0 -- a
+        #: height field, a ramp, a shelf. Without one the model's own rest height is used.
+        self.spawn_z = z
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
@@ -126,9 +162,24 @@ class SpawnRobotPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        pos = config.get("pos", [0.0, 0.0])
-        if len(pos) not in (2, 3):
-            errors.append("'pos' must be [x, y], or [x, y, z] to override the model's rest height")
+        if "pose" in config:
+            # Refused rather than resolved: which one wins is a guess about what the author meant,
+            # and the wrong guess puts the robot somewhere plausible instead of failing.
+            if {"pos", "yaw"} & set(config):
+                errors.append(
+                    "'pose' states the whole spawn pose, so it cannot be combined with "
+                    "'pos'/'yaw'. Use one or the other."
+                )
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
+        else:
+            pos = config.get("pos", [0.0, 0.0])
+            if len(pos) not in (2, 3):
+                errors.append(
+                    "'pos' must be [x, y], or [x, y, z] to override the model's rest height"
+                )
         if "present" in config and not isinstance(config["present"], bool):
             errors.append("'present' must be true or false")
         return errors
@@ -204,7 +255,7 @@ class SpawnRobotPlugin(Plugin):
         set_present(ctx, ctx.entities.get(self.robot_name), self.present)
 
     def _apply_initial_pose(self, ctx: SimContext) -> None:
-        x, y, yaw = self.initial_pose
+        x, y, _ = self.initial_pose
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
         if jid < 0:
             ctx.logger.warning(
@@ -221,5 +272,4 @@ class SpawnRobotPlugin(Plugin):
         z = self.spawn_z if self.spawn_z is not None else self.rest_z
         if z is not None:
             ctx.data.qpos[q + 2] = z
-        h = yaw / 2.0
-        ctx.data.qpos[q + 3 : q + 7] = (np.cos(h), 0.0, 0.0, np.sin(h))
+        ctx.data.qpos[q + 3 : q + 7] = self.quat
