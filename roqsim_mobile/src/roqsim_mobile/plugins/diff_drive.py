@@ -18,6 +18,7 @@ sits rather than a config key::
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
+      odom_child_frame: base_link   # frame the odometry TF points at (see below)
       test_cmd: [0.15, 0.4]        # optional [v, w] applied every tick (standalone demo)
 
 Skid-steer (>1 wheel per side, e.g. Husky A200): give the per-side actuator/joint *lists* instead of
@@ -33,6 +34,12 @@ averages each side's wheel velocities. ``slip_factor`` compensates the lateral s
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
+
+``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT
+of whatever URDF ``robot_state_publisher`` is running: a robot_state_publisher rooted at
+``base_footprint`` (every published TurtleBot 3 description) already gives ``base_link`` a parent,
+and a second parent from here leaves the frame with two, which tf2 cannot resolve. Robots whose
+description is rooted at ``base_link`` (TurtleBot 4) keep the default.
 
 ``slip_factor`` exists because a 4-wheel skid-steer turns by scrubbing its wheels sideways: with
 MuJoCo point contacts the base yaws at only ~15% of the ideal differential-drive prediction, which
@@ -75,6 +82,9 @@ class DiffDrivePlugin(Plugin):
         self.wheel_accel = float(self.config.get("wheel_accel_limit", 0.9))
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
         self.base_body = self.config.get("base_body", "base_link")
+        # Link the odometry TF points at: the root of the robot description published alongside,
+        # which differs per platform (base_link on a TurtleBot 4, base_footprint on a TurtleBot 3).
+        self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         self._sign_l: list[float] = []
         self._sign_r: list[float] = []
         self._target_v = 0.0
@@ -223,7 +233,7 @@ class DiffDrivePlugin(Plugin):
                         "type": "nav_msgs.msg.Odometry",
                         "topic": self.topic_override("odom") or "odom",
                         "frame_id": "odom",
-                        "child_frame_id": "base_link",
+                        "child_frame_id": self.odom_child_frame,
                         "emit_tf": True,
                     }
                 },
