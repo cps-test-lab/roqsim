@@ -48,6 +48,27 @@ Add a texture by dropping `assets/<Name>/<Name>_Color.png` (+ optional `manifest
 referenceable as `roqsim_assets:<Name>`. Any other package can serve textures the same way — expose
 an `ASSETS_DIR` and reference it as `<that_package>:<Name>`.
 
+## Props: what a prop collides as
+
+The import pipeline gives a prop **one mesh geom**, and MuJoCo collides a mesh geom as its **convex
+hull**. For anything with a span under it — a trestle desk, a shelf, a chair — that hull is a solid
+block filling the very opening the shape exists to leave, so a robot meant to drive under the prop
+crashes into nothing, and the contact it reports names a geom the model never named.
+
+A prop is therefore not finished when it is reduced, textured and grounded. It is finished when what
+it collides as resembles what it looks like:
+
+```bash
+roqsim assets collision audit                   # which props collide as a hull that is not the shape
+roqsim assets collision diff office_table       # how far one candidate is from its own mesh, both ways
+roqsim render office_table --geomgroup 2,3      # and what that looks like
+```
+
+The fix is the mesh made visual-only (`contype="0" conaffinity="0" group="2"`) plus a small skeleton
+of named primitives carrying the contacts (`group="3"`) — `office_table` and `industrial_table` are
+the worked examples. Name those geoms: a contact report is only attributable if the geom that made it
+has a name. Not every prop needs one; a solid-ish prop *is* its hull, and `audit` says which is which.
+
 ## Props: reusing another prop's mesh (hierarchical props)
 
 Placeable props live one-per-folder under `models/<name>/<name>.xml` (see `models/__init__.py` and

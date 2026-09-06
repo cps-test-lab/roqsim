@@ -1,0 +1,548 @@
+"""Measure what a prop collides as against what it looks like.
+
+A prop the import pipeline produces is one mesh geom, and MuJoCo collides a mesh geom as its
+**convex hull**. For anything with a span under it -- a trestle desk, a shelf, a chair -- the hull is
+a solid block filling the space the shape exists to leave open, so a robot crashes into geometry that
+is not there, and the contact it reports names a geom the model never named. Nothing in the pipeline
+says so, which is why props ship this way.
+
+Two subcommands, one measurement:
+
+``audit`` -- which props are wrong. Samples each collidable mesh geom's convex hull and reports how
+far that hull stands from the surface it is meant to represent. Corpus triage: run it over a
+provider and it ranks what needs work.
+
+``diff`` -- how wrong one candidate is. Compares the collision geoms against the visual geoms in both
+directions, because each direction is a different defect and one alone hides the other:
+
+  coverage   visual surface -> nearest collider   geometry a robot will pass straight through
+  overreach  collider surface -> nearest visual   obstacle standing where the prop is not
+
+**Both measurements are surface-to-surface, and that is not a detail.** The obvious metric -- the
+ratio of a hull's volume to its mesh's -- needs a watertight surface to have a volume at all, and not
+one prop in this library has one; they are artwork, open shells. On such a mesh the signed volume is
+whatever the unclosed faces happen to sum to, and the ratio ranges over seven orders of magnitude on
+geometry that differs by a factor of two. Distances between surfaces need no interior, and they come
+out in millimetres a reader can act on.
+
+Everything is read off the **compiled** model, not the source OBJ, so a baked ``<mesh scale>``, a
+prop built from several meshes, meshes in a ``meshes/`` subfolder and ``assets:``-borrowed geometry
+are all handled without a special case -- and a model is named the way a world names it
+(``office_table``, ``roqsim_assets:office_table``, or a path), so this works on anything with an
+MJCF, a robot link included, not only on a prop folder.
+
+Usage::
+
+    roqsim assets collision audit                          # every model of every provider
+    roqsim assets collision audit --provider roqsim_assets # one provider
+    roqsim assets collision audit office_table desk_diy    # named models
+    roqsim assets collision diff office_table              # one model, in detail
+    roqsim assets collision diff office_table --tol 5      # a tighter question
+    roqsim assets collision diff office_table --json       # machine-readable
+
+Exits non-zero when anything is FAIL, so an agent or a CI step fails loudly rather than reading past
+it. To SEE what a verdict is talking about, render the two halves against each other::
+
+    roqsim render office_table --geomgroup 2,3 --out check.png
+
+Needs the ``collision`` extra (``pip install 'roqsim_assets[collision]'``) for trimesh + scipy:
+surface sampling, convex hulls and the nearest-point queries. It is an extra rather than a
+dependency because placing a prop needs none of it -- this is a tool for the person adding one.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import mujoco
+import numpy as np
+
+#: Default agreement required between the two surfaces, in metres. A costmap cell in the navigation
+#: worlds here is 50 mm, so 10 mm is well inside the resolution any consumer of this geometry has.
+DEFAULT_TOL = 0.010
+
+#: Fixed so two runs of the same question give the same answer; ``--seed`` varies it to check that
+#: a verdict is not an artefact of one point set.
+DEFAULT_SEED = 0
+
+#: Points sampled on each surface for a query. The reported resolution is derived from this and the
+#: surface area, so a caller can see how sharp the answer is rather than assume it.
+QUERY_SAMPLES = 60_000
+CLOUD_SAMPLES = 600_000
+
+_EXTRA_HELP = (
+    "roqsim assets collision needs trimesh + scipy: pip install 'roqsim_assets[collision]'"
+)
+
+
+def _deps():
+    """trimesh + scipy, or a clear instruction. Never a silent degradation to a weaker metric."""
+    try:
+        import trimesh
+        from scipy.spatial import cKDTree
+    except ImportError as exc:  # noqa: TRY003 - the message IS the handling
+        raise SystemExit(f"{_EXTRA_HELP}\n  ({exc})") from exc
+    return trimesh, cKDTree
+
+
+# -- geometry ------------------------------------------------------------------------------------
+
+
+def compile_model(ref: str):
+    """Compile the model ``ref`` names and return ``(model, data)`` with poses resolved.
+
+    Compiling is what makes this work on any model rather than on a prop folder: MuJoCo applies the
+    mesh scale, the geom offsets and the compiler's own mesh recentring, so ``geom_xpos``/``geom_xmat``
+    are where the geometry actually is.
+    """
+    from roqsim.models import apply_assets, resolve_model
+
+    asset = resolve_model(ref)
+    spec = mujoco.MjSpec.from_file(str(asset.path))
+    apply_assets(spec, asset)
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    return model, data
+
+
+def geom_surface(trimesh, model, data, gid: int):
+    """A geom as a surface mesh in world coordinates, or ``None`` for a shape with no closed form.
+
+    A plane and a heightfield are unbounded, so there is no surface to sample and no useful distance
+    to anything; they are scenery a prop is placed on, never part of the prop.
+    """
+    kind, size = model.geom_type[gid], model.geom_size[gid]
+    if kind == mujoco.mjtGeom.mjGEOM_BOX:
+        mesh = trimesh.creation.box(extents=2 * size[:3])
+    elif kind == mujoco.mjtGeom.mjGEOM_SPHERE:
+        mesh = trimesh.creation.icosphere(radius=float(size[0]))
+    elif kind == mujoco.mjtGeom.mjGEOM_ELLIPSOID:
+        mesh = trimesh.creation.icosphere(radius=1.0)
+        mesh.apply_scale(size[:3])
+    elif kind == mujoco.mjtGeom.mjGEOM_CYLINDER:
+        mesh = trimesh.creation.cylinder(radius=float(size[0]), height=2 * float(size[1]))
+    elif kind == mujoco.mjtGeom.mjGEOM_CAPSULE:
+        mesh = trimesh.creation.capsule(radius=float(size[0]), height=2 * float(size[1]))
+        mesh.apply_translation([0, 0, -float(size[1])])  # trimesh builds it from the origin up
+    elif kind == mujoco.mjtGeom.mjGEOM_MESH:
+        i = model.geom_dataid[gid]
+        verts = model.mesh_vert[
+            model.mesh_vertadr[i] : model.mesh_vertadr[i] + model.mesh_vertnum[i]
+        ]
+        faces = model.mesh_face[
+            model.mesh_faceadr[i] : model.mesh_faceadr[i] + model.mesh_facenum[i]
+        ]
+        mesh = trimesh.Trimesh(
+            vertices=np.asarray(verts, float), faces=np.asarray(faces), process=False
+        )
+    else:
+        return None
+    pose = np.eye(4)
+    pose[:3, :3] = data.geom_xmat[gid].reshape(3, 3)
+    pose[:3, 3] = data.geom_xpos[gid]
+    mesh.apply_transform(pose)
+    return mesh
+
+
+def split_geoms(model) -> tuple[list[int], list[int]]:
+    """Geom ids as ``(visual, collision)``.
+
+    The split is MuJoCo's own: a geom with neither ``contype`` nor ``conaffinity`` cannot pair with
+    anything, so it is decoration whatever group it is drawn in. Reading the masks rather than the
+    group number means a model that uses the group convention loosely still measures correctly.
+    """
+    visual, collision = [], []
+    for gid in range(model.ngeom):
+        solid = bool(model.geom_contype[gid] or model.geom_conaffinity[gid])
+        (collision if solid else visual).append(gid)
+    return visual, collision
+
+
+def sample_surfaces(trimesh, meshes: list, total: int, seed: int = DEFAULT_SEED):
+    """``total`` points over ``meshes`` in proportion to area, plus which mesh each point came from.
+
+    Seeded, because the numbers are meant to be COMPARED: an unseeded sampling moves the reported
+    maximum by a few tenths of a millimetre between runs, and an agent editing a collision model
+    cannot then tell a real improvement from the noise of having asked twice. The seed is offset per
+    mesh so two identical parts do not receive identical point sets.
+
+    The owner index is what turns a score into a work order -- it is how a millimetre figure becomes
+    the NAME of the geom responsible for it.
+    """
+    if not meshes:
+        return np.zeros((0, 3)), np.zeros(0, int)
+    areas = np.array([max(float(m.area), 1e-12) for m in meshes])
+    share = areas / areas.sum()
+    points, owners = [], []
+    for i, (mesh, frac) in enumerate(zip(meshes, share, strict=True)):
+        count = max(int(total * frac), 1)
+        points.append(mesh.sample(count, seed=seed + i))
+        owners.append(np.full(count, i))
+    return np.vstack(points), np.concatenate(owners)
+
+
+def distance_to(
+    trimesh, cKDTree, meshes: list, points: np.ndarray, seed: int = DEFAULT_SEED
+) -> tuple[np.ndarray, float]:
+    """Distance from each point to the nearest surface in ``meshes``, and the resolution of that answer.
+
+    A KD-tree over a dense sampling of the target surfaces rather than an exact point-to-triangle
+    query: the exact one needs ``rtree``, a binding to a native spatial index, and it would buy
+    accuracy far below the tolerance anyone asks of this. The cost is that a distance is never
+    under-reported by more than the sample spacing, which is returned so the caller can print it
+    instead of trusting it.
+    """
+    if not meshes or len(points) == 0:
+        return np.full(len(points), np.inf), 0.0
+    cloud, _ = sample_surfaces(trimesh, meshes, CLOUD_SAMPLES, seed)
+    area = sum(float(m.area) for m in meshes)
+    resolution = float(np.sqrt(area / max(len(cloud), 1)))
+    return cKDTree(cloud).query(points)[0], resolution
+
+
+def _stats(distance: np.ndarray, tol: float) -> dict:
+    if len(distance) == 0:
+        return {"mean_mm": 0.0, "p95_mm": 0.0, "max_mm": 0.0, "beyond_tol": 0.0}
+    return {
+        "mean_mm": float(distance.mean() * 1000),
+        "p95_mm": float(np.percentile(distance, 95) * 1000),
+        "max_mm": float(distance.max() * 1000),
+        "beyond_tol": float((distance > tol).mean()),
+    }
+
+
+def _region(points: np.ndarray, distance: np.ndarray, tol: float) -> dict | None:
+    """Where the WORST of the disagreement is: the box holding the worst tenth of the failures.
+
+    An agent fixing a collision model needs a place to look, not only a magnitude: a coverage hole
+    spanning z 0.10..0.35 at |x| ~ 0.55 names the missing part on sight. The worst tenth rather than
+    everything past tolerance, because a prop always disagrees a little all over -- at a rounded
+    corner, a castor, a chamfer -- and the box around ALL of that is just the prop's own bounding
+    box, which locates nothing. Reported as an extent, since a defect is a part and not a point.
+    """
+    beyond = distance > tol
+    if not beyond.any():
+        return None
+    cut = max(tol, float(np.percentile(distance[beyond], 90)))
+    worst = points[distance >= cut]
+    if len(worst) == 0:
+        return None
+    lo, hi = worst.min(axis=0), worst.max(axis=0)
+    return {
+        "count": int(beyond.sum()),
+        "worst_beyond_mm": round(cut * 1000, 1),
+        "min": [round(float(v), 3) for v in lo],
+        "max": [round(float(v), 3) for v in hi],
+    }
+
+
+def _worst_geoms(
+    model, ids: list[int], owners: np.ndarray, distance: np.ndarray, tol: float
+) -> list:
+    """Per-geom blame for the samples beyond tolerance, worst first, so the fix has an address."""
+    beyond = distance > tol
+    if not beyond.any():
+        return []
+    out = []
+    for index, gid in enumerate(ids):
+        mine = owners == index
+        if not mine.any() or not (mine & beyond).any():
+            continue
+        out.append(
+            {
+                "geom": _name(model, gid),
+                "share": float((mine & beyond).sum() / beyond.sum()),
+                "max_mm": float(distance[mine].max() * 1000),
+            }
+        )
+    return sorted(out, key=lambda r: -r["share"])
+
+
+def _name(model, gid: int) -> str:
+    return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or f"<unnamed geom {gid}>"
+
+
+# -- diff ----------------------------------------------------------------------------------------
+
+
+def diff(
+    ref: str,
+    tol: float = DEFAULT_TOL,
+    samples: int = QUERY_SAMPLES,
+    seed: int = DEFAULT_SEED,
+) -> dict:
+    """Compare one model's collision geometry against its visual geometry, both ways."""
+    trimesh, cKDTree = _deps()
+    model, data = compile_model(ref)
+    visual_ids, collision_ids = split_geoms(model)
+    hulls = [g for g in collision_ids if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH]
+
+    report = {
+        "model": ref,
+        "tolerance_mm": tol * 1000,
+        "visual_geoms": len(visual_ids),
+        "collision_geoms": len(collision_ids),
+        "hull_colliders": [_name(model, g) for g in hulls],
+    }
+
+    visual = [
+        m for m in (geom_surface(trimesh, model, data, g) for g in visual_ids) if m is not None
+    ]
+    collision = [
+        m for m in (geom_surface(trimesh, model, data, g) for g in collision_ids) if m is not None
+    ]
+
+    if not visual:
+        # Nothing to measure against. With a hull collider that is the FAIL below; without one it
+        # means the model draws nothing, which is a different problem and not this tool's to judge.
+        report["verdict"] = "FAIL" if hulls else "WARN"
+        report["reason"] = (
+            "the mesh collides, so physics sees its convex hull"
+            if hulls
+            else "no visual geometry to compare the collider against"
+        )
+        return report
+
+    visual_pts, visual_owner = sample_surfaces(trimesh, visual, samples, seed)
+    collision_pts, collision_owner = sample_surfaces(trimesh, collision, samples, seed)
+    coverage, res_a = distance_to(trimesh, cKDTree, collision, visual_pts, seed)
+    overreach, res_b = distance_to(trimesh, cKDTree, visual, collision_pts, seed)
+    report["coverage"] = _stats(coverage, tol)
+    report["overreach"] = _stats(overreach, tol)
+    # Where, and whose fault. Coverage is blamed on a REGION (the missing part has no geom to name)
+    # and overreach on the GEOMS that stand clear of the prop, which do have names.
+    report["coverage"]["region"] = _region(visual_pts, coverage, tol)
+    report["coverage"]["worst_visual"] = _worst_geoms(
+        model, visual_ids, visual_owner, coverage, tol
+    )
+    report["overreach"]["region"] = _region(collision_pts, overreach, tol)
+    report["overreach"]["worst_geoms"] = _worst_geoms(
+        model, collision_ids, collision_owner, overreach, tol
+    )
+    report["resolution_mm"] = max(res_a, res_b) * 1000
+    worst = max(report["coverage"]["beyond_tol"], report["overreach"]["beyond_tol"])
+    report["agreement"] = 1.0 - worst
+    if hulls:
+        report["verdict"], report["reason"] = (
+            "FAIL",
+            "the mesh collides, so physics sees its convex hull",
+        )
+    elif worst > 0.05:
+        report["verdict"] = "WARN"
+        report["reason"] = f"the two surfaces disagree over {worst * 100:.1f}% of themselves"
+    else:
+        report["verdict"] = "ok"
+        report["reason"] = (
+            f"within {tol * 1000:.0f} mm over {(1 - worst) * 100:.1f}% of both surfaces"
+        )
+    return report
+
+
+def print_diff(report: dict) -> None:
+    print(f"collision diff: {report['model']}")
+    print(
+        f"  visual {report['visual_geoms']:4d} geoms   collision {report['collision_geoms']:4d} geoms"
+        f"   tolerance {report['tolerance_mm']:.0f} mm"
+    )
+    for name in report["hull_colliders"]:
+        print(f"  [FAIL] {name} is a mesh and collides -- physics sees its CONVEX HULL")
+    for key, arrow in (
+        ("coverage", "visual surface  -> nearest collider"),
+        ("overreach", "collider surface -> nearest visual "),
+    ):
+        s = report.get(key)
+        if not s:
+            continue
+        print(
+            f"  {key:9s} {arrow}   mean {s['mean_mm']:5.1f} mm"
+            f"  p95 {s['p95_mm']:6.1f} mm  max {s['max_mm']:6.1f} mm"
+        )
+        what = (
+            "of the prop has no collider within tolerance"
+            if key == "coverage"
+            else "of the collider stands where the prop does not"
+        )
+        print(f"  {'':9s} {s['beyond_tol'] * 100:5.1f}% {what}")
+        region = s.get("region")
+        if region:
+            lo, hi = region["min"], region["max"]
+            print(
+                f"  {'':9s} worst of it (>{region['worst_beyond_mm']:.0f} mm) in"
+                f"  x {lo[0]:+.2f}..{hi[0]:+.2f}  y {lo[1]:+.2f}..{hi[1]:+.2f}"
+                f"  z {lo[2]:+.2f}..{hi[2]:+.2f}"
+            )
+        for row in s.get("worst_geoms", [])[:4]:
+            print(
+                f"  {'':9s} {row['share'] * 100:5.1f}% of it is {row['geom']} (max {row['max_mm']:.0f} mm)"
+            )
+    if "resolution_mm" in report:
+        print(f"  resolution ~{report['resolution_mm']:.1f} mm (surfaces are sampled, not solved)")
+    print(f"  [{report['verdict']:4s}] {report['reason']}")
+
+
+# -- audit ---------------------------------------------------------------------------------------
+
+
+def audit_one(ref: str, tol: float, seed: int = DEFAULT_SEED) -> dict:
+    """How far one model's collidable hulls stand from the surface they stand in for."""
+    trimesh, cKDTree = _deps()
+    try:
+        model, data = compile_model(ref)
+    except Exception as exc:  # noqa: BLE001 - a model that will not compile is a result, not a crash
+        return {"model": ref, "verdict": "ERROR", "reason": f"{type(exc).__name__}: {exc}"}
+
+    _, collision_ids = split_geoms(model)
+    meshes = [g for g in collision_ids if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH]
+    if not meshes:
+        return {
+            "model": ref,
+            "collider": "primitive",
+            "verdict": "ok",
+            "reason": "collision is primitives, not a hull",
+        }
+
+    surfaces = [m for m in (geom_surface(trimesh, model, data, g) for g in meshes) if m is not None]
+    surfaces = [m for m in surfaces if len(m.vertices) >= 4]
+    hulls = []
+    for mesh in surfaces:
+        try:
+            hulls.append(mesh.convex_hull)
+        except Exception:  # noqa: BLE001, S112 - a degenerate mesh has no hull; say so, don't crash
+            continue
+    if not hulls:
+        return {"model": ref, "collider": "hull", "verdict": "ERROR", "reason": "degenerate mesh"}
+
+    hull_pts, _hull_owner = sample_surfaces(trimesh, hulls, 40_000, seed)
+    distance, _ = distance_to(trimesh, cKDTree, surfaces, hull_pts, seed)
+    p95 = float(np.percentile(distance, 95) * 1000)
+    peak = float(distance.max() * 1000)
+    verdict = "FAIL" if p95 > tol * 1000 else "WARN" if peak > tol * 2000 else "ok"
+    return {
+        "model": ref,
+        "collider": "hull",
+        "phantom_p95_mm": p95,
+        "phantom_max_mm": peak,
+        "geoms": [_name(model, g) for g in meshes],
+        "verdict": verdict,
+        "reason": (
+            f"the hull stands up to {peak:.0f} mm off the prop"
+            if verdict != "ok"
+            else "the hull follows the prop"
+        ),
+    }
+
+
+def provider_models(provider: str | None) -> list[str]:
+    """Every model name a provider offers -- the nested ``<name>/<name>.xml`` layout props use."""
+    from roqsim.models import providers
+
+    found: list[str] = []
+    for name, models_dir, _mesh, _tex in providers():
+        if provider and name != provider:
+            continue
+        for path in sorted(Path(models_dir).glob("*/*.xml")):
+            if path.stem == path.parent.name:
+                found.append(path.stem)
+        found += [p.stem for p in sorted(Path(models_dir).glob("*.xml"))]
+    return sorted(dict.fromkeys(found))
+
+
+def print_audit(rows: list[dict], tol: float) -> None:
+    print(
+        f"collision audit -- how far a hull collider stands from the prop (tolerance {tol * 1000:.0f} mm)"
+    )
+    print(f"{'model':32s} {'collider':>10s} {'phantom p95':>12s} {'max':>9s}  verdict")
+    for row in sorted(rows, key=lambda r: -r.get("phantom_p95_mm", -1)):
+        p95 = f"{row['phantom_p95_mm']:9.0f} mm" if "phantom_p95_mm" in row else f"{'-':>12s}"
+        peak = f"{row['phantom_max_mm']:6.0f} mm" if "phantom_max_mm" in row else f"{'-':>9s}"
+        note = f" -- {row['reason']}" if row["verdict"] in ("FAIL", "ERROR") else ""
+        print(
+            f"{row['model']:32s} {row.get('collider', '-'):>10s} {p95} {peak}  {row['verdict']}{note}"
+        )
+    bad = sum(1 for r in rows if r["verdict"] == "FAIL")
+    print(f"\n{bad} of {len(rows)} collide as a convex hull that is not the shape.")
+
+
+# -- cli -----------------------------------------------------------------------------------------
+
+
+def main(argv: list | None = None) -> int:
+    # The shared flags are on a parent parser, so they are accepted on EITHER side of the
+    # subcommand. argparse otherwise binds them to the top level only, and `collision diff x --json`
+    # -- where anyone would naturally put it -- fails with "unrecognized arguments".
+    # SUPPRESS, not a real default: a parent's default is re-applied by the subparser, so a value
+    # given BEFORE the subcommand would be silently overwritten by the default given after it --
+    # `--tol 30 audit` would quietly measure at 10. With SUPPRESS the attribute exists only where the
+    # flag was actually typed, and the defaults are applied once, below.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument(
+        "--json",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="machine-readable output only",
+    )
+    common.add_argument(
+        "--seed",
+        type=int,
+        default=DEFAULT_SEED,
+        metavar="N",
+        help=f"sampling seed (default: {DEFAULT_SEED}); vary it to confirm a verdict is not one "
+        "unlucky point set",
+    )
+    common.add_argument(
+        "--tol",
+        type=float,
+        default=argparse.SUPPRESS,
+        metavar="MM",
+        help=f"agreement required between the surfaces, in mm (default: {DEFAULT_TOL * 1000:.0f})",
+    )
+    parser = argparse.ArgumentParser(
+        prog="roqsim assets collision",
+        description=__doc__.split("\n")[0],
+        parents=[common],
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_diff = sub.add_parser(
+        "diff", parents=[common], help="compare one model's collider against its visual geometry"
+    )
+    p_diff.add_argument("model", help="model reference: <name>, <provider>:<name>, or a path")
+    p_diff.add_argument(
+        "--samples", type=int, default=QUERY_SAMPLES, metavar="N", help="points sampled per surface"
+    )
+
+    p_audit = sub.add_parser(
+        "audit",
+        parents=[common],
+        help="which models collide as a convex hull that is not the shape",
+    )
+    p_audit.add_argument(
+        "models", nargs="*", help="model references (default: every one registered)"
+    )
+    p_audit.add_argument("--provider", help="limit the default set to one roqsim.models provider")
+
+    args = parser.parse_args(argv)
+    tol = getattr(args, "tol", DEFAULT_TOL * 1000) / 1000
+    as_json = getattr(args, "json", False)
+
+    if args.command == "diff":
+        report = diff(args.model, tol=tol, samples=args.samples, seed=args.seed)
+        print(json.dumps(report, indent=2)) if as_json else print_diff(report)
+        return 1 if report["verdict"] in ("FAIL", "ERROR") else 0
+
+    models = args.models or provider_models(args.provider)
+    if not models:
+        parser.error(
+            "no models to audit" + (f" for provider {args.provider!r}" if args.provider else "")
+        )
+    rows = [audit_one(ref, tol, args.seed) for ref in models]
+    print(json.dumps(rows, indent=2)) if as_json else print_audit(rows, tol)
+    return 1 if any(r["verdict"] in ("FAIL", "ERROR") for r in rows) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

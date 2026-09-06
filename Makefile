@@ -89,6 +89,9 @@ SMOKE_STEPS ?= 200
 EXTRAS_DEFAULT        := [test]
 EXTRAS_roqsim_sensors := [test,markers,coverage]
 EXTRAS_roqsim_scenes  := [test,preview]
+# `roqsim assets collision` measures a prop against its own mesh; its tests exercise the measurement,
+# so the dev venv carries the extra even though placing a prop never needs it.
+EXTRAS_roqsim_assets  := [test,collision]
 
 .DEFAULT_GOAL := help
 
