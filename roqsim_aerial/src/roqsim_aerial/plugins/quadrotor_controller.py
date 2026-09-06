@@ -18,10 +18,10 @@ Cascaded, in the usual quadrotor form:
    a rate damping term. This is used rather than Euler angles because it does not degenerate as the
    drone tilts, and a quadrotor recovering from a large disturbance does tilt.
 
-Config::
+Config -- a component of the entry that spawns the drone, since ownership is where the entry
+sits rather than a config key::
 
     quadrotor_controller:
-      robot: drone                  # entity name registered by spawn_robot
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       body: cf2                     # the drone's root body (default: the entity's root)
       thrust_actuator: body_thrust  # collective thrust, in newtons

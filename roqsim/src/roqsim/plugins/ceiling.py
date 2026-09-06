@@ -25,9 +25,9 @@ Set ``keep: false`` in the world YAML (or via ``--set`` / an ``extends`` overrid
 factor) to open the roof.
 
 The key is ``keep`` rather than ``enabled`` because this plugin is SUBTRACTIVE: it does its work by
-removing geometry, so it is the entry running that opens the roof. ``enabled:`` is now a reserved
-sibling meaning "run this component at all", and ``ceiling: {enabled: false}`` would therefore leave
-the ceiling standing -- the exact opposite of what it used to mean, silently. It is refused by name.
+removing geometry, so it is the entry running that opens the roof. ``enabled:`` is the reserved
+sibling meaning "run this component at all", so ``ceiling: {enabled: false}`` leaves the ceiling
+standing -- the opposite of what someone writing it wants. It is refused by name rather than obeyed.
 
 Removal happens in ``build`` (pre-compile); the engine's ``dedup_assets`` pass then drops the
 textures the removed geoms leave unreferenced.
@@ -76,9 +76,9 @@ class CeilingPlugin(Plugin):
         errors: list[str] = []
         if "enabled" in config:
             errors.append(
-                "'enabled' is now a reserved sibling meaning 'run this component at all', and this "
-                "plugin works by REMOVING geometry -- so `enabled: false` would leave the ceiling "
-                "standing, the opposite of what it used to mean. Use `keep:` instead."
+                "'enabled' is the reserved sibling meaning 'run this component at all', and this "
+                "plugin works by REMOVING geometry -- so `enabled: false` leaves the ceiling "
+                "standing, the opposite of what you are asking for. Use `keep:` instead."
             )
         if "above_z" in config and not np.isfinite(float(config.get("above_z", 0.0) or 0.0)):
             # The schema has no "finite" rule and should not grow one for a single caller: an

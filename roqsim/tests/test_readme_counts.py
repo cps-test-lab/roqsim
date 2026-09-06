@@ -4,13 +4,22 @@
 
 """The README's numbers, checked against the registries they describe.
 
-Every one of them was wrong when this was written -- 48 plugins against 49, 18 robot models against
-34, 21 worlds against 25 -- and each had been right once. A number in a README is a claim that decays
-silently: nobody recounts, the drift is invisible in review, and the first reader to notice is
-someone who trusted it.
+A number in a README is a claim that decays silently: nobody recounts, the drift is invisible in
+review, and the first reader to notice is someone who trusted it. So the totals the README does
+state are asserted here rather than maintained by hand.
 
-So the counts are asserted rather than maintained. The failure message says what to write, because a
-test that only says "51 != 52" makes the reader do the arithmetic that the test just did.
+A count the README is better off not making is deleted from both sides instead. Two were: the
+number of registered plugins, and the number of ready-to-run worlds. Both depend on which packages
+are installed, so both read differently in a full checkout, in an install of the public packages
+alone, and in a working tree that has an experiment's own provider installed beside them -- and a
+number that is wrong for most readers is worse than no number. The README describes what plugins and
+worlds are rather than how many there are.
+
+The robot total stays because it does not have that problem: it is counted over a fixed list of
+in-tree packages, so an out-of-tree provider cannot move it.
+
+The failure message says what to write, because a test that only says "51 != 52" makes the reader do
+the arithmetic that the test just did.
 
 Scope, deliberately: this checks the totals the README states, not the prose around them. A new robot
 that lands without being named in the family list is caught by the total moving; whether the sentence
@@ -27,8 +36,6 @@ import pytest
 
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
 from roqsim.models import _entry_points, _provider_dirs
-from roqsim.registry import ENTRY_POINT_GROUP as PLUGINS_GROUP
-from roqsim.world import _world_entry_points
 
 #: The packages whose models are ROBOTS. Props, sensors and pedestrian blueprints are models too and
 #: are counted elsewhere in the docs; "robot models" in the README means these.
@@ -66,14 +73,6 @@ def _installed(names) -> list[str]:
     return present
 
 
-def test_the_plugin_count_is_the_number_of_registered_plugins():
-    actual = len(list(_entry_points(PLUGINS_GROUP)))
-    assert _stated(r"\*\*(\d+) plugins\*\*") == actual, (
-        f"the README says a different number of plugins than are registered here ({actual}). "
-        "Adding one means updating that line in the same commit."
-    )
-
-
 def test_the_robot_model_count_is_the_number_of_shipped_robot_models():
     if len(_installed(ROBOT_PROVIDERS)) < len(ROBOT_PROVIDERS):
         pytest.skip("not every robot-family package is installed, so the total is not comparable")
@@ -88,22 +87,4 @@ def test_the_robot_model_count_is_the_number_of_shipped_robot_models():
     assert _stated(r"\*\*(\d+) robot models") == len(models), (
         f"the README says a different number of robot models than are shipped ({len(models)}): "
         f"{sorted(models)}"
-    )
-
-
-def test_the_world_count_is_the_number_a_ref_can_name():
-    """The worlds a package OFFERS -- its `roqsim.worlds` entry point -- not every YAML on disk.
-
-    Several packages ship debugging worlds that are deliberately unregistered and run by path; a
-    README promising "ready to run" is promising the ones a `<package>:<world>` ref names.
-    """
-    providers = list(_world_entry_points())
-    if len(providers) < 5:
-        pytest.skip("not every world provider is installed, so the total is not comparable")
-    total = 0
-    for ep in providers:
-        worlds = Path(ep.load().WORLDS_DIR)
-        total += len(list(worlds.glob("*.yaml"))) if worlds.is_dir() else 0
-    assert _stated(r"\*\*(\d+) ready-to-run worlds\*\*") == total, (
-        f"the README says a different number of runnable worlds than are registered here ({total})"
     )

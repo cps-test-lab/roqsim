@@ -67,14 +67,14 @@ from .viewer import (
     GL_HELP,
     DisplayError,
     ViewError,
-    apply_walk,
+    apply_viewer_keys,
     close_viewer,
     has_display,
     launch_viewer,
     prepare_viewer_gl,
     setup_camera,
 )
-from .window_title import retitle_window_async
+from .window_branding import brand_window_async
 from .world import resolve_world_yaml_ref
 
 log = logging.getLogger(__name__)
@@ -253,13 +253,24 @@ def _run_headless(
                 recorder.sample(engine.ctx)
 
 
-def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_callback=None):
+def open_loading_viewer(
+    *,
+    name: str | None = None,
+    left_ui: bool = False,
+    right_ui: bool = False,
+    key_callback=None,
+    key_sources=(),
+):
     """Open the viewer on an empty placeholder and draw the splash overlay immediately.
 
     An empty model compiles and opens in ~1 ms (no meshes/textures to build), so the window and the
     splash come up as fast as MuJoCo can create the GL context -- *before* the real world compiles,
     so the splash covers the whole load. The real world is swapped into this same window later by
     :func:`adopt_world`; the splash (full-bleed navy art) stays up until then.
+
+    The window is branded here too, not only in :func:`adopt_world`: a world that takes half a minute
+    to compile is half a minute of taskbar and title bar, and the placeholder carries MuJoCo's name
+    and no icon at all.
 
     Returns ``(handle, open_seconds)``, or ``(None, 0.0)`` if the window could not be opened -- the
     caller then falls back to opening on the real model, where the GL error is reported properly.
@@ -271,12 +282,18 @@ def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_ca
         model = mujoco.MjSpec().compile()  # empty world (worldbody only); compiles in ~1 ms
         data = mujoco.MjData(model)
         handle = launch_viewer(
-            model, data, left_ui=left_ui, right_ui=right_ui, key_callback=key_callback
+            model,
+            data,
+            left_ui=left_ui,
+            right_ui=right_ui,
+            key_callback=key_callback,
+            key_sources=key_sources,
         )
     except Exception as err:  # noqa: BLE001 — no pre-window is fine; the real launch reports GL errors
         log.debug("loading window skipped: %s", err)
         return None, 0.0
     show_loading_overlay(handle)
+    brand_window_async(model, name=name)
     return handle, time.perf_counter() - started
 
 
@@ -294,7 +311,7 @@ def adopt_world(viewer, engine: Engine, *, name: str | None = None) -> float:
     started = time.perf_counter()
     sim.load(engine.ctx.model, engine.ctx.data, "")
     mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
-    retitle_window_async(engine.ctx.model, name=name)
+    brand_window_async(engine.ctx.model, name=name)
     return time.perf_counter() - started
 
 
@@ -330,6 +347,7 @@ def _run_windowed(
                 left_ui=left_ui,
                 right_ui=right_ui,
                 key_callback=_key_callback(toggle, saver),
+                key_sources=(toggle, saver),
             )
         except Exception as err:  # noqa: BLE001 — any GL init failure maps to the same guidance
             raise DisplayError(GL_HELP.format(err=err)) from err
@@ -344,7 +362,7 @@ def _run_windowed(
             if profile:
                 print(f"[loading] world swap-in: {swap_s * 1e3:.0f} ms", file=sys.stderr)
         else:
-            retitle_window_async(engine.ctx.model, name=name)
+            brand_window_async(engine.ctx.model, name=name)
         camera = setup_camera(viewer, view, engine.ctx, preview=preview)
         if loading:
             # Scene loaded and camera framed under the splash: reveal it in one clean cut.
@@ -363,7 +381,7 @@ def _run_windowed(
             # pose being saved cannot move while the question is on screen.
             if toggle is not None and toggle.take_pending():
                 recorder.toggle()
-                retitle_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
+                brand_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
             if saver is not None and saver.take_pending():
                 save_current_view(
                     _live_camera(viewer),
@@ -385,14 +403,14 @@ def _run_windowed(
             if now - last_render >= render_period:
                 if camera is not None:
                     camera.update(viewer)
-                apply_walk(viewer)  # arrow-key camera travel, integrated per rendered frame
+                apply_viewer_keys(viewer)  # arrow-key travel and the F1 list, per rendered frame
                 viewer.sync()
                 last_render = now
     finally:
         close_viewer(viewer)
 
 
-def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
+def _hotkeys(*, can_save_view: bool = True) -> tuple[RecordToggle, SaveViewKey]:
     """roqsim's own viewer hotkeys, chained: F9 starts/stops a recording take, F8 saves the camera view.
 
     ``launch_passive`` accepts exactly one key callback, so each handler takes a ``chain`` it forwards
@@ -401,7 +419,7 @@ def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
     outermost of them (:func:`_key_callback`).
     """
     toggle = RecordToggle()
-    return toggle, SaveViewKey(chain=toggle.key_callback)
+    return toggle, SaveViewKey(chain=toggle.key_callback, savable=can_save_view)
 
 
 def _key_callback(toggle: RecordToggle | None, saver: SaveViewKey | None):
@@ -415,7 +433,7 @@ def _rec_name(name: str | None, recording: bool) -> str | None:
     """Append a recording marker to the window title, so the state is visible where the person looks.
 
     A toggle you cannot see is a toggle you will get wrong -- and the window title is the one piece of
-    chrome roqsim already owns (:mod:`roqsim.window_title` retitles through ctypes libX11).
+    chrome roqsim already owns (:mod:`roqsim.window_branding` sets title and icon through ctypes libX11).
     """
     base = name or ""
     return f"{base} [REC]" if recording else base or None
@@ -629,14 +647,19 @@ def run(
     # Built before the window, because the window opens on an empty placeholder *before* the world
     # compiles -- so the key callback has to exist first. Both are pointed at their targets below: the
     # toggle at the recorder, the saver at the world YAML this run came out of.
-    toggle, saver = _hotkeys() if not headless else (None, None)
+    # Windowed only, both of them: the hotkeys are the window's, and the world YAML is resolved here
+    # only to answer whether F8 has anywhere to save to. A headless run has neither question.
+    world_yaml = world_yaml_path(target) if not headless else None
+    toggle, saver = _hotkeys(can_save_view=world_yaml is not None) if not headless else (None, None)
 
     loading_view, open_s = (None, 0.0)
     if not headless and has_display():
         loading_view, open_s = open_loading_viewer(
+            name=cfg.name,
             left_ui=left_ui,
             right_ui=right_ui,
             key_callback=_key_callback(toggle, saver),
+            key_sources=(toggle, saver),
         )
         if open_s:
             log.debug("loading window: opened in %.3fs", open_s)
@@ -648,8 +671,8 @@ def run(
         # Before setup(): configure() may read it, and pre_step certainly does.
         engine.ctx.manual_control = manual_control
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
-        # recorded, so it can be repeated. Before this the sensors read a ctx.rng nothing ever set, so a
-        # noisy run could not be reproduced at all.
+        # recorded, so it can be repeated. A seed nothing sets and nothing reports is the case where
+        # a noisy run cannot be reproduced at all.
         engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:
@@ -748,7 +771,7 @@ def run(
                     recorder=recorder,
                     toggle=toggle,
                     saver=saver,
-                    world_yaml=world_yaml_path(target),
+                    world_yaml=world_yaml,
                 )
         finally:
             # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or

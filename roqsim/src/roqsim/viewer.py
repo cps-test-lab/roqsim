@@ -13,7 +13,7 @@ on-screen window. The window management lives here so neither driver duplicates 
 * :class:`WalkKeys` gives that window a second navigation mode -- arrow-key *flight*, so a
   building-sized world can be flown through rather than only circled from outside -- and **F10**
   switches between the two. :func:`launch_viewer` wires one up for every driver; the driver's render
-  loop then calls :func:`apply_walk` per frame. It shares :func:`roqsim.walk_delta` with the
+  loop then calls :func:`apply_viewer_keys` per frame. It shares :func:`roqsim.walk_delta` with the
   scene-review window, so both fly the same way.
 
   The window opens in MuJoCo's own mouse mode, untouched: orbit, pan and zoom all keep their full
@@ -48,10 +48,11 @@ import weakref
 import mujoco
 import numpy as np
 
+from . import keys, overlay
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
 from .rendering import set_orbit_radius, walk_delta
-from .window_title import retitle_window_async
+from .window_branding import brand_window_async
 
 log = logging.getLogger(__name__)
 
@@ -228,16 +229,13 @@ WALK_SPRINT = 3.0
 #: cover ground. 0 disables it, leaving the world's own framing as the pivot.
 PIVOT_RADIUS_M = 1.5
 
-#: GLFW keycode for F10 -- the navigation-mode toggle. Simulate claims F1-F7
-#: (help/info/profiler/sensor/fullscreen/frame/label), roqsim's recording toggle is F9 and its view-save
-#: is F8, which leaves F10; and only a function key will do, because Simulate binds every letter to a
-#: visualization or rendering flag and the passive viewer's callback runs *in addition to* its own
-#: handling. Same constraint that put travel on the arrows.
-KEY_F10 = 299
+#: GLFW keycode for F10 -- the navigation-mode toggle. Declared in :mod:`roqsim.keys`, with every
+#: other key roqsim binds and the reasoning about which keys are takeable at all.
+KEY_F10 = keys.KEY_F10
 
 #: Auto-repeat delivers several presses from one held F10 (~0.2 s apart); above that, below a
-#: deliberate double-press. Matches :data:`roqsim.view_save.DEBOUNCE_S`.
-_TOGGLE_DEBOUNCE_S = 0.4
+#: deliberate double-press.
+_TOGGLE_DEBOUNCE_S = keys.DEBOUNCE_S
 
 #: How long the mode notice stays on screen after a switch. A toggle you cannot see is a toggle you
 #: will get wrong -- but a label that never leaves would sit in every screenshot of the window.
@@ -258,58 +256,33 @@ _KEY_HOLD_S = 0.35
 #: The token Shift carries through the held-key set -- a modifier, not a direction.
 _SPRINT = "shift"
 
-#: GLFW keycodes (what MuJoCo hands the key callback) -> the walk direction they mean.
-#:
-#: Letters are unusable in this window: MuJoCo's Simulate binds W/A/S/D/E/Q to visualization flags
-#: (wireframe, static bodies, select point, ...) whether or not a side panel is open, so a WASD walk
-#: would toggle rendering as it moved. The arrows and Page Up/Down are free while the simulation
-#: runs -- Simulate's arrow bindings only step the physics while it is *paused*.
-_WALK_KEYCODES = {
-    265: "w",  # Up: forward along the view
-    264: "s",  # Down: back
-    263: "a",  # Left: strafe left
-    262: "d",  # Right: strafe right
-    266: "e",  # Page Up: rise
-    267: "q",  # Page Down: descend
-    340: _SPRINT,  # Left Shift: fly faster
-    344: _SPRINT,  # Right Shift
-}
-
-#: The same keys as X keysym names, for the :mod:`roqsim.key_state` poll.
-_WALK_KEYSYMS = {
-    "Up": "w",
-    "Down": "s",
-    "Left": "a",
-    "Right": "d",
-    "Prior": "e",
-    "Next": "q",
-    "Shift_L": _SPRINT,
-    "Shift_R": _SPRINT,
-}
+#: GLFW keycodes (what MuJoCo hands the key callback) -> the walk direction they mean, and the same
+#: keys as X keysym names for the :mod:`roqsim.key_state` poll. Both come from the bindings the F1
+#: list is rendered from, so the keys that fly and the keys that list themselves are one declaration.
+_WALK_KEYCODES = keys.keycodes(keys.WALK)
+_WALK_KEYSYMS = keys.keysyms(keys.WALK)
 
 
 def _show_notice(handle, text: tuple[str, str]) -> None:
     """Put the mode notice in the window's lower-left corner. Cosmetic, so never raises.
 
-    ``set_texts`` is the passive viewer's own overlay channel (the loading splash of :mod:`roqsim.splash`
-    uses its ``set_images`` sibling, and nothing else in roqsim writes text), so this clobbers nobody. An
-    installed MuJoCo without the API, or a window already closing, simply shows no notice -- the same
-    best-effort stance the splash takes.
+    Written through :mod:`roqsim.overlay` rather than straight at the handle, because ``set_texts``
+    replaces the *whole* overlay: the F1 key list is up there too, and a notice that took it down
+    every time the mode changed would be a notice that ate the list explaining the mode.
     """
-    try:
-        handle.set_texts(
-            (mujoco.mjtFontScale.mjFONTSCALE_150, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT, *text)
-        )
-    except Exception as err:  # noqa: BLE001 — a notice never breaks navigation
-        log.debug("camera-mode notice skipped: %s", err)
+    overlay.set_text(
+        handle,
+        overlay.SLOT_MODE,
+        font=mujoco.mjtFontScale.mjFONTSCALE_150,
+        gridpos=mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+        text1=text[0],
+        text2=text[1],
+    )
 
 
 def _clear_notice(handle) -> None:
-    """Take the mode notice back down. Cosmetic, so never raises."""
-    try:
-        handle.clear_texts()
-    except Exception as err:  # noqa: BLE001
-        log.debug("clearing the camera-mode notice failed: %s", err)
+    """Take the mode notice back down, leaving anything else on screen. Cosmetic, so never raises."""
+    overlay.clear_text(handle, overlay.SLOT_MODE)
 
 
 class WalkKeys:
@@ -346,6 +319,10 @@ class WalkKeys:
     stream: :meth:`key_callback` timestamps each direction and it counts as held for
     :data:`_KEY_HOLD_S` after its last event. Hops and a short coast on release, but it still flies.
     """
+
+    #: What this handler answers to, and what the window's F1 list says of it. The maps it flies on
+    #: (:data:`_WALK_KEYCODES`, :data:`_WALK_KEYSYMS`) are derived from these same bindings.
+    key_bindings = keys.CAMERA
 
     def __init__(
         self,
@@ -435,9 +412,11 @@ class WalkKeys:
         """
         now = time.monotonic()
         previous, self._last_apply = self._last_apply, now
-        keys = self.held(now)
-        speed = self.speed * (self.sprint if _SPRINT in keys else 1.0)
-        keys = [k for k in keys if k != _SPRINT]  # a modifier, not a direction to travel in
+        # ``held``, not ``keys``: this module's ``keys`` is the binding catalogue, and WalkKeys'
+        # own ``keys=`` parameter (the key-state source) already shadows it once.
+        held = self.held(now)
+        speed = self.speed * (self.sprint if _SPRINT in held else 1.0)
+        held = [k for k in held if k != _SPRINT]  # a modifier, not a direction to travel in
         switched, self._toggles = self._toggles % 2 == 1, 0  # two presses are back where we started
         with handle.lock():
             cam = handle.cam
@@ -456,10 +435,10 @@ class WalkKeys:
                     # out into the distance.
                     set_orbit_radius(cam, self.pivot_radius)
                 # The first frame of a hold has no measured interval yet; the next one moves.
-                if keys and previous is not None:
+                if held and previous is not None:
                     dt = min(now - previous, self.hold_s)  # a stalled frame must not teleport it
                     cam.lookat[:] = np.array(cam.lookat) + walk_delta(
-                        cam.azimuth, keys, speed * dt, cam.elevation
+                        cam.azimuth, held, speed * dt, cam.elevation
                     )
         self._notice(handle, now, switched)
 
@@ -479,21 +458,101 @@ class WalkKeys:
             _clear_notice(handle)
 
 
+class HelpKeys:
+    """F1: the keys roqsim added to this window, listed in its top-right corner until F1 comes again.
+
+    Simulate's own help opens on the same press -- the passive viewer's callback runs *in addition to*
+    its handling and cannot take a key away from it -- so the two sit in opposite corners saying
+    different things, and this one names itself. F1 is the only key roqsim shares with Simulate, and
+    it is shared because it means the same thing in both.
+
+    Sticky, unlike the timed notice :class:`WalkKeys` shows: a list you have to hold a key to read is
+    one you cannot read while flying.
+
+    Threading is :class:`roqsim.capture.RecordToggle`'s: :meth:`key_callback` runs on MuJoCo's UI
+    thread and only debounces and counts, while :meth:`apply` runs on the thread that renders, which
+    is where the overlay is written -- the same thread the mode notice is written from, so the text
+    channel keeps one writer.
+
+    ``bindings`` is what the list says. It is the run's own, not the catalogue: a window with no
+    recorder, or one whose run has no world YAML to save a view into, must not offer keys it lacks.
+    """
+
+    #: What this handler answers to, and what the list says of it -- it is in its own list.
+    key_bindings = (keys.SHOW_HELP,)
+
+    def __init__(self, bindings=(), chain=None) -> None:
+        self._chain = chain
+        self._toggles = 0
+        self._last_accepted = 0.0
+        self.shown = False
+        # Rendered once: the keys cannot change during a run, so a frame costs a boolean.
+        self._text = keys.help_columns(bindings) if bindings else None
+
+    def key_callback(self, keycode: int) -> None:
+        """UI thread. Chain, debounce, count -- the overlay is written where the frames are."""
+        if self._chain is not None:
+            self._chain(keycode)
+        if int(keycode) != keys.KEY_F1 or self._text is None:
+            return
+        now = time.monotonic()
+        if now - self._last_accepted < keys.DEBOUNCE_S:
+            return  # auto-repeat from one held key is one toggle
+        self._last_accepted = now
+        self._toggles += 1
+
+    def apply(self, handle) -> None:
+        """Show or hide the list, if F1 has been pressed since the last frame. Never raises."""
+        pending, self._toggles = self._toggles % 2 == 1, 0  # two presses are back where we started
+        if not pending:
+            return
+        self.shown = not self.shown
+        if self.shown:
+            overlay.set_text(
+                handle,
+                overlay.SLOT_HELP,
+                font=mujoco.mjtFontScale.mjFONTSCALE_100,
+                gridpos=mujoco.mjtGridPos.mjGRID_TOPRIGHT,
+                text1=self._text[0],
+                text2=self._text[1],
+            )
+        else:
+            overlay.clear_text(handle, overlay.SLOT_HELP)
+
+
 #: Viewer handle -> its :class:`WalkKeys`, so a driver's render loop can find the one
 #: :func:`launch_viewer` wired up without threading it through every call. Weakly keyed, like
 #: :data:`_VIEWER_THREADS`.
 _VIEWER_WALK: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
+#: The same, for the F1 key list.
+_VIEWER_HELP: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
-def apply_walk(handle) -> None:
-    """Advance ``handle``'s arrow-key camera travel by one frame; no-op if it has none."""
+
+def apply_viewer_keys(handle) -> None:
+    """Advance one frame of ``handle``'s key work: arrow-key travel, and the F1 list.
+
+    Both are done here rather than in the key callback because MuJoCo's key events are far too sparse
+    to fly on and because the callback is the UI thread, and both are cheap: the list is a boolean
+    check unless F1 was pressed. No-op for a window that has neither.
+    """
     walk = _VIEWER_WALK.get(handle)
     if walk is not None:
         walk.apply(handle)
+    helper = _VIEWER_HELP.get(handle)
+    if helper is not None:
+        helper.apply(handle)
 
 
 def launch_viewer(
-    model, data, *, left_ui: bool = False, right_ui: bool = False, key_callback=None, walk=True
+    model,
+    data,
+    *,
+    left_ui: bool = False,
+    right_ui: bool = False,
+    key_callback=None,
+    walk=True,
+    key_sources=(),
 ):
     """``mujoco.viewer.launch_passive``, remembering the threads it started for :func:`close_viewer`.
 
@@ -503,8 +562,12 @@ def launch_viewer(
     -- callers decide whether to translate them into :class:`DisplayError` or fall back.
 
     ``walk`` (default on) adds the arrow-key camera travel of :class:`WalkKeys`, chaining to
-    ``key_callback`` when the caller passes one. The driver must call :func:`apply_walk` once per
-    rendered frame for it to move -- key events alone are far too sparse to fly on.
+    ``key_callback`` when the caller passes one. The driver must call :func:`apply_viewer_keys` once
+    per rendered frame for it to move -- key events alone are far too sparse to fly on.
+
+    ``key_sources`` are the run's own key handlers -- anything declaring ``key_bindings`` (see
+    :func:`roqsim.keys.merge`). They are what the F1 list names, so a window without a recorder, or
+    one whose run has no world YAML to save a view into, does not advertise a key it does not have.
 
     Always close the returned handle with :func:`close_viewer`, never ``Handle.close()``.
     """
@@ -513,11 +576,14 @@ def launch_viewer(
     walker = WalkKeys(chain=key_callback) if walk else None
     if walker is not None:
         key_callback = walker.key_callback
+    helper = HelpKeys(bindings=keys.merge(HelpKeys, walker, *key_sources), chain=key_callback)
+    key_callback = helper.key_callback
 
     before = set(threading.enumerate())
     handle = mujoco.viewer.launch_passive(
         model, data, key_callback=key_callback, **ui_kwargs(left_ui, right_ui)
     )
+    _VIEWER_HELP[handle] = helper
     if walker is not None:
         _VIEWER_WALK[handle] = walker
     fresh = [t for t in threading.enumerate() if t not in before]
@@ -542,6 +608,7 @@ def close_viewer(handle, *, timeout: float = _CLOSE_TIMEOUT_S) -> None:
     Joining the threads makes the teardown ordered, which costs ~10 ms.
     """
     threads = _VIEWER_THREADS.pop(handle, [])
+    _VIEWER_HELP.pop(handle, None)
     walk = _VIEWER_WALK.pop(handle, None)
     if walk is not None:
         walk.close()  # the arrow-key poll holds its own X connection
@@ -717,7 +784,7 @@ class PassiveViewer:
             self._handle = launch_viewer(ctx.model, ctx.data, left_ui=left_ui, right_ui=right_ui)
         except Exception as err:  # noqa: BLE001 — any GL init failure maps to the same guidance
             raise DisplayError(GL_HELP.format(err=err)) from err
-        retitle_window_async(ctx.model, name=name)
+        brand_window_async(ctx.model, name=name)
         self._camera = setup_camera(self._handle, view, ctx)
 
     def is_running(self) -> bool:
@@ -726,7 +793,7 @@ class PassiveViewer:
     def sync(self) -> None:
         if self._camera is not None:
             self._camera.update(self._handle)
-        apply_walk(self._handle)
+        apply_viewer_keys(self._handle)
         self._handle.sync()
 
     def close(self) -> None:

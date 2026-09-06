@@ -209,22 +209,28 @@ jobs:
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.repo }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_REPO }}:${{ matrix.image }}-${{ matrix.arch }}
 
-      # One empty file per digest, named after it. The merge job globs them, which is how it learns
-      # what to point a tag at without this job having to know the tag.
+      # One empty file per digest, named after it, in a directory named after the IMAGE. The merge
+      # job globs that directory, which is how it learns what to point a tag at without this job
+      # having to know the tag. The directory is what keeps two images apart, and artifact names
+      # cannot: one image's name may be a PREFIX of another's, so a download pattern built from the
+      # shorter name also matches the longer one's artifacts -- and those digests exist only in the
+      # other image's repository, so the merge asks the registry for a digest that was never pushed
+      # there and fails with `not found`.
       - name: Hand the digest to the merge job
         if: needs.prepare.outputs.push == 'true'
         run: |
           set -euo pipefail
-          mkdir -p "${{ runner.temp }}/digests"
+          mkdir -p "${{ runner.temp }}/digests/${{ matrix.image }}"
           digest="${{ steps.push.outputs.digest }}"
           test -n "$digest" || { echo "::error::the push produced no digest" >&2; exit 1; }
-          touch "${{ runner.temp }}/digests/${digest#sha256:}"
+          touch "${{ runner.temp }}/digests/${{ matrix.image }}/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v4
         if: needs.prepare.outputs.push == 'true'
         with:
           name: digests-${{ matrix.image }}-${{ matrix.arch }}
-          path: ${{ runner.temp }}/digests/*
+          # The directory, so the image name it is named after survives into the merge job.
+          path: ${{ runner.temp }}/digests
           if-no-files-found: error
           retention-days: 1
 
@@ -240,10 +246,12 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJSON(needs.prepare.outputs.images) }}
     steps:
+      # Every image's digests are downloaded, and the directory each was uploaded in decides which
+      # of them this job publishes -- see the upload above for why a name pattern cannot.
       - uses: actions/download-artifact@v4
         with:
           path: ${{ runner.temp }}/digests
-          pattern: digests-${{ matrix.image }}-*
+          pattern: digests-*
           merge-multiple: true
 
       - uses: docker/setup-buildx-action@v3
@@ -269,7 +277,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Point every tag at every architecture
-        working-directory: ${{ runner.temp }}/digests
+        working-directory: ${{ runner.temp }}/digests/${{ matrix.image }}
         run: |
           set -euo pipefail
           docker buildx imagetools create \

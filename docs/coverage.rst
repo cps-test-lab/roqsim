@@ -118,9 +118,9 @@ stated once, in the model, and the same numbers drive ``spawn_sensor: {show_fov:
 coverage study. A lidar entry names no model and needs no optics at all -- its adapter instantiates
 the plugin and reads the defaults it resolved.
 
-Restating those numbers in the catalog is what this module used to do, and the copies had drifted (the
-zivid entry claimed 704x704 against the model's 480x480), so there is no longer a field to write one
-in. ``fov_overrides`` exists for the genuine exception -- a study pinning a camera's ``far``, which is
+Restating those numbers in the catalog is what an entry must not do -- a copy cannot be kept true by
+attention, and a catalog that disagrees with the model it names is worse than one that says nothing
+-- so there is deliberately no field to write one in. ``fov_overrides`` exists for the genuine exception -- a study pinning a camera's ``far``, which is
 an analysis assumption rather than a property of the device.
 
 Visualising a sensor's FOV directly
@@ -170,6 +170,6 @@ Worth stating because the symptom did not look like occlusion. The D435 mount's 
 4.3 mm ahead of its camera, which blocked the whole central cone while wide-angle fringe rays still
 escaped — so a mounted camera reported a *plausible but low* number rather than an obvious zero, and
 a narrow long-range sensor (the Zivid, near 1.3 m) reported exactly **0** coverage in a room it saw
-perfectly well. Numbers from before this fix under-report every ``spawn_sensor``-mounted sensor and
-are not comparable with numbers from after it. A *hypothetical* placement (``pos``/``rpy``, not
+perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
+``spawn_sensor``-mounted sensor. A *hypothetical* placement (``pos``/``rpy``, not
 spawned) is unaffected: it has no body, because nothing of it exists to get in the way.

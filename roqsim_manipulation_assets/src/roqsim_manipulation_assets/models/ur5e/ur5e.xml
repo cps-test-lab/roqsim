@@ -1,4 +1,5 @@
 <mujoco model="ur5e">
+  <!-- Universal Robots UR5e (6-DoF collaborative arm) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
   <!-- No <option> here: timestep, integrator, solver, friction cone and the global contact

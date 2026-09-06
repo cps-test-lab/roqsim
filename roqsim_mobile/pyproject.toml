@@ -41,6 +41,9 @@ floorplan = "roqsim_mobile.plugins.floorplan:FloorplanPlugin"
 spawn_robot = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"
 diff_drive = "roqsim_mobile.plugins.diff_drive:DiffDrivePlugin"
 omni_drive = "roqsim_mobile.plugins.omni_drive:OmniDrivePlugin"
+# The third base geometry, and the one whose CONSTRAINT is the point: a car cannot turn in place,
+# so a planner written for a differential base is not a planner for this one.
+ackermann_drive = "roqsim_mobile.plugins.ackermann_drive:AckermannDrivePlugin"
 
 # Bundled robot models (e.g. turtlebot4), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]

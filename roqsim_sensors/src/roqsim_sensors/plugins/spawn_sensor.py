@@ -23,7 +23,8 @@ Config::
         fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
         intrinsics:            # this UNIT's measured lens, rendered as well as published
           {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
-      name: camera_1           # the entry's OWN key, not the config's: this mount's entity
+      name: camera_1           # the entry's label -- a sibling of the ref -- names this mount's
+                               #   entity, which a capture plugin's `robot:` then points at
 
 ``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see
@@ -113,6 +114,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest, manifest_fov
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 #: Name suffix marking a sensor model's FOV-visualisation geoms (non-colliding, hidden until
 #: revealed). A name convention, not a geom group -- see the module docstring for why.
@@ -356,19 +358,6 @@ def _raycast_depths(
     ).dist
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
-
-
 #: What a calibration measures, and the frame it measured them in. All six or none: a focal length in
 #: pixels means nothing without its resolution, and two plausible ones are always in reach -- the
 #: model's own ``resolution`` and the size the capture plugin renders at -- so neither is guessed.
@@ -445,7 +434,7 @@ class SpawnSensorPlugin(Plugin):
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         # This UNIT's measured lens, written onto the model's camera at build time so MuJoCo renders
         # through it (see :meth:`_apply_intrinsics`). Empty is the historical path: the model's own
         # fovy, an ideal pinhole, a centred principal point.

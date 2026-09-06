@@ -16,10 +16,10 @@ It also registers an :class:`ArmHandle` on the blackboard under ``arm:<name>`` e
 ``joint_names``, ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers;
 a scripted ``test_target`` drives the arm standalone.
 
-Config::
+Config -- a component of the entry that spawns the arm, since ownership is where the entry
+sits rather than a config key::
 
     arm_controller:
-      arm: ur10e                 # entity name registered by spawn_arm
       joints: [shoulder_pan_joint, ...]  # optional: the joints this controller owns. Omitted, the
                                  #   plugin claims every joint actuator sharing the entity's prefix,
                                  #   which is right for a standalone arm and wrong for an arm that
@@ -35,6 +35,13 @@ Config::
                                  #   below would otherwise claim as a seventh arm joint). Resolved by
                                  #   ACTUATOR NAME, so it need not be a tendon -- and a tendon one is
                                  #   not inferable anyway once an entity carries two (left/right).
+      joint_prefix: ""           # prepended to every joint name this controller REPORTS in
+                                 #   `joint_states` and accepts in a trajectory. Empty (the default)
+                                 #   reports the model's own names. Set it -- conventionally to the
+                                 #   arm's MJCF prefix -- when two arms must appear in ONE robot
+                                 #   description: a URDF is a flat namespace, so two `shoulder_pan_joint`
+                                 #   cannot coexist there, and MoveIt matches states and trajectory
+                                 #   points to the description by name.
       namespace: ur10e           # transport scope (default: inherited from spawn_arm's namespace)
       topics: {joint_states: /joint_states}  # optional: hardwire the joint_states topic to an
                                  #   absolute name, overriding namespace (see Plugin.topic_override)
@@ -263,8 +270,14 @@ class ArmControllerPlugin(Plugin):
             self._joint_acts, self._aux_acts = prefixed_actuators(m, prefix)
         if not self._joint_acts:
             raise RuntimeError(f"arm_controller: no joint actuators found for arm {self.arm!r}")
+        # What this controller CALLS its joints, everywhere it reports or accepts them. The MJCF
+        # prefix is stripped so the names are the model's own; `joint_prefix` puts one back, which is
+        # what a cell needs when two arms of the same model must appear in ONE robot description --
+        # `shoulder_pan_joint` cannot name two joints there, and MoveIt matches joint states and
+        # trajectory points to that description BY NAME.
+        jp = str(self.config.get("joint_prefix", "") or "")
         self._ctrl_names = [
-            strip_prefix(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, jid), prefix)
+            jp + strip_prefix(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, jid), prefix)
             for _, jid in self._joint_acts
         ]
         if self.joints:
@@ -278,7 +291,7 @@ class ArmControllerPlugin(Plugin):
         else:
             self._report_jids = prefixed_joints(m, prefix)
         self._report_names = [
-            strip_prefix(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, jid), prefix)
+            jp + strip_prefix(mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, jid), prefix)
             for jid in self._report_jids
         ]
 

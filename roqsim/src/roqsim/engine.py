@@ -39,6 +39,7 @@ from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
 from .plugin import Plugin
+from .presence import arm_gravity_compensation
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -184,7 +185,8 @@ class Engine:
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
         # jaws at millimetres per second under an under-solved contact -- measured, and it responds to
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
-        # not one. There was previously no way to ask for a tighter solve from a world.
+        # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
+        # than in whatever code happens to build it.
         for key, attr in (
             ("solver", "solver"),
             ("iterations", "iterations"),
@@ -225,6 +227,11 @@ class Engine:
             spec.modelname = str(sim_name)
         elif not spec.modelname or spec.modelname == "MuJoCo Model":
             spec.modelname = "Roqsim"
+
+        # Presence freezes an absent entity by compensating its gravity, and MuJoCo decides whether
+        # that field is live at all when the model compiles. Armed for every world rather than for
+        # the ones that declare an absent entity: any entity can be deleted at run time.
+        arm_gravity_compensation(spec)
 
         with self._span("compile"):
             self.ctx.model = spec.compile()

@@ -1,4 +1,4 @@
-"""Generate a complete MoveIt 2 configuration for one arm, from the world the simulator loads.
+"""Generate a complete MoveIt 2 configuration for an arm, from the world the simulator loads.
 
 Why all six files and not two
 =============================
@@ -15,8 +15,32 @@ and most of what they wrote was not theirs to choose:
   positions and efforts are already in the URDF; what is added here is an *execution* property of the
   bridge and the position servo behind it.
 * ``kinematics.yaml`` is a solver over the chain the SRDF already names.
-* ``ompl_planning.yaml`` is the one that genuinely belongs to the experiment -- a planner comparison's
-  whole factor can live in it -- so it is emitted as a starting point and meant to be overridden.
+* ``<pipeline>_planning.yaml`` is the one that genuinely belongs to the experiment -- a planner
+  comparison's whole factor can live in it -- so it is emitted as a starting point and meant to be
+  overridden.
+
+Which planning pipelines
+=======================
+``--pipelines`` names the pipelines ``move_group`` should offer, and ``planning_pipelines.yaml`` then
+carries that list and the default; name one and there is nothing to select, so it is not written and
+the output is what it always was. Any name MoveIt can load is allowed -- the list is open on purpose,
+so a pipeline this file has never heard of costs nothing.
+
+Only ``ompl_planning.yaml`` is written, and that is the boundary this module keeps everywhere else:
+its ``projection_evaluator`` names joints this model has, which makes it derivable. An optimizer's
+cost weights are not -- they are the operating point of a minimisation, which is an experiment
+decision, and writing a copied table of them here would be the exporter choosing the experiment. So
+every other pipeline takes MoveIt's own packaged config until someone supplies a file, and the
+supplier is whoever owns the comparison.
+
+Comparing planners INSIDE one pipeline is a different edit -- another entry in ``ompl_planning.yaml``
+-- and needs none of this. Several pipelines are for a comparison ACROSS them, where the planners are
+different plugins with unrelated parameters, and a trial then selects one per request via
+``MotionPlanRequest.pipeline_id`` rather than by loading a different configuration. Each pipeline's
+planner package must be installed where ``move_group`` runs; a missing one is a pipeline that fails to
+load at start-up, not a request that falls back. And a pipeline may not accept the goals the
+comparison sends: CHOMP takes joint-space goals only, so a pose target fails every request rather
+than planning badly. ``JOINT_SPACE_ONLY`` is warned about at export time.
 
 So this reads the answers off the compiled world instead of asking for them. The joint names, their
 order, the home posture, the controller and action names, the gripper's units and which subtree is a
@@ -36,15 +60,36 @@ What "derived" means, file by file
   disagree with the action the trajectory is executed against.
 * the collapse root -- the lowest common ancestor of every body an ``equality`` constraint touches.
   A closed linkage is what URDF cannot express, and MuJoCo says exactly where one is.
-* ``start_state_max_bounds_error`` -- present only if the arm has a CONTINUOUS joint. MoveIt maps such
-  a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start state that
-  has drifted a hair outside; the symptom is the next phase failing instantly with
-  START_STATE_INVALID (-26) after a phase that succeeded, at a different phase each run. A
-  range-limited arm has no such problem and gets no such setting.
+* ``fix_start_state`` -- present only if the arm has a CONTINUOUS joint. ``CheckStartStateBounds``
+  normalizes such a joint onto [-pi, pi] and, with this false by default, refuses the request because
+  it had to; the symptom is the next phase failing instantly with START_STATE_INVALID (-26) after a
+  phase that succeeded, at a different phase each run. A range-limited arm has no such problem and
+  gets no such setting.
+
+Several arms in one configuration
+=================================
+``--arm left,right`` describes both arms as ONE robot: one URDF with both chains under a common root,
+one group per arm, and a group spanning all of them. That last group is the point of it -- a plan for
+it is a single trajectory through both arms' joint space, so each arm's motion is checked against
+where the other IS at that instant rather than against where it was before it started, and the two
+can move at once. Planning the arms one after the other cannot express that.
+
+Three things follow from a shared description, and each is refused rather than repaired:
+
+* **Names stay apart.** One URDF is one flat namespace, so each arm's links and joints keep its MJCF
+  prefix. Joint names are the controller's, not ours to rename -- they are what reaches
+  ``/joint_states`` and what a trajectory point carries -- so an arm whose controller reports
+  unprefixed names is refused, naming ``arm_controller``'s ``joint_prefix``.
+* **The combined group gets no IK solver.** A chain solver has no chain to solve; see
+  ``kinematics_yaml``.
+* **Each arm keeps its own controller entry**, with the action its own endpoints declared, so a goal
+  for one arm cannot be executed against the other.
 
 Usage::
 
     roqsim export moveit --world w.yaml --prefix ur5e_ --out cfg/ --tip-site pinch --check
+    roqsim export moveit --world cell.yaml --arm left,right --out cfg/ --tip-site pinch
+    roqsim export moveit --world w.yaml --out cfg/ --tip-site pinch --pipelines ompl,chomp
 """
 
 from __future__ import annotations
@@ -61,16 +106,21 @@ import mujoco
 import yaml
 
 from . import logging_setup
-from .export_srdf import build_srdf, links_from_urdf
-from .export_urdf import UrdfExporter, round_trip_error
+from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
+from .export_urdf import UrdfExporter, _first_body, combine_urdfs, round_trip_error
 
 logger = logging.getLogger(__name__)
 
 #: MoveIt's own group names. Not configurable: ``kinematics.yaml``, the SRDF's ``<group>`` and
 #: ``ompl_planning.yaml`` must all use the same string, and a knob whose only valid setting is "the
-#: same everywhere" is a way to get it wrong.
-ARM_GROUP = "arm"
+#: same everywhere" is a way to get it wrong. ``ARM_GROUP`` (imported from ``export_srdf``, which
+#: emits the group) is the name a ONE-arm description uses; a description holding several arms names
+#: each group after the entity it was spawned as, because one string cannot serve two groups.
 GRIPPER_GROUP = "gripper"
+
+#: Name of the group spanning EVERY arm in a multi-arm description. Nothing in the model implies it,
+#: so it is the one group name that is a choice rather than a reading.
+COMBINED_GROUP = "both_arms"
 
 #: Per-joint kinematic limits, in SI. Deliberately far below any vendor maximum, and this is an
 #: execution property of the substrate rather than a fact about the robot: a trajectory is followed by
@@ -84,6 +134,21 @@ SCALING = 0.15
 #: Gripper effort reported to a ``GripperCommand`` goal. Not read by the substrate -- the commanded
 #: position is mapped onto the actuator's ctrlrange -- but MoveIt requires the field.
 GRIPPER_EFFORT = 50.0
+
+#: The pipeline ``move_group`` uses for a request that names none, and the only one this export
+#: writes a file for. OMPL, because a sampling planner succeeds on a wider range of goals than an
+#: optimizer that starts from one seed trajectory -- and because its ``projection_evaluator`` names
+#: joints this model has, which is the only pipeline parameter anywhere that is a fact about the robot.
+DEFAULT_PIPELINE = "ompl"
+
+#: Pipelines that plan in joint space ONLY, and what a pose goal does there. Not a list of what may be
+#: exported -- any name MoveIt can load is allowed -- but a warning worth making at export time, since
+#: the failure is per request and looks like the planner performing badly rather than like a goal it
+#: was never given a chance at.
+JOINT_SPACE_ONLY = {
+    "chomp": "chomp_planner.cpp rejects a goal with no joint_constraints, or with any position or "
+    "orientation constraint, as INVALID_GOAL_CONSTRAINTS ('Only joint-space goals are supported')",
+}
 
 _GENERATED = (
     "# GENERATED by `roqsim export moveit` from the world the simulator loads. Do not edit.\n#\n"
@@ -108,10 +173,61 @@ class ArmFacts:
     gripper_joint: str = ""
     gripper_open: float = 0.0
     gripper_close: float = 0.0
+    #: The SRDF group this arm's chain is in. ``ARM_GROUP`` for a description holding one arm; the
+    #: entity's own name where several share a description.
+    group: str = ARM_GROUP
+    #: Whether the emitted link and joint names keep the arm's MJCF prefix. True only in a
+    #: description holding several robots, where one flat namespace has to hold both.
+    keep_prefix: bool = False
 
     @property
     def has_gripper(self) -> bool:
         return bool(self.gripper_joint)
+
+    @property
+    def gripper_group(self) -> str:
+        return GRIPPER_GROUP if self.group == ARM_GROUP else f"{self.group}_gripper"
+
+    @property
+    def urdf_gripper_joint(self) -> str:
+        """The gripper joint as the DESCRIPTION spells it.
+
+        Unlike the arm joints -- which come from the controller and are therefore already in the
+        spelling that reaches ``/joint_states`` -- this one is read from the plugin's config, which
+        names it model-locally. Where prefixes are kept it needs the arm's own.
+        """
+        if not self.gripper_joint or not self.keep_prefix:
+            return self.gripper_joint
+        return self.prefix + self.gripper_joint
+
+    @property
+    def controller_key(self) -> str:
+        """What ``moveit_controllers.yaml`` calls this arm's controller.
+
+        MoveIt joins the entry's name and ``action_ns`` into the action it sends goals to, so an arm
+        whose endpoints are scoped by a namespace only reaches its own action when that namespace is
+        part of the name. In a one-arm description the name is left as the controller's own, which is
+        what a bringup that remaps the whole node expects.
+        """
+        if self.group != ARM_GROUP and self.namespace:
+            return f"{self.namespace}/{self.controller}"
+        return self.controller
+
+    @property
+    def gripper_controller_key(self) -> str:
+        if self.group != ARM_GROUP and self.namespace:
+            return f"{self.namespace}/{self.gripper_controller}"
+        return self.gripper_controller
+
+
+@dataclass
+class _Exported:
+    """What ``_run`` reports about a URDF it wrote, whether from one exporter or several."""
+
+    mesh_files: dict
+    dropped_dofs: list
+    mesh_dir: Path
+    strip_prefix: str
 
 
 def infer_collapse(model: mujoco.MjModel, bodies: set[int]) -> tuple[str, ...]:
@@ -211,8 +327,9 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     if arm is None:
         if len(arms) > 1:
             raise ValueError(
-                f"this world has {len(arms)} arms ({', '.join(arms)}); name one with --arm. A MoveIt "
-                "configuration describes one robot, so generating for 'all of them' is not a thing."
+                f"this world has {len(arms)} arms ({', '.join(arms)}); name one with --arm, or "
+                "several (--arm a,b) to describe them as one robot with a group spanning both. "
+                "Which it is changes every file, so it is not guessed."
             )
         arm = arms[0]
     elif arm not in arms:
@@ -329,30 +446,99 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     return facts
 
 
+def all_arm_facts(engine, arms: list[str] | None = None) -> list[ArmFacts]:
+    """Read every arm a configuration is being generated for, in the order named.
+
+    One arm is the ordinary case and reads exactly like :func:`arm_facts`. Several arms are a
+    description they SHARE, which one flat namespace has to hold, so two things are required of them
+    and refused rather than repaired here:
+
+    * a distinct, non-empty MJCF prefix each -- what keeps their link names apart;
+    * joint names that already carry that prefix, i.e. ``arm_controller``'s ``joint_prefix``. Those
+      names are the ones reaching ``/joint_states`` and the ones MoveIt puts in a trajectory point,
+      so the description cannot rename them: two arms of one model would both command
+      ``shoulder_pan_joint`` and each would answer for the other's trajectory.
+    """
+    if not arms:
+        return [arm_facts(engine)]
+    if len(arms) == 1:
+        return [arm_facts(engine, arms[0])]
+
+    facts = []
+    for arm in arms:
+        one = arm_facts(engine, arm)
+        one.group = one.arm
+        one.keep_prefix = True
+        if not one.prefix:
+            raise ValueError(
+                f"arm {arm!r} has no MJCF prefix, so its links cannot be told from the other arms' "
+                "in one description. Give each arm in a multi-arm cell a distinct `prefix:`."
+            )
+        outside = [j for j in one.joints if not j.startswith(one.prefix)]
+        if outside:
+            raise ValueError(
+                f"arm {arm!r} publishes joints that do not carry its prefix {one.prefix!r} "
+                f"({', '.join(outside)}). A description holding several arms is one flat namespace, "
+                "and these are the names that reach /joint_states and a trajectory point, so they "
+                f"cannot be renamed here. Set `joint_prefix: {one.prefix!r}` on this arm's "
+                "arm_controller."
+            )
+        facts.append(one)
+
+    for label, seen in (("prefix", {}), ("joint", {})):
+        for one in facts:
+            for value in [one.prefix] if label == "prefix" else one.joints:
+                if value in seen:
+                    raise ValueError(
+                        f"arms {seen[value]!r} and {one.arm!r} share the {label} {value!r}. One "
+                        "description cannot hold two of it, so MoveIt would command one arm and "
+                        "read the other's state back."
+                    )
+                seen[value] = one.arm
+    return facts
+
+
+def _facts_list(facts) -> list[ArmFacts]:
+    """Accept either one arm's facts or a whole cell's, so every generator below takes both."""
+    return [facts] if isinstance(facts, ArmFacts) else list(facts)
+
+
 # -- the four YAMLs ------------------------------------------------------------------------------
 
 
-def kinematics_yaml(facts: ArmFacts) -> str:
+def kinematics_yaml(facts, combined_group: str = "") -> str:
+    arms = _facts_list(facts)
+    body = {
+        one.group: {
+            "kinematics_solver": "kdl_kinematics_plugin/KDLKinematicsPlugin",
+            "kinematics_solver_search_resolution": 0.005,
+            "kinematics_solver_timeout": 0.05,
+            "kinematics_solver_attempts": 3,
+        }
+        for one in arms
+    }
+    combined = (
+        "#\n"
+        f"# {combined_group} gets NO solver, deliberately. KDL solves a single serial chain, and that\n"
+        "# group is several -- there is no pose for it to solve for, only a pair of poses whose IK is\n"
+        "# each arm's own. What the group is for is planning in the JOINT space of both arms at once,\n"
+        "# so that one arm's motion is checked against where the other actually is at that instant\n"
+        "# rather than against where it was before it started. Give each arm a pose through its own\n"
+        "# group, or plan for this one in joint space.\n"
+        if combined_group
+        else ""
+    )
     return (
         _GENERATED
         + "# KDL is MoveIt's default and solves a single serial chain, which is what an arm group is.\n"
         + "# The gripper group gets no solver: it is one joint driven by a GripperCommand controller,\n"
         + "# never by IK.\n"
-        + yaml.safe_dump(
-            {
-                ARM_GROUP: {
-                    "kinematics_solver": "kdl_kinematics_plugin/KDLKinematicsPlugin",
-                    "kinematics_solver_search_resolution": 0.005,
-                    "kinematics_solver_timeout": 0.05,
-                    "kinematics_solver_attempts": 3,
-                }
-            },
-            sort_keys=False,
-        )
+        + combined
+        + yaml.safe_dump(body, sort_keys=False)
     )
 
 
-def joint_limits_yaml(facts: ArmFacts, max_velocity: float, max_acceleration: float) -> str:
+def joint_limits_yaml(facts, max_velocity: float, max_acceleration: float) -> str:
     limits = {
         j: {
             "has_velocity_limits": True,
@@ -360,7 +546,8 @@ def joint_limits_yaml(facts: ArmFacts, max_velocity: float, max_acceleration: fl
             "has_acceleration_limits": True,
             "max_acceleration": max_acceleration,
         }
-        for j in facts.joints
+        for one in _facts_list(facts)
+        for j in one.joints
     }
     return (
         _GENERATED
@@ -378,37 +565,49 @@ def joint_limits_yaml(facts: ArmFacts, max_velocity: float, max_acceleration: fl
     )
 
 
-def moveit_controllers_yaml(facts: ArmFacts, gripper_effort: float) -> str:
-    names = [facts.controller] + ([facts.gripper_controller] if facts.has_gripper else [])
+def moveit_controllers_yaml(facts, gripper_effort: float) -> str:
+    arms = _facts_list(facts)
+    names: list[str] = []
+    manager: dict = {"controller_names": names}
+    served_lines = ""
+    for one in arms:
+        if one.controller_key in manager:
+            raise ValueError(
+                f"two arms would both be called {one.controller_key!r} in moveit_controllers.yaml. "
+                "MoveIt maps a trajectory onto a controller by that name, so one arm's goals would "
+                "go to the other. Give each arm's arm_controller its own `controller_name` or its "
+                "own `namespace`."
+            )
+        names.append(one.controller_key)
+        manager[one.controller_key] = {
+            "type": "FollowJointTrajectory",
+            "action_ns": "follow_joint_trajectory",
+            "default": True,
+            "joints": one.joints,
+        }
+        served = f"{one.namespace}/" if one.namespace else ""
+        served_lines += f"#   /{served}{one.trajectory_action}\n"
+        if one.has_gripper:
+            names.append(one.gripper_controller_key)
+            manager[one.gripper_controller_key] = {
+                "type": "GripperCommand",
+                "action_ns": "gripper_cmd",
+                "default": True,
+                "joints": [one.urdf_gripper_joint],
+                "max_effort": gripper_effort,
+            }
+            served_lines += f"#   /{served}{one.gripper_action}\n"
     body: dict = {
         "moveit_controller_manager": (
             "moveit_simple_controller_manager/MoveItSimpleControllerManager"
         ),
-        "moveit_simple_controller_manager": {
-            "controller_names": names,
-            facts.controller: {
-                "type": "FollowJointTrajectory",
-                "action_ns": "follow_joint_trajectory",
-                "default": True,
-                "joints": facts.joints,
-            },
-        },
+        "moveit_simple_controller_manager": manager,
     }
-    if facts.has_gripper:
-        body["moveit_simple_controller_manager"][facts.gripper_controller] = {
-            "type": "GripperCommand",
-            "action_ns": "gripper_cmd",
-            "default": True,
-            "joints": [facts.gripper_joint],
-            "max_effort": gripper_effort,
-        }
-    served = f"{facts.namespace}/" if facts.namespace else ""
     return (
         _GENERATED
         + "# Every name below was read from the endpoints the arm's controller declared, so it names an\n"
         + "# action this substrate's bridge actually serves:\n"
-        + f"#   /{served}{facts.trajectory_action}\n"
-        + (f"#   /{served}{facts.gripper_action}\n" if facts.has_gripper else "")
+        + served_lines
         + "#\n"
         + "# moveit_simple_controller_manager is the right manager: the bridge exposes those actions\n"
         + "# DIRECTLY, with no ros2_control controller_manager behind them, so\n"
@@ -417,9 +616,41 @@ def moveit_controllers_yaml(facts: ArmFacts, gripper_effort: float) -> str:
     )
 
 
-def ompl_planning_yaml(facts: ArmFacts) -> str:
-    body: dict = {
-        "planning_plugins": ["ompl_interface/OMPLPlanner"],
+def _start_state_normalization(arms, body: dict) -> str:
+    """Set ``fix_start_state`` if any arm has a CONTINUOUS joint, and say why.
+
+    Belongs to the pipeline rather than to one planner: ``CheckStartStateBounds`` is a request
+    adapter and reads its parameters from the namespace the pipeline is called by, so a pipeline
+    that omits this refuses to plan from a start state the other accepts -- and a comparison between
+    them then measures the configuration.
+    """
+    continuous = sorted({j for one in arms for j in one.continuous_joints})
+    if not continuous:
+        # Only for an arm that has one. On a range-limited arm the setting is noise, and a reader who
+        # sees it everywhere learns nothing from it being there.
+        return ""
+    body["fix_start_state"] = True
+    return (
+        "#\n"
+        "# fix_start_state is set because this arm has CONTINUOUS joints "
+        f"({', '.join(continuous)}).\n"
+        "# CheckStartStateBounds normalizes such a joint onto [-pi, pi] and then, with this FALSE\n"
+        "# by default, reports START_STATE_INVALID precisely BECAUSE it had to normalize -- so a\n"
+        "# start state that drifted a hair past pi after a motion is refused rather than wrapped.\n"
+        "# The symptom is a phase failing instantly with START_STATE_INVALID (-26) right after a\n"
+        "# phase that succeeded, at a different phase each run. True writes the normalized state\n"
+        "# back into the request; a joint genuinely outside its limits is still refused, since\n"
+        "# that is a separate bounds check the flag does not relax.\n"
+    )
+
+
+def _adapters() -> dict:
+    """The request and response adapters every pipeline here runs, in the order they are applied.
+
+    Shared on purpose: they are what turns a raw planner result into an executable trajectory, so two
+    pipelines that ran different ones cannot be compared as planners.
+    """
+    return {
         "request_adapters": [
             "default_planning_request_adapters/ResolveConstraintFrames",
             "default_planning_request_adapters/ValidateWorkspaceBounds",
@@ -431,33 +662,34 @@ def ompl_planning_yaml(facts: ArmFacts) -> str:
             "default_planning_response_adapters/ValidateSolution",
             "default_planning_response_adapters/DisplayMotionPath",
         ],
-        ARM_GROUP: {
+    }
+
+
+def ompl_planning_yaml(facts, combined_group: str = "") -> str:
+    arms = _facts_list(facts)
+    body: dict = {"planning_plugins": ["ompl_interface/OMPLPlanner"], **_adapters()}
+    for one in arms:
+        body[one.group] = {
             "planner_configs": ["RRTConnectkConfigDefault"],
             # Must name joints that ARE in the group: naming one outside it makes move_group refuse
             # every request with "joint ... is not known to the group", which reads like a planner
             # problem rather than a configuration typo.
-            "projection_evaluator": f"joints({facts.joints[0]},{facts.joints[1]})",
+            "projection_evaluator": f"joints({one.joints[0]},{one.joints[1]})",
             "longest_valid_segment_fraction": 0.002,
-        },
-        "planner_configs": {
-            "RRTConnectkConfigDefault": {"type": "geometric::RRTConnect", "range": 0.0}
-        },
+        }
+    if combined_group:
+        # One joint from each of the first two arms, so the projection separates states by what the
+        # ARMS are doing rather than by one arm's shoulder alone -- and both are in the group, which
+        # is the property move_group checks.
+        body[combined_group] = {
+            "planner_configs": ["RRTConnectkConfigDefault"],
+            "projection_evaluator": f"joints({arms[0].joints[0]},{arms[1].joints[0]})",
+            "longest_valid_segment_fraction": 0.002,
+        }
+    body["planner_configs"] = {
+        "RRTConnectkConfigDefault": {"type": "geometric::RRTConnect", "range": 0.0}
     }
-    note = ""
-    if facts.continuous_joints:
-        # Only for an arm that has one. On a range-limited arm the setting is noise, and a reader who
-        # sees it everywhere learns nothing from it being there.
-        body["start_state_max_bounds_error"] = 0.1
-        note = (
-            "#\n"
-            "# start_state_max_bounds_error is set because this arm has CONTINUOUS joints "
-            f"({', '.join(facts.continuous_joints)}).\n"
-            "# MoveIt maps such a joint onto [-pi, pi], so after any motion one can sit a hair\n"
-            "# outside, and CheckStartStateBounds' default of 0.0 then REFUSES to plan from it. The\n"
-            "# symptom is a phase failing instantly with START_STATE_INVALID (-26) right after a phase\n"
-            "# that succeeded, at a different phase each run. 0.1 rad wraps that drift and is far less\n"
-            "# than a real configuration error.\n"
-        )
+    note = _start_state_normalization(arms, body)
     return (
         _GENERATED
         + "# THE ONE FILE HERE THAT IS YOURS. Planner choice, its parameters and the validity-checking\n"
@@ -473,10 +705,46 @@ def ompl_planning_yaml(facts: ArmFacts) -> str:
     )
 
 
+def planning_pipelines_yaml(pipelines: list, default: str) -> str:
+    """``move_group``'s own two parameters saying which pipelines exist and which is used unasked.
+
+    Not part of any pipeline's file: these live in ``move_group``'s node namespace, while a pipeline's
+    parameters live under its name. Emitted only when more than one pipeline was exported, because
+    with one there is nothing to select and the file would be a restatement of the directory.
+    """
+    caveats = "".join(
+        f"# {name} plans in JOINT SPACE only: {why}. A request with a pose target fails outright.\n"
+        for name in pipelines
+        if name in JOINT_SPACE_ONLY
+        for why in [JOINT_SPACE_ONLY[name]]
+    )
+    return (
+        _GENERATED
+        + "# move_group NODE parameters -- pass them alongside the pipeline files, not inside one.\n"
+        + "# Each name is the namespace move_group reads that pipeline's parameters from AND the stem\n"
+        + "# of the <name>_planning.yaml they come from; the two cannot be chosen separately. Only\n"
+        + "# ompl_planning.yaml is written here, because its projection_evaluator names joints this\n"
+        + "# model has. Every other pipeline's parameters are an experiment decision nothing in the\n"
+        + "# world implies, so MoveIt's packaged default config is used until you put a file of that\n"
+        + "# name on the config path -- and the planner's own package must be installed, or the\n"
+        + "# pipeline fails to LOAD at start-up rather than failing the request that uses it.\n"
+        + "#\n"
+        + "# A request that names no pipeline gets default_planning_pipeline. To make the pipeline an\n"
+        + "# experiment's factor, set MotionPlanRequest.pipeline_id per trial instead of editing this.\n"
+        + ("#\n" + caveats if caveats else "")
+        + yaml.safe_dump(
+            {"planning_pipelines": list(pipelines), "default_planning_pipeline": default},
+            sort_keys=False,
+        )
+    )
+
+
 # -- the postcondition ---------------------------------------------------------------------------
 
 
-def assert_agrees(out: Path, urdf: Path, srdf: Path, facts: ArmFacts, arm_tip: str) -> str:
+def assert_agrees(
+    out: Path, urdf: Path, srdf: Path, facts, arm_tip, combined_group: str = ""
+) -> str:
     """Check the generated set agrees with itself, and return the planning frame it settled on.
 
     Every check here catches a configuration that LOADS and then cannot plan, which is the expensive
@@ -484,7 +752,16 @@ def assert_agrees(out: Path, urdf: Path, srdf: Path, facts: ArmFacts, arm_tip: s
     caller waits out its whole timeout to discover it. Owning both files is what makes these checkable at
     all -- ``export srdf`` alone cannot validate ``--arm-tip``, and accepts a tip link that is not in
     the URDF at all.
+
+    ``facts`` and ``arm_tip`` are per arm, so every check runs once per arm: a second arm whose chain
+    is short by a joint, or whose home disagrees with the simulator, fails exactly as loudly as the
+    first. The root-link check does not multiply -- however many robots a description holds, it is
+    still one tree with one root.
     """
+    arms = _facts_list(facts)
+    tips = [arm_tip] if isinstance(arm_tip, str) else list(arm_tip)
+    if len(tips) != len(arms):
+        raise ValueError(f"{len(arms)} arms but {len(tips)} tip links; they are read pairwise")
     urdf_root = ET.parse(urdf).getroot()
     srdf_root = ET.parse(srdf).getroot()
 
@@ -513,66 +790,99 @@ def assert_agrees(out: Path, urdf: Path, srdf: Path, facts: ArmFacts, arm_tip: s
                 "which degrades exactly like declaring none."
             )
 
-    group = next((g for g in srdf_root.findall("group") if g.get("name") == ARM_GROUP), None)
-    chain = group.find("chain") if group is not None else None
-    if chain is None:
-        raise ValueError(f"the SRDF has no {ARM_GROUP!r} group with a chain")
-    if chain.get("tip_link") != arm_tip:
-        raise ValueError(
-            f"the SRDF's arm chain ends at {chain.get('tip_link')!r}, but this export asked for "
-            f"{arm_tip!r}."
-        )
-    if chain.get("tip_link") not in links:
-        raise ValueError(
-            f"the arm chain's tip is {chain.get('tip_link')!r}, which is not a link in the URDF. "
-            "MoveIt would load and then never plan. Use --tip-site to end the chain at a real frame."
-        )
-
-    # Walk the chain and collect the ACTUATED joints it spans. Fixed joints are skipped deliberately:
-    # the chain may end at a fixed frame link, and counting that as a DOF would make an over-long chain
-    # look right while a genuinely missing joint also looked right.
-    spanned, link = [], chain.get("tip_link")
-    while link != chain.get("base_link"):
-        joint = joint_by_child.get(link)
-        if joint is None:
-            raise ValueError(
-                f"the arm chain {chain.get('base_link')} -> {chain.get('tip_link')} is broken: "
-                f"nothing in the URDF is the parent of {link!r}"
-            )
-        if joint.get("type") != "fixed":
-            spanned.append(joint.get("name"))
-        link = joint.find("parent").get("link")
-    if sorted(spanned) != sorted(facts.joints):
-        raise ValueError(
-            f"the {ARM_GROUP!r} chain spans {sorted(spanned)} but the controller commands "
-            f"{sorted(facts.joints)}. An arm exposed as fewer DOF than it has plans badly and silently."
-        )
-
-    state = next(
-        (
-            s
-            for s in srdf_root.findall("group_state")
-            if s.get("name") == "home" and s.get("group") == ARM_GROUP
-        ),
-        None,
-    )
-    if state is None:
-        raise ValueError(f"the SRDF has no 'home' state for {ARM_GROUP!r}")
-    got = {j.get("name"): float(j.get("value")) for j in state.findall("joint")}
-    for joint, want in facts.home.items():
-        if abs(got.get(joint, 1e9) - want) > 1e-5:
-            raise ValueError(
-                f"the SRDF's home has {joint}={got.get(joint)} but the simulator starts it at {want}. "
-                "They must agree: MoveIt's start-state bounds check runs against the arm's real posture."
-            )
+    def spanned_joints(chain: ET.Element, group: str) -> list[str]:
+        """The ACTUATED joints a chain spans. Fixed joints are skipped deliberately: the chain may
+        end at a fixed frame link, and counting that as a DOF would make an over-long chain look
+        right while a genuinely missing joint also looked right."""
+        spanned, link = [], chain.get("tip_link")
+        while link != chain.get("base_link"):
+            joint = joint_by_child.get(link)
+            if joint is None:
+                raise ValueError(
+                    f"the {group!r} chain {chain.get('base_link')} -> {chain.get('tip_link')} is "
+                    f"broken: nothing in the URDF is the parent of {link!r}"
+                )
+            if joint.get("type") != "fixed":
+                spanned.append(joint.get("name"))
+            link = joint.find("parent").get("link")
+        return spanned
 
     controllers = yaml.safe_load((out / "moveit_controllers.yaml").read_text(encoding="utf-8"))
-    declared = controllers["moveit_simple_controller_manager"][facts.controller]["joints"]
-    if declared != facts.joints:
-        raise ValueError(
-            f"moveit_controllers.yaml names {declared} but the controller publishes {facts.joints}. "
-            "move_group cannot execute a trajectory whose joints it cannot map."
+    for one, tip in zip(arms, tips, strict=True):
+        group = next((g for g in srdf_root.findall("group") if g.get("name") == one.group), None)
+        chain = group.find("chain") if group is not None else None
+        if chain is None:
+            raise ValueError(f"the SRDF has no {one.group!r} group with a chain")
+        if chain.get("tip_link") != tip:
+            raise ValueError(
+                f"the SRDF's {one.group!r} chain ends at {chain.get('tip_link')!r}, but this export "
+                f"asked for {tip!r}."
+            )
+        if chain.get("tip_link") not in links:
+            raise ValueError(
+                f"the {one.group!r} chain's tip is {chain.get('tip_link')!r}, which is not a link in "
+                "the URDF. MoveIt would load and then never plan. Use --tip-site to end the chain at "
+                "a real frame."
+            )
+
+        spanned = spanned_joints(chain, one.group)
+        if sorted(spanned) != sorted(one.joints):
+            raise ValueError(
+                f"the {one.group!r} chain spans {sorted(spanned)} but the controller commands "
+                f"{sorted(one.joints)}. An arm exposed as fewer DOF than it has plans badly and "
+                "silently."
+            )
+
+        state = next(
+            (
+                s
+                for s in srdf_root.findall("group_state")
+                if s.get("name") == "home" and s.get("group") == one.group
+            ),
+            None,
         )
+        if state is None:
+            raise ValueError(f"the SRDF has no 'home' state for {one.group!r}")
+        got = {j.get("name"): float(j.get("value")) for j in state.findall("joint")}
+        for joint, want in one.home.items():
+            if abs(got.get(joint, 1e9) - want) > 1e-5:
+                raise ValueError(
+                    f"the SRDF's home has {joint}={got.get(joint)} but the simulator starts it at "
+                    f"{want}. They must agree: MoveIt's start-state bounds check runs against the "
+                    "arm's real posture."
+                )
+
+        declared = controllers["moveit_simple_controller_manager"][one.controller_key]["joints"]
+        if declared != one.joints:
+            raise ValueError(
+                f"moveit_controllers.yaml names {declared} for {one.controller_key!r} but that "
+                f"controller publishes {one.joints}. move_group cannot execute a trajectory whose "
+                "joints it cannot map."
+            )
+
+    if combined_group:
+        group = next(
+            (g for g in srdf_root.findall("group") if g.get("name") == combined_group), None
+        )
+        if group is None:
+            raise ValueError(f"the SRDF has no {combined_group!r} group")
+        joints = sorted(
+            j for c in group.findall("chain") for j in spanned_joints(c, combined_group)
+        )
+        want = sorted(j for one in arms for j in one.joints)
+        if joints != want:
+            raise ValueError(
+                f"the {combined_group!r} group spans {joints} but the arms together command {want}. "
+                "A group that is missing an arm's joints plans that arm as if it were not there, "
+                "which is exactly the collision the group exists to avoid."
+            )
+        solvers = yaml.safe_load((out / "kinematics.yaml").read_text(encoding="utf-8")) or {}
+        if combined_group in solvers:
+            raise ValueError(
+                f"kinematics.yaml configures a solver for {combined_group!r}. That group is several "
+                "chains, and a chain solver cannot solve it -- it would load and then fail every "
+                "pose request. Plan for it in joint space."
+            )
     return planning_frame
 
 
@@ -582,14 +892,25 @@ def assert_agrees(out: Path, urdf: Path, srdf: Path, facts: ArmFacts, arm_tip: s
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export moveit",
-        description="Generate a complete MoveIt 2 configuration for one arm from a roqsim world.",
+        description="Generate a complete MoveIt 2 configuration for an arm, or for a cell's arms "
+        "together, from a roqsim world.",
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
     source.add_argument("--mjcf", help="a bare MJCF file")
-    parser.add_argument("--out", required=True, help="output DIRECTORY for the six files")
+    parser.add_argument("--out", required=True, help="output DIRECTORY for the generated files")
     parser.add_argument(
-        "--arm", default=None, help="entity name of the arm; optional with one arm in the world"
+        "--arm",
+        default=None,
+        help="entity name of the arm; optional with one arm in the world. Several names, "
+        "comma-separated, put those arms in ONE description with a group spanning all of them -- "
+        "what a planner needs to move them together instead of one after the other",
+    )
+    parser.add_argument(
+        "--combined-group",
+        default=COMBINED_GROUP,
+        help="name of the group spanning every arm (several --arm only). Nothing in the model "
+        "implies it, so it is the one group name that is chosen rather than read",
     )
     parser.add_argument("--name", default=None, help="robot name (default: the arm's entity name)")
     parser.add_argument(
@@ -623,6 +944,16 @@ def main(argv: list | None = None) -> int:
         default=None,
         help="last link of the arm chain (default: --tip-link when --tip-site is given, else the "
         "last link the arm's joints reach)",
+    )
+    parser.add_argument(
+        "--pipelines",
+        default=DEFAULT_PIPELINE,
+        help="comma-separated MoveIt planning pipelines move_group should offer. Any name it can "
+        f"load is allowed; only {DEFAULT_PIPELINE!r} gets a parameter file written here, and the "
+        "others take MoveIt's own packaged config unless you supply one. Several make the pipeline "
+        "selectable per request, which is what a comparison ACROSS pipelines needs -- a planner "
+        "comparison inside OMPL is a change to ompl_planning.yaml instead. The first named is the "
+        "default pipeline",
     )
     parser.add_argument("--base-joint", default="auto", help="passed to the SRDF export")
     parser.add_argument("--parent-frame", default="odom", help="passed to the SRDF export")
@@ -687,14 +1018,42 @@ def _run(args, log) -> int:
     engine = Engine(cfg)
     engine.setup()
 
-    facts = arm_facts(engine, args.arm)
+    pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
+    if not pipelines:
+        raise ValueError("--pipelines named none; move_group needs at least one planning pipeline")
+    if len(set(pipelines)) != len(pipelines):
+        raise ValueError(f"--pipelines repeats a name ({args.pipelines!r}); each is one file")
+
+    named = [s.strip() for s in (args.arm or "").split(",") if s.strip()]
+    facts_list = all_arm_facts(engine, named)
+    facts = facts_list[0]
+    multi = len(facts_list) > 1
+    combined_group = args.combined_group if multi else ""
+    if multi:
+        for flag, value in (
+            ("--prefix", args.prefix),
+            ("--collapse", args.collapse),
+            ("--arm-base", args.arm_base),
+            ("--arm-tip", args.arm_tip),
+        ):
+            if value is not None:
+                raise ValueError(
+                    f"{flag} names one robot, and this export covers "
+                    f"{', '.join(f.arm for f in facts_list)}. Each arm's value is read off the model."
+                )
+        log.warning(
+            "%d arms in one description: their link and joint names keep each arm's MJCF prefix, "
+            "and %r spans all of them so a plan is one trajectory through both arms' joint space.",
+            len(facts_list),
+            combined_group,
+        )
     prefix = args.prefix if args.prefix is not None else facts.prefix
     collapse = (
         tuple(s.strip() for s in args.collapse.split(",") if s.strip())
         if args.collapse is not None
         else facts.collapse
     )
-    name = args.name or facts.arm
+    name = args.name or "_".join(f.arm for f in facts_list)
     log.info(
         "arm %r: %d joints (%s), controller %r%s; collapse %s",
         facts.arm,
@@ -713,19 +1072,83 @@ def _run(args, log) -> int:
     srdf = out / f"{name}.srdf"
     model = engine.ctx.model
 
-    exporter = UrdfExporter(
-        model,
-        prefix=prefix,
-        name=name,
-        root_link=args.root_link,
-        collapse=collapse,
-        mesh_dir=out / "meshes",
-        gripper_joint=facts.gripper_joint,
-        mesh_package=args.mesh_package,
-        tip_site=args.tip_site,
-        tip_link=args.tip_link,
-    )
-    tree = exporter.export()
+    def tip_of(tree: ET.ElementTree, one: ArmFacts, base: str, tip_link: str) -> str:
+        """Where this arm's chain ends: the asked-for tip, the tip site's link, or the last link."""
+        if args.arm_tip:
+            return args.arm_tip
+        if args.tip_site:
+            return tip_link
+        tip = _last_link_of_chain(tree.getroot(), base, one.joints)
+        log.warning(
+            "no --tip-site given, so the %s chain ends at %r -- the outermost rigidly attached "
+            "link, not the point that grasps. Every orientation tolerance is then multiplied by the "
+            "distance from there to the "
+            "fingers; a cell measured 61 mm of lateral error against 12.2 mm of jaw clearance that "
+            "way. Pass --tip-site to fix the goal to the frame that does the work.",
+            one.group,
+            tip,
+        )
+        return tip
+
+    if multi:
+        parts, groups, tips, meshes, dropped = [], [], [], {}, []
+        for one in facts_list:
+            entity = engine.ctx.entities.get(one.arm)
+            root_body = mujoco.mj_name2id(
+                model, mujoco.mjtObj.mjOBJ_BODY, getattr(entity, "body", "") or ""
+            )
+            if root_body < 0:
+                root_body = _first_body(model, one.prefix)
+            arm_root_link = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, root_body)
+            part = UrdfExporter(
+                model,
+                prefix=one.prefix,
+                name=f"{name}_{one.arm}",
+                # Names are kept, so this arm's root link keeps the model's own (prefixed) body
+                # name and --root-link names the common root every arm hangs off instead.
+                root_link=arm_root_link,
+                collapse=tuple(one.prefix + c for c in one.collapse),
+                mesh_dir=out / "meshes",
+                gripper_joint=one.urdf_gripper_joint,
+                mesh_package=args.mesh_package,
+                tip_site=args.tip_site,
+                tip_link=f"{one.prefix}{args.tip_link}",
+                strip="",
+                link_strip="",
+            )
+            part_tree = part.export()
+            parts.append((part_tree, root_body))
+            meshes |= part.mesh_files
+            dropped += part.dropped_dofs
+            tip = tip_of(part_tree, one, arm_root_link, f"{one.prefix}{args.tip_link}")
+            tips.append(tip)
+            groups.append(
+                ArmGroup(
+                    name=one.group,
+                    base_link=arm_root_link,
+                    tip_link=tip,
+                    gripper_joint=one.urdf_gripper_joint,
+                    gripper_open=one.gripper_open,
+                    gripper_close=one.gripper_close,
+                    home=one.home,
+                )
+            )
+        tree = combine_urdfs(model, parts, name=name, root_link=args.root_link)
+        exporter = _Exported(meshes, dropped, out / "meshes", "")
+    else:
+        exporter = UrdfExporter(
+            model,
+            prefix=prefix,
+            name=name,
+            root_link=args.root_link,
+            collapse=collapse,
+            mesh_dir=out / "meshes",
+            gripper_joint=facts.gripper_joint,
+            mesh_package=args.mesh_package,
+            tip_site=args.tip_site,
+            tip_link=args.tip_link,
+        )
+        tree = exporter.export()
     ET.indent(tree, space="  ")
     tree.write(urdf, encoding="utf-8", xml_declaration=True)
     log.info(
@@ -736,35 +1159,31 @@ def _run(args, log) -> int:
         f"; dropped {len(exporter.dropped_dofs)} collapsed DOF(s)" if exporter.dropped_dofs else "",
     )
 
-    arm_base = args.arm_base or args.root_link
-    if args.arm_tip:
-        arm_tip = args.arm_tip
-    elif args.tip_site:
-        arm_tip = args.tip_link
+    if multi:
+        arm_tip = tips
+        strip = ""
     else:
-        arm_tip = _last_link_of_chain(tree.getroot(), arm_base, facts.joints)
-        log.warning(
-            "no --tip-site given, so the arm chain ends at %r -- the outermost rigidly attached "
-            "link, not the point that grasps. Every orientation tolerance is then multiplied by the "
-            "distance from there to the "
-            "fingers; a cell measured 61 mm of lateral error against 12.2 mm of jaw clearance that "
-            "way. Pass --tip-site to fix the goal to the frame that does the work.",
-            arm_tip,
-        )
+        arm_base = args.arm_base or args.root_link
+        arm_tip = tip_of(tree, facts, arm_base, args.tip_link)
+        strip = prefix
+        groups = None
 
-    links = links_from_urdf(model, urdf, prefix)
+    links = links_from_urdf(model, urdf, strip, roots=len(facts_list))
     if not links:
-        raise ValueError(f"no URDF link matched a body in the model (prefix={prefix!r})")
+        raise ValueError(f"no URDF link matched a body in the model (prefix={strip!r})")
     srdf_tree = build_srdf(
         model,
         links,
         name=name,
-        arm_base=arm_base,
-        arm_tip=arm_tip,
+        arm_base="" if multi else arm_base,
+        arm_tip="" if multi else arm_tip,
         gripper_joint=facts.gripper_joint,
         gripper_open=facts.gripper_open,
         gripper_close=facts.gripper_close,
         home=facts.home,
+        arms=groups,
+        combined_group=combined_group,
+        urdf_root_link=args.root_link if multi else "",
         base_joint=args.base_joint,
         parent_frame=args.parent_frame,
         samples=args.samples,
@@ -773,20 +1192,60 @@ def _run(args, log) -> int:
     srdf_tree.write(srdf, encoding="utf-8", xml_declaration=True)
     log.info("wrote %s", srdf)
 
-    for fname, text in (
-        ("kinematics.yaml", kinematics_yaml(facts)),
-        ("joint_limits.yaml", joint_limits_yaml(facts, args.max_velocity, args.max_acceleration)),
-        ("moveit_controllers.yaml", moveit_controllers_yaml(facts, args.gripper_effort)),
-        ("ompl_planning.yaml", ompl_planning_yaml(facts)),
-    ):
+    files = [
+        ("kinematics.yaml", kinematics_yaml(facts_list, combined_group)),
+        (
+            "joint_limits.yaml",
+            joint_limits_yaml(facts_list, args.max_velocity, args.max_acceleration),
+        ),
+        ("moveit_controllers.yaml", moveit_controllers_yaml(facts_list, args.gripper_effort)),
+    ]
+    if DEFAULT_PIPELINE in pipelines:
+        files.append(
+            (f"{DEFAULT_PIPELINE}_planning.yaml", ompl_planning_yaml(facts_list, combined_group))
+        )
+    if len(pipelines) > 1:
+        files.append(("planning_pipelines.yaml", planning_pipelines_yaml(pipelines, pipelines[0])))
+    for fname, text in files:
         (out / fname).write_text(text, encoding="utf-8")
-    log.info("wrote kinematics, joint_limits, moveit_controllers and ompl_planning YAMLs")
+    log.info("wrote %s", ", ".join(fname for fname, _ in files))
+    if len(pipelines) > 1:
+        log.warning(
+            "%d planning pipelines (%s); %r is used by a request that names none. A pipeline is "
+            "chosen per request via MotionPlanRequest.pipeline_id, and each needs its planner "
+            "package installed in the image move_group runs in.",
+            len(pipelines),
+            ", ".join(pipelines),
+            pipelines[0],
+        )
+    for pipe in pipelines:
+        if pipe != DEFAULT_PIPELINE:
+            log.warning(
+                "no %s_planning.yaml is written: its parameters are an experiment decision that "
+                "nothing in the world implies. move_group takes MoveIt's packaged config for it "
+                "unless a file of that name is on the config path it reads.",
+                pipe,
+            )
+        if pipe in JOINT_SPACE_ONLY:
+            log.warning(
+                "%r plans in JOINT SPACE only -- %s. A trial that sets a pose target fails every "
+                "request it sends to this pipeline, so give it joint goals (solve the IK first) or "
+                "do not compare it on pose goals at all.",
+                pipe,
+                JOINT_SPACE_ONLY[pipe],
+            )
 
-    planning_frame = assert_agrees(out, urdf, srdf, facts, arm_tip)
-    log.info("planning frame: %s; chain %s -> %s", planning_frame, arm_base, arm_tip)
+    planning_frame = assert_agrees(out, urdf, srdf, facts_list, arm_tip, combined_group)
+    log.info(
+        "planning frame: %s; chains %s",
+        planning_frame,
+        "; ".join(f"{g.base_link} -> {g.tip_link}" for g in groups)
+        if multi
+        else f"{arm_base} -> {arm_tip}",
+    )
 
     if args.check:
-        err, where = round_trip_error(urdf, model, prefix, mesh_dir=exporter.mesh_dir)
+        err, where = round_trip_error(urdf, model, strip, mesh_dir=exporter.mesh_dir)
         if err > args.tolerance:
             log.error(
                 "the exported URDF diverges from the MJCF by %.3e m at %r (tolerance %.1e). MoveIt "

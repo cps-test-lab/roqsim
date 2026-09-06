@@ -11,8 +11,9 @@ components:
   # largest in roqsim_mobile) and the lidar come from the warthog model manifest.
   - spawn_robot:
       model: warthog
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

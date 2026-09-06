@@ -24,7 +24,10 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
      - "./plugins/x.py:Foo": { ... }    # (3) path to a .py file (relative to this YAML)
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling. The plugin ref has three resolution forms:
+plus an optional reserved ``name:`` sibling, which defaults to the ref. Writing ``name:`` *inside* the
+config map is refused with the corrected spelling: no plugin reads it there, and a document that
+placed it there would load with every entry answering to the plugin's ref. The plugin ref has three
+resolution forms:
 
 #. **short name** — a registered ``roqsim.plugins`` entry-point.
 #. **module.path:Class** — imported off ``PYTHONPATH``.
@@ -251,8 +254,8 @@ That build has **no transport in it**, and ``dropped_transport`` names what went
 
 A describe publishes nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim
 render`` and the exporters -- and since the ROS bridge ships in a colcon package, a pip-only
-environment cannot resolve it at all, which used to fail the build over plugins that contribute no
-geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
+environment cannot resolve it at all, so requiring it would fail a describe over plugins that
+contribute no geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
 ``drop_transport_plugins``): a misspelt geometry plugin has to stay fatal, because dropping it would
 leave an entity missing from a list a caller reads as complete. The bridge is still in ``plugins``,
 so ``plugins.ros2_bridge.*`` remains a checkable override.
@@ -282,7 +285,7 @@ inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elem
    disable:                       # OPTIONAL: drop inherited plugins by name (needs ``extends``)
      - graspable_box
    components:                    # child entries are APPENDED after the (kept) parent entries
-     - spawn_robot: {model: oli, name: oli, prefix: oli_, pos: [13.2, 2.6]}
+     - spawn_robot: {model: oli, name: oli, prefix: oli_, pose: {position: {x: 13.2, y: 2.6}}}
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
 ``roqsim.worlds`` provider (to that provider's ``<world>.yaml``), or a path relative to the child
@@ -464,3 +467,14 @@ back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the t
 this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ignores
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
+
+A world can declare an entity absent from the start, with ``present: false`` on the entry that
+registers it::
+
+    - spawn_model: {model: pallet, pos: [4.0, 1.0], free: true, present: false}
+      name: obstacle
+
+That is what gives a trial something to spawn. The declared value is restored on every reset, so a
+spare brought in during one repetition is a spare again in the next. Do not confuse it with
+``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
+to spawn.

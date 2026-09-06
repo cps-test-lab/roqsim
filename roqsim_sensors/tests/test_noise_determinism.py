@@ -36,7 +36,7 @@ def world(tmp_path):
     return {
         "sim": {"world": str(scene)},
         "plugins": [
-            {"lidar": {"name": "front", "site": "scan", "num_rays": 64, "range_stddev": 0.05}}
+            {"lidar": {"site": "scan", "num_rays": 64, "range_stddev": 0.05}, "name": "front"}
         ],
     }
 

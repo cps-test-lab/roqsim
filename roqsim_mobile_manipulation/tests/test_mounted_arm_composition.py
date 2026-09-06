@@ -34,7 +34,7 @@ MOUNT_POS = [0.25, 0.0, 0.2587]
 
 def _world(tmp_path, arm_extra=None, robot_first=True, prefix="ur10e_"):
     robot = {
-        "spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]},
+        "spawn_robot": {"model": "husky_a200", "pose": {"position": {"x": 0.0, "y": 0.0}}},
         "name": "husky",
     }
     # The arm stays a top-level entry: it PROVIDES an entity rather than attaching to one, and
@@ -102,7 +102,10 @@ def test_mounted_arm_rides_the_base(tmp_path):
             "sim": {},
             "components": [
                 {
-                    "spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]},
+                    "spawn_robot": {
+                        "model": "husky_a200",
+                        "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    },
                     "name": "husky",
                     # A scripted forward command, so the test needs no ROS transport.
                     "components": [{"diff_drive": {"test_cmd": [0.5, 0.0]}}],

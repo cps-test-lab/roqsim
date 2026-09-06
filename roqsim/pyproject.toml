@@ -29,6 +29,15 @@ dummy = "roqsim.plugins.dummy:DummyPlugin"
 spawn_model = "roqsim.plugins.spawn_model:SpawnModelPlugin"
 ceiling = "roqsim.plugins.ceiling:CeilingPlugin"
 contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
+# WHERE it is being touched, right now, rather than whether it ever was. A separate plugin because
+# it is a different question with a different lifetime: contact_monitor LATCHES the first contact
+# (a failed trial is not un-failed), while a tactile reading is only useful while it is current and
+# is replaced every step. This is what a bumper-driven or tactile controller reads in its loop.
+contact_location = "roqsim.plugins.contact_location:ContactLocationPlugin"
+# The friction of ONE pair, which per-geom values cannot express: MuJoCo combines them by MAX, so a
+# geom's friction is a floor on every contact it takes part in. Two different pair frictions sharing
+# one object -- a box sliding on a floor while a robot pushes it -- need an explicit <pair>.
+contact_pair_override = "roqsim.plugins.contact_pair_override:ContactPairOverridePlugin"
 # The gradient beside that verdict: contact_monitor says whether it touched, this says how
 # close it came. Same geometry, one owner each.
 clearance_monitor = "roqsim.plugins.clearance_monitor:ClearanceMonitorPlugin"
@@ -43,6 +52,10 @@ payload = "roqsim.plugins.payload:PayloadPlugin"
 # than a robot family because every actuated thing has the question, and the measured part
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
+
+# Ground that is not flat. Everything this substrate could stand a robot on was a plane, while four
+# of its ported platforms are outdoor machines whose papers are about what happens when it is not.
+heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
 
 [project.scripts]
 # `roqsim` is the command tree; the simulator is `roqsim sim`. The roqsim-export-* names stay as aliases of

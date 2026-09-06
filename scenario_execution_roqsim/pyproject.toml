@@ -44,6 +44,8 @@ roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
 [project.entry-points."scenario_execution.actions"]
 entity_moved = "scenario_execution_roqsim.actions.entity_moved:EntityMoved"
 entity_rotated = "scenario_execution_roqsim.actions.entity_rotated:EntityRotated"
+entity_navigate = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigate"
+entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigateStart"
 entity_teleport = "scenario_execution_roqsim.actions.entity_teleport:EntityTeleport"
 set_model_override = "scenario_execution_roqsim.actions.set_model_override:SetModelOverride"
 set_sensor_override = "scenario_execution_roqsim.actions.set_sensor_override:SetSensorOverride"

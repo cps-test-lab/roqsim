@@ -23,6 +23,9 @@ WORKDIR /ws
 #    simulation_interfaces the bridge needs, plus GL libs for headless MuJoCo. BOTH offscreen
 #    backends: egl needs a DRI render device and a CPU-only node has none, so the choice belongs to
 #    the node (roqsim.gl.select_offscreen_gl) and the image must be able to satisfy either answer.
+#    The MoveIt planner plugins are named alongside the metapackage rather than left to it:
+#    `roqsim export moveit --pipelines` can offer move_group more than one planning pipeline, and a
+#    pipeline whose plugin is absent makes move_group fail at START-UP rather than fail the request.
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -42,6 +45,8 @@ RUN apt-get update && \
         ros-${ROS_DISTRO}-simulation-interfaces \
         ros-${ROS_DISTRO}-vision-msgs \
         ros-${ROS_DISTRO}-moveit \
+        ros-${ROS_DISTRO}-moveit-planners-ompl \
+        ros-${ROS_DISTRO}-moveit-planners-chomp \
         ros-${ROS_DISTRO}-ros2-control \
         ros-${ROS_DISTRO}-ros2-controllers \
         ros-${ROS_DISTRO}-controller-manager \
@@ -93,6 +98,7 @@ COPY roqsim_manipulation ./roqsim_manipulation
 COPY roqsim_manipulation_assets   ./roqsim_manipulation_assets
 COPY roqsim_mobile_manipulation   ./roqsim_mobile_manipulation
 COPY roqsim_scenes       ./roqsim_scenes
+COPY roqsim_nav          ./roqsim_nav
 COPY roqsim_walker       ./roqsim_walker
 COPY roqsim_webctrl          ./roqsim_webctrl
 COPY roqsim_quadruped    ./roqsim_quadruped
@@ -106,6 +112,7 @@ RUN pip install --no-cache-dir --break-system-packages --no-deps \
         ./roqsim_manipulation_assets \
         ./roqsim_mobile_manipulation \
         ./roqsim_scenes \
+        ./roqsim_nav \
         ./roqsim_walker \
         ./roqsim_webctrl \
         ./roqsim_quadruped \
@@ -118,7 +125,7 @@ RUN pip install --no-cache-dir --break-system-packages --no-deps \
 COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
 RUN python3 /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
 
-# 5) Volatile layer: colcon-build the ROS 2 workspace (bridge + nav2 example + walker_ros).
+# 5) Volatile layer: colcon-build the ROS 2 workspace (bridge, nav2 example, goal actions).
 COPY ros2_ws/src ./ros2_ws/src
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ros2_ws && \

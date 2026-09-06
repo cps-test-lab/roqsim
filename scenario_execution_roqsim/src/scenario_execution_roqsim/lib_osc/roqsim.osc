@@ -52,6 +52,47 @@ action entity_rotated:
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
 
+action entity_navigate:
+    # Send an entity somewhere, and succeed when it gets there. The mover is the SIMULATOR's -- a
+    # `navigator` component on that entity plans and drives it internally -- so this drives the
+    # traffic in a trial, never the robot under test. Contrast `osc.nav2`'s `nav_to_pose`, which
+    # commands an EXTERNAL nav2 stack over ROS: that one is the subject, this one is the apparatus.
+    # They stay separate actions because they prove different things -- a goal reached through nav2
+    # says something about nav2; a goal reached through this says the traffic arrived on cue.
+    #
+    # POSITIONS only: the navigator drives to a point and stops facing the way it arrived, so a
+    # nonzero orientation is REFUSED rather than accepted and dropped. A final heading is a
+    # capability to add to the navigator, not a value to pass and ignore.
+    # The route replaces whatever the navigator was doing, and the entity's own configured route
+    # resumes when it finishes, if it had one. A branch that is abandoned cancels the route rather
+    # than leaving the mover driving to a goal the scenario has given up on.
+    #
+    # Over ROS this is the simulator's own NavigateThroughPoses server, reached at
+    # `<entity>/navigate_through_poses` by the same convention `set_model_override` uses for
+    # `<instance>/override`. `action_name` is the escape hatch for a deployment that scoped it
+    # differently; leaving it empty is what keeps a scenario identical on both transports.
+    entity: string                        # roqsim entity name -- the world's `name:`, not a body
+                                          #   and not a TF frame
+    goal_poses: list of pose_3d           # world-frame. One goal is a 1-element list; OSC has no
+                                          #   union type, the same rule the rest of this file follows
+    success_on_acceptance: bool = false   # true -> succeed once the route is accepted, without
+                                          #   waiting for arrival (fire-and-forget traffic)
+    action_name: string = ''              # ROS only; empty = `<entity>/navigate_through_poses`
+
+action entity_navigate_start:
+    # Run the route the entity was CONFIGURED with, and succeed when it finishes.
+    #
+    # A separate action rather than `entity_navigate` with an empty list, because a list parameter
+    # cannot carry a default in this grammar -- and because the distinction is worth a name. With
+    # the route in the world (`navigator: {goals: [...], autostart: false}`) and only the trigger
+    # here, the trajectory is part of the world's provenance -- identical in every repetition, and
+    # visible in a campaign's config diff -- while its timing belongs to the trial. Sending the
+    # route from the scenario instead puts both in the scenario. Both are legitimate; they answer
+    # different questions.
+    entity: string
+    success_on_acceptance: bool = false
+    action_name: string = ''
+
 action entity_teleport:
     # Place a free-jointed entity at `pose` and zero its velocity, matching a fresh spawn. The
     # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's

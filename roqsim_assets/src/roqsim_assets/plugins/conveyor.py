@@ -5,8 +5,8 @@
 so it runs forever. Objects ride the belt purely through the ``belt_package`` friction pair.
 
 The belt is a **benchtop** unit: its feet run from z=0.76 to 0.915, so it needs a ~0.76 m table
-under it, spawned separately (``industrial_table`` reproduces the one this model used to bundle;
-``desk_diy`` at 0.758 also works). Nothing here places or checks that table -- a conveyor with no
+under it, spawned separately (``industrial_table`` is the matching prop, and ``desk_diy`` at 0.758
+also works). Nothing here places or checks that table -- a conveyor with no
 table under it simply floats.
 
 The belt speed is live-controllable: this plugin declares a backend-neutral ``speed`` input
@@ -17,7 +17,6 @@ exposing ``set_speed(float)`` (m/s, sign = direction) for in-process/standalone 
 Config::
 
     conveyor:
-      name: conveyor        # entity name (default 'conveyor')
       namespace: ""         # optional transport scope for the speed endpoint (/<ns>/speed)
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 belt)
       model: conveyor       # bundled model name / path
@@ -35,7 +34,6 @@ Config::
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -45,19 +43,7 @@ import numpy as np
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+from roqsim.pose import rpy_to_quat
 
 
 @dataclass
@@ -90,7 +76,7 @@ class ConveyorPlugin(Plugin):
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         # Optional belt size (full length/width, m). Absent -> keep the base model exactly. Bad
         # values are tolerated here (kept as the base half-extent) so validate_config can report
         # them with a friendly message rather than crashing during construction.

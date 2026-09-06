@@ -1,22 +1,24 @@
-"""Rebrand MuJoCo's hardcoded ``MuJoCo : `` window title to ``Roqsim: <model>``.
+"""Brand the MuJoCo viewer's X11 window: its title, and the icon the desktop shows for it.
 
-MuJoCo's C++ ``Simulate`` sets the GLFW window title to ``"MuJoCo : <model name>"`` once
-per model load (``glfwSetWindowTitle``) and exposes no Python hook to change it. We rename
-the top-level X11 window out-of-band via libX11 (ctypes), swapping the ``MuJoCo : `` prefix
-for ``Roqsim: `` so the window reads ``Roqsim: <world name>`` -- or just ``Roqsim`` when the
-world carries no meaningful name, so MuJoCo's default ``MuJoCo Model`` is never shown. (The engine
-also names the model itself, from ``sim.name`` or ``Roqsim``, so the native title is meaningful even
-where this X11 rename can't run.)
+MuJoCo's C++ ``Simulate`` sets the GLFW window title to ``"MuJoCo : <model name>"`` once per model
+load (``glfwSetWindowTitle``) and never sets a window icon at all, so the desktop falls back to its
+generic placeholder. Neither is reachable from Python. We therefore set both on the top-level X11
+window out-of-band via libX11 (ctypes): the ``MuJoCo : `` prefix is swapped for ``Roqsim: `` so the
+window reads ``Roqsim: <world name>`` -- or just ``Roqsim`` when the world carries no meaningful
+name, so MuJoCo's default ``MuJoCo Model`` is never shown -- and ``_NET_WM_ICON`` is filled with the
+packaged roqsim mark. (The engine also names the model itself, from ``sim.name`` or ``Roqsim``, so
+the native title is meaningful even where this X11 branding can't run.)
 
-Cosmetic and X11-only. The window is created asynchronously on MuJoCo's render thread and
-its title is set slightly after ``launch_passive`` returns, so we poll for a short window
-from a daemon thread. On Wayland/macOS, without a ``DISPLAY``, or if libX11 is unavailable,
-this is a silent no-op -- a window title is not an artifact, so best-effort is the right
-altitude here rather than a hard failure.
+Cosmetic and X11-only. The window is created asynchronously on MuJoCo's render thread and its title
+is set slightly after ``launch_passive`` returns, so we poll for a short window from a daemon thread.
+On Wayland/macOS, without a ``DISPLAY``, or if libX11 is unavailable, this is a silent no-op --
+window chrome is not an artifact, so best-effort is the right altitude here rather than a hard
+failure (same stance as :mod:`roqsim.splash`). The icon additionally needs Pillow, and is skipped on
+its own if that is missing.
 
 The poll walks *other clients'* top-level windows, so a window closing mid-pass (including our own
 viewer at shutdown) makes ``XGetWindowProperty`` fail -- and Xlib's default error handler kills the
-whole process. :func:`_watch_and_rename` therefore runs under an ignoring error handler; see there.
+whole process. :func:`_watch_and_brand` therefore runs under an ignoring error handler; see there.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import os
 import sys
 import threading
 import time
+from importlib import resources
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +39,12 @@ _MUJOCO_PREFIX = "MuJoCo : "
 _ROQSIM_PREFIX = "Roqsim: "
 #: Brand shown alone when the world carries no meaningful name -- never "MuJoCo Model".
 _ROQSIM_BRAND = "Roqsim"
+#: The roqsim mark, packaged with the wheel (256x256 RGBA) beside the splash art.
+_ICON = ("assets", "icon.png")
+#: Sizes offered in ``_NET_WM_ICON``, largest first -- the desktop picks what it needs and
+#: scales. Capped at 128 on purpose: the property is one X request, and 256x256 alone would
+#: push it past the 256 KiB a server without the BIG-REQUESTS extension will accept.
+_ICON_SIZES = (128, 64, 48, 32, 16)
 
 
 def _display_title(name: str) -> str:
@@ -48,6 +57,7 @@ def _display_title(name: str) -> str:
 
 # X11 constants
 _ANY_PROPERTY_TYPE = 0
+_XA_CARDINAL = 6
 _XA_STRING = 31
 _PROP_MODE_REPLACE = 0
 
@@ -59,25 +69,25 @@ def _model_name(model) -> str:
     return raw[: nul if nul >= 0 else len(raw)].decode("utf-8", "replace")
 
 
-def retitle_window_async(
+def brand_window_async(
     model, *, name: str | None = None, timeout_s: float = 4.0
 ) -> threading.Thread | None:
-    """Spawn a daemon watcher that renames this process's MuJoCo viewer window.
+    """Spawn a daemon watcher that titles and icons this process's MuJoCo viewer window.
 
     ``name`` overrides the title's world name (from the world YAML's ``sim.name``); it defaults
-    to MuJoCo's model name, which is what MuJoCo itself would have shown.
+    to MuJoCo's model name, which is what MuJoCo itself would have shown. A model with no name at
+    all -- the empty placeholder the loading window opens on -- is branded as plain ``Roqsim``
+    rather than left showing MuJoCo's own chrome.
 
     Returns the watcher thread (already started), or ``None`` if we won't attempt it
-    (non-X11 platform, no display, empty name).
+    (non-X11 platform, no display).
     """
     if sys.platform != "linux" or not os.environ.get("DISPLAY"):
         return None
     name = name or _model_name(model)
-    if not name:
-        return None
 
     thread = threading.Thread(
-        target=_watch_and_rename, args=(name, timeout_s), name="roqsim-retitle", daemon=True
+        target=_watch_and_brand, args=(name, timeout_s), name="roqsim-branding", daemon=True
     )
     thread.start()
     return thread
@@ -116,16 +126,16 @@ def _log_and_ignore_x_error(_disp, event) -> int:
 _IGNORE_X_ERRORS = _X_ERROR_HANDLER(_log_and_ignore_x_error)
 
 
-def _watch_and_rename(name: str, timeout_s: float) -> None:
+def _watch_and_brand(name: str, timeout_s: float) -> None:
     try:
         xlib = _load_xlib()
     except OSError as err:
-        log.debug("window retitle skipped: libX11 unavailable (%s)", err)
+        log.debug("window branding skipped: libX11 unavailable (%s)", err)
         return
 
     disp = xlib.XOpenDisplay(None)
     if not disp:
-        log.debug("window retitle skipped: cannot open X display %r", os.environ.get("DISPLAY"))
+        log.debug("window branding skipped: cannot open X display %r", os.environ.get("DISPLAY"))
         return
 
     # Xlib's default error handler prints the request and calls exit(1) -- so a window that closes
@@ -137,11 +147,20 @@ def _watch_and_rename(name: str, timeout_s: float) -> None:
     try:
         atoms = {
             key: xlib.XInternAtom(disp, key.encode(), False)
-            for key in ("_NET_CLIENT_LIST", "_NET_WM_PID", "_NET_WM_NAME", "UTF8_STRING", "WM_NAME")
+            for key in (
+                "_NET_CLIENT_LIST",
+                "_NET_WM_PID",
+                "_NET_WM_NAME",
+                "UTF8_STRING",
+                "WM_NAME",
+                "_NET_WM_ICON",
+            )
         }
         pid = os.getpid()
+        icon = _icon_property()
         deadline = time.monotonic() + timeout_s
         renamed = False
+        iconed: set[int] = set()
         while time.monotonic() < deadline:
             for win in _top_level_windows(xlib, disp, atoms):
                 title = _get_text(xlib, disp, win, atoms["_NET_WM_NAME"])
@@ -151,13 +170,18 @@ def _watch_and_rename(name: str, timeout_s: float) -> None:
                     continue
                 _set_title(xlib, disp, win, atoms, _display_title(name))
                 renamed = True
+                # The icon survives a model reload (only the title is re-set), and the property is
+                # ~100 KiB, so send it once per window rather than on every pass.
+                if icon is not None and win not in iconed:
+                    _set_icon(xlib, disp, win, atoms, icon)
+                    iconed.add(win)
             xlib.XFlush(disp)
             # Keep polling after the first hit: a reset/reload re-sets the prefix, and a
             # freshly mapped window may not carry _NET_WM_PID yet on the first pass.
             time.sleep(0.1)
         if not renamed:
             log.debug(
-                "window retitle: no %r window found for pid %d within %.1fs",
+                "window branding: no %r window found for pid %d within %.1fs",
                 _MUJOCO_PREFIX,
                 pid,
                 timeout_s,
@@ -329,4 +353,71 @@ def _set_title(xlib, disp, win, atoms, title: str) -> None:
     # Legacy WM_NAME for anything that ignores _NET_WM_NAME.
     xlib.XChangeProperty(
         disp, win, atoms["WM_NAME"], _XA_STRING, 8, _PROP_MODE_REPLACE, utf8, len(utf8)
+    )
+
+
+def _icon_property() -> bytes | None:
+    """The ``_NET_WM_ICON`` payload for :data:`_ICON`, or ``None`` if it cannot be built.
+
+    The EWMH format is a run of ``width, height, then width*height ARGB pixels`` per size. It is a
+    32-bit property, and Xlib takes 32-bit property data as an array of C ``long`` (8 bytes each on
+    LP64) -- hence ``uintp`` rather than ``uint32``; the server is handed the low 32 bits of each.
+    """
+    path = icon_path()
+    if path is None:
+        return None
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError as err:
+        log.debug("window icon skipped: %s", err)
+        return None
+    try:
+        with Image.open(path) as src:
+            image = src.convert("RGBA")
+            words: list[int] = []
+            for size in _ICON_SIZES:
+                pixels = np.asarray(image.resize((size, size), Image.LANCZOS), dtype=np.uint32)
+                argb = (
+                    (pixels[..., 3] << 24)
+                    | (pixels[..., 0] << 16)
+                    | (pixels[..., 1] << 8)
+                    | pixels[..., 2]
+                )
+                words += [size, size, *argb.ravel().tolist()]
+    except OSError as err:
+        log.debug("window icon skipped: cannot read %s (%s)", path, err)
+        return None
+    return np.asarray(words, dtype=np.uintp).tobytes()
+
+
+def icon_path() -> str | None:
+    """Filesystem path of the packaged roqsim mark (a 256x256 RGBA PNG), or ``None`` when there is
+    no real file to open (a zipped install, or an incomplete one).
+
+    Public because it is not only this module's: roqsim's other windows -- the scene builder's
+    tkinter ones, which set their icon through Tk rather than through X11 -- wear the same mark.
+    """
+    res = resources.files(__package__).joinpath(*_ICON)
+    try:
+        path = os.fspath(res)
+    except TypeError:
+        return None  # zipped install: no real file to open
+    if not os.path.exists(path):
+        log.debug("window icon skipped: %s is not installed", path)
+        return None
+    return path
+
+
+def _set_icon(xlib, disp, win, atoms, payload: bytes) -> None:
+    """Write ``_NET_WM_ICON``. ``nelements`` counts 32-bit items, not the bytes of the long array."""
+    xlib.XChangeProperty(
+        disp,
+        win,
+        atoms["_NET_WM_ICON"],
+        _XA_CARDINAL,
+        32,
+        _PROP_MODE_REPLACE,
+        payload,
+        len(payload) // ctypes.sizeof(ctypes.c_ulong),
     )

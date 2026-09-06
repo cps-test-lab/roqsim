@@ -33,15 +33,15 @@ class Plugin:
     hooks you need; unimplemented hooks are skipped by the engine (no per-tick cost).
     """
 
-    #: This plugin's config, declared once: ``{key: roqsim.schema.Field(...)}``. Optional -- a
-    #: plugin without one behaves exactly as before. Declaring it gets two things from one place:
-    #: the mechanical checks (types, ranges, required keys, unknown keys) run against it, and
-    #: ``roqsim plugins describe`` publishes the fields WITH their types and defaults instead of a
-    #: docstring's prose. See :mod:`roqsim.schema`.
+    #: This plugin's config, declared once: ``{key: roqsim.schema.Field(...)}``. Optional. A
+    #: plugin that declares one gets two things from it: the mechanical checks (types, ranges,
+    #: required keys, unknown keys) run against it, and ``roqsim plugins describe`` publishes the
+    #: fields with their types and defaults rather than a docstring's prose. See
+    #: :mod:`roqsim.schema`.
     #:
     #: **Declaring it is what enforces it.** ``instantiate_plugins`` runs the check for every plugin
     #: that has one, beside its ``validate_config``; there is no call to remember. A schema the
-    #: catalog publishes and nothing checks would be exactly the docstring this replaces.
+    #: catalog publishes and nothing checks would be prose with a type annotation.
     CONFIG_SCHEMA: dict | None = None
 
     #: With a schema, whether a key it does not mention is an error. Opt-in: a component's config

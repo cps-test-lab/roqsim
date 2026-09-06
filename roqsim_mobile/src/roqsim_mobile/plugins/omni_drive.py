@@ -6,10 +6,10 @@ that can translate in any direction while holding, or independently changing, it
 for PAL Robotics' OMNI base (TIAGo Pro), whose ROS 2 stack uses
 ``omni_drive_controller/OmniDriveController``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     omni_drive:
-      robot: robot                  # entity name registered by spawn_robot
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       base_joint: base_free         # the base's free joint
       vx_actuator: base_vx          # planar drive actuators (see "Planar drive" below)
@@ -31,7 +31,13 @@ Config::
       # `wheels`. Their presence is what selects swerve inverse kinematics over mecanum.
       steer_joints: [...]
       steer_actuators: [...]
+      odom_child_frame: base_footprint   # link the odometry TF points at (see below)
       test_cmd: [0.2, 0.1, 0.0]     # optional [vx, vy, wz] applied every tick (standalone demo)
+
+``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
+whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
+``base_footprint`` already gives ``base_link`` a parent, and a second parent from here leaves that
+frame with two, which tf2 cannot resolve.
 
 **Planar drive.** A real omnidirectional base translates sideways because each mecanum wheel's passive rollers let the
 contact patch slide along one diagonal. Those rollers are **not modelled** (~9 per wheel would mean
@@ -102,6 +108,9 @@ class OmniDrivePlugin(Plugin):
         self.base_joint = self.config.get("base_joint", "base_free")
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
         self.base_body = self.config.get("base_body", "base_link")
+        # PAL's mobile_base_controller reports odom in base_footprint, which is also the body the
+        # free joint drives -- hence a different default from the two-wheel drives.
+        self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
         self._act_names = (
             self.config.get("vx_actuator", "base_vx"),
             self.config.get("vy_actuator", "base_vy"),
@@ -272,7 +281,12 @@ class OmniDrivePlugin(Plugin):
 
         ctx.blackboard.set(
             f"robot:{self.robot}",
-            RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
+            RobotHandle(
+                name=self.robot,
+                drive=self.drive,
+                read_odom=self.read_odom,
+                kinematics="holonomic",
+            ),
         )
         ctx.interface.add(
             Endpoint(
@@ -302,9 +316,7 @@ class OmniDrivePlugin(Plugin):
                         "type": "nav_msgs.msg.Odometry",
                         "topic": self.topic_override("odom") or "odom",
                         "frame_id": "odom",
-                        # PAL's mobile_base_controller reports odom in base_footprint, which is also
-                        # the body the free joint drives.
-                        "child_frame_id": "base_footprint",
+                        "child_frame_id": self.odom_child_frame,
                         "emit_tf": True,
                     }
                 },

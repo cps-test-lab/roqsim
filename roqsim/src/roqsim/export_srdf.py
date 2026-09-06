@@ -31,11 +31,11 @@ never collide and land in ``Never`` -- consistent, not a special case.
 
 The base joint is computed too
 ------------------------------
-Whether the robot's base FLOATS is the other mechanical fact in this file, and it used to be assumed:
-a ``planar`` ``virtual_joint`` from ``odom`` was emitted unconditionally, which is right for the mobile
-manipulators the substrate mostly serves and wrong for an arm bolted to a pedestal. It is readable from
-the model -- a floating base rides a MuJoCo free joint, a bolted one is welded to the world -- so
-``resolve_base_joint`` reads it instead, and ``--base-joint`` only overrides the verdict.
+Whether the robot's base FLOATS is the other mechanical fact in this file, and it is computed rather
+than assumed. Emitting a ``planar`` ``virtual_joint`` from ``odom`` unconditionally is right for the
+mobile manipulators the substrate mostly serves and wrong for an arm bolted to a pedestal. It is
+readable from the model -- a floating base rides a MuJoCo free joint, a bolted one is welded to the
+world -- so ``resolve_base_joint`` reads it, and ``--base-joint`` only overrides the verdict.
 
 Getting it wrong is expensive and nearly silent, which is why it is computed and why the two
 directions are treated differently. A virtual joint nothing publishes leaves move_group logging "The
@@ -58,6 +58,7 @@ import argparse
 import logging
 import sys
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from itertools import combinations
 from pathlib import Path
 
@@ -73,30 +74,46 @@ logger = logging.getLogger(__name__)
 #: fixed joint"). ``auto`` reads the answer off the model; see ``resolve_base_joint``.
 BASE_JOINTS = ("auto", "planar", "floating", "fixed")
 
+#: The group name a ONE-arm description uses. Every MoveIt config generated for a single arm calls it
+#: this, so it stays literal rather than being derived from the entity's name; a description holding
+#: several arms names each group after its entity instead, since one string cannot serve two.
+ARM_GROUP = "arm"
+
 
 def _body_of_geom(model, geom: int) -> int:
     return int(model.geom_bodyid[geom])
 
 
-def exported_root_body(model: mujoco.MjModel, links: dict[int, str]) -> int:
-    """The MuJoCo body that is the exported URDF's ROOT link.
+def exported_root_bodies(
+    model: mujoco.MjModel, links: dict[int, str], expected: int = 1
+) -> list[int]:
+    """The MuJoCo bodies that are the exported description's ROOT links, one per robot in it.
 
-    A URDF is a single tree, so exactly one mapped body has an unmapped parent. More than one means
-    ``links`` reaches outside the robot -- a URDF link name matched a body in another subtree -- and
-    every base verdict below it would be about the wrong kinematic chain.
+    A URDF is a single tree, so one robot contributes exactly one mapped body with an unmapped
+    parent. ``expected`` is how many robots the description carries -- one arm, or the two arms of a
+    dual-arm cell, each hanging off a common root link that is a pure frame and therefore has no
+    MuJoCo body of its own. Any other count means ``links`` reaches outside those robots -- a URDF
+    link name matched a body in another subtree -- and every base verdict below it would be about
+    the wrong kinematic chain.
     """
     roots = [b for b in links if int(model.body_parentid[b]) not in links]
-    if len(roots) != 1:
+    if len(roots) != expected:
         names = sorted(links[b] for b in roots)
+        each = "exactly one root link" if expected == 1 else f"exactly {expected} root links"
         raise ValueError(
-            f"expected exactly one root link in the exported robot, found {len(roots)}: {names}. "
-            "A URDF has a single root, so this means a URDF link name matched a MuJoCo body outside "
-            "the robot (check --strip and the model's name prefixes)."
+            f"expected {each} in the exported robot, found {len(roots)}: {names}. "
+            "A URDF has a single root per robot, so this means a URDF link name matched a MuJoCo "
+            "body outside the robot (check --strip and the model's name prefixes)."
         )
-    return roots[0]
+    return sorted(roots)
 
 
-def base_free_joint(model: mujoco.MjModel, links: dict[int, str]) -> str | None:
+def exported_root_body(model: mujoco.MjModel, links: dict[int, str]) -> int:
+    """The single root body of a one-robot description; see :func:`exported_root_bodies`."""
+    return exported_root_bodies(model, links, 1)[0]
+
+
+def base_free_joint(model: mujoco.MjModel, links: dict[int, str], roots: int = 1) -> str | None:
     """Name of the free joint the exported robot's base rides, or ``None`` if it is welded down.
 
     The walk goes past the exported subtree up to the world body, because a mounted arm's own root is
@@ -106,19 +123,37 @@ def base_free_joint(model: mujoco.MjModel, links: dict[int, str]) -> str | None:
     ``roqsim export urdf`` emits below a synthetic fixed ``world`` link, so MoveIt already has the fixed
     root it requires and needs no virtual joint for it.
     """
-    body = exported_root_body(model, links)
-    while body > 0:
-        adr, num = int(model.body_jntadr[body]), int(model.body_jntnum[body])
-        for j in range(adr, adr + num):
-            if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
-                name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
-                return name or f"<unnamed joint {j}>"
-        body = int(model.body_parentid[body])
-    return None
+    found: dict[str, str | None] = {}
+    for root in exported_root_bodies(model, links, roots):
+        body, free = root, None
+        while body > 0 and free is None:
+            adr, num = int(model.body_jntadr[body]), int(model.body_jntnum[body])
+            for j in range(adr, adr + num):
+                if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+                    free = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) or (
+                        f"<unnamed joint {j}>"
+                    )
+                    break
+            body = int(model.body_parentid[body])
+        found[links[root]] = free
+    # One description has ONE base, so its robots must agree about whether that base floats. A
+    # description mixing a bolted arm with one riding a mobile base has no single answer: emitting a
+    # virtual joint would move the bolted arm with a transform that does not apply to it, and
+    # emitting none would freeze the riding one at the planning frame's origin.
+    if len({v is None for v in found.values()}) > 1:
+        raise ValueError(
+            "the robots in this description disagree about their base: "
+            + ", ".join(
+                f"{link} {'rides ' + free if free else 'is welded to the world'}"
+                for link, free in sorted(found.items())
+            )
+            + ". A single SRDF has one virtual joint, so it cannot describe both."
+        )
+    return next(iter(found.values()))
 
 
 def resolve_base_joint(
-    model: mujoco.MjModel, links: dict[int, str], requested: str = "auto"
+    model: mujoco.MjModel, links: dict[int, str], requested: str = "auto", roots: int = 1
 ) -> tuple[str, str]:
     """``(base_joint, why)`` -- what to emit for the base, and the evidence for it.
 
@@ -128,7 +163,7 @@ def resolve_base_joint(
     if requested not in BASE_JOINTS:
         raise ValueError(f"base_joint must be one of {', '.join(BASE_JOINTS)}, not {requested!r}")
 
-    free = base_free_joint(model, links)
+    free = base_free_joint(model, links, roots)
     detected = f"free joint {free}" if free else "welded to the world, no free joint above the root"
 
     if requested == "auto":
@@ -201,8 +236,8 @@ def _require_self_collision(model: mujoco.MjModel, links: dict[int, str]) -> Non
 
     Every pair would come back ``Never`` on no evidence, which is not a conservative default but the
     most dangerous possible SRDF: it disables self-collision checking for the whole robot, and nothing
-    downstream says so. Measured on the TIAGo Pro before this check existed: 0 contacts over 200 random
-    poses, 1711 pairs marked ``Never``, 0 marked ``Always``.
+    downstream says so. A masked-apart two-arm model samples 200 random poses without a single
+    contact, which the matrix reports as seventeen hundred pairs that can never touch.
     """
     collidable = [
         g
@@ -321,24 +356,88 @@ def _sample_matrix(
     return out
 
 
+@dataclass
+class ArmGroup:
+    """One planning group in the SRDF: a chain, the hand at its end, and their named states.
+
+    ``name`` is the group's own name -- the entity the arm was spawned as, so a cell's groups are
+    called what its world calls them. A description holding one arm uses ``ARM_GROUP`` instead, which
+    is the name a one-arm MoveIt configuration refers to everywhere.
+    """
+
+    name: str
+    base_link: str
+    tip_link: str
+    gripper_joint: str = ""
+    gripper_open: float = 0.0
+    gripper_close: float = 0.0
+    home: dict[str, float] = field(default_factory=dict)
+
+    @property
+    def gripper_group(self) -> str:
+        return "gripper" if self.name == ARM_GROUP else f"{self.name}_gripper"
+
+    @property
+    def end_effector(self) -> str:
+        return "hand" if self.name == ARM_GROUP else f"{self.name}_hand"
+
+
 def build_srdf(
     model: mujoco.MjModel,
     links: dict[int, str],
     *,
     name: str,
-    arm_base: str,
-    arm_tip: str,
-    gripper_joint: str,
-    gripper_open: float,
-    gripper_close: float,
-    home: dict[str, float],
+    arm_base: str = "",
+    arm_tip: str = "",
+    gripper_joint: str = "",
+    gripper_open: float = 0.0,
+    gripper_close: float = 0.0,
+    home: dict[str, float] | None = None,
+    arms: list[ArmGroup] | None = None,
+    combined_group: str = "",
+    urdf_root_link: str = "",
     base_joint: str = "auto",
     base_link: str | None = None,
     parent_frame: str = "odom",
     samples: int = 10000,
 ) -> ET.ElementTree:
-    base_joint, why = resolve_base_joint(model, links, base_joint)
-    root_link = links[exported_root_body(model, links)]
+    """One SRDF for the description, whether it holds one robot or several.
+
+    ``arms`` is the general form: one :class:`ArmGroup` per chain, plus ``combined_group`` naming a
+    group that holds ALL of them, which is what makes a planner treat two arms as one system
+    instead of planning them one after the other. The ``arm_*``/``gripper_*``/``home`` arguments are
+    the one-arm spelling of the same thing.
+
+    ``urdf_root_link`` names the description's root when it is a pure frame with no MuJoCo body of
+    its own -- the link several robots hang off. Left empty, the root is read off the model, which
+    is the single-robot case.
+    """
+    if arms is None:
+        arms = [
+            ArmGroup(
+                name=ARM_GROUP,
+                base_link=arm_base,
+                tip_link=arm_tip,
+                gripper_joint=gripper_joint,
+                gripper_open=gripper_open,
+                gripper_close=gripper_close,
+                home=dict(home or {}),
+            )
+        ]
+    if combined_group and len(arms) < 2:
+        raise ValueError(
+            f"combined_group {combined_group!r} was asked for, but this description has one group "
+            f"({arms[0].name!r}). A combined group exists to plan several chains at once."
+        )
+    names = [a.name for a in arms] + ([combined_group] if combined_group else [])
+    if len(set(names)) != len(names):
+        raise ValueError(
+            f"two planning groups would be called the same thing: {names}. MoveIt looks a group up "
+            "by name, so one of them would be unreachable."
+        )
+
+    base_joint, why = resolve_base_joint(model, links, base_joint, roots=len(arms))
+    root_link = urdf_root_link or links[exported_root_bodies(model, links, len(arms))[0]]
     logger.info(
         "base joint: %s (%s); MoveIt's planning frame is %s",
         base_joint,
@@ -391,30 +490,42 @@ def build_srdf(
             child_link=child_link,
         )
 
-    arm = ET.SubElement(robot, "group", name="arm")
-    ET.SubElement(arm, "chain", base_link=arm_base, tip_link=arm_tip)
+    for spec in arms:
+        group = ET.SubElement(robot, "group", name=spec.name)
+        ET.SubElement(group, "chain", base_link=spec.base_link, tip_link=spec.tip_link)
 
-    gripper = ET.SubElement(robot, "group", name="gripper")
-    ET.SubElement(gripper, "joint", name=gripper_joint)
+        hand = ET.SubElement(robot, "group", name=spec.gripper_group)
+        ET.SubElement(hand, "joint", name=spec.gripper_joint)
 
-    ET.SubElement(
-        robot,
-        "end_effector",
-        name="hand",
-        parent_link=arm_tip,
-        group="gripper",
-        parent_group="arm",
-    )
+        ET.SubElement(
+            robot,
+            "end_effector",
+            name=spec.end_effector,
+            parent_link=spec.tip_link,
+            group=spec.gripper_group,
+            parent_group=spec.name,
+        )
+
+    if combined_group:
+        # Every chain in ONE group, so a plan for it is a single trajectory through the joint space
+        # of both arms -- which is the only way one motion can be checked against the other rather
+        # than against a snapshot of where the other was. The chains are named directly rather than
+        # by composing the per-arm groups, so the group's joint set does not depend on how a reader
+        # (or a future MoveIt) resolves subgroups.
+        both = ET.SubElement(robot, "group", name=combined_group)
+        for spec in arms:
+            ET.SubElement(both, "chain", base_link=spec.base_link, tip_link=spec.tip_link)
 
     # Named states. `open`/`closed` are in the gripper JOINT's units, matching the values the gripper's
     # manifest gives arm_controller -- so a MoveIt named target and a GripperCommand agree.
-    for state, value in (("open", gripper_open), ("closed", gripper_close)):
-        grp = ET.SubElement(robot, "group_state", name=state, group="gripper")
-        ET.SubElement(grp, "joint", name=gripper_joint, value=f"{value:.6g}")
-    if home:
-        grp = ET.SubElement(robot, "group_state", name="home", group="arm")
-        for joint, value in home.items():
-            ET.SubElement(grp, "joint", name=joint, value=f"{value:.6g}")
+    for spec in arms:
+        for state, value in (("open", spec.gripper_open), ("closed", spec.gripper_close)):
+            grp = ET.SubElement(robot, "group_state", name=state, group=spec.gripper_group)
+            ET.SubElement(grp, "joint", name=spec.gripper_joint, value=f"{value:.6g}")
+        if spec.home:
+            grp = ET.SubElement(robot, "group_state", name="home", group=spec.name)
+            for joint, value in spec.home.items():
+                ET.SubElement(grp, "joint", name=joint, value=f"{value:.6g}")
 
     matrix = collision_matrix(model, links, samples=samples)
     for a, b, reason in matrix:
@@ -430,7 +541,9 @@ def build_srdf(
     return ET.ElementTree(robot)
 
 
-def links_from_urdf(model: mujoco.MjModel, urdf: Path, strip: str) -> dict[int, str]:
+def links_from_urdf(
+    model: mujoco.MjModel, urdf: Path, strip: str, roots: int = 1
+) -> dict[int, str]:
     """Map MuJoCo body id -> URDF link name, for the links the exported URDF actually has.
 
     Read from the URDF rather than recomputed so the two files cannot disagree about what a link is --
@@ -474,14 +587,15 @@ def links_from_urdf(model: mujoco.MjModel, urdf: Path, strip: str) -> dict[int, 
     # carriage's fixed `world` link has no MuJoCo body to claim.
     if not out:  # nothing matched at all; the caller reports that, with the prefix it used
         return out
-    body = exported_root_body(model, out)
-    link = out[body]
-    while (parent_link := parent_of.get(link)) is not None and parent_link not in out.values():
-        body = int(model.body_parentid[body])
-        if body == 0:
-            break
-        out[body] = parent_link
-        link = parent_link
+    for root in exported_root_bodies(model, out, roots):
+        body = root
+        link = out[body]
+        while (parent_link := parent_of.get(link)) is not None and parent_link not in out.values():
+            body = int(model.body_parentid[body])
+            if body == 0:
+                break
+            out[body] = parent_link
+            link = parent_link
     return out
 
 

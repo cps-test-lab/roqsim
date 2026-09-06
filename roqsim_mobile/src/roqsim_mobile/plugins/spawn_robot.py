@@ -10,9 +10,11 @@ Config::
       model: turtlebot4     # bundled model name, filename, or absolute path
       namespace: ""         # optional transport scope; the robot's endpoints inherit it
       prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
-      pos: [0.0, 0.0]       # world XY spawn
-      yaw: 0.0              # spawn heading (rad)
+      pose:                 # the spawn pose, as SpawnEntity states one (see below)
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
       base_joint: base_free # free joint used to place the base
+      present: true         # false: compiled in, but absent until it is spawned
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -20,17 +22,77 @@ to that entity by position, and are addressed ``<name>.<label>``.
 
 The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix``, ``model``, and
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
+
+``pose:`` is the spawn pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose`` -- a
+``geometry_msgs/PoseStamped``. Its orientation may be a quaternion or Euler angles, so the common
+case stays short::
+
+    - spawn_robot: {model: turtlebot4, pose: {position: {x: 1.5, y: 2.0},
+                                              orientation: {yaw: 0.785}}}
+
+It is the ONLY way to state one, which is the point: a world declaring where a robot starts and a
+``SpawnEntity`` call placing it mid-trial are the same pose, so they are written the same way and
+a producer needs no conversion that depends on which door the pose came in at. It also makes the
+pose a value a campaign can write per configuration -- one destination, not two keys to split
+across -- so a swept start pose is spawned rather than applied after the fact.
+
+Omitting it spawns the robot at the origin, at the model's own resting height. See
+:mod:`roqsim.pose` for the shape and the three ways a document may say more than the message can
+(a world-frame ``header``, an omitted ``z`` meaning that resting height rather than zero, and the
+Euler spelling).
+
+The rotation is a full quaternion, because the service's is: a robot can be spawned tilted. Nothing
+here refuses that -- the base has a free joint and MuJoCo holds whatever orientation it is given --
+so a rotation that is not a heading is taken at its word.
+
+``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
+the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
+states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so what one
+trial spawned does not carry into the next.
+
+Absence hides the robot's BODY, not its software: its controller and sensor plugins keep running,
+so an absent robot still publishes and still responds to a twist -- and being out of the contact
+set, a twist drives it through walls. For a start pose decided per run, move the robot with
+``SetEntityState`` instead; absence is for a machine that is not meant to be in the trial yet.
 """
 
 from __future__ import annotations
 
 import mujoco
-import numpy as np
 
 from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose, yaw_of
+from roqsim.presence import set_present
+
+
+def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
+    """The base's resting height, as the model's own keyframe states it -- or ``None``.
+
+    A wheeled model is authored with ``base_link`` at the origin and its wheels hanging below it, so
+    the compiled rest height of the base free joint is 0 and spawning at it buries the robot by a
+    wheel radius. What the model actually knows about its own stance is in its ``<key>``: every
+    model in this package states one, from a couple of millimetres of tyre squash to the Warthog's
+    0.288 m. That height is read here because :func:`_strip_keyframes` is about to discard the rest
+    of it, and a robot dropped into the floor is not merely ugly -- it is ejected on the first step,
+    so the trial begins with a pose and a velocity nobody asked for.
+
+    The address is resolved by compiling a copy rather than assuming the free joint comes first: a
+    keyframe's qpos is the whole robot's, and reading the wrong three numbers out of it would put
+    a wheel angle in the z of the spawn.
+    """
+    if not spec.keys:
+        return None
+    key = next((k for k in spec.keys if k.name == "home"), spec.keys[0])
+    model = spec.copy().compile()
+    jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, base_joint)
+    if jid < 0 or model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+        return None
+    adr = int(model.jnt_qposadr[jid])
+    qpos = list(key.qpos)
+    return float(qpos[adr + 2]) if len(qpos) > adr + 2 else None
 
 
 def _strip_keyframes(spec: mujoco.MjSpec) -> None:
@@ -68,9 +130,25 @@ class SpawnRobotPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.robot_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0])
-        self.initial_pose = (float(pos[0]), float(pos[1]), float(self.config.get("yaw", 0.0)))
+        #: The base orientation as a quaternion ``[w, x, y, z]``: whatever rotation the pose stated,
+        #: which is what makes it the same value the spawn service accepts.
+        self.quat = [1.0, 0.0, 0.0, 0.0]
+        #: The origin at the model's own resting height, for a world that states no pose.
+        x, y, z = 0.0, 0.0, None
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            x, y, z = position
+        #: ``(x, y, yaw)``: what the entity's ``meta`` advertises, and what a consumer that can only
+        #: act on a heading reads. A tilted spawn keeps its full rotation in :attr:`quat`; this is
+        #: the heading part of it.
+        self.initial_pose = (x, y, yaw_of(self.quat))
+        #: An explicit z, which a world states when the ground under the spawn is not at z=0 -- a
+        #: height field, a ramp, a shelf. Without one the model's own rest height is used.
+        self.spawn_z = z
+        #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
+        self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
+        self.present = bool(self.config.get("present", True))
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -81,9 +159,13 @@ class SpawnRobotPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        pos = config.get("pos", [0.0, 0.0])
-        if len(pos) != 2:
-            errors.append("'pos' must be [x, y]")
+        if "pose" in config:
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
+        if "present" in config and not isinstance(config["present"], bool):
+            errors.append("'present' must be true or false")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -92,6 +174,7 @@ class SpawnRobotPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
@@ -139,13 +222,24 @@ class SpawnRobotPlugin(Plugin):
             )
         )
         self._apply_initial_pose(ctx)
+        self._apply_declared_presence(ctx)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._apply_initial_pose(ctx)
+        self._apply_declared_presence(ctx)
         mujoco.mj_forward(ctx.model, ctx.data)
 
+    def _apply_declared_presence(self, ctx: SimContext) -> None:
+        """Put the robot back to the presence the world declared.
+
+        Run at configure AND at every reset, because presence lives in ``model`` while
+        ``mj_resetData`` restores ``data``: a robot a trial spawned is still present when the next
+        one begins.
+        """
+        set_present(ctx, ctx.entities.get(self.robot_name), self.present)
+
     def _apply_initial_pose(self, ctx: SimContext) -> None:
-        x, y, yaw = self.initial_pose
+        x, y, _ = self.initial_pose
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
         if jid < 0:
             ctx.logger.warning(
@@ -157,6 +251,9 @@ class SpawnRobotPlugin(Plugin):
         q = ctx.model.jnt_qposadr[jid]
         ctx.data.qpos[q] = x
         ctx.data.qpos[q + 1] = y
-        # qpos[q+2] keeps the compiled rest height.
-        h = yaw / 2.0
-        ctx.data.qpos[q + 3 : q + 7] = (np.cos(h), 0.0, 0.0, np.sin(h))
+        # z: the world's if it states one, else the model's own stance. Only a model that states
+        # neither keeps the compiled qpos0, which for a base_link authored at the origin is 0.
+        z = self.spawn_z if self.spawn_z is not None else self.rest_z
+        if z is not None:
+            ctx.data.qpos[q + 2] = z
+        ctx.data.qpos[q + 3 : q + 7] = self.quat

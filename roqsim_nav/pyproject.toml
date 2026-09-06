@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "roqsim_nav"
+version = "0.1.0"
+description = "2D navigation for roqsim: A* over a grid read off the compiled model, a behaviour tree that follows it, and the `navigator` plugin that moves an entity along it."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+# `roqsim` and nothing else from this tree. The `navigator` plugin builds no geometry and imports no
+# sibling: it moves an entity another plugin provided, reached through `ctx.entities` and the
+# blackboard. That is what lets a robot family depend on this package -- `roqsim_walker` does -- and
+# what keeps the dependency acyclic.
+dependencies = [
+    "roqsim",
+    "mujoco>=3.0",   # obstacles.py reads wall footprints straight off the compiled model
+    "numpy>=1.24",
+    "py_trees>=2.2", # the navigate / stuck-recovery behaviour tree
+]
+
+[project.optional-dependencies]
+test = ["pytest>=7.0"]
+# ORCA local collision avoidance: the `orca` model of the world-level `avoidance:` plugin. Built from
+# source (Cython), so it is opt-in -- without it a navigator follows its planned path without
+# yielding, and logs why.
+#
+# This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
+# publishes no wheel, so the alternatives were vendoring the Cython source or having no ORCA at all.
+# Two consequences a downstream consumer has to plan for, because pip does not warn about either:
+# PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
+# with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
+# air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
+# degrades to planned paths without local avoidance and logs why, it does not fail.
+#
+# It gates the `orca` model ONLY: this package stays wheel-installable, and a world using a
+# pure-Python avoidance model needs no toolchain at all.
+# The DISTRIBUTION is `pyrvo2`; the module it installs is `rvo2`. Naming it `rvo2` here made pip
+# resolve metadata for one project against a requirement for another and refuse the install
+# outright, so the extra could not be installed at all -- which is worth knowing, because it is the
+# reason `give_way` above is the default rather than a fallback.
+#
+# It also needs its build dependency present, and pip's build isolation hides one that is merely
+# installed. An extra cannot express that, so the install is two commands:
+#
+#   pip install Cython
+#   pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
+avoidance = ["pyrvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
+
+# Entry points are declared by the step that implements what they point at, so that every step
+# leaves an installable package: a group naming a module that does not exist yet turns `roqsim
+# plugins` and `roqsim sim` into an import error for everyone, not just for the unfinished feature.
+
+[project.entry-points."roqsim.plugins"]
+# Moves the entity of the entry it is nested under, along a planned or given route.
+navigator = "roqsim_nav.plugins.navigator:NavigatorPlugin"
+
+# How a navigator's motion reaches the physics. `roqsim_walker` registers `walker` into this same
+# group, which is what keeps the dependency running walker -> nav and never back.
+# Local-avoidance models, resolved the way plugins and outputs are. ORCA is one implementation and
+# is named nowhere in this package's own code -- see avoidance/__init__.py.
+[project.entry-points."roqsim_nav.avoidance"]
+# The default, and pure Python: a world gets working avoidance from `pip install roqsim_nav`, with
+# no compiler. `orca` is the better model where the encounter itself is the experiment.
+give_way = "roqsim_nav.avoidance.give_way:GiveWayModel"
+orca = "roqsim_nav.avoidance.orca:OrcaModel"
+
+[project.entry-points."roqsim_nav.outputs"]
+drive = "roqsim_nav.outputs.drive:DriveOutput"
+mocap = "roqsim_nav.outputs.mocap:MocapOutput"
+
+# The one example world, so `roqsim sim roqsim_nav:nav_opponents` resolves.
+[project.entry-points."roqsim.worlds"]
+roqsim_nav = "roqsim_nav"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+roqsim_nav = ["worlds/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

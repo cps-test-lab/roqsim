@@ -58,6 +58,7 @@ from roqsim_scene_builder.annotate_ui import (
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 _DEFAULT_SIZE = (760, 760)
@@ -840,6 +841,7 @@ class _SketchApp:
 
         root = tk.Tk()
         root.title("roqsim floorplan sketch")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.geometry(f"900x{self.height + 24}")  # start at a sensible width; resize keeps the 2:1
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -925,8 +927,9 @@ class _SketchApp:
             font=("TkDefaultFont", 11, "bold"),
         ).pack(fill="x", padx=8, pady=10, ipady=self._BTN_IPADY)
 
-        # Everything above the footer scrolls as one region: the title and message (which the caller
-        # sizes, and which used to push the tool row and lists down), the tool row, and the lists.
+        # Everything above the footer scrolls as one region: the title and message (whose height the
+        # caller controls, so unscrolled they push the tool row and lists down), the tool row, and
+        # the lists.
         inner, self._sync_panel = build_scrollable(tk, panel, padx=0)
 
         if title:

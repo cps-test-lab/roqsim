@@ -1,4 +1,5 @@
 <mujoco model="panda">
+  <!-- Franka Emika Panda (7-DoF arm + Franka Hand parallel gripper) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
 
@@ -213,6 +214,18 @@
                       <geom mesh="hand_3" material="white" class="p_visual"/>
                       <geom mesh="hand_4" material="off_white" class="p_visual"/>
                       <geom mesh="hand_c" class="p_collision"/>
+                      <!-- Grasp frame, named `pinch` as on every other gripper here (gen3,
+                           robotiq_2f85, schunk_pg70, vx300s): the point BETWEEN the finger pads,
+                           103.4 mm from the hand frame, which is Franka's own TCP definition and
+                           coincides with the measured pad centres at 102.9 mm.
+
+                           It is not decoration. Without a site, `roqsim export moveit` ends the
+                           kinematic chain at `hand` and every orientation tolerance is then
+                           multiplied by the 0.1 m offset to the fingers -- which the exporter warns
+                           about, because that error scale exceeds a parallel jaw's clearance. Pass
+                           it as `--tip-site pinch`. -->
+                      <site name="pinch" pos="0 0 0.1034" type="sphere" size="0.005" group="5"
+                            rgba="0.9 0.9 0.9 1"/>
                       <body name="left_finger" pos="0 0 0.0584">
                         <inertial mass="0.015" pos="0 0 0" diaginertia="2.375e-6 2.375e-6 7.5e-7"/>
                         <joint name="finger_joint1" class="finger"/>

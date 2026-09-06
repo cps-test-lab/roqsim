@@ -12,14 +12,18 @@ adjacent 0.15 m boxes touch at their corners and leave no gap; two tangent 0.15 
 same pitch leave one. A benchmark whose difficulty is defined by how tightly the robot must squeeze
 measures something different if its round obstacles are squared off.
 
-Like every plugin in this package the cylinder is **welded scenery** -- static, no free joint -- and
-is declared in the world YAML rather than baked into the scene, so it stays out of the occupancy grid
-the map is generated from. For something physics should move, use ``spawn_model`` with ``free: true``.
+By default the cylinder is **welded scenery** -- static, with no free joint -- and is declared in the
+world YAML rather than baked into the scene, so it stays out of the occupancy grid the map is
+generated from. ``free: true`` gives it a free joint, exactly as on ``box``: physics can then move it
+and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that service rejects any entity
+without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
+billet -- and not only an obstacle, and it is why ``radius`` matters as config: a graspable round
+object's diameter has to match the gripper's stroke, and a modelled asset scaled uniformly cannot
+change its diameter without changing its height.
 
 Config::
 
     cylinder:
-      name: obstacle_1     # entity name (default 'cylinder')
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 cylinder)
       pos: [x, y]          # centre in world metres; [x, y] stands the cylinder ON the floor,
                            #   [x, y, z] places its CENTRE at z (REQUIRED)
@@ -28,10 +32,18 @@ Config::
       color: [r,g,b,a]     # default a light warehouse grey; alpha optional
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
+      free: false          # give the cylinder a free joint: movable, and TELEPORTABLE
+      mass: null           # total mass, kg. Unset -> MuJoCo's default density (1000 kg/m^3), which
+                           #   for a hollow container is several times too heavy
 
 ``height`` is the **full** height and ``radius`` is a true radius, matching how a world file talks
 about a post. MuJoCo's cylinder geom wants ``[radius, half-height]``; that conversion happens here so
 it never has to happen in your head -- the same reason ``box`` takes full extents.
+
+``mass`` sets the geom's total mass and lets MuJoCo derive the inertia from the shape, so it stays a
+solid cylinder's inertia at the stated mass. It is a separate key from the geometry because the two
+are independent for anything the size of a drinks can: the diameter is set by what the fingers can
+span, the mass by what the object is made of and whether it is full.
 """
 
 from __future__ import annotations
@@ -60,6 +72,10 @@ class CylinderPlugin(Plugin):
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
+        self.free = bool(self.config.get("free", False))
+        self.mass = self._optional_float(self.config.get("mass"))
+        self._base_joint = ""
+        self._spawn_qpos: list[float] | None = None
 
     # -- config coercion -------------------------------------------------------------------------
     @staticmethod
@@ -68,6 +84,16 @@ class CylinderPlugin(Plugin):
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    @staticmethod
+    def _optional_float(value) -> float | None:
+        """``None`` when the key is absent, so "unset" stays distinct from "zero"."""
+        if value is None:
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _pos(self, value, height: float) -> tuple[float, float, float]:
         """``[x, y]`` stands the cylinder on the floor; ``[x, y, z]`` places its centre at z."""
@@ -129,6 +155,16 @@ class CylinderPlugin(Plugin):
             errors.append("'color' must be [r, g, b] or [r, g, b, a] numbers")
         if "collide" in config and not isinstance(config["collide"], bool):
             errors.append("'collide' must be a boolean")
+        if "free" in config and not isinstance(config["free"], bool):
+            errors.append("'free' must be a boolean")
+        if config.get("mass") is not None:
+            try:
+                mass = float(config["mass"])
+            except (TypeError, ValueError):
+                errors.append("'mass' must be a number in kilograms")
+            else:
+                if mass <= 0:
+                    errors.append(f"'mass' must be positive, got {mass}")
         return errors
 
     # -- lifecycle -------------------------------------------------------------------------------
@@ -148,9 +184,21 @@ class CylinderPlugin(Plugin):
         g.size = [self.radius, self.height / 2, 0.0]  # MuJoCo wants [radius, half-height]
         g.material = mat.name
         g.friction = self.friction
+        if self.mass is not None:
+            # `mass` rather than `density`, so the world states the quantity it knows. MuJoCo then
+            # derives the inertia from the shape at that mass, keeping a solid cylinder's inertia.
+            g.mass = self.mass
         if not self.collide:
             g.contype = 0
             g.conaffinity = 0
+
+        if self.free:
+            # The free joint is what makes the cylinder movable, and what lets
+            # simulation_interfaces' SetEntityState teleport it (the service rejects any entity
+            # without a free base_joint). Naming and meta follow `box`/`spawn_model`, so all three
+            # kinds of prop are re-seated and teleported by one code path.
+            body.add_freejoint(name="free")
+            self._base_joint = f"{self.prefix}free"
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
@@ -159,16 +207,38 @@ class CylinderPlugin(Plugin):
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def configure(self, ctx: SimContext) -> None:
+        meta = {
+            "prefix": self.prefix,
+            "radius": self.radius,
+            "height": self.height,
+            "pos": list(self.pos),
+        }
+        if self.mass is not None:
+            meta["mass"] = self.mass
+        if self.free:
+            meta["base_joint"] = self._base_joint
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="prop",
+                kind="object" if self.free else "prop",
                 body=self.prefix + _ROOT_BODY,
-                meta={
-                    "prefix": self.prefix,
-                    "radius": self.radius,
-                    "height": self.height,
-                    "pos": list(self.pos),
-                },
+                meta=meta,
             )
         )
+        if self.free:
+            jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
+            if jid < 0:
+                raise RuntimeError(f"cylinder: free joint {self._base_joint!r} not found")
+            adr = int(ctx.model.jnt_qposadr[jid])
+            # Remember the spawn pose so on_reset re-seats the cylinder between episodes instead of
+            # leaving it wherever the last trial pushed (or teleported) it.
+            self._spawn_qpos = [adr, *(float(v) for v in ctx.model.qpos0[adr : adr + 7])]
+
+    def on_reset(self, ctx: SimContext) -> None:
+        if self._spawn_qpos is None:
+            return
+        adr = int(self._spawn_qpos[0])
+        ctx.data.qpos[adr : adr + 7] = self._spawn_qpos[1:]
+        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
+        dof = int(ctx.model.jnt_dofadr[jid])
+        ctx.data.qvel[dof : dof + 6] = 0.0

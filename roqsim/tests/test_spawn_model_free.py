@@ -23,7 +23,7 @@ def _world(tmp_path, **box):
                     "spawn_model": {
                         "model": "industrial_table",
                         "prefix": "t_",
-                        "pos": [0, 0, 0],
+                        "pose": {"position": {"x": 0, "y": 0, "z": 0}},
                     },
                     "name": "table",
                 },
@@ -31,7 +31,7 @@ def _world(tmp_path, **box):
                     "spawn_model": {
                         "model": "graspable_box",
                         "prefix": "b_",
-                        "pos": [0, 0, 0.9],
+                        "pose": {"position": {"x": 0, "y": 0, "z": 0.9}},
                         **box,
                     },
                     "name": "box",

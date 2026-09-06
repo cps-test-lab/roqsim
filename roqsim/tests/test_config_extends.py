@@ -122,6 +122,56 @@ def test_disable_drops_named_plugin(tmp_path):
     assert [type(p).__name__ for p in instantiate_plugins(cfg)] == ["SpawnModelPlugin"]
 
 
+def test_disable_then_re_add_is_how_you_modify_an_inherited_plugin(tmp_path):
+    """The override pattern this module's own docstring documents: "To *modify* an inherited plugin,
+    ``disable`` it and re-add a tweaked copy in the child's ``plugins``."
+
+    It has to survive the duplicate-label check, and only just does: `disable` turns the inherited
+    entry OFF rather than removing it, so the document really does carry two entries under one
+    label. A disabled one builds nothing and registers nothing, so it cannot be what another label
+    silently stands in for -- which is the thing that check exists to catch.
+    """
+    _parent(tmp_path)
+    child = _write(
+        tmp_path,
+        "child.yaml",
+        """
+        extends: parent.yaml
+        disable: [table_2]
+        plugins:
+          - spawn_model: {model: industrial_table, pose: {position: {x: 1.0, y: 0.0, z: 0.0}}}
+            name: table_2
+        """,
+    )
+    cfg = load_config(child)
+    labels = [(s.label, s.enabled) for s in cfg.declared]
+    assert labels == [("table_1", True), ("table_2", False), ("greeter", True), ("table_2", True)]
+    # ...and exactly one table_2 is built: the tweaked copy, not the inherited one.
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == [
+        "SpawnModelPlugin",
+        "DummyPlugin",
+        "SpawnModelPlugin",
+    ]
+
+
+def test_two_live_entries_under_one_label_still_raise(tmp_path):
+    """The guard the test above must not have loosened: two ENABLED entries sharing a label are
+    still one instance standing in for the other, and are still refused."""
+    _parent(tmp_path)
+    child = _write(
+        tmp_path,
+        "child.yaml",
+        """
+        extends: parent.yaml
+        plugins:
+          - spawn_model: {model: industrial_table}
+            name: table_1
+        """,
+    )
+    with pytest.raises(PluginError, match="two components labelled"):
+        load_config(child)
+
+
 def test_disable_unknown_selector_raises(tmp_path):
     _parent(tmp_path)
     child = _write(
@@ -175,7 +225,7 @@ def test_extends_package_ref_resolves(tmp_path):
         sim:
           timestep: 0.001
         plugins:
-          - spawn_robot: {model: turtlebot4, prefix: robot_, pos: [-8.0, 0.0]}
+          - spawn_robot: {model: turtlebot4, prefix: robot_, pose: {position: {x: -8.0, y: 0.0}}}
             name: robot
         """,
     )

@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>roqsim_nav_ros</name>
+  <version>0.1.0</version>
+  <description>
+    ROS 2 goal interface for anything roqsim navigates itself: a pedestrian, an opponent robot, a
+    driven prop. Serves the navigator's goal endpoints as nav2 NavigateToPose and
+    NavigateThroughPoses, so a client that can drive nav2 can drive the simulator's own movers.
+  </description>
+  <maintainer email="frederik.pasch@h-ka.de">Frederik Pasch</maintainer>
+  <license>Apache-2.0</license>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>roqsim_ros_bridge</exec_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

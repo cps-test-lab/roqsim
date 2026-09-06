@@ -34,7 +34,6 @@ Config::
       quiet_zone: 0.15         # white margin around the tag, as a fraction of `size` (default 0.15)
       emission: 0.0            # material emission; RAISE ONLY FOR VISIBILITY, NOT FOR DETECTION (see below)
       thickness: 0.002         # box half-thickness behind the marker face (m)
-      name: null               # texture/material/geom base name (default: "<family>_<id>")
       vflip: false             # flip the texture rows / cols if the render comes out mirrored
       hflip: false             #   (a mirrored tag will NOT decode)
       # --- placement: EXACTLY ONE of the following two forms ---
@@ -47,6 +46,9 @@ Config::
                                #   inherited automatically when this plugin ships in a model manifest
       rel_pose: [x, y, z]      # marker position in that body's frame (default [0, 0, 0])
       rel_quat: [w, x, y, z]   # marker orientation in that body's frame (or `rel_rpy`); default identity
+
+The texture, material and geom this builds are named after the entry's label (its ``name:``
+sibling, else ``fiducial_marker``), so a world carrying several markers gives each entry a label.
 """
 
 from __future__ import annotations
@@ -58,19 +60,7 @@ import numpy as np
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+from roqsim.pose import rpy_to_quat
 
 
 def _dict_name(family: str) -> str:
@@ -208,7 +198,7 @@ class FiducialMarkerPlugin(Plugin):
             return [v / n for v in q]
         if rpy_key in self.config:
             r, p, y = (float(v) for v in self.config[rpy_key])
-            return _rpy_to_quat(r, p, y)
+            return rpy_to_quat(r, p, y)
         return [1.0, 0.0, 0.0, 0.0]
 
     def _render_marker(self) -> np.ndarray:

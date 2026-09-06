@@ -35,4 +35,4 @@ components:
   # in. Walls, pillars and floor clutter (which span down into the room) stay. Set `enabled: true` for
   # the roofed warehouse. Generic: the `ceiling` plugin (roqsim core) opens any world by height.
   - ceiling: {above_z: 2.6, keep: false}
-  # e.g. add a robot below: - spawn_robot: {model: turtlebot4, name: robot, pos: [-8.0, 0.0]}
+  # e.g. add a robot below: - spawn_robot: {model: turtlebot4, name: robot, pose: {position: {x: -8.0, y: 0.0}}}

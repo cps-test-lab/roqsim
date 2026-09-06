@@ -41,7 +41,7 @@ two plugins that vary it are `wind_field`, below, and core roqsim's `payload` (c
 
 ```yaml
 components:
-  - spawn_robot: {model: crazyflie_2, prefix: "cf2_", pos: [0.0, 0.0]}
+  - spawn_robot: {model: crazyflie_2, prefix: "cf2_", pose: {position: {x: 0.0, y: 0.0}}}
     name: drone
     components:
       - quadrotor_controller: {target: [0.0, 0.0, 1.0]}

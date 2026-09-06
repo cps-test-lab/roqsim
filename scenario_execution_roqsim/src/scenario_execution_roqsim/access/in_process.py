@@ -17,6 +17,8 @@ import numpy as np
 
 from . import (
     AccessError,
+    NavCall,
+    NavOutcome,
     OverrideCall,
     OverrideOutcome,
     Pose,
@@ -26,6 +28,34 @@ from . import (
 )
 
 _MISSING = object()
+
+
+class _PostedRoute(NavCall):
+    """A route sent to a navigator, polled on its sequence number.
+
+    ``wait=False`` succeeds as soon as the route is *applied* -- fire-and-forget traffic, where the
+    scenario wants the mover moving and has something else to be doing. Even then it waits for the
+    sequence to land rather than returning immediately, because the route is marshalled onto the
+    physics thread and "accepted" must mean the simulator has it.
+    """
+
+    def __init__(self, handle, seq: int, *, wait: bool):
+        self._handle = handle
+        self._seq = seq
+        self._wait = wait
+
+    def poll(self):
+        applied, finished, _goals, _dist = self._handle.status()
+        if applied > self._seq:
+            return NavOutcome(False, "a newer route preempted this one")
+        if applied < self._seq:
+            return None  # not applied yet: the post has not been drained
+        if not self._wait:
+            return NavOutcome(True, "route accepted")
+        return NavOutcome(True, "arrived") if finished else None
+
+    def cancel(self) -> None:
+        self._handle.cancel()
 
 
 class InProcessAccess(WorldAccess):
@@ -112,6 +142,31 @@ class InProcessAccess(WorldAccess):
         before = int(handle.read_state().changes)
         ctx.post(lambda _ctx: handle.set_active(bool(active)))
         return _PostedCall(handle, before)
+
+    # -- navigation --------------------------------------------------------------------------------
+    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        handle = ctx.blackboard.get(f"nav:{name}:handle")
+        if handle is None:
+            offered = sorted(
+                k.split(":", 1)[1].removesuffix(":handle")
+                for k in getattr(ctx.blackboard, "_data", {})
+                if k.startswith("nav:") and k.endswith(":handle")
+            )
+            raise AccessError(
+                f"entity {name!r} has no navigator, so nothing can drive it. A `navigator` component "
+                f"must be nested under the entry that provides it (spawn_robot, spawn_model with "
+                f"`mocap: true`, or walker). This world can navigate: "
+                f"{', '.join(offered) if offered else '(nothing)'}."
+            )
+        poses = [(float(p[0]), float(p[1])) for p in goal_poses]
+        if poses:
+            seq = handle.send_goals(poses)
+        else:
+            seq = handle.start()
+        return _PostedRoute(handle, seq, wait=wait)
 
     # -- teleport ---------------------------------------------------------------------------------
     def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:

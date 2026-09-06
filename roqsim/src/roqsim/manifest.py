@@ -42,14 +42,46 @@ def manifest_fov(model_file: Path) -> dict:
     return data.get("fov", {}) or {}
 
 
+def manifest_license(model_file: Path) -> list[Path]:
+    """The licence sidecars a model's manifest declares (``license:``), as existing paths.
+
+    Which licence covers a model is only self-evident in the folder-per-model layout, where the
+    sidecar sits alone beside the MJCF. A provider that ships its models flat has one directory
+    holding every model and every vendored licence, and "the file next to it" then attributes one
+    vendor's terms to another vendor's robot -- a wrong answer of the worst kind. So a model whose
+    licence is not obvious from the layout names it::
+
+        license: LICENSE.unitree_ros        # one, or a list when several apply
+
+    A name is relative to the model's own directory and must exist -- a declaration pointing at
+    nothing raises here rather than quietly dropping the model's licence from the catalog. A model
+    that declares none is normal (a hand-authored one carries no vendor terms), and its readers fall
+    back to what ships beside it.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text()) or {}
+    declared = data.get("license")
+    names = [declared] if isinstance(declared, str) else list(declared or [])
+    paths = []
+    for name in names:
+        sidecar = model_file.parent / name
+        if not sidecar.is_file():
+            raise PluginError(f"{path}: license: {name!r} is not a file beside the model")
+        paths.append(sidecar)
+    return paths
+
+
 def load_manifest(
     model_file: Path, base_dir: Path | None = None, seen: frozenset[Path] = frozenset()
 ) -> list[dict]:
     """The manifest's ``components:`` list for a resolved model file, or ``[]`` when it has none.
 
     A manifest is a document like any other, so it may ``extends:`` another model's manifest and
-    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and said that by
-    repeating the base's ``g1_locomotion`` and ``lidar`` blocks verbatim until it could say it once.
+    inherit its components: ``unitree_g1_dex1`` is ``unitree_g1`` plus hands, and says exactly that
+    instead of repeating the base's ``g1_locomotion`` and ``lidar`` blocks for someone to keep in
+    step by hand.
     It inherits **components, not geometry** -- a derived model keeps its own MJCF; ``extends:`` never
     carried geometry, ``sim.world`` did, and a manifest may not carry ``sim:`` at all (see below).
 
@@ -100,8 +132,8 @@ def expand_manifest(
     When the owner already declares a component with the same **label**, the manifest default is not
     injected -- the world's entry is the one that runs -- but the manifest's config is **merged
     underneath it** (per key: the world's value always wins, missing keys are filled from the
-    manifest). That is what lets a world override *part* of a default: ``diff_drive: {robot: robot,
-    test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
+    manifest). That is what lets a world override *part* of a default: ``diff_drive:
+    {test_cmd: [0.5, 0.4]}`` adds a scripted command while keeping the model's wheel geometry, slip
     calibration and actuator names.
 
     The merge is shallow, deliberately: a nested value the world sets (``topics: {scan: /s}``)

@@ -491,6 +491,33 @@ def test_state_without_at_renders_the_last_sample(a_recording, tmp_path):
     assert record["sample_index"] == len(open_recording(npz)) - 1
 
 
+def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp_path):
+    """--view must reach the camera on the recording path too, not just on a live render.
+
+    A live render gets its overrides through the world config, which is loaded with them. A
+    recording rebuilds its world from its own provenance and never sees that config, so the flag was
+    accepted and silently did nothing -- the worst shape a bug can take, because the render succeeds
+    and only the framing is wrong. The docstring in `_render_recording` promised the opposite.
+    """
+    _scene, npz = a_recording
+    record = render.render_target(
+        None, tmp_path / "o.png", size="120x90", state=npz, view=["distance=1.25", "elevation=-25"]
+    )
+    assert record["camera"]["distance"] == pytest.approx(1.25)
+    assert record["camera"]["elevation"] == pytest.approx(-25)
+
+
+def test_view_is_partial_when_replaying_too(a_recording, tmp_path):
+    """One stated key must not reset the others -- the same rule a live render follows."""
+    _scene, npz = a_recording
+    base = render.render_target(None, tmp_path / "a.png", size="120x90", state=npz)
+    only_elevation = render.render_target(
+        None, tmp_path / "b.png", size="120x90", state=npz, view=["elevation=-25"]
+    )
+    assert only_elevation["camera"]["elevation"] == pytest.approx(-25)
+    assert only_elevation["camera"]["distance"] == pytest.approx(base["camera"]["distance"])
+
+
 def test_out_of_range_at_is_refused(a_recording, tmp_path):
     from roqsim.recording import RecordingError
 

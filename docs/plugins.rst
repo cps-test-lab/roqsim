@@ -42,10 +42,41 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``clock_rate_hz`` (default ``step`` — one ``/clock`` per physics step; a **rate** must
        divide every gated publish period or that publisher's stamps alias, and ``configure()``
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides), ``owner``
-       (optional endpoint filter for multi-transport splits).
+       (optional endpoint filter for multi-transport splits), ``merged_joint_states``
+       (see the note below).
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
        required config; reuses the bridge's node when co-loaded.
+
+.. note::
+
+   **When to set** ``merged_joint_states``. A robot with several controllers declares one
+   ``joint_states`` endpoint *per controller* (``arm_controller`` does), and where those are scoped
+   apart by namespace nothing publishes the plain topic a ``robot_state_publisher`` or MoveIt's
+   planning-scene monitor over their **combined** ``robot_description`` subscribes to — so that
+   description gets no TF and ``move_group`` never learns a current state, silently: it still logs
+   that planning is ready. The bridge closes that with one extra merged publisher per group, carrying
+   every member endpoint's names/positions/velocities/efforts in registration order, alongside each
+   endpoint's own topic, which is unchanged.
+
+   Which endpoints form a group is a fact about the *stack* — how many ``robot_description``\ s it
+   runs — that the world cannot answer, so it is declared::
+
+       components:
+         - ros2_bridge: {}                                # "auto" (default): group by entity
+         - ros2_bridge: {merged_joint_states: true}       # one /joint_states across all entities
+         - ros2_bridge: {merged_joint_states: false}      # never merge
+         - ros2_bridge:                                   # groups stated outright
+             merged_joint_states:
+               - {topic: /cell/joint_states, owners: [ur10e_left, ur10e_right]}
+
+   ``"auto"`` merges each **entity**'s controllers into the scope they share (``dual/left`` +
+   ``dual/right`` → ``/dual/joint_states``) and keeps separate robots separate — right without any
+   declaration, because one entity is one physical robot however the stack is arranged. Two arms that
+   are two entities but *one* description (what ``arm_controller``'s ``joint_prefix`` exists for) need
+   ``true`` or an explicit group; ``auto`` warns when more than one entity publishes joint states here
+   so that case is not silent. Controllers already sharing one topic get no merged publisher: they
+   meet on the wire, and both ``robot_state_publisher`` and MoveIt accumulate partial joint states.
 
 .. note::
 
@@ -110,8 +141,8 @@ It is not the render path's rule with a flag on it. Two differences, both becaus
 than silently ordered.
 
 Nothing is required to know the flag exists, either. When a world's *only* unresolvable plugins are
-its bridges, the failure says so and names both ways out — the bare "unknown plugin ``ros2_bridge``"
-used to send the reader hunting for a typo that was never there.
+its bridges, the failure says so and names both ways out; a bare "unknown plugin ``ros2_bridge``"
+sends the reader hunting for a typo that is not there.
 
 Model plugin manifests
 ----------------------
@@ -147,9 +178,10 @@ in its ``realsense_d435`` capture plugin.
   your entry wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is
   duplicated. Matching is on the **label**: the entry's ``name:``, else its plugin ref, among that
   owner's components. There is no entity key to name — an entry belongs to the entity whose block it
-  sits in — so the mistake this used to invite is not expressible: omitting ``robot:`` gave a *second*
-  controller running alongside the manifest default rather than replacing it, two controllers fighting
-  over the same actuators, and a config that silently had no effect.
+  sits in — which is what makes an override an override: a controller that named its robot instead
+  could sit anywhere, and one declared outside the block would run *alongside* the manifest default
+  rather than replacing it, leaving two controllers on the same actuators and a config with no
+  visible effect.
   The override is **partial**: keys you do not mention keep the model's manifest values, so adding a
   ``test_cmd`` does not cost you the model's wheel geometry or actuator names. Per key, what the
   world says wins; nested values (e.g. ``topics:``) replace the manifest's mapping outright rather
@@ -163,8 +195,8 @@ in its ``realsense_d435`` capture plugin.
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
 - **Opt out** entirely: set ``default_plugins: false`` on the ``spawn_*`` config.
 - **Derive one manifest from another** with ``extends:``. ``unitree_g1_dex1`` is a ``unitree_g1``
-  plus hands, and used to say so by repeating the base's locomotion and lidar blocks verbatim --
-  two copies that then had to be kept in step by hand. It now inherits them::
+  plus hands, and says exactly that -- rather than repeating the base's locomotion and lidar blocks
+  as a second copy for someone to keep in step by hand::
 
      extends: unitree_g1        # a roqsim.models ref, or a path beside this manifest
      components:
@@ -228,6 +260,206 @@ Note the envelope is recorded, not enforced: outside it a policy does not fail, 
 it against what a world actually contains (``spec.envelope.check_payload(mass)``) rather than trusting a
 port log to be read.
 
+Navigation: a mover the simulator drives itself
+-----------------------------------------------
+
+A trial usually needs more than the robot it is measuring: a second robot in the aisle, a pedestrian
+crossing, a cart that goes somewhere rather than along a fixed polyline. Those are *apparatus*, and
+``navigator`` drives them from inside the simulator -- it plans with A\* over a grid rasterized from
+the world's own wall geoms, so there is no map file, no localisation, and nothing on the ROS graph
+but the robot under test.
+
+It builds no geometry. It moves the entity of the entry it is nested under, and how that motion
+reaches the physics is its ``output``:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 12 20 68
+
+   * - output
+     - moves
+     - cost and what it is for
+   * - ``drive``
+     - a ``spawn_robot``
+     - Calls the ``RobotHandle.drive(vx, vy, w)`` the entity's controller published -- the *same*
+       entry point the ROS bridge writes ``/cmd_vel`` into. ``diff_drive`` still does its own inverse
+       kinematics, acceleration ramp and wheel-encoder odometry, so the wheels really turn and the
+       thing can slip. A full articulated robot in the solver: use it when the opponent's dynamics
+       are part of the experiment.
+   * - ``mocap``
+     - ``spawn_model: {mocap: true}``
+     - Writes the body's pose. **Zero solver DOFs** -- collision geometry the robot's lidar and
+       contacts see, and nothing for the physics to integrate. The cheap default for any opponent
+       whose wheel dynamics do not matter.
+   * - ``walker``
+     - a ``walker``
+     - The pedestrian: seventeen mocap bodies and a gait, also zero DOFs. Registered by
+       ``roqsim_walker``, not listed here -- outputs resolve from an entry-point group, so an
+       out-of-tree embodiment needs no edit to ``roqsim_nav``.
+
+.. code-block:: yaml
+
+   components:
+     - spawn_robot: {model: turtlebot4, pose: {position: {x: 4, y: -3}}}
+       name: cart
+       components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
+
+     - spawn_model: {model: graspable_box, pos: [2, 1], mocap: true}
+       name: pallet
+       components: [ {navigator: {speed: 0.3, goals: [[-2, 1]]}} ]
+
+``roqsim sim roqsim_nav:nav_opponents`` is the worked example: five encounters in one room, every
+mover navigated by the simulator itself -- a robot and a pedestrian swapping places, two
+omnidirectional bases head-on, two robots where both look and only one steers, a patrolling walker,
+and a robot given a goal beyond an obstacle its planner cannot see. Add a ``spawn_robot`` with a
+stack of its own and they carry on around it.
+
+**Routes.** ``route_mode: plan`` (the default) runs A\* between the given points -- they are goals.
+``route_mode: exact`` makes the path *be* the given polyline: straight legs, no planner, nothing that
+routes around anything, for replaying a recorded or scripted trajectory. ``autostart: false`` plans
+the route at load and holds the mover at its first point until something starts it, so a world can
+own the trajectory -- identical in every repetition, visible in a campaign's config diff -- while a
+scenario owns only its timing (``entity_navigate_start``).
+
+**One block says how a mover behaves around what its plan did not contain.** ``avoidance:`` carries
+three independent capabilities, each one question with one answer:
+
+.. code-block:: yaml
+
+   avoidance:
+     stop: true          # look ahead and hold until the way is clear      (default)
+     steer: give_way     # which shared model gives way for it, or `none`  (default: none)
+     reroute: false      # remember what stopped it and plan around it     (needs `stop`)
+     lookahead: 0.6      # ...and the probe's tuning, in the same block
+
+They are deliberately not a ladder. A walker steers without ever stopping -- which is how every
+existing pedestrian world behaves -- and an ordered scale from "ignore" to "reroute" cannot express
+that. Keeping them separate also means there is no combination table to learn.
+
+Which you want follows from what the mover is *for*:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 34 32
+
+   * - the mover is...
+     - write
+     - because
+   * - a scripted obstacle that must be in the same place at the same time in every repetition
+     - ``{stop: false, steer: none}``
+     - Reacting to the robot under test makes its trajectory a function of that robot's behaviour,
+       which is the coupling a controlled trial removes. Pair it with ``route_mode: exact``.
+   * - traffic that should not be driven into, but whose path must not change
+     - ``{stop: true}`` (the default)
+     - It holds and resumes on the leg it was on. Nothing it meets can alter where it goes.
+   * - traffic sharing a corridor, which should get past
+     - ``{stop: true, steer: give_way}``
+     - Both sides of a head-on encounter alter course to their own right, so the pair parts instead
+       of stopping nose to nose.
+   * - a mover that must reach its goal whatever is parked in the way
+     - ``{stop: true, steer: give_way, reroute: true}``
+     - It remembers what stopped it and plans around. The only setting that lets an encounter change
+       the planned path -- do not use it for a mover whose route is the experiment.
+   * - a pedestrian, behaving as pedestrians always have here
+     - nothing; the ``walker`` entry's own ``avoidance: true|false`` still works
+     - It expands to ``{steer: ..., stop: false}``: a walker steers or does nothing, and has never
+       looked ahead. Give it a ``navigator`` asking for ``stop: true`` to change that.
+
+Two settings are worth knowing before a scene misbehaves. ``lookahead`` is clear corridor measured
+from the mover's **front**, so it is how far short of something it halts -- the 1.2 m default is
+sized for a fast or large mover and will look like stopping for nothing on a small slow one.
+``width`` is the corridor swept, and it is not read from the model: it is the body **plus the
+clearance the mover should keep**, and widening it makes the mover stop earlier for everything, not
+just fit better.
+
+``stop`` is the forward probe. The planner's grid holds static walls and nothing else, so a mover
+also looks ahead along the corridor it is about to occupy, and what it sees is exactly the complement
+of the grid: a body with degrees of freedom, or a mocap body -- precisely what ``wall_polygons``
+refuses to rasterize. A wall at a corner is the planner's business and never the probe's. Holding is
+the default response, because a stopped mover is still on its path and resumes on the leg it was on,
+while a re-routing one has quietly changed a trajectory the experiment may have been holding fixed.
+
+``reroute`` is the opt-in that changes that: it remembers where it was stopped as a disc that
+expires, and plans around it. The memory is what makes it work -- the grid is static, so a mover that
+merely re-planned would return the same path and drive into the same obstacle for ever. It is
+deliberately not a costmap: a handful of discs, stamped onto a copy of the raster at plan time and
+nowhere else. ``recovery`` is separate again, for a mover that is wedged rather than merely blocked.
+
+``steer`` names the local model, resolved from the ``roqsim_nav.avoidance`` registry -- ORCA is one
+implementation, behind the ``[avoidance]`` extra. Every mover joins the model whether or not it
+steers, because opting out of yielding is not opting out of existing: a mover the others cannot see
+is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
+whose state is overwritten from ground truth, so the others go round it and it is never pushed.
+
+**Every key, and its default.** ``python -m pydoc roqsim_nav.plugins.navigator`` prints the
+annotated original beside the code it configures, which is the copy that cannot go stale.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 24 14 62
+
+   * - key
+     - default
+     - what it does
+   * - ``speed``
+     - *required*
+     - m/s the route is followed at.
+   * - ``goals``
+     - ``[]``
+     - The route, world metres: ``[x, y]`` or ``[x, y, yaw]``. Empty means "wait to be told".
+   * - ``output``
+     - ``auto``
+     - ``drive`` | ``mocap`` | ``walker`` | ``module:Class``. ``auto`` probes in a fixed order.
+   * - ``route_mode``
+     - ``plan``
+     - ``plan`` runs A\* between the points; ``exact`` makes the polyline *be* the path.
+   * - ``tracker``
+     - ``waypoint``
+     - ``waypoint`` steers at the goal; ``pure_pursuit`` steers at a carrot along the route, which
+       bounds cross-track error by ``lookahead`` rather than by ``arrival_radius``.
+   * - ``autostart``
+     - ``true``
+     - ``false`` plans at load and holds at the first point until something starts it.
+   * - ``loop``
+     - ``false``
+     - Cycle the route forever rather than stopping at the last point.
+   * - ``arrival_radius``
+     - ``0.25``
+     - m within which a goal counts as reached.
+   * - ``avoidance``
+     - ``{stop: true}``
+     - The block above: ``stop``, ``steer``, ``reroute``, ``params``, and the probe's tuning
+       (``lookahead``, ``width``, ``rays``, ``height``, ``clear_time``, ``yield_time``,
+       ``forget_after``, ``blockage_radius``, ``ignore``).
+   * - ``recovery``
+     - ``{enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}``
+     - For a mover that is wedged rather than merely blocked: it backs away from what stopped it and
+       re-plans. Refused with ``route_mode: exact``, which by definition cannot leave its path.
+   * - ``obstacle_height``
+     - ``[0.1, 1.8]``
+     - The z band a geom must span to be a wall **for this mover**, and the band its probe scans in.
+   * - ``resolution``
+     - ``0.05``
+     - m per planner grid cell. Movers agreeing on this and on ``obstacle_height`` share one raster.
+   * - ``planner``
+     - ``{inflation_radius: <measured>, waypoint_radius: 0.3}``
+     - Inflation defaults to the mover's own measured footprint, so it plans a path it fits through.
+   * - ``update_hz``
+     - ``20`` (``60`` for ``walker``)
+     - The nav pipeline's rate. Physics steps far faster; the output declares what it needs.
+   * - ``namespace``, ``goal_endpoint``, ``actions``
+     - the owner's, ``true``, both
+     - The goal interface: which nav2 actions this mover answers, and under what scope.
+
+Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
+``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
+``drive``; ``yaw_rate`` to ``mocap`` and ``walker``.
+
+**It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
+zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
+must not become a function of wheel slip, hence of contacts with the robot under test). A mover with
+realistic localisation error is a different experiment.
+
 Navigation: detecting a collision
 ---------------------------------
 
@@ -250,6 +482,69 @@ Two things are worth knowing before reaching for a proximity check instead:
 * **A latched report is a failed trial.** With ``latch: true`` (the default) the report stays true
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
+
+**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
+*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
+replaced every step and reports the region being touched — its centre in the robot's own frame, and
+whether that region is a point or a line::
+
+   - spawn_robot: {model: ridgeback}
+     name: robot
+     components:
+       - contact_monitor:  {ignore: [floor], min_force: 1.0}          # did it touch?
+       - contact_location: {ignore: [floor], merge_radius: 0.02}      # where, right now?
+
+Three things about it:
+
+* **A region, not a point.** A tactile skin reports one sensing area firing as a point contact and
+  several adjacent ones as a line. MuJoCo already computes a position per solved contact, so the
+  region is the set of simultaneous qualifying positions and the classification is their count — no
+  taxel grid is modelled and none needs to be. ``merge_radius`` is where a skin's spatial resolution
+  enters: two solver contacts closer together than one sensing area cannot be told apart by the real
+  device either, and without it every flat push reads as a dozen separate areas.
+* **In the robot's frame by default.** ``frame: base`` is what a rule like "contact on my left"
+  needs, and it makes a reading independent of where the robot is standing. ``frame: world`` is
+  there for logging against a map.
+* **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
+  logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
+  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
+  use, and the one a per-step control law needs.
+
+**Whose friction is it?** ``contact_pair_override`` answers the question per-geom friction
+cannot. It is the pair-scoped member of a family: ``sim.contact_override`` sets the same three
+parameters for every contact in the world, and ``model_override`` changes named model fields mid-run. MuJoCo
+combines two geoms' values by taking the **maximum**, so a geom's friction is a floor on every
+contact it takes part in and never a statement about one of them. Two consequences follow::
+
+   - contact_pair_override: {a: {entity: robot}, b: {entity: crate}, friction: 0.35}
+     name: robot_on_crate
+   - contact_pair_override: {a: {entity: crate}, b: {geom: floor}, friction: 0.3}
+     name: crate_on_floor
+
+* A pair cannot be made *less* frictional than either side already is -- lowering one geom does
+  nothing while the other stays high. A robot whose model leaves its body geoms at MuJoCo's default
+  1.0 pins every contact it makes to at least that.
+* Two different pair frictions sharing one object are not expressible at all. A crate sliding on a
+  floor at 0.3 while a robot pushes it at 0.35 has no per-geom assignment, because the crate's own
+  value is a floor on both.
+
+An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
+answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
+or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
+is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
+subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
+asking a world to enumerate them is how a pair silently misses the one that actually touches.
+
+One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
+contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
+two geoms that were deliberately non-colliding *makes them collide*. Two boxes with
+``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
+declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
+
+Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
+sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
+than resolved -- MuJoCo keeps both and uses one, and which is not something a world should have to
+know.
 
 **How close did it come?** ``clearance_monitor`` is the companion, and deliberately its opposite
 number. Contact is a bit: every configuration that does not touch scores identically, which is the
@@ -323,7 +618,8 @@ inertia about its own centre. An ``offset`` is refused rather than approximated 
 shifts the centre of mass and adds a parallel-axis term, which is a different body, not a heavier
 one. ``mass: 0`` leaves the model untouched, so the unloaded cell of a sweep is identical to a world
 that never declared a payload. Load a body other than the root with ``body:`` (the entity's spawn
-prefix is applied for you), and a robot other than the owning entity with ``robot:``.
+prefix is applied for you); which robot is loaded is the entry this one sits in, so there is nothing
+to point with.
 
 Where thrust is bounded this is the flight envelope rather than a detail: see
 ``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight
@@ -451,11 +747,47 @@ reading zero forever looks exactly like a robot that costs nothing to drive.
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
 collision -- a scenario reads the endpoint and stops the run itself.
 
+Ground that is not flat
+-----------------------
+
+Everything a robot could stand on here was a plane, while four of the ported platforms -- Spot, the
+Husky, the Jackal, the Warthog -- are outdoor machines whose papers are about what happens when it is
+not. ``heightfield`` is MuJoCo's own height field wired into a world::
+
+   components:
+     - heightfield: {size: [40, 40], height: 2.5, resolution: 128, seed: 3}
+     - spawn_robot: {model: husky_a200, pose: {position: {x: 0, y: 0}}}
+       name: robot
+
+It provides the ground (``provides_world``), so ``sim.world`` is not also built underneath it -- a
+floor through the hills is what that would mean. Elevation comes from one of three places and is
+normalised the same way regardless: generated fractal noise (reproducible from ``seed``, so two cells
+of a campaign share their hills), a ``.npy`` array, or a greyscale ``.png``/``.tif`` read at its own
+bit depth. A GeoTIFF is converted by the tools that own reprojection --
+``gdal_translate -ot UInt16 -scale dem.tif dem.png`` -- rather than by a simulator pretending to know
+about coordinate systems.
+
+The vertical scale is stated in metres (``height:``), never inferred from the file: an image has no
+unit, and a guessed one would put a made-up gradient under every result. It is also the natural
+campaign factor -- "the same hills, half as steep" is one number.
+
+``roqsim sim roqsim_mobile:warthog_terrain_demo`` is this with a robot on it: 2.5 m of relief over
+24 m, which the skid-steer climbs at up to 23 deg of pitch. It also shows the one coupling a terrain
+world has to get right -- ``spawn_robot`` keeps the model's rest height, measured against flat ground
+at z=0, so the spawn belongs at the terrain's lowest sample or the robot starts inside a hill. The
+demo picks a seed whose minimum is the grid centre and pins that in a test, because a seed changed
+without moving the spawn looks like a world that simply throws its robot.
+
+Contact is against the field's triangles, so the sample spacing is the resolution of every wheel and
+foot interaction: 128 samples over 40 m is a 31 cm grid, which a 10 cm wheel rides as facets. Raise
+``resolution`` for a small rough patch rather than a large smooth one; the cost is quadratic and buys
+nothing where the ground is flat.
+
 Declaring a plugin's config
 ---------------------------
 
-Every plugin validates its own config, and that stays. What a plugin may now also do is *declare*
-it, so the checks and the published description come from one place::
+Every plugin validates its own config. A plugin may also *declare* that config, so the checks and
+the published description come from one place::
 
    from roqsim.schema import Field
 
@@ -470,18 +802,18 @@ it, so the checks and the published description come from one place::
 
 **Declaring it is what enforces it.** The types, ranges, required keys and -- with ``STRICT_KEYS``
 -- unknown keys are checked when the world's plugins are built, beside whatever ``validate_config``
-adds; there is no call to remember. A schema the catalog published and nothing checked would be the
-docstring this replaces, wearing a type.
+adds; there is no call to remember. A schema the catalog publishes and nothing checks would be
+prose with a type annotation.
 
 ``roqsim plugins describe payload`` then carries a ``schema`` block beside the docstring-parsed
 ``parameters``: the same keys with their **types, defaults, units and bounds**. That is what a caller
 generating a world needs and what prose cannot give it -- and unlike a comment it cannot drift from
 behaviour, because validation runs on it.
 
-It is opt-in and additive: a plugin without a declaration behaves exactly as before, and one with a
-declaration still owns ``validate_config``. The schema covers what is the same everywhere; a rule
-only one plugin has (two lists the same length, a file that must exist, a cut that must be finite)
-stays where it belongs rather than growing the shared vocabulary.
+It is opt-in: a plugin without a declaration is unchecked by it, and one with a declaration still
+owns ``validate_config``. The schema covers what is the same everywhere; a rule only one plugin has
+(two lists the same length, a file that must exist, a cut that must be finite) stays where it
+belongs rather than growing the shared vocabulary.
 
 ``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
 ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
@@ -542,6 +874,72 @@ takes effect nowhere, and reads back as though it had is worse than one that is 
 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the
 next would quietly turn a nominal control cell into a degraded one.
+
+Bases: three geometries, one interface
+--------------------------------------
+
+``diff_drive``, ``omni_drive`` and ``ackermann_drive`` publish the same endpoints -- ``cmd_vel`` in,
+``odom`` and ``joint_states`` out -- so a stack does not know which it is driving until it asks for
+something the geometry cannot do. That is the point of having the third one: a car **cannot turn in
+place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
+that command is a planner that would not move the real vehicle, and approximating a car with a
+differential base and a small angular limit hides exactly the failure the experiment is looking for.
+
+``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
+right -- plus the wheelbase and the widths its geometry comes from::
+
+   components:
+     - spawn_robot: {model: my_car}
+       name: robot
+       components:
+         - ackermann_drive:
+             wheelbase: 0.32
+             track: 0.24
+             steer_track: 0.20
+             max_steer_angle: 0.5
+             steer_actuators: [left_steer_motor, right_steer_motor]
+             steer_joints:    [left_steer_joint, right_steer_joint]
+             drive_actuators: [rear_left_motor, rear_right_motor]
+             drive_joints:    [rear_left_joint, rear_right_joint]
+
+The two front wheels are steered by *different* angles and the two rear wheels driven at *different*
+speeds, both derived from the same curve -- the inner wheel of a turn follows a tighter radius, and a
+shared value would scrub the tyres. Both splits vanish as the curve straightens.
+
+**Which width is which.** A real car has three and they are not interchangeable: the separation of
+the two *steering axes*, the separation of the front wheel centres, and the driven axle's track. The
+two splits are measured across different ones, so there are two keys. ``steer_track`` is the width
+the steer split pivots about -- the steering axes, which on most vehicles are inboard of the wheels
+since a kingpin sits inside the hub -- and ``track`` is the driven axle the drive split is measured
+across. ``steer_track`` defaults to ``track``, which is exact for a design whose steering axes sit at
+its wheel centres; anywhere else, leaving it out overstates the steer split at every radius, and the
+front wheel centres (neither of the two) overstate it whichever key they are passed as.
+
+It also accepts the message a car-like stack already speaks. ``ackermann_cmd`` takes an
+``ackermann_msgs/AckermannDriveStamped`` on ``drive``, beside the ``cmd_vel`` every base here
+publishes::
+
+   ros2 topic pub /drive ackermann_msgs/msg/AckermannDriveStamped \
+     '{drive: {steering_angle: 0.3, speed: 0.6}}'
+
+The message's ``steering_angle`` is defined as *the yaw of a virtual wheel located at the center of
+the front axle*, which is exactly the centre angle this plugin splits into two, so nothing is
+converted on the way in. **That is what makes it more than an alias for a twist**: a twist states a
+curvature, ``w / v``, which says nothing at rest -- so through ``cmd_vel`` a stopped car's rack can
+only hold the angle it has. Through ``ackermann_cmd`` a stopped car can turn its wheels, which is
+what a real one does while parking, and what a car-like stack sends when lining up before it moves
+off. Whichever of the two commands arrived last owns the angle; they are never merged, because a
+stated angle and a curvature are two ways of saying the same thing and averaging them obeys neither.
+
+Both interfaces are kept because their consumers differ. Nav2 plans for car-like vehicles perfectly
+well -- Smac Hybrid-A* and the state-lattice planner both take a minimum turning radius -- but its
+controller commands in ``TwistStamped``, so a car driven by Nav2 needs ``cmd_vel``. A stack built
+around ``ackermann_msgs`` needs the other. Neither is a superset of the other.
+
+Its odometry is dead reckoning like the others', and it drifts on a curve where the tyres slip. That
+is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
+for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
+constant would only make the estimate look better than the sensor it stands for.
 
 Manipulation: an arm on a linear axis
 -------------------------------------
@@ -627,11 +1025,13 @@ Four more answers come off the model rather than from flags, each because gettin
 * **the collapse root** — the lowest common ancestor of every body an ``equality`` constraint touches.
   A closed linkage is exactly what URDF cannot express, and MuJoCo says where one is; collapse it and
   the loop is gone, miss it and the URDF keeps revolute DOFs nothing publishes.
-* **``start_state_max_bounds_error``** — emitted only for an arm that has a *continuous* joint. MoveIt
-  maps such a joint onto [-pi, pi] and ``CheckStartStateBounds`` then refuses to plan from a start
-  state that has drifted a hair outside it, which surfaces as a phase failing instantly with
-  ``START_STATE_INVALID`` right after a phase that succeeded — at a different phase each run. A
-  range-limited arm has no such problem and gets no such setting.
+* **``fix_start_state``** — emitted only for an arm that has a *continuous* joint.
+  ``CheckStartStateBounds`` normalizes such a joint onto [-pi, pi], and with this false (its default)
+  it reports ``START_STATE_INVALID`` precisely because it had to normalize. A start state that drifted
+  a hair past pi is therefore refused rather than wrapped, which surfaces as a phase failing instantly
+  right after a phase that succeeded — at a different phase each run. True writes the normalized state
+  back into the request; a joint genuinely outside its limits is still refused, by a separate bounds
+  check this flag does not relax. A range-limited arm has no such problem and gets no such setting.
 
 **Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
 fingertips has to be written as an offset from there — which multiplies every orientation tolerance by
@@ -639,6 +1039,44 @@ that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. On
 lateral error against 12.2 mm of jaw clearance: MoveIt had satisfied the goal exactly, and the goal was
 about the wrong point. ``--tip-site pinch`` emits a frame link at the gripper's own grasp site (through
 a collapsed parent, where such a site usually sits), so a 3 mm position tolerance means 3 mm at the pads.
+
+**Two arms that must move at once.** ``--arm left,right`` describes both as one robot: one URDF with
+both chains under a common root, one group per arm, and a group spanning all of them. That last group
+is the point of it — a plan for it is a single trajectory through both arms' joint space, so each
+arm's motion is checked against where the other *is* at that instant rather than against where it was
+before it started. It deliberately gets **no** IK solver: KDL solves a single serial chain and this
+group is several, so a solver there would load and then fail every pose request; reach a pose through
+one arm's own group, and use the combined group for joint-space planning. One flat namespace has to
+hold both arms, so their links and joints keep each arm's MJCF prefix — and since joint names are the
+controller's, not the description's, each arm's ``arm_controller`` needs ``joint_prefix:`` set to that
+same prefix. An arm publishing unprefixed names is refused rather than renamed, because those names
+are what reaches ``/joint_states`` and what a trajectory point carries. Every check above runs per arm:
+a second arm whose chain is short by a joint, or whose home disagrees with the simulator, fails as
+loudly as the first.
+
+**More than one planning pipeline.** ``--pipelines ompl,chomp`` writes a ``planning_pipelines.yaml``
+naming them for ``move_group`` and saying which one a request that names none gets; with the default
+single pipeline neither that file nor the selector is written, because there is nothing to select. Any
+name MoveIt can load is allowed — the list is open, so a pipeline this exporter has never heard of
+costs nothing — but each one's planner package has to be installed where ``move_group`` runs, or the
+pipeline fails to *load* at start-up rather than failing the request that uses it.
+
+Only ``ompl_planning.yaml`` is written. Its ``projection_evaluator`` names joints this model has,
+which is what makes it derivable; an optimizer's cost weights are not — they are the operating point
+of a minimisation, which is the experiment's decision, and a table of them emitted here would be the
+exporter making it. Every other pipeline therefore takes MoveIt's own packaged config (the config
+builder falls back to ``moveit_configs_utils/default_configs/<name>_planning.yaml``) until the
+experiment puts a file of that name on the config path it reads.
+
+Use this for a comparison **across** pipelines, where the planners are different plugins with
+unrelated parameter files and a trial picks one per request through ``MotionPlanRequest.pipeline_id``;
+comparing planners *inside* OMPL is another entry in ``ompl_planning.yaml`` and needs none of it. One
+thing to settle before designing such a comparison: **CHOMP accepts joint-space goals only.** It
+rejects a goal with no joint constraints, or with any position or orientation constraint, as
+``INVALID_GOAL_CONSTRAINTS``, so a trial that sets a pose target fails every CHOMP request outright —
+which reads like a planner performing badly rather than one that was never given a goal it could take.
+Solve the IK and send joint goals, or leave that pipeline out of a pose-goal comparison. The export
+warns about it, and ``planning_pipelines.yaml`` says so in a comment.
 
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.

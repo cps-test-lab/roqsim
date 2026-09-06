@@ -28,7 +28,11 @@ from scenario_execution.actions.base_action import ActionError  # noqa: E402
 
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
-from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: E402
+from scenario_execution_roqsim.actions.entity_moved import EntityMoved
+from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
+    EntityNavigate,
+    EntityNavigateStart,
+)
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.entity_teleport import EntityTeleport  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
@@ -133,8 +137,14 @@ def test_the_baseline_is_where_the_entity_was_when_the_action_started(world):
     """
     ctx, clock, sim = world
     action = _start(
-        EntityMoved(), sim, clock,
-        entities=["parcel"], threshold=0.05, mode="z", dwell=0.0, require="all",
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["parcel"],
+        threshold=0.05,
+        mode="z",
+        dwell=0.0,
+        require="all",
     )
     assert action.update() is RUNNING, "0.4 m above the floor is not 0.05 m of MOVEMENT"
     assert "parcel" in action.feedback_message
@@ -144,8 +154,14 @@ def test_it_succeeds_once_the_entity_has_actually_moved(world):
     """The crate slides down the ramp; the action fires when the displacement passes the threshold."""
     ctx, clock, sim = world
     action = _start(
-        EntityMoved(), sim, clock,
-        entities=["parcel"], threshold=0.05, mode="distance", dwell=0.0, require="all",
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["parcel"],
+        threshold=0.05,
+        mode="distance",
+        dwell=0.0,
+        require="all",
     )
     assert action.update() is RUNNING
     for _ in range(2000):
@@ -153,8 +169,12 @@ def test_it_succeeds_once_the_entity_has_actually_moved(world):
         if action.update() is SUCCESS:
             break
     assert action.update() is SUCCESS
-    moved = float(np.linalg.norm(ctx.data.xpos[mujoco.mj_name2id(
-        ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")] - np.array([0.0, 0.0, 0.4])))
+    moved = float(
+        np.linalg.norm(
+            ctx.data.xpos[mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")]
+            - np.array([0.0, 0.0, 0.4])
+        )
+    )
     assert moved >= 0.05
 
 
@@ -167,8 +187,14 @@ def test_the_dwell_is_measured_on_the_runners_clock_and_restarts_on_a_dip(world)
     ctx, clock, sim = world
     bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")
     action = _start(
-        EntityMoved(), sim, clock,
-        entities=["parcel"], threshold=0.05, mode="z", dwell=1.0, require="all",
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["parcel"],
+        threshold=0.05,
+        mode="z",
+        dwell=1.0,
+        require="all",
     )
     action.update()  # capture the baseline at z = 0.4
 
@@ -232,8 +258,14 @@ def test_an_unknown_entity_raises_and_names_the_near_miss(world):
     """A typo'd entity would otherwise wait out the scenario timeout with nothing to explain it."""
     _ctx, clock, sim = world
     action = _start(
-        EntityMoved(), sim, clock,
-        entities=["parcell"], threshold=0.05, mode="z", dwell=0.0, require="all",
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["parcell"],
+        threshold=0.05,
+        mode="z",
+        dwell=0.0,
+        require="all",
     )
     with pytest.raises(ActionError, match="parcel"):
         action.update()
@@ -244,8 +276,14 @@ def test_a_welded_entity_raises_rather_than_waiting_forever(world):
     ctx, clock, sim = world
     ctx.entities.add(Entity(name="ramp_entity", kind="prop", body="world"))
     action = _start(
-        EntityMoved(), sim, clock,
-        entities=["ramp_entity"], threshold=0.05, mode="distance", dwell=0.0, require="all",
+        EntityMoved(),
+        sim,
+        clock,
+        entities=["ramp_entity"],
+        threshold=0.05,
+        mode="distance",
+        dwell=0.0,
+        require="all",
     )
     with pytest.raises(ActionError, match="welded to the world"):
         action.update()
@@ -259,8 +297,14 @@ def test_it_waits_rather_than_building_a_world(world):
         context = None
 
     action = _start(
-        EntityMoved(), NotBuilt(), clock,
-        entities=["parcel"], threshold=0.05, mode="z", dwell=0.0, require="all",
+        EntityMoved(),
+        NotBuilt(),
+        clock,
+        entities=["parcel"],
+        threshold=0.05,
+        mode="z",
+        dwell=0.0,
+        require="all",
     )
     assert action.update() is RUNNING
     assert "simulation" in action.feedback_message
@@ -271,8 +315,13 @@ def test_rotation_fires_on_the_geodesic_angle(world):
     ctx, clock, sim = world
     bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")
     action = _start(
-        EntityRotated(), sim, clock,
-        entities=["parcel"], angle=0.5, dwell=0.0, require="all",
+        EntityRotated(),
+        sim,
+        clock,
+        entities=["parcel"],
+        angle=0.5,
+        dwell=0.0,
+        require="all",
     )
     assert action.update() is RUNNING
     turn = 0.6
@@ -295,7 +344,9 @@ def test_the_fault_is_applied_and_the_verdict_read_back(world):
     """SUCCESS only after the queued write has landed AND the plugin has verified it."""
     ctx, clock, sim = world
     plugin = _override(ctx)
-    _step(ctx, clock, plugin, seconds=2.0)  # let the crate settle onto the ramp, so a contact exists
+    _step(
+        ctx, clock, plugin, seconds=2.0
+    )  # let the crate settle onto the ramp, so a contact exists
 
     action = _start(
         SetModelOverride(), sim, clock, instance="grip_fault", active=True, require_landed=True
@@ -408,7 +459,9 @@ def teleport_world():
     ctx = SimContext(config={})
     ctx.model, ctx.data = model, mujoco.MjData(model)
     mujoco.mj_forward(model, ctx.data)
-    ctx.entities.add(Entity(name="robot", kind="robot", body="robot", meta={"base_joint": "robot_free"}))
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="robot", meta={"base_joint": "robot_free"})
+    )
     # No `base_joint` in meta: exercises the "cannot be teleported" outcome (a static prop).
     ctx.entities.add(Entity(name="prop", kind="object", body="fixed_prop", meta={}))
     return ctx, FakeClock(), FakeSim(ctx)
@@ -419,10 +472,13 @@ def test_teleport_places_the_entity_and_zeroes_its_velocity(teleport_world):
     bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
     jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
     dof = ctx.model.jnt_dofadr[jid]
-    ctx.data.qvel[dof:dof + 6] = 1.0  # nonzero, so the teleport's zeroing is actually exercised
+    ctx.data.qvel[dof : dof + 6] = 1.0  # nonzero, so the teleport's zeroing is actually exercised
 
     action = _start(
-        EntityTeleport(), sim, clock, entity="robot",
+        EntityTeleport(),
+        sim,
+        clock,
+        entity="robot",
         pose={"position": {"x": 5.0, "y": -1.0, "z": 0.0}, "orientation": {"yaw": math.pi / 2}},
     )
     assert action.update() is RUNNING, "the write is posted, not yet drained"
@@ -435,14 +491,19 @@ def test_teleport_places_the_entity_and_zeroes_its_velocity(teleport_world):
     # atol, not exactly 0: `_step` drains the write and then steps physics once, so gravity has
     # already pulled qvel[z] away from the zero the write itself set by one timestep's worth
     # (9.81 * 0.002 s here) -- the write is verified where it happens, not frozen against physics.
-    assert np.allclose(ctx.data.qvel[dof:dof + 6], 0.0, atol=0.03)
+    assert np.allclose(ctx.data.qvel[dof : dof + 6], 0.0, atol=0.03)
 
 
-def test_teleport_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_joint(teleport_world):
+def test_teleport_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_joint(
+    teleport_world,
+):
     """A static prop is a fact about the world the campaign chose, not a malformed call."""
     ctx, clock, sim = teleport_world
     action = _start(
-        EntityTeleport(), sim, clock, entity="prop",
+        EntityTeleport(),
+        sim,
+        clock,
+        entity="prop",
         pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "orientation": {"yaw": 0.0}},
     )
     assert action.update() is RUNNING
@@ -454,7 +515,10 @@ def test_teleport_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_
 def test_teleport_raises_on_an_unknown_entity(teleport_world):
     _ctx, clock, sim = teleport_world
     action = _start(
-        EntityTeleport(), sim, clock, entity="ghost",
+        EntityTeleport(),
+        sim,
+        clock,
+        entity="ghost",
         pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "orientation": {"yaw": 0.0}},
     )
     with pytest.raises(ActionError, match="no entity"):
@@ -466,7 +530,10 @@ def test_teleport_rejects_nonzero_roll_or_pitch_at_execute():
     with pytest.raises(ActionError, match="roll or pitch"):
         action.execute(
             entity="robot",
-            pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "orientation": {"roll": 0.1, "yaw": 0.0}},
+            pose={
+                "position": {"x": 0.0, "y": 0.0, "z": 0.0},
+                "orientation": {"roll": 0.1, "yaw": 0.0},
+            },
         )
 
 
@@ -551,3 +618,155 @@ def test_an_empty_sensor_address_is_refused_at_execute(world):
     with pytest.raises(Exception) as err:
         action.execute(instance="", active=True, require_landed=True)
     assert "COMPONENT ADDRESS" in str(err.value)
+
+
+# -- entity_navigate ------------------------------------------------------------------------------
+class FakeNavHandle:
+    """A navigator's handle, with the sequence-number contract and nothing else.
+
+    The action is written against that contract, not against a navigator, so this is what it should
+    be tested against: a stub makes the preemption and stale-completion cases reachable, which they
+    are not with a real mover without contriving a race.
+    """
+
+    def __init__(self):
+        self.applied = 0
+        self.finished = False
+        self.routes: list[list] = []
+        self.cancels = 0
+        self.starts = 0
+        self._next = 0
+
+    def _stamp(self) -> int:
+        self._next += 1
+        return self._next
+
+    def send_goals(self, goals) -> int:
+        self.routes.append(list(goals))
+        return self._stamp()
+
+    def start(self) -> int:
+        self.starts += 1
+        return self._stamp()
+
+    def cancel(self) -> int:
+        self.cancels += 1
+        return self._stamp()
+
+    def status(self):
+        return self.applied, self.finished, 0, 0.0
+
+    def apply(self, seq: int, *, finished: bool = False) -> None:
+        """What the physics thread does when a posted route lands."""
+        self.applied, self.finished = seq, finished
+
+
+def _nav(ctx, entity="parcel"):
+    handle = FakeNavHandle()
+    ctx.blackboard.set(f"nav:{entity}:handle", handle)
+    return handle
+
+
+def _pose(x, y, yaw=0.0):
+    return {"position": {"x": x, "y": y, "z": 0.0}, "orientation": {"yaw": yaw}}
+
+
+def test_a_route_is_sent_and_the_action_waits_for_arrival(world):
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(2.0, 1.0)])
+
+    assert action.update() == py_trees.common.Status.RUNNING
+    assert handle.routes == [[(2.0, 1.0)]]
+
+    handle.apply(1)  # applied, still driving
+    assert action.update() == py_trees.common.Status.RUNNING
+
+    handle.apply(1, finished=True)
+    assert action.update() == py_trees.common.Status.SUCCESS
+
+
+def test_it_does_not_report_an_arrival_before_the_route_is_even_applied(world):
+    """The failure the sequence number exists to prevent.
+
+    The navigator is idle and 'finished' when the route is queued -- it completed whatever it was
+    doing before. An action watching that flag alone would succeed instantly, having driven nothing.
+    """
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    handle.apply(0, finished=True)  # a previous route's completion, still latched
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(1.0, 0.0)])
+    assert action.update() == py_trees.common.Status.RUNNING
+
+
+def test_a_newer_route_preempts_this_one_and_fails_the_branch(world):
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(1.0, 0.0)])
+    action.update()
+    handle.apply(7, finished=True)  # somebody else's route, and it finished
+    assert action.update() == py_trees.common.Status.FAILURE
+
+
+def test_success_on_acceptance_does_not_wait_for_arrival(world):
+    """Fire-and-forget traffic: the scenario wants the mover moving, not to watch it."""
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(
+        EntityNavigate(),
+        sim,
+        clock,
+        entity="parcel",
+        goal_poses=[_pose(5.0, 5.0)],
+        success_on_acceptance=True,
+    )
+    action.update()
+    handle.apply(1)  # applied but nowhere near arrived
+    assert action.update() == py_trees.common.Status.SUCCESS
+
+
+def test_start_runs_the_configured_route_and_sends_no_goals(world):
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(EntityNavigateStart(), sim, clock, entity="parcel")
+    action.update()
+    assert handle.starts == 1
+    assert handle.routes == [], "it sent a route instead of starting the configured one"
+    handle.apply(1, finished=True)
+    assert action.update() == py_trees.common.Status.SUCCESS
+
+
+def test_an_abandoned_branch_stops_the_mover(world):
+    """Otherwise the opponent keeps driving across the robot's path long after the phase ended."""
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(9.0, 9.0)])
+    action.update()
+    assert action.request_cancel() is True
+    assert handle.cancels == 1
+
+
+def test_an_entity_with_no_navigator_raises_and_says_what_the_world_offers(world):
+    ctx, clock, sim = world
+    _nav(ctx, entity="cart")  # a different entity can navigate
+    action = _start(EntityNavigate(), sim, clock, entity="parcel", goal_poses=[_pose(1.0, 0.0)])
+    with pytest.raises(ActionError, match="has no navigator"):
+        action.update()
+
+
+@pytest.mark.parametrize("axis", ["roll", "pitch", "yaw"])
+def test_a_goal_orientation_is_refused_rather_than_dropped(world, axis):
+    """The navigator drives to a position; it has no final-heading control.
+
+    Accepting an orientation and discarding it would let a scenario believe it had set where the
+    mover ends up facing. Yaw is refused for the same reason as roll and pitch, and the message says
+    that adding the capability is the fix rather than passing the value.
+    """
+    ctx, clock, sim = world
+    _nav(ctx)
+    action = EntityNavigate()
+    action.setup(simulation=sim, clock=clock)
+    goal = _pose(1.0, 0.0)
+    goal["orientation"][axis] = 0.3
+    with pytest.raises(ActionError, match="orientation is nonzero"):
+        action.execute(entity="parcel", goal_poses=[goal])

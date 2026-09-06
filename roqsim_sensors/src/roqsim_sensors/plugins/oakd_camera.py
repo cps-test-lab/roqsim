@@ -9,7 +9,6 @@ Config (in addition to ``camera_common.CameraPlugin``'s, and ``depth_camera.Dept
 ``clip_near``/``clip_far``/``depth_encoding``)::
 
     oakd_camera:
-      robot: robot
       camera: oakd_rgb
       clip_near: 0.3      # m; depth outside [clip_near, clip_far] reads as "no return" (inf)
       clip_far: 100.0     # m

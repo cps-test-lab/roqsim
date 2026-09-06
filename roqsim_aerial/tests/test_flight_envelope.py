@@ -12,7 +12,6 @@ the aerial consequence, which only exists once a model with bounded thrust is fl
   what makes wind a disturbance rather than a number in the model.
 """
 
-
 from __future__ import annotations
 
 import numpy as np
@@ -44,7 +43,11 @@ def _world(*, payload=None, wind=None, sim_extra=None):
         },
         "components": [
             {
-                "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_", "pos": [0.0, 0.0]},
+                "spawn_robot": {
+                    "model": "crazyflie_2",
+                    "prefix": "cf2_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                },
                 "name": "drone",
                 "components": components,
             }
@@ -65,9 +68,7 @@ def _fly(world, seconds, seed=7):
     engine.setup()
     engine.ctx.seed = seed
     engine.reset()
-    controller = next(
-        p for p in engine.plugins if type(p).__name__ == "QuadrotorControllerPlugin"
-    )
+    controller = next(p for p in engine.plugins if type(p).__name__ == "QuadrotorControllerPlugin")
     track = []
     for _ in range(int(seconds / engine.ctx.dt)):
         engine.step()
@@ -78,10 +79,10 @@ def _fly(world, seconds, seed=7):
 @pytest.mark.parametrize(
     "payload_kg, expect_hover",
     [
-        (0.000, True),    # T/W 1.32
-        (0.003, True),    # T/W 1.19
-        (0.009, False),   # T/W 0.99 -- just under, and it cannot leave the floor
-        (0.012, False),   # T/W 0.91
+        (0.000, True),  # T/W 1.32
+        (0.003, True),  # T/W 1.19
+        (0.009, False),  # T/W 0.99 -- just under, and it cannot leave the floor
+        (0.012, False),  # T/W 0.91
     ],
 )
 def test_flight_envelope_collapses_with_payload(payload_kg, expect_hover):
@@ -99,6 +100,7 @@ def test_flight_envelope_collapses_with_payload(payload_kg, expect_hover):
 
 # -- wind ----------------------------------------------------------------------------------------
 
+
 def test_steady_wind_pushes_the_drone_downwind():
     calm = _fly(_world(), seconds=6.0)
     windy = _fly(_world(wind={"steady": [3.0, 0.0, 0.0]}), seconds=6.0)
@@ -112,5 +114,3 @@ def test_gust_displaces_further_than_the_steady_wind_alone():
     without = _fly(_world(wind=steady), seconds=6.0)
     with_gust = _fly(_world(wind=gusty), seconds=6.0)
     assert float(np.max(with_gust[:, 0])) > float(np.max(without[:, 0])) + 0.5
-
-

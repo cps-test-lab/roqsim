@@ -640,6 +640,24 @@ def decode_twist_stamped(msg) -> tuple[float, float, float]:
     return decode_twist(msg.twist)
 
 
+@decoder("ackermann_msgs.msg.AckermannDrive")
+def decode_ackermann(msg) -> tuple[float, float]:
+    """Car-like command -> neutral ``(steering_angle, speed)``.
+
+    Not converted to a twist on the way through, which would be the obvious thing and is wrong here.
+    A twist states a curvature, and turning a steering angle into one needs the wheelbase -- robot
+    geometry, which this module deliberately does not know. It also loses the case the message
+    exists to carry: at zero speed a curvature says nothing, while a steering angle still says which
+    way the wheels point. The consumer knows its own wheelbase and can do neither badly.
+    """
+    return (msg.steering_angle, msg.speed)
+
+
+@decoder("ackermann_msgs.msg.AckermannDriveStamped")
+def decode_ackermann_stamped(msg) -> tuple[float, float]:
+    return decode_ackermann(msg.drive)
+
+
 @decoder("geometry_msgs.msg.PoseStamped")
 def decode_pose_stamped(msg) -> tuple[float, float, float, float]:
     """Position setpoint -> neutral ``(x, y, z, yaw)``. Yaw is projected out of the quaternion: a

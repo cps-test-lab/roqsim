@@ -129,6 +129,36 @@ class TeleportCall(ABC):
     def poll(self) -> TeleportOutcome | None: ...
 
 
+@dataclass(frozen=True)
+class NavOutcome:
+    """What became of a navigation route.
+
+    ``ok`` false is a trial fact, not an authoring one: the route was preempted by a newer goal, or
+    the navigator gave up on it. An entity that has no navigator at all raises instead -- that is a
+    world that cannot answer, which is the distinction :class:`AccessError` exists to keep.
+    """
+
+    ok: bool
+    detail: str = ""
+
+
+class NavCall(ABC):
+    """A route in flight. ``poll()`` returns ``None`` until the outcome is known.
+
+    Keyed on the navigator's **sequence number**, not on a bare "finished" flag, and that is the
+    whole reason this is a call object rather than a boolean read. A navigator that has completed
+    whatever it was doing before is *already* finished when a new route is queued, so a caller
+    watching the flag would report an arrival that had not happened. The sequence says whose arrival
+    it is: equal and finished means yours; larger means something preempted you.
+    """
+
+    @abstractmethod
+    def poll(self) -> NavOutcome | None: ...
+
+    def cancel(self) -> None:
+        """Stop the mover. Idempotent -- an action's ``request_cancel`` may fire more than once."""
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -166,6 +196,20 @@ class WorldAccess(ABC):
         *kind* selects the channel (see :attr:`OVERRIDE_KINDS`); *instance* names the fault within
         it -- a ``model_override`` instance's ``name:`` for the physics channel, a component
         **address** (``robot.lidar``) for the sensor channel.
+        """
+
+    @abstractmethod
+    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
+
+        An empty ``goal_poses`` **starts the route the entity was configured with** rather than
+        sending a new one, which is what lets a world own an opponent's trajectory -- identical in
+        every repetition, and visible in a campaign's config diff -- while the scenario owns only
+        its timing.
+
+        This drives the simulator's own mover. It is not ``osc.nav2``'s ``nav_to_pose``, which
+        commands an external nav2 stack: that one is the subject of the experiment, this one is the
+        apparatus around it.
         """
 
     @abstractmethod

@@ -47,7 +47,7 @@ def recording(tmp_path, monkeypatch):
             {
                 "sim": {"world": str(scene)},
                 "plugins": [
-                    {"lidar": {"name": "front", "site": "scan", "rays": 180, "range_stddev": 0.05}}
+                    {"lidar": {"site": "scan", "rays": 180, "range_stddev": 0.05}, "name": "front"}
                 ],
             }
         )

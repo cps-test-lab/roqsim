@@ -361,14 +361,14 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
             {
                 "spawn_sensor": {
                     "model": "d435",
-                    "name": "d435",
                     "pos": [0.0, 0.0, 1.0],  # mount looks along +y (toward the wall) at rpy 0
                     "show_fov": True,
                     "fov_near": 0.2,
                     "fov_range": 3.0,
                     "fov_rays": [16, 12],
                     **spawn,
-                }
+                },
+                "name": "d435",
             }
         ],
     }
@@ -613,8 +613,11 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
 
     def column_profile(cx):
         lens = {"fx": f, "fy": f, "cx": cx, "cy": height / 2, "width": width, "height": height}
+        # The yaw is what puts the red box in frame, and the measurement is only the box's: with the
+        # camera facing anywhere else the profile is the room, whose shading carries no feature to
+        # correlate, and the lag it reports means nothing.
         engine = Engine(_lens_world(lens, width=width, height=height, scene=True,
-                                    pos=[0, 0, 0.5], rpy=[0, 0, 1.5707963]))
+                                    pos=[0, 0, 0.5], rpy=[0, 0, -1.5707963]))
         engine.setup()
         engine.reset()
         engine.step()

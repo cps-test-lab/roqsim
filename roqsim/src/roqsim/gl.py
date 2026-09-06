@@ -39,8 +39,8 @@ DEFAULT_MUJOCO_GL = "egl"
 #: Any ``renderD*`` counts, and probing for the specific name ``renderD128`` was a bug: nodes
 #: are numbered from 128 in probe order, so on a machine with an integrated chip *and* a
 #: discrete card the discrete one is ``renderD129`` -- and a container handed only that card
-#: sees no ``renderD128`` at all. That container has a perfectly good GPU, and the fixed path
-#: read it as the half-configured case below and refused to run.
+#: sees no ``renderD128`` at all. That container has a perfectly good GPU, and probing the fixed
+#: name reads it as the half-configured case below and refuses to run.
 _RENDER_NODE_DIR = "/dev/dri"
 
 #: The prefix a DRI render node's name always has (``renderD128``, ``renderD129``, ...), as

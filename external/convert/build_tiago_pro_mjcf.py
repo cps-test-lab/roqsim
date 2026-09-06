@@ -39,6 +39,7 @@ import numpy as np
 from xml.dom import minidom
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from model_headline import with_headline  # noqa: E402
 from sources import resolve_source  # noqa: E402
 
 # ---------------------------------------------------------------------------------------------
@@ -77,6 +78,7 @@ PACKAGES = {
 XACRO_ARGS = ["camera_model:=realsense-d435"]
 
 MODEL = "tiago_pro"
+HEADLINE = "PAL Robotics TIAGo Pro (omnidirectional base, SEA arm, head and PRO gripper) for MuJoCo."
 # The package's models/ dir, addressed relative to external/ (a sibling of the roqsim_* packages) so
 # the script runs from any cwd. The package is laid out one folder per model, so everything this
 # script writes goes under `models/<MODEL>/`: the MJCF, and its own `meshes/` beside it. Per-model
@@ -762,7 +764,9 @@ def add_pad_boxes(model_path: Path) -> None:
                     "rgba": "0.15 0.15 0.16 1",
                 }))
     xml = minidom.parseString(ET.tostring(root, encoding="unicode")).toprettyxml(indent="  ")
-    model_path.write_text("\n".join(l for l in xml.splitlines() if l.strip()) + "\n")
+    model_path.write_text(
+        with_headline("\n".join(l for l in xml.splitlines() if l.strip()), HEADLINE) + "\n"
+    )
     print(f"  added 8 pad boxes (2 per finger), fingertip hulls no longer collide")
 
 

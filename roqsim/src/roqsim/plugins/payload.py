@@ -7,7 +7,6 @@ plugin states it in the world, so it is swept like any other factor and recorded
 Config::
 
     payload:
-      robot: robot        # entity whose body carries it (default: the owning entity)
       mass: 2.5           # kg, REQUIRED -- added to the body's own mass
       body: tray          # body to load (default: the entity's root body)
 
@@ -45,7 +44,7 @@ class PayloadPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        self.robot = self.config.get("robot") or self.entity
+        self.robot = self.entity
         self._bid = -1
 
     #: Declared once, so `roqsim plugins describe payload` publishes the same keys the checks run

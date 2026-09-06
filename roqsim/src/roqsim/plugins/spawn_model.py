@@ -12,10 +12,13 @@ Config::
     spawn_model:
       model: industrial_table        # bundled model name, filename, or absolute path
       prefix: ""                     # MJCF name prefix (use distinct prefixes for >1 of the model)
-      pos: [0.0, 0.0, 0.0]           # [x, y] or [x, y, z]
-      rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
+      pose:                          # the mount pose, as SpawnEntity states one (see below)
+        position:    {x: 0.0, y: 0.0, z: 0.0}
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
+      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
+      present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the root body's total geom mass (kg)
       friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
@@ -31,6 +34,18 @@ variation plugin, just ``ParameterVariationList`` against these. ``mass`` rescal
 masses in proportion, keeping the mass distribution of a multi-geom prop; ``friction`` accepts a single
 sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
 has nothing to scale, rather than silently doing nothing.
+
+A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
+a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
+two non-default ones.
+
+``mocap: true`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
+it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
+and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
+component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
+``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
+rather than a joint), so a repetition never inherits where the last one left it.
 
 ``free: true`` adds a ``<freejoint/>`` to the prop's root body, turning it from welded scenery into a
 body physics moves -- a box a robot can pick up. It also registers the joint as the entity's
@@ -58,6 +73,30 @@ be stretched on one axis needs a purpose-built plugin instead (as ``door`` does 
 ``scale`` is geometry only -- it does not touch mass or inertia, which is why it suits the static
 scenery this plugin places (there is no free joint) and not a dynamic body.
 
+``pose:`` is the mount pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose``. Its
+orientation may be a quaternion or Euler angles, so a prop turned about +Z stays short::
+
+    - spawn_model: {model: industrial_table, pose: {position: {x: -0.13, y: 0.6},
+                                                    orientation: {yaw: 1.5708}}}
+
+It is the only way to state one, for the reason :mod:`roqsim.pose` gives: a document declaring where
+a thing sits and a ``SpawnEntity`` call placing it are the same pose, so they are written the same
+way. Omitting it mounts the prop at the origin, unrotated; an omitted ``position.z`` is the floor,
+which is what a prop's frame means by z (a robot's is its model's resting height, since a wheeled
+base has one and a prop does not). ``scale``, ``mass`` and ``friction`` are unaffected -- they are
+properties of the prop, not of where it is.
+
+``present: false`` compiles the prop in and starts it **absent**: nothing sees or touches it, and the
+control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
+is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
+recompiles, so everything a trial may bring in is declared up front (see :mod:`roqsim.presence`). The
+declared value is restored on ``on_reset``, so a spare spawned in one episode is a spare again in the
+next; without that, repetitions after the first would begin with an obstacle already in the room.
+
+It is not a way to leave a prop out: ``enabled: false`` does that, and does it properly, by never
+building the body at all. An absent prop still costs its geometry in the compiled model -- that is
+what makes it spawnable.
+
 Unlike the ``spawn_*`` plugins for robots/sensors this does **not** pull in a model manifest -- a prop
 is inert geometry with no intrinsic controller or sensors. Place several by listing the plugin
 multiple times with distinct ``prefix`` (and ``name``).
@@ -77,13 +116,13 @@ gets the frame. It has no effect on the baked web scene, which already seats the
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
+from roqsim.presence import set_present
 
 _TF_MODES = (False, "dynamic", "static")
 
@@ -113,19 +152,6 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
         joint.pos = [c * factor for c in joint.pos]
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
-
-
 class SpawnModelPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -136,12 +162,18 @@ class SpawnModelPlugin(Plugin):
         self.model_ref = self.config.get("model", "")
         self.prefix = self.config.get("prefix", "")
         self.entity_name = self.address
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos = [0.0, 0.0, 0.0]
+        self.quat = [1.0, 0.0, 0.0, 0.0]
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            # A prop is attached at a frame, so an unstated z is the frame's own: 0.0, the floor.
+            # (spawn_robot reads the same omission as the model's resting height, because a wheeled
+            # base has one and a prop does not.)
+            self.pos = [position[0], position[1], position[2] or 0.0]
         self.scale = float(self.config.get("scale", 1.0))
         self.free = bool(self.config.get("free", False))
+        self.mocap = bool(self.config.get("mocap", False))
+        self.present = bool(self.config.get("present", True))
         self.mass = self.config.get("mass")
         friction = self.config.get("friction")
         if friction is not None and not isinstance(friction, (list, tuple)):
@@ -149,6 +181,7 @@ class SpawnModelPlugin(Plugin):
         self.friction = [float(v) for v in friction] if friction is not None else None
         self._base_joint = ""
         self._spawn_qpos: list[float] = []
+        self._mocapid = -1
         # publish_tf: false | "dynamic" | "static"; `true` is an alias for "dynamic".
         mode = self.config.get("publish_tf", False)
         self.publish_tf = "dynamic" if mode is True else mode
@@ -167,10 +200,11 @@ class SpawnModelPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        if "pose" in config:
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         scale = config.get("scale", 1.0)
         if isinstance(scale, (list, tuple)):
             errors.append(
@@ -199,6 +233,21 @@ class SpawnModelPlugin(Plugin):
                 errors.append("'friction' must be a number or [sliding, torsional, rolling]")
             elif any(float(v) < 0.0 for v in values):
                 errors.append("'friction' components must be >= 0")
+        if "present" in config and not isinstance(config["present"], bool):
+            errors.append("'present' must be true or false")
+        if config.get("free") and config.get("mocap"):
+            # A mocap body has no DOFs, so a free joint on it is not a stricter version of the same
+            # thing -- it is the opposite claim about who moves the prop. MuJoCo would accept the
+            # combination and then ignore one of them.
+            errors.append(
+                "'free' and 'mocap' are mutually exclusive: 'free' hands the prop to physics, "
+                "'mocap' hands it to a plugin. Pick the one that owns its pose."
+            )
+        if config.get("mocap") and ("dynamic" if mode is True else mode) == "static":
+            errors.append(
+                "'publish_tf: static' contradicts 'mocap: true' -- a driven body's pose is not "
+                "model-fixed; use publish_tf: dynamic"
+            )
         if config.get("free") and ("dynamic" if mode is True else mode) == "static":
             # A latched one-shot pose for a body that moves is a frame frozen at the spawn pose.
             errors.append(
@@ -231,6 +280,8 @@ class SpawnModelPlugin(Plugin):
             self._apply_physics_overrides(bodies, asset)
         if self.free:
             self._add_freejoint(child, bodies, asset)
+        if self.mocap:
+            self._make_mocap(child, bodies, asset)
         if not self.entity_name:
             self.entity_name = asset.path.stem
         frame = spec.worldbody.add_frame()
@@ -279,6 +330,24 @@ class SpawnModelPlugin(Plugin):
         root.add_freejoint(name="free")
         self._base_joint = f"{self.prefix}free"
 
+    def _make_mocap(self, child: mujoco.MjSpec, bodies, asset) -> None:
+        """Make the prop's root body a mocap body, refusing the cases that go silently wrong."""
+        if not bodies:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mocap: true needs a root body to drive, but "
+                f"{asset.path} declares none (its geoms sit directly on worldbody)."
+            )
+        root = bodies[0]
+        if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
+            # MuJoCo compiles a jointed mocap body without complaint and then never moves the joints,
+            # so an articulated prop would arrive looking correct and be frozen.
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: mocap: true, but {asset.path} gives its root body "
+                f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
+                f"inert -- spawn it without `mocap`."
+            )
+        root.mocap = True
+
     def configure(self, ctx: SimContext) -> None:
         self._body_frame = self.prefix + self._root_body
         meta = {"prefix": self.prefix, "model": self.model_ref}
@@ -286,14 +355,32 @@ class SpawnModelPlugin(Plugin):
             # simulation_interfaces' SetEntityState only accepts an entity whose base_joint is a free
             # joint, so without this a movable prop could not be teleported or reset between episodes.
             meta["base_joint"] = self._base_joint
+        if self.mocap:
+            # `mocap` in the meta is how a component nested under this entry -- a `navigator`, say --
+            # discovers that it may write this body's pose, without having to re-derive it from the
+            # compiled model.
+            meta["mocap"] = True
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if self.free else "prop",
+                # Not "prop": a prop is scenery, and both of the other two states MOVE. What differs
+                # is who moves them, which `meta` says.
+                kind="object" if (self.free or self.mocap) else "prop",
                 body=self._body_frame,
                 meta=meta,
             )
         )
+        self._apply_declared_presence(ctx)
+        if self.mocap:
+            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, self._body_frame)
+            if bid < 0:
+                raise RuntimeError(f"spawn_model: body {self._body_frame!r} not found for mocap")
+            self._mocapid = int(ctx.model.body_mocapid[bid])
+            if self._mocapid < 0:
+                raise RuntimeError(
+                    f"spawn_model: body {self._body_frame!r} is not a mocap body after compile"
+                )
+
         if self.free:
             jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
             if jid < 0:
@@ -358,11 +445,21 @@ class SpawnModelPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
 
-        Only for ``free: true``: a welded prop cannot drift, but a movable one is wherever the last
-        episode left it -- on the floor, if the robot knocked it off the table. Repetitions of a trial
-        would then not be repetitions. ``mj_resetData`` restores ``qpos0``, which already holds the
-        spawn pose, but velocity is cleared per-joint here so a prop reset mid-flight does not keep it.
+        A welded prop cannot drift, but a ``free`` one is wherever the last episode left it -- on the
+        floor, if the robot knocked it off the table -- so repetitions of a trial would not be
+        repetitions.
+
+        Only ``free`` needs anything done here. ``mj_resetData`` restores ``qpos0``, which already
+        holds the spawn pose, so all that is left is clearing velocity per-joint, so a prop reset
+        mid-flight does not keep it.
+
+        A ``mocap`` prop needs nothing, and that is worth stating because it looks like it should:
+        ``mj_resetData`` re-initialises ``mocap_pos``/``mocap_quat`` from the body's ``body_pos`` /
+        ``body_quat``, which *is* the spawn pose (this plugin attaches the prop at a frame there).
+        So a driven prop is already back where it started before any ``on_reset`` runs, and an
+        explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
+        self._apply_declared_presence(ctx)
         if not self.free or not self._spawn_qpos:
             return
         adr, *pose = self._spawn_qpos
@@ -371,6 +468,15 @@ class SpawnModelPlugin(Plugin):
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
         dofadr = int(ctx.model.jnt_dofadr[jid])
         ctx.data.qvel[dofadr : dofadr + 6] = 0.0
+
+    def _apply_declared_presence(self, ctx: SimContext) -> None:
+        """Put the prop back to the presence the world declared.
+
+        Run at configure AND at every reset, because presence lives in ``model`` while
+        ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when the next
+        one begins. A world that declares a spare means it in every episode, not just the first.
+        """
+        set_present(ctx, ctx.entities.get(self.entity_name), self.present)
 
     def read_pose(self):
         """Endpoint ``read`` (physics thread): the root body's world pose as a one-entry TF payload

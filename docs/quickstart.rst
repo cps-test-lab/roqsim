@@ -55,6 +55,14 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer h
    the same process as MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with
    ``undefined symbol: eglQueryString``. If you see that, clear it with ``export -n LD_PRELOAD``.
 
+.. _viewer-keys:
+
+Keys in the window
+~~~~~~~~~~~~~~~~~~
+
+**F1** lists the keys roqsim adds to the window, and leaves the list up until F1 comes again. MuJoCo's
+own help opens with it, in the opposite corner, listing Simulate's keys rather than these.
+
 Moving the camera
 ~~~~~~~~~~~~~~~~~
 
@@ -202,6 +210,27 @@ names the same eye position and renders the identical image, it just no longer r
 from the scene". And F8 needs a world YAML to write into — a run started from an MJCF scene or a bare
 model reference has none, and says so rather than picking a file.
 
+Checking a world before running it
+----------------------------------
+
+``roqsim check`` loads a world as far as it goes and reports **every** problem it found, in the order
+the loader would hit them -- so a world with three bad keys reports three, and a mount that does not
+exist is named rather than discovered by a run that dies quietly::
+
+   roqsim check world.yaml
+   roqsim check roqsim_mobile:husky_demo --json     # the same report, for a script
+
+It runs five stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure`` -- and says
+which one it reached, because "the config is wrong" and "the config is fine and the model refused the
+name a plugin asked for" send a reader to different files. It does not step the simulation: a world
+that passes can still behave wrongly, but it cannot fail to *start*, which is the failure worth
+catching before a campaign queues a thousand of them.
+
+With no problems it prints the inventory instead: the entities that registered, the endpoints they
+publish with their topics and types, and the model's totals. That is what the next thing gets written
+against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the
+world file and its manifests to work out what is in there.
+
 .. _recording-a-run:
 
 Recording a run
@@ -222,6 +251,13 @@ from any camera, at any resolution, as a still or a video — without re-running
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
 same way: one line rewritten in place at a terminal, and a handful of lines when the output is a log.
+
+**F9 records a take**, in any windowed run — with or without ``--record``. Press it once to start
+and again to stop; the window title carries ``[REC]`` while one is running, and takes are numbered
+(``run.npz``, ``run-2.npz``, …) beside the ``--record`` path, or beside the default when the run was
+started without one. It is the way to capture the interesting minute of a long run rather than all
+of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
+same way.
 
 ``--capture-fps`` is **samples per simulated second**, so a recording plays back at 1× sim time
 whatever pacing the run used. Samples can only be taken on a physics step, so the rate is snapped onto

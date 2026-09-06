@@ -16,21 +16,21 @@
 
 """A plugin's config, declared once: checked at load, and readable by a machine.
 
-Every plugin validates its own config -- that part is deliberate and stays (:meth:`roqsim.plugin.
-Plugin.validate_config`). What was missing is a way to *say* what the config IS. The catalog
-(``roqsim plugins describe``) reconstructs it by parsing the ``Config::`` block out of a docstring,
-which yields a name, an example and a comment: no type, no range, no way to tell a required key from
-one with a default. A caller writing a world -- a person, a campaign generator, an agent -- has to
-read prose and guess, and finds out by running.
+Every plugin validates its own config (:meth:`roqsim.plugin.Plugin.validate_config`). A schema is
+how a plugin also *says* what that config is. Without one the catalog (``roqsim plugins describe``)
+has only the ``Config::`` block parsed out of a docstring: a name, an example and a comment, with no
+type, no range, and no way to tell a required key from one with a default -- so a caller writing a
+world, whether a person, a campaign generator or an agent, reads prose, guesses, and finds out by
+running.
 
 A plugin that declares :data:`Plugin.CONFIG_SCHEMA` gets both from one place: :func:`validate` turns
 the declaration into the same error strings the hand-written checks produce, and the introspection
 API publishes the fields with their types, defaults, units and bounds.
 
-Opt-in, and additive. A plugin without a schema behaves exactly as before, and a plugin WITH one
-still owns ``validate_config`` for whatever else it knows (that two lists must be the same length,
-that a file must exist). The schema is not a validation framework growing to cover every rule; it is
-the part that is the same everywhere, written once instead of forty times.
+Opt-in. A plugin without a schema is unchecked by it, and a plugin with one still owns
+``validate_config`` for whatever else it knows (that two lists must be the same length, that a file
+must exist). The schema is not a validation framework covering every rule; it is the part that is
+the same everywhere, written once rather than in every plugin.
 
 **Declaring a schema is what enforces it**: ``instantiate_plugins`` checks it, so there is no call
 for a plugin author to remember and no way to publish a contract through the catalog that nothing

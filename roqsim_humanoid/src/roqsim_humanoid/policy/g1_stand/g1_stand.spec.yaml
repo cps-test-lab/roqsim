@@ -1,6 +1,6 @@
 # Unitree G1 -- actively balanced STANDING, while MoveIt moves the arms.
 #
-# Use with:  g1_locomotion: {robot: robot, policy: g1_stand, station_keeping: true}
+# Use with:  g1_locomotion: {policy: g1_stand, station_keeping: true}, nested under the spawn
 #
 # Why this policy exists, in one line: the bundled walk policy (`motion.pt`) cannot stand still. Its
 # observation carries a cycling gait phase, so a zero command means "walk at zero speed" -- measured at

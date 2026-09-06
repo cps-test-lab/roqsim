@@ -9,13 +9,20 @@ the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e 
 
 from __future__ import annotations
 
+import xml.etree.ElementTree as ET
+
 import mujoco
 import numpy as np
 import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.export_urdf import UrdfExporter, _quat_to_rpy, round_trip_error
+from roqsim.export_urdf import (
+    UrdfExporter,
+    _quat_to_rpy,
+    combine_urdfs,
+    round_trip_error,
+)
 
 
 def _rpy_to_mat(roll, pitch, yaw):
@@ -69,16 +76,22 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}},
+                {
+                    "spawn_robot": {
+                        "model": "husky_a200",
+                        "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    },
+                    "name": "husky",
+                },
                 {
                     "spawn_arm": {
                         "model": "ur10e",
-                        "name": "arm",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
                         "pos": [0.25, 0.0, 0.2587],
                         "end_effector": {"model": gripper, "replaces": ["ee_plate"]},
-                    }
+                    },
+                    "name": "arm",
                 },
             ],
         },
@@ -165,7 +178,7 @@ def test_round_trip_survives_a_rotated_root_body(tmp_path):
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_arm": {"model": "ur5e", "name": "arm", "prefix": "ur5e_"}}],
+            "plugins": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "arm"}],
         },
         base_dir=tmp_path,
     )
@@ -483,3 +496,104 @@ def test_an_unknown_tip_site_names_the_sites_the_model_has(tmp_path, robot):
     with pytest.raises(ValueError, match="names no site") as err:
         _tip_export(tmp_path, robot, tip_site="pnich")
     assert "pinch" in str(err.value), "the error should list what was available"
+
+
+# -- several robots in one description -----------------------------------------------------------
+
+_PAIR = """
+<mujoco>
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="a_base" pos="0.3 -0.4 0.1" quat="0 0 0 1">
+      <geom name="a_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="a_link" pos="0 0 0.2">
+        <joint name="a_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="a_g2" type="box" size="0.05 0.2 0.05" mass="1"/>
+      </body>
+    </body>
+    <body name="b_base" pos="0 0.4 0">
+      <geom name="b_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="b_link" pos="0 0 0.2">
+        <joint name="b_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="b_g2" type="box" size="0.05 0.2 0.05" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _pair_parts(model, mesh_dir):
+    parts = []
+    for prefix in ("a_", "b_"):
+        exporter = UrdfExporter(
+            model,
+            prefix=prefix,
+            name=f"part_{prefix}",
+            root_link=f"{prefix}base",
+            mesh_dir=mesh_dir,
+            strip="",
+            link_strip="",
+        )
+        parts.append(
+            (exporter.export(), mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base"))
+        )
+    return parts
+
+
+def test_two_robots_hang_off_one_root_at_the_pose_the_model_puts_them(tmp_path):
+    """One description, one root, and each robot where the compiled world has it -- including its
+    ORIENTATION, or a plan for the pair is right about each arm and wrong about the cell."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    tree = combine_urdfs(
+        model, _pair_parts(model, tmp_path / "meshes"), name="pair", root_link="base_link"
+    )
+    root = tree.getroot()
+    links = {link.get("name") for link in root.findall("link")}
+    assert links == {"base_link", "a_base", "a_link", "b_base", "b_link"}
+    mounts = {
+        j.find("child").get("link"): j for j in root.findall("joint") if j.get("type") == "fixed"
+    }
+    assert mounts["a_base"].find("parent").get("link") == "base_link"
+    assert mounts["a_base"].find("origin").get("xyz") == "0.3 -0.4 0.1"
+    assert mounts["b_base"].find("origin").get("xyz") == "0 0.4 0"
+    assert mounts["a_base"].find("origin").get("rpy") != mounts["b_base"].find("origin").get("rpy")
+
+
+def test_the_combined_urdf_agrees_with_the_model_it_came_from(tmp_path):
+    """The round trip is what proves the mount poses are right rather than merely present: a second
+    robot placed by the wrong transform shows up here as centimetres."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    out = tmp_path / "pair.urdf"
+    tree = combine_urdfs(
+        model, _pair_parts(model, tmp_path / "meshes"), name="pair", root_link="base_link"
+    )
+    ET.indent(tree, space="  ")
+    tree.write(out, encoding="utf-8", xml_declaration=True)
+    err, where = round_trip_error(out, model, "", mesh_dir=tmp_path / "meshes")
+    assert err < 1e-6, f"combined URDF diverges from the MJCF at {where}"
+
+
+def test_a_name_two_robots_both_claim_is_refused(tmp_path):
+    """One URDF is one flat namespace. Keeping only one of the two would parse and then plan around
+    a robot that is not there."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    parts = [
+        (
+            UrdfExporter(
+                model, prefix=prefix, name="part", root_link="base", mesh_dir=tmp_path / "meshes"
+            ).export(),
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base"),
+        )
+        for prefix in ("a_", "b_")
+    ]
+    with pytest.raises(ValueError, match="claimed by both"):
+        combine_urdfs(model, parts, name="pair", root_link="base_link")
+
+
+def test_one_robot_is_exported_directly_rather_than_combined(tmp_path):
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    with pytest.raises(ValueError, match="at least two parts"):
+        combine_urdfs(
+            model, _pair_parts(model, tmp_path / "meshes")[:1], name="one", root_link="base_link"
+        )

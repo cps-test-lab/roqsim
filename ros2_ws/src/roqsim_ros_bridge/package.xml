@@ -28,6 +28,7 @@
   <exec_depend>simulation_interfaces</exec_depend>
   <exec_depend>control_msgs</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
+  <exec_depend>ackermann_msgs</exec_depend>
 
   <!-- roqsim is a plain pip package (not a ROS package); install it into the
        same environment (pip install -e .). It is intentionally not a ROS dep. -->
