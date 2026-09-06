@@ -295,6 +295,13 @@ def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
     """
     seen: dict[str, PluginSpec] = {}
     for spec in specs:
+        # A disabled entry is not a component: it builds nothing, registers no entity and owns no
+        # generated MJCF name, so it cannot be the thing another label silently stands in for. It
+        # must be skipped, because `disable:` turns an inherited entry OFF rather than removing it
+        # (`_apply_disable`) -- so the documented way to modify an inherited plugin, "disable it and
+        # re-add a tweaked copy", leaves exactly one live entry and one dead one under one label.
+        if not spec.enabled:
+            continue
         clash = seen.get(spec.label)
         if clash is not None:
             where = f"'{owner}'" if owner else "this document"
