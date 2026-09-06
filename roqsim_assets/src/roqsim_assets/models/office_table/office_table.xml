@@ -1,0 +1,15 @@
+<mujoco model="office_table">
+  <!-- MuJoCo can't read OBJ .mtl textures and only loads PNG, so the colour map is declared
+       here explicitly. Load standalone or <include> it into a scene. -->
+  <compiler meshdir="." texturedir="."/>
+  <asset>
+    <texture name="office_table_color" type="2d" file="textures/DefaultMaterial_baseColor.png"/>
+    <material name="office_table" texture="office_table_color"/>
+    <mesh name="office_table" file="office_table.obj"/>
+  </asset>
+  <worldbody>
+    <body name="office_table">
+      <geom type="mesh" mesh="office_table" material="office_table"/>
+    </body>
+  </worldbody>
+</mujoco>
