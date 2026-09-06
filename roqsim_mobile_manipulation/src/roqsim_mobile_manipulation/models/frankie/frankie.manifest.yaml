@@ -58,3 +58,25 @@ components:
         joint5: 0.0
         joint6: 2.0
         joint7: 0.7853981633974483
+
+  # The base's own safety laser. Every mobile base in the substrate ships a `lidar` site and this
+  # one is a navigating platform, so it carries a scan by default rather than making each world
+  # rediscover the mount.
+  #
+  # The GEOMETRY is measured from the Omron CAD (see the site's comment in frankie.xml): the mount
+  # point is the sensor housing's centre, and the window slot subtends 250 deg about it, so the fan
+  # is +-125 deg. `exclude_body` is not optional -- the site sits inside the chassis collision box,
+  # and without it every ray returns the robot's own shell.
+  #
+  # The SAMPLING is not: the source URDF models no laser at all, so `rays` and `rate_hz` are the
+  # substrate's, chosen as one sample per half-degree at a typical safety-scanner rate. A study that
+  # depends on angular resolution or scan rate should set them from the scanner it means to model
+  # rather than inherit these. Range is likewise the plugin's default rather than a rated figure.
+  - lidar:
+      site: lidar
+      rays: 500                     # 250 deg at 0.5 deg spacing
+      angle_min: -2.1816615649      # -125 deg
+      angle_max: 2.1816615649       # +125 deg
+      rate_hz: 15.0
+      exclude_body: base_link       # the site is inside the chassis box; see above
+    name: lidar

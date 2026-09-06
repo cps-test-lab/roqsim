@@ -510,6 +510,42 @@ Three things about it:
   current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
   use, and the one a per-step control law needs.
 
+**Whose friction is it?** ``contact_pair_override`` answers the question per-geom friction
+cannot. It is the pair-scoped member of a family: ``sim.contact_override`` sets the same three
+parameters for every contact in the world, and ``model_override`` changes named model fields mid-run. MuJoCo
+combines two geoms' values by taking the **maximum**, so a geom's friction is a floor on every
+contact it takes part in and never a statement about one of them. Two consequences follow::
+
+   - contact_pair_override: {a: {entity: robot}, b: {entity: crate}, friction: 0.35}
+     name: robot_on_crate
+   - contact_pair_override: {a: {entity: crate}, b: {geom: floor}, friction: 0.3}
+     name: crate_on_floor
+
+* A pair cannot be made *less* frictional than either side already is -- lowering one geom does
+  nothing while the other stays high. A robot whose model leaves its body geoms at MuJoCo's default
+  1.0 pins every contact it makes to at least that.
+* Two different pair frictions sharing one object are not expressible at all. A crate sliding on a
+  floor at 0.3 while a robot pushes it at 0.35 has no per-geom assignment, because the crate's own
+  value is a floor on both.
+
+An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
+answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
+or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
+is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
+subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
+asking a world to enumerate them is how a pair silently misses the one that actually touches.
+
+One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
+contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
+two geoms that were deliberately non-colliding *makes them collide*. Two boxes with
+``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
+declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
+
+Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
+sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
+than resolved -- MuJoCo keeps both and uses one, and which is not something a world should have to
+know.
+
 **How close did it come?** ``clearance_monitor`` is the companion, and deliberately its opposite
 number. Contact is a bit: every configuration that does not touch scores identically, which is the
 right failure criterion and a poor thing to optimise. Distance is the same question asked
