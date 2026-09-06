@@ -17,6 +17,7 @@ Config::
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
       mocap: false                   # make it a mocap body: moved by a plugin, not by physics
+      present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the root body's total geom mass (kg)
       friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
@@ -71,6 +72,17 @@ be stretched on one axis needs a purpose-built plugin instead (as ``door`` does 
 ``scale`` is geometry only -- it does not touch mass or inertia, which is why it suits the static
 scenery this plugin places (there is no free joint) and not a dynamic body.
 
+``present: false`` compiles the prop in and starts it **absent**: nothing sees or touches it, and the
+control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
+is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
+recompiles, so everything a trial may bring in is declared up front (see :mod:`roqsim.presence`). The
+declared value is restored on ``on_reset``, so a spare spawned in one episode is a spare again in the
+next; without that, repetitions after the first would begin with an obstacle already in the room.
+
+It is not a way to leave a prop out: ``enabled: false`` does that, and does it properly, by never
+building the body at all. An absent prop still costs its geometry in the compiled model -- that is
+what makes it spawnable.
+
 Unlike the ``spawn_*`` plugins for robots/sensors this does **not** pull in a model manifest -- a prop
 is inert geometry with no intrinsic controller or sensors. Place several by listing the plugin
 multiple times with distinct ``prefix`` (and ``name``).
@@ -97,6 +109,7 @@ import mujoco
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.presence import set_present
 
 _TF_MODES = (False, "dynamic", "static")
 
@@ -156,6 +169,7 @@ class SpawnModelPlugin(Plugin):
         self.scale = float(self.config.get("scale", 1.0))
         self.free = bool(self.config.get("free", False))
         self.mocap = bool(self.config.get("mocap", False))
+        self.present = bool(self.config.get("present", True))
         self.mass = self.config.get("mass")
         friction = self.config.get("friction")
         if friction is not None and not isinstance(friction, (list, tuple)):
@@ -214,6 +228,8 @@ class SpawnModelPlugin(Plugin):
                 errors.append("'friction' must be a number or [sliding, torsional, rolling]")
             elif any(float(v) < 0.0 for v in values):
                 errors.append("'friction' components must be >= 0")
+        if "present" in config and not isinstance(config["present"], bool):
+            errors.append("'present' must be true or false")
         if config.get("free") and config.get("mocap"):
             # A mocap body has no DOFs, so a free joint on it is not a stricter version of the same
             # thing -- it is the opposite claim about who moves the prop. MuJoCo would accept the
@@ -349,6 +365,7 @@ class SpawnModelPlugin(Plugin):
                 meta=meta,
             )
         )
+        self._apply_declared_presence(ctx)
         if self.mocap:
             bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, self._body_frame)
             if bid < 0:
@@ -437,6 +454,7 @@ class SpawnModelPlugin(Plugin):
         So a driven prop is already back where it started before any ``on_reset`` runs, and an
         explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
+        self._apply_declared_presence(ctx)
         if not self.free or not self._spawn_qpos:
             return
         adr, *pose = self._spawn_qpos
@@ -445,6 +463,15 @@ class SpawnModelPlugin(Plugin):
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
         dofadr = int(ctx.model.jnt_dofadr[jid])
         ctx.data.qvel[dofadr : dofadr + 6] = 0.0
+
+    def _apply_declared_presence(self, ctx: SimContext) -> None:
+        """Put the prop back to the presence the world declared.
+
+        Run at configure AND at every reset, because presence lives in ``model`` while
+        ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when the next
+        one begins. A world that declares a spare means it in every episode, not just the first.
+        """
+        set_present(ctx, ctx.entities.get(self.entity_name), self.present)
 
     def read_pose(self):
         """Endpoint ``read`` (physics thread): the root body's world pose as a one-entry TF payload

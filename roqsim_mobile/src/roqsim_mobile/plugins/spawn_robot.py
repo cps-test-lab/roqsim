@@ -13,6 +13,7 @@ Config::
       pos: [0.0, 0.0]       # world XY spawn ([x, y, z] to override the model's rest height)
       yaw: 0.0              # spawn heading (rad)
       base_joint: base_free # free joint used to place the base
+      present: true         # false: compiled in, but absent until it is spawned
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -20,6 +21,16 @@ to that entity by position, and are addressed ``<name>.<label>``.
 
 The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix``, ``model``, and
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
+
+``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
+the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
+states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so what one
+trial spawned does not carry into the next.
+
+Absence hides the robot's BODY, not its software: its controller and sensor plugins keep running,
+so an absent robot still publishes and still responds to a twist -- and being out of the contact
+set, a twist drives it through walls. For a start pose decided per run, move the robot with
+``SetEntityState`` instead; absence is for a machine that is not meant to be in the trial yet.
 """
 
 from __future__ import annotations
@@ -31,6 +42,7 @@ from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.presence import set_present
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -103,6 +115,7 @@ class SpawnRobotPlugin(Plugin):
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
+        self.present = bool(self.config.get("present", True))
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -116,6 +129,8 @@ class SpawnRobotPlugin(Plugin):
         pos = config.get("pos", [0.0, 0.0])
         if len(pos) not in (2, 3):
             errors.append("'pos' must be [x, y], or [x, y, z] to override the model's rest height")
+        if "present" in config and not isinstance(config["present"], bool):
+            errors.append("'present' must be true or false")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -172,10 +187,21 @@ class SpawnRobotPlugin(Plugin):
             )
         )
         self._apply_initial_pose(ctx)
+        self._apply_declared_presence(ctx)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._apply_initial_pose(ctx)
+        self._apply_declared_presence(ctx)
         mujoco.mj_forward(ctx.model, ctx.data)
+
+    def _apply_declared_presence(self, ctx: SimContext) -> None:
+        """Put the robot back to the presence the world declared.
+
+        Run at configure AND at every reset, because presence lives in ``model`` while
+        ``mj_resetData`` restores ``data``: a robot a trial spawned is still present when the next
+        one begins.
+        """
+        set_present(ctx, ctx.entities.get(self.robot_name), self.present)
 
     def _apply_initial_pose(self, ctx: SimContext) -> None:
         x, y, yaw = self.initial_pose
