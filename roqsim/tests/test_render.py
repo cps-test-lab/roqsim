@@ -765,3 +765,80 @@ def test_the_preview_fill_leaves_a_light_that_casts_no_shadow_alone():
     before = np.array(model.light_diffuse[i])
     render.fill_preview_self_shadows(model)
     assert np.allclose(model.light_diffuse[i], before)
+
+
+# -- geom groups: seeing what a model COLLIDES as, not only what it shows ---------------------------
+
+_TWO_GROUPS = """
+<mujoco model="two_groups">
+  <worldbody>
+    <geom name="shown" type="box" size="0.3 0.3 0.3" pos="0 0 0.3"
+          contype="0" conaffinity="0" group="2" rgba="1 0 0 1"/>
+    <geom name="solid" type="box" size="0.1 0.1 0.9" pos="0 0 0.9" group="3" rgba="0 1 0 1"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _render_groups(tmp_path, groups):
+    from roqsim.rendering import FrameRenderer
+
+    path = tmp_path / "two_groups.xml"
+    path.write_text(_TWO_GROUPS)
+    model = mujoco.MjModel.from_xml_path(str(path))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    frame = FrameRenderer(model, 96, 72, geomgroup=groups)
+    try:
+        image = frame.render(data).astype(int)
+    finally:
+        frame.close()
+    # Which of the two coloured boxes reached the picture.
+    return {
+        "red": bool((image[..., 0] > image[..., 1] + 40).any()),
+        "green": bool((image[..., 1] > image[..., 0] + 40).any()),
+    }
+
+
+def test_collision_geometry_is_invisible_until_it_is_asked_for(tmp_path):
+    # MuJoCo's default MjvOption draws groups 0-2 and nothing above, so a model's collision
+    # primitives -- group 3 by this tree's convention -- never appear in a default render. A
+    # reviewer looking at a prop is therefore looking at the half that carries no contacts.
+    assert _render_groups(tmp_path, None) == {"red": True, "green": False}
+
+
+def test_a_group_can_be_rendered_on_its_own_or_over_the_other(tmp_path):
+    assert _render_groups(tmp_path, [3]) == {"red": False, "green": True}
+    assert _render_groups(tmp_path, [2]) == {"red": True, "green": False}
+    assert _render_groups(tmp_path, [2, 3]) == {"red": True, "green": True}
+
+
+def test_absence_is_not_a_drawing_preference(tmp_path):
+    # An absent entity stays out of the picture whatever groups are named: it is a property of the
+    # entity, and letting a render flag re-admit it would make absence two decisions instead of one.
+    from roqsim.presence import ABSENT_GEOM_GROUP
+    from roqsim.rendering import FrameRenderer
+
+    path = tmp_path / "absent.xml"
+    path.write_text(_TWO_GROUPS)
+    model = mujoco.MjModel.from_xml_path(str(path))
+    frame = FrameRenderer(model, 32, 24, geomgroup=[ABSENT_GEOM_GROUP, 3])
+    try:
+        assert frame._vopt.geomgroup[ABSENT_GEOM_GROUP] == 0
+        assert frame._vopt.geomgroup[3] == 1
+    finally:
+        frame.close()
+
+
+@pytest.mark.parametrize("bad", ["9", "-1", "two", ""])
+def test_a_group_outside_mujocos_range_is_refused(bad):
+    parser = pytest.importorskip("argparse").ArgumentParser()
+    with pytest.raises(SystemExit):
+        render._parse_geomgroup(parser, bad)
+
+
+def test_no_groups_named_means_mujocos_own_defaults():
+    parser = pytest.importorskip("argparse").ArgumentParser()
+    assert render._parse_geomgroup(parser, None) is None
+    assert render._parse_geomgroup(parser, "2,3") == [2, 3]
+    assert render._parse_geomgroup(parser, "2 3") == [2, 3]

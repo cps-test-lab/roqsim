@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+from collections.abc import Sequence
 
 import mujoco
 import numpy as np
@@ -509,6 +510,7 @@ class FrameRenderer:
         width: int,
         height: int,
         camera: mujoco.MjvCamera | int | str | None = None,
+        geomgroup: Sequence[int] | None = None,
     ) -> None:
         # Before anything touches GL: a wrong backend aborts the process inside MjrContext with a
         # message that explains nothing, and this is the funnel every renderer in the tree goes
@@ -528,6 +530,15 @@ class FrameRenderer:
         # excluding the group is what makes absence one decision rather than several that could
         # drift -- and it is the same group every raycast mask excludes.
         self._vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
+        if geomgroup is not None:
+            # Draw only the named groups. A model separates what it SHOWS from what it COLLIDES --
+            # group 2 for visual meshes, group 3 for the primitives physics uses -- and a picture of
+            # the visual half cannot answer a question about the other one. Absence stays excluded
+            # regardless: it is a property of the entity, not a drawing preference, and letting a
+            # caller re-enable it here would make absence two decisions instead of one.
+            for group in range(len(self._vopt.geomgroup)):
+                self._vopt.geomgroup[group] = 1 if group in geomgroup else 0
+            self._vopt.geomgroup[ABSENT_GEOM_GROUP] = 0
         self.camera: mujoco.MjvCamera | int | str = (
             camera if camera is not None else default_free_camera(model)
         )

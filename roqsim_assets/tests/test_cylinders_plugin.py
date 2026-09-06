@@ -65,7 +65,8 @@ def test_instances_get_distinct_names():
 
 def test_an_instance_may_name_itself():
     model, _, _ = _build(
-        name="clutter", instances=[{"pos": [0.1, 0.1], "radius": 0.03, "height": 0.1, "name": "target"}]
+        name="clutter",
+        instances=[{"pos": [0.1, 0.1], "radius": 0.03, "height": 0.1, "name": "target"}],
     )
     assert _body_names(model, "target")
 
@@ -154,9 +155,7 @@ def test_an_override_changes_the_population_count():
         {"pos": [0.02 * i, 0.0], "radius": 0.03, "height": 0.15, "free": True} for i in range(20)
     ]
 
-    cfg = load_config_from_dict(
-        world, overrides={"components": {"clutter": {"instances": twenty}}}
-    )
+    cfg = load_config_from_dict(world, overrides={"components": {"clutter": {"instances": twenty}}})
 
     cylinders = next(s for s in cfg.plugins if s.ref == "cylinders")
     assert len(cylinders.config["instances"]) == 20

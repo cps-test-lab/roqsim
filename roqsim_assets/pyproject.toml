@@ -22,6 +22,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# `roqsim assets collision`: surface sampling, convex hulls and nearest-point queries. An extra and
+# not a dependency because PLACING a prop needs none of it -- this is for the person adding one, the
+# same line `roqsim_scenes` draws around its CAD readers. The floors match the two packages that
+# already carry these (roqsim_walker, roqsim_scenes); scipy 1.11 in particular is what the ROS base
+# image ships as a Debian package with no RECORD file, which pip can neither upgrade nor remove.
+# `rtree` is deliberately absent: trimesh's exact point-to-triangle query wants it, and it is a
+# binding to a native spatial index for accuracy far below the millimetre tolerance anyone asks here
+# -- the sampled query reports its own resolution instead.
+collision = ["trimesh>=3.20", "scipy>=1.11"]
 
 # `sketchfab_helper` on the venv PATH: search redistributable + downloadable models and pull thumbnail
 # previews, in front of the tools/ import pipeline. Implementation in roqsim_assets.sketchfab;
