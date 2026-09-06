@@ -483,6 +483,33 @@ Two things are worth knowing before reaching for a proximity check instead:
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
 
+**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
+*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
+replaced every step and reports the region being touched — its centre in the robot's own frame, and
+whether that region is a point or a line::
+
+   - spawn_robot: {model: ridgeback}
+     name: robot
+     components:
+       - contact_monitor:  {ignore: [floor], min_force: 1.0}          # did it touch?
+       - contact_location: {ignore: [floor], merge_radius: 0.02}      # where, right now?
+
+Three things about it:
+
+* **A region, not a point.** A tactile skin reports one sensing area firing as a point contact and
+  several adjacent ones as a line. MuJoCo already computes a position per solved contact, so the
+  region is the set of simultaneous qualifying positions and the classification is their count — no
+  taxel grid is modelled and none needs to be. ``merge_radius`` is where a skin's spatial resolution
+  enters: two solver contacts closer together than one sensing area cannot be told apart by the real
+  device either, and without it every flat push reads as a dozen separate areas.
+* **In the robot's frame by default.** ``frame: base`` is what a rule like "contact on my left"
+  needs, and it makes a reading independent of where the robot is standing. ``frame: world`` is
+  there for logging against a map.
+* **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
+  logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
+  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
+  use, and the one a per-step control law needs.
+
 **How close did it come?** ``clearance_monitor`` is the companion, and deliberately its opposite
 number. Contact is a bit: every configuration that does not touch scores identically, which is the
 right failure criterion and a poor thing to optimise. Distance is the same question asked
