@@ -377,3 +377,35 @@ def test_c3_wheel_encoders_and_imu_exist():
         "base_quat",
     ):
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name) >= 0, f"missing {name}"
+
+
+def test_c4_odometry_tf_points_at_the_description_root():
+    """C4: ``odom ->`` targets base_footprint, the root of every published TurtleBot 3 URDF.
+
+    A robot_state_publisher running that description already parents base_link to base_footprint,
+    so an odometry TF aimed at base_link would give the frame two parents and tf2 would resolve
+    neither. The default is base_link (a TurtleBot 4 description is rooted there), which is why
+    this platform has to state it.
+    """
+    assert _manifest_plugin("diff_drive")["odom_child_frame"] == "base_footprint"
+
+    model, data = _build()
+    ctx, _ = _plugin(model, data)
+    odom = next(e for e in ctx.interface.all() if e.name == "odom")
+    assert odom.backend["ros2"]["frame_id"] == "odom"
+    assert odom.backend["ros2"]["child_frame_id"] == "base_footprint"
+
+
+def test_c5_odometry_tf_default_is_base_link():
+    """C5: platforms that say nothing keep base_link, so this change moves no existing robot."""
+    model, data = _build()
+    cfg = {k: v for k, v in _manifest_plugin("diff_drive").items() if k != "odom_child_frame"}
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
+    )
+    plugin = DiffDrivePlugin(cfg)
+    plugin.configure(ctx)
+    odom = next(e for e in ctx.interface.all() if e.name == "odom")
+    assert odom.backend["ros2"]["child_frame_id"] == "base_link"

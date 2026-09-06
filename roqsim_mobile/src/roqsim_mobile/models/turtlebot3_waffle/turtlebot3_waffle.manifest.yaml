@@ -23,6 +23,7 @@ components:
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
+      odom_child_frame: base_footprint
   # LDS-01, the stock Waffle scanner, as a planar 2D scan at the URDF base_scan frame (0.132 m above
   # the floor). The paper names only "its Lidar sensor" (spec gap g_lidar_params), so these are the
   # platform's own published values: 360 deg, 1 deg resolution -> 360 rays, 5 Hz, 0.12-3.5 m.
