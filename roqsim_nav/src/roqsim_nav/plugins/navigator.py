@@ -232,11 +232,20 @@ def _dwell_pair(d) -> tuple[float, float]:
 def _dwell_list(spec, n: int) -> list[tuple[float, float]]:
     """`n` dwell pairs from a scalar, a ``[lo, hi]`` pair, or one entry per route point.
 
-    A bare ``[lo, hi]`` is ambiguous against a two-point route's per-point list, and is read as the
-    random pause -- which is the form a world writes far more often. Spell the per-point case with
-    nested entries (``[[0, 3], [1, 2]]``) to say the other thing.
+    Entries may be scalars, ``[lo, hi]`` pairs, or a mix of the two.
+
+    One case is genuinely ambiguous: two bare numbers on a two-point route are either a random pause
+    or one dwell per point. It is read as the random pause, which is the form a world writes far more
+    often; nesting (``[[1, 1], [2, 2]]``) says the other thing. Anything with a nested entry, or a
+    length other than two, is unambiguous and read as per-point.
     """
-    if isinstance(spec, (list, tuple)) and spec and all(isinstance(e, (list, tuple)) for e in spec):
+    if isinstance(spec, (list, tuple)):
+        # A per-point list may mix the two forms -- `[0, [2, 4], 0, [1, 3]]` is what a patrol with a
+        # pause at only some of its waypoints looks like -- so ANY nested entry makes it per-point.
+        # Requiring every entry to be nested would reject exactly that, the commonest shape there is.
+        nested = any(isinstance(e, (list, tuple)) for e in spec)
+        if not nested and len(spec) == 2:
+            return [_dwell_pair(spec)] * n  # the documented tie-break, below
         if len(spec) != n:
             raise ValueError(f"one dwell per route point: expected {n}, got {len(spec)}")
         return [_dwell_pair(e) for e in spec]

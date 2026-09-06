@@ -165,7 +165,11 @@ class WalkerPlugin(Plugin):
             # The navigator's route is the mover's start followed by `goals`, and a walker starts at
             # its first waypoint -- so the two lists already line up entry for entry. The values are
             # passed through as written and coerced there, so the dwell format has one owner.
-            nav["dwell"] = [list(d) if isinstance(d, (list, tuple)) else d for d in dwells]
+            # Normalised to `[lo, hi]` pairs rather than passed through as written. The walker
+            # KNOWS these are one-per-waypoint, and a two-waypoint route whose dwells are two bare
+            # numbers would otherwise hit the navigator's documented tie-break and be read as a
+            # single random pause applied to both.
+            nav["dwell"] = [list(d) if isinstance(d, (list, tuple)) else [d, d] for d in dwells]
         if isinstance(nav.get("avoidance"), bool):
             # A walker's own block has always spelled this as a yes/no. The navigator names a model
             # instead, because there is more than one and "yes" does not say which -- so the legacy

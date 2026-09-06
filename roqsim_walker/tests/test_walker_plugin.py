@@ -386,6 +386,31 @@ def test_a_per_waypoint_dwell_reaches_the_navigator():
     assert _walker_navigator(engine)._core.st.dwell == [(0.0, 3.0), (1.0, 2.0)]
 
 
+def test_a_dwell_on_only_some_waypoints_reaches_the_navigator():
+    """The shape the shipped `walker_patrol` world writes: a pause at two of four waypoints. The
+    per-point list is then a MIX of bare numbers and pairs, which is what broke that world."""
+    engine = _engine_with_waypoints(
+        [[-2.0, -2.0], [2.0, -2.0, [2.0, 4.0]], [2.0, 2.0], [-2.0, 2.0, [1.0, 3.0]]]
+    )
+    engine.setup()
+    engine.reset()
+    assert _walker_navigator(engine)._core.st.dwell == [
+        (0.0, 0.0),
+        (2.0, 4.0),
+        (0.0, 0.0),
+        (1.0, 3.0),
+    ]
+
+
+def test_two_bare_per_waypoint_dwells_are_not_read_as_one_random_pause():
+    """The navigator reads two bare numbers as `[lo, hi]`; the walker knows its values are
+    per-waypoint, so it normalises them to pairs and never relies on that tie-break."""
+    engine = _engine_with_waypoints([[0.0, 0.0, 1.0], [2.0, 0.0, 3.0]])
+    engine.setup()
+    engine.reset()
+    assert _walker_navigator(engine)._core.st.dwell == [(1.0, 1.0), (3.0, 3.0)]
+
+
 def test_the_walkers_default_dwell_applies_to_every_waypoint():
     """`dwell:` on the walker block is the other half of the same feature."""
     engine = _engine_with_waypoints([[0.0, 0.0], [2.0, 0.0]], dwell=1.5)

@@ -91,6 +91,23 @@ def test_one_value_applies_to_every_route_point():
     assert _dwell_list([0.0, 3.0], 2) == [(0.0, 3.0)] * 2
 
 
+def test_a_per_point_list_may_mix_scalars_and_pairs():
+    """What a patrol with a pause at only SOME of its waypoints looks like, and the shape the
+    shipped `walker_patrol` world writes. Requiring every entry to be nested rejected exactly this,
+    which is how two shipped worlds stopped loading."""
+    assert _dwell_list([0.0, [2.0, 4.0], 0.0, [1.0, 3.0]], 4) == [
+        (0.0, 0.0),
+        (2.0, 4.0),
+        (0.0, 0.0),
+        (1.0, 3.0),
+    ]
+
+
+def test_bare_numbers_are_per_point_when_the_count_is_unambiguous():
+    """Three numbers on a three-point route cannot be a `[lo, hi]` pause, so they are per-point."""
+    assert _dwell_list([1.0, 2.0, 3.0], 3) == [(1.0, 1.0), (2.0, 2.0), (3.0, 3.0)]
+
+
 def test_nested_entries_are_per_point():
     """A bare `[lo, hi]` is ambiguous against a two-point route's per-point list, and reads as the
     random pause; nesting is how a world says the other thing."""
@@ -101,7 +118,7 @@ def test_nested_entries_are_per_point():
     "bad, message",
     [
         ([[0.0, 1.0]], "one dwell per route point"),
-        ([1.0, 2.0, 3.0], "is \\[lo, hi\\]"),
+        ([1.0, 2.0, 3.0], "one dwell per route point"),
         (-1.0, "cannot be negative"),
         ([3.0, 1.0], "must be ordered"),
     ],
