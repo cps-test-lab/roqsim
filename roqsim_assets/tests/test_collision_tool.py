@@ -191,3 +191,52 @@ def test_json_is_the_whole_report(tmp_path, capsys):
     assert report["verdict"] == "WARN"
     assert report["overreach"]["worst_geoms"][0]["geom"] == "c_leg_r"
     assert np.isfinite(report["resolution_mm"])
+
+
+# -- effort: what a skeleton will cost, before anyone writes one -----------------------------------
+
+
+def test_effort_separates_how_many_from_what_kind(tmp_path):
+    # Two props of similar complexity, one built from slabs and one from tilted members. The count
+    # does not tell them apart; `boxy` does, and it is the one that says whether plain axis-aligned
+    # boxes will land on the shape or every part costs a rotation.
+    import trimesh
+
+    slabs = [
+        trimesh.creation.box(extents=(1.0, 0.5, 0.04)),
+        trimesh.creation.box(extents=(0.05, 0.05, 0.7)),
+    ]
+    tilted = trimesh.creation.box(extents=(1.0, 0.5, 0.04))
+    tilted.apply_transform(trimesh.transformations.rotation_matrix(0.6, [1, 0, 0]))
+    assert collision.effort(trimesh, slabs, 0.05)["axis_frac"] == pytest.approx(1.0, abs=0.01)
+    assert collision.effort(trimesh, [tilted], 0.05)["axis_frac"] < 0.1
+
+
+def test_effort_counts_more_boxes_for_a_more_broken_up_shape(tmp_path):
+    # Eight shelves cost more primitives than one, which is the ordering the column exists to give.
+    import trimesh
+
+    def shelves(n):
+        return [
+            trimesh.creation.box(extents=(1.0, 0.4, 0.03)).apply_translation([0, 0, 0.2 * i])
+            for i in range(n)
+        ]
+
+    assert (
+        collision.effort(trimesh, shelves(1), 0.01)["boxes_upper"]
+        < collision.effort(trimesh, shelves(8), 0.01)["boxes_upper"]
+    )
+
+
+def test_effort_is_an_upper_bound_not_the_answer(tmp_path):
+    # The number exists to be ORDERED, not believed: a greedy voxel pass needs many more primitives
+    # than someone reading the shape, so it must never be quoted as the size of the job.
+    import trimesh
+
+    ring = [
+        trimesh.creation.box(extents=(0.05, 0.05, 1.0)).apply_translation([x, y, 0])
+        for x in (-0.5, 0.5)
+        for y in (-0.3, 0.3)
+    ]
+    measured = collision.effort(trimesh, ring, 0.05)
+    assert measured["boxes_upper"] >= len(ring)

@@ -215,6 +215,75 @@ def _stats(distance: np.ndarray, tol: float) -> dict:
     }
 
 
+def effort(trimesh, meshes: list, tol: float) -> dict:
+    """How much work this prop's skeleton is, before anyone starts writing it.
+
+    Two deterministic numbers, because "which of these 22 do I do first" is a planning question and
+    guessing it from a photograph is how a half-hour job turns out to be an afternoon:
+
+    ``boxes_upper`` what a greedy voxel decomposition needs at this tolerance -- an upper bound on
+                    the primitive count, since a person reading the shape does far better (the
+                    trestle desk: 31 by voxel at 50 mm, 11 by hand). Monotone in complexity, which
+                    is what makes it orderable even though it is not the answer. It counts the
+                    SURFACE, these meshes being shells: a solid cube reads 6, one slab per face.
+    ``axis_frac``   the fraction of surface area whose normal points along x, y or z. It separates
+                    HOW MANY primitives from WHAT KIND: near 1.0 the prop is slabs and posts and
+                    plain boxes will land on it, near 0 every part is oblique or round and each one
+                    costs a rotation to place or a capsule to approximate.
+
+    Not the count of connected components, which on artwork counts triangle islands -- a server rack
+    reads 3447 of them -- and so measures how the model was built rather than what it is.
+
+    Reported rather than acted on. A high count can still be the right prop to do first if a world
+    places it fifty times, and that is not something this file can know.
+    """
+    pitch = max(2 * tol, 0.02)
+    boxes = 0
+    axis_area = total_area = 0.0
+    for mesh in meshes:
+        try:
+            normals = np.asarray(mesh.face_normals)
+            areas = np.asarray(mesh.area_faces)
+            # within ~10 degrees of an axis: |n . axis| >= cos(10 deg)
+            aligned = (np.abs(normals) >= 0.985).any(axis=1)
+            axis_area += float(areas[aligned].sum())
+            total_area += float(areas.sum())
+        except Exception:  # noqa: BLE001 - a degenerate mesh contributes no area either way
+            pass
+        try:
+            voxels = mesh.voxelized(pitch=pitch)
+            occupied = np.zeros(voxels.shape, bool)
+            occupied[tuple(np.array(voxels.sparse_indices).T)] = True
+        except Exception:  # noqa: BLE001 - nothing to voxelize is nothing to build
+            continue
+        boxes += _greedy_boxes(occupied)
+    return {
+        "boxes_upper": boxes,
+        "axis_frac": round(axis_area / total_area, 2) if total_area else 0.0,
+        "effort": "small" if boxes <= 12 else "moderate" if boxes <= 40 else "large",
+    }
+
+
+def _greedy_boxes(occupied: np.ndarray) -> int:
+    """Merge an occupancy grid into axis-aligned boxes, greedily. Only the count is wanted."""
+    grid = occupied.copy()
+    count = 0
+    while grid.any():
+        i, j, k = np.argwhere(grid)[0]
+        di = 1
+        while i + di < grid.shape[0] and grid[i + di, j, k]:
+            di += 1
+        dj = 1
+        while j + dj < grid.shape[1] and grid[i : i + di, j + dj, k].all():
+            dj += 1
+        dk = 1
+        while k + dk < grid.shape[2] and grid[i : i + di, j : j + dj, k + dk].all():
+            dk += 1
+        grid[i : i + di, j : j + dj, k : k + dk] = False
+        count += 1
+    return count
+
+
 def _region(points: np.ndarray, distance: np.ndarray, tol: float) -> dict | None:
     """Where the WORST of the disagreement is: the box holding the worst tenth of the failures.
 
@@ -427,6 +496,7 @@ def audit_one(ref: str, tol: float, seed: int = DEFAULT_SEED) -> dict:
         "phantom_p95_mm": p95,
         "phantom_max_mm": peak,
         "geoms": [_name(model, g) for g in meshes],
+        **effort(trimesh, surfaces, tol),
         "verdict": verdict,
         "reason": (
             f"the hull stands up to {peak:.0f} mm off the prop"
@@ -455,13 +525,19 @@ def print_audit(rows: list[dict], tol: float) -> None:
     print(
         f"collision audit -- how far a hull collider stands from the prop (tolerance {tol * 1000:.0f} mm)"
     )
-    print(f"{'model':32s} {'collider':>10s} {'phantom p95':>12s} {'max':>9s}  verdict")
+    print(
+        f"{'model':32s} {'collider':>10s} {'phantom p95':>12s} {'max':>9s}"
+        f" {'boxes':>6s} {'boxy':>5s} {'effort':>9s}  verdict"
+    )
     for row in sorted(rows, key=lambda r: -r.get("phantom_p95_mm", -1)):
         p95 = f"{row['phantom_p95_mm']:9.0f} mm" if "phantom_p95_mm" in row else f"{'-':>12s}"
         peak = f"{row['phantom_max_mm']:6.0f} mm" if "phantom_max_mm" in row else f"{'-':>9s}"
-        note = f" -- {row['reason']}" if row["verdict"] in ("FAIL", "ERROR") else ""
+        boxes = f"{row['boxes_upper']:6d}" if "boxes_upper" in row else f"{'-':>6s}"
+        boxy = f"{row['axis_frac']:5.2f}" if "axis_frac" in row else f"{'-':>5s}"
+        note = f" -- {row['reason']}" if row["verdict"] == "ERROR" else ""
         print(
-            f"{row['model']:32s} {row.get('collider', '-'):>10s} {p95} {peak}  {row['verdict']}{note}"
+            f"{row['model']:32s} {row.get('collider', '-'):>10s} {p95} {peak}"
+            f" {boxes} {boxy} {row.get('effort', '-'):>9s}  {row['verdict']}{note}"
         )
     bad = sum(1 for r in rows if r["verdict"] == "FAIL")
     print(f"\n{bad} of {len(rows)} collide as a convex hull that is not the shape.")
