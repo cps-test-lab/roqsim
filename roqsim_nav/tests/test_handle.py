@@ -35,7 +35,7 @@ def _engine(tmp_path, **nav):
                     {
                         "spawn_model": {
                             "model": str(crate),
-                            "pos": [0.0, 0.0, 0.25],
+                            "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.25}},
                             "mocap": True,
                         },
                         "name": "cart",

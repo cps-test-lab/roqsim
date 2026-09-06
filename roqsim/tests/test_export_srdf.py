@@ -226,7 +226,13 @@ def _composed(tmp_path):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]}, "name": "husky"},
+                {
+                    "spawn_robot": {
+                        "model": "husky_a200",
+                        "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    },
+                    "name": "husky",
+                },
                 {
                     "spawn_arm": {
                         "model": "ur10e",

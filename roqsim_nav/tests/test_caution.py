@@ -62,7 +62,11 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half
     navigator.update(nav or {})
     components = [
         {
-            "spawn_model": {"model": crate, "pos": [START[0], START[1], 0.25], "mocap": True},
+            "spawn_model": {
+                "model": crate,
+                "mocap": True,
+                "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
+            },
             "name": "cart",
             "components": [{"navigator": navigator}],
         }
@@ -79,7 +83,7 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half
                 "spawn_model": {
                     "model": crate if blocker_half_height is None else low,
                     "prefix": "b_",
-                    "pos": [blocker[0], blocker[1], half],
+                    "pose": {"position": {"x": blocker[0], "y": blocker[1], "z": half}},
                     **({"mocap": True} if blocker_mocap else {"free": True}),
                 },
                 "name": "blocker",

@@ -59,7 +59,7 @@ def world(tmp_path):
             {
                 "spawn_model": {
                     "model": str(tmp_path / "rover.xml"),
-                    "pos": [0.0, 0.0],
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
                     "free": True,
                 },
                 "name": "robot",

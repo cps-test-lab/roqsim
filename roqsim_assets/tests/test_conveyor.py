@@ -142,7 +142,13 @@ def test_industrial_table_top_carries_the_belt(tmp_path):
     # The split-out table must present its top exactly where the belt's feet land, so
     # `spawn_model industrial_table` + `conveyor` at the same z reproduces the old bundled cell.
     plugins = [
-        {"spawn_model": {"model": "industrial_table", "pos": [-0.13, 0.6, 0.0]}, "name": "bench"},
+        {
+            "spawn_model": {
+                "model": "industrial_table",
+                "pose": {"position": {"x": -0.13, "y": 0.6, "z": 0.0}},
+            },
+            "name": "bench",
+        },
         {"conveyor": {}, "name": "conveyor"},
     ]
     engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))

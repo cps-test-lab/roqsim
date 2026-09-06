@@ -94,21 +94,9 @@ import mujoco
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 logger = logging.getLogger("roqsim_assets.door")
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
 
 
 # Neutral tan-face colour for a box leaf when no mesh model is given (matches the wooden-door tone).
@@ -156,9 +144,7 @@ class DoorPlugin(Plugin):
         else:
             self.pos = [0.0, 0.0, 0.0]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = (
-            _rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
-        )
+        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
 
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports
         # them with a friendly message rather than crashing construction.

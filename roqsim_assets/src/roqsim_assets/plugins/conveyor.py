@@ -34,7 +34,6 @@ Config::
 
 from __future__ import annotations
 
-import math
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -44,19 +43,7 @@ import numpy as np
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+from roqsim.pose import rpy_to_quat
 
 
 @dataclass
@@ -89,7 +76,7 @@ class ConveyorPlugin(Plugin):
         pos = self.config.get("pos", [0.0, 0.0, 0.0])
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         # Optional belt size (full length/width, m). Absent -> keep the base model exactly. Bad
         # values are tolerated here (kept as the base half-extent) so validate_config can report
         # them with a friendly message rather than crashing during construction.

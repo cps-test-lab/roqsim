@@ -42,8 +42,9 @@ components:
   # is the hills -- the ground itself is an obstacle, which is the whole point of the world.
   - spawn_robot:
       model: warthog
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

@@ -25,7 +25,7 @@ SPAWN_ROBOT = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"
 
 
 def _engine(present=None):
-    config = {"model": "turtlebot4", "pos": [0.0, 0.0]}
+    config = {"model": "turtlebot4", "pose": {"position": {"x": 0.0, "y": 0.0}}}
     if present is not None:
         config["present"] = present
     return Engine(

@@ -13,8 +13,9 @@ components:
   # diff_drive + lidar come from the turtlebot4 model manifest (models/turtlebot4/turtlebot4.manifest.yaml).
   - spawn_robot:
       model: turtlebot4
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # The bridge reads the robot's declared endpoints from ctx.interface and publishes

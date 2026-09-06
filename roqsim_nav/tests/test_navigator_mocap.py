@@ -39,7 +39,7 @@ def _world(tmp_path, *, world=ROOM, nav=None, **prop):
                 {
                     "spawn_model": {
                         "model": str(crate),
-                        "pos": [START[0], START[1], 0.25],
+                        "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
                         "mocap": True,
                         **prop,
                     },
@@ -127,7 +127,7 @@ def test_two_movers_share_one_rasterized_grid(tmp_path):
             "spawn_model": {
                 "model": str(crate),
                 "prefix": f"c{i}_",
-                "pos": [-2.5, y, 0.25],
+                "pose": {"position": {"x": -2.5, "y": y, "z": 0.25}},
                 "mocap": True,
             },
             "name": f"cart{i}",
@@ -165,7 +165,11 @@ def test_a_second_navigator_on_one_entity_is_refused(tmp_path):
             "sim": {"pacing": "asap"},
             "components": [
                 {
-                    "spawn_model": {"model": str(crate), "pos": [0, 0, 0.25], "mocap": True},
+                    "spawn_model": {
+                        "model": str(crate),
+                        "mocap": True,
+                        "pose": {"position": {"x": 0, "y": 0, "z": 0.25}},
+                    },
                     "name": "cart",
                     "components": [
                         {"navigator": {"speed": 0.5, "goals": [[1.0, 0.0]]}, "name": "a"},
@@ -192,7 +196,7 @@ def test_speed_is_required(tmp_path):
                         {
                             "spawn_model": {
                                 "model": str(crate),
-                                "pos": [0, 0, 0.25],
+                                "pose": {"position": {"x": 0, "y": 0, "z": 0.25}},
                                 "mocap": True,
                             },
                             "name": "cart",
