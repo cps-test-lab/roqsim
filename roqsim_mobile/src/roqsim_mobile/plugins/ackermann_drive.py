@@ -61,7 +61,15 @@ Config::
       drive_joints:    [rear_left_joint, rear_right_joint]
       base_body: base_link
       odom_child_frame: base_link   # link the odometry TF points at (see below)
+      stamped_cmd_vel: false        # true when the stack publishes TwistStamped (see below)
       test_cmd: [1.0, 0.4]          # optional [v, w] applied every tick (standalone demo)
+
+``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
+for the velocity command. Which of the two a stack publishes is a property of that stack, not of
+the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
+configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
+so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
+only symptom is a controller reporting that it cannot make progress.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
@@ -124,6 +132,8 @@ class AckermannDrivePlugin(Plugin):
         self.drive_joint_names = list(self.config.get("drive_joints") or [])
         self.base_body = self.config.get("base_body", "base_link")
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
+        #: Message type of the velocity command: the stack decides it, not the kinematics.
+        self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
 
         self._target_v = 0.0
         self._target_w = 0.0
@@ -242,7 +252,9 @@ class AckermannDrivePlugin(Plugin):
                 write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
                 backend={
                     "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
+                        "type": "geometry_msgs.msg.TwistStamped"
+                        if self.stamped_cmd_vel
+                        else "geometry_msgs.msg.Twist",
                         "topic": self.topic_override("cmd_vel") or "cmd_vel",
                     }
                 },
