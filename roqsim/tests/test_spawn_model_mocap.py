@@ -48,7 +48,7 @@ def _world(tmp_path, xml=CRATE, name="crate", **prop):
                 {
                     "spawn_model": {
                         "model": _model(tmp_path, name, xml),
-                        "pos": [1.0, 2.0, 0.25],
+                        "pose": {"position": {"x": 1.0, "y": 2.0, "z": 0.25}},
                         **prop,
                     },
                     "name": "cart",

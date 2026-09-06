@@ -336,8 +336,8 @@ def world_doc(
     Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder). A
     map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
     heading is given: the map's ``yaw_deg`` wins, else the marker's own ``yaw_deg`` (set in the sketch
-    UI's Mark mode); the chosen yaw is emitted as spawn_model's ``rpy`` (roll/pitch stay 0 -- a
-    floor-standing prop only turns about +Z).
+    UI's Mark mode); the chosen yaw is emitted as the pose's ``orientation.yaw`` (roll/pitch stay 0 --
+    a floor-standing prop only turns about +Z).
     """
     plugins = []
     for m in markers:
@@ -352,13 +352,16 @@ def world_doc(
             yaw_deg is None
         ):  # caller gave no heading -> honour a heading the human drew in the sketch
             yaw_deg = m.get("yaw_deg")
-        spawn = {
-            "model": model,
-            "prefix": f"marker_{mid}_",
-            "pos": [round(float(m["x_m"]), 3), round(float(m["y_m"]), 3), 0.0],
+        pose = {
+            "position": {
+                "x": round(float(m["x_m"]), 3),
+                "y": round(float(m["y_m"]), 3),
+                "z": 0.0,
+            }
         }
         if yaw_deg:
-            spawn["rpy"] = [0.0, 0.0, round(math.radians(float(yaw_deg)), 5)]
+            pose["orientation"] = {"yaw": round(math.radians(float(yaw_deg)), 5)}
+        spawn = {"model": model, "prefix": f"marker_{mid}_", "pose": pose}
         # `name` is a sibling of the plugin ref, not part of its config -- see the door entries.
         plugins.append({"spawn_model": spawn, "name": f"marker_{mid}"})
     # Doors first (structural), then the marker props.

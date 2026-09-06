@@ -249,7 +249,11 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
         "sim": {"world": str(scene)},
         "components": [
             {
-                "spawn_model": {"model": str(rover), "pos": [0.0, 0.0], "free": True},
+                "spawn_model": {
+                    "model": str(rover),
+                    "free": True,
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                },
                 "name": "robot",
                 "components": [{"clearance_monitor": {"ignore": ["floor"], "distmax": 8.0}}],
             },

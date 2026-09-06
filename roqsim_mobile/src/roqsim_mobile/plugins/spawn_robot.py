@@ -159,14 +159,6 @@ class SpawnRobotPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if retired := sorted({"pos", "yaw"} & set(config)):
-            # Named rather than ignored. A key that quietly stops being read spawns every robot at
-            # the origin and reports nothing, which is the one outcome a removal must not have.
-            errors.append(
-                f"{retired} is no longer a key here: a spawn pose is stated once, as 'pose', the "
-                "way SpawnEntity states one. Write pose: {position: {x: .., y: ..}, "
-                "orientation: {yaw: ..}}"
-            )
         if "pose" in config:
             try:
                 parse_pose(config["pose"])

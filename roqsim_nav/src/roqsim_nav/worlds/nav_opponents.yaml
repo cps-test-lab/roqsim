@@ -178,7 +178,7 @@ components:
 
   # Shuttling along the far wall, out of everyone else's lanes: a driven prop that is scenery to the
   # rest of the room rather than another thing to negotiate with.
-  - spawn_model: {model: graspable_box, scale: 5.0, pos: [4.5, -3.0, 0.125], mocap: true}
+  - spawn_model: {model: graspable_box, scale: 5.0, pose: {position: {x: 4.5, y: -3.0, z: 0.125}}, mocap: true}
     name: crate
     components:
       - navigator:

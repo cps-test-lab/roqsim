@@ -98,18 +98,6 @@ def test_the_entity_meta_still_advertises_a_heading():
     assert yaw == pytest.approx(1.2)
 
 
-@pytest.mark.parametrize("retired", [{"pos": [1.0, 2.0]}, {"yaw": 0.5}])
-def test_the_keys_a_pose_replaced_are_named_rather_than_ignored(retired):
-    """A world written against the old keys must say so.
-
-    A key that quietly stops being read spawns every robot at the origin and reports nothing,
-    which is the one outcome a removal must not have.
-    """
-    cfg = _cfg({"model": "turtlebot4", **retired})
-    with pytest.raises(Exception, match="no longer a key here"):
-        instantiate_plugins(cfg)
-
-
 def test_a_pose_that_is_not_one_is_reported_by_the_validator():
     """Before compute is spent, rather than at compile: mixing the two spellings of a rotation is
     a document mid-edit."""

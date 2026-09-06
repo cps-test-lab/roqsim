@@ -139,7 +139,7 @@ def test_disable_then_re_add_is_how_you_modify_an_inherited_plugin(tmp_path):
         extends: parent.yaml
         disable: [table_2]
         plugins:
-          - spawn_model: {model: industrial_table, pos: [1.0, 0.0, 0.0]}
+          - spawn_model: {model: industrial_table, pose: {position: {x: 1.0, y: 0.0, z: 0.0}}}
             name: table_2
         """,
     )
@@ -225,7 +225,7 @@ def test_extends_package_ref_resolves(tmp_path):
         sim:
           timestep: 0.001
         plugins:
-          - spawn_robot: {model: turtlebot4, prefix: robot_, pos: [-8.0, 0.0]}
+          - spawn_robot: {model: turtlebot4, prefix: robot_, pose: {position: {x: -8.0, y: 0.0}}}
             name: robot
         """,
     )

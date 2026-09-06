@@ -147,7 +147,7 @@ def test_world_doc_spawns_mapped_markers():
             "spawn_model": {
                 "model": "industrial_table",
                 "prefix": "marker_1_",
-                "pos": [2.5, 3.0, 0.0],
+                "pose": {"position": {"x": 2.5, "y": 3.0, "z": 0.0}},
             },
             "name": "marker_1",
         }
@@ -176,13 +176,15 @@ def test_world_doc_yaw_from_map_and_sketch_with_map_override():
     plugins = [p["spawn_model"] for p in entries]
     # Each marker answers to its own label, so the world loads with more than one of them.
     assert [p["name"] for p in entries] == ["marker_1", "marker_2", "marker_3"]
-    assert plugins[0]["model"] == "bed" and plugins[0]["rpy"] == pytest.approx(
-        [0, 0, math.pi], abs=1e-4
+    assert plugins[0]["model"] == "bed"
+    assert plugins[0]["pose"]["orientation"]["yaw"] == pytest.approx(math.pi, abs=1e-4)
+    assert plugins[1]["model"] == "plant"
+    assert plugins[1]["pose"]["orientation"]["yaw"] == pytest.approx(
+        math.radians(90), abs=1e-4
     )
-    assert plugins[1]["model"] == "plant" and plugins[1]["rpy"] == pytest.approx(
-        [0, 0, math.radians(90)], abs=1e-4
-    )
-    assert "rpy" not in plugins[2]  # heading resolved to 0 -> axis-aligned, no rpy emitted
+    # A heading resolved to 0 leaves the prop axis-aligned, and the pose says so by omission --
+    # `orientation` defaults to the identity, so writing a zero yaw would state nothing extra.
+    assert "orientation" not in plugins[2]["pose"]
 
 
 def test_world_doc_errors_on_map_dict_without_model():

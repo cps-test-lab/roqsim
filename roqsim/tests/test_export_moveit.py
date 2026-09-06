@@ -294,7 +294,13 @@ def test_a_world_with_no_arm_says_so(tmp_path):
     world = {
         "sim": {},
         "plugins": [
-            {"spawn_model": {"model": "industrial_table", "pos": [0, 0, 0]}, "name": "bench"}
+            {
+                "spawn_model": {
+                    "model": "industrial_table",
+                    "pose": {"position": {"x": 0, "y": 0, "z": 0}},
+                },
+                "name": "bench",
+            }
         ],
     }
     with pytest.raises(SystemExit, match="follow_joint_trajectory"):

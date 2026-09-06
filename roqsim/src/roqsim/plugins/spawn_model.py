@@ -12,9 +12,9 @@ Config::
     spawn_model:
       model: industrial_table        # bundled model name, filename, or absolute path
       prefix: ""                     # MJCF name prefix (use distinct prefixes for >1 of the model)
-      pos: [0.0, 0.0, 0.0]           # [x, y] or [x, y, z]
-      rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
-      pose: {...}                    # the whole pose as SpawnEntity states one; replaces pos + rpy
+      pose:                          # the mount pose, as SpawnEntity states one (see below)
+        position:    {x: 0.0, y: 0.0, z: 0.0}
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}
       scale: 1.0                     # uniform geometric scale factor (see below)
       free: false                    # give the prop a free joint: a movable body, not scenery
       mocap: false                   # make it a mocap body: moved by a plugin, not by physics
@@ -73,6 +73,19 @@ be stretched on one axis needs a purpose-built plugin instead (as ``door`` does 
 ``scale`` is geometry only -- it does not touch mass or inertia, which is why it suits the static
 scenery this plugin places (there is no free joint) and not a dynamic body.
 
+``pose:`` is the mount pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose``. Its
+orientation may be a quaternion or Euler angles, so a prop turned about +Z stays short::
+
+    - spawn_model: {model: industrial_table, pose: {position: {x: -0.13, y: 0.6},
+                                                    orientation: {yaw: 1.5708}}}
+
+It is the only way to state one, for the reason :mod:`roqsim.pose` gives: a document declaring where
+a thing sits and a ``SpawnEntity`` call placing it are the same pose, so they are written the same
+way. Omitting it mounts the prop at the origin, unrotated; an omitted ``position.z`` is the floor,
+which is what a prop's frame means by z (a robot's is its model's resting height, since a wheeled
+base has one and a prop does not). ``scale``, ``mass`` and ``friction`` are unaffected -- they are
+properties of the prop, not of where it is.
+
 ``present: false`` compiles the prop in and starts it **absent**: nothing sees or touches it, and the
 control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
 is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
@@ -108,7 +121,7 @@ import mujoco
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
-from roqsim.pose import PoseError, parse_pose, rpy_to_quat
+from roqsim.pose import PoseError, parse_pose
 from roqsim.presence import set_present
 
 _TF_MODES = (False, "dynamic", "static")
@@ -149,17 +162,14 @@ class SpawnModelPlugin(Plugin):
         self.model_ref = self.config.get("model", "")
         self.prefix = self.config.get("prefix", "")
         self.entity_name = self.address
+        self.pos = [0.0, 0.0, 0.0]
+        self.quat = [1.0, 0.0, 0.0, 0.0]
         if (pose := self.config.get("pose")) is not None:
             position, self.quat = parse_pose(pose)
-            # A prop is attached at a frame, so an unstated z is the frame's own -- 0.0, which is
-            # what `pos: [x, y]` already means here. (spawn_robot reads the same omission as the
-            # model's resting height, because a wheeled base has one and a prop does not.)
+            # A prop is attached at a frame, so an unstated z is the frame's own: 0.0, the floor.
+            # (spawn_robot reads the same omission as the model's resting height, because a wheeled
+            # base has one and a prop does not.)
             self.pos = [position[0], position[1], position[2] or 0.0]
-        else:
-            pos = self.config.get("pos", [0.0, 0.0, 0.0])
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-            rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-            self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         self.scale = float(self.config.get("scale", 1.0))
         self.free = bool(self.config.get("free", False))
         self.mocap = bool(self.config.get("mocap", False))
@@ -191,22 +201,10 @@ class SpawnModelPlugin(Plugin):
             except ModelError as exc:
                 errors.append(str(exc))
         if "pose" in config:
-            # Refused rather than resolved: which one wins is a guess about what the author meant,
-            # and the wrong guess puts the prop somewhere plausible instead of failing.
-            if {"pos", "rpy"} & set(config):
-                errors.append(
-                    "'pose' states the whole spawn pose, so it cannot be combined with "
-                    "'pos'/'rpy'. Use one or the other."
-                )
             try:
                 parse_pose(config["pose"])
             except PoseError as exc:
                 errors.append(str(exc))
-        else:
-            if "rpy" in config and len(config["rpy"]) != 3:
-                errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-            if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-                errors.append("'pos' must be [x, y] or [x, y, z]")
         scale = config.get("scale", 1.0)
         if isinstance(scale, (list, tuple)):
             errors.append(
