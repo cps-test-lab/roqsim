@@ -467,3 +467,18 @@ back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the t
 this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ignores
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
+
+Absence is also a *freeze*, for the same reason from the other direction: a body out of the contact
+set has nothing holding it up, so its gravity is compensated and its velocity zeroed while it is
+away, and it is still at its pose whenever the trial calls for it.
+
+A world can declare an entity absent from the start, with ``present: false`` on the entry that
+registers it::
+
+    - spawn_model: {model: pallet, pos: [4.0, 1.0], free: true, present: false}
+      name: obstacle
+
+That is what gives a trial something to spawn. The declared value is restored on every reset, so a
+spare brought in during one repetition is a spare again in the next. Do not confuse it with
+``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
+to spawn.

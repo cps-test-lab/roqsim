@@ -5,6 +5,9 @@ body to a compiled one. So an obstacle that must *appear* mid-trial is compiled 
 made **absent** until it is wanted: nothing can see it, nothing can touch it, and the control
 plane does not list it.
 
+A world declares which entities start that way (``present: false`` on the entry that registers the
+entity); a scenario moves them either way at run time through ``SpawnEntity``/``DeleteEntity``.
+
 Presence is not position
 -------------------------
 
@@ -14,8 +17,8 @@ however long it is parked, so it returns with metres per second of accumulated v
 long trial can drop it far enough to fall out of any sensible bound. It also stays in the
 world's contact set, so two parked props can collide with each other.
 
-Absence here is *perceptual and physical*, and the pose never moves. Three model fields, all
-runtime-mutable, so nothing recompiles:
+Absence here is *perceptual and physical*, and the pose never moves. Three model fields decide what
+can perceive or touch the entity, all runtime-mutable, so nothing recompiles:
 
 ``rgba`` alpha
     zeroed. **This is what actually removes the entity from a raycast**: ``mj_ray``/``mj_multiRay``
@@ -34,6 +37,15 @@ runtime-mutable, so nothing recompiles:
 
 The originals are saved on the entity, so returning is exact rather than a guess at what the
 world declared.
+
+An absent entity is also frozen
+-------------------------------
+
+Taking a body out of the contact set puts a ``free`` one in free fall -- the same accumulating
+velocity the parking trick was rejected for, arrived at from the other direction. So absence also
+compensates the subtree's gravity and zeroes its velocity (:func:`_freeze`), which together leave a
+passive entity exactly where it was. The gravity half needs :func:`arm_gravity_compensation` to have
+run before the world compiled; that is the engine's job, once per world.
 
 Who calls this
 --------------
@@ -59,12 +71,15 @@ ABSENT_GEOM_GROUP = 4
 #: Key under which an entity's saved geom appearance lives while it is absent.
 _SAVED = "_presence_saved"
 
+#: Key under which an entity's saved per-body gravity compensation lives while it is absent.
+_SAVED_GRAVCOMP = "_presence_saved_gravcomp"
 
-def entity_geom_ids(model, body_name: str) -> list[int]:
-    """Every geom of *body_name* and its descendants.
+
+def entity_body_ids(model, body_name: str) -> list[int]:
+    """*body_name* and every body below it.
 
     Descendants included because an entity is rarely one body -- a prop with a free joint, a
-    walker's limbs -- and leaving a child visible would make "absent" mean "mostly absent".
+    walker's limbs -- and leaving a child behind would make "absent" mean "mostly absent".
     """
     root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
     if root < 0:
@@ -75,7 +90,32 @@ def entity_geom_ids(model, body_name: str) -> list[int]:
     for body in range(root + 1, model.nbody):
         if int(model.body_parentid[body]) in bodies:
             bodies.add(body)
+    return sorted(bodies)
+
+
+def entity_geom_ids(model, body_name: str) -> list[int]:
+    """Every geom of *body_name* and its descendants."""
+    bodies = set(entity_body_ids(model, body_name))
+    if not bodies:
+        return []
     return [g for g in range(model.ngeom) if int(model.geom_bodyid[g]) in bodies]
+
+
+def arm_gravity_compensation(spec) -> None:
+    """Make ``body_gravcomp`` writable at run time, by marking the world body before compile.
+
+    MuJoCo gates the whole gravity-compensation path on ``model.ngravcomp``, a count the COMPILER
+    derives from the bodies that carry a nonzero ``gravcomp``. It is read-only afterwards, so in a
+    model compiled without one, writing ``body_gravcomp`` at run time is silently inert -- and
+    :func:`_freeze` depends on that write to stop an absent body falling.
+
+    The world body is the one that can carry the mark for free: it has no degrees of freedom and
+    infinite mass, so compensating its weight is arithmetic on a body that cannot move. Every other
+    body keeps the compiled value it declared, so nothing is compensated until presence asks for it.
+
+    Called once per world, immediately before ``spec.compile()``.
+    """
+    spec.worldbody.gravcomp = 1.0
 
 
 def set_present(ctx, entity, present: bool) -> bool:
@@ -97,6 +137,7 @@ def set_present(ctx, entity, present: bool) -> bool:
         _restore(ctx.model, entity, geoms)
     else:
         _hide(ctx.model, entity, geoms)
+        _freeze(ctx.model, ctx.data, entity)
     entity.present = bool(present)
     # A transition leaves NO other trace. It writes model fields, while a recording stores
     # `mjData` state (roqsim.capture's STATE_SPEC is MuJoCo's keyframe notion), and the pose
@@ -130,7 +171,54 @@ def _hide(model, entity, geoms) -> None:
     entity.meta[_SAVED] = saved
 
 
+def _freeze(model, data, entity) -> None:
+    """Stop an absent entity moving, so "not there" does not mean "falling out of the world".
+
+    Zeroing ``contype``/``conaffinity`` takes an absent body out of the contact set, and a body with
+    no contacts and a free joint is in free fall: nothing holds it up. Over a trial that is metres
+    per second and kilometres of drift, and the pose it comes back at is whatever the caller states
+    on spawn -- so the fall is invisible while it happens and silently corrected afterwards, which
+    is what makes it worth writing down. What it costs meanwhile is real: ``GetEntityState`` reports
+    a pose far below the world, a recording stores the diverging qpos, and a long enough run reaches
+    the magnitudes MuJoCo resets a diverged simulation for.
+
+    Two writes, both restored on return:
+
+    ``body_gravcomp``
+        1.0, so gravity is exactly cancelled for the whole subtree rather than approximately
+        resisted. Requires :func:`arm_gravity_compensation` to have marked the world body before
+        compile -- without it MuJoCo skips the gravcomp path and this write does nothing.
+    the subtree's velocities
+        zeroed, because compensation removes the force but not the motion the entity already had.
+        A prop deleted mid-flight would otherwise coast in a straight line forever.
+
+    Together those two make an absent PASSIVE entity stationary: no force acts on it, and it starts
+    from rest. An absent entity whose actuators are still being commanded is a separate matter --
+    its controller is driving it, and presence does not silence controllers.
+    """
+    bodies = entity_body_ids(model, entity.body)
+    saved = {}
+    for bid in bodies:
+        saved[bid] = float(model.body_gravcomp[bid])
+        model.body_gravcomp[bid] = 1.0
+        adr, num = int(model.body_dofadr[bid]), int(model.body_dofnum[bid])
+        if num:
+            data.qvel[adr : adr + num] = 0.0
+    entity.meta[_SAVED_GRAVCOMP] = saved
+
+
+def _thaw(model, entity) -> None:
+    """Give the subtree back the gravity it was compiled with.
+
+    Velocity is deliberately not restored: an entity returns from absence either at rest or at the
+    pose and velocity its spawn stated, never carrying momentum from before it left.
+    """
+    for bid, gravcomp in (entity.meta.pop(_SAVED_GRAVCOMP, None) or {}).items():
+        model.body_gravcomp[bid] = gravcomp
+
+
 def _restore(model, entity, geoms) -> None:
+    _thaw(model, entity)
     saved = entity.meta.pop(_SAVED, None) or {}
     for gid in geoms:
         original = saved.get(gid)
