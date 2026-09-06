@@ -3,8 +3,8 @@
 A prop the import pipeline produces is one mesh geom, and MuJoCo collides a mesh geom as its
 **convex hull**. For anything with a span under it -- a trestle desk, a shelf, a chair -- the hull is
 a solid block filling the space the shape exists to leave open, so a robot crashes into geometry that
-is not there, and the contact it reports names a geom the model never named. Nothing in the pipeline
-says so, which is why props ship this way.
+is not there, and the contact it reports names a geom the model never named. No other check in the
+pipeline looks at this, so a prop reaches a scene that way unless someone measures it.
 
 Two subcommands, one measurement:
 
