@@ -29,6 +29,11 @@ dummy = "roqsim.plugins.dummy:DummyPlugin"
 spawn_model = "roqsim.plugins.spawn_model:SpawnModelPlugin"
 ceiling = "roqsim.plugins.ceiling:CeilingPlugin"
 contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
+# WHERE it is being touched, right now, rather than whether it ever was. A separate plugin because
+# it is a different question with a different lifetime: contact_monitor LATCHES the first contact
+# (a failed trial is not un-failed), while a tactile reading is only useful while it is current and
+# is replaced every step. This is what a bumper-driven or tactile controller reads in its loop.
+contact_location = "roqsim.plugins.contact_location:ContactLocationPlugin"
 # The gradient beside that verdict: contact_monitor says whether it touched, this says how
 # close it came. Same geometry, one owner each.
 clearance_monitor = "roqsim.plugins.clearance_monitor:ClearanceMonitorPlugin"
