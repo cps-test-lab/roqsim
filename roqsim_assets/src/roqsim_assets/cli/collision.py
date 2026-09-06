@@ -527,6 +527,164 @@ def print_diff(report: dict) -> None:
     print(f"  [{report['verdict']:4s}] {report['reason']}")
 
 
+# -- propose -------------------------------------------------------------------------------------
+
+
+def bands(trimesh, meshes: list, res: float, samples: int = 900_000, seed: int = DEFAULT_SEED):
+    """Slice the prop into z-bands of constant plan footprint, each as axis-aligned rectangles.
+
+    This is the shape of the MJCF somebody has to write: between these two heights the prop occupies
+    these boxes. Bands are merged while their rectangle count and total width hold, so a post that
+    runs the height of a desk comes out as one band rather than forty.
+
+    ``res`` is the plan grid, and it is the whole accuracy story -- a 20 mm grid rounds a 25 mm post
+    up to 40 and a tabletop out by 20, which is exactly how a first draft ends up 26 mm proud. Read
+    the numbers, then measure the parts that matter; that is why this prints a draft and a warning
+    rather than writing the file.
+    """
+    points, _ = sample_surfaces(trimesh, meshes, samples, seed)
+    if len(points) == 0:
+        return []
+    lo, hi = points.min(axis=0), points.max(axis=0)
+    steps = max(int((hi[2] - lo[2]) / res), 1)
+    out, run, start = [], None, lo[2]
+    for k in range(steps + 1):
+        z = lo[2] + k * (hi[2] - lo[2]) / steps
+        slab = points[(points[:, 2] >= z) & (points[:, 2] < z + (hi[2] - lo[2]) / steps)]
+        rect = _plan_rectangles(slab, lo, res) if len(slab) > 5 else []
+        key = (len(rect), round(sum(r[1] - r[0] for r in rect), 2))
+        if run is not None and key != run[0]:
+            out.append((start, z, run[1]))
+            start = z
+        run = (key, rect)
+    if run is not None:
+        out.append((start, hi[2], run[1]))
+    return [b for b in out if b[2]]
+
+
+def _plan_rectangles(points: np.ndarray, origin, res: float) -> list:
+    """Greedy axis-aligned rectangles covering a slab's plan occupancy."""
+    nx = int((points[:, 0].max() - origin[0]) / res) + 2
+    ny = int((points[:, 1].max() - origin[1]) / res) + 2
+    grid = np.zeros((nx, ny), bool)
+    grid[
+        ((points[:, 0] - origin[0]) / res).astype(int).clip(0, nx - 1),
+        ((points[:, 1] - origin[1]) / res).astype(int).clip(0, ny - 1),
+    ] = True
+    out = []
+    while grid.any():
+        i, j = np.argwhere(grid)[0]
+        di = 1
+        while i + di < nx and grid[i + di, j]:
+            di += 1
+        dj = 1
+        while j + dj < ny and grid[i : i + di, j + dj].all():
+            dj += 1
+        grid[i : i + di, j : j + dj] = False
+        out.append(
+            (
+                origin[0] + i * res,
+                origin[0] + (i + di) * res,
+                origin[1] + j * res,
+                origin[1] + (j + dj) * res,
+            )
+        )
+    return out
+
+
+def propose(ref: str, res: float = 0.02, max_geoms: int = 40, seed: int = DEFAULT_SEED) -> dict:
+    """A first-draft skeleton for ``ref`` -- boxes, named by band, ready to be corrected."""
+    trimesh, _ = _deps()
+    model, data = compile_model(ref)
+    visual_ids, collision_ids = split_geoms(model)
+    ids = visual_ids + [
+        g for g in collision_ids if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH
+    ]
+    meshes = [m for m in (geom_surface(trimesh, model, data, g) for g in ids) if m is not None]
+    if not meshes:
+        return {"model": ref, "bands": [], "geoms": [], "reason": "no mesh geometry to read"}
+    found = bands(trimesh, meshes, res, seed=seed)
+    points, _ = sample_surfaces(trimesh, meshes, 900_000, seed)
+    name = Path(ref).stem
+    geoms, count = [], 0
+    for lo, hi, rects in found:
+        for r in rects:
+            count += 1
+            if count > max_geoms:
+                break
+            box = _refine(points, r, lo, hi)
+            if box is None:
+                continue
+            (x0, x1), (y0, y1), (z0, z1) = box
+            geoms.append(
+                {
+                    "name": f"{name}_b{len(geoms):02d}",
+                    "pos": [
+                        round((x0 + x1) / 2, 4),
+                        round((y0 + y1) / 2, 4),
+                        round((z0 + z1) / 2, 4),
+                    ],
+                    "size": [
+                        round((x1 - x0) / 2, 4),
+                        round((y1 - y0) / 2, 4),
+                        round((z1 - z0) / 2, 4),
+                    ],
+                }
+            )
+    return {
+        "model": ref,
+        "resolution_mm": res * 1000,
+        "bands": len(found),
+        "geoms": geoms,
+        "truncated": count > max_geoms,
+    }
+
+
+def _refine(points: np.ndarray, rect, lo: float, hi: float):
+    """Shrink a grid rectangle onto the geometry actually inside it.
+
+    The grid is what makes the decomposition possible and what makes it wrong: at 20 mm it rounds a
+    25 mm post up to 40 and a tabletop out by 20, and a draft carrying those numbers is a collision
+    model that stands proud of the prop everywhere. Re-reading the samples inside each cell costs
+    nothing and removes the rounding entirely, so the draft's numbers are measurements.
+    """
+    inside = points[
+        (points[:, 0] >= rect[0])
+        & (points[:, 0] < rect[1])
+        & (points[:, 1] >= rect[2])
+        & (points[:, 1] < rect[3])
+        & (points[:, 2] >= lo)
+        & (points[:, 2] <= hi)
+    ]
+    if len(inside) < 8:
+        return None
+    return [(float(inside[:, i].min()), float(inside[:, i].max())) for i in range(3)]
+
+
+def print_propose(draft: dict) -> None:
+    if not draft["geoms"]:
+        print(f"collision propose: {draft['model']} -- {draft.get('reason', 'nothing to propose')}")
+        return
+    print(
+        f"<!-- draft skeleton for {draft['model']}: {draft['bands']} bands found on a "
+        f"{draft['resolution_mm']:.0f} mm plan grid,"
+    )
+    print("     each box then shrunk onto the geometry inside it, so these numbers are measured")
+    print(
+        "     rather than rounded. The DECOMPOSITION is still a guess -- a curved or diagonal part"
+    )
+    print("     comes out as a staircase of slivers -- so read it, do not paste it, and settle the")
+    print("     result with `collision diff`. -->")
+    for g in draft["geoms"]:
+        print(f'<geom type="box" name="{g["name"]}" group="3"')
+        print(
+            f'      pos="{g["pos"][0]} {g["pos"][1]} {g["pos"][2]}"'
+            f' size="{g["size"][0]} {g["size"][1]} {g["size"][2]}"/>'
+        )
+    if draft["truncated"]:
+        print(f"<!-- truncated at {len(draft['geoms'])} geoms; a coarser --res gives fewer -->")
+
+
 # -- audit ---------------------------------------------------------------------------------------
 
 
@@ -665,6 +823,17 @@ def main(argv: list | None = None) -> int:
         "--samples", type=int, default=QUERY_SAMPLES, metavar="N", help="points sampled per surface"
     )
 
+    p_propose = sub.add_parser(
+        "propose", parents=[common], help="a first-draft skeleton to correct, not to trust"
+    )
+    p_propose.add_argument("model", help="model reference: <name>, <provider>:<name>, or a path")
+    p_propose.add_argument(
+        "--res", type=float, default=20.0, metavar="MM", help="plan grid, in mm (default: 20)"
+    )
+    p_propose.add_argument(
+        "--max-geoms", type=int, default=40, metavar="N", help="stop after N boxes (default: 40)"
+    )
+
     p_audit = sub.add_parser(
         "audit",
         parents=[common],
@@ -683,6 +852,11 @@ def main(argv: list | None = None) -> int:
         report = diff(args.model, tol=tol, samples=args.samples, seed=args.seed)
         print(json.dumps(report, indent=2)) if as_json else print_diff(report)
         return 1 if report["verdict"] in ("FAIL", "ERROR") else 0
+
+    if args.command == "propose":
+        draft = propose(args.model, res=args.res / 1000, max_geoms=args.max_geoms, seed=args.seed)
+        print(json.dumps(draft, indent=2)) if as_json else print_propose(draft)
+        return 0
 
     models = args.models or provider_models(args.provider)
     if not models:

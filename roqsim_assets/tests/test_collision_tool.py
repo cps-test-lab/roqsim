@@ -316,3 +316,47 @@ def test_containment_is_analytic_per_shape(tmp_path):
     outside = centres + np.array([0, 0.5, 0])
     assert collision.inside_any(model, data, ids, centres).all()
     assert not collision.inside_any(model, data, ids, outside).any()
+
+
+# -- propose: a draft to correct ------------------------------------------------------------------
+
+
+def test_propose_finds_the_bands_a_prop_is_made_of(tmp_path):
+    # A table: a top, and four posts under it. Two bands, five boxes.
+    path = tmp_path / "table.xml"
+    path.write_text(TABLE.format(collider=FAITHFUL))
+    draft = collision.propose(str(path), res=0.03)
+    assert draft["bands"] >= 2
+    names = {round(g["pos"][2], 2) for g in draft["geoms"]}
+    assert any(z > 0.6 for z in names), "the top should be one of the bands"
+
+
+def test_propose_reports_measurements_not_grid_multiples(tmp_path):
+    # The grid is what makes the decomposition possible and what makes it wrong: at 30 mm a 25 mm
+    # post rounds up to 30 or 60, and a draft carrying that is proud of the prop everywhere. Each
+    # box is shrunk back onto the geometry inside it, so a 25 mm post reads 25.
+    path = tmp_path / "posts.xml"
+    path.write_text(
+        """
+        <mujoco model="posts"><worldbody><body name="p">
+          <geom type="box" size="0.0125 0.0125 0.35" pos="0.4 0 0.35"
+                contype="0" conaffinity="0" group="2"/>
+          <geom type="box" size="0.0125 0.0125 0.35" pos="-0.4 0 0.35"
+                contype="0" conaffinity="0" group="2"/>
+        </body></worldbody></mujoco>
+        """
+    )
+    draft = collision.propose(str(path), res=0.03)
+    posts = [g for g in draft["geoms"] if g["size"][2] > 0.2]
+    assert posts, "the posts should survive as tall boxes"
+    for post in posts:
+        assert post["size"][0] == pytest.approx(0.0125, abs=0.002)
+        assert abs(post["pos"][0]) == pytest.approx(0.4, abs=0.002)
+
+
+def test_propose_is_capped_and_says_so(tmp_path):
+    path = tmp_path / "table.xml"
+    path.write_text(TABLE.format(collider=FAITHFUL))
+    draft = collision.propose(str(path), res=0.005, max_geoms=3)
+    assert len(draft["geoms"]) <= 3
+    assert draft["truncated"]
