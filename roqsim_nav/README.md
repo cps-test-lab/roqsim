@@ -13,7 +13,7 @@ roqsim sim roqsim_nav:nav_opponents      # a TurtleBot 4 nothing drives, and thr
 ```
 
 ```yaml
-- spawn_robot: {model: turtlebot4, pos: [4, -3]}     # an opponent whose wheels really turn
+- spawn_robot: {model: turtlebot4, pose: {position: {x: 4, y: -3}}}   # an opponent whose wheels really turn
   name: cart
   components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
 ```

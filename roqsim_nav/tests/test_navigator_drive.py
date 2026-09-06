@@ -22,7 +22,7 @@ def _world(*, model="turtlebot4", nav=None, pos=(-3.0, 0.0), extra=None):
     navigator.update(nav or {})
     components = [
         {
-            "spawn_robot": {"model": model, "pos": list(pos)},
+            "spawn_robot": {"model": model, "pose": {"position": {"x": pos[0], "y": pos[1]}}},
             "name": "cart",
             "components": [{"navigator": navigator}],
         }
@@ -152,7 +152,10 @@ def test_a_robot_without_a_drive_names_the_fix():
                 "sim": {},
                 "components": [
                     {
-                        "spawn_robot": {"model": "turtlebot4", "pos": [0.0, 0.0]},
+                        "spawn_robot": {
+                            "model": "turtlebot4",
+                            "pose": {"position": {"x": 0.0, "y": 0.0}},
+                        },
                         "name": "cart",
                         "components": [
                             {"diff_drive": {}, "enabled": False},
@@ -233,7 +236,7 @@ def test_three_robots_navigate_at_once_and_stop_for_each_other():
                             "model": "turtlebot4",
                             "prefix": f"{name}_",
                             "namespace": name,
-                            "pos": list(start),
+                            "pose": {"position": {"x": start[0], "y": start[1]}},
                         },
                         "name": name,
                         "components": [

@@ -300,7 +300,7 @@ reaches the physics is its ``output``:
 .. code-block:: yaml
 
    components:
-     - spawn_robot: {model: turtlebot4, pos: [4, -3]}
+     - spawn_robot: {model: turtlebot4, pose: {position: {x: 4, y: -3}}}
        name: cart
        components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
 
@@ -756,7 +756,7 @@ not. ``heightfield`` is MuJoCo's own height field wired into a world::
 
    components:
      - heightfield: {size: [40, 40], height: 2.5, resolution: 128, seed: 3}
-     - spawn_robot: {model: husky_a200, pos: [0, 0]}
+     - spawn_robot: {model: husky_a200, pose: {position: {x: 0, y: 0}}}
        name: robot
 
 It provides the ground (``provides_world``), so ``sim.world`` is not also built underneath it -- a

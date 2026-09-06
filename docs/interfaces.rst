@@ -285,7 +285,7 @@ inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elem
    disable:                       # OPTIONAL: drop inherited plugins by name (needs ``extends``)
      - graspable_box
    components:                    # child entries are APPENDED after the (kept) parent entries
-     - spawn_robot: {model: oli, name: oli, prefix: oli_, pos: [13.2, 2.6]}
+     - spawn_robot: {model: oli, name: oli, prefix: oli_, pose: {position: {x: 13.2, y: 2.6}}}
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
 ``roqsim.worlds`` provider (to that provider's ``<world>.yaml``), or a path relative to the child

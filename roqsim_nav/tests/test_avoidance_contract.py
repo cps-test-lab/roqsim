@@ -44,7 +44,7 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
                 "spawn_model": {
                     "model": str(crate),
                     "prefix": f"m{i}_",
-                    "pos": [-2.0, float(i), 0.25],
+                    "pose": {"position": {"x": -2.0, "y": float(i), "z": 0.25}},
                     "mocap": True,
                 },
                 "name": f"mover{i}",
@@ -78,7 +78,11 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
         # A robot with no navigator: the externally controlled subject.
         components.append(
             {
-                "spawn_model": {"model": str(crate), "prefix": "s_", "pos": [0.0, 0.0, 0.25]},
+                "spawn_model": {
+                    "model": str(crate),
+                    "prefix": "s_",
+                    "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.25}},
+                },
                 "name": "subject",
             }
         )

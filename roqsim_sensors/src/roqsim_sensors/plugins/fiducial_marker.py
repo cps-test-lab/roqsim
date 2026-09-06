@@ -60,19 +60,7 @@ import numpy as np
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+from roqsim.pose import rpy_to_quat
 
 
 def _dict_name(family: str) -> str:
@@ -210,7 +198,7 @@ class FiducialMarkerPlugin(Plugin):
             return [v / n for v in q]
         if rpy_key in self.config:
             r, p, y = (float(v) for v in self.config[rpy_key])
-            return _rpy_to_quat(r, p, y)
+            return rpy_to_quat(r, p, y)
         return [1.0, 0.0, 0.0, 0.0]
 
     def _render_marker(self) -> np.ndarray:

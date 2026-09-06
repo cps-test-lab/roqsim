@@ -17,8 +17,9 @@ components:
   # g1_locomotion + lidar come from the unitree_g1 model manifest (models/unitree_g1.manifest.yaml).
   - spawn_robot:
       model: unitree_g1
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # The bridge reads the robot's declared endpoints from ctx.interface and publishes

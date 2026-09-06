@@ -17,7 +17,7 @@ scene, is declared in a **single YAML file**.
 sim:
   world: empty_room
 components:
-  - spawn_robot: {model: turtlebot4, pos: [0, 0]}
+  - spawn_robot: {model: turtlebot4, pose: {position: {x: 0, y: 0}}}
 ```
 
 That is a driving, sensing robot: the TurtleBot 4 brings its own differential drive, lidar and RGB-D

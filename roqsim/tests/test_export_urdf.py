@@ -76,7 +76,13 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "pos": [0.0, 0.0]}, "name": "husky"},
+                {
+                    "spawn_robot": {
+                        "model": "husky_a200",
+                        "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    },
+                    "name": "husky",
+                },
                 {
                     "spawn_arm": {
                         "model": "ur10e",

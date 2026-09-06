@@ -44,7 +44,7 @@ def world(tmp_path):
     (tmp_path / "world" / "cell.yaml").write_text(
         textwrap.dedent("""
         components:
-          - spawn_model: {model: sibling_prop.xml, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: sibling_prop.xml, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: prop
     """),
         encoding="utf-8",
@@ -98,7 +98,7 @@ def test_the_cwd_is_not_a_second_anchor(world, monkeypatch, tmp_path):
     (decoy / "world" / "ghost.xml").write_text(BIN_MJCF, encoding="utf-8")
     (decoy / "world" / "cell.yaml").write_text(textwrap.dedent("""
         components:
-          - spawn_model: {model: world/ghost.xml, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: world/ghost.xml, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: prop
     """), encoding="utf-8")
     monkeypatch.chdir(decoy)
@@ -117,7 +117,7 @@ def test_a_bundled_model_name_is_unaffected(tmp_path, monkeypatch):
     (tmp_path / "cell.yaml").write_text(
         textwrap.dedent("""
         components:
-          - spawn_model: {model: graspable_box, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: graspable_box, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: parcel
     """),
         encoding="utf-8",
