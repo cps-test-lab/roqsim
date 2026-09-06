@@ -60,7 +60,13 @@ Config::
       drive_actuators: [rear_left_motor, rear_right_motor]      # VELOCITY servos, left then right
       drive_joints:    [rear_left_joint, rear_right_joint]
       base_body: base_link
+      odom_child_frame: base_link   # link the odometry TF points at (see below)
       test_cmd: [1.0, 0.4]          # optional [v, w] applied every tick (standalone demo)
+
+``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
+whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
+``base_footprint`` already gives ``base_link`` a parent, and a second parent from here leaves that
+frame with two, which tf2 cannot resolve.
 
 Endpoints are the ones every base here publishes, so a stack does not know which geometry it is
 driving until it tries to turn in place: ``cmd_vel`` in (``geometry_msgs/Twist``), ``odom`` out with
@@ -117,6 +123,7 @@ class AckermannDrivePlugin(Plugin):
         self.drive_actuator_names = list(self.config.get("drive_actuators") or [])
         self.drive_joint_names = list(self.config.get("drive_joints") or [])
         self.base_body = self.config.get("base_body", "base_link")
+        self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
 
         self._target_v = 0.0
         self._target_w = 0.0
@@ -276,7 +283,7 @@ class AckermannDrivePlugin(Plugin):
                         "type": "nav_msgs.msg.Odometry",
                         "topic": self.topic_override("odom") or "odom",
                         "frame_id": "odom",
-                        "child_frame_id": "base_link",
+                        "child_frame_id": self.odom_child_frame,
                         "emit_tf": True,
                     }
                 },
