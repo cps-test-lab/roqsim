@@ -514,9 +514,9 @@ Three things about it:
 combines two geoms' values by taking the **maximum**, so a geom's friction is a floor on every
 contact it takes part in and never a statement about one of them. Two consequences follow::
 
-   - contact_pair: {entities: [robot, crate], friction: 0.35}
+   - contact_pair: {a: {entity: robot}, b: {entity: crate}, friction: 0.35}
      name: robot_on_crate
-   - contact_pair: {geoms: [crate_g, floor], friction: 0.3}
+   - contact_pair: {a: {entity: crate}, b: {geom: floor}, friction: 0.3}
      name: crate_on_floor
 
 * A pair cannot be made *less* frictional than either side already is -- lowering one geom does
@@ -527,9 +527,11 @@ contact it takes part in and never a statement about one of them. Two consequenc
   value is a floor on both.
 
 An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
-answer and what this plugin declares. Naming ``entities`` or ``bodies`` pairs every geom of both
-subtrees -- a robot base with twenty collision geoms against a five-geom crate is a hundred pairs,
-and asking a world to enumerate them is how a pair silently misses the one that actually touches.
+answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
+or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
+is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
+subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
+asking a world to enumerate them is how a pair silently misses the one that actually touches.
 
 Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
 sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather

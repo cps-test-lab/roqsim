@@ -14,14 +14,16 @@ MuJoCo's own answer is an explicit ``<pair>``, which carries its own friction an
 combination rule. This plugin declares one from world config::
 
     contact_pair:
-      # WHAT touches what -- exactly two sides, each given one way:
-      entities: [robot, cube]     # every geom of these two entities' subtrees, or
-      bodies: [base_link, box]    # every geom of these two bodies' subtrees, or
-      geoms: [pad_left, cube_g]   # two geoms by name
-      friction: 0.35              # sliding, or the full [slide, slide, spin, roll, roll]
-      condim: 3                   # contact dimensionality (1 frictionless, 3 sliding, 4 +spin, 6 +roll)
-      solref: null                # optional, MuJoCo's two-element contact solver reference
-      solimp: null                # optional, five-element solver impedance
+      a: {entity: robot}     # each side is named ONE of: entity, body, geom
+      b: {entity: crate}
+      friction: 0.35         # sliding, or the full [slide, slide, spin, roll, roll]
+      condim: 3              # contact dimensionality (1 frictionless, 3 sliding, 4 +spin, 6 +roll)
+      solref: null           # optional, MuJoCo's two-element contact solver reference
+      solimp: null           # optional, five-element solver impedance
+
+The two sides are named separately, and independently, because a real pair often mixes kinds: the
+floor is a geom while the thing sliding on it is an entity, and requiring both to be the same kind
+would make the commonest pair in a pushing experiment inexpressible.
 
 Every geom of side A is paired with every geom of side B, so a robot base with twenty collision
 geoms touching a five-geom object declares a hundred pairs -- MuJoCo handles that as a list, and the
@@ -56,9 +58,8 @@ class ContactPairPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        self.entities = list(self.config.get("entities") or [])
-        self.bodies = list(self.config.get("bodies") or [])
-        self.geoms = list(self.config.get("geoms") or [])
+        self.a = self.config.get("a")
+        self.b = self.config.get("b")
         self.friction = self.config.get("friction")
         self.condim = self.config.get("condim")
         self.solref = self.config.get("solref")
@@ -67,16 +68,20 @@ class ContactPairPlugin(Plugin):
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        given = [k for k in ("entities", "bodies", "geoms") if config.get(k)]
-        if len(given) != 1:
-            errors.append(
-                "name the two sides with exactly one of 'entities', 'bodies' or 'geoms'"
-                + (f"; got {given}" if given else "")
-            )
-        for key in given:
-            value = config[key]
-            if not isinstance(value, list) or len(value) != 2:
-                errors.append(f"'{key}' must be a list of exactly two names, got {value!r}")
+        for side in ("a", "b"):
+            sel = config.get(side)
+            if sel is None:
+                errors.append(f"'{side}' is required: a pair has two sides")
+                continue
+            if not isinstance(sel, dict):
+                errors.append(f"'{side}' must be a mapping, e.g. {{entity: robot}}; got {sel!r}")
+                continue
+            kinds = [k for k in ("entity", "body", "geom") if sel.get(k)]
+            if len(kinds) != 1:
+                errors.append(
+                    f"'{side}' names exactly one of 'entity', 'body' or 'geom'"
+                    + (f"; got {kinds}" if kinds else "")
+                )
         if "friction" in config:
             f = config["friction"]
             if isinstance(f, (list, tuple)):
@@ -124,22 +129,24 @@ class ContactPairPlugin(Plugin):
             stack.extend(b.bodies)
         return out
 
+    def _side(self, sel: dict, spec: mujoco.MjSpec, ctx: SimContext) -> list[str]:
+        """One side's geom names, from whichever of entity / body / geom it was given by."""
+        if sel.get("geom"):
+            return [sel["geom"]]
+        if sel.get("body"):
+            return self._subtree_geoms(spec, sel["body"])
+        name = sel["entity"]
+        entity = ctx.entities.get(name)
+        if entity is None or not entity.body:
+            raise RuntimeError(
+                f"contact_pair: no entity named {name!r} with a base body. Entities are registered "
+                "by the plugin that spawns them, so this pair must be declared AFTER both -- one "
+                "naming a robot listed below it finds nothing."
+            )
+        return self._subtree_geoms(spec, entity.body)
+
     def _sides(self, spec: mujoco.MjSpec, ctx: SimContext) -> tuple[list[str], list[str]]:
-        if self.geoms:
-            return [self.geoms[0]], [self.geoms[1]]
-        if self.bodies:
-            return tuple(self._subtree_geoms(spec, b) for b in self.bodies)
-        sides = []
-        for name in self.entities:
-            entity = ctx.entities.get(name)
-            if entity is None or not entity.body:
-                raise RuntimeError(
-                    f"contact_pair: no entity named {name!r} with a base body. Entities are "
-                    "registered by the plugin that spawns them, so this one must be declared "
-                    "AFTER both -- a pair naming a robot listed below it finds nothing."
-                )
-            sides.append(self._subtree_geoms(spec, entity.body))
-        return sides[0], sides[1]
+        return self._side(self.a, spec, ctx), self._side(self.b, spec, ctx)
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         a, b = self._sides(spec, ctx)
