@@ -16,14 +16,15 @@ Config::
 
     box:
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 box)
-      pos: [x, y]          # centre in world metres; [x, y] sits the box ON the floor,
-                           #   [x, y, z] places its CENTRE at z (REQUIRED)
+      pose:                # world placement (REQUIRED), as SpawnEntity states one; omit z to
+        position: {x: 0.0, y: 0.0}     #   sit the box ON the floor, give z to place its CENTRE
+        orientation: {yaw: 0.0}        #   a full rotation, so a box may be tipped onto an edge
       size: [0.4, 0.4, 0.8]  # full extents (not half-extents), metres (REQUIRED)
-      yaw: 0.0             # rotation about z, radians
       color: [r,g,b,a]     # default a light warehouse grey; alpha optional
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
-      free: false          # give the box a free joint: movable, and TELEPORTABLE (see below)
+      motion: physics      # who owns the pose: physics (default; movable and TELEPORTABLE),
+                           #   static (welded scenery), driven (a plugin writes it)
       motion: driven       # a plugin writes the pose: collidable, immovable, and NOT in a
                            #   navigator's planner grid
 
@@ -32,7 +33,7 @@ box, and halving it in your head is exactly the kind of silent factor-of-two a s
 of its author.
 
 By default the box is welded scenery -- static, with no free joint -- like every other plugin in this
-package. ``free: true`` gives it a free joint, which buys two things: physics can move it, and
+package. ``motion: physics`` gives it a free joint, which buys two things: physics can move it, and
 ``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any entity
 without a free ``base_joint``).
 
@@ -48,9 +49,6 @@ excluded from a navigator's planner grid by the same rule that excludes walkers 
 that grid holds only what cannot move. So a mover plans straight through it and has to discover it
 with its forward probe, which is exactly the "obstacle the robot is not supposed to know about" this
 plugin exists for. Welded scenery cannot do that job: it lands in the grid and gets routed around.
-
-``free`` and ``mocap`` are mutually exclusive -- a body cannot both carry a free joint and be
-kinematically posed -- and asking for both is refused rather than silently resolved.
 """
 
 from __future__ import annotations
