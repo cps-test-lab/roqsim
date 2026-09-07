@@ -40,7 +40,7 @@ def _world(tmp_path, *, world=ROOM, nav=None, **prop):
                     "spawn_model": {
                         "model": str(crate),
                         "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
-                        "mocap": True,
+                        "motion": "driven",
                         **prop,
                     },
                     "name": "cart",
@@ -128,7 +128,7 @@ def test_two_movers_share_one_rasterized_grid(tmp_path):
                 "model": str(crate),
                 "prefix": f"c{i}_",
                 "pose": {"position": {"x": -2.5, "y": y, "z": 0.25}},
-                "mocap": True,
+                "motion": "driven",
             },
             "name": f"cart{i}",
             "components": [{"navigator": dict(nav)}],
@@ -167,7 +167,7 @@ def test_a_second_navigator_on_one_entity_is_refused(tmp_path):
                 {
                     "spawn_model": {
                         "model": str(crate),
-                        "mocap": True,
+                        "motion": "driven",
                         "pose": {"position": {"x": 0, "y": 0, "z": 0.25}},
                     },
                     "name": "cart",
@@ -197,7 +197,7 @@ def test_speed_is_required(tmp_path):
                             "spawn_model": {
                                 "model": str(crate),
                                 "pose": {"position": {"x": 0, "y": 0, "z": 0.25}},
-                                "mocap": True,
+                                "motion": "driven",
                             },
                             "name": "cart",
                             "components": [{"navigator": {"goals": [[1.0, 0.0]]}}],
@@ -211,6 +211,6 @@ def test_speed_is_required(tmp_path):
 
 def test_a_navigator_on_a_welded_prop_is_refused_with_the_fix(tmp_path):
     """The common mistake, and the error has to name the cure rather than the symptom."""
-    engine = Engine(_world(tmp_path, mocap=False, nav={"output": "mocap"}))
-    with pytest.raises(Exception, match="mocap: true"):
+    engine = Engine(_world(tmp_path, motion="physics", nav={"output": "mocap"}))
+    with pytest.raises(Exception, match="motion: driven"):
         engine.setup()

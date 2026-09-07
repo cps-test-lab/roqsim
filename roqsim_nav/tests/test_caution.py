@@ -48,7 +48,7 @@ def _write(tmp_path, name, text):
     return str(path)
 
 
-def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half_height=None):
+def _world(tmp_path, *, blocker=None, nav=None, blocker_driven=True, blocker_half_height=None):
     """The mover, plus optionally a second prop sitting in its way at the origin."""
     crate = _write(tmp_path, "crate.xml", CRATE)
     navigator = {
@@ -64,7 +64,7 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half
         {
             "spawn_model": {
                 "model": crate,
-                "mocap": True,
+                "motion": "driven",
                 "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
             },
             "name": "cart",
@@ -84,7 +84,7 @@ def _world(tmp_path, *, blocker=None, nav=None, blocker_mocap=True, blocker_half
                     "model": crate if blocker_half_height is None else low,
                     "prefix": "b_",
                     "pose": {"position": {"x": blocker[0], "y": blocker[1], "z": half}},
-                    **({"mocap": True} if blocker_mocap else {"free": True}),
+                    **({"motion": "driven"} if blocker_driven else {"motion": "physics"}),
                 },
                 "name": "blocker",
             }
@@ -159,7 +159,7 @@ def test_a_free_jointed_body_in_the_way_is_a_blocker(tmp_path):
     at the blocker -- it would shovel it down the corridor. That the blocker has not moved is the
     assertion, and it is a stronger one than the mover's own position.
     """
-    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), blocker_mocap=False))
+    engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), blocker_driven=False))
     engine.setup()
     engine.reset()
     try:

@@ -72,7 +72,12 @@ class CylinderPlugin(Plugin):
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
-        self.free = bool(self.config.get("free", False))
+        # `motion` names who owns this body's pose -- one question with three answers, rather
+        # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
+        # was meaningless and had to be refused wherever they were offered.
+        self.motion = self.config.get("motion", "physics")
+        self.free = self.motion == "physics"
+        self.mocap = self.motion == "driven"
         self.mass = self._optional_float(self.config.get("mass"))
         self._base_joint = ""
         self._spawn_qpos: list[float] | None = None
@@ -155,8 +160,23 @@ class CylinderPlugin(Plugin):
             errors.append("'color' must be [r, g, b] or [r, g, b, a] numbers")
         if "collide" in config and not isinstance(config["collide"], bool):
             errors.append("'collide' must be a boolean")
-        if "free" in config and not isinstance(config["free"], bool):
-            errors.append("'free' must be a boolean")
+        for gone, replacement in (
+            ("free", "motion: physics (or motion: static)"),
+            ("mocap", "motion: driven"),
+        ):
+            if gone in config:
+                # Refused rather than translated: a removed key that quietly still worked would
+                # leave two vocabularies for one question, which is what this replaced.
+                errors.append(
+                    f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
+                    "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "
+                    "it), 'static' (welded scenery, which a planner's grid holds), 'driven' (a "
+                    "plugin writes the pose each step: solid, immovable, and NOT in the grid)."
+                )
+        if "motion" in config and config["motion"] not in {"physics", "static", "driven"}:
+            errors.append(
+                f"'motion' must be one of physics, static, driven -- got {config['motion']!r}."
+            )
         if config.get("mass") is not None:
             try:
                 mass = float(config["mass"])
@@ -199,6 +219,12 @@ class CylinderPlugin(Plugin):
             # kinds of prop are re-seated and teleported by one code path.
             body.add_freejoint(name="free")
             self._base_joint = f"{self.prefix}free"
+        elif self.mocap:
+            # Zero DOFs, so the solver treats it as immovable and nothing shoves it aside; and no
+            # `on_reset` is needed, because `mj_resetData` restores a mocap body's pose from
+            # `body_pos`. Its absence from a navigator's grid follows from being mocap, which is
+            # what `wall_polygons` filters on -- the pillar a robot must see rather than plan round.
+            body.mocap = True
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
@@ -217,10 +243,13 @@ class CylinderPlugin(Plugin):
             meta["mass"] = self.mass
         if self.free:
             meta["base_joint"] = self._base_joint
+        if self.mocap:
+            # How a nested driver discovers it may write this prop's pose, as with `box`.
+            meta["mocap"] = True
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if self.free else "prop",
+                kind="prop",
                 body=self.prefix + _ROOT_BODY,
                 meta=meta,
             )

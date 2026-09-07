@@ -45,7 +45,7 @@ def _world(tmp_path, *, movers=1, avoidance=None, yields=True, model=STUB, subje
                     "model": str(crate),
                     "prefix": f"m{i}_",
                     "pose": {"position": {"x": -2.0, "y": float(i), "z": 0.25}},
-                    "mocap": True,
+                    "motion": "driven",
                 },
                 "name": f"mover{i}",
                 "components": [

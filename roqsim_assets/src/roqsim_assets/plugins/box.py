@@ -24,7 +24,8 @@ Config::
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
       free: false          # give the box a free joint: movable, and TELEPORTABLE (see below)
-      mocap: true          # collidable and immovable, and NOT in a navigator's planner grid
+      motion: driven       # a plugin writes the pose: collidable, immovable, and NOT in a
+                           #   navigator's planner grid
 
 ``size`` is deliberately **full extents**, not MuJoCo half-extents: a world file describes a 0.4 m
 box, and halving it in your head is exactly the kind of silent factor-of-two a scene should not ask
@@ -41,7 +42,7 @@ harmless (below the floor, say), and moved into place by the scenario when the m
 episodes ``on_reset`` puts it back at its declared pose, so a trial never inherits the previous
 trial's obstacle position.
 
-``mocap: true`` is the third state, and it is what makes this plugin's opening paragraph achievable
+``motion: driven`` is the third state, and it is what makes this plugin's opening paragraph achievable
 without a scenario at all. A mocap box has no degrees of freedom, so nothing can push it, and it is
 excluded from a navigator's planner grid by the same rule that excludes walkers and driven props --
 that grid holds only what cannot move. So a mover plans straight through it and has to discover it
@@ -80,8 +81,12 @@ class BoxPlugin(Plugin):
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
-        self.free = bool(self.config.get("free", False))
-        self.mocap = bool(self.config.get("mocap", False))
+        # `motion` names who owns this body's pose -- one question with three answers, rather
+        # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
+        # was meaningless and had to be refused wherever they were offered.
+        self.motion = self.config.get("motion", "physics")
+        self.free = self.motion == "physics"
+        self.mocap = self.motion == "driven"
         self._base_joint = ""
         self._spawn_qpos: list[float] | None = None
 
@@ -163,14 +168,22 @@ class BoxPlugin(Plugin):
             errors.append("'color' must be [r, g, b] or [r, g, b, a] numbers")
         if "collide" in config and not isinstance(config["collide"], bool):
             errors.append("'collide' must be a boolean")
-        if "free" in config and not isinstance(config["free"], bool):
-            errors.append("'free' must be a boolean")
-        if "mocap" in config and not isinstance(config["mocap"], bool):
-            errors.append("'mocap' must be a boolean")
-        if config.get("free") and config.get("mocap"):
+        for gone, replacement in (
+            ("free", "motion: physics (or motion: static)"),
+            ("mocap", "motion: driven"),
+        ):
+            if gone in config:
+                # Refused rather than translated: a removed key that quietly still worked would
+                # leave two vocabularies for one question, which is what this replaced.
+                errors.append(
+                    f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
+                    "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "
+                    "it), 'static' (welded scenery, which a planner's grid holds), 'driven' (a "
+                    "plugin writes the pose each step: solid, immovable, and NOT in the grid)."
+                )
+        if "motion" in config and config["motion"] not in {"physics", "static", "driven"}:
             errors.append(
-                "'free' and 'mocap' are mutually exclusive: a free joint means physics moves the "
-                "box, a mocap body means its pose is written. Pick one."
+                f"'motion' must be one of physics, static, driven -- got {config['motion']!r}."
             )
         return errors
 
@@ -230,7 +243,7 @@ class BoxPlugin(Plugin):
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if (self.free or self.mocap) else "prop",
+                kind="prop",
                 body=self.prefix + _ROOT_BODY,
                 meta=meta,
             )

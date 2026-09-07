@@ -66,7 +66,7 @@ def sim(tmp_path_factory):
                 "spawn_model": {
                     "model": str(tmp / "crate.xml"),
                     "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.25}},
-                    "mocap": True,
+                    "motion": "driven",
                 },
                 "name": "cart",
                 "components": [

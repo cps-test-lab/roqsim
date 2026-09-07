@@ -1,7 +1,7 @@
 """The ``mocap`` output: move a body by writing its pose.
 
 For anything with no degrees of freedom that still has to go somewhere -- a pallet, a cart, a crate
-that crosses an aisle. The body is a MuJoCo mocap body (``spawn_model: {mocap: true}``), so it costs
+that crosses an aisle. The body is a MuJoCo mocap body (``spawn_model: {motion: driven}``), so it costs
 the solver nothing and nothing can push it off course, while remaining collision geometry the robot
 under test perceives and collides with. That combination is exactly what a *controlled* obstacle is:
 present to the robot, immovable by it.
@@ -43,7 +43,7 @@ class MocapOutput(NavOutput):
         if self._mocapid < 0:
             raise OutputUnavailable(
                 f"body {entity.body!r} of entity {entity.name!r} is not a mocap body, so its pose "
-                f"cannot be written. Spawn it with `spawn_model: {{mocap: true}}`."
+                f"cannot be written. Spawn it with `spawn_model: {{motion: driven}}`."
             )
 
     def emit(self, ctx, pref_vel: np.ndarray, yaw: float, dt: float) -> None:
