@@ -1,0 +1,30 @@
+TurtleBot3 World scene
+======================
+
+Ported from the ROBOTIS "turtlebot3_world" Gazebo model in turtlebot3_simulations:
+  https://github.com/ROBOTIS-GIT/turtlebot3_simulations
+  pinned at commit 9be186fb03d84ed4f293e5c0db71d8c05bbc91f3
+
+Licence: Apache License 2.0
+  http://www.apache.org/licenses/LICENSE-2.0
+Model author: Taehun Lim (Darby), ROBOTIS -- as stated in the model's own model.config
+  ("TurtleBot3 World", version 1.0, "World of TurtleBot3 with ROS symbol")
+
+This is the hexagonal room with nine pillars that TurtleBot 3's own tutorials and nav2's TurtleBot 3
+examples navigate. The files read by the import, and their sha256 at that commit:
+
+  turtlebot3_gazebo/worlds/turtlebot3_world.world
+    c9366524b786938956219153997e8569835c8a7777ec5bf219e318fa137021e5
+  turtlebot3_gazebo/models/turtlebot3_world/model.sdf
+    80d2cd15882457b35ed9bbe7fcf70153158bdae4260916c8227e2fe5c624239a
+  turtlebot3_gazebo/models/turtlebot3_world/meshes/wall.dae
+    da086329366d78b9ee73a8dc210232683bdfee93db66bf8ddd14b1bd545cf089
+  turtlebot3_gazebo/models/turtlebot3_world/meshes/hexagon.dae
+    16b1756c50e90c2161f89e2ada1047b69d495889c53522197520116de23a4cda
+
+The commit and those hashes are the pin, and external/convert/build_tb3_world_scene.py checks them
+before it imports anything -- the world's two <include> URIs (a Fuel ground plane and sun, both CC0)
+are what assets.lock.json covers, because they are the only assets the importer fetches itself.
+
+Geometry and poses are the source's, unchanged. What the port had to decide, and how the result was
+checked against the occupancy grid ROBOTIS publishes for this world, is in port_log.md.

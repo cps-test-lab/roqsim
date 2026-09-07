@@ -49,6 +49,12 @@ roqsim_sensors/src/roqsim_sensors/models/robin_w1g/meshes/robin_w1g_body.obj
 roqsim_scenes/src/roqsim_scenes/scenes/depot/meshes/
 roqsim_scenes/src/roqsim_scenes/scenes/depot/textures/
 
+# roqsim_scenes 'tb3_world' scene: same rule, from the pinned upstream Gazebo model
+# (scenes/tb3_world/CREDITS.txt + external/convert/build_tb3_world_scene.py). Only the baked world
+# under worlds/tb3_world/ is committed; scene.json + assets.lock.json + CREDITS.txt + port_log.md
+# stay tracked as the port's provenance + re-bake recipe.
+roqsim_scenes/src/roqsim_scenes/scenes/tb3_world/meshes/
+
 # `roqsim sensors coverage` / the sensor_coverage_probe plugin write their report here by default
 # (report.json + the 2D/3D figures). Anchored: roqsim_sensors/src/roqsim_sensors/coverage/ is source.
 /coverage/

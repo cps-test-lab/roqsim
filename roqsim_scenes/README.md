@@ -1,7 +1,9 @@
 # roqsim_scenes
 
 MuJoCo scene worlds imported from CAD, USD or Gazebo SDF and baked into a **plain MJCF** you can load
-with roqsim *or* any MuJoCo tool. Ships the **Depot** warehouse (from Gazebo Fuel, CC-BY-4.0).
+with roqsim *or* any MuJoCo tool. Ships the **Depot** warehouse (from Gazebo Fuel, CC-BY-4.0) and the
+ROS 2 **TurtleBot3 World** (from ROBOTIS `turtlebot3_simulations`, Apache-2.0) — the hexagonal room
+with nine pillars that TurtleBot 3's and nav2's own tutorials navigate.
 
 There is **no runtime plugin**. An offline pipeline turns a source scene into a committed `.xml` world;
 roqsim loads it via `sim.world` (which now accepts an MJCF file path), and so does
@@ -87,6 +89,14 @@ because the MJCF loads and steps happily in every case:
   building's walls and roof are usually *welded into one component*, whose hull is the solid brick
   above. The reflex-edge cut (`scene_mesh_io.split_convex_parts`) recovers the individual slabs;
   genuinely convex geometry passes through as one piece.
+- **A closed ring of walls defeats both of those, and is cut by its own footprint instead.** Both cuts
+  work on the mesh graph, and a loop is one component whose reflex corners leave the outer faces
+  connected the long way round — so a room's fence keeps the hull that fills the room. Where such a
+  part is an *extrusion of a 2D footprint* (every vertex on one of two horizontal planes, every face
+  vertical or horizontal — most building shells, and `tb3_world`'s wall), `scene_mesh_io.split_extruded_shell`
+  decomposes it into convex prisms over a trapezoidal decomposition of that footprint: exact, so the
+  pieces' volume is the wall's. It runs only on a part that fails the hull check, and a part it cannot
+  cut still gets the refusal and its two documented ways forward (`--no-collide`, `--collision-only`).
 - **Take the ground height from the source's `<plane>`, not from the scene bounds.** A world that puts
   its ground at z=0 and drops the building to z=-0.1 (Gazebo's Warehouse) leaves an outdoor apron as
   the lowest geometry. Guessing from the bounds sinks the collision floor below the visible one. The
@@ -100,6 +110,13 @@ has exactly one material). Source JPEGs are re-encoded to PNG on the way in — 
 
 ## What's here
 
+- `scenes/tb3_world/` — the ROS 2 `turtlebot3_world` port: `scene.json`, `assets.lock.json`,
+  `CREDITS.txt` and `port_log.md` (what the port had to decide — a Collada `<up_axis>` that
+  contradicts its own geometry, and a wall ring that cannot be collided as a mesh — and how the
+  result was checked against the occupancy grid ROBOTIS publishes for this world). Re-import with
+  `python external/convert/build_tb3_world_scene.py`, which pins the upstream commit and verifies it
+  file by file.
+- `worlds/tb3_world/tb3_world.xml` + `assets/`, and `worlds/tb3_world.yaml` — the baked world.
 - `scenes/depot/` — the port's provenance and re-bake recipe: `scene.json`, `depot.sdf`,
   `assets.lock.json` (the pinned Fuel model) and `CREDITS.txt`. The tessellated source meshes and
   textures (~43 MB) are regenerable from that pin and are git-ignored.
@@ -117,6 +134,7 @@ has exactly one material). Source JPEGs are re-encoded to PNG on the way in — 
 ```
 # via roqsim (add spawn_robot/spawn_arm plugins to populate the scene)
 roqsim sim roqsim_scenes:depot
+roqsim sim roqsim_scenes:tb3_world
 
 # or as a plain MuJoCo model, no roqsim
 python -m mujoco.viewer --mjcf roqsim_scenes/src/roqsim_scenes/worlds/depot/depot.xml
