@@ -275,10 +275,11 @@ def build_world(
         )
         spawn = {
             "model": robot,
-            "name": "robot",
             "pose": {"position": position, "orientation": {"yaw": yaw}},
         }
-        plugins.append({"spawn_robot": spawn})
+        # `name` is a SIBLING of the plugin ref, not one of its config keys -- see the identical
+        # note on `obstacle_plugins` above; this entry was missed when that one was fixed.
+        plugins.append({"spawn_robot": spawn, "name": "robot"})
     plugins.extend(
         obstacle_plugins(
             grid,
