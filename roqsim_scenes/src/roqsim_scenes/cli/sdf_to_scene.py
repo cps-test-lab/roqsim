@@ -568,7 +568,20 @@ class Importer:
         out.mkdir(parents=True, exist_ok=True)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
-        if self.args.lock and self.assets:
+        if self.args.lock:
+            if not self.assets:
+                # Asking for a lock file and getting silence is the worst outcome here: the import
+                # succeeds, the scene loads, and nothing records where its geometry came from. A
+                # world whose every `uri` is a `model://` resolved against `--model-path` has no
+                # external asset to pin -- its provenance is the checkout it was read from, which
+                # this tool never saw and cannot hash. Say so instead of writing nothing.
+                raise SystemExit(
+                    f"--lock {self.args.lock}: nothing to pin. Every model in this world resolved "
+                    f"locally through --model-path, so there is no fetched asset whose URI and "
+                    f"digest could be recorded. The provenance of a world like this is the source "
+                    f"tree it was read from: pin that (repository, revision, per-path digest and "
+                    f"licence) beside the scene instead, and do not pass --lock."
+                )
             fuel_fetch.write_lock(
                 Path(self.args.lock), list(self.assets.values()), world=str(self.args.world)
             )
