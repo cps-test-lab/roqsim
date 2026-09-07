@@ -14,7 +14,7 @@ measures something different if its round obstacles are squared off.
 
 By default the cylinder is **welded scenery** -- static, with no free joint -- and is declared in the
 world YAML rather than baked into the scene, so it stays out of the occupancy grid the map is
-generated from. ``free: true`` gives it a free joint, exactly as on ``box``: physics can then move it
+generated from. ``motion: physics`` gives it a free joint, exactly as on ``box``: physics can move it
 and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that service rejects any entity
 without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
 billet -- and not only an obstacle, and it is why ``radius`` matters as config: a graspable round
@@ -25,14 +25,16 @@ Config::
 
     cylinder:
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 cylinder)
-      pos: [x, y]          # centre in world metres; [x, y] stands the cylinder ON the floor,
+      pose:                # world placement (REQUIRED), as SpawnEntity states one; omit z to
+        position: {x: 0.0, y: 0.0}     #   stand it ON the floor, give z to place its CENTRE
                            #   [x, y, z] places its CENTRE at z (REQUIRED)
       radius: 0.075        # metres (REQUIRED)
       height: 0.5          # full height, metres (REQUIRED)
       color: [r,g,b,a]     # default a light warehouse grey; alpha optional
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
-      free: false          # give the cylinder a free joint: movable, and TELEPORTABLE
+      motion: physics      # who owns the pose: physics (default; movable and TELEPORTABLE),
+                           #   static (welded scenery), driven (a plugin writes it)
       mass: null           # total mass, kg. Unset -> MuJoCo's default density (1000 kg/m^3), which
                            #   for a hollow container is several times too heavy
 

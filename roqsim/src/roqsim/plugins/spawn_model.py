@@ -4,7 +4,7 @@ The generic, family-free counterpart to ``spawn_robot``/``spawn_arm``/``spawn_se
 any ``roqsim.models`` entry -- notably the reusable props in ``roqsim_assets`` (an office table,
 a chair, a fire extinguisher) -- and attaches it at a mount pose. By default there is no free joint, so
 the model is welded in place (static scenery); it is the world-YAML alternative to ``<include>``-ing the
-prop's MJCF into a baked scene. The prop's own MJCF is used unchanged. Set ``free: true`` for a prop
+prop's MJCF into a baked scene. The prop's own MJCF is used unchanged. Set ``motion: physics`` for a prop
 physics should move (a box to be picked up).
 
 Config::
@@ -16,7 +16,8 @@ Config::
         position:    {x: 0.0, y: 0.0, z: 0.0}
         orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}
       scale: 1.0                     # uniform geometric scale factor (see below)
-      free: false                    # give the prop a free joint: a movable body, not scenery
+      motion: physics                # who owns the pose: physics (default; a movable body),
+                                     #   static (welded scenery), driven (a plugin writes it)
       mocap: false                   # make it a mocap body: moved by a plugin, not by physics
       present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the root body's total geom mass (kg)
@@ -47,7 +48,7 @@ is: it goes where the experiment says, and the robot under test cannot shove it 
 ``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
 rather than a joint), so a repetition never inherits where the last one left it.
 
-``free: true`` adds a ``<freejoint/>`` to the prop's root body, turning it from welded scenery into a
+``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves,
 body physics moves -- a box a robot can pick up. It also registers the joint as the entity's
 ``base_joint``, which is what lets ``simulation_interfaces``' ``SetEntityState`` teleport or re-seat it
 (the service rejects any entity without one), and what ``on_reset`` uses to put it back at its spawn
@@ -368,13 +369,13 @@ class SpawnModelPlugin(Plugin):
         """Make the prop's root body a free body, refusing the cases that go silently wrong."""
         if not bodies:
             raise ModelError(
-                f"spawn_model {self.model_ref!r}: free: true needs a root body to attach the free "
+                f"spawn_model {self.model_ref!r}: motion: physics needs a root body to attach the free "
                 f"joint to, but {asset.path} declares none (its geoms sit directly on worldbody)."
             )
         root = bodies[0]
         if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
             raise ModelError(
-                f"spawn_model {self.model_ref!r}: free: true, but {asset.path} already gives its root "
+                f"spawn_model {self.model_ref!r}: motion: physics, but {asset.path} already gives its root "
                 f"body a joint. Spawn it without `free` -- the prop defines its own articulation."
             )
         root.add_freejoint(name="free")
