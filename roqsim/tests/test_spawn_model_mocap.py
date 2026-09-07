@@ -71,17 +71,19 @@ def test_a_mocap_prop_has_no_degrees_of_freedom(tmp_path):
     ``nq == 0`` is the strong form -- the prop contributes no generalised coordinate at all, so a
     world can carry many of them without the physics step growing.
     """
-    engine = Engine(_world(tmp_path, mocap=True))
+    engine = Engine(_world(tmp_path, motion="driven"))
     engine.setup()
     entity = engine.ctx.entities.get("cart")
-    assert entity.kind == "object"  # it moves, so it is not scenery
+    # `kind` is the prop's role; who owns the pose is what `motion` says, and a driven prop
+    # advertises `mocap` in meta for a nested driver to find.
+    assert entity.kind == "prop"
     assert entity.meta.get("mocap") is True  # how a nested driver discovers it may write the pose
     assert _mocapid(engine) >= 0
     assert engine.ctx.model.nq == 0
 
 
 def test_a_driver_writes_the_pose_and_physics_leaves_it_alone(tmp_path):
-    engine = Engine(_world(tmp_path, mocap=True))
+    engine = Engine(_world(tmp_path, motion="driven"))
     engine.setup()
     engine.reset()
     data, mid = engine.ctx.data, _mocapid(engine)
@@ -101,7 +103,7 @@ def test_reset_reseats_a_driven_prop(tmp_path):
     body's ``body_pos``, which is the spawn pose. The test pins that behaviour rather than the
     absence of code, so the day it stops holding this fails instead of the campaign.
     """
-    engine = Engine(_world(tmp_path, mocap=True))
+    engine = Engine(_world(tmp_path, motion="driven"))
     engine.setup()
     engine.reset()
     data, mid = engine.ctx.data, _mocapid(engine)
@@ -110,22 +112,35 @@ def test_reset_reseats_a_driven_prop(tmp_path):
     assert data.mocap_pos[mid] == pytest.approx([1.0, 2.0, 0.25])
 
 
-def test_default_is_still_welded_scenery(tmp_path):
+def test_the_default_is_physics(tmp_path):
     engine = Engine(_world(tmp_path))
     engine.setup()
     assert engine.ctx.entities.get("cart").kind == "prop"
     assert _mocapid(engine) < 0
 
 
-def test_free_and_mocap_together_are_refused(tmp_path):
-    """They are not two strengths of one thing -- they disagree about who owns the pose."""
-    with pytest.raises(PluginError, match="mutually exclusive"):
-        Engine(_world(tmp_path, mocap=True, free=True))
+@pytest.mark.parametrize(
+    "gone, says", [({"free": True}, "'free' is gone"), ({"mocap": True}, "'mocap' is gone")]
+)
+def test_the_keys_motion_replaced_are_refused_not_ignored(tmp_path, gone, says):
+    """`free` and `mocap` asked one question -- who owns this pose -- as two booleans, whose
+    fourth combination was meaningless and had to be refused wherever they were offered.
+
+    They are refused rather than translated because this plugin declares no schema, so a key it
+    stopped reading would be silently ignored: the world would load, say what it always said, and
+    behave differently."""
+    with pytest.raises(PluginError, match=says):
+        Engine(_world(tmp_path, **gone))
+
+
+def test_a_motion_value_it_does_not_know_is_refused(tmp_path):
+    with pytest.raises(PluginError, match="must be one of physics, static, driven"):
+        Engine(_world(tmp_path, motion="floaty"))
 
 
 def test_static_publish_tf_is_refused_for_a_driven_prop(tmp_path):
     with pytest.raises(PluginError, match="publish_tf: static"):
-        Engine(_world(tmp_path, mocap=True, publish_tf="static"))
+        Engine(_world(tmp_path, motion="driven", publish_tf="static"))
 
 
 def test_mocap_on_an_articulated_prop_is_refused(tmp_path):
@@ -133,6 +148,6 @@ def test_mocap_on_an_articulated_prop_is_refused(tmp_path):
 
     Without this the prop arrives looking right and is frozen, which is a slow thing to diagnose.
     """
-    engine = Engine(_world(tmp_path, xml=HINGED, name="hinged", mocap=True))
+    engine = Engine(_world(tmp_path, xml=HINGED, name="hinged", motion="driven"))
     with pytest.raises(Exception, match="no degrees of freedom|inert"):
         engine.setup()

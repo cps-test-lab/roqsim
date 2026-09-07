@@ -105,21 +105,38 @@ def test_several_boxes_coexist_under_distinct_prefixes():
     assert {"o0_box", "o1_box", "o2_box"} <= names
 
 
-def test_welded_by_default_so_nothing_can_teleport_it():
-    """No free joint unless asked: the default box is scenery, and SetEntityState must refuse it."""
+def test_physics_by_default_so_a_trial_can_teleport_it():
+    """A box is movable unless the world says otherwise.
+
+    The other way round failed silently and expensively: SetEntityState refuses an entity with no
+    free `base_joint`, so a world that parked an obstacle out of the way and teleported it in on
+    cue failed on its first call, every run, while the world compiled, the entity existed under
+    the name the caller used, and GetEntities listed it.
+    """
     model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8])
+    assert model.njnt == 1
+    assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE
+    assert ctx.entities.get("box").meta["base_joint"] == "free"
+
+
+def test_static_is_the_opt_out_for_scenery():
+    """`motion: static` welds it: for anything the trial never moves, which spares the solver six
+    DOFs per box and keeps a LIGHT box from being shoved out of a placement the experiment chose."""
+    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="static")
     assert model.njnt == 0
     assert "base_joint" not in ctx.entities.get("box").meta
 
 
-def test_free_adds_a_free_joint_and_advertises_it_as_base_joint():
-    """`free: true` is what makes the box teleportable -- simulation_interfaces' SetEntityState
-    rejects any entity whose meta carries no free `base_joint`, so the joint alone is not enough."""
-    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], free=True)
+def test_physics_advertises_the_joint_as_base_joint():
+    """The joint alone is not enough: simulation_interfaces' SetEntityState rejects any entity
+    whose meta carries no free `base_joint`, so the plugin has to advertise it."""
+    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="physics")
     assert model.njnt == 1
     assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE
     entity = ctx.entities.get("box")
-    assert entity.kind == "object"
+    # `kind` names the role. What a consumer must ask about movability is `base_joint` -- the
+    # thing SetEntityState and the planner grid actually need.
+    assert entity.kind == "prop"
     assert entity.meta["base_joint"] == "free"
     jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "free")
     assert jid >= 0
@@ -136,7 +153,7 @@ def test_free_box_keeps_its_prefix_in_the_base_joint_name():
                 "pos": [x, 0.0],
                 "size": [0.4, 0.4, 0.8],
                 "prefix": f"o{i}_",
-                "free": True,
+                "motion": "physics",
             },
             label=f"obstacle_{i}",
         )
@@ -153,7 +170,7 @@ def test_free_box_keeps_its_prefix_in_the_base_joint_name():
 
 def test_on_reset_returns_a_teleported_box_to_its_declared_pose():
     """A trial must not inherit where the previous trial left the obstacle."""
-    model, data, plugin, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], free=True)
+    model, data, plugin, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="physics")
     jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "free")
     adr = int(model.jnt_qposadr[jid])
     data.qpos[adr : adr + 3] = [5.0, 6.0, 7.0]  # as SetEntityState would teleport it
@@ -163,28 +180,33 @@ def test_on_reset_returns_a_teleported_box_to_its_declared_pose():
     assert data.qvel[int(model.jnt_dofadr[jid])] == pytest.approx(0.0)
 
 
-def test_validation_rejects_non_boolean_free():
-    errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.4, 0.8], "free": "yes"})
-    assert any("'free' must be a boolean" in e for e in errs)
+def test_validation_rejects_a_motion_it_does_not_know():
+    errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.4, 0.8], "motion": "yes"})
+    assert any("must be one of physics, static, driven" in e for e in errs)
 
 
 # -- mocap: the third body state -------------------------------------------------------------------
-def test_a_mocap_box_has_no_dofs_and_is_a_mocap_body():
+def test_a_driven_box_has_no_dofs_and_is_a_mocap_body():
     """Immovable to the solver.
 
     Being a mocap body is also what keeps it out of a navigator's planner grid -- that filter is
     ``roqsim_nav``'s and is tested there; this package does not depend on it.
     """
-    model, _, _, ctx = _build(pos=[1.0, 0.0], size=[0.4, 0.4, 0.5], mocap=True)
+    model, _, _, ctx = _build(pos=[1.0, 0.0], size=[0.4, 0.4, 0.5], motion="driven")
     bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, ctx.entities.get("box").body)
     assert int(model.body_mocapid[bid]) >= 0
     assert int(model.body_dofnum[bid]) == 0
-    assert ctx.entities.get("box").kind == "object"
+    assert ctx.entities.get("box").kind == "prop"
     assert ctx.entities.get("box").meta["mocap"] is True
 
 
-def test_free_and_mocap_together_are_refused():
-    from roqsim_assets.plugins.box import BoxPlugin
+@pytest.mark.parametrize("gone, says", [("free", "'free' is gone"), ("mocap", "'mocap' is gone")])
+def test_the_keys_motion_replaced_are_refused_not_ignored(gone, says):
+    """`free` and `mocap` asked one question -- who owns this pose -- as two booleans, whose
+    fourth combination was meaningless and had to be refused wherever they were offered.
 
-    cfg = {"pos": [0.0, 0.0], "size": [1.0, 1.0, 1.0], "free": True, "mocap": True}
-    assert any("mutually exclusive" in e for e in BoxPlugin(cfg).validate_config(cfg))
+    Refused rather than translated: this plugin declares no schema, so a key it merely stopped
+    reading would be silently ignored, and the world would load, read as it always did, and
+    behave differently."""
+    cfg = {"pos": [0.0, 0.0], "size": [1.0, 1.0, 1.0], gone: True}
+    assert any(says in e for e in BoxPlugin(cfg).validate_config(cfg))

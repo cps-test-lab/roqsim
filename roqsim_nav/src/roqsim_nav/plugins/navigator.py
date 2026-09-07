@@ -567,7 +567,10 @@ class NavigatorPlugin(Plugin):
         model = ctx.model
         roots = set()
         for entity in ctx.entities.all():
-            if entity.kind != "object" or not entity.body:
+            # The free joint, not the kind: what decides whether a prop is baked into the
+            # grid is whether physics can move it, which a placement plugin registers as
+            # `base_joint`. `kind` names the prop's role and never answered this.
+            if not entity.meta.get("base_joint") or not entity.body:
                 continue
             if ctx.blackboard.get(f"nav:{entity.name}:handle") is not None:
                 continue  # driven, so it is traffic rather than scenery

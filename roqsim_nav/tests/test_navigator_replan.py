@@ -57,7 +57,7 @@ def _world(tmp_path, reroute):
                     "spawn_model": {
                         "model": str(tmp_path / "barrier.xml"),
                         "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.5}},
-                        "mocap": True,
+                        "motion": "driven",
                     },
                     "name": "barrier",
                 },
@@ -65,7 +65,7 @@ def _world(tmp_path, reroute):
                     "spawn_model": {
                         "model": str(tmp_path / "crate.xml"),
                         "pose": {"position": {"x": START[0], "y": START[1], "z": 0.25}},
-                        "mocap": True,
+                        "motion": "driven",
                     },
                     "name": "cart",
                     "components": [

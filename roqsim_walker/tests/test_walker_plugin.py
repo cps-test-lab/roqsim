@@ -251,7 +251,7 @@ def test_clearance_measures_the_nearest_limb_not_the_walker_origin(tmp_path):
             {
                 "spawn_model": {
                     "model": str(rover),
-                    "free": True,
+                    "motion": "physics",
                     "pose": {"position": {"x": 0.0, "y": 0.0}},
                 },
                 "name": "robot",
