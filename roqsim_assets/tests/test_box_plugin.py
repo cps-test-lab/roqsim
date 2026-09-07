@@ -40,13 +40,13 @@ def _box_gid(model):
 
 
 def test_size_is_full_extents_not_half():
-    model, _, _, _ = _build(pos=[1.0, 2.0], size=[0.4, 0.6, 0.8])
+    model, _, _, _ = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.6, 0.8])
     gid = _box_gid(model)
     assert list(model.geom_size[gid][:3]) == pytest.approx([0.2, 0.3, 0.4])
 
 
 def test_two_element_pos_sits_the_box_on_the_floor():
-    model, data, _, _ = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8])
+    model, data, _, _ = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8])
     gid = _box_gid(model)
     z = float(data.geom_xpos[gid][2])
     assert z == pytest.approx(0.4)  # centre at half height => bottom face at z = 0
@@ -54,12 +54,14 @@ def test_two_element_pos_sits_the_box_on_the_floor():
 
 
 def test_three_element_pos_places_the_centre():
-    model, data, _, _ = _build(pos=[0.0, 0.0, 1.5], size=[0.4, 0.4, 0.8])
+    model, data, _, _ = _build(pose={"position": {"x": 0.0, "y": 0.0, "z": 1.5}}, size=[0.4, 0.4, 0.8])
     assert float(data.geom_xpos[_box_gid(model)][2]) == pytest.approx(1.5)
 
 
-def test_yaw_rotates_the_box():
-    model, data, _, _ = _build(pos=[0.0, 0.0], size=[1.0, 0.2, 0.5], yaw=math.pi / 2)
+def test_the_pose_orientation_rotates_the_box():
+    model, data, _, _ = _build(
+        pose={"position": {"x": 0.0, "y": 0.0}, "orientation": {"yaw": math.pi / 2}},
+        size=[1.0, 0.2, 0.5])
     gid = _box_gid(model)
     # After a 90 deg yaw the long axis points along world y.
     xmat = data.geom_xmat[gid].reshape(3, 3)
@@ -67,19 +69,19 @@ def test_yaw_rotates_the_box():
 
 
 def test_collide_false_makes_it_visual_only():
-    model, _, _, _ = _build(pos=[0.0, 0.0], size=[0.4, 0.4, 0.4], collide=False)
+    model, _, _, _ = _build(pose={"position": {"x": 0.0, "y": 0.0}}, size=[0.4, 0.4, 0.4], collide=False)
     gid = _box_gid(model)
     assert model.geom_contype[gid] == 0 and model.geom_conaffinity[gid] == 0
 
 
 def test_collides_by_default():
-    model, _, _, _ = _build(pos=[0.0, 0.0], size=[0.4, 0.4, 0.4])
+    model, _, _, _ = _build(pose={"position": {"x": 0.0, "y": 0.0}}, size=[0.4, 0.4, 0.4])
     gid = _box_gid(model)
     assert model.geom_contype[gid] != 0 and model.geom_conaffinity[gid] != 0
 
 
 def test_registers_an_entity_with_its_geometry():
-    _, _, plugin, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], name="obstacle_3")
+    _, _, plugin, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8], name="obstacle_3")
     entity = ctx.entities.get("obstacle_3")
     assert entity is not None and entity.kind == "prop"
     assert entity.meta["size"] == [0.4, 0.4, 0.8]
@@ -87,11 +89,11 @@ def test_registers_an_entity_with_its_geometry():
 
 
 def test_validation_rejects_bad_geometry():
-    assert "'pos' is required" in " ".join(BoxPlugin({}).validate_config({"size": [1, 1, 1]}))
-    assert "'size' is required" in " ".join(BoxPlugin({}).validate_config({"pos": [0, 0]}))
-    errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.0, 0.8]})
+    assert "'pose' is required" in " ".join(BoxPlugin({}).validate_config({"size": [1, 1, 1]}))
+    assert "'size' is required" in " ".join(BoxPlugin({}).validate_config({"pose": {"position": {"x": 0, "y": 0}}}))
+    errs = BoxPlugin({}).validate_config({"pose": {"position": {"x": 0, "y": 0}}, "size": [0.4, 0.0, 0.8]})
     assert any("positive" in e for e in errs)
-    errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.4]})
+    errs = BoxPlugin({}).validate_config({"pose": {"position": {"x": 0, "y": 0}}, "size": [0.4, 0.4]})
     assert any("three numbers" in e for e in errs)
 
 
@@ -99,7 +101,7 @@ def test_several_boxes_coexist_under_distinct_prefixes():
     spec = mujoco.MjSpec()
     ctx = SimContext(config={})
     for i, x in enumerate((0.0, 1.4, 2.8)):
-        BoxPlugin({"pos": [x, 0.0], "size": [0.4, 0.4, 0.8], "prefix": f"o{i}_"}).build(spec, ctx)
+        BoxPlugin({"pose": {"position": {"x": x, "y": 0.0}}, "size": [0.4, 0.4, 0.8], "prefix": f"o{i}_"}).build(spec, ctx)
     model = spec.compile()
     names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) for g in range(model.ngeom)}
     assert {"o0_box", "o1_box", "o2_box"} <= names
@@ -113,7 +115,7 @@ def test_physics_by_default_so_a_trial_can_teleport_it():
     cue failed on its first call, every run, while the world compiled, the entity existed under
     the name the caller used, and GetEntities listed it.
     """
-    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8])
+    model, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8])
     assert model.njnt == 1
     assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE
     assert ctx.entities.get("box").meta["base_joint"] == "free"
@@ -122,7 +124,7 @@ def test_physics_by_default_so_a_trial_can_teleport_it():
 def test_static_is_the_opt_out_for_scenery():
     """`motion: static` welds it: for anything the trial never moves, which spares the solver six
     DOFs per box and keeps a LIGHT box from being shoved out of a placement the experiment chose."""
-    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="static")
+    model, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8], motion="static")
     assert model.njnt == 0
     assert "base_joint" not in ctx.entities.get("box").meta
 
@@ -130,7 +132,7 @@ def test_static_is_the_opt_out_for_scenery():
 def test_physics_advertises_the_joint_as_base_joint():
     """The joint alone is not enough: simulation_interfaces' SetEntityState rejects any entity
     whose meta carries no free `base_joint`, so the plugin has to advertise it."""
-    model, _, _, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="physics")
+    model, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8], motion="physics")
     assert model.njnt == 1
     assert model.jnt_type[0] == mujoco.mjtJoint.mjJNT_FREE
     entity = ctx.entities.get("box")
@@ -150,7 +152,7 @@ def test_free_box_keeps_its_prefix_in_the_base_joint_name():
     for i, x in enumerate((0.0, 1.4)):
         p = BoxPlugin(
             {
-                "pos": [x, 0.0],
+                "pose": {"position": {"x": x, "y": 0.0}},
                 "size": [0.4, 0.4, 0.8],
                 "prefix": f"o{i}_",
                 "motion": "physics",
@@ -170,7 +172,7 @@ def test_free_box_keeps_its_prefix_in_the_base_joint_name():
 
 def test_on_reset_returns_a_teleported_box_to_its_declared_pose():
     """A trial must not inherit where the previous trial left the obstacle."""
-    model, data, plugin, ctx = _build(pos=[1.0, 2.0], size=[0.4, 0.4, 0.8], motion="physics")
+    model, data, plugin, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8], motion="physics")
     jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, "free")
     adr = int(model.jnt_qposadr[jid])
     data.qpos[adr : adr + 3] = [5.0, 6.0, 7.0]  # as SetEntityState would teleport it
@@ -181,7 +183,7 @@ def test_on_reset_returns_a_teleported_box_to_its_declared_pose():
 
 
 def test_validation_rejects_a_motion_it_does_not_know():
-    errs = BoxPlugin({}).validate_config({"pos": [0, 0], "size": [0.4, 0.4, 0.8], "motion": "yes"})
+    errs = BoxPlugin({}).validate_config({"pose": {"position": {"x": 0, "y": 0}}, "size": [0.4, 0.4, 0.8], "motion": "yes"})
     assert any("must be one of physics, static, driven" in e for e in errs)
 
 
@@ -192,7 +194,7 @@ def test_a_driven_box_has_no_dofs_and_is_a_mocap_body():
     Being a mocap body is also what keeps it out of a navigator's planner grid -- that filter is
     ``roqsim_nav``'s and is tested there; this package does not depend on it.
     """
-    model, _, _, ctx = _build(pos=[1.0, 0.0], size=[0.4, 0.4, 0.5], motion="driven")
+    model, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 0.0}}, size=[0.4, 0.4, 0.5], motion="driven")
     bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, ctx.entities.get("box").body)
     assert int(model.body_mocapid[bid]) >= 0
     assert int(model.body_dofnum[bid]) == 0
@@ -208,5 +210,5 @@ def test_the_keys_motion_replaced_are_refused_not_ignored(gone, says):
     Refused rather than translated: this plugin declares no schema, so a key it merely stopped
     reading would be silently ignored, and the world would load, read as it always did, and
     behave differently."""
-    cfg = {"pos": [0.0, 0.0], "size": [1.0, 1.0, 1.0], gone: True}
+    cfg = {"pose": {"position": {"x": 0.0, "y": 0.0}}, "size": [1.0, 1.0, 1.0], gone: True}
     assert any(says in e for e in BoxPlugin(cfg).validate_config(cfg))

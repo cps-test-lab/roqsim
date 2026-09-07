@@ -204,6 +204,15 @@ class SpawnModelPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                # Not a second spelling -- INERT. This plugin reads only `pose`, so a world
+                # stating `pos:` was placed at the origin: stated, ignored, nothing raised.
+                errors.append(
+                    f"'{gone}' is not read by spawn_model and never was -- state the whole pose "
+                    "under 'pose': pose: {position: {x, y, z}, orientation: {yaw}}. A world that "
+                    "set it was silently placing the prop at the origin."
+                )
         if "pose" in config:
             try:
                 parse_pose(config["pose"])

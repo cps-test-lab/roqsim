@@ -15,8 +15,8 @@ from roqsim.context import SimContext
 from roqsim_assets.plugins.boxes import BoxesPlugin
 
 _TWO = [
-    {"pos": [2.0, 1.0], "size": [0.5, 0.5, 1.0]},
-    {"pos": [4.0, -1.0], "size": [0.8, 0.8, 1.0], "yaw": 0.4},
+    {"pose": {"position": {"x": 2.0, "y": 1.0}}, "size": [0.5, 0.5, 1.0]},
+    {"pose": {"position": {"x": 4.0, "y": -1.0}}, "size": [0.8, 0.8, 1.0], "yaw": 0.4},
 ]
 
 
@@ -54,7 +54,7 @@ def test_instances_get_distinct_names():
 
 
 def test_an_instance_may_name_itself():
-    model, _ = _build(name="obstacles", instances=[{"pos": [1.0, 1.0], "name": "pillar"}])
+    model, _ = _build(name="obstacles", instances=[{"pose": {"position": {"x": 1.0, "y": 1.0}}, "name": "pillar"}])
     assert _body_names(model, "pillar")
 
 
@@ -66,7 +66,7 @@ def test_an_empty_population_is_legal():
 
 def test_geometry_is_the_box_plugins():
     """Delegation, not reimplementation: full extents, and two-element pos sits on the floor."""
-    model, _ = _build(name="obstacles", instances=[{"pos": [0.0, 0.0], "size": [0.4, 0.6, 1.0]}])
+    model, _ = _build(name="obstacles", instances=[{"pose": {"position": {"x": 0.0, "y": 0.0}}, "size": [0.4, 0.6, 1.0]}])
     gid = next(
         g
         for g in range(model.ngeom)
@@ -86,7 +86,7 @@ def test_an_override_changes_the_population_count():
     one entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
     """
     world = {"sim": {}, "components": [{"boxes": {"instances": _TWO}, "name": "obstacles"}]}
-    five = [{"pos": [float(i), 0.0], "size": [0.3, 0.3, 0.3]} for i in range(5)]
+    five = [{"pose": {"position": {"x": float(i), "y": 0.0}}, "size": [0.3, 0.3, 0.3]} for i in range(5)]
 
     cfg = load_config_from_dict(world, overrides={"components": {"obstacles": {"instances": five}}})
 
@@ -98,7 +98,7 @@ def test_validation_names_the_offending_instance():
     """ "size must have three elements" is not actionable when the world declares twelve boxes."""
     plugin = BoxesPlugin({"instances": _TWO}, label="obstacles")
     errors = plugin.validate_config(
-        {"name": "obstacles", "instances": [_TWO[0], {"pos": [1.0, 1.0], "size": "big"}]}
+        {"name": "obstacles", "instances": [_TWO[0], {"pose": {"position": {"x": 1.0, "y": 1.0}}, "size": "big"}]}
     )
     assert errors and all(e.startswith("instances[1]:") for e in errors)
 
@@ -110,4 +110,4 @@ def test_instances_is_required():
 
 def test_instances_must_be_a_list():
     plugin = BoxesPlugin({}, label="boxes")
-    assert "must be a list" in plugin.validate_config({"instances": {"pos": [0, 0]}})[0]
+    assert "must be a list" in plugin.validate_config({"instances": {"pose": {"position": {"x": 0, "y": 0}}}})[0]

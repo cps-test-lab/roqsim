@@ -18,7 +18,7 @@ components:
   # motion: static -- the arm is mounted on this bench, so it must not be something the arm can
   # push. A box is `physics` by default, which is right for an obstacle and wrong for furniture.
   - box:
-      pos: [0.0, 0.0, 0.365]
+      pose: {position: {x: 0.0, y: 0.0, z: 0.365}}
       size: [0.60, 0.45, 0.73]
       color: [0.93, 0.93, 0.95, 1.0]
       motion: static

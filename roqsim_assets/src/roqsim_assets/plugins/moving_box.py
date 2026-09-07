@@ -28,15 +28,16 @@ Config::
     moving_box:
       prefix: "cube1_"          # MJCF name prefix (use distinct prefixes for >1 mover)
       size: [0.3, 0.3, 0.3]     # full extents, metres (REQUIRED)
-      pos: [x, y]               # start; [x, y] sits it ON the floor, [x, y, z] sets its CENTRE
-      yaw: 0.0                  # rotation about z, radians (constant; the box does not turn)
+      pose:                     # start; omit z to sit it ON the floor, state z to set its CENTRE
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0} # constant -- the box travels without turning
       speed: 0.1                # m/s along the route (REQUIRED, > 0)
       color: [r, g, b, a]       # default a light warehouse grey; alpha optional
       collide: true             # false -> nothing bumps into it (a raycast still sees it)
       friction: 1.0             # sliding friction, or the full [sliding, torsional, rolling] triple
 
       # -- mode A: a fixed route -----------------------------------------------------------------
-      waypoints: [[2.0, 1.0], [2.0, -3.0]]   # world metres; the box starts at `pos`
+      waypoints: [[2.0, 1.0], [2.0, -3.0]]   # world metres; the box starts at `pose`
       loop: true                # true -> cycle the route forever; false -> stop at the last point
       ping_pong: false          # true -> reverse at the end instead of jumping back to the start
 
@@ -47,7 +48,7 @@ Config::
         bounds: [x0, y0, x1, y1]   # optional axis-aligned box the centre must stay inside
         turn_deg: [60, 300]     # heading change sampled uniformly from this range, in degrees
 
-``pos`` is where the box is at ``on_reset``, every episode: a trial never inherits the previous
+``pose`` is where the box is at ``on_reset``, every episode: a trial never inherits the previous
 trial's obstacle position, and neither does the RNG (it is re-seeded), so repetition N of a cell sees
 the same obstacle motion however many trials ran before it.
 """
@@ -63,6 +64,7 @@ import numpy as np
 from roqsim import raycast
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
 
 _GREY_RGBA = [0.86, 0.86, 0.83, 1.0]  # pale warehouse carton, as `box`
 _ROOT_BODY = "moving_box"
@@ -84,8 +86,7 @@ class MovingBoxPlugin(Plugin):
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         self.size = self._vec3(self.config.get("size"), (0.3, 0.3, 0.3))
-        self.pos = self._pos(self.config.get("pos"), self.size[2])
-        self.yaw = self._float(self.config.get("yaw"), 0.0)
+        self.pos, self.quat = self._pose(self.config.get("pose"), self.size[2])
         self.speed = self._float(self.config.get("speed"), 0.1)
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
@@ -126,15 +127,13 @@ class MovingBoxPlugin(Plugin):
             pass
         return default
 
-    def _pos(self, value, height: float):
-        try:
-            if len(value) >= 3:
-                return float(value[0]), float(value[1]), float(value[2])
-            if len(value) == 2:
-                return float(value[0]), float(value[1]), height / 2.0
-        except (TypeError, ValueError):
-            pass
-        return 0.0, 0.0, height / 2.0
+    @staticmethod
+    def _pose(value, height: float):
+        """``(position, quaternion)`` from a ``pose:``, sitting on the floor when z is unstated."""
+        if value is None:
+            return (0.0, 0.0, height / 2.0), [1.0, 0.0, 0.0, 0.0]
+        (x, y, z), quat = parse_pose(value)
+        return (x, y, height / 2.0 if z is None else z), quat
 
     @staticmethod
     def _rgba(value):
@@ -175,7 +174,7 @@ class MovingBoxPlugin(Plugin):
     # -- validation ------------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        for key in ("pos", "size", "speed"):
+        for key in ("pose", "size", "speed"):
             if key not in config:
                 errors.append(f"'{key}' is required")
         if "size" in config:
@@ -186,12 +185,18 @@ class MovingBoxPlugin(Plugin):
             else:
                 if len(extents) != 3 or any(v <= 0 for v in extents):
                     errors.append(f"'size' must be three positive numbers, got {extents}")
-        if "pos" in config:
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                errors.append(
+                    f"'{gone}' is gone -- state the whole pose under 'pose', the shape "
+                    "SpawnEntity uses: pose: {position: {x, y, z}, orientation: {yaw}}. Omit z "
+                    "to sit it on the floor, which is what a two-element 'pos' used to mean."
+                )
+        if "pose" in config:
             try:
-                if len(config["pos"]) not in (2, 3):
-                    errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
-            except TypeError:
-                errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         if "speed" in config and self._float(config["speed"], -1.0) <= 0.0:
             errors.append("'speed' must be a positive number of m/s")
 
@@ -258,7 +263,7 @@ class MovingBoxPlugin(Plugin):
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
-        frame.quat = [math.cos(self.yaw / 2), 0.0, 0.0, math.sin(self.yaw / 2)]
+        frame.quat = list(self.quat)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def configure(self, ctx: SimContext) -> None:
@@ -281,7 +286,7 @@ class MovingBoxPlugin(Plugin):
                     "prefix": self.prefix,
                     "size": list(self.size),
                     "pos": list(self.pos),
-                    "yaw": self.yaw,
+                    "quat": list(self.quat),
                     "speed": self.speed,
                     "motion": "random_walk" if self.random_walk else "waypoints",
                 },
@@ -300,12 +305,7 @@ class MovingBoxPlugin(Plugin):
             self._heading = self._rng.uniform(-math.pi, math.pi)
         if ctx.data is not None and self._mocapid >= 0:
             ctx.data.mocap_pos[self._mocapid] = [self._xy[0], self._xy[1], self.pos[2]]
-            ctx.data.mocap_quat[self._mocapid] = [
-                math.cos(self.yaw / 2),
-                0.0,
-                0.0,
-                math.sin(self.yaw / 2),
-            ]
+            ctx.data.mocap_quat[self._mocapid] = list(self.quat)
 
     def pre_step(self, ctx: SimContext) -> None:
         if self._mocapid < 0 or self._done:

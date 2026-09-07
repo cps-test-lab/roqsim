@@ -471,7 +471,7 @@ an absent obstacle a perfectly good lidar return.
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
 
-    - spawn_model: {model: pallet, pos: [4.0, 1.0], motion: physics, present: false}
+    - spawn_model: {model: pallet, pose: {position: {x: 4.0, y: 1.0}}, motion: physics, present: false}
       name: obstacle
 
 That is what gives a trial something to spawn. The declared value is restored on every reset, so a
