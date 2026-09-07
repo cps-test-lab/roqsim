@@ -587,6 +587,12 @@ pace — finer than anything downstream consumes. Beyond ``distmax`` the report 
 The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
 failure is attributable rather than merely flagged.
 
+**What did it see along the way?** ``swept_coverage_monitor`` is a third member of the same family
+and follows the same two conventions: a ``compute_rate_hz`` separate from the publish ``rate_hz``,
+and a blackboard reader for a control loop that needs the value at full rate. It accumulates the
+union of the field of view a *moving* sensor has covered over a run, where ``sensor_coverage_probe``
+answers the placement question once for a mount as positioned. See :doc:`coverage` for both.
+
 Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
 contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
 unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned

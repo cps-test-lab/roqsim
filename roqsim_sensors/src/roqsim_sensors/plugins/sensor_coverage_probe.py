@@ -36,7 +36,6 @@ import json
 from pathlib import Path
 
 import mujoco
-import numpy as np
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
@@ -106,24 +105,18 @@ class SensorCoverageProbePlugin(Plugin):
         ]
 
     def _build_points(self, model, data):
-        points_list, labels_list, names = [], [], []
-        if self.sample_volume:
-            vol = sampling.room_volume_points(
-                model, data, resolution=self.resolution, heights=self.heights
-            )
-            if len(vol):
-                points_list.append(vol)
-                labels_list.append(np.full(len(vol), -1))
-        if self.sample_objects:
-            surf, lab, names = sampling.object_surface_points(
-                model, data, per_object=self.per_object
-            )
-            if len(surf):
-                points_list.append(surf)
-                labels_list.append(lab)
-        if not points_list:
+        points, labels, names = sampling.sample_set(
+            model,
+            data,
+            volume=self.sample_volume,
+            objects=self.sample_objects,
+            resolution=self.resolution,
+            heights=self.heights,
+            per_object=self.per_object,
+        )
+        if len(points) == 0:
             raise RuntimeError("sensor_coverage_probe: no sample points produced")
-        return np.vstack(points_list), np.concatenate(labels_list), names
+        return points, labels, names
 
     def configure(self, ctx: SimContext) -> None:
         model, data = ctx.model, ctx.data

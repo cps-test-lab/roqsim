@@ -9,12 +9,19 @@ installed by ``make venv``), the 3D render needs only MuJoCo. Rendering works he
 setup — ``import roqsim`` selects an offscreen backend for the machine (see
 :func:`roqsim.gl.select_offscreen_gl`); set ``MUJOCO_GL`` only to override it.
 
-There are two front doors onto the same core:
+There are three front doors onto the same core:
 
 * the **plugin** ``sensor_coverage_probe`` — a world-YAML toggle that reports the coverage of the
-  sensors already in a world;
+  sensors already in a world, computed **once**, at ``configure``, for the mounts as placed;
+* the **plugin** ``swept_coverage_monitor`` — the same geometry evaluated **repeatedly while the
+  world runs**, accumulating the union of everything a *moving* sensor has covered over a run;
 * the **CLI** ``roqsim sensors coverage`` — a placement-search workbench that evaluates *hypothetical*
   candidate mounts and iterates toward a target.
+
+The first and third ask where to put a sensor; the second asks what a sensor that moves ended up
+seeing. They are the same range → FOV → line-of-sight computation, so a number from one is
+comparable with a number from another only when both sampled the same way — which is why the two
+plugins share one sample-set builder.
 
 Concepts
 --------
@@ -37,8 +44,8 @@ Concepts
   *detection range* and too generous a value inflates coverage (depth cameras default it to their
   ``clip_far``).
 
-The plugin (world-YAML toggle)
-------------------------------
+The static plugin (world-YAML toggle)
+-------------------------------------
 
 List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
 write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
@@ -59,6 +66,44 @@ in the world; give an explicit list for lidars/Livox or hypothetical placements.
 .. code:: bash
 
    roqsim sim world.yaml --headless --steps 1
+
+The swept plugin (a sensor that moves)
+--------------------------------------
+
+``sensor_coverage_probe`` answers "what do these mounts see from where they are". It cannot answer
+"what did this sensor see over the whole run", because coverage accrues *between* pose samples and
+because an occluder may itself move. List ``swept_coverage_monitor`` instead to evaluate the same
+geometry at ``compute_rate_hz`` while the world runs and accumulate the union of everything covered.
+
+The mount is given as exactly one of ``camera:``, ``site:`` or ``body:`` — naming a mount on a moving
+entity is the whole point, and the pose is re-read from the model on every evaluation rather than
+captured once.
+
+.. code:: yaml
+
+   components:
+     - swept_coverage_monitor:
+         type: lidar              # which adapter builds the field of view
+         site: lidar              # or camera: <name> / body: <name> (+ offset, rpy)
+         config: {angle_min: -0.51, angle_max: 0.51, max_range: 1.3}
+         sample: {volume: true, resolution: 0.05, heights: [0.05]}
+         compute_rate_hz: 5.0     # how often the union is updated
+         rate_hz: 2.0             # how often the fraction is published
+         out: coverage            # optional report.json at shutdown
+
+It publishes a ``coverage`` endpoint carrying the covered fraction, and puts a reader on the
+blackboard under ``swept_coverage:<address>`` that hands out the sample points and each point's visit
+count — so a scenario can react to coverage live, and a metric can be recomputed afterwards from the
+points rather than from a summary.
+
+Two properties are worth relying on: the union is **monotonic** (a cell once covered never becomes
+uncovered, so holding still raises the visit counts and leaves the union untouched), and an occluded
+cell stays at **exactly zero** visits rather than near zero. Both are asserted in the package's
+tests, as is the thing the plugin exists for: on a corridor fixture, the same sensor driven along it
+covers 3.16× what it covers standing still.
+
+Unlike the static probe this plugin does no rendering, which is what lets it run in parallel with
+other simulations; a coverage figure and a picture of it are separate jobs here.
 
 The CLI (placement search)
 --------------------------

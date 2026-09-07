@@ -9,6 +9,9 @@ baked scene, a floorplan STL, a hand-written MJCF) using only numpy and MuJoCo r
 * :func:`room_volume_points` -- a 3D grid of points in the room's free interior at a few heights.
   Answers "how much of the room can be observed."
 
+:func:`sample_set` is the two of them as one labelled point set -- what a coverage caller evaluates,
+shared so that two callers cannot disagree about what "the sample set" is.
+
 Free-space classification (for the volume grid) is raycast-based and deliberately conservative: a point
 is kept only if it is *enclosed* (an axis ray hits geometry on all four horizontal sides -- so points
 outside the building footprint, over the infinite floor plane, are dropped) and not *embedded* in a
@@ -216,6 +219,53 @@ def room_volume_points(
     if not kept:
         return np.zeros((0, 3))
     return np.vstack(kept)
+
+
+# -- the combined sample set -------------------------------------------------------------------------
+
+
+def sample_set(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    volume: bool = True,
+    objects: bool = True,
+    resolution: float = 0.25,
+    heights=(0.3, 1.0, 1.7),
+    per_object: int = 64,
+    include_groups=(0, 1, 2, 3),
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
+    """The two samplers above as one labelled point set -- what a coverage caller actually evaluates.
+
+    Returns ``(points (P,3), labels (P,) int, label_names)``. A volume point's label is ``-1`` (it
+    belongs to no object); a surface point's indexes ``label_names``. Volume points come first, so a
+    caller that needs the grid on its own can take the leading ``labels == -1`` block.
+
+    Shared rather than restated per caller so two callers cannot disagree about what "the sample set"
+    is: a coverage number is only comparable across evaluations that sampled the same way. Returns an
+    empty set rather than raising -- a caller with a name to put in the message is the one that should
+    refuse, and every caller here does.
+    """
+    points_list: list[np.ndarray] = []
+    labels_list: list[np.ndarray] = []
+    names: list[str] = []
+    if volume:
+        vol = room_volume_points(
+            model, data, resolution=resolution, heights=heights, include_groups=include_groups
+        )
+        if len(vol):
+            points_list.append(vol)
+            labels_list.append(np.full(len(vol), -1))
+    if objects:
+        surf, lab, names = object_surface_points(
+            model, data, per_object=per_object, include_groups=include_groups
+        )
+        if len(surf):
+            points_list.append(surf)
+            labels_list.append(lab)
+    if not points_list:
+        return np.zeros((0, 3)), np.zeros(0, dtype=int), []
+    return np.vstack(points_list), np.concatenate(labels_list), names
 
 
 # -- gap clustering ----------------------------------------------------------------------------------
