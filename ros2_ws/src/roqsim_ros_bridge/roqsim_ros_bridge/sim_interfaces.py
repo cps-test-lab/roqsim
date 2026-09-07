@@ -335,7 +335,7 @@ class SimInterfacesPlugin(Plugin):
                 error_message=(
                     f"{verb} {name!r} asks for a pose the entity cannot take: the world compiled "
                     f"it without a free joint, welded at {outcome['welded_at']}. Ask for that "
-                    "pose, or give it 'free: true' in the world so it can be placed."
+                    "pose, or give it 'motion: physics' in the world so it can be placed."
                 ),
             )
             return resp
@@ -383,13 +383,40 @@ class SimInterfacesPlugin(Plugin):
         p = req.state.pose.position
         o = req.state.pose.orientation
         quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
-        ok = {}
-        run_on_physics(
-            self._ctx, lambda c: ok.update(done=self._write_body(c, entity, (p.x, p.y, p.z), quat))
-        )
-        resp.result = Result(
-            result=Result.RESULT_OK if ok.get("done") else Result.RESULT_OPERATION_FAILED
-        )
+        pose = ((p.x, p.y, p.z), quat)
+        # Recorded POSITIVELY, and each failure told apart, exactly as the spawn door does it:
+        # run_on_physics sets its event in a `finally`, so a command that raised still returns
+        # True, and reading "no outcome" as one particular failure would explain an exception as
+        # a missing free joint. A welded entity asked for the pose it already holds succeeds --
+        # the caller got what it asked for, and only a MOVE is what a weld refuses.
+        outcome = {}
+
+        def _apply(ctx):
+            if not self._write_body(ctx, entity, pose[0], pose[1]):
+                state = self._read_body(ctx, entity.body) if entity.body else {}
+                if not _already_at(state, pose):
+                    outcome["welded_at"] = state.get("pos")
+                    return
+            outcome["done"] = True
+
+        if not run_on_physics(self._ctx, _apply):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"the simulation did not place {req.entity!r} within "
+                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+            )
+            return resp
+        if "welded_at" in outcome:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=(
+                    f"{req.entity!r} cannot be moved: the world compiled it without a free "
+                    f"joint, welded at {outcome['welded_at']}. Give it 'motion: physics' in the "
+                    "world so it can be placed."
+                ),
+            )
+            return resp
+        resp.result = Result(result=Result.RESULT_OK)
         return resp
 
     def _get_sim_state(self, req, resp):
