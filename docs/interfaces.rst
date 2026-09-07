@@ -478,3 +478,20 @@ That is what gives a trial something to spawn. The declared value is restored on
 spare brought in during one repetition is a spare again in the next. Do not confuse it with
 ``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
 to spawn.
+
+Moving one needs a free joint
+`````````````````````````````
+
+``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
+same joint when it is given a pose. A body compiled without one is welded scenery: it holds the
+pose the world gave it, and both services refuse to move it, naming the weld and the
+``motion: physics`` that resolves it.
+
+This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
+exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an
+obstacle out of the way and teleports it in on cue fails on its first call, every run, and the
+count and names all agree. A placement is ``motion: physics`` by default, so this is what a world
+says when it has welded something with ``motion: static`` that the trial then tries to move.
+
+Asking a welded entity for the pose it already holds succeeds. Only a move is what a weld refuses,
+so a world that states a pose twice is not an error.

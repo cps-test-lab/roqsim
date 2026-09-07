@@ -335,7 +335,7 @@ class SimInterfacesPlugin(Plugin):
                 error_message=(
                     f"{verb} {name!r} asks for a pose the entity cannot take: the world compiled "
                     f"it without a free joint, welded at {outcome['welded_at']}. Ask for that "
-                    "pose, or give it 'free: true' in the world so it can be placed."
+                    "pose, or give it 'motion: physics' in the world so it can be placed."
                 ),
             )
             return resp
@@ -411,7 +411,7 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=(
                     f"{req.entity!r} cannot be moved: the world compiled it without a free "
-                    f"joint, welded at {outcome['welded_at']}. Give it 'free: true' in the "
+                    f"joint, welded at {outcome['welded_at']}. Give it 'motion: physics' in the "
                     "world so it can be placed."
                 ),
             )

@@ -51,8 +51,9 @@ class _Entity:
 def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
     """A handler whose physics write succeeds or refuses, with everything else stubbed."""
     plugin = SimInterfacesPlugin.__new__(SimInterfacesPlugin)
-    plugin._ctx = type("Ctx", (), {"entities": type("E", (), {"get": staticmethod(
-        lambda name: entity)})()})()
+    plugin._ctx = type(
+        "Ctx", (), {"entities": type("E", (), {"get": staticmethod(lambda name: entity)})()}
+    )()
     plugin._write_body = lambda ctx, ent, pos, quat: writable
     # `quat` too: _already_at compares both, and a state missing either is "not there".
     plugin._read_body = lambda ctx, body: {"pos": list(at), "quat": [1.0, 0.0, 0.0, 0.0]}
@@ -61,6 +62,7 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
 
 def _run(plugin, req):
     import roqsim_ros_bridge.sim_interfaces as mod
+
     original = mod.run_on_physics
     # The command runs inline: this test is about what the handler CONCLUDES, and threading a
     # real physics queue through it would test the queue instead.
@@ -77,14 +79,15 @@ def test_a_welded_entity_is_refused_by_naming_the_weld():
     # The name, the cause and the fix -- the three things the campaign log had none of.
     assert "dynamic_0" in resp.result.error_message
     assert "free joint" in resp.result.error_message
-    assert "free: true" in resp.result.error_message
+    assert "motion: physics" in resp.result.error_message
 
 
 def test_a_welded_entity_asked_for_the_pose_it_holds_succeeds():
     """Only a MOVE is what a weld refuses. The caller asking where it already is got what it
     asked for, and answering FAILED there would refuse a world that states a pose twice."""
-    resp = _run(_plugin(writable=False, at=(40.0, 40.0, 0.03)),
-                _Req("dynamic_0", (40.0, 40.0, 0.03)))
+    resp = _run(
+        _plugin(writable=False, at=(40.0, 40.0, 0.03)), _Req("dynamic_0", (40.0, 40.0, 0.03))
+    )
     assert resp.result.result == Result.RESULT_OK
 
 
