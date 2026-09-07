@@ -31,6 +31,18 @@ def _quad(path, z, half=4.0):
     mio.write_obj(path, verts, np.array([[0, 1, 2], [0, 2, 3]]))
 
 
+def _prop(path, z0, z1, half=0.5):
+    """An upright block from *z0* to *z1* -- a prop, as opposed to a floor. Only its z range matters."""
+    xy = [(-half, -half), (half, -half), (half, half), (-half, half)]
+    verts = np.array([[x, y, z] for x, y in xy for z in (z0, z1)], float)
+    faces = []
+    for k in range(4):
+        a, b = 2 * k, 2 * ((k + 1) % 4)
+        faces += [[a, b, b + 1], [a, b + 1, a + 1]]
+    faces += [[0, 2, 4], [0, 4, 6], [1, 5, 3], [1, 7, 5]]
+    mio.write_obj(path, verts, np.array(faces))
+
+
 def _scene(tmp_path, *, ground_z, objects, name="s"):
     """Write a minimal scene dir; *objects* is a list of (obj_name, z, render)."""
     meshes = tmp_path / "meshes"
@@ -146,3 +158,46 @@ def test_ground_plane_false_still_suppresses_both(tmp_path):
     m, ids = _bake(sj, tmp_path / "w.xml")
 
     assert "floor" not in ids and "floor_visual" not in ids
+
+
+def test_a_prop_sunk_into_the_floor_does_not_drag_the_drawn_floor_down_with_it(tmp_path, capsys):
+    """A source world may bury part of a prop; the floor is meant to hide exactly that part.
+
+    ``turtlebot3_world`` sinks the largest of its ornaments 0.5 m into the ground. Reading that as
+    "there is scene floor 0.5 m down" put the drawn plane below it, which exposed the ornament's buried
+    underside -- drawing MORE than the source world does -- and left a half-metre step around the room
+    for everything else. A prop that rises above the stated ground cannot be hidden by a floor at the
+    ground, so it has no say in where that floor goes.
+    """
+    sj = _scene(tmp_path, ground_z=0.0, objects=[("Wall", 1.0, True)])
+    _prop(tmp_path / "meshes" / "Ornament.obj", -0.5, 1.5)
+    manifest = json.loads(sj.read_text())
+    manifest["bounds_min"][2] = -0.5
+    manifest["objects"].append(
+        {
+            "name": "Ornament",
+            "mesh": "meshes/Ornament.obj",
+            "rgba": [0.1, 0.8, 0.1, 1.0],
+            "collide": True,
+            "render": True,
+        }
+    )
+    sj.write_text(json.dumps(manifest))
+    m, ids = _bake(sj, tmp_path / "w.xml")
+
+    assert m.geom_pos[ids["floor_visual"]][2] == pytest.approx(-0.002), (
+        "drawn at the ground, not 0.5 m under it"
+    )
+    assert "note: the drawn floor sits" not in capsys.readouterr().out
+
+
+def test_a_slab_entirely_below_the_ground_still_lowers_the_drawn_floor(tmp_path):
+    """The distinction the rule turns on: floor down there, not a prop reaching down.
+
+    A recessed slab or an outdoor apron IS the floor where it lies, so covering it with our own checker
+    is the failure the drawn plane's depth exists to prevent. It stays covered.
+    """
+    sj = _scene(tmp_path, ground_z=0.0, objects=[("Floor", 0.0, True), ("Apron", -0.4, True)])
+    m, ids = _bake(sj, tmp_path / "w.xml")
+
+    assert m.geom_pos[ids["floor_visual"]][2] < -0.4

@@ -237,7 +237,8 @@ def _add_ground_plane(
     # covered by a plane at a fixed offset. Under the minimum it cannot be, whatever the scene's shape.
     visual.pos = [
         *centre,
-        min(z, _lowest_renderable_z(manifest, origin, meshdir)) - _FLOOR_VISUAL_DROP,
+        min(z, _lowest_renderable_z(manifest, origin, meshdir, ground_z=z if stated else None))
+        - _FLOOR_VISUAL_DROP,
     ]
     visual.size = size
     visual.contype = 0
@@ -254,12 +255,23 @@ def _add_ground_plane(
         )
 
 
-def _lowest_renderable_z(manifest: dict, origin: list[float], meshdir: str) -> float:
+def _lowest_renderable_z(
+    manifest: dict, origin: list[float], meshdir: str, ground_z: float | None = None
+) -> float:
     """The lowest point of anything a viewer *draws*, so the drawn floor can go under all of it.
 
     Renderable objects only. A collision-only part routinely reaches below the floor -- a wall's
     footing, a plinth -- and it cannot be covered up by definition, so letting it decide the height
     would drop the backdrop for nothing and put a visible step at the scene's edge.
+
+    An object that RISES above a stated *ground_z* is treated the same way: it is a prop standing on
+    the floor with part of itself buried (a source world sinks a decoration to hide its underside),
+    and a floor drawn at the ground hides only the buried part -- which is what the source shows too.
+    Lowering the whole backdrop to expose it would draw MORE than the original did, and put a 0.5 m
+    step around a room to show the underside of an ornament. Geometry lying entirely below the ground
+    still counts: a recessed slab or an outdoor apron IS floor down there, and covering it is the
+    failure this function exists to prevent. Without a stated ground height nothing can be classified
+    this way, so every renderable object counts -- the conservative read.
 
     The manifest bounds are the fallback for a mesh that will not read, and only then: they cover every
     object including the ones that do not render, so using them unconditionally would reintroduce
@@ -277,11 +289,20 @@ def _lowest_renderable_z(manifest: dict, origin: list[float], meshdir: str) -> f
             unreadable = True
             continue
         for sub in subs:
-            if len(sub.verts):
-                lowest = min(lowest, float(sub.verts[:, 2].min()) + origin[2])
-    if unreadable or lowest is math.inf:
+            if not len(sub.verts):
+                continue
+            top = float(sub.verts[:, 2].max()) + origin[2]
+            if ground_z is not None and top > ground_z:
+                continue  # a prop standing on the floor, part buried: the floor is meant to hide that
+            lowest = min(lowest, float(sub.verts[:, 2].min()) + origin[2])
+    if unreadable:
         lo, _ = _bounds(manifest, origin)
         return min(lowest, lo[2])
+    # Nothing to go under: every renderable object either starts at the ground or rises above it. That
+    # is not a missing answer -- it is "a floor at the ground height hides nothing" -- so say so, and
+    # let the caller keep its stated height rather than dropping the backdrop to a scene-bounds guess.
+    if lowest is math.inf:
+        return math.inf
     return lowest
 
 
