@@ -1,0 +1,30 @@
+{
+  "world": "external/sources/turtlebot3_simulations/turtlebot3_gazebo/worlds/turtlebot3_world.world",
+  "registry": "https://fuel.gazebosim.org",
+  "generated_at": "2026-09-07T14:29:42Z",
+  "note": "Pinned third-party assets. The world file referenced these by URI and contained no geometry of its own; this lock is what makes the port reproducible. Re-fetching without checking these hashes silently changes the experiment.",
+  "assets": [
+    {
+      "uri": "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Ground Plane",
+      "owner": "OpenRobotics",
+      "name": "Ground Plane",
+      "version": 5,
+      "sha256": "bb1394826b055aae349363859e58c04383dc25a34251a288593a1f283746836e",
+      "licence": "Creative Commons Zero v1.0 Universal",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "fetched_at": "2026-09-07T14:29:41Z",
+      "local": "OpenRobotics__Ground_Plane__v5"
+    },
+    {
+      "uri": "https://fuel.gazebosim.org/1.0/OpenRobotics/models/Sun",
+      "owner": "OpenRobotics",
+      "name": "Sun",
+      "version": 3,
+      "sha256": "4d5a9ae9cc9ba0a5c713521c817fb061e581b734b2cf268691cd702f9b0c285e",
+      "licence": "Creative Commons Zero v1.0 Universal",
+      "licence_url": "https://creativecommons.org/publicdomain/zero/1.0/",
+      "fetched_at": "2026-09-07T14:29:42Z",
+      "local": "OpenRobotics__Sun__v3"
+    }
+  ]
+}

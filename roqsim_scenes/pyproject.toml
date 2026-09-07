@@ -81,6 +81,8 @@ roqsim_scenes = [
 
     "worlds/*.yaml",
     "worlds/*/*.xml",
+    "worlds/*/*.thumb.png",      # `roqsim catalog` looks for one beside the MJCF, in an installed
+                                 # copy as much as in a checkout
     "worlds/*/assets/*.obj",
     "worlds/*/assets/*.png",
 ]
