@@ -18,8 +18,11 @@ Layered so the pieces compose without dragging in the whole stack:
 * :mod:`~roqsim_sensors.coverage.report` / :mod:`~roqsim_sensors.coverage.viz` -- the two
   outputs (an agent-digestible JSON report and a human visualisation).
 
-Two front doors onto this core: the ``sensor_coverage_probe`` runtime plugin (a world-YAML toggle) and
-the ``roqsim sensors coverage`` CLI (:mod:`~roqsim_sensors.coverage.cli`).
+Three front doors onto this core, differing only in *when* the field of view is posed: the
+``sensor_coverage_probe`` runtime plugin (a world-YAML toggle, evaluated once for a fixed mount), the
+``swept_coverage_monitor`` runtime plugin (the same evaluation re-posed each tick and accumulated over
+a run, for a sensor carried through the world), and the ``roqsim sensors coverage`` CLI
+(:mod:`~roqsim_sensors.coverage.cli`, which searches over hypothetical mounts).
 """
 
 from __future__ import annotations

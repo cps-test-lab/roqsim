@@ -759,6 +759,12 @@ distance query per geom pair, a real share of the step budget if done every phys
 ``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
 rather than offering a number that looks measured.
 
+**What did it see along the way?** ``swept_coverage_monitor`` follows the same two conventions: a
+``compute_rate_hz`` separate from the publish ``rate_hz``, and a blackboard reader for a control
+loop that needs the value at full rate. It accumulates the union of the field of view a *moving*
+sensor has covered over a run, where ``sensor_coverage_probe`` answers the placement question once
+for a mount as positioned. See :doc:`coverage` for both.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
