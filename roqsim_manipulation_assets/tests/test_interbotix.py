@@ -54,7 +54,7 @@ def _engine(model, *, rest=None, gripper_ctrl=None, box=None, grasping=True):
             {
                 "spawn_model": {
                     "model": "graspable_box",
-                    "free": True,
+                    "motion": "physics",
                     "pose": {"position": {"x": box[0], "y": box[1], "z": box[2]}},
                 },
                 "name": "box",

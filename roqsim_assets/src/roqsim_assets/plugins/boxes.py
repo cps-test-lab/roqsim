@@ -5,13 +5,13 @@ entry per box::
 
     - boxes:
         instances:
-        - {pos: [2.1, -3.4], size: [0.5, 0.5, 1.0]}
-        - {pos: [5.8, -1.2], size: [0.5, 0.5, 1.0], yaw: 0.4}
+        - {pose: {position: {x: 2.1, y: -3.4}}, size: [0.5, 0.5, 1.0]}
+        - {pose: {position: {x: 5.8, y: -1.2}, orientation: {yaw: 0.4}}, size: [0.5, 0.5, 1.0]}
       name: obstacles      # the entry's label, which every generated box is named after
 
-Each entry accepts every key ``box`` does (``pos``, ``size``, ``yaw``, ``color``, ``collide``,
-``friction``, ``free``, and an optional ``name``), because each one *is* a box: this plugin owns the
-list, not the geometry.
+Each entry accepts every key ``box`` does (``pose``, ``size``, ``color``, ``collide``,
+``friction``, ``motion``, and an optional ``name``), because each one *is* a box: this plugin owns
+the list, not the geometry.
 
 Why a list and not a count
 --------------------------

@@ -160,7 +160,7 @@ component (which is also how "does this device have an IMU" becomes a campaign f
    components:
      - spawn_robot:
          model: turtlebot4
-         pos: [0, 0]                # diff_drive + lidar + oakd_camera come with it
+         pose: {position: {x: 0, y: 0}}   # diff_drive + lidar + oakd_camera come with it
      - ros2_bridge: {}
 
 An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
@@ -287,7 +287,7 @@ reaches the physics is its ``output``:
        thing can slip. A full articulated robot in the solver: use it when the opponent's dynamics
        are part of the experiment.
    * - ``mocap``
-     - ``spawn_model: {mocap: true}``
+     - ``spawn_model: {motion: driven}``
      - Writes the body's pose. **Zero solver DOFs** -- collision geometry the robot's lidar and
        contacts see, and nothing for the physics to integrate. The cheap default for any opponent
        whose wheel dynamics do not matter.
@@ -304,7 +304,7 @@ reaches the physics is its ``output``:
        name: cart
        components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
 
-     - spawn_model: {model: graspable_box, pos: [2, 1], mocap: true}
+     - spawn_model: {model: graspable_box, pose: {position: {x: 2, y: 1}}, motion: driven}
        name: pallet
        components: [ {navigator: {speed: 0.3, goals: [[-2, 1]]}} ]
 
@@ -1135,12 +1135,11 @@ Manipulation: what a grasping world needs
 Four things have to line up before an object can be picked up, and three of them are opt-in because
 they cost something a navigation world should not pay:
 
-1. **A movable object.** Every prop in ``roqsim_assets`` is welded scenery by default. ``spawn_model``'s
-   ``free: true`` adds a ``<freejoint/>``, registers the joint as the entity's ``base_joint`` (which is
-   what ``simulation_interfaces``' ``SetEntityState`` requires to re-seat it), and re-seats it on
-   ``reset`` so repetitions of a trial really are repetitions. Pair it with ``publish_tf: dynamic`` —
-   nothing else publishes a free body's pose. ``graspable_box`` is the reference prop, sized and
-   contact-tuned for a parallel gripper.
+1. **A movable object.** ``motion: physics`` — the default — adds a ``<freejoint/>``, registers the
+   joint as the entity's ``base_joint`` (which is what ``simulation_interfaces``' ``SetEntityState``
+   requires to re-seat it), and re-seats it on ``reset`` so repetitions of a trial really are
+   repetitions. Pair it with ``publish_tf: dynamic`` — nothing else publishes a movable body's pose.
+   ``graspable_box`` is the reference prop, sized and contact-tuned for a parallel gripper.
 2. **Solver effort.** ``sim: {noslip_iterations: 10}``. Without it a firmly held object creeps out of
    the jaws; see "Solver options" in ``architecture.rst`` for the measurements.
 3. **Scoped actuator ownership**, if the arm shares its entity with anything else. ``arm_controller``

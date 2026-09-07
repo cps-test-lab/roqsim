@@ -33,7 +33,7 @@ is infinitely stiff and its motion is exactly the commanded path regardless of t
 is the right model for a stepper-driven gantry and the wrong one for a compliant conveyor.
 
 ``Props carried by the plate need their own free joint`` -- spawn them with
-``spawn_model: {..., free: true}`` and place them just above the plate's top surface.
+``spawn_model: {..., motion: physics}`` and place them just above the plate's top surface.
 """
 
 from __future__ import annotations
