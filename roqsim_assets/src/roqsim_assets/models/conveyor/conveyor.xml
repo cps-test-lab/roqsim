@@ -32,10 +32,10 @@
     <!-- Conveyor static parts: feet, visible belt, side rails, and the end rollers
          (roller_a drive at -x, roller_b idler at +x; spun about y by the plugin). -->
     <body name="conveyor_frame" pos="0 0.6 0">
-      <geom name="conv_leg_1" type="box" size="0.03 0.03 0.0775" pos="1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_2" type="box" size="0.03 0.03 0.0775" pos="-1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_3" type="box" size="0.03 0.03 0.0775" pos="1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_4" type="box" size="0.03 0.03 0.0775" pos="-1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="conv_leg_1" type="box" size="0.03 0.03 0.0775" pos="1.1 0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_2" type="box" size="0.03 0.03 0.0775" pos="-1.1 0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_3" type="box" size="0.03 0.03 0.0775" pos="1.1 -0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_4" type="box" size="0.03 0.03 0.0775" pos="-1.1 -0.27 0.8375" material="frame"/>
       <geom name="belt_visual" type="box" size="1.221 0.29 0.0275" pos="0 0 0.9425" material="belt" contype="0" conaffinity="0"/>
       <geom name="rail_near" type="box" size="1.221 0.006 0.03" pos="0 -0.296 0.9425" material="frame" contype="0" conaffinity="0"/>
       <geom name="rail_far"  type="box" size="1.221 0.006 0.03" pos="0  0.296 0.9425" material="frame" contype="0" conaffinity="0"/>
