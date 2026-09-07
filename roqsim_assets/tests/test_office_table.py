@@ -27,11 +27,11 @@ PROBE_Z = 0.049  # centre: the TB4 body cylinder spans z = 0.019 .. 0.079
 
 def _world(tmp_path, probe_y, probe_x=-1.5):
     plugins = [
-        {"spawn_model": {"model": TABLE, "pos": [0.0, 0.0, 0.0]}, "name": "table"},
+        {"spawn_model": {"model": TABLE, "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}, "name": "table"},
         {
             "cylinder": {
                 "prefix": "probe_",
-                "pos": [probe_x, probe_y, PROBE_Z],
+                "pose": {"position": {"x": probe_x, "y": probe_y, "z": PROBE_Z}},
                 "radius": PROBE_RADIUS,
                 "height": PROBE_HEIGHT,
                 "mass": 3.0,
@@ -132,11 +132,11 @@ def test_the_top_is_still_a_surface(tmp_path):
     # Taking contacts off the mesh must not take the tabletop with them: something set down on the
     # desk has to rest on it at 0.717 m, not fall through to the floor.
     plugins = [
-        {"spawn_model": {"model": TABLE, "pos": [0.0, 0.0, 0.0]}, "name": "table"},
+        {"spawn_model": {"model": TABLE, "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.0}}}, "name": "table"},
         {
             "box": {
                 "prefix": "parcel_",
-                "pos": [0.0, 0.0, 0.85],
+                "pose": {"position": {"x": 0.0, "y": 0.0, "z": 0.85}},
                 "size": [0.1, 0.1, 0.1],
                 "motion": "physics",
             },

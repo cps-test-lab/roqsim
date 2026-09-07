@@ -52,6 +52,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
 
 _GREY_RGBA = [0.86, 0.86, 0.83, 1.0]  # pale warehouse grey, as box
 _ROOT_BODY = "cylinder"
@@ -68,7 +69,9 @@ class CylinderPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         self.radius = self._float(self.config.get("radius"), 0.2)
         self.height = self._float(self.config.get("height"), 0.5)
-        self.pos = self._pos(self.config.get("pos"), self.height)
+        # One way to state a pose, in the shape SpawnEntity uses. An omitted z stands it on the
+        # floor, which is what a two-element `pos` used to mean.
+        self.pos, self.quat = self._pose(self.config.get("pose"), self.height)
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
@@ -100,16 +103,18 @@ class CylinderPlugin(Plugin):
         except (TypeError, ValueError):
             return None
 
-    def _pos(self, value, height: float) -> tuple[float, float, float]:
-        """``[x, y]`` stands the cylinder on the floor; ``[x, y, z]`` places its centre at z."""
-        try:
-            if len(value) >= 3:
-                return float(value[0]), float(value[1]), float(value[2])
-            if len(value) == 2:
-                return float(value[0]), float(value[1]), height / 2.0
-        except (TypeError, ValueError):
-            pass
-        return 0.0, 0.0, height / 2.0
+    @staticmethod
+    def _pose(value, height: float):
+        """``(position, quaternion)`` from a ``pose:``, standing on the floor when z is unstated.
+
+        A cylinder is rotationally symmetric about its own axis, so a yaw would have nothing to
+        do -- but a pose carries a full rotation, and tipping one onto its side is a thing a world
+        may want to say. That is what this keeps and a `yaw` key could not express.
+        """
+        if value is None:
+            return (0.0, 0.0, height / 2.0), [1.0, 0.0, 0.0, 0.0]
+        (x, y, z), quat = parse_pose(value)
+        return (x, y, height / 2.0 if z is None else z), quat
 
     @staticmethod
     def _rgba(value) -> list[float] | None:
@@ -138,15 +143,24 @@ class CylinderPlugin(Plugin):
     # -- validation ------------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        for key in ("pos", "radius", "height"):
+        for key in ("pose", "radius", "height"):
             if key not in config:
                 errors.append(f"'{key}' is required")
-        if "pos" in config:
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                # Refused rather than translated. Two ways to state one pose is what let a world
+                # say `pos:` to a plugin that reads only `pose:` and be placed at the origin --
+                # stated, ignored, and nothing raised anywhere.
+                errors.append(
+                    f"'{gone}' is gone -- state the whole pose under 'pose', the shape "
+                    "SpawnEntity uses: pose: {position: {x, y, z}, orientation: {yaw}}. Omit z "
+                    "to sit it on the floor, which is what a two-element 'pos' used to mean."
+                )
+        if "pose" in config:
             try:
-                if len(config["pos"]) not in (2, 3):
-                    errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
-            except TypeError:
-                errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         for key in ("radius", "height"):
             if key in config:
                 try:
@@ -228,8 +242,7 @@ class CylinderPlugin(Plugin):
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
-        # A cylinder is rotationally symmetric about its own axis, so unlike `box` there is no `yaw`:
-        # there would be nothing for it to do.
+        frame.quat = list(self.quat)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def configure(self, ctx: SimContext) -> None:
@@ -238,6 +251,7 @@ class CylinderPlugin(Plugin):
             "radius": self.radius,
             "height": self.height,
             "pos": list(self.pos),
+            "quat": list(self.quat),
         }
         if self.mass is not None:
             meta["mass"] = self.mass

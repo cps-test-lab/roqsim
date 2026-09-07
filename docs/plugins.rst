@@ -160,7 +160,7 @@ component (which is also how "does this device have an IMU" becomes a campaign f
    components:
      - spawn_robot:
          model: turtlebot4
-         pos: [0, 0]                # diff_drive + lidar + oakd_camera come with it
+         pose: {position: {x: 0, y: 0}}   # diff_drive + lidar + oakd_camera come with it
      - ros2_bridge: {}
 
 An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
@@ -304,7 +304,7 @@ reaches the physics is its ``output``:
        name: cart
        components: [ {navigator: {speed: 0.4, goals: [[4, 3]]}} ]
 
-     - spawn_model: {model: graspable_box, pos: [2, 1], motion: driven}
+     - spawn_model: {model: graspable_box, pose: {position: {x: 2, y: 1}}, motion: driven}
        name: pallet
        components: [ {navigator: {speed: 0.3, goals: [[-2, 1]]}} ]
 
