@@ -19,6 +19,7 @@ sits rather than a config key::
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
+      stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
       test_cmd: [0.15, 0.4]        # optional [v, w] applied every tick (standalone demo)
 
 Skid-steer (>1 wheel per side, e.g. Husky A200): give the per-side actuator/joint *lists* instead of
@@ -34,6 +35,13 @@ averages each side's wheel velocities. ``slip_factor`` compensates the lateral s
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
+
+``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
+for the velocity command. Which of the two a stack publishes is a property of that stack, not of
+the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
+configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
+so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
+only symptom is a controller reporting that it cannot make progress.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT
 of whatever URDF ``robot_state_publisher`` is running: a robot_state_publisher rooted at
@@ -85,6 +93,8 @@ class DiffDrivePlugin(Plugin):
         # Link the odometry TF points at: the root of the robot description published alongside,
         # which differs per platform (base_link on a TurtleBot 4, base_footprint on a TurtleBot 3).
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
+        #: Message type of the velocity command: the stack decides it, not the kinematics.
+        self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
         self._sign_l: list[float] = []
         self._sign_r: list[float] = []
         self._target_v = 0.0
@@ -214,7 +224,9 @@ class DiffDrivePlugin(Plugin):
                 write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
                 backend={
                     "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
+                        "type": "geometry_msgs.msg.TwistStamped"
+                        if self.stamped_cmd_vel
+                        else "geometry_msgs.msg.Twist",
                         "topic": self.topic_override("cmd_vel") or "cmd_vel",
                     }
                 },

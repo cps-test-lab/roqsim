@@ -409,3 +409,23 @@ def test_c5_odometry_tf_default_is_base_link():
     plugin.configure(ctx)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
     assert odom.backend["ros2"]["child_frame_id"] == "base_link"
+
+
+def test_c6_cmd_vel_type_follows_the_stack():
+    """C6: the velocity command's message type is the stack's choice, not the plugin's.
+
+    Nav2 publishes ``geometry_msgs/TwistStamped`` when its own ``enable_stamped_cmd_vel`` is set
+    -- the TurtleBot 4's shipped configuration does -- and a subscription is one type, so a
+    mismatch delivers nothing at all rather than something degraded. The failure has no message
+    of its own: the robot simply never moves while the controller reports it cannot make progress.
+    """
+    model, data = _build()
+
+    ctx, _ = _plugin(model, data)
+    plain = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
+    assert plain.backend["ros2"]["type"] == "geometry_msgs.msg.Twist"
+
+    ctx, _ = _plugin(model, data, stamped_cmd_vel=True)
+    stamped = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
+    assert stamped.backend["ros2"]["type"] == "geometry_msgs.msg.TwistStamped"
+    assert stamped.backend["ros2"]["topic"] == plain.backend["ros2"]["topic"]
