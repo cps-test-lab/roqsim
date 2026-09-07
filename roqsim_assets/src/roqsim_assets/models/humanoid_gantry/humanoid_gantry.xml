@@ -58,16 +58,19 @@
       <geom name="hang_ring"   type="cylinder" fromto="-0.018 0 1.885  0.018 0 1.885" size="0.010"
             material="hook" contype="0" conaffinity="0"/>
 
-      <!-- Four trolley_wheel swivel casters, wheel bottoms on the floor. Visual only. The wheel
+      <!-- Four trolley_wheel swivel casters, wheel bottoms on the floor. The WHEELS collide -- they
+           are what the gantry stands on, and without them the frame rested on its own rails, 0.16 m
+           into the floor. MuJoCo takes a mesh's convex hull, which for a wheel is the squat cylinder
+           the contact wants. The top plates stay decoration. The wheel
            trails toward local +y, so the front pair keeps yaw 0 (trailing forward) and the rear
            pair is yawed 180 deg (trailing backward) -> every wheel points outward, visible. -->
-      <geom name="caster_fl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_fl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42  0.42 0"/>
       <geom name="caster_fl_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos=" 0.42  0.42 0" contype="0" conaffinity="0"/>
-      <geom name="caster_fr_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42  0.42 0" contype="0" conaffinity="0"/>
+      <geom name="caster_fr_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42  0.42 0"/>
       <geom name="caster_fr_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos="-0.42  0.42 0" contype="0" conaffinity="0"/>
-      <geom name="caster_bl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+      <geom name="caster_bl_wheel" type="mesh" mesh="wheel"     material="wheel"     pos=" 0.42 -0.42 0" quat="0 0 0 1"/>
       <geom name="caster_bl_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos=" 0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
-      <geom name="caster_br_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
+      <geom name="caster_br_wheel" type="mesh" mesh="wheel"     material="wheel"     pos="-0.42 -0.42 0" quat="0 0 0 1"/>
       <geom name="caster_br_top"   type="mesh" mesh="wheel_top" material="wheel_top" pos="-0.42 -0.42 0" quat="0 0 0 1" contype="0" conaffinity="0"/>
     </body>
   </worldbody>

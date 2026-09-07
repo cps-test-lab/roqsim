@@ -11,8 +11,10 @@
       - spawn_model: {model: industrial_table, name: bench, prefix: bench_, pos: [-0.13, 0.6, 0]}
       - conveyor:    {name: conveyor, pos: [0, 0, 0]}
 
-    Only the top collides -- it catches objects that fall off the belt, while the legs are visual
-    (contype/conaffinity 0) as in the source cell, so an arm or robot near the bench never snags one.
+    The top and the legs collide: the top catches objects that fall off the belt, and the legs are
+    what the bench stands on -- with them visual-only the model could not rest on a floor at all, and
+    a mobile robot drove straight through the bench. The legs sit at the corners, 1.41 m out from the
+    centre, so they are nowhere near an arm working at the benchtop.
   -->
   <compiler angle="radian" autolimits="true"/>
 
@@ -26,13 +28,13 @@
       <geom name="industrial_table_top" type="box" size="1.45 0.78 0.02" pos="0 0 0.74"
             material="industrial_table_top"/>
       <geom name="industrial_table_leg_1" type="box" size="0.04 0.04 0.36" pos="1.41 0.74 0.36"
-            material="industrial_table_frame" contype="0" conaffinity="0"/>
+            material="industrial_table_frame"/>
       <geom name="industrial_table_leg_2" type="box" size="0.04 0.04 0.36" pos="-1.41 0.74 0.36"
-            material="industrial_table_frame" contype="0" conaffinity="0"/>
+            material="industrial_table_frame"/>
       <geom name="industrial_table_leg_3" type="box" size="0.04 0.04 0.36" pos="1.41 -0.74 0.36"
-            material="industrial_table_frame" contype="0" conaffinity="0"/>
+            material="industrial_table_frame"/>
       <geom name="industrial_table_leg_4" type="box" size="0.04 0.04 0.36" pos="-1.41 -0.74 0.36"
-            material="industrial_table_frame" contype="0" conaffinity="0"/>
+            material="industrial_table_frame"/>
     </body>
   </worldbody>
 </mujoco>
