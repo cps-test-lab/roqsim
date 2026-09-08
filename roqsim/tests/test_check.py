@@ -132,3 +132,60 @@ def test_the_text_report_names_the_stages_it_did_not_reach(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "reached: nothing" in out
     assert " -> ".join(STAGES) in out
+
+
+# -- `actuators:`: which stage a bad block is blamed on ------------------------------------------
+#
+# The stage is a contract, not a detail. An external validator checks a world before spending compute
+# on it by compiling one -- `roqsim scenes describe --entities` is that call -- so a build-stage
+# refusal reaches its author rather than a trial, and a config-stage one reaches them without
+# compiling at all. Blaming the wrong stage sends a reader to the wrong file, so each is asserted.
+
+ARM = """
+    sim: {{}}
+    components:
+      - spawn_arm: {{model: ur5e, actuators: {block}}}
+        name: arm
+"""
+
+
+def _arm_world(tmp_path, block: str, name: str):
+    return _world(tmp_path, ARM.format(block=block), name=name)
+
+
+def test_a_bad_gain_key_is_a_config_problem(tmp_path):
+    """A key typo must not blame the model -- nothing has been compiled when it is found."""
+    pytest.importorskip("roqsim_manipulation", reason="spawn_arm lives in roqsim_manipulation")
+    report = check_world(str(_arm_world(tmp_path, "{control: impedance, kp: 2.0}", "key.yaml")))
+    assert report["ok"] is False
+    stages = {problem["stage"] for problem in report["problems"]}
+    assert stages == {"config"}
+    assert "'p'" in report["problems"][0]["message"]
+
+
+def test_an_unknown_actuator_is_a_build_problem(tmp_path):
+    """Whether the model HAS the actuator needs the model, so it is found where the model is read."""
+    pytest.importorskip("roqsim_manipulation", reason="spawn_arm lives in roqsim_manipulation")
+    report = check_world(
+        str(_arm_world(tmp_path, "{each: {no_such_actuator: {p: 1.0}}}", "name.yaml"))
+    )
+    assert report["ok"] is False
+    assert [problem["stage"] for problem in report["problems"]] == ["build"]
+    assert "roqsim catalog model ur5e" in report["problems"][0]["message"]
+
+
+def test_a_joint_name_is_a_build_problem_naming_its_actuator(tmp_path):
+    pytest.importorskip("roqsim_manipulation", reason="spawn_arm lives in roqsim_manipulation")
+    report = check_world(
+        str(_arm_world(tmp_path, "{each: {wrist_3_joint: {p: 1.0}}}", "joint.yaml"))
+    )
+    assert [problem["stage"] for problem in report["problems"]] == ["build"]
+    assert "'wrist_3'" in report["problems"][0]["message"]
+
+
+def test_a_world_that_declares_gains_the_model_accepts_is_ok(tmp_path):
+    pytest.importorskip("roqsim_manipulation", reason="spawn_arm lives in roqsim_manipulation")
+    report = check_world(
+        str(_arm_world(tmp_path, "{control: impedance, stiffness: 2.0, damping: 0.02}", "ok.yaml"))
+    )
+    assert report["ok"] is True and report["problems"] == []

@@ -272,6 +272,14 @@ class SimContext:
         self.interface = InterfaceRegistry()
         self.render = None  # lazily set to a RenderService when first needed
 
+        #: What each spawned model's actuators ended up running under, keyed by entity: a list of
+        #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``
+        #: and written into the run's provenance. It carries EVERY actuator, not only the ones an
+        #: ``actuators:`` block changed, because "what did this joint run under" is a question about
+        #: the run rather than about the diff -- an answer listing only the changes would need the
+        #: model opened to be understood. A world that overrides nothing still fills it.
+        self.actuator_tables: dict[str, list] = {}
+
         # Manual control: when True the *human* owns ``data.ctrl`` this run, so every controller
         # plugin must leave it alone and let the viewer's control sliders drive the actuators. A
         # run-level switch (the runner's ``--manual-control``), not world config: which controller a

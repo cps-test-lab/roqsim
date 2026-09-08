@@ -501,6 +501,16 @@ class _SampleStream:
         return self._final
 
 
+def _actuator_record(ctx) -> dict:
+    """The resolved actuator table per entity, as plain data, or ``{}`` when nothing filled it.
+
+    Reads what the spawn plugins published at ``configure``; a world whose spawn plugins predate this
+    simply records nothing rather than failing, which is what keeps an embedding driver working.
+    """
+    tables = getattr(ctx, "actuator_tables", None) or {}
+    return {entity: [row.as_record() for row in rows] for entity, rows in tables.items() if rows}
+
+
 def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
     """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
 
@@ -634,6 +644,14 @@ class StateRecorder:
             # outright so rebuilding is a read rather than a re-resolution, which is what keeps a
             # recording valid across a change to the override grammar.
             "world_model": config.as_record() if config is not None else None,
+            # What each joint actually ran under. The world_model above carries what a world
+            # DECLARED, which is only half the answer: a model's own gains are the other half, and
+            # an `actuators:` block that changes one joint leaves the rest reported by nothing. This
+            # is the resolved table -- every actuator, its law, its gains, and whether the value came
+            # from the model or from the world -- so a reader can state the gains a run used without
+            # opening the MJCF and re-deriving them. Additive: `Recording` reads `world_model` by
+            # name and ignores keys it does not know, so no FORMAT_VERSION bump.
+            "actuators": _actuator_record(ctx),
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
             "state_fields": list(STATE_FIELDS),

@@ -278,6 +278,63 @@ cell and then wasted on every faster one. It is a *request*: the engine does not
 act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
 stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
 
+Actuator overrides (``actuators:``) [impl]
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so used to mean editing the shared MJCF: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
+
+The vocabulary is the robot's, not MuJoCo's: ``control`` names a ros2_control command interface and the gains are the ones a real controller's yaml carries, because a port transcribing a paper reads its numbers out of a controller config and a key it has to translate is a key it can get wrong. ``effort_limit`` is URDF's ``<limit effort=>``, which ``export_urdf`` already emits from ``actuator_forcerange``.
+
+.. code:: yaml
+
+   - spawn_arm:
+       model: ur5e
+       actuators:
+         control: impedance       # applies to every actuator this model declares
+         stiffness: 2.0           # N*m/rad
+         damping: 0.02            # N*m*s/rad
+         each:                    # per-actuator, on top of the shared keys
+           wrist_3: {control: position, p: 2000, d: 500}
+
+Four laws:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 14 20 22 44
+
+   * - ``control``
+     - commands
+     - gains
+     - compiles to
+   * - ``position``
+     - joint position
+     - ``p``, ``d``
+     - ``gaintype fixed``, ``biastype affine``, ``gainprm [p]``, ``biasprm [0, -p, -d]``
+   * - ``velocity``
+     - joint velocity
+     - ``d``
+     - ``gaintype fixed``, ``biastype affine``, ``biasprm [0, 0, -d]``
+   * - ``effort``
+     - joint torque
+     - —
+     - ``gaintype fixed``, ``biastype none``
+   * - ``impedance``
+     - joint position
+     - ``stiffness``, ``damping``
+     - the affine form above, **plus** ``body_gravcomp`` on the entity's bodies
+
+``impedance`` is not a second spelling of ``position``. A real joint-impedance controller (Franka's ``joint_impedance``, a UR in force mode) compensates the arm's own weight, which is what lets a stiffness of 2 N·m/rad hold a pose at all: measured on the ur5e, a *position* servo at that gain folds by 2.3 rad while impedance holds to under a milliradian. **In a world at zero gravity the two coincide** — a contact cell that turns gravity off to keep an untared FT sensor honest gets identical physics from either, and should not conclude the mode did nothing.
+
+**Where each half is applied, and why they differ.** The actuator rewrite runs on the child ``MjSpec`` right after ``apply_assets`` and **before** an end effector is grafted on: ``actuators:`` names the actuators *this model* declares, and the graft puts a gripper's tendon actuator into the same spec, so a shared ``control:`` resolved after it would fall on a tendon — which has no joint stiffness — and refuse a block whose gains were only ever about the arm. The gravity-compensation half runs **after** the graft, for the opposite reason: ``body_gravcomp`` is per body and does not cascade, so an arm compensated before its tool was attached would sag by exactly the tool's weight. Compensating the tool is also the right physics — a real controller is told its payload and holds that too. Both run before ``spec.attach``, so the whole thing is pre-compile and the file on disk is never touched; a world that declares nothing compiles a byte-identical model.
+
+**Refusals name their replacement**, the way ``motion:`` does: MuJoCo's own spellings (``kp``, ``kv``, ``kd``, ``forcerange``) and its actuator types (``motor``, ``pd``) are refused rather than translated, because these plugins take config maps they do not fully own and a key merely not read would be accepted in silence. Keys under ``each:`` are actuator names; a **joint** name is refused naming the actuator that drives it, rather than resolved silently, so a reader of someone else's world can tell what a key is without opening the MJCF. ``roqsim catalog model <model>`` lists the names.
+
+A shape error (an unknown key, a gain the chosen law does not read) is found by ``validate_config`` at ``roqsim check``'s **config** stage, before anything is compiled. Anything needing the model — an unknown actuator, a joint name, a tendon, a missing ``ctrlrange`` — is raised in ``build()`` and lands at the **build** stage. That split is a contract rather than a detail: an external validator that checks a world before spending compute on it does so by compiling — ``roqsim scenes describe --entities`` is that call — so both kinds of mistake reach its author rather than a trial. ``ctrlrange`` is required only when the **command unit** changes (rad ↔ rad/s ↔ N·m); ``position`` → ``impedance`` keeps the unit, so the model's own ``ctrlrange`` stays correct and is not refused.
+
+The **resolved table** — every actuator, its final law and gains, and whether each value came from the model or the world — is published on ``SimContext.actuator_tables`` at ``configure`` and written into the run's provenance beside ``world_model`` (``capture.py``). It carries every actuator rather than only the changed ones, because "what did this joint run under" is a question about the run and not about the diff. The addition needs no ``FORMAT_VERSION`` bump: ``Recording`` reads ``world_model`` by name and ignores keys it does not know.
+
+Not part of this: ``spawn_arm``'s ``rail: {kp, damping}``. That parameterises a carriage drive roqsim *synthesises*, where ``actuators:`` overrides actuators a *model declares*.
+
 Asset de-duplication (``sim.dedup_assets``) [impl]
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
