@@ -213,7 +213,7 @@ def test_blocked_door_pushes_gently_and_gives_up(tmp_path):
             # dimensions (which a mesh swap could then quietly change).
             "box": {
                 "prefix": "obs_",
-                "pos": [0.45, 0.5],
+                "pose": {"position": {"x": 0.45, "y": 0.5}},
                 "size": [0.45, 0.30, 0.45],
             },
             "name": "obs",

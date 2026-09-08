@@ -29,8 +29,8 @@ def world(tmp_path):
         "components:\n"
         "- boxes:\n"
         "    instances:\n"
-        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
-        "    - {pos: [3.0, 2.0], size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 1.0, y: 1.0}}, size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 3.0, y: 2.0}}, size: [0.4, 0.4, 0.4]}\n"
         "  name: obstacles\n"
     )
     return path
@@ -281,7 +281,7 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
         "components:\n"
         "  obstacle:\n"  # the entry's LABEL, which is what an address names
         "    instances:\n"
-        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 1.0, y: 1.0}}, size: [0.4, 0.4, 0.4]}\n"
     )
 
     plain = _describe(capsys, str(world), "--entities")

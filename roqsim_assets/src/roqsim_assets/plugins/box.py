@@ -16,50 +16,54 @@ Config::
 
     box:
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 box)
-      pos: [x, y]          # centre in world metres; [x, y] sits the box ON the floor,
-                           #   [x, y, z] places its CENTRE at z (REQUIRED)
+      pose:                # world placement (REQUIRED), as SpawnEntity states one; omit z to
+        position: {x: 0.0, y: 0.0}     #   sit the box ON the floor, give z to place its CENTRE
+        orientation: {yaw: 0.0}        #   a full rotation, so a box may be tipped onto an edge
       size: [0.4, 0.4, 0.8]  # full extents (not half-extents), metres (REQUIRED)
-      yaw: 0.0             # rotation about z, radians
       color: [r,g,b,a]     # default a light warehouse grey; alpha optional
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
-      free: false          # give the box a free joint: movable, and TELEPORTABLE (see below)
-      mocap: true          # collidable and immovable, and NOT in a navigator's planner grid
+      motion: physics      # who owns the pose: physics (default; movable and TELEPORTABLE),
+                           #   static (welded scenery), driven (a plugin writes it)
+      motion: driven       # a plugin writes the pose: collidable, immovable, and NOT in a
+                           #   navigator's planner grid
 
 ``size`` is deliberately **full extents**, not MuJoCo half-extents: a world file describes a 0.4 m
 box, and halving it in your head is exactly the kind of silent factor-of-two a scene should not ask
 of its author.
 
 By default the box is welded scenery -- static, with no free joint -- like every other plugin in this
-package. ``free: true`` gives it a free joint, which buys two things: physics can move it, and
+package. ``motion: physics`` gives it a free joint, which buys two things: physics can move it, and
 ``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any entity
 without a free ``base_joint``).
 
 Teleporting is how an obstacle *appears* mid-trial. roqsim never recompiles the model at runtime, so
-there is no spawning: a box that must show up on cue is compiled in at build time, parked somewhere
-harmless (below the floor, say), and moved into place by the scenario when the moment comes. Between
-episodes ``on_reset`` puts it back at its declared pose, so a trial never inherits the previous
-trial's obstacle position.
+there is no spawning: a box that must show up on cue is compiled in at build time, kept out of the
+way, and moved into place by the scenario when the moment comes. Between episodes ``on_reset`` puts
+it back at its declared pose, so a trial never inherits the previous trial's obstacle position.
 
-``mocap: true`` is the third state, and it is what makes this plugin's opening paragraph achievable
+A teleport states the box's **centre**, and no part of it may be inside the floor. The z this file's
+``pose:`` lets you omit is a convenience of the world, not of the service: ``SetEntityState`` states
+every field, so a scenario placing a floor-standing box asks for half its height and gets what it
+asks for. A free box seated inside the floor is not parked -- the solver answers the penetration by
+launching it metres upward before it settles, in view of the run. Keep it out of the way by making
+it ABSENT (``DeleteEntity``, which leaves its pose alone) or by moving it sideways, never downward.
+
+``motion: driven`` is the third state, and it is what makes this plugin's opening paragraph achievable
 without a scenario at all. A mocap box has no degrees of freedom, so nothing can push it, and it is
 excluded from a navigator's planner grid by the same rule that excludes walkers and driven props --
 that grid holds only what cannot move. So a mover plans straight through it and has to discover it
 with its forward probe, which is exactly the "obstacle the robot is not supposed to know about" this
 plugin exists for. Welded scenery cannot do that job: it lands in the grid and gets routed around.
-
-``free`` and ``mocap`` are mutually exclusive -- a body cannot both carry a free joint and be
-kinematically posed -- and asking for both is refused rather than silently resolved.
 """
 
 from __future__ import annotations
-
-import math
 
 import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
 
 _GREY_RGBA = [0.86, 0.86, 0.83, 1.0]  # pale warehouse carton
 _ROOT_BODY = "box"
@@ -75,13 +79,19 @@ class BoxPlugin(Plugin):
         self.entity_name = self.address
         self.prefix = self.config.get("prefix", "")
         self.size = self._vec3(self.config.get("size"), (0.4, 0.4, 0.4))
-        self.pos = self._pos(self.config.get("pos"), self.size[2])
-        self.yaw = self._float(self.config.get("yaw"), 0.0)
+        # One way to state a pose, in the shape SpawnEntity uses, so a box a world places and a
+        # box a scenario moves are written the same. An omitted z sits it on the floor, which is
+        # what a two-element `pos` used to mean.
+        self.pos, self.quat = self._pose(self.config.get("pose"), self.size[2])
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
-        self.free = bool(self.config.get("free", False))
-        self.mocap = bool(self.config.get("mocap", False))
+        # `motion` names who owns this body's pose -- one question with three answers, rather
+        # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
+        # was meaningless and had to be refused wherever they were offered.
+        self.motion = self.config.get("motion", "physics")
+        self.free = self.motion == "physics"
+        self.mocap = self.motion == "driven"
         self._base_joint = ""
         self._spawn_qpos: list[float] | None = None
 
@@ -102,16 +112,17 @@ class BoxPlugin(Plugin):
             pass
         return default
 
-    def _pos(self, value, height: float) -> tuple[float, float, float]:
-        """``[x, y]`` sits the box on the floor; ``[x, y, z]`` places its centre at z."""
-        try:
-            if len(value) >= 3:
-                return float(value[0]), float(value[1]), float(value[2])
-            if len(value) == 2:
-                return float(value[0]), float(value[1]), height / 2.0
-        except (TypeError, ValueError):
-            pass
-        return 0.0, 0.0, height / 2.0
+    @staticmethod
+    def _pose(value, height: float):
+        """``(position, quaternion)`` from a ``pose:``, resting on the floor when z is unstated.
+
+        The rotation is a full quaternion because the pose shape carries one: a box can be
+        declared tipped onto an edge, which a `yaw` could not say.
+        """
+        if value is None:
+            return (0.0, 0.0, height / 2.0), [1.0, 0.0, 0.0, 0.0]
+        (x, y, z), quat = parse_pose(value)
+        return (x, y, height / 2.0 if z is None else z), quat
 
     @staticmethod
     def _rgba(value) -> list[float] | None:
@@ -140,15 +151,24 @@ class BoxPlugin(Plugin):
     # -- validation ------------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        for key in ("pos", "size"):
+        for key in ("pose", "size"):
             if key not in config:
                 errors.append(f"'{key}' is required")
-        if "pos" in config:
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                # Refused rather than translated. Two ways to state one pose is what let a world
+                # say `pos:` to a plugin that reads only `pose:` and be placed at the origin --
+                # stated, ignored, and nothing raised anywhere.
+                errors.append(
+                    f"'{gone}' is gone -- state the whole pose under 'pose', the shape "
+                    "SpawnEntity uses: pose: {position: {x, y, z}, orientation: {yaw}}. Omit z "
+                    "to sit it on the floor, which is what a two-element 'pos' used to mean."
+                )
+        if "pose" in config:
             try:
-                if len(config["pos"]) not in (2, 3):
-                    errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
-            except TypeError:
-                errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         if "size" in config:
             try:
                 extents = [float(v) for v in config["size"]]
@@ -163,14 +183,22 @@ class BoxPlugin(Plugin):
             errors.append("'color' must be [r, g, b] or [r, g, b, a] numbers")
         if "collide" in config and not isinstance(config["collide"], bool):
             errors.append("'collide' must be a boolean")
-        if "free" in config and not isinstance(config["free"], bool):
-            errors.append("'free' must be a boolean")
-        if "mocap" in config and not isinstance(config["mocap"], bool):
-            errors.append("'mocap' must be a boolean")
-        if config.get("free") and config.get("mocap"):
+        for gone, replacement in (
+            ("free", "motion: physics (or motion: static)"),
+            ("mocap", "motion: driven"),
+        ):
+            if gone in config:
+                # Refused rather than translated: a removed key that quietly still worked would
+                # leave two vocabularies for one question, which is what this replaced.
+                errors.append(
+                    f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
+                    "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "
+                    "it), 'static' (welded scenery, which a planner's grid holds), 'driven' (a "
+                    "plugin writes the pose each step: solid, immovable, and NOT in the grid)."
+                )
+        if "motion" in config and config["motion"] not in {"physics", "static", "driven"}:
             errors.append(
-                "'free' and 'mocap' are mutually exclusive: a free joint means physics moves the "
-                "box, a mocap body means its pose is written. Pick one."
+                f"'motion' must be one of physics, static, driven -- got {config['motion']!r}."
             )
         return errors
 
@@ -213,7 +241,7 @@ class BoxPlugin(Plugin):
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
-        frame.quat = [math.cos(self.yaw / 2), 0.0, 0.0, math.sin(self.yaw / 2)]
+        frame.quat = list(self.quat)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def configure(self, ctx: SimContext) -> None:
@@ -221,7 +249,7 @@ class BoxPlugin(Plugin):
             "prefix": self.prefix,
             "size": list(self.size),
             "pos": list(self.pos),
-            "yaw": self.yaw,
+            "quat": list(self.quat),
         }
         if self.free:
             meta["base_joint"] = self._base_joint
@@ -230,7 +258,7 @@ class BoxPlugin(Plugin):
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if (self.free or self.mocap) else "prop",
+                kind="prop",
                 body=self.prefix + _ROOT_BODY,
                 meta=meta,
             )

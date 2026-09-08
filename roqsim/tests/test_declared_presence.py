@@ -38,8 +38,8 @@ def prop_file(tmp_path):
 
 @pytest.fixture
 def make_engine(prop_file):
-    def _make(present=None, free=True):
-        config = {"model": prop_file, "pos": [1.0, 0.0, 1.0], "free": free}
+    def _make(present=None, motion="physics"):
+        config = {"model": prop_file, "pose": {"position": {"x": 1.0, "y": 0.0, "z": 1.0}}, "motion": motion}
         if present is not None:
             config["present"] = present
         return Engine(

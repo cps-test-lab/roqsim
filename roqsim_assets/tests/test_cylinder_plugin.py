@@ -42,14 +42,14 @@ def _cyl_gid(model, suffix="cylinder"):
 
 
 def test_height_is_full_not_half_and_radius_is_a_radius():
-    model, _, _, _ = _build(pos=[1.0, 2.0], radius=0.075, height=0.5)
+    model, _, _, _ = _build(pose={"position": {"x": 1.0, "y": 2.0}}, radius=0.075, height=0.5)
     gid = _cyl_gid(model)
     assert float(model.geom_size[gid][0]) == pytest.approx(0.075)
     assert float(model.geom_size[gid][1]) == pytest.approx(0.25)
 
 
 def test_two_element_pos_stands_the_cylinder_on_the_floor():
-    model, data, _, _ = _build(pos=[1.0, 2.0], radius=0.075, height=0.5)
+    model, data, _, _ = _build(pose={"position": {"x": 1.0, "y": 2.0}}, radius=0.075, height=0.5)
     gid = _cyl_gid(model)
     z = float(data.geom_xpos[gid][2])
     assert z == pytest.approx(0.25)  # centre at half height => base at z = 0
@@ -57,7 +57,7 @@ def test_two_element_pos_stands_the_cylinder_on_the_floor():
 
 
 def test_three_element_pos_places_the_centre():
-    model, data, _, _ = _build(pos=[0.0, 0.0, 1.5], radius=0.1, height=0.4)
+    model, data, _, _ = _build(pose={"position": {"x": 0.0, "y": 0.0, "z": 1.5}}, radius=0.1, height=0.4)
     assert float(data.geom_xpos[_cyl_gid(model)][2]) == pytest.approx(1.5)
 
 
@@ -70,7 +70,7 @@ def _geom_rgba(model, gid):
 
 
 def test_defaults_are_grey_and_colliding():
-    model, _, plugin, _ = _build(pos=[0.0, 0.0], radius=0.1, height=1.0)
+    model, _, plugin, _ = _build(pose={"position": {"x": 0.0, "y": 0.0}}, radius=0.1, height=1.0)
     gid = _cyl_gid(model)
     assert plugin.collide is True
     assert int(model.geom_contype[gid]) != 0
@@ -78,7 +78,7 @@ def test_defaults_are_grey_and_colliding():
 
 
 def test_registers_an_entity_with_its_geometry():
-    _, _, _, ctx = _build(pos=[1.0, 2.0], radius=0.075, height=0.5, name="obstacle_3")
+    _, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, radius=0.075, height=0.5, name="obstacle_3")
     entity = ctx.entities.get("obstacle_3")
     assert entity is not None and entity.kind == "prop"
     assert entity.meta["radius"] == pytest.approx(0.075)
@@ -87,7 +87,7 @@ def test_registers_an_entity_with_its_geometry():
 
 
 def test_collide_false_keeps_the_geom_but_disables_contact():
-    model, _, _, _ = _build(pos=[0.0, 0.0], radius=0.1, height=1.0, collide=False)
+    model, _, _, _ = _build(pose={"position": {"x": 0.0, "y": 0.0}}, radius=0.1, height=1.0, collide=False)
     gid = _cyl_gid(model)
     assert int(model.geom_contype[gid]) == 0
     assert int(model.geom_conaffinity[gid]) == 0
@@ -95,21 +95,21 @@ def test_collide_false_keeps_the_geom_but_disables_contact():
 
 def test_color_and_friction_reach_the_geom():
     model, _, _, _ = _build(
-        pos=[0.0, 0.0], radius=0.1, height=1.0, color=[0.648, 0.192, 0.192], friction=0.4
+        pose={"position": {"x": 0.0, "y": 0.0}}, radius=0.1, height=1.0, color=[0.648, 0.192, 0.192], friction=0.4
     )
     gid = _cyl_gid(model)
     assert _geom_rgba(model, gid) == pytest.approx([0.648, 0.192, 0.192, 1.0])
     assert float(model.geom_friction[gid][0]) == pytest.approx(0.4)
 
 
-def test_validate_config_requires_pos_radius_height_and_rejects_nonpositive():
+def test_validate_config_requires_pose_radius_height_and_rejects_nonpositive():
     plugin = CylinderPlugin({})
     errors = plugin.validate_config({})
-    assert any("'pos' is required" in e for e in errors)
+    assert any("'pose' is required" in e for e in errors)
     assert any("'radius' is required" in e for e in errors)
     assert any("'height' is required" in e for e in errors)
 
-    errors = plugin.validate_config({"pos": [0, 0], "radius": 0.0, "height": -1.0})
+    errors = plugin.validate_config({"pose": {"position": {"x": 0, "y": 0}}, "radius": 0.0, "height": -1.0})
     assert any("'radius' must be positive" in e for e in errors)
     assert any("'height' must be positive" in e for e in errors)
 
@@ -119,7 +119,7 @@ def test_several_cylinders_coexist_under_distinct_prefixes():
     ctx = SimContext(config={})
     for i in range(3):
         CylinderPlugin(
-            {"prefix": f"o{i}_", "pos": [float(i), 0.0], "radius": 0.075, "height": 0.5}
+            {"prefix": f"o{i}_", "pose": {"position": {"x": float(i), "y": 0.0}}, "radius": 0.075, "height": 0.5}
         ).build(spec, ctx)
     model = spec.compile()
     names = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) for gid in range(model.ngeom)}
@@ -138,7 +138,7 @@ def test_diagonal_neighbours_leave_a_gap_a_box_would_not():
     spec = mujoco.MjSpec()
     ctx = SimContext(config={})
     for i, (x, y) in enumerate([(0.0, 0.0), (pitch, pitch)]):
-        CylinderPlugin({"prefix": f"c{i}_", "pos": [x, y], "radius": radius, "height": 0.5}).build(
+        CylinderPlugin({"prefix": f"c{i}_", "pose": {"position": {"x": x, "y": y}}, "radius": radius, "height": 0.5}).build(
             spec, ctx
         )
     model = spec.compile()

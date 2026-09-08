@@ -41,6 +41,39 @@ quotes.
 Each plugin validates its own ``config:`` section; the engine aggregates all errors and fails fast
 before the scene is built.
 
+Stating a joint's gains (``actuators:``)
+````````````````````````````````````````
+
+A spawn plugin's ``actuators:`` block says what law the model's joints run under, and with which
+gains, without editing the shared model file. Start from the names it keys on::
+
+   roqsim catalog model ur5e     # lists the actuators, and the joint each drives
+
+Then state the law once, and only what differs per actuator:
+
+.. code-block:: yaml
+
+   - spawn_arm:
+       model: ur5e
+       actuators:
+         control: impedance     # position | velocity | effort | impedance
+         stiffness: 2.0         # N*m/rad
+         damping: 0.02          # N*m*s/rad
+         each:
+           shoulder_lift: {stiffness: 5.0, effort_limit: 150}   # N*m
+           wrist_3: {control: position, p: 2000, d: 500}
+
+Anything not stated keeps the model's own value, so a world says what the experiment fixes and
+nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not joint names
+(``wrist_3_joint``) — a joint name is refused, naming the actuator that drives it.
+
+The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
+interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
+``impedance`` is joint-impedance control — a position law that also carries the arm's own weight, so
+a soft stiffness holds a pose instead of folding; at zero gravity it is identical to ``position``.
+Which law and gains every joint ended up with is written into the run's recording, so a result can
+state what its joints ran under. See :ref:`architecture` for the full mechanism.
+
 Overriding the world
 --------------------
 
@@ -471,10 +504,27 @@ an absent obstacle a perfectly good lidar return.
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
 
-    - spawn_model: {model: pallet, pos: [4.0, 1.0], free: true, present: false}
+    - spawn_model: {model: pallet, pose: {position: {x: 4.0, y: 1.0}}, motion: physics, present: false}
       name: obstacle
 
 That is what gives a trial something to spawn. The declared value is restored on every reset, so a
 spare brought in during one repetition is a spare again in the next. Do not confuse it with
 ``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
 to spawn.
+
+Moving one needs a free joint
+`````````````````````````````
+
+``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
+same joint when it is given a pose. A body compiled without one is welded scenery: it holds the
+pose the world gave it, and both services refuse to move it, naming the weld and the
+``motion: physics`` that resolves it.
+
+This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
+exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an
+obstacle out of the way and teleports it in on cue fails on its first call, every run, and the
+count and names all agree. A placement is ``motion: physics`` by default, so this is what a world
+says when it has welded something with ``motion: static`` that the trial then tries to move.
+
+Asking a welded entity for the pose it already holds succeeds. Only a move is what a weld refuses,
+so a world that states a pose twice is not an error.

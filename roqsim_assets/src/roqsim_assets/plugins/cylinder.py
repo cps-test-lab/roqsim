@@ -14,7 +14,7 @@ measures something different if its round obstacles are squared off.
 
 By default the cylinder is **welded scenery** -- static, with no free joint -- and is declared in the
 world YAML rather than baked into the scene, so it stays out of the occupancy grid the map is
-generated from. ``free: true`` gives it a free joint, exactly as on ``box``: physics can then move it
+generated from. ``motion: physics`` gives it a free joint, exactly as on ``box``: physics can move it
 and ``simulation_interfaces``' ``SetEntityState`` can teleport it (that service rejects any entity
 without a free ``base_joint``). That is what makes a cylinder a *workpiece* -- a can, a bottle, a
 billet -- and not only an obstacle, and it is why ``radius`` matters as config: a graspable round
@@ -25,14 +25,16 @@ Config::
 
     cylinder:
       prefix: ""           # MJCF name prefix (use distinct prefixes for >1 cylinder)
-      pos: [x, y]          # centre in world metres; [x, y] stands the cylinder ON the floor,
+      pose:                # world placement (REQUIRED), as SpawnEntity states one; omit z to
+        position: {x: 0.0, y: 0.0}     #   stand it ON the floor, give z to place its CENTRE
                            #   [x, y, z] places its CENTRE at z (REQUIRED)
       radius: 0.075        # metres (REQUIRED)
       height: 0.5          # full height, metres (REQUIRED)
       color: [r,g,b,a]     # default a light warehouse grey; alpha optional
       collide: true        # false -> visual only (raycast still sees it; nothing bumps into it)
       friction: 1.0        # sliding friction, or the full [sliding, torsional, rolling] triple
-      free: false          # give the cylinder a free joint: movable, and TELEPORTABLE
+      motion: physics      # who owns the pose: physics (default; movable and TELEPORTABLE),
+                           #   static (welded scenery), driven (a plugin writes it)
       mass: null           # total mass, kg. Unset -> MuJoCo's default density (1000 kg/m^3), which
                            #   for a hollow container is several times too heavy
 
@@ -52,6 +54,7 @@ import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
 
 _GREY_RGBA = [0.86, 0.86, 0.83, 1.0]  # pale warehouse grey, as box
 _ROOT_BODY = "cylinder"
@@ -68,11 +71,18 @@ class CylinderPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         self.radius = self._float(self.config.get("radius"), 0.2)
         self.height = self._float(self.config.get("height"), 0.5)
-        self.pos = self._pos(self.config.get("pos"), self.height)
+        # One way to state a pose, in the shape SpawnEntity uses. An omitted z stands it on the
+        # floor, which is what a two-element `pos` used to mean.
+        self.pos, self.quat = self._pose(self.config.get("pose"), self.height)
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
-        self.free = bool(self.config.get("free", False))
+        # `motion` names who owns this body's pose -- one question with three answers, rather
+        # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
+        # was meaningless and had to be refused wherever they were offered.
+        self.motion = self.config.get("motion", "physics")
+        self.free = self.motion == "physics"
+        self.mocap = self.motion == "driven"
         self.mass = self._optional_float(self.config.get("mass"))
         self._base_joint = ""
         self._spawn_qpos: list[float] | None = None
@@ -95,16 +105,18 @@ class CylinderPlugin(Plugin):
         except (TypeError, ValueError):
             return None
 
-    def _pos(self, value, height: float) -> tuple[float, float, float]:
-        """``[x, y]`` stands the cylinder on the floor; ``[x, y, z]`` places its centre at z."""
-        try:
-            if len(value) >= 3:
-                return float(value[0]), float(value[1]), float(value[2])
-            if len(value) == 2:
-                return float(value[0]), float(value[1]), height / 2.0
-        except (TypeError, ValueError):
-            pass
-        return 0.0, 0.0, height / 2.0
+    @staticmethod
+    def _pose(value, height: float):
+        """``(position, quaternion)`` from a ``pose:``, standing on the floor when z is unstated.
+
+        A cylinder is rotationally symmetric about its own axis, so a yaw would have nothing to
+        do -- but a pose carries a full rotation, and tipping one onto its side is a thing a world
+        may want to say. That is what this keeps and a `yaw` key could not express.
+        """
+        if value is None:
+            return (0.0, 0.0, height / 2.0), [1.0, 0.0, 0.0, 0.0]
+        (x, y, z), quat = parse_pose(value)
+        return (x, y, height / 2.0 if z is None else z), quat
 
     @staticmethod
     def _rgba(value) -> list[float] | None:
@@ -133,15 +145,24 @@ class CylinderPlugin(Plugin):
     # -- validation ------------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
-        for key in ("pos", "radius", "height"):
+        for key in ("pose", "radius", "height"):
             if key not in config:
                 errors.append(f"'{key}' is required")
-        if "pos" in config:
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                # Refused rather than translated. Two ways to state one pose is what let a world
+                # say `pos:` to a plugin that reads only `pose:` and be placed at the origin --
+                # stated, ignored, and nothing raised anywhere.
+                errors.append(
+                    f"'{gone}' is gone -- state the whole pose under 'pose', the shape "
+                    "SpawnEntity uses: pose: {position: {x, y, z}, orientation: {yaw}}. Omit z "
+                    "to sit it on the floor, which is what a two-element 'pos' used to mean."
+                )
+        if "pose" in config:
             try:
-                if len(config["pos"]) not in (2, 3):
-                    errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
-            except TypeError:
-                errors.append("'pos' must be [x, y] or [x, y, z] in world metres")
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         for key in ("radius", "height"):
             if key in config:
                 try:
@@ -155,8 +176,23 @@ class CylinderPlugin(Plugin):
             errors.append("'color' must be [r, g, b] or [r, g, b, a] numbers")
         if "collide" in config and not isinstance(config["collide"], bool):
             errors.append("'collide' must be a boolean")
-        if "free" in config and not isinstance(config["free"], bool):
-            errors.append("'free' must be a boolean")
+        for gone, replacement in (
+            ("free", "motion: physics (or motion: static)"),
+            ("mocap", "motion: driven"),
+        ):
+            if gone in config:
+                # Refused rather than translated: a removed key that quietly still worked would
+                # leave two vocabularies for one question, which is what this replaced.
+                errors.append(
+                    f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
+                    "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "
+                    "it), 'static' (welded scenery, which a planner's grid holds), 'driven' (a "
+                    "plugin writes the pose each step: solid, immovable, and NOT in the grid)."
+                )
+        if "motion" in config and config["motion"] not in {"physics", "static", "driven"}:
+            errors.append(
+                f"'motion' must be one of physics, static, driven -- got {config['motion']!r}."
+            )
         if config.get("mass") is not None:
             try:
                 mass = float(config["mass"])
@@ -199,11 +235,16 @@ class CylinderPlugin(Plugin):
             # kinds of prop are re-seated and teleported by one code path.
             body.add_freejoint(name="free")
             self._base_joint = f"{self.prefix}free"
+        elif self.mocap:
+            # Zero DOFs, so the solver treats it as immovable and nothing shoves it aside; and no
+            # `on_reset` is needed, because `mj_resetData` restores a mocap body's pose from
+            # `body_pos`. Its absence from a navigator's grid follows from being mocap, which is
+            # what `wall_polygons` filters on -- the pillar a robot must see rather than plan round.
+            body.mocap = True
 
         frame = spec.worldbody.add_frame()
         frame.pos = list(self.pos)
-        # A cylinder is rotationally symmetric about its own axis, so unlike `box` there is no `yaw`:
-        # there would be nothing for it to do.
+        frame.quat = list(self.quat)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
     def configure(self, ctx: SimContext) -> None:
@@ -212,15 +253,19 @@ class CylinderPlugin(Plugin):
             "radius": self.radius,
             "height": self.height,
             "pos": list(self.pos),
+            "quat": list(self.quat),
         }
         if self.mass is not None:
             meta["mass"] = self.mass
         if self.free:
             meta["base_joint"] = self._base_joint
+        if self.mocap:
+            # How a nested driver discovers it may write this prop's pose, as with `box`.
+            meta["mocap"] = True
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if self.free else "prop",
+                kind="prop",
                 body=self.prefix + _ROOT_BODY,
                 meta=meta,
             )

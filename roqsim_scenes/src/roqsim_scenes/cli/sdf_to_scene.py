@@ -73,6 +73,26 @@ def _enclosed_volume(verts: np.ndarray, faces: np.ndarray) -> float:
     return float(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum() / 6.0)
 
 
+def _hull_ratio(pv: np.ndarray, pf: np.ndarray) -> float | None:
+    """Convex-hull volume over the part's own enclosed volume, or None when there is nothing to judge.
+
+    ``None`` is the honest answer for an open patch (a wall skin from an STL) and for a coplanar or
+    degenerate part: neither encloses a volume, so a hull has nothing to swallow. Callers must not
+    read it as "fine" -- see ``_check_nothing_is_walled_off`` for the check that covers those.
+    """
+    from scipy.spatial import ConvexHull  # local: only the hull checks need scipy
+
+    if len(pv) < 4 or not _is_closed(pv, pf):
+        return None
+    mesh_vol = abs(_enclosed_volume(pv, pf))
+    if mesh_vol <= 1e-9:
+        return None
+    try:
+        return float(ConvexHull(pv).volume) / mesh_vol
+    except Exception:  # degenerate/coplanar: no volume to swallow
+        return None
+
+
 def _ln(el) -> str:
     # Comments/PIs have a callable .tag and are not QNames; real worlds are full of commented-out models.
     return etree.QName(el).localname if isinstance(el.tag, str) else ""
@@ -175,12 +195,21 @@ class Importer:
             # <submesh> narrows a shared mesh file to one named piece (Warehouse re-uses warehouse.dae
             # for its drop zone). Ignoring it silently duplicates the whole file at the visual's pose.
             sm = _kid(m, "submesh")
+            # A file whose <up_axis> contradicts its own geometry, asserted per file by the caller.
+            # Announced rather than applied quietly: it overrides what the asset says about itself,
+            # so the run log has to show which mesh was read against its declaration.
+            as_authored = any(pat in str(path) for pat in self.args.ignore_up_axis)
+            if as_authored:
+                print(
+                    f"  reading {path.name} as authored (its <up_axis> declaration is overridden)"
+                )
             subs = mio.read_mesh(
                 path,
                 submesh=_text(sm, "name") if sm is not None else None,
                 center=(_text(sm, "center", "false").strip().lower() in ("1", "true"))
                 if sm is not None
                 else False,
+                ignore_up_axis=as_authored,
             )
             sc = _text(m, "scale")
             scale = np.array([float(x) for x in sc.split()]) if sc else None
@@ -342,7 +371,7 @@ class Importer:
                             f"vertices) — the convex split destroyed this collision mesh instead of "
                             f"cutting it. Re-run with --no-split-components to keep it whole."
                         )
-                    parts = solid
+                    parts = self._cut_extruded_shells(solid, base)
                     self._check_hulls_are_faithful(parts, base, model_name)
                 else:
                     parts = [(sub.verts, sub.faces, sub.uv)]
@@ -369,6 +398,46 @@ class Importer:
                     self.objects.append(obj)
                 if len(parts) > 1:
                     print(f"  split {base} -> {len(parts)} components")
+
+    def _cut_extruded_shells(self, parts, base: str):
+        """Re-cut any part whose hull still swallows a void, where that part is an extruded footprint.
+
+        The two cuts in ``_emit`` are graph cuts, and a *ring* of walls defeats both: one component,
+        and reflex edges at the inner corners leave the outer faces connected the long way round. What
+        does cut it is the part's own 2D footprint (``scene_mesh_io.split_extruded_shell``), which is
+        exact for the shape most building shells actually are -- two horizontal planes, vertical walls
+        between them.
+
+        Applied only to parts that FAIL the hull test, so nothing already faithful is multiplied into
+        strips, and it is a refinement of the refusal rather than a replacement for it: a cut that does
+        not apply, or that leaves a piece still swallowing a void, falls through to
+        :meth:`_check_hulls_are_faithful` and its message.
+        """
+        out = []
+        for pv, pf, puv in parts:
+            ratio = _hull_ratio(pv, pf)
+            if ratio is None or ratio <= self._MAX_HULL_RATIO:
+                out.append((pv, pf, puv))
+                continue
+            try:
+                cut = mio.split_extruded_shell(pv, pf)
+            except ValueError as exc:
+                print(f"  footprint cut declined {base}: {exc}")
+                cut = None
+            worst = (
+                max((_hull_ratio(cv, cf) or 1.0 for cv, cf, _ in cut), default=None)
+                if cut
+                else None
+            )
+            if not cut or worst is None or worst > self._MAX_HULL_RATIO:
+                out.append((pv, pf, puv))
+                continue
+            print(
+                f"  cut {base} into {len(cut)} convex prisms over its own footprint "
+                f"(hull/mesh {ratio:.1f} -> {worst:.2f})"
+            )
+            out.extend(cut)
+        return out
 
     def _check_nothing_is_walled_off(self) -> None:
         """Refuse a scene whose collision hulls seal off floor its own geometry leaves reachable.
@@ -436,21 +505,12 @@ class Importer:
         (the AWS warehouse, ratio 31.7) cheaply and by name; that one catches what only the finished
         scene can show.
         """
-        from scipy.spatial import ConvexHull  # local: only this check needs it
-
         for pv, pf, _ in parts:
-            if len(pv) < 4 or not _is_closed(pv, pf):
+            ratio = _hull_ratio(pv, pf)
+            if ratio is None or ratio <= self._MAX_HULL_RATIO:
                 continue
             mesh_vol = abs(_enclosed_volume(pv, pf))
-            if mesh_vol <= 1e-9:
-                continue
-            try:
-                hull_vol = float(ConvexHull(pv).volume)
-            except Exception:  # degenerate/coplanar: no volume to swallow
-                continue
-            ratio = hull_vol / mesh_vol
-            if ratio <= self._MAX_HULL_RATIO:
-                continue
+            hull_vol = ratio * mesh_vol
             raise SystemExit(
                 f"{model_name}: collision part of {base!r} encloses a void that its convex hull would "
                 f"fill (hull {hull_vol:.1f} m^3 vs mesh {mesh_vol:.1f} m^3, ratio {ratio:.1f}).\n"
@@ -458,7 +518,10 @@ class Importer:
                 f"through the interior -- a robot spawned inside cannot move, and every trial reports "
                 f"a collision on step 1 while still looking like a valid run.\n"
                 f"This is the ring case the reflex-edge split cannot cut: it separates faces by "
-                f"dihedral, and a closed loop stays connected the long way round.\n"
+                f"dihedral, and a closed loop stays connected the long way round. The footprint cut "
+                f"that does get a ring (scene_mesh_io.split_extruded_shell) did not apply here, so "
+                f"this part is not an extrusion of a 2D footprint -- it has a slope, a chamfer, a "
+                f"third z level or a doubled skin.\n"
                 f"Ways forward:\n"
                 f"  --no-collide {model_name}   import this model's geometry as VISUAL only, and\n"
                 f"                              declare its collision as primitives in the world YAML\n"
@@ -622,6 +685,15 @@ def main(argv: list | None = None) -> int:
         help="import matching models as VISUAL only (repeatable); declare their collision "
         "as primitives in the world YAML. The documented way past the closed-shell "
         "hull check for axis-aligned buildings.",
+    )
+    ap.add_argument(
+        "--ignore-up-axis",
+        action="append",
+        default=[],
+        metavar="MESH_SUBSTRING",
+        help="read matching mesh files as authored, ignoring their <up_axis> (repeatable). For an "
+        "asset whose declaration contradicts its own data -- the tell is a building that lands on "
+        "edge. Assert it per file; never as a blanket setting.",
     )
     ap.add_argument(
         "--collision-only",

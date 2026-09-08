@@ -215,7 +215,12 @@ def _collada_materials(root, base: Path) -> dict[str, tuple[Path | None, list[fl
     return out
 
 
-def read_collada(path: Path, submesh: str | None = None, center: bool = False) -> list[Submesh]:
+def read_collada(
+    path: Path,
+    submesh: str | None = None,
+    center: bool = False,
+    ignore_up_axis: bool = False,
+) -> list[Submesh]:
     """Submeshes (one per material) **in metres, Z-up**, placed through the visual scene graph.
 
     *submesh* selects a single named node's subtree, mirroring SDF ``<mesh><submesh><name>``. Ignoring
@@ -228,6 +233,12 @@ def read_collada(path: Path, submesh: str | None = None, center: bool = False) -
     Honours ``<triangles>``/``<polylist>`` input offsets so interleaved index streams de-interleave
     correctly, ``<up_axis>`` (Y_UP files are rotated to Z-up), and — critically —
     ``<asset><unit meter="..."/>``.
+
+    *ignore_up_axis* reads the file's coordinates as authored, ignoring its ``<up_axis>``. Only for a
+    file whose declaration contradicts its own data -- exporters (SketchUp among them) emit ``Y_UP``
+    over Z-up geometry, and the tell is that honouring it stands a building on edge. It is a per-file
+    assertion by the caller, never a default: the spec is on the file's side, and every other asset
+    here needs the rotation.
 
     That unit is not optional bookkeeping. Fuel ships a mix: a Gazebo ``Chair`` is authored in metres,
     while ``shelf_big``/``Jersey Barrier``/``foldable_chair`` are authored in centimetres and declare
@@ -271,7 +282,7 @@ def read_collada(path: Path, submesh: str | None = None, center: bool = False) -
             f"available: {sorted(_node_names(root))}"
         )
 
-    out = _finish_collada(root, _merge_by_material(parts))
+    out = _finish_collada(root, _merge_by_material(parts), ignore_up_axis=ignore_up_axis)
     if center:
         # <center>true</center>: re-origin on the bbox centre of the SELECTION, so the SDF <pose> then
         # places that centre. Computed across all submeshes at once -- per-material would shear them.
@@ -444,7 +455,7 @@ def _walk_node(
             _walk_node(c, m, geoms, out, select, inside)
 
 
-def _finish_collada(root, subs: list[Submesh]) -> list[Submesh]:
+def _finish_collada(root, subs: list[Submesh], ignore_up_axis: bool = False) -> list[Submesh]:
     # <asset><unit meter="0.01"/> -- author units. Fuel mixes metre- and centimetre-authored models
     # (a Gazebo Chair in metres next to a Jersey Barrier in centimetres), so ignoring this yields
     # models exactly 100x too large sitting beside correct ones.
@@ -456,7 +467,7 @@ def _finish_collada(root, subs: list[Submesh]) -> list[Submesh]:
     ).strip()
     rot = (
         np.array([[1, 0, 0, 0], [0, 0, -1, 0], [0, 1, 0, 0], [0, 0, 0, 1]], float)
-        if up == "Y_UP"
+        if up == "Y_UP" and not ignore_up_axis
         else None
     )
 
@@ -580,7 +591,12 @@ def read_obj(path: Path) -> list[Submesh]:
 _READERS = {".dae": read_collada, ".stl": read_stl, ".obj": read_obj}
 
 
-def read_mesh(path: Path, submesh: str | None = None, center: bool = False) -> list[Submesh]:
+def read_mesh(
+    path: Path,
+    submesh: str | None = None,
+    center: bool = False,
+    ignore_up_axis: bool = False,
+) -> list[Submesh]:
     fn = _READERS.get(path.suffix.lower())
     if fn is None:
         raise ValueError(
@@ -593,8 +609,10 @@ def read_mesh(path: Path, submesh: str | None = None, center: bool = False) -> l
                 f"<submesh>{submesh}</submesh> requested for {path.name}, but only Collada supports "
                 f"named submesh selection here -- add it for {path.suffix} rather than ignoring it"
             )
-        return read_collada(path, submesh=submesh, center=center)
-    return fn(path)
+        return read_collada(path, submesh=submesh, center=center, ignore_up_axis=ignore_up_axis)
+    if fn is read_collada:
+        return read_collada(path, ignore_up_axis=ignore_up_axis)
+    return fn(path)  # STL and OBJ declare no up-axis, so there is nothing to ignore
 
 
 # ---------------------------------------------------------------- primitives
@@ -842,6 +860,146 @@ def split_convex_parts(
         remap[used] = np.arange(len(used))
         out.append((verts[used], remap[f], uv[used] if uv is not None else None))
     return out
+
+
+def _prism(poly: np.ndarray, z0: float, z1: float) -> tuple[np.ndarray, np.ndarray]:
+    """A convex, counter-clockwise 2D polygon extruded to [*z0*, *z1*] as a closed manifold mesh."""
+    n = len(poly)
+    verts = np.vstack(
+        [
+            np.column_stack([poly, np.full(n, z0)]),
+            np.column_stack([poly, np.full(n, z1)]),
+        ]
+    )
+    faces = []
+    for i in range(1, n - 1):
+        faces.append([0, i + 1, i])  # bottom cap, normal -z
+        faces.append([n, n + i, n + i + 1])  # top cap, normal +z
+    for i in range(n):
+        j = (i + 1) % n
+        faces.append([i, j, n + j])  # side quad, normal outward
+        faces.append([i, n + j, n + i])
+    return verts, np.array(faces, dtype=np.int64)
+
+
+def split_extruded_shell(
+    verts: np.ndarray, faces: np.ndarray, tol: float = 1e-6, max_parts: int = 256
+) -> list[tuple[np.ndarray, np.ndarray, np.ndarray | None]] | None:
+    """Cut a shell that is an **extrusion of a 2D footprint** into convex prisms.
+
+    The third cut, and the only one that gets a *ring*. :func:`split_components` separates meshes that
+    merely share a file and :func:`split_convex_parts` separates the walls inside one welded shell,
+    but neither can cut a closed loop of walls: it is a single component, and a reflex cut at every
+    inner corner still leaves the outer faces connected the long way round. Its convex hull is then
+    the filled room -- solid geometry through the interior, a robot that cannot move, and a campaign
+    that still reports complete results (``sdf_to_scene._check_hulls_are_faithful`` refuses it).
+
+    Most building shells are extrusions: every vertex sits on one of two horizontal planes and every
+    face is vertical or horizontal. Such a shell *is* its 2D footprint, and a prism over a polygon
+    decomposes **exactly** -- no approximation, nothing shaved off the material -- into prisms over a
+    trapezoidal decomposition of that footprint. Cut at every vertex's x; inside a strip no vertex
+    exists, so the solid there is bounded by two straight edges and each piece is the intersection of
+    four half-planes with two horizontal ones. Convex by construction, so MuJoCo's hull of a piece is
+    the piece.
+
+    The footprint is read off the mesh's own **horizontal edges of vertical faces**: each appears once
+    at the bottom and once at the top of its wall quad, while the quad's diagonal has different z at
+    its ends and drops out -- which is what makes the cut independent of how the exporter triangulated.
+
+    Returns ``None`` -- not an empty list, not a raise -- when the mesh is not such an extrusion: a
+    sloped roof, a chamfer, a third z level, a doubled skin. There is nothing about those this
+    function can say, and the caller has a better diagnosis for them.
+    """
+    if len(faces) == 0:
+        return None
+
+    z = verts[:, 2]
+    lo, hi = float(z.min()), float(z.max())
+    if hi - lo <= tol or np.any((z > lo + tol) & (z < hi - tol)):
+        return None  # flat, or a third level: not one extrusion
+
+    tri = verts[faces]
+    normals = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+    length = np.linalg.norm(normals, axis=1)
+    live = length > tol  # a degenerate triangle bounds nothing; it cannot make this a slope either
+    nz = np.abs(normals[live, 2]) / length[live]
+    if np.any((nz > 1e-6) & (nz < 1 - 1e-6)):
+        return None  # a sloped face: not an extrusion
+    vertical = np.zeros(len(faces), dtype=bool)
+    vertical[np.nonzero(live)[0]] = nz <= 1e-6
+
+    quant = 1e-5  # the weld tolerance used everywhere else in this module
+    point: dict[tuple[int, int], np.ndarray] = {}
+    seen: dict[tuple[tuple[int, int], tuple[int, int]], int] = {}
+
+    def key(v: np.ndarray) -> tuple[int, int]:
+        k = tuple(np.round(v[:2] / quant).astype(np.int64))
+        point.setdefault(k, v[:2].astype(float))
+        return k
+
+    for fi in np.nonzero(vertical)[0]:
+        a, b, c = faces[fi]
+        for u, v in ((a, b), (b, c), (c, a)):
+            if abs(verts[u, 2] - verts[v, 2]) > tol:
+                continue  # not a horizontal edge: the triangulation's diagonal
+            ku, kv = key(verts[u]), key(verts[v])
+            if ku == kv:
+                continue
+            e = (min(ku, kv), max(ku, kv))
+            seen[e] = seen.get(e, 0) + 1
+    if not seen or any(c != 2 for c in seen.values()):
+        return None  # not one wall edge per level: an open or doubled skin
+
+    degree: dict[tuple[int, int], int] = {}
+    for ku, kv in seen:
+        degree[ku] = degree.get(ku, 0) + 1
+        degree[kv] = degree.get(kv, 0) + 1
+    if any(d != 2 for d in degree.values()):
+        return None  # the footprint is not a set of simple closed loops; even-odd would be a guess
+
+    segs = [(point[ku], point[kv]) for ku, kv in seen]
+    xs = np.unique(np.round([p[0] for s in segs for p in s], 9))
+
+    parts: list[tuple[np.ndarray, np.ndarray, np.ndarray | None]] = []
+    for xa, xb in zip(xs[:-1], xs[1:], strict=True):
+        if xb - xa <= tol:
+            continue
+        xm = 0.5 * (xa + xb)
+        rows = []
+        for p, q in segs:
+            if abs(q[0] - p[0]) <= tol:
+                continue  # an edge along the cut itself bounds no strip
+            if min(p[0], q[0]) > xa + tol or max(p[0], q[0]) < xb - tol:
+                continue  # no vertex lies inside a strip, so an edge either spans it or misses it
+            slope = (q[1] - p[1]) / (q[0] - p[0])
+            rows.append(tuple(p[1] + slope * (x - p[0]) for x in (xm, xa, xb)))
+        rows.sort()
+        if len(rows) % 2:
+            raise ValueError(
+                f"footprint cut found {len(rows)} crossings in strip x=[{xa:.4f}, {xb:.4f}] -- an odd "
+                "count means the footprint does not close, so inside and outside cannot be told apart"
+            )
+        for (_, ya0, yb0), (_, ya1, yb1) in zip(rows[0::2], rows[1::2], strict=True):
+            poly = [(xa, ya0), (xb, yb0), (xb, yb1), (xa, ya1)]
+            keep = [
+                p
+                for i, p in enumerate(poly)
+                if abs(p[0] - poly[i - 1][0]) > tol or abs(p[1] - poly[i - 1][1]) > tol
+            ]
+            if len(keep) < 3:
+                continue  # the two bounding edges meet here: no material in this strip
+            pv, pf = _prism(np.array(keep, dtype=np.float64), lo, hi)
+            parts.append((pv, pf, None))
+
+    if not parts:
+        return None
+    if len(parts) > max_parts:
+        raise ValueError(
+            f"footprint cut produced {len(parts)} prisms (> max_parts={max_parts}). A footprint this "
+            "intricate wants a real convex decomposition or a primitive collision shape, not a "
+            "geom per strip."
+        )
+    return parts
 
 
 def write_obj(

@@ -269,7 +269,7 @@ def test_a_sensor_owned_by_a_robot_is_addressed_through_it(tmp_path):
         "sim": {"world": str(scene), "seed": 3},
         "components": [
             {
-                "spawn_model": {"model": str(rover), "free": False},
+                "spawn_model": {"model": str(rover), "motion": "static"},
                 "name": "rover",
                 "components": [
                     {

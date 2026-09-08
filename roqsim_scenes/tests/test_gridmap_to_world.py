@@ -19,6 +19,12 @@ from roqsim_scenes.cli import gridmap_to_world as g2w
 CELL = 0.15
 
 
+def _xy(cfg: dict) -> list[float]:
+    """The prop's (x, y), from the one pose shape the box/cylinder plugins accept."""
+    position = cfg["pose"]["position"]
+    return [position["x"], position["y"]]
+
+
 def _grid(pattern: list[str]) -> np.ndarray:
     """Build a grid from rows of '.' (free) and '#' (occupied); row 0 is the TOP row."""
     return np.array([[1 if ch == "#" else 0 for ch in row] for row in pattern], dtype=np.uint8)
@@ -72,7 +78,7 @@ def test_world_props_land_in_occupied_map_pixels(tmp_path):
 
     assert len(props) == int(grid.sum())
     for entry in props:
-        x, y = entry["cylinder"]["pos"]
+        x, y = _xy(entry["cylinder"])
         # invert cell_centre
         c = round((x - origin[0]) / CELL - 0.5)
         r = rows - 1 - round((y - origin[1]) / CELL - 0.5)
@@ -155,8 +161,8 @@ def test_cylinder_radius_defaults_leave_a_diagonal_gap_box_would_seal():
         shell_only=False,
         prefix="o_",
     )
-    (x0, y0) = props[0]["cylinder"]["pos"]
-    (x1, y1) = props[1]["cylinder"]["pos"]
+    (x0, y0) = _xy(props[0]["cylinder"])
+    (x1, y1) = _xy(props[1]["cylinder"])
     centre_dist = float(np.hypot(x1 - x0, y1 - y0))
     assert centre_dist == pytest.approx(CELL * np.sqrt(2))
     assert centre_dist - CELL > 0  # tangent-cylinder gap; boxes of side CELL would touch
@@ -233,7 +239,7 @@ def _footprint(entries, cell_size: float, origin, shape) -> np.ndarray:
     out = np.zeros(shape, dtype=bool)
     for entry in entries:
         cfg = entry["box"]
-        x, y = cfg["pos"]
+        x, y = _xy(cfg)
         sx, sy, _ = cfg["size"]
         # cell index of the box's lower-left corner, inverting the row axis on the way back
         c0 = round((x - sx / 2 - origin[0]) / cell_size)
@@ -280,7 +286,7 @@ def test_merging_a_solid_block_yields_one_box():
     entries = _boxes(grid, merge=True)
     assert len(entries) == 1
     assert entries[0]["box"]["size"] == pytest.approx([3 * CELL, 3 * CELL, 0.4])
-    assert entries[0]["box"]["pos"] == pytest.approx([1.5 * CELL, 1.5 * CELL])
+    assert _xy(entries[0]["box"]) == pytest.approx([1.5 * CELL, 1.5 * CELL])
 
 
 def test_merging_a_scattered_field_buys_nothing():
@@ -376,3 +382,38 @@ def test_a_converted_grid_loads_however_many_obstacles_it_has(tmp_path, obstacle
     config = load_config(path)
     labels = [spec.label for spec in config.plugins if spec.ref == obstacle]
     assert labels == [f"obs_{i}" for i in range(n_obstacles)]
+
+
+# -- the emitted config must be one the prop plugins actually accept -----------------------------
+@pytest.mark.parametrize("obstacle", ["box", "cylinder"])
+def test_emitted_props_validate_against_the_plugin_that_reads_them(obstacle):
+    """The check the YAML round-trip cannot make: does the plugin ACCEPT what we wrote?
+
+    Everything else here compares the emitted mapping against arithmetic this module also owns, so a
+    generator that emits a key no plugin reads passes all of it. That is not hypothetical: `pos:` was
+    emitted here for as long as the tool existed, was removed from `box`/`cylinder` in favour of the
+    single `pose:` shape, and every generated world stopped loading -- with the tests green, because
+    no test asked the plugin. Validation is the plugin's own, so it moves when the schema moves.
+    """
+    box = pytest.importorskip("roqsim_assets.plugins.box")
+    cylinder = pytest.importorskip("roqsim_assets.plugins.cylinder")
+    plugin_cls = {"box": box.BoxPlugin, "cylinder": cylinder.CylinderPlugin}[obstacle]
+
+    entries = g2w.obstacle_plugins(
+        _grid(["#.", ".#"]),
+        cell_size=CELL,
+        origin=(-1.0, 2.0),
+        obstacle=obstacle,
+        radius=CELL / 2,
+        height=0.5,
+        color=[1, 0, 0, 1],
+        shell_only=False,
+        prefix="o_",
+    )
+    assert entries
+    for entry in entries:
+        config = entry[obstacle]
+        assert plugin_cls.__new__(plugin_cls).validate_config(config) == []
+        # An occupancy grid describes cells nothing can pass through, so the props standing for them
+        # must not be given a free joint by default.
+        assert config["motion"] == "static"
