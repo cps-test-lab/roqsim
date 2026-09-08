@@ -5,7 +5,7 @@ Architecture & porting playbook
 
 This is the source of truth for how roqsim is built and how to rework existing MuJoCo code into it. It documents both what exists today and designs that are **planned / not yet implemented** (so marked). A large external MuJoCo codebase is expected to be reworked into this structure — the **Porting playbook** (section 6) is the section to read for that.
 
-   Status legend: **[impl]** implemented · **[planned]** designed, not yet built.
+   Status legend: **[planned]** means designed but not yet built. Everything else is implemented.
 
 .. _1-overview--goals:
 
@@ -16,10 +16,10 @@ roqsim is a lightweight, plugin-driven MuJoCo simulator for mobile robots, robot
 
 Two ways to run, one engine:
 
--  **Standalone driver** (``runner.py``) — owns the loop; windowed by default, headless for containers; real-time / factor / as-fast-as-possible pacing; can record world state over time. **[impl]**
--  **scenario-execution driver** (``scenario_adapter.py``) — a ``SimulationInterface`` subclass; scenario-execution owns the loop and calls ``dt``/``setup``/``reset``/``step``/``shutdown``. It also publishes ``context``, the seam an in-process scenario action reads (§12, *Reaching a plugin from outside*). **[impl]**
+-  **Standalone driver** (``runner.py``) — owns the loop; windowed by default, headless for containers; real-time / factor / as-fast-as-possible pacing; can record world state over time.
+-  **scenario-execution driver** (``scenario_adapter.py``) — a ``SimulationInterface`` subclass; scenario-execution owns the loop and calls ``dt``/``setup``/``reset``/``step``/``shutdown``. It also publishes ``context``, the seam an in-process scenario action reads (§12, *Reaching a plugin from outside*).
 
-Both wrap the same ``Engine`` **[impl]**, so behaviour is identical across the two.
+Both wrap the same ``Engine``, so behaviour is identical across the two.
 
 Tick pipeline (one ``step()``):
 
@@ -75,8 +75,8 @@ Reference implementation: ``roqsim/src/roqsim/engine.py``.
 
 .. _plugin-pluginpy-impl:
 
-``Plugin`` (``plugin.py``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``Plugin`` (``plugin.py``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 -  ``__init__(self, config: dict | None, *, name: str | None)`` — receives its YAML ``config:`` section.
 -  ``validate_config(self, config) -> list[str]`` — return error strings (empty = valid).
@@ -85,8 +85,8 @@ Reference implementation: ``roqsim/src/roqsim/engine.py``.
 
 .. _simcontext-contextpy-impl:
 
-``SimContext`` (``context.py``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``SimContext`` (``context.py``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Passed to every hook. Key members:
 
@@ -101,22 +101,22 @@ Passed to every hook. Key members:
 
 .. _robothandle-contextpy-impl:
 
-``RobotHandle`` (``context.py``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+``RobotHandle`` (``context.py``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``RobotHandle(name, drive(vx,vy,w), read_odom()->(x,y,yaw,vx,vy,w))``. A controller plugin puts one on the blackboard (key convention ``robot:<name>``); a bridge looks it up. Both callables run on the physics thread.
 
 .. _registry-registrypy-impl:
 
-Registry (``registry.py``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Registry (``registry.py``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``resolve_plugin(ref, base_dir) -> type[Plugin]``. See §4.
 
 .. _config-configpy-impl:
 
-Config (``config.py``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Config (``config.py``)
+~~~~~~~~~~~~~~~~~~~~~~
 
 ``load_config(path)`` / ``load_config_from_dict(raw, base_dir)`` → ``SimConfig``. ``instantiate_plugins(cfg) -> list[Plugin]`` resolves classes, expands manifests (``Plugin.expand``; see §4), constructs, and runs aggregated validation.
 
@@ -162,8 +162,8 @@ Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if t
 
 Validation is **delegated to each plugin** (``validate_config``); ``instantiate_plugins`` aggregates all errors across all plugins and raises once, namespaced ``[name (ref)] message``.
 
-World definition (``sim.world``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+World definition (``sim.world``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The static environment the robots/props stand in — ground + lighting — is a *world definition*, chosen with the ``sim.world`` key (``roqsim/world.py``). It is separate from robot-family scene plugins so a fixed cell (an arm, a conveyor) never has to depend on the mobile package for a floor. Semantics:
 
@@ -171,8 +171,8 @@ The static environment the robots/props stand in — ground + lighting — is a 
 - The engine builds/loads the world into the ``MjSpec`` **before** any plugin ``build``, so plugins attach onto it.
 - A scene plugin that builds its **own** ground+lighting sets the class attribute ``provides_world = True`` (the mobile ``floorplan``, which also adds lidar walls). When such a plugin is present the engine **skips** the world definition; if ``sim.world`` was *also* set explicitly the engine logs a warning and lets the plugin win. So ``floorplan`` is the mobile scene, ``sim.world`` is the fixed-cell default, and they never double up the floor.
 
-Policy specs (``roqsim.policy``) [impl]
-'''''''''''''''''''''''''''''''''''''''
+Policy specs (``roqsim.policy``)
+''''''''''''''''''''''''''''''''
 
 A policy-driven robot needs its observation assembled in exactly the layout its checkpoint was trained
 on, and getting that wrong does not raise -- the robot twitches. Three plugins (``g1_locomotion``,
@@ -199,15 +199,15 @@ A useful thing that fell out of writing those tests: Unitree's ``get_gravity_ori
 Lab's ``quat_rotate_inverse(q, [0,0,-1])`` are bit-identical (max difference 0 over 500 random
 quaternions), so one ``projected_gravity`` term serves a humanoid and a quadruped alike.
 
-Solver options (``sim.solver`` and friends) [impl]
-''''''''''''''''''''''''''''''''''''''''''''''''''
+Solver options (``sim.solver`` and friends)
+'''''''''''''''''''''''''''''''''''''''''''
 
 ``sim`` carries five optional passthroughs to MuJoCo's ``<option>``: ``solver`` (``newton``/``cg``/``pgs``), ``iterations``, ``ls_iterations``, ``noslip_iterations`` and ``impratio``. Each is left at MuJoCo's default unless a world sets it, because the right value is a property of the *experiment*, not of the framework: a navigation world wants the cheapest solve that keeps wheels stable, a manipulation world needs contacts that hold.
 
 **A grasping world must set ``noslip_iterations``.** MuJoCo defaults it to ``0``, which leaves friction contacts a residual tangential drift. Measured on the G1/Dex1 pick: a 0.5 kg parcel gripped at 20 N between two pads crept out of the jaws at **0.119 m/s** and was dropped within two seconds; with ``noslip_iterations: 10`` the creep is **0.0009 m/s** and the lift holds indefinitely — a 137× reduction. ``iterations`` and ``ls_iterations`` alone changed nothing measurable, because this is the solver's dedicated slip-removal pass rather than general convergence. The failure mode is worth knowing because it presents as *insufficient friction* and is not: sweeping the sliding coefficient from 0.4 to 3.0 moved the creep rate by 17%, while halving the payload moved it by 80×.
 
-Contact overrides (``sim.contact_override``, ``sim.cone``, ``sim.gravity``) [impl]
-'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Contact overrides (``sim.contact_override``, ``sim.cone``, ``sim.gravity``)
+'''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''''
 
 Three more ``<option>`` passthroughs, added for contact-rich worlds where the *contact* is the
 measurement rather than an incidental.
@@ -266,8 +266,8 @@ facets.
 often runs at zero g deliberately: a simulated force-torque sensor is not tared, so with gravity on
 every wrench sample carries a constant tool-weight bias that a force-energy metric is dominated by.
 
-Ending a run from a plugin (``ctx.request_stop``) [impl]
-''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+Ending a run from a plugin (``ctx.request_stop``)
+'''''''''''''''''''''''''''''''''''''''''''''''''
 
 A trial that knows it is finished -- the goal was reached, the episode failed, the recording is
 complete -- can say so with ``ctx.request_stop(reason)``. The standalone driver polls
@@ -278,8 +278,8 @@ cell and then wasted on every faster one. It is a *request*: the engine does not
 act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
 stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
 
-Actuator overrides (``actuators:``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Actuator overrides (``actuators:``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so used to mean editing the shared MJCF: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
 
@@ -335,13 +335,13 @@ The **resolved table** — every actuator, its final law and gains, and whether 
 
 Not part of this: ``spawn_arm``'s ``rail: {kp, damping}``. That parameterises a carriage drive roqsim *synthesises*, where ``actuators:`` overrides actuators a *model declares*.
 
-Asset de-duplication (``sim.dedup_assets``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Asset de-duplication (``sim.dedup_assets``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 ``spec.attach`` deep-copies a child model's meshes, textures, and materials under a unique prefix, with no sharing — so a world that spawns *N* copies of one prop carries *N* copies of its assets, and ``spec.compile()`` parses every OBJ, decodes every PNG, and builds a convex hull for each. Between the build loop and compile the engine runs a de-duplication pass (``roqsim/assets.py``, on by default; ``sim.dedup_assets: false`` opts out) that merges byte-identical **file-backed** meshes and materials and drops the textures left unreferenced. It keys on the resolved absolute file path (sound because ``apply_assets`` already absolutized every ref) plus the attributes that change compiled output, and retargets references onto the survivor. It rewrites only the name-string references (``geom.meshname``, ``.material`` on geoms/sites/meshes/skins) that survive attach — a material's texture-role vector is immutable once attached, so identical *materials* are merged rather than repointing textures directly. Builtin/procedural assets and non-2D textures (skyboxes, cube maps) are never touched. On the ``os`` world (240 identical trays) this takes ``compile`` from ~2.5 s to ~0.15 s and texture RAM from ~930 MB to ~60 MB; the ``--profile`` load report shows it as the ``dedup_assets`` phase.
 
-Model plugin manifests (``expand``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Model plugin manifests (``expand``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + ``lidar``; an arm → ``arm_controller``) in a ``<model>.manifest.yaml`` manifest next to its MJCF, so a world only spawns the model instead of re-declaring them. Mechanism:
 
@@ -382,8 +382,8 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 
 Any new spawn plugin reuses this by calling ``expand_manifest`` with the config key its downstream plugins use to name the entity.
 
-Model discovery (``roqsim.models``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Model discovery (``roqsim.models``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model``, which mirrors plugin resolution (``roqsim.registry``) so a model may live in **any** installed package — not just the spawn plugin's own:
 
@@ -454,7 +454,7 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 
 -  **New robot / arm:** a scene plugin whose ``build`` attaches the robot MJCF into ``spec`` (``spec.attach`` / add body), registers an ``Entity(kind="robot")`` and a ``RobotHandle`` in ``configure``.
 -  **New sensor:** a ``post_step`` plugin that reads ``data`` (or renders via ``ctx.render``), optionally adds its own noise (§9), and hands the reading off (blackboard/bridge). Register a producer gate (§10) if it should participate in sync mode.
--  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Seeding ``ctrl`` once in ``on_reset`` stays right (it opens the sliders at the home pose); the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config. **[impl]**
+-  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Seeding ``ctrl`` once in ``on_reset`` stays right (it opens the sliders at the home pose); the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config.
 -  **Environment/floorplan loader:** a ``build`` plugin that adds a mesh + collision geoms to ``spec``.
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction.
@@ -475,10 +475,10 @@ Split one big feature into cooperating plugins that talk through the **blackboar
 
 Will show a concrete before (monolithic script) → after (plugins + world YAML), step by step.
 
-.. _7-concurrency--threading-model-impl-queuesnapshot-exercised-in-phase-5:
+.. _7-concurrency--threading-model:
 
-7. Concurrency & threading model [impl: queue/snapshot; exercised in Phase 5]
------------------------------------------------------------------------------
+7. Concurrency & threading model
+--------------------------------
 
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
@@ -496,27 +496,27 @@ Anti-patterns (do not do)
 -  ❌ Blocking inside ``pre_step``/``post_step`` waiting on external I/O (except deliberately in sync mode).
 -  ❌ Plugin importing another plugin. Cooperate via the blackboard/entity registry.
 
-.. _8-rendering-planned:
+.. _8-rendering:
 
-8. Rendering [planned]
-----------------------
+8. Rendering
+------------
 
-A ``RenderService`` on the context owns all GL/EGL contexts and camera renderers, created lazily and shared so multiple sensor/render plugins never fight over contexts.
+A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built, which is why the heading no longer says otherwise.
 
 -  **Lidar** uses ``mujoco.mj_multiRay`` — **no GL**, works headless everywhere (M1 uses this; nav2 needs a ``LaserScan``).
--  **Camera / RGB-D** uses ``mujoco.Renderer`` (offscreen). Cameras render **only when consumed** (lazy), and their expensive endpoints are not *published* to nobody either: ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points`` set ``Endpoint.lazy``, so a subscriber-less stream costs neither a GL pass nor a serialisation. The two checks answer different questions — the render gate ORs over every endpoint one pass feeds, the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames, and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG, since RVL has no C library behind it). **[impl]**
+-  **Camera / RGB-D** uses ``mujoco.Renderer`` (offscreen). Cameras render **only when consumed** (lazy), and their expensive endpoints are not *published* to nobody either: ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points`` set ``Endpoint.lazy``, so a subscriber-less stream costs neither a GL pass nor a serialisation. The two checks answer different questions — the render gate ORs over every endpoint one pass feeds, the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames, and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG, since RVL has no C library behind it).
 
--  **The offscreen backend is bound by ``import mujoco``, so it is chosen by ``import roqsim``.** ``MUJOCO_GL`` is read exactly once, inside ``mujoco/rendering/classic/gl_context.py``, while mujoco is being imported; it assigns ``GLContext`` there and then, and an *unset* value is not an error but a choice — it falls through to **glfw**. Everything that follows from that is the reason :func:`roqsim.gl.select_offscreen_gl` is called from the package ``__init__`` rather than from a driver's ``main``: a driver module's own imports reach mujoco before its ``main`` body runs, so a selection made there sets a variable nobody will read again. This is not hypothetical — the call lived in ``roqsim.runner.main`` and was inert for every headless run, invisibly, because a world with no camera never constructs a ``Renderer`` and therefore never instantiates the mis-bound backend. It surfaced the first time a camera world was dispatched to a cluster, as ``mujoco.FatalError: gladLoadGL error`` from inside ``MjrContext``. A node with a DRI render device gets ``egl``, one without gets ``osmesa``; an explicit ``MUJOCO_GL`` always wins and ``ROQSIM_NO_GL_SELECT`` opts out. Both backends are installed in the container images for the same reason the choice is deferred: which one works is a property of the node, not of the image. The one case the package ``__init__`` cannot cover — a consumer importing ``mujoco`` first — is caught by :func:`roqsim.rendering.check_gl_backend`, which every renderer in the tree funnels through and which names the cause and the fix rather than leaving MuJoCo's message to stand. **[impl]**
--  The interactive viewer (``mujoco.viewer.launch_passive``) is a *driver* concern, separate from the offscreen ``RenderService``, so windowed vs headless is a driver switch, not a plugin change. The standalone runner sets the viewer's initial free camera from the world's optional ``sim.view`` block (``lookat``/``distance``/``azimuth``/``elevation``; any subset — omitted keys keep MuJoCo's model-derived default). ``sim.view`` is the camera and *only* the camera: it is schema-checked on load, so an unknown key fails the run rather than being silently dropped. The two Simulate side panels are deliberately **not** expressible there — they are run-level flags (``--left-ui``/``--right-ui``, passed to ``launch_passive``'s ``show_left_ui``/``show_right_ui``, both hidden by default), on the same footing as ``--manual-control``: a world describes the experiment, whereas panels and hand-driving describe one interactive session. All of it is windowed-only (ignored under ``headless``) and is not a plugin concern. The keys roqsim adds to that window are declared once (:mod:`roqsim.keys`): the handlers take their keycodes from those records and the **F1** list is rendered from them, so what the window says a key does and what it does are one declaration -- and the list a run shows is merged from the handlers that run actually wired, so it never offers a key this window lacks. The window's text overlay is owned by slot (:mod:`roqsim.overlay`) because ``set_texts`` replaces the whole set: the camera-mode notice and the key list are two writers, and either alone would take the other down. **[impl]**
--  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back. **[impl]**
+-  **The offscreen backend is bound by ``import mujoco``, so it is chosen by ``import roqsim``.** ``MUJOCO_GL`` is read exactly once, inside ``mujoco/rendering/classic/gl_context.py``, while mujoco is being imported; it assigns ``GLContext`` there and then, and an *unset* value is not an error but a choice — it falls through to **glfw**. Everything that follows from that is the reason :func:`roqsim.gl.select_offscreen_gl` is called from the package ``__init__`` rather than from a driver's ``main``: a driver module's own imports reach mujoco before its ``main`` body runs, so a selection made there sets a variable nobody will read again. This is not hypothetical — the call lived in ``roqsim.runner.main`` and was inert for every headless run, invisibly, because a world with no camera never constructs a ``Renderer`` and therefore never instantiates the mis-bound backend. It surfaced the first time a camera world was dispatched to a cluster, as ``mujoco.FatalError: gladLoadGL error`` from inside ``MjrContext``. A node with a DRI render device gets ``egl``, one without gets ``osmesa``; an explicit ``MUJOCO_GL`` always wins and ``ROQSIM_NO_GL_SELECT`` opts out. Both backends are installed in the container images for the same reason the choice is deferred: which one works is a property of the node, not of the image. The one case the package ``__init__`` cannot cover — a consumer importing ``mujoco`` first — is caught by :func:`roqsim.rendering.check_gl_backend`, which every renderer in the tree funnels through and which names the cause and the fix rather than leaving MuJoCo's message to stand.
+-  The interactive viewer (``mujoco.viewer.launch_passive``) is a *driver* concern, separate from the offscreen ``RenderService``, so windowed vs headless is a driver switch, not a plugin change. The standalone runner sets the viewer's initial free camera from the world's optional ``sim.view`` block (``lookat``/``distance``/``azimuth``/``elevation``; any subset — omitted keys keep MuJoCo's model-derived default). ``sim.view`` is the camera and *only* the camera: it is schema-checked on load, so an unknown key fails the run rather than being silently dropped. The two Simulate side panels are deliberately **not** expressible there — they are run-level flags (``--left-ui``/``--right-ui``, passed to ``launch_passive``'s ``show_left_ui``/``show_right_ui``, both hidden by default), on the same footing as ``--manual-control``: a world describes the experiment, whereas panels and hand-driving describe one interactive session. All of it is windowed-only (ignored under ``headless``) and is not a plugin concern. The keys roqsim adds to that window are declared once (:mod:`roqsim.keys`): the handlers take their keycodes from those records and the **F1** list is rendered from them, so what the window says a key does and what it does are one declaration -- and the list a run shows is merged from the handlers that run actually wired, so it never offers a key this window lacks. The window's text overlay is owned by slot (:mod:`roqsim.overlay`) because ``set_texts`` replaces the whole set: the camera-mode notice and the key list are two writers, and either alone would take the other down.
+-  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
 
--  **Closing the window is a wait, not a request.** MuJoCo runs the window on threads it owns and ``Handle.close()`` only sets ``exitrequest``, so the window, its GL context and its X drawable are destroyed *after* the call returns. A process that closed and then exited promptly (a world that fails to load, ``--steps 1``, a short ``--seconds``) raced its own teardown: Python's ``atexit`` ran ``glfw.terminate`` under the render thread, whose in-flight ``glXSwapBuffers`` then hit a destroyed drawable, and Xlib's default handler called ``exit()`` from that thread while the main thread was already finalizing — the process hung after its last line of output (or segfaulted). Both drivers therefore open with :func:`roqsim.viewer.launch_viewer` and close with :func:`roqsim.viewer.close_viewer`, which joins those threads (~10 ms) so the teardown is ordered; never ``Handle.close()`` or ``with handle:`` directly. Relatedly, the cosmetic X11 window branding (:mod:`roqsim.window_branding`) polls other clients' windows, where a window closing mid-pass is normal, so it installs an ignoring X error handler for the duration — Xlib's default one would kill the process over a window title. **[impl]**
--  **Windowed run + cameras — two GL contexts, two backends.** The viewer window is *always* glfw: ``mujoco.viewer`` imports and initialises glfw directly, independent of ``MUJOCO_GL``, which selects only the *offscreen* ``Renderer`` backend. So a windowed run of a camera world holds a glfw window context **and** an offscreen render context at once, and they must not both be glfw — two glfw contexts in one process collide and MuJoCo aborts with ``gladLoadGL error``. The runner (see :func:`roqsim.viewer.prepare_viewer_gl`) resolves this before any GL loads, for windowed launches only, with two overridable defaults: it preloads the system **libGLEW** (the glfw window context needs it in the global symbol namespace on many Linux/GL-driver combinations) via an ``LD_PRELOAD`` re-exec — ``LD_PRELOAD`` is read only at process startup — and defaults ``MUJOCO_GL=egl`` so the offscreen cameras get their own context. Override with ``MUJOCO_GL`` / ``ROQSIM_NO_GL_PRELOAD``. Caveat: a hand-exported ``LD_PRELOAD=…libGLEW`` left in the shell drags GLX into the process alongside MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with ``undefined symbol: eglQueryString`` — roqsim preloads libGLEW itself, so do not also export it. **[impl]**
+-  **Closing the window is a wait, not a request.** MuJoCo runs the window on threads it owns and ``Handle.close()`` only sets ``exitrequest``, so the window, its GL context and its X drawable are destroyed *after* the call returns. A process that closed and then exited promptly (a world that fails to load, ``--steps 1``, a short ``--seconds``) raced its own teardown: Python's ``atexit`` ran ``glfw.terminate`` under the render thread, whose in-flight ``glXSwapBuffers`` then hit a destroyed drawable, and Xlib's default handler called ``exit()`` from that thread while the main thread was already finalizing — the process hung after its last line of output (or segfaulted). Both drivers therefore open with :func:`roqsim.viewer.launch_viewer` and close with :func:`roqsim.viewer.close_viewer`, which joins those threads (~10 ms) so the teardown is ordered; never ``Handle.close()`` or ``with handle:`` directly. Relatedly, the cosmetic X11 window branding (:mod:`roqsim.window_branding`) polls other clients' windows, where a window closing mid-pass is normal, so it installs an ignoring X error handler for the duration — Xlib's default one would kill the process over a window title.
+-  **Windowed run + cameras — two GL contexts, two backends.** The viewer window is *always* glfw: ``mujoco.viewer`` imports and initialises glfw directly, independent of ``MUJOCO_GL``, which selects only the *offscreen* ``Renderer`` backend. So a windowed run of a camera world holds a glfw window context **and** an offscreen render context at once, and they must not both be glfw — two glfw contexts in one process collide and MuJoCo aborts with ``gladLoadGL error``. The runner (see :func:`roqsim.viewer.prepare_viewer_gl`) resolves this before any GL loads, for windowed launches only, with two overridable defaults: it preloads the system **libGLEW** (the glfw window context needs it in the global symbol namespace on many Linux/GL-driver combinations) via an ``LD_PRELOAD`` re-exec — ``LD_PRELOAD`` is read only at process startup — and defaults ``MUJOCO_GL=egl`` so the offscreen cameras get their own context. Override with ``MUJOCO_GL`` / ``ROQSIM_NO_GL_PRELOAD``. Caveat: a hand-exported ``LD_PRELOAD=…libGLEW`` left in the shell drags GLX into the process alongside MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with ``undefined symbol: eglQueryString`` — roqsim preloads libGLEW itself, so do not also export it.
 
 .. _9-sensor-noise-impl:
 
-9. Sensor noise [impl]
-----------------------
+9. Sensor noise
+---------------
 
 .. _91-sensor-noise-impl:
 
@@ -613,8 +613,8 @@ consequences, and they differ:
 
 **Proximity is a separate observable, and a separate plugin.** ``contact_monitor`` answers *did it touch*; ``clearance_monitor`` answers *how close did it come*. Contact is the honest failure criterion and a poor optimisation target -- a bit gives every non-touching configuration one score -- so the pair exists to supply a verdict and a gradient over one geometry, with one owner each. The distance is measured in the simulator rather than derived afterwards from recorded poses for three reasons that cannot be fixed downstream: the closest approach falls *between* pose samples, and the faster the pass the more is missed; a footprint radius would put a calibration constant between the geometry and the result, which is the objection §9.2 and the contact plugin both raise against proximity proxies; and an articulated obstacle's nearest part is a limb rather than its origin. ``mj_geomDistance`` measures the real shapes, so the limb is what it finds and names. Collision masks matter here and MuJoCo's distance query does not apply them: a render-only geom would otherwise be reported as clearance to something the robot passes straight through (a pedestrian model carries six of those beside fifteen solid ones), so candidates and watched geoms are filtered by MuJoCo's own pairing rule on both sides. It **never ends a trial** -- two plugins reporting one failure by different rules is how a trial starts disagreeing with itself, and a clearance threshold is exactly the tunable number the contact oracle avoids; a scenario that wants to stop on a near-miss reads the endpoint and decides, with the threshold stated in the experiment. Measuring is a distance query per geom pair, so ``compute_rate_hz`` (default 200) is decoupled from the publish rate: every physics step cost about a fifth of the step budget on a nav world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking pace.
 
-9.2 Physical faults (``model_override``) [impl]
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+9.2 Physical faults (``model_override``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The runtime counterpart to ``--set``: name a model field, name the objects, name a target value, and let an **external trigger** switch between nominal and target. It is what makes "the robot loses the object it is carrying, at this instant" a property of the world rather than something scripted into whatever drives the robot. Save/restore is exact, from the values read at ``configure``, the way :mod:`roqsim.presence` restores what it hid.
 
@@ -666,8 +666,8 @@ The command-queue model (§7) is the substrate: sync mode adds a *wait on named 
 
 .. _11-performance--benchmarking-impl:
 
-11. Performance & benchmarking [impl]
--------------------------------------
+11. Performance & benchmarking
+------------------------------
 
 With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times every overridden hook and accumulates per-plugin, per-hook wall-time; profiling off means no timing work at all. ``Engine.timing_report()`` → ``{plugin: {hook: avg_µs}}``; ``Engine.format_timing()`` prints a table. Use it to answer "is a plugin slowing the sim?" — total plugin overhead should be a small fraction of ``mj_step``. The same flag records one-shot load phases (plugin resolution, world parse, compile, data creation): ``Engine.load_report()``/``format_load_report()``, printed by the runner right after setup — this answers "why does the world load slowly?". For the practical workflow — measuring RTF, ``py-spy`` thread attribution, and the GIL caveat — see :doc:`profiling`.
 
@@ -688,8 +688,8 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 
 .. _13-robot-interface--transport-bridges:
 
-13. Robot interface & transport bridges [impl]
-----------------------------------------------
+13. Robot interface & transport bridges
+---------------------------------------
 
 A robot's I/O is **self-describing** and transport-neutral, so it is not duplicated in a per-backend
 bridge and can be wired to any transport. It has three layers:
