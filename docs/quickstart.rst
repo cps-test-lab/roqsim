@@ -248,6 +248,12 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.npz --at 12.5 --out t.png # one moment
    roqsim render --state run.npz --out run.webm        # the whole run as video
 
+Those three commands name no world, and that is not a shorthand: a recording carries the **resolved**
+component tree rather than a recipe, so it rebuilds from itself and needs only the model packages it
+referred to. What ran is recorded outright — including the actuator table, which says what control
+law and gains every joint ran under and whether each value came from the model or from the world's
+``actuators:`` block, so a result can state its gains without anyone reopening the MJCF.
+
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
 same way: one line rewritten in place at a terminal, and a handful of lines when the output is a log.

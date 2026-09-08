@@ -14,6 +14,11 @@ Config::
         position:    {x: 0.0, y: 0.0}
         orientation: {yaw: 0.0}
       base_joint: base_free # free joint used to place the base
+      actuators:            # OPTIONAL: what law this robot's actuators run under, and their gains.
+        control: velocity   #   position | velocity | effort | impedance; the model's own if unset
+        d: 40               #   N*m*s/rad -- see roqsim.actuators for the gain of each control
+        each:               #   per-actuator, on top of the shared keys above
+          front_left_wheel_motor: {d: 25}
       present: true         # false: compiled in, but absent until it is spawned
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
@@ -58,8 +63,20 @@ set, a twist drives it through walls. For a start pose decided per run, move the
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import mujoco
 
+from roqsim.actuators import (
+    apply_gravity_compensation,
+    uses_impedance,
+)
+from roqsim.actuators import (
+    resolve as resolve_actuators,
+)
+from roqsim.actuators import (
+    validate_override as validate_actuators,
+)
 from roqsim.context import Entity, SimContext
 from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
@@ -149,6 +166,9 @@ class SpawnRobotPlugin(Plugin):
         self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
         self.present = bool(self.config.get("present", True))
+        #: Every actuator's final law and gains, filled in :meth:`build` and published at
+        #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
+        self.actuator_table: list = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -159,6 +179,7 @@ class SpawnRobotPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
+        errors += validate_actuators(config.get("actuators"))
         for gone in ("pos", "yaw"):
             if gone in config:
                 # Not a second spelling -- INERT. This plugin reads only `pose`, so a world
@@ -184,6 +205,14 @@ class SpawnRobotPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        # Nothing is grafted onto a base, so both halves of an override land here: the actuator
+        # rewrite, and -- when a joint runs under `impedance` -- the body-level gravity term that
+        # makes a soft stiffness hold a pose instead of folding under the robot's own weight.
+        self.actuator_table = resolve_actuators(
+            child, self.config.get("actuators"), model_name=str(self.config["model"])
+        )
+        if uses_impedance(self.actuator_table):
+            apply_gravity_compensation(child)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         frame = spec.worldbody.add_frame()
@@ -231,6 +260,15 @@ class SpawnRobotPlugin(Plugin):
                 },
             )
         )
+        # Under the names the compiled model has, so a reader can join the table to `nu`.
+        ctx.actuator_tables[self.robot_name] = [
+            replace(
+                row,
+                name=self.prefix + row.name,
+                joint=(self.prefix + row.joint) if row.joint else "",
+            )
+            for row in self.actuator_table
+        ]
         self._apply_initial_pose(ctx)
         self._apply_declared_presence(ctx)
 

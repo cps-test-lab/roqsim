@@ -1120,7 +1120,12 @@ Three things decide whether such a world measures anything at all:
   ``arm_controller``'s position servo, which is stiff. Admittance gains taken from a system with a
   soft joint controller will oscillate and diverge on contact. Tune against a stability criterion
   fixed in advance, and record the result as a calibration — the ``ur5e`` model is the worked
-  example, including the sweeps.
+  example, including the sweeps. Where the *plant itself* is what a reconstruction has to match, the
+  spawn's ``actuators:`` block states it: ``control: impedance`` with the joint stiffness and damping
+  the reference used, in place of the model's own servo. That is a property of the experiment rather
+  than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
+  "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
+  ``impedance`` and ``position``.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
 ``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being

@@ -284,3 +284,23 @@ def test_arming_compensates_nothing_that_can_move():
     assert ctx.model.ngravcomp == 1
     assert float(ctx.model.body_gravcomp[0]) == 1.0
     assert [float(g) for g in ctx.model.body_gravcomp[1:]] == [0.0]
+
+
+def test_impedance_survives_being_made_absent_and_present_again(ctx, prop):
+    """The two mechanisms both write ``body_gravcomp``, and they compose.
+
+    ``control: impedance`` marks the entity's bodies compensated before compile; presence sets the
+    same field to 1.0 to stop an absent body falling, and restores what it saved. Saving 1.0 and
+    restoring 1.0 is the composition -- an absence that reset the field to zero instead would leave
+    the arm folding under its own weight from the first trial that hid anything.
+    """
+    bodies = [
+        mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name) for name in ("prop", "prop_lid")
+    ]
+    for body in bodies:
+        ctx.model.body_gravcomp[body] = 1.0  # as `roqsim.actuators` leaves them
+
+    set_present(ctx, prop, False)
+    set_present(ctx, prop, True)
+
+    assert [float(ctx.model.body_gravcomp[b]) for b in bodies] == [1.0, 1.0]
