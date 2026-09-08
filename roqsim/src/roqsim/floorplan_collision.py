@@ -86,10 +86,30 @@ def _load_graph(jdir):
     return graph
 
 
+def _shape_kinds(graph):
+    """``3d-shape`` polyhedron id -> ``wall`` / ``door`` / ``column``, from the entity that declares it.
+
+    The generator types every part -- ``Wall``, ``Entryway``, ``Column`` -- and links it to its
+    polyhedron through ``3d-shape``. That is the classification; :func:`_parse` falls back to reading
+    the ``@id`` only for a document that carries no typed parts.
+    """
+    by_type = {"Wall": "wall", "Entryway": "door", "Column": "column"}
+    out = {}
+    for e in graph:
+        shape = e.get("3d-shape")
+        if not shape:
+            continue
+        for t in _types(e):
+            if t in by_type:
+                out[shape] = by_type[t]
+    return out
+
+
 def _parse(graph):
     polys = [e for e in graph if "Polyhedron" in _types(e)]
     world = _solve_frames(graph)
     corners = _corner_table(graph)
+    declared = _shape_kinds(graph)
 
     def corner_world(cid):
         frame, x, y, z = corners[cid]
@@ -99,6 +119,13 @@ def _parse(graph):
         return np.array([corner_world(c) for c in poly["points"] if c in corners])
 
     def kind(pid):
+        # The declared type first: an opening is whatever the generator called an Entryway, not
+        # whatever its name happens to contain. Naming it after the room rather than after the
+        # doorway ("..._opening", "..._wall_removal") must not turn it into a solid wall, because
+        # the mesh and the occupancy grid both show it open and nothing else would report the
+        # disagreement -- the robot just hits geometry no sensor can see.
+        if pid in declared:
+            return declared[pid]
         return next((k for k in ("door", "window", "entry", "column") if k in pid), "wall")
 
     doors = [p for p in polys if kind(p["@id"]) in ("door", "entry")]
