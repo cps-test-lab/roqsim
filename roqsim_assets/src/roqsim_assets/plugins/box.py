@@ -38,10 +38,16 @@ package. ``motion: physics`` gives it a free joint, which buys two things: physi
 without a free ``base_joint``).
 
 Teleporting is how an obstacle *appears* mid-trial. roqsim never recompiles the model at runtime, so
-there is no spawning: a box that must show up on cue is compiled in at build time, parked somewhere
-harmless (below the floor, say), and moved into place by the scenario when the moment comes. Between
-episodes ``on_reset`` puts it back at its declared pose, so a trial never inherits the previous
-trial's obstacle position.
+there is no spawning: a box that must show up on cue is compiled in at build time, kept out of the
+way, and moved into place by the scenario when the moment comes. Between episodes ``on_reset`` puts
+it back at its declared pose, so a trial never inherits the previous trial's obstacle position.
+
+A teleport states the box's **centre**, and no part of it may be inside the floor. The z this file's
+``pose:`` lets you omit is a convenience of the world, not of the service: ``SetEntityState`` states
+every field, so a scenario placing a floor-standing box asks for half its height and gets what it
+asks for. A free box seated inside the floor is not parked -- the solver answers the penetration by
+launching it metres upward before it settles, in view of the run. Keep it out of the way by making
+it ABSENT (``DeleteEntity``, which leaves its pose alone) or by moving it sideways, never downward.
 
 ``motion: driven`` is the third state, and it is what makes this plugin's opening paragraph achievable
 without a scenario at all. A mocap box has no degrees of freedom, so nothing can push it, and it is
