@@ -125,3 +125,13 @@ class BoxesPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         for child in self._children:
             child.on_reset(ctx)
+
+    def apply_declared_presence(self, ctx: SimContext) -> None:
+        """Forwarded, because the CHILDREN register the entities.
+
+        The engine sees this entry and not the instances under it, so the one hook it would call
+        here belongs to no entity. Each instance carries its own ``present:``, the way it carries
+        its own pose and size.
+        """
+        for child in self._children:
+            child.apply_declared_presence(ctx)

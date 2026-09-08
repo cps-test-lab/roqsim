@@ -778,9 +778,14 @@ unchanged.
    raycasts, rendering and contacts, and from what ``GetEntities`` lists. Parking it out of sight
    instead is the obvious alternative and is worse -- a free body accelerates under gravity for as
    long as it is away, so it returns with whatever velocity it accumulated. An entry that registers
-   an entity (``spawn_model``, ``spawn_robot``) takes ``present: false`` to start it absent, which is
-   how a world provides the spares for something that appears mid-trial; the declared value is
-   re-applied on reset, because presence is a ``model`` field and ``mj_resetData`` restores ``data``.
+   an entity — **any** of them, which is what ``provides_entity`` declares — takes ``present: false``
+   to start it absent, which is how a world provides the spares for something that appears mid-trial;
+   the declared value is re-applied on reset, because presence is a ``model`` field and
+   ``mj_resetData`` restores ``data``. Both are done from the engine, for the plugin's declared
+   entity, rather than by each plugin: only two ever implemented it, and the rest accepted the key
+   and dropped it. A plugin whose entity is registered by something *under* it — a population like
+   ``boxes``, whose instances are the entities — forwards it to them, since the engine sees the entry
+   and not what the entry made.
    Absence also freezes the entity — compensated gravity, zeroed velocity — since taking a free body
    out of the contact set otherwise puts it in the very free fall the parking trick was rejected for.
    The gravity half is armed once per world, before compile, because MuJoCo decides there whether

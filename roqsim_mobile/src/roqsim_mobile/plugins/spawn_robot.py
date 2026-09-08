@@ -82,7 +82,6 @@ from roqsim.manifest import expand_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose, yaw_of
-from roqsim.presence import set_present
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -165,7 +164,6 @@ class SpawnRobotPlugin(Plugin):
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
-        self.present = bool(self.config.get("present", True))
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
@@ -195,8 +193,6 @@ class SpawnRobotPlugin(Plugin):
                 parse_pose(config["pose"])
             except PoseError as exc:
                 errors.append(str(exc))
-        if "present" in config and not isinstance(config["present"], bool):
-            errors.append("'present' must be true or false")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -270,21 +266,10 @@ class SpawnRobotPlugin(Plugin):
             for row in self.actuator_table
         ]
         self._apply_initial_pose(ctx)
-        self._apply_declared_presence(ctx)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._apply_initial_pose(ctx)
-        self._apply_declared_presence(ctx)
         mujoco.mj_forward(ctx.model, ctx.data)
-
-    def _apply_declared_presence(self, ctx: SimContext) -> None:
-        """Put the robot back to the presence the world declared.
-
-        Run at configure AND at every reset, because presence lives in ``model`` while
-        ``mj_resetData`` restores ``data``: a robot a trial spawned is still present when the next
-        one begins.
-        """
-        set_present(ctx, ctx.entities.get(self.robot_name), self.present)
 
     def _apply_initial_pose(self, ctx: SimContext) -> None:
         x, y, _ = self.initial_pose

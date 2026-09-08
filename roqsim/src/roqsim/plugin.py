@@ -174,11 +174,68 @@ class Plugin:
         for ``validate_config`` and quietly check less than a run does.
         """
         errors = list(type(self).validate_schema(config))
+        errors += self.validate_presence(config)
         try:
             errors += self.validate_config(config) or []
         except Exception as exc:  # a plugin's validator itself blew up
             errors.append(f"validate_config raised: {exc}")
         return errors
+
+    def validate_presence(self, config: dict) -> list[str]:
+        """Check ``present:``, and refuse it where it would do nothing.
+
+        Read here rather than left to each plugin because the plugins that register an entity are
+        the ones this applies to, and they say so already (:attr:`provides_entity`). Thirteen of
+        the fourteen used to ACCEPT the key and drop it: a world declaring a prop absent got a
+        present one, silently, which is the reading of ``present: false`` nobody wants and the one
+        that looks like it worked.
+        """
+        if "present" not in config:
+            return []
+        if not self.provides_entity:
+            return [
+                "'present' says whether the entity this entry registers starts perceivable, "
+                f"and {type(self).__name__} registers none"
+            ]
+        if not isinstance(config["present"], bool):
+            return ["'present' must be true or false"]
+        return []
+
+    @property
+    def declared_present(self) -> bool:
+        """Whether the world declares this plugin's entity perceivable from the first step."""
+        return bool(self.config.get("present", True))
+
+    def apply_declared_presence(self, ctx) -> None:
+        """Put this plugin's entity back to the presence the world declared. Physics thread only.
+
+        Run after ``configure`` AND after every ``on_reset``, because presence lives in ``model``
+        while ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when
+        the next episode begins, and a world that declares a spare means it every episode.
+
+        Driven from the engine rather than from each plugin's own hooks, so a plugin registering an
+        entity gets this by declaring that it does. The alternative was the same three lines copied
+        into every prop, which is how they came to disagree in the first place.
+        """
+        if not self.provides_entity:
+            return
+        from .presence import set_present
+
+        # `address` is what a provides_entity plugin names its entity, but a few compute the name
+        # and keep it; ask for that first so this cannot address a different entity than the one
+        # the plugin registered.
+        name = getattr(self, "entity_name", None) or self.address
+        entity = ctx.entities.get(name)
+        if entity is None:
+            if not self.declared_present:
+                # A world asked for a spare and did not get one. Silence here would be the bug
+                # this method exists to remove, arrived at from the other side.
+                raise RuntimeError(
+                    f"{type(self).__name__} declares 'present: false' but registered no entity "
+                    f"named {name!r}, so the declaration could not be applied"
+                )
+            return
+        set_present(ctx, entity, self.declared_present)
 
     @staticmethod
     def validate_topics(config: dict) -> list[str]:
