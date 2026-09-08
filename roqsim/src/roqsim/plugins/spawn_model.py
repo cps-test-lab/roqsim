@@ -123,7 +123,6 @@ from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import PoseError, parse_pose
-from roqsim.presence import set_present
 
 _TF_MODES = (False, "dynamic", "static")
 
@@ -178,7 +177,6 @@ class SpawnModelPlugin(Plugin):
         self.motion = self.config.get("motion", "physics")
         self.free = self.motion == "physics"
         self.mocap = self.motion == "driven"
-        self.present = bool(self.config.get("present", True))
         self.mass = self.config.get("mass")
         friction = self.config.get("friction")
         if friction is not None and not isinstance(friction, (list, tuple)):
@@ -247,8 +245,6 @@ class SpawnModelPlugin(Plugin):
                 errors.append("'friction' must be a number or [sliding, torsional, rolling]")
             elif any(float(v) < 0.0 for v in values):
                 errors.append("'friction' components must be >= 0")
-        if "present" in config and not isinstance(config["present"], bool):
-            errors.append("'present' must be true or false")
         static_tf = ("dynamic" if mode is True else mode) == "static"
         for gone, replacement in (
             ("free", "motion: physics (or motion: static)"),
@@ -421,7 +417,6 @@ class SpawnModelPlugin(Plugin):
                 meta=meta,
             )
         )
-        self._apply_declared_presence(ctx)
         if self.mocap:
             bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, self._body_frame)
             if bid < 0:
@@ -510,7 +505,6 @@ class SpawnModelPlugin(Plugin):
         So a driven prop is already back where it started before any ``on_reset`` runs, and an
         explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
-        self._apply_declared_presence(ctx)
         if not self.free or not self._spawn_qpos:
             return
         adr, *pose = self._spawn_qpos
@@ -519,15 +513,6 @@ class SpawnModelPlugin(Plugin):
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
         dofadr = int(ctx.model.jnt_dofadr[jid])
         ctx.data.qvel[dofadr : dofadr + 6] = 0.0
-
-    def _apply_declared_presence(self, ctx: SimContext) -> None:
-        """Put the prop back to the presence the world declared.
-
-        Run at configure AND at every reset, because presence lives in ``model`` while
-        ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when the next
-        one begins. A world that declares a spare means it in every episode, not just the first.
-        """
-        set_present(ctx, ctx.entities.get(self.entity_name), self.present)
 
     def read_pose(self):
         """Endpoint ``read`` (physics thread): the root body's world pose as a one-entry TF payload

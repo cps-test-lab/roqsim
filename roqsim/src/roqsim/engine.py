@@ -240,6 +240,10 @@ class Engine:
 
         for plugin in self.plugins:
             self._timed(plugin, "configure", plugin.configure, self.ctx)
+            # After configure, because the entity has to be registered before its presence can
+            # be set; here rather than inside each plugin so that a plugin registering an entity
+            # gets the world's `present:` honoured by declaring that it registers one.
+            plugin.apply_declared_presence(self.ctx)
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -287,6 +291,9 @@ class Engine:
             self.ctx.blackboard.set("reset_params", params)
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
+            # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
+            # in one episode would still be in the room at the start of the next.
+            plugin.apply_declared_presence(self.ctx)
         for gate in self.ctx.gates():
             gate.reset()
 
