@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from roqsim.placement import base_joint_of, place_body
+
 from . import (
     AccessError,
     NavCall,
@@ -30,44 +32,6 @@ from . import (
 )
 
 _MISSING = object()
-
-
-def _place_body(ctx, entity, joint_name, pos, quat, vel=None) -> bool:
-    """Put *entity* at a pose. Physics thread only; ``False`` if the world compiled it welded.
-
-    Two kinds of body can take a pose, and they differ in who owns it afterwards.
-
-    A **mocap** body (``motion: driven``) is placed through ``mocap_pos``/``mocap_quat``. It has
-    no degrees of freedom, so the solver never owns its pose: it stays where it is put, nothing
-    that bumps into it moves it off the placement a campaign chose, and a placement that happens
-    to intersect other geometry is not answered by launching it. A stated velocity is dropped
-    rather than refused -- there is no DOF to carry one, and the placement itself was applied in
-    full.
-
-    A **free** body (``motion: physics``) is placed by writing its base joint. From the next step
-    its pose is the solver's, which is what a trial wants only when the obstacle is meant to
-    move, fall or be pushed.
-
-    Welded scenery has neither and cannot be placed at all.
-    """
-    import mujoco
-
-    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, getattr(entity, "body", "") or "")
-    mocapid = int(ctx.model.body_mocapid[bid]) if bid >= 0 else -1
-    if mocapid >= 0:
-        ctx.data.mocap_pos[mocapid] = pos
-        ctx.data.mocap_quat[mocapid] = quat
-        return True
-
-    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name) if joint_name else -1
-    if jid < 0 or ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
-        return False
-    q = ctx.model.jnt_qposadr[jid]
-    ctx.data.qpos[q : q + 3] = pos
-    ctx.data.qpos[q + 3 : q + 7] = quat
-    dof = ctx.model.jnt_dofadr[jid]
-    ctx.data.qvel[dof : dof + 6] = 0.0 if vel is None else vel
-    return True
 
 
 def _unplaceable(name, joint_name) -> str:
@@ -235,7 +199,7 @@ class InProcessAccess(WorldAccess):
                 f"the simulator has no entity called {name!r}. The name is the world's `name:` for "
                 "that spawn, not a body name and not a TF frame."
             )
-        joint_name = (entity.meta or {}).get("base_joint")
+        joint_name = base_joint_of(entity)
         outcome_box: dict = {}
 
         def _write(
@@ -253,7 +217,7 @@ class InProcessAccess(WorldAccess):
         ):
             # The velocity the caller asked for, which defaults to zero -- so a placement with no
             # twist stated behaves exactly as it always has, and a stated one is no longer dropped.
-            if not _place_body(_ctx, entity, joint_name, pos, quat, vel):
+            if not place_body(_ctx, entity, pos, quat, vel):
                 outcome_box["outcome"] = TeleportOutcome(
                     ok=False, detail=_unplaceable(name, joint_name)
                 )
@@ -288,7 +252,7 @@ class InProcessAccess(WorldAccess):
                 "already declares -- it does not create one -- so the name must be a `name:` in "
                 "the world, and a world that declares no such entity cannot be made to have it."
             )
-        joint_name = (entity.meta or {}).get("base_joint")
+        joint_name = base_joint_of(entity)
         outcome_box: dict = {}
 
         def _apply(
@@ -312,7 +276,7 @@ class InProcessAccess(WorldAccess):
                 # The velocity is left at zero for the same reason a teleport zeroes it: an entity
                 # that has just appeared has no history, and a velocity carried over from before it
                 # was hidden is one this trial never applied.
-                if not _place_body(_ctx, entity, joint_name, pos, quat):
+                if not place_body(_ctx, entity, pos, quat):
                     outcome_box["outcome"] = SpawnOutcome(
                         ok=False,
                         detail=_unplaceable(name, joint_name)
