@@ -15,7 +15,11 @@ everything downstream:
     is exactly what makes it the honest baseline for a force-control comparison.
 
 ``admittance``
-    ``M xddot = (w_d - w_a) - D xdot - C (x - x_0)``, integrated to a twist. With ``C = 0`` this is a
+    ``M xddot = (w_d - w_a) - D xdot - C (x - x_0)``, integrated to a twist. Both wrenches are what
+    the TOOL applies -- ``target_wrench: [0, 0, -10, ...]`` means "press down with 10 N" -- and the
+    measured one is converted into that convention using the reader's own ``measures``, never
+    assumed. A wrench has a direction as well as a frame, and the two conventions are negatives of
+    each other. With ``C = 0`` this is a
     pure admittance (the arm follows force); with ``C > 0`` it is the mass-spring-damper that pulls
     back toward ``x_0``. The stiffness term is included but defaults OFF, because a stiffness with no
     stated equilibrium is a spring anchored to wherever the trial happened to start.
@@ -40,7 +44,8 @@ sits rather than a config key::
       law: admittance          # admittance | position
       rate_hz: 100.0           # control rate; the loop runs at this, not at the physics rate
       # -- admittance law ------------------------------------------------------------------------
-      target_wrench: [0, 0, -10, 0, 0, 0]    # w_d, in the wrench's own frame
+      target_wrench: [0, 0, -10, 0, 0, 0]    # w_d, in the wrench's own frame; what the TOOL applies,
+                                            #   so -10 on z presses DOWN with 10 N
       mass: [1, 1, 1, 0.6, 0.6, 0.6]         # M, diagonal
       damping: [80, 80, 80, 160, 160, 160]   # D, diagonal
       stiffness: [0, 0, 0, 0, 0, 0]          # C, diagonal (0 -> pure admittance)
@@ -253,13 +258,29 @@ class CartesianAdmittancePlugin(Plugin):
 
     def _admittance_twist(self, dt: float) -> np.ndarray:
         force, torque = self._ft.read()
-        w_a = np.concatenate([force, torque])
+        w_a = self._as_applied_by_tool(np.concatenate([force, torque]))
         pos, _ = self.read_pose()
         anchor = self._anchor_pos if self._anchor_pos is not None else pos
         deflection = np.concatenate([pos - anchor, np.zeros(3)])
         accel = (self.w_d - w_a - self.D * self._twist - self.C * deflection) / self.M
         self._twist = self._clamp(self._twist + accel * dt)
         return self._twist
+
+    def _as_applied_by_tool(self, wrench: np.ndarray) -> np.ndarray:
+        """The measured wrench in ``target_wrench``'s convention: what the TOOL applies.
+
+        The two conventions are negatives of each other, and mixing them does not read as a sign
+        error. With the sensor reporting the reaction (its default, and what a real FT sensor does),
+        `w_d - w_a` for a downward target grew as the contact resisted: pressing harder raised the
+        reaction, which raised the commanded push. Positive feedback with no equilibrium anywhere --
+        measured running to roughly 300 N against a target of 10.
+
+        Taken from the reader rather than assumed, because `invert` is the world's to set: a sensor
+        configured the other way is already in this convention and must not be flipped twice.
+        """
+        if getattr(self._ft, "measures", "environment_on_tool") == "environment_on_tool":
+            return -wrench
+        return wrench
 
     def _position_twist(self) -> np.ndarray:
         pos, mat = self.read_pose()

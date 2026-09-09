@@ -23,7 +23,9 @@ sits rather than a config key::
       frame: base               # sensor | base | world -- the frame the wrench is REPORTED in
       invert: true              # negate the reading (report the force the ENVIRONMENT applies to the
                                 #   tool, the sign convention a real FT sensor and its users assume;
-                                #   MuJoCo's site sensor reports the opposite)
+                                #   MuJoCo's site sensor reports the opposite). Whichever is chosen,
+                                #   the blackboard reader says which it is in `measures`, so a
+                                #   consumer never has to assume.
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
       rate_hz: 100.0            # endpoint publish rate
@@ -78,11 +80,20 @@ class WrenchReader:
     with the reader because a consumer that integrates the wrench into a motion command has to know
     which frame it is commanding in, and getting that wrong produces a controller that pushes in a
     plausible-looking wrong direction rather than one that fails.
+
+    ``measures`` is carried for exactly the same reason, and was missing for longer: a wrench has a
+    direction as well as a frame, and the two conventions are negatives of each other. It is
+    ``"environment_on_tool"`` (what a real FT sensor and its users assume, this sensor's default)
+    or ``"tool_on_environment"`` (MuJoCo's raw site sensor). A consumer comparing a measured wrench
+    against a target it *commands* must put both in one convention first; subtracting one from the
+    other turns a contact controller's negative feedback into positive, which does not look like a
+    sign error -- it looks like the contact getting away from the controller.
     """
 
     name: str
     frame: str
     read: Callable[[], tuple[np.ndarray, np.ndarray]]
+    measures: str = "environment_on_tool"
 
 
 class ForceTorquePlugin(Plugin):
@@ -206,7 +217,15 @@ class ForceTorquePlugin(Plugin):
                 f"force_torque: blackboard key {key!r} is already registered. Two FT sensors need "
                 f"distinct labels, else a controller silently reads the wrong one."
             )
-        ctx.blackboard.set(key, WrenchReader(name=self.label, frame=self.frame, read=self.read))
+        ctx.blackboard.set(
+            key,
+            WrenchReader(
+                name=self.label,
+                frame=self.frame,
+                read=self.read,
+                measures="environment_on_tool" if self.invert else "tool_on_environment",
+            ),
+        )
 
         ctx.interface.add(
             Endpoint(
