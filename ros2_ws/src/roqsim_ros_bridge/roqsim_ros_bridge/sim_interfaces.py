@@ -387,8 +387,15 @@ class SimInterfacesPlugin(Plugin):
         # The twist is part of the state, and was being dropped: `EntityState` carries one, the
         # GETTER reports one, and this reported RESULT_OK while ignoring whatever was asked for.
         # A caller could read a velocity it could not set.
-        tl, ta = req.state.twist.linear, req.state.twist.angular
-        vel = (tl.x, tl.y, tl.z, ta.x, ta.y, ta.z)
+        #
+        # Absent rather than zero when the request has no twist at all, which a real EntityState
+        # always does but a partial caller may not: `None` is what `_write_body` already reads as
+        # "zero the velocity", so a pose write never fails for want of a field it does not use.
+        twist = getattr(req.state, "twist", None)
+        vel = None
+        if twist is not None:
+            tl, ta = twist.linear, twist.angular
+            vel = (tl.x, tl.y, tl.z, ta.x, ta.y, ta.z)
         # Recorded POSITIVELY, and each failure told apart, exactly as the spawn door does it:
         # run_on_physics sets its event in a `finally`, so a command that raised still returns
         # True, and reading "no outcome" as one particular failure would explain an exception as
