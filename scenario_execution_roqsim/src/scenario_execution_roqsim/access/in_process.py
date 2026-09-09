@@ -32,6 +32,54 @@ from . import (
 _MISSING = object()
 
 
+def _place_body(ctx, entity, joint_name, pos, quat, vel=None) -> bool:
+    """Put *entity* at a pose. Physics thread only; ``False`` if the world compiled it welded.
+
+    Two kinds of body can take a pose, and they differ in who owns it afterwards.
+
+    A **mocap** body (``motion: driven``) is placed through ``mocap_pos``/``mocap_quat``. It has
+    no degrees of freedom, so the solver never owns its pose: it stays where it is put, nothing
+    that bumps into it moves it off the placement a campaign chose, and a placement that happens
+    to intersect other geometry is not answered by launching it. A stated velocity is dropped
+    rather than refused -- there is no DOF to carry one, and the placement itself was applied in
+    full.
+
+    A **free** body (``motion: physics``) is placed by writing its base joint. From the next step
+    its pose is the solver's, which is what a trial wants only when the obstacle is meant to
+    move, fall or be pushed.
+
+    Welded scenery has neither and cannot be placed at all.
+    """
+    import mujoco
+
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, getattr(entity, "body", "") or "")
+    mocapid = int(ctx.model.body_mocapid[bid]) if bid >= 0 else -1
+    if mocapid >= 0:
+        ctx.data.mocap_pos[mocapid] = pos
+        ctx.data.mocap_quat[mocapid] = quat
+        return True
+
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name) if joint_name else -1
+    if jid < 0 or ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+        return False
+    q = ctx.model.jnt_qposadr[jid]
+    ctx.data.qpos[q : q + 3] = pos
+    ctx.data.qpos[q + 3 : q + 7] = quat
+    dof = ctx.model.jnt_dofadr[jid]
+    ctx.data.qvel[dof : dof + 6] = 0.0 if vel is None else vel
+    return True
+
+
+def _unplaceable(name, joint_name) -> str:
+    """Why a pose could not be applied, in terms of what the WORLD would have to say instead."""
+    return (
+        f"entity {name!r} is welded scenery: it has neither a mocap body nor a free joint named "
+        f"{joint_name!r}, so no pose can be written to it. Give it 'motion: driven' in the world "
+        "(placeable and immovable) or 'motion: physics' (placeable and owned by the solver from "
+        "the next step)."
+    )
+
+
 class _PostedRoute(NavCall):
     """A route sent to a navigator, polled on its sequence number.
 
@@ -203,25 +251,14 @@ class InProcessAccess(WorldAccess):
                 dtype=float,
             ),
         ):
-            jid = (
-                mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                if joint_name
-                else -1
-            )
-            if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+            # The velocity the caller asked for, defaulting to zero: a body PUT somewhere is at
+            # rest unless the caller says otherwise, which is what distinguishes a placement from
+            # a launch.
+            if not _place_body(_ctx, entity, joint_name, pos, quat, vel):
                 outcome_box["outcome"] = TeleportOutcome(
-                    ok=False,
-                    detail=f"entity {name!r} has no free joint named {joint_name!r} -- it cannot be "
-                    "teleported (a static prop, or a model without a base_joint in its meta).",
+                    ok=False, detail=_unplaceable(name, joint_name)
                 )
                 return
-            q = _ctx.model.jnt_qposadr[jid]
-            _ctx.data.qpos[q : q + 3] = pos
-            _ctx.data.qpos[q + 3 : q + 7] = quat
-            dof = _ctx.model.jnt_dofadr[jid]
-            # The velocity the caller asked for, which defaults to zero -- so a placement with no
-            # twist stated behaves exactly as it always has, and a stated one is no longer dropped.
-            _ctx.data.qvel[dof : dof + 6] = vel
             mujoco.mj_forward(_ctx.model, _ctx.data)
             moving = "" if not vel.any() else f", moving at {vel.tolist()}"
             outcome_box["outcome"] = TeleportOutcome(
@@ -261,29 +298,35 @@ class InProcessAccess(WorldAccess):
             pos=None if pos is None else np.asarray(pos, dtype=float),
             quat=None if quat is None else np.asarray(quat, dtype=float),
         ):
-            if pos is not None:
-                jid = (
-                    mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                    if joint_name
-                    else -1
+            # Refused BEFORE the pose is written, and refused at all: `SpawnEntity` over ROS answers
+            # RESULT_OPERATION_FAILED for an entity that is already in the state asked for, and two
+            # transports must not answer one question differently -- a scenario is written once and
+            # does not learn which shape it is running in. Checked first because refusing after the
+            # write would leave the entity moved by a call that reported failure.
+            if bool(getattr(entity, "present", True)) == bool(present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False,
+                    detail=f"entity {name!r} is already {'present' if present else 'absent'}",
                 )
-                if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+                return
+            if pos is not None:
+                # The velocity is left at zero for the same reason a teleport zeroes it: an entity
+                # that has just appeared has no history, and a velocity carried over from before it
+                # was hidden is one this trial never applied.
+                if not _place_body(_ctx, entity, joint_name, pos, quat):
                     outcome_box["outcome"] = SpawnOutcome(
                         ok=False,
-                        detail=f"entity {name!r} has no free joint named {joint_name!r}, so it "
-                        "cannot be placed as it appears. Spawn it without a pose to activate it "
-                        "where the world welded it, or give the model a base_joint.",
+                        detail=_unplaceable(name, joint_name)
+                        + " Or spawn it without a pose, to activate it where the world put it.",
                     )
                     return
-                q = _ctx.model.jnt_qposadr[jid]
-                _ctx.data.qpos[q : q + 3] = pos
-                _ctx.data.qpos[q + 3 : q + 7] = quat
-                dof = _ctx.model.jnt_dofadr[jid]
-                # Zeroed for the same reason a teleport zeroes it: an entity that has just appeared
-                # has no history, and a velocity carried over from before it was hidden is one this
-                # trial never applied.
-                _ctx.data.qvel[dof : dof + 6] = 0.0
-            set_present(_ctx, entity, present)
+            # The return value is the confirmation that something changed, so it is what the
+            # outcome is built from. Ignoring it would report success for a no-op.
+            if not set_present(_ctx, entity, present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False, detail=f"entity {name!r} did not change presence"
+                )
+                return
             mujoco.mj_forward(_ctx.model, _ctx.data)
             where = "" if pos is None else f" at {pos.tolist()}"
             outcome_box["outcome"] = SpawnOutcome(
