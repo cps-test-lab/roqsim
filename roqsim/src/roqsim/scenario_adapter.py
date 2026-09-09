@@ -40,6 +40,20 @@ The deployment may also supply overrides without the scenario mentioning them, t
 reads) -- the stepped shape's equivalent of that flag, since scenario-execution constructs
 this class with no arguments. A scenario passing ``world_overrides`` itself wins over it.
 
+The run's **noise seed** arrives the same way, and by the same precedence every roqsim driver
+shares (:func:`roqsim.seed.resolve_seed`): an explicit value -- a ``seed`` constructor argument, else
+``ROQSIM_SEED`` from the deployment -- beats the world's ``sim.seed``, which beats one drawn and
+logged. It is assigned to ``ctx.seed`` *before* ``setup()``, because ``configure`` may read it. A
+drawn seed is cached, so a ``reset()`` that rebuilds the world does not silently change the seed the
+recording carries.
+
+**Where a world is run repeatedly to sample a distribution, leave ``sim.seed`` unset.** Unset means
+each run draws, reports and records its own, which is what makes repeated runs samples rather than
+copies. A world that *states* a seed gives every run the same one -- reproducible, and identical
+trial after trial. That is the right choice for a single run to be replayed and the wrong one for a
+set of repetitions; pass one per run instead (the ``seed`` argument, or ``ROQSIM_SEED``), or state
+none at all.
+
 ROS transport is **not** a scenario parameter either. A checked-in world stays ROS-free so
 ``roqsim sim`` can run it in a pip-only environment, so the bridge is appended at load time when
 ``ROQSIM_ROS`` is set (with ``ROQSIM_TF_NAMESPACE`` / ``ROQSIM_SIM_CONTROL``) -- see
@@ -55,6 +69,7 @@ from pathlib import Path
 from .config import load_config, overrides_from_files
 from .context import SimContext
 from .engine import Engine
+from .seed import SEED_ENV, resolve_seed
 from .viewer import DisplayError, PassiveViewer, has_display
 
 _UNBUILT = object()  # sentinel: no engine built yet (distinct from "built with no overrides")
@@ -185,7 +200,12 @@ except Exception:  # pragma: no cover - fallback keeps core importable/testable
 class MujocoSim(_Base):
     """Adapts an :class:`Engine` to scenario-execution's step-based ``SimulationInterface``."""
 
-    def __init__(self, world: str | None = None, world_overrides: dict | None = None):
+    def __init__(
+        self,
+        world: str | None = None,
+        world_overrides: dict | None = None,
+        seed: int | None = None,
+    ):
         self._default_world = world or os.environ.get("ROQSIM_WORLD")
         if not self._default_world:
             raise ValueError(
@@ -215,6 +235,17 @@ class MujocoSim(_Base):
             overrides_file = os.environ.get("ROQSIM_WORLD_OVERRIDES")
             world_overrides = overrides_from_files([overrides_file]) if overrides_file else None
         self._default_overrides = world_overrides
+        # The run's noise seed, same story as the two above: the deployment states it in the
+        # environment (there is no command line here), and a scenario passing it wins. `None` means
+        # "the world's `sim.seed`, or draw one" -- resolved at build time, where the config is known.
+        if seed is None:
+            env_seed = os.environ.get(SEED_ENV)
+            seed = int(env_seed) if env_seed not in (None, "") else None
+        self._explicit_seed = seed
+        #: A drawn seed, kept so a rebuild does not redraw. `_build` runs again for a different world
+        #: or different overrides, and a seed that changed mid-scenario would make the single seed
+        #: each recording carries a lie. An explicit or config-stated seed is re-read every build.
+        self._drawn_seed: int | None = None
         self._built_overrides = _UNBUILT
         self._logger = None
         self._engine: Engine | None = None
@@ -238,11 +269,33 @@ class MujocoSim(_Base):
         cfg = load_config(_resolve_world(world), overrides, self._transport)
         self._world = world
         self._engine = Engine(cfg, logger=_wrap_logger(self._logger))
+        # Before setup(): configure() may read the seed, and pre_step certainly does. A seed
+        # resolved after this point would reach the tick-time consumers and silently miss the
+        # configure-time ones.
+        self._engine.ctx.seed = self._seed_for(cfg)
         self._engine.setup()
         self._built_overrides = overrides
         # A (re)built world means the browser scene descriptor (if requested) is stale; the export
         # itself runs after reset(), when mocap bodies are at their true initial pose.
         self._scene_export_pending = True
+
+    def _seed_for(self, cfg) -> int:
+        """This run's seed, by the precedence every roqsim driver shares.
+
+        Explicit (a scenario parameter, else ``ROQSIM_SEED``) beats the world's ``sim.seed``, which
+        beats a drawn one. The drawn value is cached so a rebuild reuses it -- see ``_drawn_seed``.
+        """
+        # NOT self._logger raw: the runner may hand us a non-stdlib logger, and resolve_seed logs
+        # %-style. `_wrap_logger` formats eagerly for those; a stdlib logger passes through.
+        logger = _wrap_logger(self._logger) or logging.getLogger(__name__)
+        seed = resolve_seed(
+            self._explicit_seed if self._explicit_seed is not None else self._drawn_seed,
+            logger,
+            config_seed=getattr(cfg, "seed", None),
+        )
+        if self._explicit_seed is None and getattr(cfg, "seed", None) is None:
+            self._drawn_seed = seed
+        return seed
 
     def _teardown_engine(self) -> None:
         """Drop the viewer (its model/data would go stale) and the engine, if any.

@@ -292,9 +292,9 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         if "seed" in config:
             # Silently ignoring it would leave a world believing it pinned the noise stream.
             errors.append(
-                "'seed' is not an imu setting: noise is drawn from the RUN's seed (`roqsim sim "
-                "--seed`, or the campaign's) via ctx.rng_for, so every sensor in a run is "
-                "reproducible together. Remove the key."
+                "'seed' is not an imu setting: noise is drawn from the RUN's seed (`sim.seed` in "
+                "the world, or `roqsim sim --seed`, or the seed the scenario adapter resolves) via "
+                "ctx.rng_for, so every sensor in a run is reproducible together. Remove the key."
             )
         return errors + self.validate_fault(config)
 

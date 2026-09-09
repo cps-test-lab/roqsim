@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import logging
 import math
-import random
 from dataclasses import dataclass
 
 import numpy as np
@@ -79,13 +78,20 @@ class NavCore:
     lines to each goal -- recovery still applies).
 
     ``uniform(lo, hi)`` is where the one random draw in this module -- a waypoint's dwell -- comes
-    from. It is injected rather than taken from the ``random`` module so a caller can supply a
-    counter-based stream (``ctx.rng_for``), which is what makes a dwelling agent replay exactly
-    under the same seed instead of depending on how many draws happened before it. The default
-    keeps the historical behaviour for a caller that passes nothing.
+    from, and it is **required**. Randomness belongs to the run, not to this module: the only
+    correct source is the run's own counter-based stream (``ctx.rng_for``), so there is no default
+    to fall back to. A module-level generator would make a dwell unreproducible while looking
+    exactly like a working one.
+
+    Pass something that draws **freshly on each call** --
+    ``lambda lo, hi: ctx.rng_for(name).uniform(lo, hi)`` -- not a bound method of one generator held
+    for the run. ``rng_for`` is keyed on ``(seed, episode, sim_time, name)``, so a per-call draw is a
+    pure function of the moment the mover arrived and replays exactly under the same seed. A held
+    generator is a stateful stream instead: its position depends on how many draws preceded it, and
+    the draw happens when this object is constructed rather than when the dwell is needed.
     """
 
-    def __init__(self, st, planner, params: NavParams, *, uniform=random.uniform):
+    def __init__(self, st, planner, params: NavParams, *, uniform):
         self._uniform = uniform
         self.st = st
         self.planner = planner

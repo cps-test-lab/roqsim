@@ -93,6 +93,11 @@ def _settled(scene: str = f"{__name__}:_ArmScene", *, name=None, **ft_config):
         entry["name"] = name
     cfg = load_config_from_dict({"sim": {}, "components": [{scene: {}}, entry]})
     engine = Engine(cfg)
+    # A test driving an Engine IS the driver, and `ctx.seed` is driver-owned: `rng_for`
+    # refuses an unset one. The world's own `sim.seed` is honoured so declaring one here
+    # does what it looks like it does; the fallback is fixed, not drawn, so a noisy test
+    # stays reproducible.
+    engine.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     engine.setup()
     engine.reset()
     for _ in range(200):

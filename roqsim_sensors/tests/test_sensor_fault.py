@@ -54,7 +54,11 @@ def _world(tmp_path, lidar_cfg):
 
 
 def _engine(world):
-    engine = Engine(load_config_from_dict(world))
+    cfg = load_config_from_dict(world)
+    engine = Engine(cfg)
+    # A test driving an Engine IS the driver, and applying `sim.seed` is the driver's job -- the
+    # world above declares one, and nothing else would carry it to `ctx`.
+    engine.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     engine.setup()
     engine.reset()
     return engine

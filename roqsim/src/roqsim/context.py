@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .seed import SeedError
+
 if TYPE_CHECKING:
     import mujoco
 
@@ -289,8 +291,9 @@ class SimContext:
         # sliders at the robot's home pose); the rule is about the per-tick write in ``pre_step``.
         self.manual_control: bool = False
 
-        # Deterministic noise. `seed` is set by the driver (`roqsim sim --seed`); `None` means "draw one
-        # and record it", which is the driver's job, not this object's. See `rng_for`.
+        # Deterministic noise. `seed` is set by the driver (`roqsim.seed.resolve_seed`); `None` means
+        # "draw one and record it", which is the driver's job, not this object's. `rng_for` raises on
+        # `None` rather than standing in a default -- see its docstring for why.
         self.seed: int | None = None
         #: Which trial this is within the process, counted from 0 and advanced by
         #: :meth:`roqsim.engine.Engine.reset`. It is part of the noise key: a reset puts
@@ -346,10 +349,29 @@ class SimContext:
         costs ~8 us to construct, which is 11% of a 1080-beam lidar's own work at 30 Hz (0.02% of wall
         time) but would be absurd per beam. Noise draws are vectorised anyway, so the natural shape is
         already the right one.
+
+        **An unset seed raises.** A seed is driver-owned, so a run without one is missing a required
+        input, and standing in a default would be the worst possible failure here: every trial of
+        every run draws the same numbers, each run still looks like its own, the recording still
+        reports the seed as absent, and only reading the drawn values reveals it. A world run
+        repeatedly to estimate a spread would estimate nothing, and say nothing. So it fails at
+        the first draw, before there are results to mistake for samples.
+
+        Raised here and not from ``setup()`` because this is the only place that knows a draw is
+        happening: a geometry export or a ``scenes describe`` builds the same world and needs no
+        seed at all.
         """
         import numpy as np
 
-        seed = 0 if self.seed is None else int(self.seed)
+        if self.seed is None:
+            raise SeedError(
+                "no seed was resolved for this run, so there is nothing to draw the "
+                f"randomness for {name!r} from. The seed is the DRIVER's to resolve: call "
+                "`roqsim.seed.resolve_seed(explicit, logger, config_seed=cfg.seed)` and assign it "
+                "to `ctx.seed` BEFORE `engine.setup()` (`configure` may read it, `pre_step` does). "
+                "`roqsim sim` and the scenario adapter both do; an Engine driven directly must too."
+            )
+        seed = int(self.seed)
         step = 0 if self.model is None or self.data is None else round(self.sim_time / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.

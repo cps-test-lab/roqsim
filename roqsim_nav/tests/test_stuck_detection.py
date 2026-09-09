@@ -18,7 +18,17 @@ _PERIOD = 0.05  # a navigator's default 20 Hz tick
 
 def _core(**params):
     st = NavState(name="mover", waypoints=[(0.0, 0.0), (5.0, 0.0)], speed=0.5)
-    return NavCore(st, None, NavParams(**{"stuck_time": 1.5, "stuck_eps": 0.10, **params}))
+    # `uniform` is required and only feeds a waypoint dwell, which this suite never configures --
+    # so it is wired to raise rather than to a value that would hide an unexpected draw.
+    def _no_draw(lo, hi):
+        raise AssertionError(f"stuck detection drew a dwell ({lo}, {hi}); it should not")
+
+    return NavCore(
+        st,
+        None,
+        NavParams(**{"stuck_time": 1.5, "stuck_eps": 0.10, **params}),
+        uniform=_no_draw,
+    )
 
 
 def _hold(core, seconds, at=(1.0, 1.0)):
