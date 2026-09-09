@@ -143,10 +143,17 @@ widen a family's dependencies to accommodate it.
   stream's position depends on sensor rates, step count, and whether anyone was subscribed to a
   camera — which makes a value at t = 12.5 unreproducible without replaying the whole run, and breaks
   re-running a sensor from a recording. Call it once per (sensor, step), not once per value; draws
-  are vectorised anyway. The run's seed comes from `sim.seed` in the world or `roqsim sim --seed`
-  (which wins), and a run without either draws and logs a seed so it can be replayed. The `episode`
-  is in the key because `reset()` restarts `sim_time`: without it every trial after the first in one
-  process re-draws the first one's noise, so repetitions are duplicates rather than samples.
+  are vectorised anyway. The run's seed comes from `sim.seed` in the world, `roqsim sim --seed`, or
+  `ROQSIM_SEED` for the scenario adapter (an explicit one wins), and a run without any of them draws
+  and logs a seed so it can be replayed. The `episode` is in the key because `reset()` restarts
+  `sim_time`: without it every trial after the first in one process re-draws the first one's noise,
+  so repetitions are duplicates rather than samples.
+- **A seed is driver-owned, and an unresolved one raises** (`roqsim.seed.SeedError`) rather than
+  defaulting to 0. Any code that builds an Engine and steps it is a driver: resolve a seed with
+  `roqsim.seed.resolve_seed` and assign `ctx.seed` **before** `setup()`, since `configure` may read
+  it. A preview that only settles a world to look at it pins `roqsim.seed.PREVIEW_SEED`. Never
+  inject a held generator where a draw is wanted — pass `lambda ...: ctx.rng_for(name)...` so each
+  draw is keyed on the time it happens; a captured generator is the stateful stream this forbids.
 - **End a trial with `ctx.request_stop(reason)`, not by padding `--seconds`.** A wall-clock limit has
   to be guessed high enough for the slowest cell and is then wasted on every faster one. It is a
   request, not a kill switch: the driver polls it and exits cleanly, so `shutdown` runs and files

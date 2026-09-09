@@ -52,6 +52,10 @@ def test_the_wheels_roll_rather_than_spin_backwards(model):
         "components": [{"spawn_robot": {"model": model, "prefix": "z_"}, "name": "z"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=None))
+    # This test IS the driver, and `ctx.seed` is driver-owned: a spawned robot brings its manifest's
+    # sensors, one of which draws noise, and `rng_for` refuses an unset seed. Fixed, not drawn, so
+    # the run stays reproducible.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     try:

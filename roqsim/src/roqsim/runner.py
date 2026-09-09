@@ -61,6 +61,7 @@ from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
 from .plugin import PluginError
+from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
 from .view_save import SaveViewKey, save_current_view
 from .viewer import (
@@ -673,7 +674,7 @@ def run(
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
         # recorded, so it can be repeated. A seed nothing sets and nothing reports is the case where
         # a noisy run cannot be reproduced at all.
-        engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
+        engine.ctx.seed = resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:
         # The compile failed while the loading window is up -- close it so it doesn't dangle.
@@ -850,26 +851,6 @@ def _export_capture_at_exit(engine, recorder, target, overrides, logger: logging
         )
     except Exception as err:  # noqa: BLE001 — a viewer artifact must not fail the run
         logger.warning("run capture export failed (%s); the recording itself is unaffected", err)
-
-
-def _resolve_seed(seed: int | None, logger: logging.Logger, config_seed: int | None = None) -> int:
-    """The run's noise seed, by precedence: explicit > world config > drawn.
-
-    An explicitly passed seed wins because it is the more specific instruction -- the
-    world states what a run normally uses, the caller states what THIS run uses. With
-    neither, one is drawn and announced, exactly as before ``sim.seed`` existed.
-    """
-    if seed is not None:
-        logger.info("seed: %d (given)", seed)
-        return int(seed)
-    if config_seed is not None:
-        logger.info("seed: %d (from sim.seed)", config_seed)
-        return int(config_seed)
-    import secrets
-
-    drawn = secrets.randbelow(2**31)
-    logger.info("seed: %d (drawn -- pass --seed %d to repeat this run)", drawn, drawn)
-    return drawn
 
 
 def _numbered(path: str, index: int) -> str:

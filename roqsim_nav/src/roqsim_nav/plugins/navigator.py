@@ -420,8 +420,18 @@ class NavigatorPlugin(Plugin):
         planner = None
 
         params = NavParams.from_spec(cfg, float(cfg.get("radius", 0.3)))
-        rng = ctx.rng_for(f"navigator:{self.entity}")
-        self._core = NavCore(self._state, planner, params, uniform=rng.uniform)
+        # A fresh generator PER DRAW, not one captured here. `rng_for` is counter-based and keyed on
+        # `(seed, episode, sim_time, name)`, so a dwell drawn at the moment of arrival is a pure
+        # function of when the mover arrived. A generator held from here would be a stateful stream
+        # whose position depends on how many draws preceded it, and would draw at configure time --
+        # before this plugin's own arrival, and before a driver need have resolved the seed.
+        stream = f"navigator:{self.entity}"
+        self._core = NavCore(
+            self._state,
+            planner,
+            params,
+            uniform=lambda lo, hi: ctx.rng_for(stream).uniform(lo, hi),
+        )
         self._tree = build_tree(
             self._core,
             recovery=bool((cfg.get("recovery") or {}).get("enabled", True)),

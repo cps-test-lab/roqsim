@@ -122,8 +122,9 @@ class ForceTorquePlugin(Plugin):
             # Silently ignoring it would leave a world believing it pinned the noise stream.
             errors.append(
                 "'seed' is not a force_torque setting: noise is drawn from the RUN's seed "
-                "(`roqsim sim --seed`, or the campaign's) via ctx.rng_for, so every sensor in a run "
-                "is reproducible together. Remove the key."
+                "(`sim.seed` in the world, or `roqsim sim --seed`, or the seed the scenario "
+                "adapter resolves) via ctx.rng_for, so every sensor in a run is reproducible "
+                "together. Remove the key."
             )
         return errors
 
