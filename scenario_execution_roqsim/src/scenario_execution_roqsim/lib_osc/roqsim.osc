@@ -7,7 +7,7 @@
 # declared here, so a scenario moves between the two unedited. None of them can run under `remote()`:
 # a remote server is handed no simulation and no node.
 
-import osc.types  # pose_3d, for entity_teleport
+import osc.types  # pose_3d / velocity_6d, for set_entity_state
 
 # How a displacement is reduced to one number.
 #
@@ -93,12 +93,31 @@ action entity_navigate_start:
     success_on_acceptance: bool = false
     action_name: string = ''
 
-action entity_teleport:
-    # Place a free-jointed entity at `pose` and zero its velocity, matching a fresh spawn. The
+action spawn_entity:
+    # Make an entity the world DECLARED perceivable, at the pose it appears at. Activation, not
+    # creation: roqsim never recompiles the model, so a name the world does not carry is refused --
+    # which is also why there is no `uri` here. The pose is applied in the same transaction as the
+    # presence flip, so the entity is never perceivable at a pose nobody asked for; a `pose_3d`,
+    # read by the parser a world document and simulation_interfaces both use.
+    #
+    # This is the verb for a per-RUN start pose. Fails the trial when the spawn does not land.
+    #
+    # `scenario_execution_sim` declares one of these too. An action name is unique within a
+    # LIBRARY: an invocation binds to the implementation from the package whose library declared
+    # it, so importing `osc.roqsim` is what selects this one.
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    pose: pose_3d
+
+action set_entity_state:
+    # Put a free-jointed entity in a state: at `pose`, moving at `twist`. The name and shape are
+    # `simulation_interfaces`' SetEntityState, because it is the same operation -- and `twist`
+    # defaults to zero, so a placement that states none behaves as a fresh spawn does. The
     # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's
     # randomly generated start pose) rather than per CONFIGURATION -- nothing before compile knows a
-    # value drawn once per repetition, and the substrate does not recompile mid-run. Only yaw is
-    # applied; a nonzero roll or pitch in `pose.orientation` is refused (see the action's docstring).
+    # value drawn once per repetition, and the substrate does not recompile mid-run. A FULL pose:
+    # `orientation` takes roll/pitch/yaw or a quaternion, read by the same parser a world document
+    # and `simulation_interfaces/SetEntityState` go through, so one orientation means one thing
+    # everywhere. What a body cannot take, the simulator refuses (see below).
     #
     # Fails the trial when the write does not land (Result != RESULT_OK, or the entity has no free
     # joint) -- a teleport that did not happen must not leave a row whose recorded start_pose the
@@ -106,6 +125,7 @@ action entity_teleport:
     entity: string                                    # roqsim entity name -- the world's `name:`, not
                                                       # a body or a TF frame
     pose: pose_3d
+    twist: velocity_6d = velocity_6d()                # zero unless stated
 
 action set_sensor_override:
     # Degrade a SENSOR mid-run: apply (or restore) the `fault:` block the sensor carries in its own

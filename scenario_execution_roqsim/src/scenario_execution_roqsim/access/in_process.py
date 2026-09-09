@@ -22,6 +22,8 @@ from . import (
     OverrideCall,
     OverrideOutcome,
     Pose,
+    SpawnCall,
+    SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -169,7 +171,9 @@ class InProcessAccess(WorldAccess):
         return _PostedRoute(handle, seq, wait=wait)
 
     # -- teleport ---------------------------------------------------------------------------------
-    def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
+    def set_entity_state(
+        self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
+    ) -> TeleportCall:
         # Imported HERE, not at module scope -- see the note on `_body_id`: this pulls in MuJoCo,
         # and the behaviour tree is built before any world is compiled.
         import mujoco
@@ -191,6 +195,13 @@ class InProcessAccess(WorldAccess):
             joint_name=joint_name,
             pos=np.asarray(pos, dtype=float),
             quat=np.asarray(quat, dtype=float),
+            vel=np.asarray(
+                [
+                    *(lin if lin is not None else (0.0, 0.0, 0.0)),
+                    *(ang if ang is not None else (0.0, 0.0, 0.0)),
+                ],
+                dtype=float,
+            ),
         ):
             jid = (
                 mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
@@ -208,12 +219,93 @@ class InProcessAccess(WorldAccess):
             _ctx.data.qpos[q : q + 3] = pos
             _ctx.data.qpos[q + 3 : q + 7] = quat
             dof = _ctx.model.jnt_dofadr[jid]
-            _ctx.data.qvel[dof : dof + 6] = 0.0
+            # The velocity the caller asked for, which defaults to zero -- so a placement with no
+            # twist stated behaves exactly as it always has, and a stated one is no longer dropped.
+            _ctx.data.qvel[dof : dof + 6] = vel
             mujoco.mj_forward(_ctx.model, _ctx.data)
-            outcome_box["outcome"] = TeleportOutcome(ok=True, detail=f"placed at {pos.tolist()}")
+            moving = "" if not vel.any() else f", moving at {vel.tolist()}"
+            outcome_box["outcome"] = TeleportOutcome(
+                ok=True, detail=f"placed at {pos.tolist()}{moving}"
+            )
 
         ctx.post(_write)
         return _PostedTeleport(outcome_box)
+
+    def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
+        """Flip presence and place the entity in ONE posted callback.
+
+        One callback, not two, because that is the whole reason to spawn rather than teleport: a
+        flip and a pose applied in separate transactions leave the entity perceivable for a step at
+        wherever the world compiled it, and a free body accelerating under gravity in between.
+        """
+        import mujoco
+
+        from roqsim.presence import set_present
+
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        entity = ctx.entities.get(name)
+        if entity is None:
+            raise AccessError(
+                f"the simulator has no entity called {name!r}. A spawn ACTIVATES what the world "
+                "already declares -- it does not create one -- so the name must be a `name:` in "
+                "the world, and a world that declares no such entity cannot be made to have it."
+            )
+        joint_name = (entity.meta or {}).get("base_joint")
+        outcome_box: dict = {}
+
+        def _apply(
+            _ctx,
+            joint_name=joint_name,
+            pos=None if pos is None else np.asarray(pos, dtype=float),
+            quat=None if quat is None else np.asarray(quat, dtype=float),
+        ):
+            if pos is not None:
+                jid = (
+                    mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
+                    if joint_name
+                    else -1
+                )
+                if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+                    outcome_box["outcome"] = SpawnOutcome(
+                        ok=False,
+                        detail=f"entity {name!r} has no free joint named {joint_name!r}, so it "
+                        "cannot be placed as it appears. Spawn it without a pose to activate it "
+                        "where the world welded it, or give the model a base_joint.",
+                    )
+                    return
+                q = _ctx.model.jnt_qposadr[jid]
+                _ctx.data.qpos[q : q + 3] = pos
+                _ctx.data.qpos[q + 3 : q + 7] = quat
+                dof = _ctx.model.jnt_dofadr[jid]
+                # Zeroed for the same reason a teleport zeroes it: an entity that has just appeared
+                # has no history, and a velocity carried over from before it was hidden is one this
+                # trial never applied.
+                _ctx.data.qvel[dof : dof + 6] = 0.0
+            set_present(_ctx, entity, present)
+            mujoco.mj_forward(_ctx.model, _ctx.data)
+            where = "" if pos is None else f" at {pos.tolist()}"
+            outcome_box["outcome"] = SpawnOutcome(
+                ok=True, detail=f"{'present' if present else 'absent'}{where}"
+            )
+
+        ctx.post(_apply)
+        return _PostedSpawn(outcome_box)
+
+
+class _PostedSpawn(SpawnCall):
+    """Waits for the queued presence flip, then reports what ``_apply`` recorded.
+
+    Same box-as-confirmation shape as :class:`_PostedTeleport`, and safe unlocked for the same
+    reason: the stepped runner ticks the tree and steps physics on one thread, alternating.
+    """
+
+    def __init__(self, outcome_box: dict):
+        self._box = outcome_box
+
+    def poll(self) -> SpawnOutcome | None:
+        return self._box.get("outcome")
 
 
 class _PostedTeleport(TeleportCall):

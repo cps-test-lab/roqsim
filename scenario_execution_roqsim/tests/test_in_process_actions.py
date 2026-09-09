@@ -34,9 +34,10 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigateStart,
 )
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
-from scenario_execution_roqsim.actions.entity_teleport import EntityTeleport  # noqa: E402
+from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
+from scenario_execution_roqsim.actions.spawn_entity import SpawnEntity  # noqa: E402
 
 RUNNING = py_trees.common.Status.RUNNING
 SUCCESS = py_trees.common.Status.SUCCESS
@@ -434,10 +435,10 @@ def test_an_unknown_instance_raises_and_says_where_it_comes_from(world):
         action.update()
 
 
-# -- entity_teleport --------------------------------------------------------------------------------
+# -- set_entity_state --------------------------------------------------------------------------------
 #
 # A separate tiny scene: the shared `world` fixture's freejoint is unnamed (fine for entity_moved,
-# which resolves the BODY), and set_entity_pose needs a named joint to write qpos through.
+# which resolves the BODY), and set_entity_state needs a named joint to write qpos through.
 TELEPORT_SCENE = """
 <mujoco model="teleport_test">
   <worldbody>
@@ -467,7 +468,7 @@ def teleport_world():
     return ctx, FakeClock(), FakeSim(ctx)
 
 
-def test_teleport_places_the_entity_and_zeroes_its_velocity(teleport_world):
+def test_set_entity_state_places_the_entity_and_zeroes_its_velocity(teleport_world):
     ctx, clock, sim = teleport_world
     bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
     jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
@@ -475,7 +476,7 @@ def test_teleport_places_the_entity_and_zeroes_its_velocity(teleport_world):
     ctx.data.qvel[dof : dof + 6] = 1.0  # nonzero, so the teleport's zeroing is actually exercised
 
     action = _start(
-        EntityTeleport(),
+        SetEntityState(),
         sim,
         clock,
         entity="robot",
@@ -494,13 +495,13 @@ def test_teleport_places_the_entity_and_zeroes_its_velocity(teleport_world):
     assert np.allclose(ctx.data.qvel[dof : dof + 6], 0.0, atol=0.03)
 
 
-def test_teleport_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_joint(
+def test_set_entity_state_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_joint(
     teleport_world,
 ):
     """A static prop is a fact about the world the campaign chose, not a malformed call."""
     ctx, clock, sim = teleport_world
     action = _start(
-        EntityTeleport(),
+        SetEntityState(),
         sim,
         clock,
         entity="prop",
@@ -512,10 +513,10 @@ def test_teleport_fails_the_trial_rather_than_raise_when_the_entity_has_no_free_
     assert "no free joint" in action.feedback_message
 
 
-def test_teleport_raises_on_an_unknown_entity(teleport_world):
+def test_set_entity_state_raises_on_an_unknown_entity(teleport_world):
     _ctx, clock, sim = teleport_world
     action = _start(
-        EntityTeleport(),
+        SetEntityState(),
         sim,
         clock,
         entity="ghost",
@@ -525,16 +526,262 @@ def test_teleport_raises_on_an_unknown_entity(teleport_world):
         action.update()
 
 
-def test_teleport_rejects_nonzero_roll_or_pitch_at_execute():
-    action = EntityTeleport()
-    with pytest.raises(ActionError, match="roll or pitch"):
+def test_set_entity_state_applies_roll_and_pitch(teleport_world):
+    """A full orientation, the same one `SetEntityState` has always accepted.
+
+    This action used to convert yaw itself and refuse roll or pitch, on the grounds that it places
+    a wheeled base on its floor. That made the OSC verb the only place in the substrate where an
+    orientation meant something narrower than everywhere else -- while the service behind it took
+    a whole quaternion -- and it blocked aiming a sensor, which is a pose with no floor in it. The
+    real constraint is whether the body has a free joint, and the simulator already reports that.
+    """
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    roll, pitch, yaw = 0.3, -0.2, 1.1
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="robot",
+        pose={
+            "position": {"x": 1.0, "y": 2.0, "z": 3.0},
+            "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
+        },
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    # Compared against roqsim's own conversion rather than a hand-written quaternion: the point is
+    # that this action no longer has a convention of its own, and pinning a literal here would put
+    # a second one back into the tests.
+    from roqsim.pose import rpy_to_quat
+
+    assert np.allclose(ctx.data.xquat[bid], rpy_to_quat(roll, pitch, yaw), atol=1e-6)
+
+
+def test_set_entity_state_accepts_a_quaternion_as_the_service_states_one(teleport_world):
+    """The other spelling. `parse_pose` takes either, so a pose can be pasted from a
+    `geometry_msgs/Pose` without being rewritten as Euler angles first."""
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    half = math.pi / 4
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="robot",
+        pose={
+            "position": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "orientation": {"x": 0.0, "y": 0.0, "z": math.sin(half), "w": math.cos(half)},
+        },
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+    assert np.allclose(ctx.data.xquat[bid], [math.cos(half), 0.0, 0.0, math.sin(half)], atol=1e-6)
+
+
+def test_set_entity_state_refuses_a_malformed_pose_naming_the_key(teleport_world):
+    """A key `pose` has no business carrying is refused by name, by the same parser a world
+    document goes through -- rather than silently defaulting to the origin."""
+    _ctx, clock, sim = teleport_world
+    action = SetEntityState()
+    with pytest.raises(ActionError, match="orientation"):
         action.execute(
             entity="robot",
-            pose={
-                "position": {"x": 0.0, "y": 0.0, "z": 0.0},
-                "orientation": {"roll": 0.1, "yaw": 0.0},
-            },
+            pose={"position": {"x": 0.0, "y": 0.0}, "orientation": {"jaw": 0.5}},
         )
+
+
+def test_set_entity_state_applies_a_stated_twist(teleport_world):
+    """A twist is part of the state, and a stated one has to arrive.
+
+    `SetEntityState` carries a twist, the GETTER reports one, and both this action and the bridge
+    behind it used to drop it while replying OK -- so a caller could read a velocity it could not
+    set. Written in the scenario's own vocabulary (`velocity_6d` spells its halves
+    `translational`/`angular`).
+    """
+    ctx, clock, sim = teleport_world
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
+    dof = ctx.model.jnt_dofadr[jid]
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 0.0, "y": 0.0, "z": 1.0}, "orientation": {"yaw": 0.0}},
+        twist={
+            "translational": {"x": 1.5, "y": -0.5, "z": 0.0},
+            "angular": {"roll": 0.0, "pitch": 0.0, "yaw": 0.75},
+        },
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    # atol as elsewhere here: `_step` drains the write and then steps physics once, so gravity has
+    # already moved qvel[z] by one timestep's worth.
+    assert np.allclose(ctx.data.qvel[dof : dof + 3], [1.5, -0.5, 0.0], atol=0.03)
+    assert np.allclose(ctx.data.qvel[dof + 3 : dof + 6], [0.0, 0.0, 0.75], atol=0.03)
+
+
+def test_set_entity_state_accepts_the_messages_spelling_of_a_twist(teleport_world):
+    """`linear`/`x` as the message spells it, so a twist can be pasted from either vocabulary."""
+    ctx, clock, sim = teleport_world
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
+    dof = ctx.model.jnt_dofadr[jid]
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 0.0, "y": 0.0, "z": 1.0}, "orientation": {"yaw": 0.0}},
+        twist={"linear": {"x": 0.0, "y": 2.0, "z": 0.0}, "angular": {"z": -0.25}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+    assert np.allclose(ctx.data.qvel[dof + 1], 2.0, atol=0.03)
+    assert np.allclose(ctx.data.qvel[dof + 5], -0.25, atol=0.03)
+
+
+def test_set_entity_state_with_no_twist_still_zeroes_the_velocity(teleport_world):
+    """The default, and what every caller before this relied on: a body PUT somewhere is not still
+    carrying the velocity it had."""
+    ctx, clock, sim = teleport_world
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
+    dof = ctx.model.jnt_dofadr[jid]
+    ctx.data.qvel[dof : dof + 6] = 3.0
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 0.0, "y": 0.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+    assert np.allclose(ctx.data.qvel[dof : dof + 6], 0.0, atol=0.03)
+
+
+# -- spawn_entity -----------------------------------------------------------------------------------
+#
+# Presence AND pose, and the point of the action is that they are one transaction: a flip and a pose
+# applied separately leave the entity perceivable for a step wherever the world compiled it.
+
+
+def test_spawn_makes_the_entity_present_at_the_pose_asked_for(teleport_world):
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    entity = ctx.entities.get("robot")
+    entity.present = False  # declared absent, as a world would leave it for a per-run spawn
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 4.0, "y": -2.0, "z": 0.1}, "orientation": {"yaw": math.pi / 2}},
+    )
+    assert action.update() is RUNNING, "the flip is posted, not yet drained"
+    assert entity.present is False, "and nothing has changed before it drains"
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    assert entity.present is True
+    assert np.allclose(ctx.data.xpos[bid][:2], [4.0, -2.0], atol=1e-6)
+    assert np.allclose(
+        ctx.data.xquat[bid], [math.cos(math.pi / 4), 0.0, 0.0, math.sin(math.pi / 4)], atol=1e-6
+    )
+
+
+def test_spawn_takes_a_full_orientation(teleport_world):
+    """Roll and pitch too -- aiming a sensor is a pose with no floor in it."""
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    ctx.entities.get("robot").present = False
+    roll, pitch, yaw = 0.2, 0.4, -0.6
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={
+            "position": {"x": 0.0, "y": 0.0, "z": 1.0},
+            "orientation": {"roll": roll, "pitch": pitch, "yaw": yaw},
+        },
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    from roqsim.pose import rpy_to_quat
+
+    assert np.allclose(ctx.data.xquat[bid], rpy_to_quat(roll, pitch, yaw), atol=1e-6)
+
+
+def test_spawn_zeroes_the_velocity_the_entity_had_while_absent(teleport_world):
+    """An entity that has just appeared has no history.
+
+    An absent free body is frozen rather than moved, so whatever velocity it carried is still in
+    qvel -- and a trial that measures the thing it just spawned must not inherit it.
+    """
+    ctx, clock, sim = teleport_world
+    jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
+    dof = ctx.model.jnt_dofadr[jid]
+    ctx.entities.get("robot").present = False
+    ctx.data.qvel[dof : dof + 6] = 1.0
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 0.0, "y": 0.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+    # atol as in the teleport test: `_step` drains the write and then steps physics once.
+    assert np.allclose(ctx.data.qvel[dof : dof + 6], 0.0, atol=0.03)
+
+
+def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
+    """A welded prop asked for a pose is a fact about the world the campaign chose."""
+    ctx, clock, sim = teleport_world
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="prop",
+        pose={"position": {"x": 1.0, "y": 1.0, "z": 0.0}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "no free joint" in action.feedback_message
+
+
+def test_spawn_raises_on_an_entity_the_world_never_declared(teleport_world):
+    """Activation, not creation: there is nothing to make appear, and saying so beats inventing it."""
+    _ctx, clock, sim = teleport_world
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="ghost",
+        pose={"position": {"x": 0.0, "y": 0.0, "z": 0.0}, "orientation": {"yaw": 0.0}},
+    )
+    with pytest.raises(ActionError, match="ACTIVATES what the world already declares"):
+        action.update()
 
 
 # -- set_sensor_override --------------------------------------------------------------------------

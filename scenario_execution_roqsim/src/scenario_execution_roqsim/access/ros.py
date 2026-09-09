@@ -36,6 +36,8 @@ from . import (
     OverrideCall,
     OverrideOutcome,
     Pose,
+    SpawnCall,
+    SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -95,12 +97,20 @@ class RosAccess(WorldAccess):
     ENTITY_STATE_SERVICE = "get_entity_state"
     #: Where a teleport is sent. Same relative-naming rule as ENTITY_STATE_SERVICE.
     SET_ENTITY_STATE_SERVICE = "set_entity_state"
+    #: Presence, in both directions. Same relative-naming rule.
+    SPAWN_ENTITY_SERVICE = "spawn_entity"
+    DELETE_ENTITY_SERVICE = "delete_entity"
 
     def __init__(self, node):
         try:
             from rclpy.callback_groups import ReentrantCallbackGroup
             from simulation_interfaces.msg import Result
-            from simulation_interfaces.srv import GetEntityState, SetEntityState
+            from simulation_interfaces.srv import (
+                DeleteEntity,
+                GetEntityState,
+                SetEntityState,
+                SpawnEntity,
+            )
             from std_srvs.srv import SetBool
         except ImportError as err:  # pragma: no cover - only when ROS is genuinely absent
             raise AccessError(
@@ -113,6 +123,8 @@ class RosAccess(WorldAccess):
         self._result_ok = Result.RESULT_OK
         self._get_state_type = GetEntityState
         self._set_state_type = SetEntityState
+        self._spawn_type = SpawnEntity
+        self._delete_type = DeleteEntity
         self._set_bool_type = SetBool
         # nav2_msgs and geometry_msgs are imported lazily in `navigate`, not here: a world with no
         # navigator never needs nav2 installed, and requiring it at construction would make every
@@ -125,6 +137,12 @@ class RosAccess(WorldAccess):
         )
         self._set_state_client = node.create_client(
             SetEntityState, self.SET_ENTITY_STATE_SERVICE, callback_group=self._group
+        )
+        self._spawn_client = node.create_client(
+            SpawnEntity, self.SPAWN_ENTITY_SERVICE, callback_group=self._group
+        )
+        self._delete_client = node.create_client(
+            DeleteEntity, self.DELETE_ENTITY_SERVICE, callback_group=self._group
         )
         self._override_clients: dict[str, object] = {}
         #: entity -> (last known Pose | None, future in flight | None)
@@ -257,19 +275,52 @@ class RosAccess(WorldAccess):
         return _RosRoute(client, goal, name, wait=wait)
 
     # -- teleport ---------------------------------------------------------------------------------
-    def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
+    def set_entity_state(
+        self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
+    ) -> TeleportCall:
         """Call ``set_entity_state``. The REPLY is the outcome, same shape as ``apply_override``."""
         req = self._set_state_type.Request()
         req.entity = name
         p, q = req.state.pose.position, req.state.pose.orientation
         p.x, p.y, p.z = (float(v) for v in pos)
         q.w, q.x, q.y, q.z = (float(v) for v in quat)
+        # Stated even when zero: `EntityState` carries a twist unconditionally, so the request
+        # says what the entity's velocity is to become rather than leaving it to the simulator.
+        tl, ta = req.state.twist.linear, req.state.twist.angular
+        tl.x, tl.y, tl.z = (float(v) for v in (lin if lin is not None else (0.0, 0.0, 0.0)))
+        ta.x, ta.y, ta.z = (float(v) for v in (ang if ang is not None else (0.0, 0.0, 0.0)))
         return _RosTeleport(self._set_state_client, req, name, self._result_ok)
+
+    def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
+        """``spawn_entity`` / ``delete_entity``. The REPLY is the outcome, as everywhere here."""
+        if not present:
+            if pos is not None or quat is not None:
+                raise AccessError(
+                    "making an entity absent takes no pose: DeleteEntity states none, and an "
+                    "absent entity keeps the pose it had so it can come back where it was."
+                )
+            req = self._delete_type.Request()
+            req.name = name
+            return _RosSpawn(self._delete_client, req, name, self._result_ok, "delete_entity")
+        if pos is None or quat is None:
+            raise AccessError(
+                "spawning an entity needs a pose: SpawnEntity states `initial_pose` "
+                "unconditionally, so sending none would ask for the origin rather than for "
+                "wherever the entity is."
+            )
+        req = self._spawn_type.Request()
+        req.name = name
+        p, q = req.initial_pose.pose.position, req.initial_pose.pose.orientation
+        p.x, p.y, p.z = (float(v) for v in pos)
+        q.w, q.x, q.y, q.z = (float(v) for v in quat)
+        return _RosSpawn(self._spawn_client, req, name, self._result_ok, "spawn_entity")
 
     def teardown(self) -> None:
         for client in [
             self._state_client,
             self._set_state_client,
+            self._spawn_client,
+            self._delete_client,
             *self._override_clients.values(),
         ]:
             try:
@@ -307,6 +358,38 @@ class _RosCall(OverrideCall):
             verified=verdict,
             detail=f"{self._instance}/override replied {verdict!r}",
         )
+
+
+class _RosSpawn(SpawnCall):
+    """One presence round-trip, spawn or delete. Sent on the first poll, mirroring ``_RosTeleport``."""
+
+    def __init__(self, client, request, entity: str, result_ok: int, service: str):
+        self._client = client
+        self._request = request
+        self._entity = entity
+        self._result_ok = result_ok
+        self._service = service
+        self._future = None
+
+    def poll(self) -> SpawnOutcome | None:
+        if self._future is None:
+            if not self._client.service_is_ready():
+                return None
+            self._future = self._client.call_async(self._request)
+            return None
+        if not self._future.done():
+            return None
+        resp = self._future.result()
+        if resp is None:  # pragma: no cover
+            raise AccessError(f"the call to {self._service} for {self._entity!r} was dropped")
+        ok = int(resp.result.result) == int(self._result_ok)
+        detail = (
+            f"{self._service} {self._entity!r}"
+            if ok
+            else f"{self._service} for {self._entity!r} failed: "
+            f"{resp.result.error_message or resp.result.result}"
+        )
+        return SpawnOutcome(ok=ok, detail=detail)
 
 
 class _RosTeleport(TeleportCall):
