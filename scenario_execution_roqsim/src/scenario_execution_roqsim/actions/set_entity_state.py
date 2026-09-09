@@ -120,7 +120,7 @@ class SetEntityState(SimAction):
             self.reraise(err)
 
         if outcome is None:
-            return self.waiting(f"setting {self._entity!r}'s state ({self.transport})")
+            return self.waiting(f"setting {self._entity!r}'s state ({self.transport})", self._call)
 
         if not outcome.ok:
             return self.failed(

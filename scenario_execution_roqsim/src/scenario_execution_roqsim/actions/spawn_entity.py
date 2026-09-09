@@ -85,7 +85,7 @@ class SpawnEntity(SimAction):
             self.reraise(err)
 
         if outcome is None:
-            return self.waiting(f"spawning {self._entity!r} ({self.transport})")
+            return self.waiting(f"spawning {self._entity!r} ({self.transport})", self._call)
 
         if not outcome.ok:
             return self.failed(
