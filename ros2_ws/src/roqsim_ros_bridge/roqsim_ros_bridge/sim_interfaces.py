@@ -384,6 +384,11 @@ class SimInterfacesPlugin(Plugin):
         o = req.state.pose.orientation
         quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
         pose = ((p.x, p.y, p.z), quat)
+        # The twist is part of the state, and was being dropped: `EntityState` carries one, the
+        # GETTER reports one, and this reported RESULT_OK while ignoring whatever was asked for.
+        # A caller could read a velocity it could not set.
+        tl, ta = req.state.twist.linear, req.state.twist.angular
+        vel = (tl.x, tl.y, tl.z, ta.x, ta.y, ta.z)
         # Recorded POSITIVELY, and each failure told apart, exactly as the spawn door does it:
         # run_on_physics sets its event in a `finally`, so a command that raised still returns
         # True, and reading "no outcome" as one particular failure would explain an exception as
@@ -392,7 +397,7 @@ class SimInterfacesPlugin(Plugin):
         outcome = {}
 
         def _apply(ctx):
-            if not self._write_body(ctx, entity, pose[0], pose[1]):
+            if not self._write_body(ctx, entity, pose[0], pose[1], vel):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
                 if not _already_at(state, pose):
                     outcome["welded_at"] = state.get("pos")
@@ -466,7 +471,7 @@ class SimInterfacesPlugin(Plugin):
         }
 
     @staticmethod
-    def _write_body(ctx, entity, pos, quat) -> bool:
+    def _write_body(ctx, entity, pos, quat, vel=None) -> bool:
         import mujoco
 
         jname = entity.meta.get("base_joint")
@@ -477,7 +482,10 @@ class SimInterfacesPlugin(Plugin):
         ctx.data.qpos[q : q + 3] = pos
         ctx.data.qpos[q + 3 : q + 7] = quat
         dof = ctx.model.jnt_dofadr[jid]
-        ctx.data.qvel[dof : dof + 6] = 0.0
+        # Zero unless a velocity was asked for: a body PUT somewhere is not still carrying the
+        # velocity it had, and that default is what every caller before this relied on. A spawn
+        # passes none, which is why it stays a placement rather than a launch.
+        ctx.data.qvel[dof : dof + 6] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if vel is None else vel
         mujoco.mj_forward(ctx.model, ctx.data)
         return True
 

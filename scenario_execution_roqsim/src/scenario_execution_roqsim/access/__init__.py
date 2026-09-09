@@ -109,7 +109,7 @@ class OverrideCall(ABC):
 class TeleportOutcome:
     """What became of a teleport. ``ok`` is false only for an authoring-adjacent runtime fact that
     is still a result rather than a raise -- the named entity has no free joint to place (e.g. a
-    static prop), which :meth:`WorldAccess.set_entity_pose` reports here rather than as
+    static prop), which :meth:`WorldAccess.set_entity_state` reports here rather than as
     :class:`AccessError`, because "this entity cannot be teleported" is a fact about the WORLD a
     campaign chose, not about the call being malformed.
     """
@@ -127,6 +127,25 @@ class TeleportCall(ABC):
 
     @abstractmethod
     def poll(self) -> TeleportOutcome | None: ...
+
+
+@dataclass(frozen=True)
+class SpawnOutcome:
+    """What became of a spawn. ``ok`` is false for a runtime fact rather than a raise, on the same
+    terms as :class:`TeleportOutcome`: the world compiled no such entity to activate, or it has no
+    free joint and the pose asked for is not the one it is welded at. Both are facts about the
+    WORLD a campaign chose.
+    """
+
+    ok: bool
+    detail: str
+
+
+class SpawnCall(ABC):
+    """A presence flip in flight. ``poll()`` returns ``None`` until the outcome is known."""
+
+    @abstractmethod
+    def poll(self) -> SpawnOutcome | None: ...
 
 
 @dataclass(frozen=True)
@@ -213,14 +232,42 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
-        """Teleport a free-jointed entity to ``pos`` (metres) / ``quat`` (w, x, y, z). Never blocks.
+    def set_entity_state(
+        self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
+    ) -> TeleportCall:
+        """Place a free-jointed entity at ``pos`` (metres) / ``quat`` (w, x, y, z), moving at
+        ``lin``/``ang``. Never blocks.
 
-        For placing a robot at a per-configuration pose a MuJoCo compile cannot vary (a campaign's
-        random start pose, unlike ``spawn_robot.pos`` in the world YAML): the mechanism a
-        ``config_generation``-time factor cannot reach because it is decided per RUN, after the
-        world already compiled. Zeroes the entity's velocity, matching a fresh spawn rather than a
-        mid-flight relocation.
+        The state an entity is *in*, which is pose and velocity together -- the shape
+        ``simulation_interfaces``' ``EntityState`` has, and the reason this is not called a
+        teleport: the same call serves placing a robot at a per-configuration start pose (a
+        per-RUN value a MuJoCo compile cannot vary) and handing a body a velocity it should be
+        moving with.
+
+        ``lin``/``ang`` default to **zero**, which is what placing something means: a body put
+        somewhere is not still carrying the velocity it had. A caller that wants motion states it,
+        rather than the state being half-settable.
+        """
+
+    @abstractmethod
+    def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
+        """Make an entity perceivable (or not), placing it as it appears. Never blocks.
+
+        Presence is what a per-RUN start pose should go through, rather than a teleport: the pose is
+        applied in the SAME transaction as the flip, so the entity is never perceivable at a pose
+        nobody asked for. A teleport can only spawn-at-nominal-then-move, which is visible for a
+        step and accelerates a free body under gravity in between.
+
+        A pose is **required when making an entity present**, and refused when making it absent.
+        That is not this layer's preference: ``SpawnEntity.srv`` states ``initial_pose``
+        unconditionally -- a default-constructed request carries the origin and the identity
+        rotation -- so there is no way to spawn over ROS without asking for *some* pose, and a
+        transport that quietly sent the origin would move the entity somewhere nobody named.
+        ``DeleteEntity`` takes no pose at all, and an absent entity keeps the one it had, which is
+        what lets it come back where it was.
+
+        Making an already-present entity present again is not an error: the caller asked for a
+        state and got it.
         """
 
     def teardown(self) -> None:
