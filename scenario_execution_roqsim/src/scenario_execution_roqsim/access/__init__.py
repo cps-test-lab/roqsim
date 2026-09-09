@@ -91,7 +91,26 @@ class OverrideOutcome:
     detail: str
 
 
-class OverrideCall(ABC):
+class PendingCall(ABC):
+    """Shared by every in-flight call: why it is still waiting, when it can say.
+
+    ``poll()`` returning ``None`` means "not yet", and "not yet" has two very different causes: the
+    write is queued and will drain next step, or the thing that would answer does not exist. The
+    second is indistinguishable from the first until a timeout fires, at which point the trial has
+    spent its whole budget and reports only that it ran out -- which is what a world that served no
+    control plane looked like.
+    """
+
+    @abstractmethod
+    def poll(self):
+        """The outcome, or ``None`` while it is not yet known."""
+
+    def pending_reason(self) -> str | None:
+        """A phrase naming what is missing, or ``None`` when waiting is simply progress."""
+        return None
+
+
+class OverrideCall(PendingCall):
     """An apply/restore in flight. ``poll()`` returns ``None`` until the outcome is known.
 
     Two-phase on both transports, for the same reason the plugin's inbound endpoint is a service
@@ -118,7 +137,7 @@ class TeleportOutcome:
     detail: str
 
 
-class TeleportCall(ABC):
+class TeleportCall(PendingCall):
     """A pose write in flight. ``poll()`` returns ``None`` until the outcome is known.
 
     Two-phase for the same reason :class:`OverrideCall` is: in-process the wait is for ``ctx.post``
@@ -141,7 +160,7 @@ class SpawnOutcome:
     detail: str
 
 
-class SpawnCall(ABC):
+class SpawnCall(PendingCall):
     """A presence flip in flight. ``poll()`` returns ``None`` until the outcome is known."""
 
     @abstractmethod
@@ -161,7 +180,7 @@ class NavOutcome:
     detail: str = ""
 
 
-class NavCall(ABC):
+class NavCall(PendingCall):
     """A route in flight. ``poll()`` returns ``None`` until the outcome is known.
 
     Keyed on the navigator's **sequence number**, not on a bare "finished" flag, and that is the

@@ -69,8 +69,18 @@ class SimAction(BaseAction):
     def transport(self) -> str:
         return getattr(self._access, "transport", "unknown")
 
-    def waiting(self, message: str) -> py_trees.common.Status:
-        self.feedback_message = message  # pylint: disable=attribute-defined-outside-init
+    def waiting(self, message: str, call=None) -> py_trees.common.Status:
+        """RUNNING, with what it is waiting FOR when the call can say.
+
+        A tree that reads `-- setting 'robot''s state (ROS)` for the whole run says the action is
+        waiting; it does not say whether the write is queued or whether nothing will ever answer.
+        Passing the call lets the second case name itself while it is still happening, instead of
+        arriving as a timeout after the trial has spent its budget.
+        """
+        reason = call.pending_reason() if call is not None else None
+        self.feedback_message = (  # pylint: disable=attribute-defined-outside-init
+            f"{message}: {reason}" if reason else message
+        )
         return py_trees.common.Status.RUNNING
 
     def failed(self, message: str) -> py_trees.common.Status:
