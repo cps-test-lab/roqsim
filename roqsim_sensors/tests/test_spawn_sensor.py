@@ -681,3 +681,89 @@ def test_a_lens_without_its_resolution_is_refused():
     lens = {k: v for k, v in _CAM1.items() if k not in ("width", "height")}
     errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": lens})
     assert any("width" in e and "height" in e for e in errors), errors
+
+
+# -- motion: who owns the mount's pose ---------------------------------------
+
+
+def _entity(engine, name="d435"):
+    return engine.ctx.entities.get(name)
+
+
+def test_a_static_mount_cannot_be_placed_and_says_so():
+    """The default, and the behaviour every existing world has.
+
+    Welded scenery has neither a mocap slot nor a joint, so a placement is refused rather than
+    quietly ignored -- which is the whole value of the refusal: a trial that tried to move a
+    sensor and got no error would record a viewpoint nobody chose.
+    """
+    from roqsim.placement import place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5]))
+    engine.setup()
+    engine.reset()
+
+    assert not place_body(engine.ctx, _entity(engine), (3.0, 0.0, 1.0), (1.0, 0.0, 0.0, 0.0))
+
+
+def test_a_driven_mount_takes_a_pose_and_keeps_it():
+    """What a sensor on a mast IS, and what a trial repositioning one needs.
+
+    A mocap body has no degrees of freedom: it holds the pose, nothing shoves it off, and -- the
+    part a free joint gets wrong -- it does not fall. Stepped for a while afterwards, because
+    "it was placed" and "it stayed" are different claims and only the second is useful.
+    """
+    from roqsim.placement import place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="driven"))
+    engine.setup()
+    engine.reset()
+
+    assert place_body(engine.ctx, _entity(engine), (3.0, 0.5, 1.25), (1.0, 0.0, 0.0, 0.0))
+    for _ in range(500):
+        engine.step()
+
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    assert np.allclose(engine.ctx.data.xpos[bid], [3.0, 0.5, 1.25], atol=1e-9)
+
+
+def test_a_free_mount_is_placed_through_the_joint_named_in_its_meta():
+    """The solver owns the pose from the next step, and the entity says how to reach it.
+
+    ``base_joint`` in the meta is not decoration: it is where the placement primitive looks, and
+    a free mount without it would be as unplaceable as a welded one while looking movable.
+    """
+    from roqsim.placement import base_joint_of, place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine.setup()
+    engine.reset()
+
+    assert base_joint_of(_entity(engine)) == "free"
+    assert place_body(engine.ctx, _entity(engine), (3.0, 0.5, 1.25), (1.0, 0.0, 0.0, 0.0))
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    assert np.allclose(engine.ctx.data.xpos[bid], [3.0, 0.5, 1.25], atol=1e-9)
+
+
+def test_a_free_mount_falls_which_is_what_asking_for_physics_means():
+    """Stated rather than left as a surprise, and the reason ``driven`` is the mode to reach for.
+
+    An overhead camera on a free joint is a dropped camera. The contrast is what makes the
+    default and the recommendation legible.
+    """
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine.setup()
+    engine.reset()
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    start = float(engine.ctx.data.xpos[bid][2])
+
+    for _ in range(500):
+        engine.step()
+
+    assert float(engine.ctx.data.xpos[bid][2]) < start - 0.1
+
+
+def test_an_unknown_motion_is_refused_by_name():
+    """At config validation, before a world is built: the answer cannot depend on the model."""
+    with pytest.raises(Exception, match="static, driven, physics"):
+        Engine(_world(motion="floating"))
