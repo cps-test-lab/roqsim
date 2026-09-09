@@ -236,3 +236,154 @@ def test_the_same_run_seed_reproduces_the_noise():
 
     assert np.allclose(run(4), run(4))
     assert not np.allclose(run(4), run(5))
+
+
+# -- taring: zeroing the tool's own load ------------------------------------------------------
+
+
+def test_nothing_is_tared_unless_asked():
+    """The default reads the whole load, and the number above is what a tare must not change.
+
+    Negative because ``invert`` is the default: the ENVIRONMENT pushes the tool up.
+    """
+    engine = _settled()
+    force, _ = _plugin(engine).read()
+    assert force[2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
+
+
+def test_a_tare_zeroes_the_standing_load():
+    """What the option is for: a contact task starts from zero, not from the tool's weight."""
+    engine = _settled()
+    plugin = _plugin(engine)
+    plugin.tare()
+    force, torque = plugin.read()
+    assert np.allclose(force, 0.0, atol=1e-9)
+    assert np.allclose(torque, 0.0, atol=1e-9)
+
+
+def test_tare_at_s_fires_once_the_clock_reaches_it():
+    """Captured at a stated sim time, so a world can zero after the arm has settled.
+
+    Before that time the sensor reads the full load -- a tare armed for later must not quietly
+    apply early, or a world that meant to settle first would zero a moving arm.
+    """
+    engine = _settled(tare_at_s=1e9)  # never reached in this run
+    plugin = _plugin(engine)
+    assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
+
+    plugin.tare_at_s = engine.ctx.sim_time
+    assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)
+
+
+def test_a_tare_is_forgotten_on_reset():
+    """An offset carried into the next episode is a measurement of the previous one.
+
+    The same rule the noise follows, and for the same reason: a repetition that starts from the
+    last trial's zero is not a repetition.
+    """
+    engine = _settled()
+    plugin = _plugin(engine)
+    plugin.tare()
+    assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)
+
+    engine.reset()
+    for _ in range(200):
+        engine.step()
+    assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
+
+
+def test_taring_twice_zeroes_against_the_load_now_not_the_residual():
+    """Re-taring is the way to use this on a tool that turns, so it must not compound.
+
+    Taken through ``read`` instead of the raw pair, the second tare would capture the residual of
+    the first -- leaving the first offset standing forever and the second doing nothing.
+    """
+    engine = _settled()
+    plugin = _plugin(engine)
+    plugin.tare()
+    first = plugin._offset_force.copy()
+    plugin.tare()
+
+    assert np.allclose(plugin._offset_force, first, atol=1e-9), \
+        "the standing load has not changed, so neither should the offset"
+    assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)
+
+
+def test_the_offset_is_the_mean_so_what_remains_is_the_noise_alone():
+    """A tare taken after the noise would bake one draw into every later reading.
+
+    Captured before it, the residual is a zero-mean signal rather than one shifted by whatever
+    the sensor happened to read at the instant somebody pressed the button.
+    """
+    engine = _settled(noise_force_stddev=0.5)
+    plugin = _plugin(engine)
+    plugin.tare()
+
+    samples = []
+    for _ in range(200):
+        engine.step()
+        samples.append(plugin.read()[0][2])
+
+    assert abs(float(np.mean(samples))) < 0.15, "the residual must be centred on zero"
+    assert float(np.std(samples)) > 0.2, "and it must still carry the noise"
+
+
+def test_the_reader_on_the_blackboard_can_tare():
+    """The in-process half of the ticket: a controller zeroes at a moment it chooses."""
+    engine = _settled(name="ft")
+    reader = engine.ctx.blackboard.get("ft:ft")
+    assert reader.tare is not None
+    reader.tare()
+    assert np.allclose(reader.read()[0], 0.0, atol=1e-9)
+
+
+def test_a_negative_tare_time_is_refused_as_a_time():
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict({
+        "sim": {},
+        "components": [{f"{__name__}:_ArmScene": {}},
+                       {"force_torque": {"site": "fts_site", "tare_at_s": -1.0}}],
+    })
+    with pytest.raises(Exception, match="tare_at_s"):
+        Engine(cfg)
+
+
+def test_the_zero_button_is_a_service_a_scenario_can_press():
+    """What a user reaches for, and what real hardware exposes: a command taking no argument.
+
+    An FT driver's zero is a service (`zero_ftsensor`), not a configured time -- the moment to
+    zero is known by whatever is running the task, not by whoever wrote the world. A service also
+    has a reply, which is what lets a scenario fail instead of measuring against an offset it only
+    assumed was applied.
+    """
+    engine = _settled(name="ft")
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "tare")
+
+    assert endpoint.direction == "in"
+    assert endpoint.backend["ros2"]["service"] == "std_srvs.srv.Trigger"
+
+    plugin = _plugin(engine)
+    assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
+    endpoint.write(None)
+    engine.step()  # the command is posted to the physics thread, like every other write
+
+    assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)
+
+
+def test_all_three_doors_zero_the_same_sensor():
+    """One implementation behind the service, the reader and the configured time.
+
+    Three surfaces onto one offset, so a world that tares at a time and a controller that re-tares
+    on approach cannot end up disagreeing about what the sensor reads.
+    """
+    engine = _settled(name="ft")
+    plugin = _plugin(engine)
+    reader = engine.ctx.blackboard.get("ft:ft")
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "tare")
+
+    for press in (plugin.tare, reader.tare, lambda: (endpoint.write(None), engine.step())):
+        plugin.on_reset(engine.ctx)
+        assert plugin.read()[0][2] == pytest.approx(-EXPECTED_FZ, rel=1e-3)
+        press()
+        assert np.allclose(plugin.read()[0], 0.0, atol=1e-9)

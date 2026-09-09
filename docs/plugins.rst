@@ -1112,10 +1112,19 @@ Three things decide whether such a world measures anything at all:
   site produces a wrench that is identically zero — which looks like a well-behaved controller, not
   like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut) and ``tool_site`` (the attach
   point, further out) so the two cannot be confused.
-* **Gravity and tool mass.** A real FT sensor is tared against the tool's weight before a
-  measurement; a simulated one is not. With gravity on and a realistically-massed tool, any metric
-  that integrates force is dominated by a static offset. Either set ``sim.gravity: [0, 0, 0]`` or give
-  the tool a near-zero mass.
+* **Gravity and tool mass.** With gravity on and a realistically-massed tool, any metric that
+  integrates force is dominated by the tool's own weight. Zeroing is a command, as it is on real
+  hardware: ``force_torque`` exposes a ``tare`` service (``std_srvs/Trigger``, the analogue of a
+  driver's ``zero_ftsensor``), ``WrenchReader.tare()`` for an in-process controller, and
+  ``tare_at_s`` for a world that wants it done once at a stated time. Prefer a command -- a time
+  has to stay in step with the scenario's own timing, and fires mid-approach if that slips. All
+  three forget the offset on ``reset``, so a repetition really is one.
+
+  **A tare is not gravity compensation.** It cancels the load at *the pose it was captured at*,
+  exactly as the zero button on a real sensor does: the tool's weight is fixed in the world frame
+  while the sensor frame turns with the tool, so rotating after taring brings the weight back. Tare
+  per approach on a tool that turns. Where an experiment needs a wrench that is clean at every pose,
+  ``sim.gravity: [0, 0, 0]`` or a near-massless tool remain the honest answers.
 * **The controller's plant, not its gains.** ``cartesian_admittance`` closes a loop around
   ``arm_controller``'s position servo, which is stiff. Admittance gains taken from a system with a
   soft joint controller will oscillate and diverge on contact. Tune against a stability criterion

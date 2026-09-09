@@ -26,11 +26,19 @@ sits rather than a config key::
                                 #   MuJoCo's site sensor reports the opposite). Whichever is chosen,
                                 #   the blackboard reader says which it is in `measures`, so a
                                 #   consumer never has to assume.
+      tare_at_s: null           # sim time (s) at which to capture the zero offset, once per
+                                #   episode; null (default) never tares. The `tare` service and
+                                #   `WrenchReader.tare()` are the better doors -- see "Taring"
+                                #   below, and note the offset is only valid at the pose it was
+                                #   captured at.
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
       rate_hz: 100.0            # endpoint publish rate
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
+
+Endpoint ``tare`` (in) is that zero button as a service; it takes no argument and its reply is
+what lets a scenario fail rather than measure against an offset it only assumed was applied.
 
 Endpoint ``wrench`` (out) reads ``(force[3], torque[3])`` and carries a
 ``geometry_msgs/WrenchStamped`` backend hint. A ``WrenchReader`` is published on the blackboard
@@ -42,6 +50,35 @@ entity's base body frame, and ``world`` into the world frame. The choice is not 
 metrics that split the wrench into an insertion axis and the plane orthogonal to it: ``|F_z|`` and
 ``||F_x, F_y||`` are frame-dependent, and a tool that tilts reports a different split in its own
 frame than in the world's.
+
+**Taring: zeroing the tool's own load.** The sensor reads everything below the cut, which for a
+loaded flange is mostly the tool's own weight -- so a contact task measuring a 5 N push starts from
+20 N of tool.
+
+Zeroing is a **command**, the way it is on real hardware: an FT driver exposes a service taking no
+argument (``zero_ftsensor``) and this exposes the same thing three ways onto one implementation --
+the ``tare`` endpoint (``std_srvs/Trigger`` over ROS), ``WrenchReader.tare()`` for an in-process
+controller, and ``tare_at_s`` for a world that wants it done once at a stated time without anything
+to press the button. Prefer one of the first two: a time is a number that has to stay in step with
+a scenario's own timing, and if the approach runs long it fires mid-motion and zeroes against a
+contact.
+
+All three re-arm on ``on_reset``: an offset carried into the next episode is a measurement of the
+previous one, and repetitions of a trial would not be repetitions.
+
+**A tare is not gravity compensation, and the difference is a trap.** The offset is captured in
+the raw sensor frame and subtracted there, exactly as a real FT sensor's zero button works -- so it
+is valid at *the pose the tool was in when it was captured*. Rotate the tool ninety degrees and the
+weight reappears, up to twice the tool's load in the worst case, because the tool's weight is fixed
+in the WORLD frame while the sensor frame turns with it. Compensating at every pose needs the
+tool's mass and centre of mass estimated, which is a calibration, not a tare; roqsim does not do
+it, and a tare that quietly claimed to would leave a contact controller chasing a bias that grows
+with the tool's tilt. Tare at the pose you are about to make contact in, or tare per approach.
+
+The offset is the reading BEFORE noise is added, so what is left after taring is the noise alone
+rather than the noise plus one sample's worth of it -- a real tare averages many samples, and this
+is that average exactly. Capture happens on the first read at or after ``tare_at_s``, so a sensor
+nobody reads is never tared and one read at 100 Hz tares within a step of the time asked for.
 
 **Noise is per-sensor config, deliberately.** There is no generic error-model framework in roqsim (see
 ``docs/architecture.rst`` §9); a sensor that wants noise declares its own, as the lidar's
@@ -88,12 +125,18 @@ class WrenchReader:
     against a target it *commands* must put both in one convention first; subtracting one from the
     other turns a contact controller's negative feedback into positive, which does not look like a
     sign error -- it looks like the contact getting away from the controller.
+
+    ``tare()`` captures the current reading as the zero offset, the way a real sensor's zero button
+    does -- and with the same limit: the offset is valid at the pose it was captured at, not at
+    every pose. See "Taring" in the module docstring before reaching for it. ``None`` on a reader
+    built by something other than this plugin.
     """
 
     name: str
     frame: str
     read: Callable[[], tuple[np.ndarray, np.ndarray]]
     measures: str = "environment_on_tool"
+    tare: Callable[[], None] | None = None
 
 
 class ForceTorquePlugin(Plugin):
@@ -110,6 +153,15 @@ class ForceTorquePlugin(Plugin):
         self.invert = bool(self.config.get("invert", True))
         self.noise_f = float(self.config.get("noise_force_stddev", 0.0))
         self.noise_t = float(self.config.get("noise_torque_stddev", 0.0))
+        tare_at = self.config.get("tare_at_s")
+        self.tare_at_s = None if tare_at is None else float(tare_at)
+        #: The captured zero, in the RAW sensor frame and before the sign convention is applied --
+        #: which is where it has to live: an offset stored after the rotation would be re-rotated
+        #: on every read and would drift with the tool, and one stored after `invert` would flip
+        #: with a config change that is meant to affect only how the reading is reported.
+        self._offset_force = np.zeros(3)
+        self._offset_torque = np.zeros(3)
+        self._tared = False
         self.rate_hz = float(self.config.get("rate_hz", 100.0))
         self._ctx: SimContext | None = None
         self._force_adr = -1
@@ -129,6 +181,8 @@ class ForceTorquePlugin(Plugin):
         for key in ("noise_force_stddev", "noise_torque_stddev"):
             if float(config.get(key, 0.0)) < 0:
                 errors.append(f"'{key}' must be >= 0")
+        if config.get("tare_at_s") is not None and float(config["tare_at_s"]) < 0:
+            errors.append("'tare_at_s' must be >= 0: it is a sim time, not an offset")
         if "seed" in config:
             # Silently ignoring it would leave a world believing it pinned the noise stream.
             errors.append(
@@ -224,7 +278,30 @@ class ForceTorquePlugin(Plugin):
                 frame=self.frame,
                 read=self.read,
                 measures="environment_on_tool" if self.invert else "tool_on_environment",
+                tare=self.tare,
             ),
+        )
+
+        ctx.interface.add(
+            Endpoint(
+                name="tare",
+                direction="in",
+                owner=self.owner,
+                namespace=ns,
+                # The payload is ignored: zeroing takes no argument, and the call IS the request.
+                write=lambda _payload=None: ctx.post(lambda _ctx: self.tare()),
+                backend={
+                    "ros2": {
+                        # A service, not a topic, and `Trigger` rather than `SetBool`: this is the
+                        # zero button, which a real FT driver also exposes as a service taking no
+                        # argument (`zero_ftsensor`). A caller needs the outcome -- a scenario that
+                        # tared and carried on regardless would measure against an offset it only
+                        # assumed was applied.
+                        "service": "std_srvs.srv.Trigger",
+                        "name": self.topic_override("tare") or f"{self.name}/tare",
+                    }
+                },
+            )
         )
 
         ctx.interface.add(
@@ -250,6 +327,14 @@ class ForceTorquePlugin(Plugin):
         d = self._ctx.data
         force = np.array(d.sensordata[self._force_adr : self._force_adr + 3], dtype=float)
         torque = np.array(d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float)
+        if not self._tared and self.tare_at_s is not None and self._ctx.sim_time >= self.tare_at_s:
+            # Captured here, from the raw pair, so the offset is the reading's MEAN: the noise is
+            # added below and is what remains after the subtraction. A tare taken after the noise
+            # would bake one sample's draw into every reading for the rest of the episode.
+            self._offset_force, self._offset_torque = force.copy(), torque.copy()
+            self._tared = True
+        force = force - self._offset_force
+        torque = torque - self._offset_torque
         if self.invert:
             force, torque = -force, -torque
         if self.frame != "sensor":
@@ -274,3 +359,36 @@ class ForceTorquePlugin(Plugin):
         """Endpoint ``read``: the same wrench as plain lists, for a transport-neutral payload."""
         force, torque = self.read()
         return (force.tolist(), torque.tolist())
+
+    def tare(self) -> None:
+        """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
+
+        What a real sensor's zero button does, with the same limit: this cancels the load as it is
+        right now, not the tool's weight at every pose. See "Taring" in the module docstring.
+
+        Re-tares an already-tared sensor, deliberately: an approach that tares per contact is the
+        way to use this on a tool that turns, and refusing the second call would make that the one
+        thing it cannot do.
+        """
+        d = self._ctx.data
+        # From the raw pair rather than through `read`, which has already subtracted whatever
+        # offset is standing -- taring twice would otherwise capture the residual and leave the
+        # first tare's offset in place forever.
+        self._offset_force = np.array(
+            d.sensordata[self._force_adr : self._force_adr + 3], dtype=float
+        )
+        self._offset_torque = np.array(
+            d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float
+        )
+        self._tared = True
+
+    def on_reset(self, ctx: SimContext) -> None:
+        """Forget the zero, so the next episode captures its own.
+
+        An offset carried across a reset is a measurement of the previous episode, and the whole
+        point of a repetition is that it repeats -- the same reason the noise is keyed on the
+        episode. A `tare_at_s` sensor re-arms and tares again at that time.
+        """
+        self._offset_force = np.zeros(3)
+        self._offset_torque = np.zeros(3)
+        self._tared = False
