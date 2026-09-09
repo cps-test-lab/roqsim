@@ -28,15 +28,27 @@ class _Quat:
         self.w, self.x, self.y, self.z = w, x, y, z
 
 
+class _Twist:
+    def __init__(self, lin=(0.0, 0.0, 0.0), ang=(0.0, 0.0, 0.0)):
+        self.linear, self.angular = _Vec(*lin), _Vec(*ang)
+
+
 class _State:
-    def __init__(self, pos):
+    """As faithful to `EntityState` as the handler needs: a pose AND a twist.
+
+    The twist is not decoration -- the message always carries one, and a double without it models a
+    request that cannot exist.
+    """
+
+    def __init__(self, pos, lin=(0.0, 0.0, 0.0), ang=(0.0, 0.0, 0.0)):
         self.pose = type("P", (), {"position": _Vec(*pos), "orientation": _Quat()})()
+        self.twist = _Twist(lin, ang)
 
 
 class _Req:
-    def __init__(self, entity, pos):
+    def __init__(self, entity, pos, lin=(0.0, 0.0, 0.0), ang=(0.0, 0.0, 0.0)):
         self.entity = entity
-        self.state = _State(pos)
+        self.state = _State(pos, lin, ang)
 
 
 class _Resp:
@@ -54,7 +66,15 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
     plugin._ctx = type(
         "Ctx", (), {"entities": type("E", (), {"get": staticmethod(lambda name: entity)})()}
     )()
-    plugin._write_body = lambda ctx, ent, pos, quat: writable
+    # `vel` too: the handler passes the requested velocity through, and a double that cannot take
+    # it would pass while the real signature had moved.
+    plugin.written = {}
+
+    def _write(ctx, ent, pos, quat, vel=None):
+        plugin.written.update(pos=pos, quat=quat, vel=vel)
+        return writable
+
+    plugin._write_body = _write
     # `quat` too: _already_at compares both, and a state missing either is "not there".
     plugin._read_body = lambda ctx, body: {"pos": list(at), "quat": [1.0, 0.0, 0.0, 0.0]}
     return plugin
@@ -101,3 +121,26 @@ def test_an_unknown_entity_is_still_not_found():
     resp = _run(plugin, _Req("nope", (1.0, 2.0, 0.03)))
     assert resp.result.result == Result.RESULT_NOT_FOUND
     assert "nope" in resp.result.error_message
+
+
+def test_a_requested_twist_reaches_the_write():
+    """The state includes a velocity, and asking for one has to arrive.
+
+    `EntityState` carries a twist and `GetEntityState` reports one, but this handler used to apply
+    only the pose -- and answer RESULT_OK. A caller could read a velocity it was unable to set, with
+    nothing in the reply saying half the request had been dropped.
+    """
+    plugin = _plugin(writable=True)
+    _run(plugin, _Req("robot", (1.0, 2.0, 3.0), lin=(0.5, 0.0, -0.25), ang=(0.0, 0.0, 1.5)))
+    assert plugin.written["vel"] == (0.5, 0.0, -0.25, 0.0, 0.0, 1.5)
+
+
+def test_a_request_without_a_twist_zeroes_the_velocity():
+    """A partial caller must not fail a pose write for want of a field it does not use, and must
+    not inherit a velocity either: no twist means zero, which is what a placement has always meant.
+    """
+    plugin = _plugin(writable=True)
+    req = _Req("robot", (1.0, 2.0, 3.0))
+    del req.state.twist
+    _run(plugin, req)
+    assert plugin.written["vel"] is None, "None is what _write_body reads as 'zero the velocity'"
