@@ -121,7 +121,7 @@ def check_world(target: str) -> dict:
     from roqsim.engine import Engine
 
     try:
-        engine = Engine(cfg)
+        engine = Engine(cfg, preview=True)
     except PluginError as exc:
         report["problems"].append(_problem("config", str(exc)))
         return report
