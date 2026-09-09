@@ -261,6 +261,17 @@ class InProcessAccess(WorldAccess):
             pos=None if pos is None else np.asarray(pos, dtype=float),
             quat=None if quat is None else np.asarray(quat, dtype=float),
         ):
+            # Refused BEFORE the pose is written, and refused at all: `SpawnEntity` over ROS answers
+            # RESULT_OPERATION_FAILED for an entity that is already in the state asked for, and two
+            # transports must not answer one question differently -- a scenario is written once and
+            # does not learn which shape it is running in. Checked first because refusing after the
+            # write would leave the entity moved by a call that reported failure.
+            if bool(getattr(entity, "present", True)) == bool(present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False,
+                    detail=f"entity {name!r} is already {'present' if present else 'absent'}",
+                )
+                return
             if pos is not None:
                 jid = (
                     mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
@@ -283,7 +294,13 @@ class InProcessAccess(WorldAccess):
                 # has no history, and a velocity carried over from before it was hidden is one this
                 # trial never applied.
                 _ctx.data.qvel[dof : dof + 6] = 0.0
-            set_present(_ctx, entity, present)
+            # The return value is the confirmation, and discarding it was the defect: this
+            # reported success whether or not anything had changed.
+            if not set_present(_ctx, entity, present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False, detail=f"entity {name!r} did not change presence"
+                )
+                return
             mujoco.mj_forward(_ctx.model, _ctx.data)
             where = "" if pos is None else f" at {pos.tolist()}"
             outcome_box["outcome"] = SpawnOutcome(

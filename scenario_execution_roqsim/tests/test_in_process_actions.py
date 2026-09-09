@@ -757,6 +757,9 @@ def test_spawn_zeroes_the_velocity_the_entity_had_while_absent(teleport_world):
 def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
     """A welded prop asked for a pose is a fact about the world the campaign chose."""
     ctx, clock, sim = teleport_world
+    # Absent first, or the presence check refuses it before the weld is ever reached -- which is
+    # its own test below.
+    ctx.entities.get("prop").present = False
     action = _start(
         SpawnEntity(),
         sim,
@@ -768,6 +771,53 @@ def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
     _step(ctx, clock)
     assert action.update() is FAILURE
     assert "no free joint" in action.feedback_message
+
+
+def test_spawn_refuses_an_entity_that_is_already_present(teleport_world):
+    """The same answer both transports give.
+
+    `SpawnEntity` over ROS answers RESULT_OPERATION_FAILED for an entity already in the state asked
+    for. In-process used to report success regardless -- it called `set_present` and discarded the
+    return value that exists to say whether anything changed. A scenario is written once and does
+    not learn which shape it runs in, so the two must not disagree.
+    """
+    ctx, clock, sim = teleport_world
+    assert ctx.entities.get("robot").present, "the fixture spawns it present"
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 1.0, "y": 1.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "already present" in action.feedback_message
+
+
+def test_a_refused_spawn_leaves_the_entity_where_it_was(teleport_world):
+    """Refusing after moving it would be worse than not refusing.
+
+    The presence check runs before the pose is written, so a call that reports failure has not also
+    relocated the thing it refused to spawn.
+    """
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    before = np.array(ctx.data.xpos[bid])
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 9.0, "y": 9.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert np.allclose(ctx.data.xpos[bid][:2], before[:2], atol=1e-6)
 
 
 def test_spawn_raises_on_an_entity_the_world_never_declared(teleport_world):
