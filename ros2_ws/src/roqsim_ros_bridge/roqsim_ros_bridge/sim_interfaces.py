@@ -43,7 +43,7 @@ from simulation_interfaces.srv import (
 )
 
 from roqsim import control as ctl
-from roqsim.placement import place_body
+from roqsim.placement import PLACEABLE_MODES_HINT, place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
 
@@ -335,8 +335,9 @@ class SimInterfacesPlugin(Plugin):
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=(
                     f"{verb} {name!r} asks for a pose the entity cannot take: the world compiled "
-                    f"it without a free joint, welded at {outcome['welded_at']}. Ask for that "
-                    "pose, or give it 'motion: physics' in the world so it can be placed."
+                    f"it as welded scenery at {outcome['welded_at']}, with neither a mocap body "
+                    f"nor a free joint to write. Ask for that pose, or place it: "
+                    f"{PLACEABLE_MODES_HINT}"
                 ),
             )
             return resp
@@ -423,9 +424,9 @@ class SimInterfacesPlugin(Plugin):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=(
-                    f"{req.entity!r} cannot be moved: the world compiled it without a free "
-                    f"joint, welded at {outcome['welded_at']}. Give it 'motion: physics' in the "
-                    "world so it can be placed."
+                    f"{req.entity!r} cannot be moved: the world compiled it as welded scenery "
+                    f"at {outcome['welded_at']}, with neither a mocap body nor a free joint to "
+                    f"write. {PLACEABLE_MODES_HINT}"
                 ),
             )
             return resp

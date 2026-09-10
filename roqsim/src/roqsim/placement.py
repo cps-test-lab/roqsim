@@ -86,4 +86,19 @@ def base_joint_of(entity) -> str | None:
     return (getattr(entity, "meta", None) or {}).get("base_joint")
 
 
-__all__ = ["base_joint_of", "place_body"]
+#: What to say to whoever asked for a pose an entity cannot take. The two modes that CAN take one,
+#: with what each means, because naming only ``physics`` sends someone who wants a placed obstacle
+#: to the mode that lets the solver move it: a free body is pushed off its placement by whatever
+#: reaches it, and a placement overlapping other geometry is answered by ejecting it.
+#:
+#: Shared for the same reason :func:`place_body` is. A refusal is part of the placement contract,
+#: and a transport that phrases its own advice is describing this module rather than reusing it --
+#: which is how the ROS bridge came to recommend the one mode a placed obstacle must not have,
+#: while the in-process transport recommended both.
+PLACEABLE_MODES_HINT = (
+    "Give it 'motion: driven' in the world (placeable and immovable) or 'motion: physics' "
+    "(placeable and owned by the solver from the next step)."
+)
+
+
+__all__ = ["PLACEABLE_MODES_HINT", "base_joint_of", "place_body"]

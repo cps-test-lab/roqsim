@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from simulation_interfaces.msg import Result
 
+from roqsim.placement import PLACEABLE_MODES_HINT
 from roqsim_ros_bridge.sim_interfaces import SimInterfacesPlugin
 
 
@@ -103,6 +104,11 @@ def test_a_welded_entity_is_refused_by_naming_the_weld():
     # The name, the cause and the fix -- the three things the campaign log had none of.
     assert "dynamic_0" in resp.result.error_message
     assert "free joint" in resp.result.error_message
+    # The advice is the SHARED one, verbatim. Naming only `physics` sent whoever wanted a placed
+    # obstacle to the mode that lets the solver move it -- and left this transport recommending
+    # something different from the in-process one for the identical refusal.
+    assert PLACEABLE_MODES_HINT in resp.result.error_message
+    assert "motion: driven" in resp.result.error_message
     assert "motion: physics" in resp.result.error_message
 
 
