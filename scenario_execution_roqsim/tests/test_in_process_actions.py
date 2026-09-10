@@ -449,6 +449,9 @@ TELEPORT_SCENE = """
     <body name="fixed_prop" pos="3 3 0.1">
       <geom name="prop" type="box" size="0.1 0.1 0.1"/>
     </body>
+    <body name="driven_prop" pos="4 4 0.1" mocap="true">
+      <geom name="driven" type="box" size="0.1 0.1 0.1"/>
+    </body>
   </worldbody>
 </mujoco>
 """
@@ -465,6 +468,9 @@ def teleport_world():
     )
     # No `base_joint` in meta: exercises the "cannot be teleported" outcome (a static prop).
     ctx.entities.add(Entity(name="prop", kind="object", body="fixed_prop", meta={}))
+    # `motion: driven`: no base_joint either, and placeable all the same -- the body is what
+    # carries the answer, which is why a mocap prop registers exactly the meta a welded one does.
+    ctx.entities.add(Entity(name="driven", kind="object", body="driven_prop", meta={"mocap": True}))
     return ctx, FakeClock(), FakeSim(ctx)
 
 
@@ -510,7 +516,61 @@ def test_set_entity_state_fails_the_trial_rather_than_raise_when_the_entity_has_
     assert action.update() is RUNNING
     _step(ctx, clock)
     assert action.update() is FAILURE
-    assert "no free joint" in action.feedback_message
+    assert "welded scenery" in action.feedback_message
+    assert "motion: driven" in action.feedback_message
+
+
+def test_set_entity_state_places_a_driven_prop_and_the_solver_leaves_it_there(teleport_world):
+    """`motion: driven` is placeable, and that is the point of it.
+
+    A trial that reveals an obstacle mid-run has to write its pose, and only two kinds of body
+    can take one. A free body's pose is the solver's from the next step: placed intersecting other
+    geometry it is launched out of the scene, and reached by the robot it is pushed off the
+    placement the experiment chose. A mocap body has no DOF -- it takes the pose and keeps it,
+    which is what an obstacle AT a position means.
+    """
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "driven_prop")
+
+    action = _start(
+        SetEntityState(),
+        sim,
+        clock,
+        entity="driven",
+        pose={"position": {"x": 5.0, "y": -1.0, "z": 0.5}, "orientation": {"yaw": math.pi / 2}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    assert np.allclose(ctx.data.xpos[bid], [5.0, -1.0, 0.5], atol=1e-6)
+    quat = ctx.data.xquat[bid]
+    assert np.allclose(quat, [math.cos(math.pi / 4), 0.0, 0.0, math.sin(math.pi / 4)], atol=1e-6)
+
+    # Exactly, and after further stepping: a free body would have fallen by now, and one placed
+    # inside something would have been pushed out of it.
+    for _ in range(50):
+        mujoco.mj_step(ctx.model, ctx.data)
+    assert np.allclose(ctx.data.xpos[bid], [5.0, -1.0, 0.5], atol=1e-9)
+
+
+def test_spawn_places_a_driven_prop_as_it_appears(teleport_world):
+    """The other door onto the same write: a revealed obstacle is placed where the trial says."""
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "driven_prop")
+    ctx.entities.get("driven").present = False
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="driven",
+        pose={"position": {"x": 1.0, "y": 1.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+    assert np.allclose(ctx.data.xpos[bid], [1.0, 1.0, 0.5], atol=1e-6)
 
 
 def test_set_entity_state_raises_on_an_unknown_entity(teleport_world):
@@ -757,6 +817,9 @@ def test_spawn_zeroes_the_velocity_the_entity_had_while_absent(teleport_world):
 def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
     """A welded prop asked for a pose is a fact about the world the campaign chose."""
     ctx, clock, sim = teleport_world
+    # Absent first, or the presence check refuses it before the weld is ever reached -- which is
+    # its own test below.
+    ctx.entities.get("prop").present = False
     action = _start(
         SpawnEntity(),
         sim,
@@ -767,7 +830,55 @@ def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
     assert action.update() is RUNNING
     _step(ctx, clock)
     assert action.update() is FAILURE
-    assert "no free joint" in action.feedback_message
+    assert "welded scenery" in action.feedback_message
+    assert "motion: driven" in action.feedback_message
+
+
+def test_spawn_refuses_an_entity_that_is_already_present(teleport_world):
+    """The same answer both transports give.
+
+    `SpawnEntity` over ROS answers RESULT_OPERATION_FAILED for an entity already in the state asked
+    for, and in-process answers the same way: `set_present` returns whether anything changed, and
+    the outcome is built from that rather than from having called it. A scenario is written once
+    and does not learn which shape it runs in, so the two must not disagree.
+    """
+    ctx, clock, sim = teleport_world
+    assert ctx.entities.get("robot").present, "the fixture spawns it present"
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 1.0, "y": 1.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "already present" in action.feedback_message
+
+
+def test_a_refused_spawn_leaves_the_entity_where_it_was(teleport_world):
+    """Refusing after moving it would be worse than not refusing.
+
+    The presence check runs before the pose is written, so a call that reports failure has not also
+    relocated the thing it refused to spawn.
+    """
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    before = np.array(ctx.data.xpos[bid])
+
+    action = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 9.0, "y": 9.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert np.allclose(ctx.data.xpos[bid][:2], before[:2], atol=1e-6)
 
 
 def test_spawn_raises_on_an_entity_the_world_never_declared(teleport_world):
@@ -1017,3 +1128,50 @@ def test_a_goal_orientation_is_refused_rather_than_dropped(world, axis):
     goal["orientation"][axis] = 0.3
     with pytest.raises(ActionError, match="orientation is nonzero"):
         action.execute(entity="parcel", goal_poses=[goal])
+
+
+# -- what an action says while it is waiting ---------------------------------------------------
+
+
+def test_a_waiting_action_names_what_is_missing_when_the_call_can_say():
+    """ "Still running" has two causes, and only one of them is progress.
+
+    A queued write drains next step; a service nobody serves never answers. They look identical
+    until the scenario's timeout fires, at which point the trial has spent its budget and reports
+    only that it ran out -- which is exactly what a world serving no `sim_interfaces` looked like.
+    """
+    from scenario_execution_roqsim.access import PendingCall
+
+    class _Silent(PendingCall):
+        def poll(self):
+            return None
+
+    class _Explains(PendingCall):
+        def poll(self):
+            return None
+
+        def pending_reason(self):
+            return "the simulator is not advertising 'set_entity_state'"
+
+    action = SetEntityState()
+    assert action.waiting("setting state", _Silent()) is RUNNING
+    assert action.feedback_message == "setting state", "progress needs no explanation"
+
+    assert action.waiting("setting state", _Explains()) is RUNNING
+    assert "not advertising 'set_entity_state'" in action.feedback_message
+
+
+def test_waiting_without_a_call_is_unchanged():
+    """The bare form still works: not every wait has a call behind it."""
+    action = SetEntityState()
+    assert action.waiting("waiting for the simulation") is RUNNING
+    assert action.feedback_message == "waiting for the simulation"
+
+
+def test_every_call_type_can_be_asked_why_it_is_waiting():
+    """The contract is shared, so an action never has to know which kind of call it holds --
+    which is how the nav call was missed when the question was first added."""
+    from scenario_execution_roqsim.access import NavCall, OverrideCall, SpawnCall, TeleportCall
+
+    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):
+        assert hasattr(cls, "pending_reason"), cls.__name__

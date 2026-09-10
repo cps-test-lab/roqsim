@@ -371,6 +371,15 @@ class _RosSpawn(SpawnCall):
         self._service = service
         self._future = None
 
+    def pending_reason(self) -> str | None:
+        if self._future is None and not self._client.service_is_ready():
+            return (
+                f"the simulator is not advertising {self._service!r}. A world serves it by "
+                "declaring the `sim_interfaces` plugin; without that this waits until the "
+                "scenario's own timeout"
+            )
+        return None
+
     def poll(self) -> SpawnOutcome | None:
         if self._future is None:
             if not self._client.service_is_ready():
@@ -402,11 +411,22 @@ class _RosTeleport(TeleportCall):
         self._result_ok = result_ok
         self._future = None
 
+    def pending_reason(self) -> str | None:
+        if self._future is None and not self._client.service_is_ready():
+            return (
+                "the simulator is not advertising 'set_entity_state'. A world serves it by "
+                "declaring the `sim_interfaces` plugin; without that this waits until the "
+                "scenario's own timeout"
+            )
+        return None
+
     def poll(self) -> TeleportOutcome | None:
         if self._future is None:
             if not self._client.service_is_ready():
                 # No simulator yet, or no `sim_interfaces` plugin in its world. Waiting beats
-                # failing: in a ROS run the stack and the simulator come up concurrently.
+                # failing: in a ROS run the stack and the simulator come up concurrently -- but the
+                # caller is told WHICH service is missing, so a world that serves none is a
+                # diagnosis rather than a trial that ran out of time.
                 return None
             self._future = self._client.call_async(self._request)
             return None

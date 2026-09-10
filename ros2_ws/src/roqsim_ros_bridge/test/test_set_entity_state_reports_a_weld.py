@@ -74,7 +74,7 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
         plugin.written.update(pos=pos, quat=quat, vel=vel)
         return writable
 
-    plugin._write_body = _write
+    plugin.place_stub = _write
     # `quat` too: _already_at compares both, and a state missing either is "not there".
     plugin._read_body = lambda ctx, body: {"pos": list(at), "quat": [1.0, 0.0, 0.0, 0.0]}
     return plugin
@@ -83,14 +83,18 @@ def _plugin(*, writable, entity=_Entity(), at=(40.0, 40.0, 0.03)):
 def _run(plugin, req):
     import roqsim_ros_bridge.sim_interfaces as mod
 
-    original = mod.run_on_physics
+    original = mod.run_on_physics, mod.place_body
     # The command runs inline: this test is about what the handler CONCLUDES, and threading a
     # real physics queue through it would test the queue instead.
     mod.run_on_physics = lambda ctx, fn, timeout=None: (fn(ctx), True)[1]
+    # Patched on the MODULE, because that is where the handler looks the placement up: it is
+    # `roqsim.placement.place_body`, and this file is about what the handler CONCLUDES from a
+    # write that refused -- which needs no model to compile.
+    mod.place_body = plugin.place_stub
     try:
         return plugin._set_entity_state(req, _Resp())
     finally:
-        mod.run_on_physics = original
+        mod.run_on_physics, mod.place_body = original
 
 
 def test_a_welded_entity_is_refused_by_naming_the_weld():
@@ -143,4 +147,4 @@ def test_a_request_without_a_twist_zeroes_the_velocity():
     req = _Req("robot", (1.0, 2.0, 3.0))
     del req.state.twist
     _run(plugin, req)
-    assert plugin.written["vel"] is None, "None is what _write_body reads as 'zero the velocity'"
+    assert plugin.written["vel"] is None, "None is what place_body reads as 'zero the velocity'"
