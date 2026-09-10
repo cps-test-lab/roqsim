@@ -47,6 +47,21 @@ class _Scene(Plugin):
         plate = spec.worldbody.add_body(name="plate", pos=[0.0, 1.2, 0.5])
         plate.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.3, 0.3, 0.02], mass=1.0)
 
+        # A procedural prop's shape: ONE body carrying its parts as separate named geoms, which
+        # is what a shelf or a workbench compiles to and what `bodies:` cannot take apart.
+        # In view from above, and the legs stand OUTSIDE the boards' footprint so both parts are
+        # visible in a plan view -- a leg tucked under a shelf top is occluded, which would make
+        # this fixture test occlusion rather than labelling.
+        rack = spec.worldbody.add_body(name="rack", pos=[0.0, 0.7, 0.3])
+        for i, z in enumerate((0.0, 0.3)):
+            g = rack.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.25, 0.15, 0.02], mass=1.0)
+            g.name = f"board_{i}"
+            g.pos = [0.0, 0.0, z]
+        for i, x in enumerate((-0.4, 0.4)):
+            g = rack.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.05, 0.05, 0.3], mass=1.0)
+            g.name = f"leg_{i}"
+            g.pos = [x, 0.0, 0.0]
+
         # The "robot": a base with a child link, to check that a subtree is one instance.
         base = spec.worldbody.add_body(name="base_link", pos=[0.0, -1.2, 0.15])
         base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.15, 0.1], mass=5.0)
@@ -273,3 +288,63 @@ def test_the_endpoints_advertise_the_topics_and_types_a_consumer_expects():
 def test_config_errors_are_reported_by_name(config, expected):
     errors = SegmentationCameraPlugin(config, entity="robot", label="seg").validate_config(config)
     assert any(expected in e for e in errors), errors
+
+
+# -- geoms: the parts of one body ----------------------------------------------------------------
+
+BOARDS = {"class_id": 3, "name": "board", "geoms": ["board_*"]}
+LEGS = {"class_id": 4, "name": "leg", "geoms": ["leg_*"]}
+
+
+def test_parts_of_one_body_can_carry_different_classes():
+    """The capability: a procedural prop is one body, and its parts are the vocabulary.
+
+    A shelf compiles to a single body whose boards and legs are separate geoms, so a body-granular
+    class can only ever call the whole rack one thing. An experiment measuring whether a mapper
+    separates a surface from its support needs them named apart.
+    """
+    labels = _plugin(_engine(classes=[BOARDS, LEGS]))._labels
+
+    assert 3 in np.unique(labels), "the boards are their own class"
+    assert 4 in np.unique(labels), "and the legs are another"
+
+
+def test_a_geom_class_does_not_leak_to_the_rest_of_its_body():
+    """Selecting a part must label THAT part. Labelling by body was the bug being fixed."""
+    labels = _plugin(_engine(classes=[BOARDS]))._labels
+    values = set(np.unique(labels).tolist())
+
+    assert 3 in values
+    assert values <= {0, 3}, "nothing else in the rack's body may take the class"
+
+
+def test_a_geom_pattern_that_matches_nothing_is_an_error():
+    """Loud, on the same terms as a body pattern: a class matching nothing is an all-background
+    class, and a metric over it reads as 'the detector never saw it'."""
+    with pytest.raises(Exception, match="matches no geom"):
+        _engine(classes=[{"class_id": 3, "name": "board", "geoms": ["plank_*"]}])
+
+
+def test_parts_of_one_body_share_that_body_s_instance():
+    """Two boards of one rack are one instance of `board`.
+
+    An instance image is asked "how many racks", not "how many planks" -- and a part has no
+    identity of its own, so the body it sits in is the only honest answer.
+    """
+    plugin = _plugin(_engine(classes=[BOARDS]))
+    ids = plugin._instance_of_geom[plugin._class_of_geom == 3]
+
+    assert len(set(ids.tolist())) == 1
+
+
+def test_a_class_may_name_geoms_beside_bodies():
+    """The selectors compose; a vocabulary is not forced to pick one granularity."""
+    mixed = {"class_id": 5, "name": "furniture", "bodies": ["plate"], "geoms": ["leg_*"]}
+    labels = _plugin(_engine(classes=[mixed]))._labels
+
+    assert 5 in np.unique(labels)
+
+
+def test_a_class_naming_none_of_the_three_selectors_is_refused():
+    with pytest.raises(Exception, match="'geoms'"):
+        _engine(classes=[{"class_id": 3, "name": "board"}])

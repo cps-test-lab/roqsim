@@ -758,10 +758,24 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
              classes:
                - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
                - {class_id: 2, name: person, entities: [walker_1]}
+               - {class_id: 3, name: shelf_board, geoms: ["board_*"]}
              instances: true
 
 That publishes a ``mono8`` class image, a ``16UC1`` instance image and a
 ``vision_msgs/Detection2DArray`` of tight boxes, all off one render through the named MJCF camera.
+
+**Three selectors, because a label does not always follow a body.** ``bodies`` and ``entities``
+label everything a body or a whole kinematic subtree carries -- what a parcel or a pedestrian is.
+``geoms`` labels named geoms directly, which is what the *parts* of a procedural prop are: a
+``shelf`` compiles to one body carrying its boards and its legs as separate geoms, and a
+``workbench`` its top and its frame, so a body-granular vocabulary can only call the whole thing
+one class. An experiment measuring whether a mapper separates a surface from its support needs
+them named apart. ``roqsim scenes describe <world> --overridable '*'`` lists the geom names a
+world carries, which is where a prop's parts appear — the same listing ``model_override``'s
+``select:`` is written against, so this is not a second naming scheme to learn. Selectors compose
+within a class and across classes, first match wins in declaration order, and a geom takes the
+instance of the body it sits in — so two boards of one rack are one instance of ``shelf_board``,
+which is what an instance image of a rack should say.
 
 Three properties are worth knowing before a metric is built on it. Boxes measure the **visible**
 extent, because that is the only extent derivable from a mask and the only one a detector could have
