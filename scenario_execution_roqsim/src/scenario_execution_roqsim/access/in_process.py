@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from roqsim.placement import base_joint_of, place_body
+
 from . import (
     AccessError,
     NavCall,
@@ -30,6 +32,16 @@ from . import (
 )
 
 _MISSING = object()
+
+
+def _unplaceable(name, joint_name) -> str:
+    """Why a pose could not be applied, in terms of what the WORLD would have to say instead."""
+    return (
+        f"entity {name!r} is welded scenery: it has neither a mocap body nor a free joint named "
+        f"{joint_name!r}, so no pose can be written to it. Give it 'motion: driven' in the world "
+        "(placeable and immovable) or 'motion: physics' (placeable and owned by the solver from "
+        "the next step)."
+    )
 
 
 class _PostedRoute(NavCall):
@@ -187,7 +199,7 @@ class InProcessAccess(WorldAccess):
                 f"the simulator has no entity called {name!r}. The name is the world's `name:` for "
                 "that spawn, not a body name and not a TF frame."
             )
-        joint_name = (entity.meta or {}).get("base_joint")
+        joint_name = base_joint_of(entity)
         outcome_box: dict = {}
 
         def _write(
@@ -203,25 +215,14 @@ class InProcessAccess(WorldAccess):
                 dtype=float,
             ),
         ):
-            jid = (
-                mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                if joint_name
-                else -1
-            )
-            if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+            # The velocity the caller asked for, defaulting to zero: a body PUT somewhere is at
+            # rest unless the caller says otherwise, which is what distinguishes a placement from
+            # a launch.
+            if not place_body(_ctx, entity, pos, quat, vel):
                 outcome_box["outcome"] = TeleportOutcome(
-                    ok=False,
-                    detail=f"entity {name!r} has no free joint named {joint_name!r} -- it cannot be "
-                    "teleported (a static prop, or a model without a base_joint in its meta).",
+                    ok=False, detail=_unplaceable(name, joint_name)
                 )
                 return
-            q = _ctx.model.jnt_qposadr[jid]
-            _ctx.data.qpos[q : q + 3] = pos
-            _ctx.data.qpos[q + 3 : q + 7] = quat
-            dof = _ctx.model.jnt_dofadr[jid]
-            # The velocity the caller asked for, which defaults to zero -- so a placement with no
-            # twist stated behaves exactly as it always has, and a stated one is no longer dropped.
-            _ctx.data.qvel[dof : dof + 6] = vel
             mujoco.mj_forward(_ctx.model, _ctx.data)
             moving = "" if not vel.any() else f", moving at {vel.tolist()}"
             outcome_box["outcome"] = TeleportOutcome(
@@ -252,7 +253,7 @@ class InProcessAccess(WorldAccess):
                 "already declares -- it does not create one -- so the name must be a `name:` in "
                 "the world, and a world that declares no such entity cannot be made to have it."
             )
-        joint_name = (entity.meta or {}).get("base_joint")
+        joint_name = base_joint_of(entity)
         outcome_box: dict = {}
 
         def _apply(
@@ -261,29 +262,35 @@ class InProcessAccess(WorldAccess):
             pos=None if pos is None else np.asarray(pos, dtype=float),
             quat=None if quat is None else np.asarray(quat, dtype=float),
         ):
-            if pos is not None:
-                jid = (
-                    mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                    if joint_name
-                    else -1
+            # Refused BEFORE the pose is written, and refused at all: `SpawnEntity` over ROS answers
+            # RESULT_OPERATION_FAILED for an entity that is already in the state asked for, and two
+            # transports must not answer one question differently -- a scenario is written once and
+            # does not learn which shape it is running in. Checked first because refusing after the
+            # write would leave the entity moved by a call that reported failure.
+            if bool(getattr(entity, "present", True)) == bool(present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False,
+                    detail=f"entity {name!r} is already {'present' if present else 'absent'}",
                 )
-                if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+                return
+            if pos is not None:
+                # The velocity is left at zero for the same reason a teleport zeroes it: an entity
+                # that has just appeared has no history, and a velocity carried over from before it
+                # was hidden is one this trial never applied.
+                if not place_body(_ctx, entity, pos, quat):
                     outcome_box["outcome"] = SpawnOutcome(
                         ok=False,
-                        detail=f"entity {name!r} has no free joint named {joint_name!r}, so it "
-                        "cannot be placed as it appears. Spawn it without a pose to activate it "
-                        "where the world welded it, or give the model a base_joint.",
+                        detail=_unplaceable(name, joint_name)
+                        + " Or spawn it without a pose, to activate it where the world put it.",
                     )
                     return
-                q = _ctx.model.jnt_qposadr[jid]
-                _ctx.data.qpos[q : q + 3] = pos
-                _ctx.data.qpos[q + 3 : q + 7] = quat
-                dof = _ctx.model.jnt_dofadr[jid]
-                # Zeroed for the same reason a teleport zeroes it: an entity that has just appeared
-                # has no history, and a velocity carried over from before it was hidden is one this
-                # trial never applied.
-                _ctx.data.qvel[dof : dof + 6] = 0.0
-            set_present(_ctx, entity, present)
+            # The return value is the confirmation that something changed, so it is what the
+            # outcome is built from. Ignoring it would report success for a no-op.
+            if not set_present(_ctx, entity, present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False, detail=f"entity {name!r} did not change presence"
+                )
+                return
             mujoco.mj_forward(_ctx.model, _ctx.data)
             where = "" if pos is None else f" at {pos.tolist()}"
             outcome_box["outcome"] = SpawnOutcome(

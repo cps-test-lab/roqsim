@@ -174,6 +174,25 @@ The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` 
 arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
 in its ``realsense_d435`` capture plugin.
 
+An **eye-in-hand** camera, or any sensor that rides something that moves, is
+``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
+``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
+document, with ``pos``/``rpy`` then read relative to that body -- which is what a datasheet or a
+CAD drawing states, and what a world-frame pose cannot be once the carrier moves. An arm whose own
+MODEL ships a camera needs none of this (three do, and their manifests offer the capture plugin);
+this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
+invisible to anyone reading the world. It is mutually exclusive with ``motion:``: a mount that
+rides a body has its pose from that body, so moving the sensor means moving what carries it.
+
+A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
+is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
+scenario repositions between phases. ``static`` is the default and welds the mount into the model,
+so nothing can move it and a placement naming it is refused rather than ignored. ``driven`` makes
+it a mocap body: it holds the pose it is given, nothing that touches it shoves it off, and -- the
+part a free joint gets wrong -- it does not fall. That is what a sensor on a mast or a ceiling is.
+``physics`` hands the pose to the solver, which for an overhead camera means the camera drops to
+the floor; ask for it only when the mount is meant to fall, be pushed or be carried.
+
 - **Override** a default: declare the same plugin inside that robot's/arm's ``components:`` block —
   your entry wins (e.g. add ``test_cmd``/``test_target``, or change ``lidar`` ``rays``). Nothing is
   duplicated. Matching is on the **label**: the entry's ``name:``, else its plugin ref, among that

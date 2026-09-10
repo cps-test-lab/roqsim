@@ -82,7 +82,9 @@ class EntityNavigate(SimAction):
 
         if outcome is None:
             where = f"through {len(self._poses)} pose(s)" if self._poses else "on its own route"
-            return self.waiting(f"navigating {self._entity!r} {where} ({self.transport})")
+            return self.waiting(
+                f"navigating {self._entity!r} {where} ({self.transport})", self._call
+            )
 
         if not outcome.ok:
             return self.failed(f"{self._entity!r} did not arrive: {outcome.detail}")
