@@ -44,6 +44,25 @@ from . import (
 )
 
 
+def _also_carries(offered, kind: str = "services") -> str:
+    """`` -- the graph carries: a, b, c``, or empty when nothing can be listed.
+
+    The ROS counterpart of the in-process refusal's "this world offers:". A name that is missing
+    says which name; the names that ARE there are what show a prefix or a namespace that does not
+    match, which is the mistake behind most of them.
+
+    Appended to a REASON, never used to decide anything. When to stop waiting belongs to the
+    scenario -- its own ``timeout()`` and the shape of its tree -- and a second clock in here
+    would take that decision away from the author and hide it in a library constant.
+    """
+    names = sorted(offered or ())
+    if not names:
+        return ""
+    listed = ", ".join(names[:20])
+    more = f" (+{len(names) - 20} more)" if len(names) > 20 else ""
+    return f" -- the graph carries these {kind}: {listed}{more}"
+
+
 class _RosRoute(NavCall):
     """A NavigateThroughPoses goal in flight.
 
@@ -52,8 +71,9 @@ class _RosRoute(NavCall):
     accepted, then for the result. ``wait=False`` stops after acceptance.
     """
 
-    def __init__(self, client, goal, name: str, *, wait: bool):
+    def __init__(self, client, goal, name: str, *, wait: bool, offered=None):
         self._client, self._goal, self._name, self._wait = client, goal, name, wait
+        self._offered = offered
         self._send = None
         self._handle = None
         self._result = None
@@ -88,6 +108,16 @@ class _RosRoute(NavCall):
     def cancel(self) -> None:
         if self._handle is not None:
             self._handle.cancel_goal_async()
+
+    def pending_reason(self) -> str | None:
+        if self._send is None and not self._client.server_is_ready():
+            return (
+                f"the simulator is not advertising the action server {self._name!r}. A world "
+                "serves it by giving that entity a `navigator` component; without that this "
+                "waits until the scenario's own timeout"
+                + _also_carries(self._offered and self._offered(), "action servers")
+            )
+        return None
 
 
 class RosAccess(WorldAccess):
@@ -201,6 +231,35 @@ class RosAccess(WorldAccess):
         )
 
     # -- the fault ------------------------------------------------------------------------------
+    #: How long a graph listing is reused. A pending reason is rebuilt on every tick the action
+    #: is RUNNING, and asking the graph each time would be a discovery round-trip per tick for a
+    #: string nobody reads until the run ends. It is a diagnostic, so a slightly stale list is
+    #: worth far more than an exact one that costs the tick.
+    OFFERED_CACHE_S = 5.0
+
+    def _advertised(self, fetch, slot: str):
+        """A cached listing of what the graph carries, for a reason string. Never a decision."""
+        import time
+
+        now = time.monotonic()
+        stamp, names = getattr(self, slot, (0.0, ()))
+        if now - stamp < self.OFFERED_CACHE_S:
+            return names
+        try:
+            names = tuple(name for name, _types in fetch())
+        except Exception:  # noqa: BLE001 - a listing that fails must not break the reason
+            names = ()
+        setattr(self, slot, (now, names))
+        return names
+
+    def _advertised_services(self):
+        return self._advertised(self._node.get_service_names_and_types, "_svc_cache")
+
+    def _advertised_actions(self):
+        from rclpy.action import get_action_names_and_types
+
+        return self._advertised(lambda: get_action_names_and_types(node=self._node), "_act_cache")
+
     def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         """Call ``<instance>/override``. The REPLY is the outcome -- that is why it is a service.
 
@@ -223,7 +282,7 @@ class RosAccess(WorldAccess):
             self._override_clients[service] = client
         req = self._set_bool_type.Request()
         req.data = bool(active)
-        return _RosCall(client, req, instance, bool(active))
+        return _RosCall(client, req, instance, bool(active), self._advertised_services)
 
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
@@ -272,7 +331,7 @@ class RosAccess(WorldAccess):
             # that would be ignored at the far end, so there is never a heading to encode here.
             pose.pose.orientation.w = 1.0
             goal.poses.append(pose)
-        return _RosRoute(client, goal, name, wait=wait)
+        return _RosRoute(client, goal, name, wait=wait, offered=self._advertised_actions)
 
     # -- teleport ---------------------------------------------------------------------------------
     def set_entity_state(
@@ -289,7 +348,9 @@ class RosAccess(WorldAccess):
         tl, ta = req.state.twist.linear, req.state.twist.angular
         tl.x, tl.y, tl.z = (float(v) for v in (lin if lin is not None else (0.0, 0.0, 0.0)))
         ta.x, ta.y, ta.z = (float(v) for v in (ang if ang is not None else (0.0, 0.0, 0.0)))
-        return _RosTeleport(self._set_state_client, req, name, self._result_ok)
+        return _RosTeleport(
+            self._set_state_client, req, name, self._result_ok, self._advertised_services
+        )
 
     def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
         """``spawn_entity`` / ``delete_entity``. The REPLY is the outcome, as everywhere here."""
@@ -301,7 +362,14 @@ class RosAccess(WorldAccess):
                 )
             req = self._delete_type.Request()
             req.name = name
-            return _RosSpawn(self._delete_client, req, name, self._result_ok, "delete_entity")
+            return _RosSpawn(
+                self._delete_client,
+                req,
+                name,
+                self._result_ok,
+                "delete_entity",
+                self._advertised_services,
+            )
         if pos is None or quat is None:
             raise AccessError(
                 "spawning an entity needs a pose: SpawnEntity states `initial_pose` "
@@ -313,7 +381,14 @@ class RosAccess(WorldAccess):
         p, q = req.initial_pose.pose.position, req.initial_pose.pose.orientation
         p.x, p.y, p.z = (float(v) for v in pos)
         q.w, q.x, q.y, q.z = (float(v) for v in quat)
-        return _RosSpawn(self._spawn_client, req, name, self._result_ok, "spawn_entity")
+        return _RosSpawn(
+            self._spawn_client,
+            req,
+            name,
+            self._result_ok,
+            "spawn_entity",
+            self._advertised_services,
+        )
 
     def teardown(self) -> None:
         for client in [
@@ -332,12 +407,13 @@ class RosAccess(WorldAccess):
 class _RosCall(OverrideCall):
     """One ``SetBool`` round-trip. Sent on the first poll, so nothing is in flight before it is due."""
 
-    def __init__(self, client, request, instance: str, active: bool):
+    def __init__(self, client, request, instance: str, active: bool, offered=None):
         self._client = client
         self._request = request
         self._instance = instance
         self._active = active
         self._future = None
+        self._offered = offered
 
     def poll(self) -> OverrideOutcome | None:
         if self._future is None:
@@ -359,16 +435,27 @@ class _RosCall(OverrideCall):
             detail=f"{self._instance}/override replied {verdict!r}",
         )
 
+    def pending_reason(self) -> str | None:
+        if self._future is None and not self._client.service_is_ready():
+            return (
+                f"the simulator is not advertising {self._instance}/override. A world serves it "
+                "by declaring the plugin this names, under exactly this label; without that "
+                "this waits until the scenario's own timeout"
+                + _also_carries(self._offered and self._offered())
+            )
+        return None
+
 
 class _RosSpawn(SpawnCall):
     """One presence round-trip, spawn or delete. Sent on the first poll, mirroring ``_RosTeleport``."""
 
-    def __init__(self, client, request, entity: str, result_ok: int, service: str):
+    def __init__(self, client, request, entity: str, result_ok: int, service: str, offered=None):
         self._client = client
         self._request = request
         self._entity = entity
         self._result_ok = result_ok
         self._service = service
+        self._offered = offered
         self._future = None
 
     def pending_reason(self) -> str | None:
@@ -376,7 +463,7 @@ class _RosSpawn(SpawnCall):
             return (
                 f"the simulator is not advertising {self._service!r}. A world serves it by "
                 "declaring the `sim_interfaces` plugin; without that this waits until the "
-                "scenario's own timeout"
+                "scenario's own timeout" + _also_carries(self._offered and self._offered())
             )
         return None
 
@@ -404,19 +491,20 @@ class _RosSpawn(SpawnCall):
 class _RosTeleport(TeleportCall):
     """One ``set_entity_state`` round-trip. Sent on the first poll, mirroring ``_RosCall``."""
 
-    def __init__(self, client, request, entity: str, result_ok: int):
+    def __init__(self, client, request, entity: str, result_ok: int, offered=None):
         self._client = client
         self._request = request
         self._entity = entity
         self._result_ok = result_ok
         self._future = None
+        self._offered = offered
 
     def pending_reason(self) -> str | None:
         if self._future is None and not self._client.service_is_ready():
             return (
                 "the simulator is not advertising 'set_entity_state'. A world serves it by "
                 "declaring the `sim_interfaces` plugin; without that this waits until the "
-                "scenario's own timeout"
+                "scenario's own timeout" + _also_carries(self._offered and self._offered())
             )
         return None
 
