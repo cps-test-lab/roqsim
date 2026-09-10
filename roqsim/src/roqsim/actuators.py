@@ -39,13 +39,22 @@ Four laws, and what each compiles to::
     position     joint position  p, d                  gaintype fixed, biastype affine
     velocity     joint velocity  d                     gaintype fixed, biastype affine
     effort       joint torque    --                    gaintype fixed, biastype none
-    impedance    joint position  stiffness, damping    affine, plus body_gravcomp on the subtree
+    impedance    joint position  stiffness, damping    the same affine law, in stiffness terms
 
-``impedance`` is not a second spelling of ``position``. A real joint-impedance controller (Franka's
-``joint_impedance``, a UR in force mode) compensates the arm's own weight, which is what lets a
-stiffness of 2 N*m/rad hold a pose at all rather than folding under gravity. That gravity term is the
-difference, and it is why the mode earns its own name -- in a world at zero gravity the two do
-coincide, and a reader should not conclude the mode did nothing.
+``impedance`` is not a second spelling of ``position``: it states the joint in the terms a
+compliance controller is specified in (Franka's ``joint_impedance``, a UR in force mode), and a
+paper that gives a stiffness should be transcribed without first converting it into somebody's
+servo gain.
+
+**All three of these carry their own weight**, because the hardware they name does: a drive
+commanded to a pose holds it, and its gain says how hard the joint resists a *disturbance*, not how
+much of the arm it can lift. That is :func:`servo_holds_against_gravity`, and
+:func:`apply_gravity_compensation` is how a spawn plugin honours it. ``effort`` is the exception --
+a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the
+controller's job, which is frequently the very thing under test.
+
+A drive that genuinely has no gravity term -- a hobby servo, a backdrivable joint -- is a real
+machine too, and a spawn plugin's ``gravity_compensation: false`` says so.
 
 **Shared keys sit on the block; per-actuator entries nest under** ``each:``. Nothing a world writes
 can then collide with an actuator name, and the common case -- one law for the whole arm, which is
@@ -400,7 +409,7 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
         act.gainprm = _prm(gains["d"])
         act.biasprm = _prm(0.0, 0.0, -gains["d"])
-    else:  # position, impedance -- the same affine joint law, differing in gravity compensation
+    else:  # position, impedance -- one affine joint law, its gains named for the controller
         k = gains["p" if control == "position" else "stiffness"]
         c = gains["d" if control == "position" else "damping"]
         act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
@@ -474,8 +483,9 @@ def _model_row(act) -> ResolvedActuator:
 def _model_control(act) -> str:
     """Which of the four laws the model already runs this actuator under.
 
-    ``impedance`` is never reported: gravity compensation is a property of a body, not of an
-    actuator, so a model cannot declare it here and a position servo is what this honestly is.
+    ``impedance`` is never reported: the two compile to the same affine law and differ only in
+    what their gains are called, so a model that declares one is declaring a position servo as far
+    as anything readable from the actuator goes.
     """
     if act.biastype == mujoco.mjtBias.mjBIAS_AFFINE:
         if act.biasprm[1] != 0.0:
@@ -505,6 +515,26 @@ def _fmt_range(ctrlrange) -> str:
 def uses_impedance(rows: list[ResolvedActuator]) -> bool:
     """Whether any actuator ended up under the one law that needs a body-level term."""
     return any(row.control == "impedance" for row in rows)
+
+
+#: Laws whose real hardware holds its own weight inside the joint's own servo loop, so a model of
+#: one that does not is a model of a different machine. ``effort`` is deliberately absent: a
+#: torque-commanded joint applies exactly the torque it is given, and supplying the gravity term is
+#: the *controller's* job -- compensating it here would quietly answer the question an experiment on
+#: gravity compensation is asking.
+_SELF_SUPPORTING = frozenset({"position", "velocity", "impedance"})
+
+
+def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
+    """Whether these actuators model hardware that holds a pose without external help.
+
+    A position or velocity servo commanded to stand still does stand still: the drive's own loop
+    supplies whatever torque the arm's weight demands, and the joint's gain describes how hard it
+    resists a *disturbance*. Modelled without :func:`apply_gravity_compensation` the same gain has
+    to carry the arm as well, so the servo trades position error for holding torque and the arm
+    stands somewhere it was never sent -- which is not a soft arm, it is a different arm.
+    """
+    return any(row.control in _SELF_SUPPORTING for row in rows)
 
 
 def apply_gravity_compensation(spec) -> int:

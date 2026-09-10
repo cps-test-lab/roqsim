@@ -22,6 +22,9 @@ Config::
         damping: 0.02       #   N*m*s/rad
         each:               #   per-actuator, on top of the shared keys above
           wrist_3: {control: position, p: 2000, d: 500}
+      gravity_compensation: # OPTIONAL: whether the arm's bodies carry their own weight. Default:
+                            #   true under position/velocity/impedance (real drives hold a pose),
+                            #   false under effort (supplying the term is the controller's job).
       pedestal: false       # add a static support box under the base (floor -> mount height); only
                             # has an effect when pos[2] > 0. Leave it off when the arm mounts on a
                             # table/desk that is already there (the usual case).
@@ -118,7 +121,7 @@ import mujoco
 
 from roqsim.actuators import (
     apply_gravity_compensation,
-    uses_impedance,
+    servo_holds_against_gravity,
 )
 from roqsim.actuators import (
     resolve as resolve_actuators,
@@ -292,6 +295,10 @@ class SpawnArmPlugin(Plugin):
             except ModelError as exc:
                 errors.append(str(exc))
         errors += validate_actuators(config.get("actuators"))
+        if "gravity_compensation" in config and not isinstance(
+            config["gravity_compensation"], bool
+        ):
+            errors.append("'gravity_compensation' must be true or false")
         if "rpy" in config and len(config["rpy"]) != 3:
             errors.append("'rpy' must be [roll, pitch, yaw] in radians")
         if len(config.get("pos", [0, 0, 0])) not in (2, 3):
@@ -373,9 +380,9 @@ class SpawnArmPlugin(Plugin):
             self._attach_end_effector(child)
         # After the gripper, and for the opposite reason: `body_gravcomp` is per body and does not
         # cascade, so an arm compensated before its tool was attached would sag by exactly the tool's
-        # weight. Compensating the tool is also what a real impedance controller does with a payload
-        # it has been told about.
-        if uses_impedance(self.actuator_table):
+        # weight. Compensating the tool is also what a real controller does with a payload it has
+        # been told about.
+        if self._compensate_gravity():
             apply_gravity_compensation(child)
 
         parent = self._mount_parent(spec)
@@ -398,6 +405,24 @@ class SpawnArmPlugin(Plugin):
             r = float(self.config.get("pedestal_half_width", 0.1))
             g.size = [r, r, self.pos[2] / 2.0]
             g.rgba = [0.25, 0.25, 0.27, 1.0]
+
+    def _compensate_gravity(self) -> bool:
+        """Whether this arm's bodies carry ``gravcomp``, and who decided.
+
+        Default: whatever the actuator law implies (:func:`servo_holds_against_gravity`). A
+        position, velocity or impedance servo is a model of hardware that holds its own weight, and
+        MuJoCo's actuator of that name does not -- it generates holding torque out of position
+        error, so the arm settles below where it was sent by an amount that grows as the gain
+        falls. The gain then reads as a stiffness and acts as a load rating.
+
+        ``gravity_compensation:`` overrides it in both directions, because both are real
+        experiments: ``false`` under a position servo asks for the raw actuator, and ``true`` under
+        ``effort`` says the torque controller under test is handed its own gravity term.
+        """
+        stated = self.config.get("gravity_compensation")
+        if stated is not None:
+            return bool(stated)
+        return servo_holds_against_gravity(self.actuator_table)
 
     def _add_carriage(self, spec: mujoco.MjSpec, frame):
         """Insert the rail carriage at *frame* and return the frame the arm should attach to.
