@@ -1,8 +1,8 @@
 """Scene plugin: attach a standalone sensor MJCF (mesh + camera/site) into the world at a mount pose.
 
 The generic, robot-free analogue of ``spawn_arm``/``spawn_robot``: for a sensor that isn't carried
-by a robot -- a fixed overhead camera, a mast-mounted lidar -- this plugin only *places* the mount
-(build + a fixed pose; there is no free joint to move it at runtime). It registers an
+by a robot -- a fixed overhead camera, a mast-mounted lidar -- this plugin places the mount, and
+``motion:`` says whether anything may move it afterwards (see below). It registers an
 ``Entity(kind='sensor')`` the same way a spawned robot/arm does, so a capture plugin
 (``lidar``/``oakd_camera``/``realsense_d435``) resolves this mount's ``prefix``/``namespace``
 via its own ``robot: <name>`` config -- no sensor-specific wiring needed here.
@@ -15,6 +15,8 @@ Config::
         prefix: ""             # MJCF name prefix (use distinct prefixes for >1 mount of the model)
         pos: [0.0, 0.0, 0.0]
         rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
+        motion: static         # who owns the mount's pose: static (default; welded, nothing moves
+                               #   it), driven (a plugin or scenario places it), physics (the solver)
         show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
         fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
                                #   darkness step between single- and multi-sensor overlap
@@ -25,6 +27,23 @@ Config::
           {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
       name: camera_1           # the entry's label -- a sibling of the ref -- names this mount's
                                #   entity, which a capture plugin's `robot:` then points at
+
+**Moving a mount after the world is built.** ``motion:`` is the same three-answer key
+``spawn_model`` uses for a prop, and it is what a trial needs to place a sensor at run time -- a
+viewpoint the campaign varies, a camera a scenario repositions between phases.
+
+``motion: static`` is the default: the mount is welded into the model. A welded body has neither
+a mocap slot nor a joint, so nothing can place it at all, and a ``set_entity_state`` naming it is
+refused rather than silently ignored -- which is the answer a trial can act on, where a placement
+that quietly did nothing is not.
+
+``motion: driven`` makes the mount a mocap body: no degrees of freedom, so it holds whatever pose
+it is given, nothing that touches it shoves it off, and it does not fall. That is what a sensor on
+a mast or a ceiling IS, and it is the mode a repositionable sensor wants.
+
+``motion: physics`` adds a free joint, handing the pose to the solver from the next step on. Only
+a mount that is meant to fall, be pushed or be carried wants it -- ask for it on an overhead
+camera and the camera drops to the floor, which is precisely what it means.
 
 ``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see
@@ -435,6 +454,15 @@ class SpawnSensorPlugin(Plugin):
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
         self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
+        # for a prop. `static` is the default: the mount is part of the model, and nothing can
+        # move it.
+        self.motion = self.config.get("motion", "static")
+        self.driven = self.motion == "driven"
+        self.free = self.motion == "physics"
+        #: The joint a free mount is placed through, recorded for the entity's meta -- which is
+        #: where `roqsim.placement.place_body` looks it up.
+        self._base_joint = ""
         # This UNIT's measured lens, written onto the model's camera at build time so MuJoCo renders
         # through it (see :meth:`_apply_intrinsics`). Empty is the historical path: the model's own
         # fovy, an ideal pinhole, a centred principal point.
@@ -464,6 +492,12 @@ class SpawnSensorPlugin(Plugin):
                 errors.append(str(exc))
         if "rpy" in config and len(config["rpy"]) != 3:
             errors.append("'rpy' must be [roll, pitch, yaw] in radians")
+        if "motion" in config and config["motion"] not in {"static", "driven", "physics"}:
+            errors.append(
+                f"'motion' must be one of static, driven, physics -- got {config['motion']!r}. "
+                "It says who owns the mount's pose: nobody (static, the default -- welded into "
+                "the model), a plugin or a scenario (driven), or the solver (physics)."
+            )
         if len(config.get("pos", [0, 0, 0])) not in (2, 3):
             errors.append("'pos' must be [x, y] or [x, y, z]")
         if not 0.0 <= float(config.get("fov_alpha", 0.25)) <= 1.0:
@@ -519,10 +553,46 @@ class SpawnSensorPlugin(Plugin):
             # A synthesised camera frustum is always clipped against the world built so far, so pass
             # the world spec every time; camera-less paths (bundled envelope, lidar sector) ignore it.
             self._show_fov(child, asset, near, far, world_spec=spec)
+        self._apply_motion(child, asset)
         frame = spec.worldbody.add_frame()
         frame.pos = self.pos
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
+
+    def _apply_motion(self, child: mujoco.MjSpec, asset) -> None:
+        """Give the mount's root body whatever ``motion:`` asked for. ``static`` adds nothing.
+
+        A **driven** mount is a mocap body: no degrees of freedom, so it holds whatever pose it is
+        given, is not shoved off it by anything that touches it, and does not fall. That is what a
+        sensor on a mast IS, and it is the mode a trial repositioning a sensor wants -- a free one
+        would be a dropped camera.
+
+        A **free** mount is offered for the same reason ``spawn_model`` offers it, and means the
+        same thing: the solver owns the pose from the next step on. Only a mount that is meant to
+        fall, be pushed or be carried wants it.
+        """
+        if not (self.driven or self.free):
+            return
+        # The child's OWN worldbody children, not `child.bodies` -- that list leads with the
+        # model's `world` body, and making THAT mocap changes nothing about the mount.
+        bodies = list(getattr(child.worldbody, "bodies", []))
+        if not bodies:
+            raise ModelError(
+                f"spawn_sensor {self.config['model']!r}: motion: {self.motion} needs a root body "
+                f"to act on, but {asset.path} declares none (its geoms sit directly on worldbody)."
+            )
+        root = bodies[0]
+        if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
+            raise ModelError(
+                f"spawn_sensor {self.config['model']!r}: motion: {self.motion}, but {asset.path} "
+                f"already gives its root body a joint. Leave motion at its default -- the model "
+                f"defines its own articulation."
+            )
+        if self.driven:
+            root.mocap = True
+            return
+        root.add_freejoint(name="free")
+        self._base_joint = f"{self.prefix}free"
 
     def _apply_intrinsics(self, child: mujoco.MjSpec) -> None:
         """Write this placement's measured lens onto the model's camera, in pixels.
@@ -823,6 +893,9 @@ class SpawnSensorPlugin(Plugin):
                     # Inherited by the mount's capture plugin (manifest-injected or explicit), so
                     # it needs no namespace plumbing of its own.
                     "namespace": self.config.get("namespace", ""),
+                    # How a placement reaches this mount: `roqsim.placement.place_body` finds a
+                    # driven one by its body, and a free one by the joint named here.
+                    **({"base_joint": self._base_joint} if self._base_joint else {}),
                 },
             )
         )
