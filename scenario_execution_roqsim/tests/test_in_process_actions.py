@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 
 import mujoco
+from roqsim.placement import PLACEABLE_MODES_HINT
 import numpy as np
 import pytest
 
@@ -517,7 +518,9 @@ def test_set_entity_state_fails_the_trial_rather_than_raise_when_the_entity_has_
     _step(ctx, clock)
     assert action.update() is FAILURE
     assert "welded scenery" in action.feedback_message
-    assert "motion: driven" in action.feedback_message
+    # The shared advice, verbatim: the two transports answer one question, and a scenario is
+    # written once without learning which shape it is running in.
+    assert PLACEABLE_MODES_HINT in action.feedback_message
 
 
 def test_set_entity_state_places_a_driven_prop_and_the_solver_leaves_it_there(teleport_world):
@@ -831,7 +834,9 @@ def test_spawn_fails_the_trial_when_the_entity_cannot_be_placed(teleport_world):
     _step(ctx, clock)
     assert action.update() is FAILURE
     assert "welded scenery" in action.feedback_message
-    assert "motion: driven" in action.feedback_message
+    # The shared advice, verbatim: the two transports answer one question, and a scenario is
+    # written once without learning which shape it is running in.
+    assert PLACEABLE_MODES_HINT in action.feedback_message
 
 
 def test_spawn_refuses_an_entity_that_is_already_present(teleport_world):
