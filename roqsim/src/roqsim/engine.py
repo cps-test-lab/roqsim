@@ -38,7 +38,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
-from .plugin import Plugin
+from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
 from .world import build_world, world_file
@@ -154,13 +154,46 @@ class Engine:
             self._setup()
         self._setup_done = True
 
+    def _world_plugins(self) -> list[Plugin]:
+        """The plugins that build their own ground + lighting, in declaration order."""
+        return [p for p in self.plugins if getattr(p, "provides_world", False)]
+
+    def _check_one_world(self, world_name: str | None) -> None:
+        """Refuse a world whose static environment is claimed twice.
+
+        Ground, lighting and enclosure are one slot, filled either by a world definition
+        (``sim.world``) or by a ``provides_world`` scene plugin -- never both, and never by two
+        such plugins. Both collisions build a scene that compiles: a second ground plane is
+        coplanar with the first and a second light only brightens it, so the world looks plausible
+        and the robot drives on a floor nobody asked for. What the author wrote is then not what
+        ran, which is exactly the difference a campaign is measuring.
+
+        The fix is always to delete one of the two, so the message names both and says so.
+        """
+        providers = self._world_plugins()
+        if len(providers) > 1:
+            raise PluginError(
+                "two scene plugins each provide the world's ground and lighting: "
+                + ", ".join(sorted(p.address for p in providers))
+                + ". They build one on top of the other. Keep the one whose environment this "
+                "world is, and drop the other."
+            )
+        if providers and world_name is not None:
+            raise PluginError(
+                f"sim.world={world_name!r} and the scene plugin {providers[0].address!r}, which "
+                "provides its own ground and lighting, both define the static environment. Drop "
+                f"sim.world to let {providers[0].address!r} build it, or drop the plugin to sit "
+                f"in {world_name!r}."
+            )
+
     def _setup(self) -> None:
         # World definition goes in first, so plugins attach onto it. ``sim.world`` is either a
         # built-in name (ground + lighting) or a path to an MJCF file (a baked scene, e.g.
         # depot/depot.xml) loaded as the base scene. A scene plugin that provides its own
-        # ground+light (provides_world, e.g. the mobile floorplan) overrides ``sim.world``.
+        # ground+light (provides_world, e.g. the mobile floorplan) fills the same slot instead.
         with self._span("world_load"):
             world_name = self.config.sim.get("world")
+            self._check_one_world(world_name)
             world_path = world_file(world_name, self.config.base_dir)
             if world_path is not None:
                 spec = mujoco.MjSpec.from_file(world_path)
@@ -168,14 +201,9 @@ class Engine:
                 spec = mujoco.MjSpec.from_string(_EMPTY_MJCF)
             self.ctx.spec = spec
 
-            if any(getattr(p, "provides_world", False) for p in self.plugins):
-                if world_name is not None:
-                    self.logger.warning(
-                        "sim.world=%r is overridden by a scene plugin that provides its own "
-                        "ground+lighting (e.g. floorplan); ignoring sim.world.",
-                        world_name,
-                    )
-            elif world_path is None:
+            # After the check above exactly one of these fills the slot: a loaded MJCF, a
+            # ``provides_world`` plugin's own build, or a world definition.
+            if world_path is None and not self._world_plugins():
                 build_world(spec, world_name)  # a built-in name (or None -> empty_room)
 
         for plugin in self.plugins:

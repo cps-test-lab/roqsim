@@ -13,9 +13,10 @@ arrives as geometry or as a layout, and a world author picks by what they HAVE:
     then an ordinary config value that a sweep varies and the run's provenance records, rather
     than a file baked ahead of time that nothing downstream can tell apart from another file.
 
-Provides a ground plane named ``floor`` (the TurtleBot caster contact pair references that name) grown
-to the mesh's XY footprint, plus a ceiling light. The floorplan mesh (e.g. an ``.stl`` from
-Floorplan-DSL / scenery_builder; ported from our earlier in-house nav prototype's ``environment.py``) *is* the walls.
+Provides a ground plane named ``floor`` (the TurtleBot caster contact pair references that name)
+grown to the walls' XY footprint, plus a ceiling light. Because it builds those itself it fills the
+same slot as a world definition: ``sim.world`` alongside it is refused, not overridden (see
+:mod:`roqsim.world`).
 
 The mesh itself is **visual + lidar only** (``contype``/``conaffinity`` = 0): MuJoCo collides a mesh by
 its *convex hull*, which for a building outline is a solid block filling the interior, so the robot
@@ -36,8 +37,8 @@ above it rather than a full-height gap, so a room stays enclosed over head heigh
 is :mod:`roqsim.floorplan_geometry`, shared with the mesh baker and the plan-view renderer, so a
 preview, a baked world and this plugin cut the same openings.
 
-Exactly one source, and naming neither is refused: a scene that only needs a bare floor + light
-should omit the plugin and use the engine's default world (``sim.world``; unset -> ``empty_room``).
+Exactly one source, and naming neither is refused. A scene that only needs a bare floor + light
+should omit this plugin and use a world definition instead (``sim.world``; unset -> ``empty_room``).
 
 Config::
 

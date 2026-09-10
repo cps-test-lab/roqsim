@@ -4,9 +4,16 @@ Available plugins
 Built-in plugins by package. Reference each by its short name in a world file (or by
 ``module:Class`` / ``file.py:Class`` for your own — see :doc:`interfaces`).
 
-The static environment (ground + light) is **not** a plugin but a *world definition* selected with
-``sim.world`` (default ``empty_room``; see :doc:`architecture`). A fixed cell needs no scene plugin;
-the mobile ``floorplan`` is the exception — it provides its own ground and overrides ``sim.world``.
+The static environment — ground, light, enclosure — is **one slot**, filled either by a *world
+definition* selected with ``sim.world`` (default ``empty_room``; see :doc:`architecture`) or by a
+scene plugin that builds its own, such as the mobile ``floorplan`` or ``heightfield``. A fixed cell
+needs no scene plugin. **Naming both is refused**, and so is carrying two such plugins: two grounds
+compile into a scene that looks right and is not the one you wrote.
+
+Which route a given environment takes follows from whether it is baked or computed. A world
+definition is a builder or an MJCF file — fixed geometry, chosen by name. A plugin builds from a
+config, so a sweep can vary it and each run records the values it used. An environment whose shape
+is an experiment's variable is therefore a plugin.
 
 ``floorplan`` takes its building from **one of two sources**, and you pick by what you have. A
 ``mesh:`` is right when the building already exists as geometry (imported from CAD, or produced by

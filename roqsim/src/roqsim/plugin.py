@@ -55,9 +55,12 @@ class Plugin:
     parallel_safe: bool = False
 
     #: Set True on a scene plugin that builds its own ground + lighting (e.g. the mobile
-    #: ``floorplan``). It overrides the engine's default ``sim.world`` (see :mod:`roqsim.world`):
-    #: when such a plugin is present the engine skips building the world definition, and if
-    #: ``sim.world`` was also set explicitly the engine warns and lets the plugin win.
+    #: ``floorplan``). Such a plugin fills the same slot as a world definition (``sim.world``, see
+    #: :mod:`roqsim.world`), so the engine skips building one -- and refuses a world that also
+    #: sets ``sim.world``, or that carries a second such plugin, rather than stacking two grounds.
+    #: This is also the only way to contribute an environment computed from config rather than
+    #: baked as geometry: the built-in definitions are a closed set and ``roqsim.worlds`` providers
+    #: offer MJCF files.
     provides_world: bool = False
 
     #: Set True on a plugin that only moves data across a process boundary: it builds no geometry and

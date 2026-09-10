@@ -7,7 +7,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.world import DEFAULT_WORLD, available_worlds, build_world, world_file
 
 
@@ -78,15 +78,57 @@ class _ScenePlugin(Plugin):
         spec.worldbody.add_light()
 
 
-def test_provides_world_plugin_overrides_default(caplog):
-    # A provides_world plugin suppresses the default world -> exactly one floor, no double-up.
-    cfg = load_config_from_dict(
-        {"sim": {"world": "empty_room"}, "plugins": []},
-    )
+def test_provides_world_plugin_fills_the_slot_instead_of_the_definition():
+    """The plugin builds the ground, so no world definition is built underneath it."""
+    cfg = load_config_from_dict({"sim": {}, "plugins": []})
     engine = Engine(cfg, plugins=[_ScenePlugin()])
-    with caplog.at_level("WARNING"):
-        engine.setup()
+    engine.setup()
+
     assert _geom_names(engine.ctx.model).count("floor") == 1
-    # sim.world was set *and* a scene plugin present -> warn but continue.
-    assert any("overridden by a scene plugin" in r.message for r in caplog.records)
     engine.shutdown()
+
+
+def test_a_world_stated_twice_is_refused():
+    """``sim.world`` beside a plugin that builds its own ground: the author said it twice.
+
+    Stacking them compiles -- a second plane coplanar with the first, a second light that only
+    brightens it -- so the scene looks like a room and is not the one the document describes.
+    Whichever of the two is dropped is the author's call, so neither can be picked here.
+    """
+    cfg = load_config_from_dict({"sim": {"world": "empty_room"}, "plugins": []})
+    engine = Engine(cfg, plugins=[_ScenePlugin()])
+
+    with pytest.raises(PluginError) as caught:
+        engine.setup()
+
+    message = str(caught.value)
+    assert "empty_room" in message and "_ScenePlugin" in message
+
+
+def test_two_scene_plugins_providing_the_world_are_refused():
+    """The collision with no ``sim.world`` in it, and the one nothing warned about before.
+
+    Two ground-providing plugins in one document -- a floorplan and a terrain, say -- is the same
+    mistake without the config key that makes it visible.
+    """
+    cfg = load_config_from_dict({"sim": {}, "plugins": []})
+    engine = Engine(cfg, plugins=[_ScenePlugin(name="indoors"), _ScenePlugin(name="outdoors")])
+
+    with pytest.raises(PluginError) as caught:
+        engine.setup()
+
+    message = str(caught.value)
+    assert "indoors" in message and "outdoors" in message
+
+
+def test_a_baked_scene_beside_such_a_plugin_is_refused_too():
+    """The path spelling of ``sim.world``, which was the worse half of the old behaviour.
+
+    A file world is *loaded* as the base spec before any plugin builds, so a warning saying it was
+    ignored described something that had already happened.
+    """
+    cfg = load_config_from_dict({"sim": {"world": "scene.xml"}, "plugins": []})
+    engine = Engine(cfg, plugins=[_ScenePlugin()])
+
+    with pytest.raises(PluginError, match="scene.xml"):
+        engine.setup()
