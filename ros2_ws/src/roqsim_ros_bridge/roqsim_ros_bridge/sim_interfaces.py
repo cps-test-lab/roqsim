@@ -43,6 +43,7 @@ from simulation_interfaces.srv import (
 )
 
 from roqsim import control as ctl
+from roqsim.placement import place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
 
@@ -314,7 +315,7 @@ class SimInterfacesPlugin(Plugin):
         outcome = {}
 
         def _apply(ctx):
-            if pose is not None and not self._write_body(ctx, entity, pose[0], pose[1]):
+            if pose is not None and not place_body(ctx, entity, pose[0], pose[1]):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
                 if not _already_at(state, pose):
                     outcome["welded_at"] = state.get("pos")
@@ -389,7 +390,7 @@ class SimInterfacesPlugin(Plugin):
         # A caller could read a velocity it could not set.
         #
         # Absent rather than zero when the request has no twist at all, which a real EntityState
-        # always does but a partial caller may not: `None` is what `_write_body` already reads as
+        # always does but a partial caller may not: `None` is what `place_body` already reads as
         # "zero the velocity", so a pose write never fails for want of a field it does not use.
         twist = getattr(req.state, "twist", None)
         vel = None
@@ -404,7 +405,7 @@ class SimInterfacesPlugin(Plugin):
         outcome = {}
 
         def _apply(ctx):
-            if not self._write_body(ctx, entity, pose[0], pose[1], vel):
+            if not place_body(ctx, entity, pose[0], pose[1], vel):
                 state = self._read_body(ctx, entity.body) if entity.body else {}
                 if not _already_at(state, pose):
                     outcome["welded_at"] = state.get("pos")
@@ -476,25 +477,6 @@ class SimInterfacesPlugin(Plugin):
             "ang": [float(v) for v in vel[:3]],
             "lin": [float(v) for v in vel[3:]],
         }
-
-    @staticmethod
-    def _write_body(ctx, entity, pos, quat, vel=None) -> bool:
-        import mujoco
-
-        jname = entity.meta.get("base_joint")
-        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, jname) if jname else -1
-        if jid < 0 or ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
-            return False
-        q = ctx.model.jnt_qposadr[jid]
-        ctx.data.qpos[q : q + 3] = pos
-        ctx.data.qpos[q + 3 : q + 7] = quat
-        dof = ctx.model.jnt_dofadr[jid]
-        # Zero unless a velocity was asked for: a body PUT somewhere is not still carrying the
-        # velocity it had, and that default is what every caller before this relied on. A spawn
-        # passes none, which is why it stays a placement rather than a launch.
-        ctx.data.qvel[dof : dof + 6] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if vel is None else vel
-        mujoco.mj_forward(ctx.model, ctx.data)
-        return True
 
     def validate_config(self, config: dict) -> list[str]:
         return []
