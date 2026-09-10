@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from roqsim.placement import base_joint_of, place_body
+from roqsim.placement import PLACEABLE_MODES_HINT, base_joint_of, place_body
 
 from . import (
     AccessError,
@@ -35,12 +35,14 @@ _MISSING = object()
 
 
 def _unplaceable(name, joint_name) -> str:
-    """Why a pose could not be applied, in terms of what the WORLD would have to say instead."""
+    """Why a pose could not be applied, in terms of what the WORLD would have to say instead.
+
+    The advice half comes from :data:`~roqsim.placement.PLACEABLE_MODES_HINT`, so this transport
+    and the ROS bridge cannot recommend different modes for the same refusal.
+    """
     return (
         f"entity {name!r} is welded scenery: it has neither a mocap body nor a free joint named "
-        f"{joint_name!r}, so no pose can be written to it. Give it 'motion: driven' in the world "
-        "(placeable and immovable) or 'motion: physics' (placeable and owned by the solver from "
-        "the next step)."
+        f"{joint_name!r}, so no pose can be written to it. {PLACEABLE_MODES_HINT}"
     )
 
 
