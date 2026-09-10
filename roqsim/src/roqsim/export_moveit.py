@@ -1015,7 +1015,7 @@ def _run(args, log) -> int:
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if skip:
         cfg.plugins = [p for p in cfg.plugins if p.ref not in skip and (p.name or "") not in skip]
-    engine = Engine(cfg)
+    engine = Engine(cfg, preview=True)
     engine.setup()
 
     pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]

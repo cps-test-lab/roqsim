@@ -597,6 +597,42 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+**Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
+guards an assumption the other two take for granted. A trial that drives something around a floor
+assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
+producing positions, distances and clearances about a body lying on its side or airborne, all of
+them plausible, none of them about the trial anyone designed::
+
+   - spawn_model: {model: pedestrian_stand-in, motion: physics}
+     name: walker
+     components:
+       - upright_monitor: {max_tilt_deg: 30.0, max_rise_m: 0.10}
+
+The mechanism it catches most often is a drive force applied at a tall body's centre of mass while
+friction holds its base: the two make a couple and the body tips. That is correct physics about a
+model that was wrong, and fixing the model is the experiment's job -- ``roqsim_walker``'s mocap
+pedestrian is the answer for pedestrians, a low centre of mass or a planar joint for anything
+hand-rolled. What the substrate owes is that nobody finds out from the results.
+
+Three things about it:
+
+* **Both thresholds are departures, not limits.** ``max_rise_m`` is symmetric, because a body
+  sinking through the floor has left the plane exactly as much as one taking off. ``max_tilt_deg``
+  is the angle between the body's own +z and the world's, so yaw is invisible to it -- a pedestrian
+  turning to walk back is doing what a planar trial expects.
+* **The reference height is where the body settled**, taken at ``settle_s`` (default 0.5 s) rather
+  than at the spawn pose. A body placed two centimetres above the floor drops onto it, and a
+  monitor that called that a departure would fire on correct worlds, which is a monitor people turn
+  off. The cost is half a second of blindness at the start; the verdict latches, so a body broken
+  from t=0 is reported late rather than not at all, and ``settle_s: 0`` opts out.
+* **It measures the pose, not the mechanism.** A mocap body cannot topple, so on a driven prop or
+  a walker this stays quiet -- but their poses are *written*, by a gait, a navigation output or a
+  scenario placing an entity, and a written pose can lay a body flat or sink it through the floor.
+  ``xpos``/``xmat`` report that exactly as they report a fall. So one monitor serves a free body, a
+  driven prop and a walker, and nothing that moves them needs to know it exists.
+* **Nothing infers that an entity should be upright.** A quadruped mid-gait, a banking drone and an
+  arm's wrist all leave the plane on purpose. It watches what somebody nested it under.
+
 ``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
 distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
 world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
