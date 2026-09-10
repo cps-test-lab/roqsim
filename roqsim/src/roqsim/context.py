@@ -366,10 +366,14 @@ class SimContext:
         if self.seed is None:
             raise SeedError(
                 "no seed was resolved for this run, so there is nothing to draw the "
-                f"randomness for {name!r} from. The seed is the DRIVER's to resolve: call "
-                "`roqsim.seed.resolve_seed(explicit, logger, config_seed=cfg.seed)` and assign it "
-                "to `ctx.seed` BEFORE `engine.setup()` (`configure` may read it, `pre_step` does). "
-                "`roqsim sim` and the scenario adapter both do; an Engine driven directly must too."
+                f"randomness for {name!r} from. The seed is the DRIVER's to resolve, and which "
+                "kind of driver this is decides how. A driver that RUNS the world calls "
+                "`roqsim.seed.resolve_seed(explicit, logger, config_seed=cfg.seed)` and assigns "
+                "the result to `ctx.seed` BEFORE `engine.setup()` (`configure` may read it, "
+                "`pre_step` does) -- `roqsim sim` and the scenario adapter both do. A driver that "
+                "only LOOKS at the world -- a render, an export, a map, a load check -- passes "
+                "`Engine(cfg, preview=True)` instead, which pins the fixed preview seed, since "
+                "there is no run to reproduce and a picture is not a measurement."
             )
         seed = int(self.seed)
         step = 0 if self.model is None or self.data is None else round(self.sim_time / self.dt)

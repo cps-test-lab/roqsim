@@ -127,7 +127,7 @@ def _load_world(
     from roqsim.engine import Engine
     from roqsim.runner import config_for_input
 
-    engine = Engine(config_for_input(world))
+    engine = Engine(config_for_input(world), preview=True)
     engine.setup()
     engine.reset()
     model, data = engine.ctx.model, engine.ctx.data

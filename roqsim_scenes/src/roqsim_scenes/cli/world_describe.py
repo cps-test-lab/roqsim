@@ -154,7 +154,7 @@ def _built(config):
     """
     from roqsim.engine import Engine
 
-    engine = Engine(config)
+    engine = Engine(config, preview=True)
     engine.setup()
     try:
         yield engine.ctx
