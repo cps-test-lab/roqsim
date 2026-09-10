@@ -41,6 +41,10 @@ zivid = "roqsim_sensors.plugins.zivid:ZividPlugin"
 spawn_sensor = "roqsim_sensors.plugins.spawn_sensor:SpawnSensorPlugin"
 fiducial_marker = "roqsim_sensors.plugins.fiducial_marker:FiducialMarkerPlugin"
 sensor_coverage_probe = "roqsim_sensors.plugins.sensor_coverage_probe:SensorCoverageProbePlugin"
+# The moving counterpart of sensor_coverage_probe: that one asks what a FIXED sensor set observes,
+# once, at configure; this one accumulates the union of a carried sensor's FoV over a run, which is
+# what a coverage, patrol or exploration trial measures. One geometry engine, two questions.
+swept_coverage_monitor = "roqsim_sensors.plugins.swept_coverage_monitor:SweptCoverageMonitorPlugin"
 ground_truth_pose = "roqsim_sensors.plugins.ground_truth_pose:GroundTruthPosePlugin"
 object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # The pixel-level counterpart of object_detector: that one says WHERE an object is in the robot's

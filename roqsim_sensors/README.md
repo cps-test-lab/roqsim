@@ -22,6 +22,7 @@ package rather than `roqsim_mobile`/`roqsim_manipulation`. ROS-free; ROS couplin
 | `force_torque` | Six-axis force/torque sensor at a site — the one sensor here that reports **contact force** rather than geometry, which is the whole measurement for a contact-rich manipulation task (insertion, polishing, compliant assembly). Adds MuJoCo's `<force>`/`<torque>` pair on a site (yielding to a vendor MJCF that already ships one), reports the wrench in the `sensor`, `base` or `world` frame, and publishes both a `wrench` (`WrenchStamped`) endpoint and a `WrenchReader` on the blackboard under `ft:<name>` for in-process controllers. **Where the sensor cuts matters**: a site sensor measures the wrench transmitted *through* that site from its children, so the tool must hang below it — a tool attached above the site reads identically zero. |
 | `ground_truth_pose` | Publish a body's *true* world pose (no odometry drift, no localisation), as a TF-shaped endpoint — the reference signal an evaluation compares a stack's estimate against. See `docs/ground_truth.rst`. |
 | `sensor_coverage_probe` | Report the **sensor coverage** of a world (a world-YAML toggle for the `coverage` subpackage below). Computes once at `configure` how much of the room / which objects the world's sensors observe, and by how many (0..N), then writes an agent-digestible `report.json` + a render. `sensors: auto` evaluates every MuJoCo camera; give an explicit list for lidars/Livox. Rendering needs a GL backend, which `import roqsim` selects for this machine — set `MUJOCO_GL` only to override. |
+| `swept_coverage_monitor` | Accumulate what a **moving** sensor's field of view ever covered over a run — the moving counterpart of `sensor_coverage_probe`. Attaches to a `<camera>`, `<site>` or `<body>` mount that moves with its carrier, re-poses the same `SensorFov` at the mount's live pose on a configurable `compute_rate_hz`, and ORs the resulting per-point mask into a union over a fixed sample set. Reports the covered fraction, the covered and sampled **areas** with the grid cell they are derived from, and the per-point visit counts (so a revisit figure comes off the same accumulator) — as a `coverage` endpoint, a `swept_coverage:<address>` blackboard reader, and optionally a `report.json` whose `uncovered_regions` cluster what the sweep never reached. Needs no GL. |
 
 Every camera plugin reads its resolution/FOV from the named MuJoCo `<camera>` element (`resolution`,
 `fovy`) rather than duplicating them in plugin config, and skips the (expensive) render while a
@@ -147,8 +148,9 @@ extra (`pip install 'roqsim_sensors[coverage]'`), the 3D render needs only mujoc
 - Two outputs: an agent-digestible `report.json` (achieved coverage, per-object, uncovered regions,
   per-sensor contribution) and a human render (a top-down 2D heatmap and/or a 3D marker render).
 
-Two front doors: the `sensor_coverage_probe` plugin (above) reports a world's coverage from its YAML;
-the **`roqsim sensors coverage` CLI** searches for placements with the agent in the loop:
+Three front doors. The `sensor_coverage_probe` plugin (above) reports a **fixed** world's coverage
+from its YAML; `swept_coverage_monitor` (also above) accumulates what a **moving** sensor covered over
+a run; and the **`roqsim sensors coverage` CLI** searches for placements with the agent in the loop:
 
 ```bash
 roqsim sensors coverage catalog                              # sensor types, FOV, cost, mount constraints
@@ -160,6 +162,38 @@ roqsim sensors coverage greedy \               # deterministic max-coverage base
 
 The agent workflow (evaluate → read `report.json` gaps → refine placements → repeat) is described in the
 `sensor-coverage` skill.
+
+### A moving sensor: `swept_coverage_monitor`
+
+The three doors above all ask a *layout* question — where should sensors go, and what does this
+arrangement see. A robot carrying a sensor asks a *trajectory* question instead: how much did it
+observe on the way. Both go through the same engine, so a swept figure and a static one are the same
+measurement asked at different times:
+
+```yaml
+components:
+  - spawn_robot: {model: turtlebot4, pos: [0, 0]}
+    name: robot
+    components:
+      - swept_coverage_monitor:
+          type: oakd_camera        # which adapter builds the FoV
+          camera: oakd_rgb         # the mount, resolved with the entity's `prefix`
+          config: {far: 5.0}       # a camera's detection range is an assumption, not physics
+          sample: {resolution: 0.25, heights: [0.5]}
+          compute_rate_hz: 5.0     # how often the FoV is evaluated; the cost knob
+          out: swept               # optional report.json at shutdown
+```
+
+Three things about the number it reports, all in the conservative direction:
+
+- **It is a lower bound.** The FoV is evaluated at `compute_rate_hz`, never interpolated between
+  poses, because an interpolated FoV has no line-of-sight test behind it and would report coverage
+  through walls. Raising the rate raises the figure and the cost together.
+- **The sample set is fixed**, built once from the world's initial state, so the union is comparable
+  across trials — and a cell the carrier itself occupies at `t=0` is never sampled.
+- **The area is per xy column**, counted over the volume grid only: `covered_area_m2` sums the
+  distinct `resolution`-sized cells covered at *any* height, so sampling three heights does not
+  triple the area. With `volume: false` there is no grid and both areas read `-1.0` rather than `0`.
 
 ## Test
 
