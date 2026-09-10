@@ -26,10 +26,15 @@ and whose module exposes ``WORLDS_DIR`` (a dir of ``<world>/<world>.xml`` baked 
 ``<world>.xml`` files).
 
 A scene plugin that builds its own ground + lighting (it sets ``Plugin.provides_world = True``, e.g.
-the mobile ``floorplan``, which loads a floorplan mesh + walls) *overrides* this: when such a plugin is
-present the engine skips the world definition. Setting both ``sim.world`` and such a plugin is allowed
-but the engine warns and lets the plugin win. Keeping the ground+light here (not baked into the engine)
-means fixed-cell packages never need to depend on the mobile ``floorplan``.
+the mobile ``floorplan``) fills this same slot instead, and the engine then skips the world
+definition. **One of the two, never both**: a world that sets ``sim.world`` and also carries such a
+plugin is refused, as is one carrying two of them, because two grounds compile into a plausible
+scene that is not the one the author wrote. Keeping the ground+light here (not baked into the
+engine) means fixed-cell packages never need to depend on the mobile ``floorplan``.
+
+The two routes differ in more than spelling. A world definition is *baked* -- a builder here, or an
+MJCF file a provider ships -- while a plugin is *computed*, from a config a sweep can vary. That is
+why an environment whose walls are an experiment's variable is a plugin.
 
 Add a world definition by registering a builder in :data:`_WORLDS`.
 """
