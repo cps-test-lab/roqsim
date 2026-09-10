@@ -66,9 +66,34 @@ Two consequences, stated rather than hidden:
   makes it *restart* rather than hold (a py_trees `Decorator` always ticks its child), which re-takes an
   `entity_moved` baseline and re-fires a fault every crossing. Use `parallel` + `emit end`, as above.
 
+## Adding an action
+
+Copy the nearest existing one: an abstract method on `WorldAccess`, an implementation in each of
+`access/in_process.py` and `access/ros.py`, the action class, its entry point in
+[`pyproject.toml`](pyproject.toml) and its declaration in `lib_osc/roqsim.osc`. Both transports, or
+the scenario stops being portable between the two shapes.
+
+**If the in-process side reaches a new blackboard key, pin it.** That key is published by a plugin
+in a package this one deliberately does not import (see below), so nothing in the build notices a
+rename of either side — the symptom is an action that raises in a campaign cell. Add a case to
+`tests/test_blackboard_conventions.py` that builds the publishing plugin and reaches it through the
+access layer. You do not have to remember: that file scans this package for the keys it reads and
+fails, naming the prefix, until a case exists.
+
+**If the ROS side waits for a name, answer `pending_reason`.** A call that polls `None` with no
+reason turns a wiring mistake into a trial that runs out of time saying nothing. When to *stop*
+waiting is the scenario's — its own `timeout()` — so a call never fails on a missing name; it only
+explains itself while it waits.
+
 ## Which parts are testable where
 
 `displacement.py` is pure numpy — no MuJoCo, no ROS, no scenario-execution — so the one part with a
 right and a wrong answer is a table test in any venv. The actions need `scenario_execution` importable
 and their tests skip without it; `access/ros.py` imports `rclpy` only when a ROS runner actually handed
 the action a node, which is what keeps the package installable in a plain venv.
+
+The package depends on `roqsim` and nothing else. Importing a plugin package would pull MuJoCo into
+the behaviour-tree build, which happens before any world is compiled, and it would not stop at one:
+every package whose plugins a scenario can address would follow. So the coupling to those plugins is
+conventional — a blackboard key here, a service name there — and `tests/test_blackboard_conventions.py`
+is what keeps the two sides honest, at test time, where importing costs nothing.
