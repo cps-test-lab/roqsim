@@ -58,6 +58,7 @@ from roqsim_scenes.floorplan_geometry import (  # noqa: F401 - re-exported: the 
     assign_doors,
     cut_openings,
     line_segments,
+    wall_pieces,
 )
 
 from . import scene_to_mjcf
@@ -83,33 +84,6 @@ def _yaw_matrix(yaw: float, translate) -> np.ndarray:
     mat[:3, :3] = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
     mat[:3, 3] = translate
     return mat
-
-
-def wall_pieces(lines: list[dict], doors: list[dict], ceiling_h: float, opening_h: float):
-    """The wall boxes to build as ``(p0, p1, z0, z1)``, with each line's door openings cut out.
-
-    A drawn line becomes: full-height solid pieces ``(0, ceiling_h)`` around its openings, plus one
-    lintel per opening spanning ``(height, ceiling_h)`` over the opening width (skipped when the
-    opening reaches the ceiling). So a door is a 2 m-high hole with a beam above it, not a full gap.
-    """
-    per_seg = assign_doors(lines, doors, opening_h)
-    pieces = []
-    for i, ((x0, y0), (x1, y1)) in enumerate(line_segments(lines)):
-        length = math.hypot(x1 - x0, y1 - y0)
-        ux, uy = (x1 - x0) / length, (y1 - y0) / length
-        openings = per_seg.get(i, [])
-        for t0, t1 in cut_openings(length, [(t, w) for t, w, _ in openings]):
-            pieces.append(
-                ((x0 + ux * t0, y0 + uy * t0), (x0 + ux * t1, y0 + uy * t1), 0.0, ceiling_h)
-            )
-        for t_m, width, height in openings:
-            if height >= ceiling_h:
-                continue  # a full-height opening keeps a true doorway -- no lintel above it
-            g0, g1 = max(0.0, t_m - width / 2), min(length, t_m + width / 2)
-            pieces.append(
-                ((x0 + ux * g0, y0 + uy * g0), (x0 + ux * g1, y0 + uy * g1), height, ceiling_h)
-            )
-    return pieces
 
 
 def wall_box(
