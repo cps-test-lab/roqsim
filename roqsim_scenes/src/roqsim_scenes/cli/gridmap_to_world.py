@@ -293,10 +293,13 @@ def build_world(
         )
         spawn = {
             "model": robot,
-            "name": "robot",
             "pose": {"position": position, "orientation": {"yaw": yaw}},
         }
-        plugins.append({"spawn_robot": spawn})
+        # `name` is a SIBLING of the plugin ref, never one of its config keys -- the label an
+        # entry answers to belongs to the entry, and a plugin's config holds only what the plugin
+        # itself reads. The obstacle entries below are written the same way, and the loader
+        # refuses the other shape outright, so a world generated with it cannot be run at all.
+        plugins.append({"spawn_robot": spawn, "name": "robot"})
     plugins.extend(
         obstacle_plugins(
             grid,
