@@ -25,6 +25,7 @@ Config::
       ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       latch: true            # once true, stay true until on_reset (a trial is failed, not un-failed)
+      reset_on_placement: true  # placing the watched entity restarts the report (see below)
       rate_hz: 30.0          # endpoint publish rate
 
 Endpoint ``contact`` (out) reads a :class:`ContactReport`:
@@ -37,6 +38,22 @@ wants the detail reads the fields directly.
 
 The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
 wheels, so a wheel clipping a box counts exactly as much as the bumper does.
+
+When the trial moves the watched entity
+---------------------------------------
+
+``reset_on_placement`` (default true) restarts the report whenever the trial PLACES the watched
+entity -- a ``SetEntityState``, or a spawn that states a pose. A latched report is a claim about
+where the entity has been, and placing it somewhere else replaces the world that claim was about.
+
+It is not a nicety. Nothing can add a body to a compiled model, so a world declares the robot at
+one pose and the trial teleports it to the configuration's own; and a campaign placing obstacles
+for that configuration knows the poses IT chose, not the pose the world file happens to compile
+the robot at. An obstacle landing there touches the robot on the first physics step, and a latched
+monitor then reports a trial as collided before it has moved -- an artifact of setting the trial
+up, indistinguishable in the results from driving into a wall.
+
+Set it false where the compiled pose is the trial's own and every contact from t = 0 counts.
 """
 
 from __future__ import annotations
@@ -80,11 +97,14 @@ class ContactMonitorPlugin(Plugin):
         self.ignore_prefixes = list(self.config.get("ignore_prefixes", []))
         self.min_force = float(self.config.get("min_force", 1.0))
         self.latch = bool(self.config.get("latch", True))
+        self.reset_on_placement = bool(self.config.get("reset_on_placement", True))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
         self._ctx: SimContext | None = None
         self._watched: set[int] = set()  # geom ids belonging to the watched subtree
         self._ignored: set[int] = set()  # geom ids that never count
         self._report = ContactReport(False, -1.0, 0, "", "")
+        self._entity = None
+        self._placements = 0
 
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
@@ -103,6 +123,8 @@ class ContactMonitorPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
+        self._entity = entity
+        self._placements = int(getattr(entity, "placements", 0)) if entity else 0
         prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
@@ -196,8 +218,28 @@ class ContactMonitorPlugin(Plugin):
 
     def on_reset(self, ctx: SimContext) -> None:
         self._report = ContactReport(False, -1.0, 0, "", "")
+        self._placements = int(getattr(self._entity, "placements", 0)) if self._entity else 0
+
+    def _placed_since_last_step(self) -> bool:
+        """Has the trial PUT the watched entity somewhere since the last step?"""
+        if not self.reset_on_placement or self._entity is None:
+            return False
+        now = int(getattr(self._entity, "placements", 0))
+        moved, self._placements = now != self._placements, now
+        return moved
 
     def post_step(self, ctx: SimContext) -> None:
+        if self._placed_since_last_step():
+            # The report describes contacts of the entity where it WAS. A trial that places it
+            # somewhere else has replaced that world, so what was accumulated is not a fact about
+            # the trial any more -- and with `latch` it would otherwise be a permanent one.
+            #
+            # This is what a world compiles the robot at one pose and teleports it to the
+            # configuration's own needs: until the teleport the robot stands wherever the world
+            # put it, which nothing placing obstacles for THIS configuration knew to keep clear.
+            # A contact there is an artifact of setting the trial up, not an outcome of running it.
+            self._report = ContactReport(False, -1.0, 0, "", "")
+
         data, model = ctx.data, ctx.model
         hits = 0
         first: tuple[str, str] | None = None

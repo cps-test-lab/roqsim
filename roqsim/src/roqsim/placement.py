@@ -58,6 +58,7 @@ def place_body(ctx, entity, pos, quat, vel=None) -> bool:
         ctx.data.mocap_pos[mocapid] = pos
         ctx.data.mocap_quat[mocapid] = quat
         mujoco.mj_forward(ctx.model, ctx.data)
+        _record_placement(entity)
         return True
 
     # Resolved here, not by the caller: which joint carries a body is a property of the model, so
@@ -73,7 +74,22 @@ def place_body(ctx, entity, pos, quat, vel=None) -> bool:
     dof = ctx.model.jnt_dofadr[jid]
     ctx.data.qvel[dof : dof + 6] = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0) if vel is None else vel
     mujoco.mj_forward(ctx.model, ctx.data)
+    _record_placement(entity)
     return True
+
+
+def _record_placement(entity) -> None:
+    """Count a successful placement on the entity, for observers whose history it invalidates.
+
+    Only on success: a refused placement moved nothing, so nothing an observer recorded has been
+    made stale by it.
+    """
+    try:
+        entity.placements = int(getattr(entity, "placements", 0)) + 1
+    except AttributeError:
+        # An entity double that does not carry the field is still placeable; the counter is an
+        # observation aid, not part of what placing means.
+        pass
 
 
 def base_joint_of(entity) -> str | None:

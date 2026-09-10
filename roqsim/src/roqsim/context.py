@@ -87,6 +87,12 @@ class Entity:
     #: -- nothing can add a body to one at runtime -- but are excluded from raycasts, from
     #: rendering, from contacts, and from what the control plane lists. See :mod:`roqsim.presence`.
     present: bool = True
+    #: How many times a trial has PUT this entity somewhere (:func:`roqsim.placement.place_body`).
+    #: A counter rather than a flag, so an observer can tell "placed again" from "placed once" by
+    #: comparing with what it last saw, and needs no callback to be told. What reads it is an
+    #: observation whose history is about where the entity WAS: a report accumulated at a pose the
+    #: trial has since replaced describes a world that no longer exists.
+    placements: int = 0
 
 
 class EntityRegistry:
