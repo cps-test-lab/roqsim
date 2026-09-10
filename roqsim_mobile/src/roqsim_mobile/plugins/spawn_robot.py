@@ -69,7 +69,6 @@ import mujoco
 
 from roqsim.actuators import (
     apply_gravity_compensation,
-    uses_impedance,
 )
 from roqsim.actuators import (
     resolve as resolve_actuators,
@@ -207,8 +206,17 @@ class SpawnRobotPlugin(Plugin):
         self.actuator_table = resolve_actuators(
             child, self.config.get("actuators"), model_name=str(self.config["model"])
         )
-        if uses_impedance(self.actuator_table):
-            apply_gravity_compensation(child)
+        # Per body, not per spec, because a robot that stands on the ground has both kinds of
+        # body: a mobile manipulator's ARM links are held up by its own motors, while the base
+        # hangs off nothing and the wheels carry the robot. Compensating all of them would cancel
+        # the weight that presses it onto the floor -- and it would not fall over, so nothing
+        # would say so. `apply_gravity_compensation` draws that line from the actuator table.
+        #
+        # The arm's own sag is small at a real robot's shipped gains (frankie's worst joint holds
+        # to 0.4 deg without this) and it is the same defect an arm on a bench has, so it is
+        # closed the same way rather than left as the one place a drive carries its own weight
+        # and is not modelled doing it.
+        apply_gravity_compensation(child, self.actuator_table)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         frame = spec.worldbody.add_frame()

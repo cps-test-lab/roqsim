@@ -524,6 +524,11 @@ def uses_impedance(rows: list[ResolvedActuator]) -> bool:
 #: gravity compensation is asking.
 _SELF_SUPPORTING = frozenset({"position", "velocity", "impedance"})
 
+#: The subset :func:`apply_gravity_compensation` acts on, per joint. ``velocity`` is out of it
+#: because that is how a WHEEL is driven, and a wheel carries the robot rather than being carried
+#: by it. No bundled arm ships velocity actuators, so nothing that holds a pose loses by it.
+_HELD_BY_A_DRIVE = frozenset({"position", "impedance"})
+
 
 def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
     """Whether these actuators model hardware that holds a pose without external help.
@@ -542,32 +547,49 @@ def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
     return any(row.control in _SELF_SUPPORTING for row in rows)
 
 
-def apply_gravity_compensation(spec) -> int:
-    """Compensate the weight of every body in *spec*, and report how many.
+def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None) -> int:
+    """Compensate the weight this mechanism's own drives carry, and report how many bodies.
 
-    What it models: a drive whose own loop carries the mechanism, so its gain sets how hard the
-    joint resists a DISTURBANCE rather than how much weight it can hold -- without this a
+    What it models: a drive whose own loop carries what hangs off it, so its gain sets how hard
+    the joint resists a DISTURBANCE rather than how much weight it can hold -- without this a
     stiffness of 2 N*m/rad does not hold a UR5e up, it folds it, and even a UR5e's shipped
     2000 N*m/rad leaves the flange 9 mm low.
 
-    **For a FIXED-BASE mechanism only.** The condition is not the actuator law
-    (:func:`servo_holds_against_gravity` answers only that half) but where the weight goes: on an
-    arm bolted down, the drives are the entire load path and this is what they do. On a legged or
-    wheeled machine the GROUND carries the robot and the drives carry a share, so compensating
-    every body cancels the weight that presses it onto the floor -- a humanoid that stands on
-    nothing, a base that does not load its wheels. Neither falls over, which is what makes it
-    hard to notice.
+    **Which bodies, and why not all of them.** Given *rows*, a body is compensated when the chain
+    from the world down to it passes a joint driven by a ``position`` or ``impedance`` actuator --
+    everything, that is, whose weight some drive is holding up. What that leaves out is the load
+    path to the ground: a mobile base hangs off nothing and its wheels are driven by ``velocity``,
+    so neither is compensated and the robot still presses on the floor. Compensate those and it
+    stands on nothing, which it does without falling over, so nothing says so. The arm bolted to
+    that base IS compensated, because its links really are held up by its motors.
 
-    Called with the **whole entity's** spec, after anything is grafted onto the model and before it
-    is attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
+    ``velocity`` is excluded for that reason and no other: it is how a wheel is driven. No bundled
+    arm ships it, so nothing that holds a pose loses anything by its absence here.
+
+    Without *rows* every body is compensated. That is the whole-mechanism form, for a caller that
+    asks for it explicitly -- a torque controller handed its own gravity term -- and it is wrong
+    for anything that stands on the ground.
+
+    Called with the **whole entity's** spec, after anything is grafted onto it and before it is
+    attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
     purpose: ``body_gravcomp`` is per body and does not cascade to children, so an arm compensated
-    before its gripper was attached would sag by exactly the tool's weight. Compensating the tool is
-    also the right physics -- a real controller is told its payload and holds that too.
+    before its gripper was attached would sag by exactly the tool's weight. Compensating the tool
+    is also the right physics -- a real controller is told its payload and holds that too.
     """
+    held = None
+    if rows is not None:
+        held = {row.joint for row in rows if row.joint and row.control in _HELD_BY_A_DRIVE}
+
     compensated = 0
-    for body in spec.bodies:
-        if body.name == "world":
-            continue
-        body.gravcomp = 1.0
-        compensated += 1
+
+    def _walk(body, carried: bool) -> None:
+        nonlocal compensated
+        for child in body.bodies:
+            below = carried or held is None or any(j.name in held for j in child.joints)
+            if below:
+                child.gravcomp = 1.0
+                compensated += 1
+            _walk(child, below)
+
+    _walk(spec.worldbody, False)
     return compensated

@@ -121,7 +121,6 @@ import mujoco
 
 from roqsim.actuators import (
     apply_gravity_compensation,
-    servo_holds_against_gravity,
 )
 from roqsim.actuators import (
     resolve as resolve_actuators,
@@ -382,7 +381,13 @@ class SpawnArmPlugin(Plugin):
         # cascade, so an arm compensated before its tool was attached would sag by exactly the tool's
         # weight. Compensating the tool is also what a real controller does with a payload it has
         # been told about.
-        if self._compensate_gravity():
+        stated = self.config.get("gravity_compensation")
+        if stated is None:
+            apply_gravity_compensation(child, self.actuator_table)
+        elif stated:
+            # Stated true means the whole mechanism, which is the only thing it can mean for an
+            # arm whose law carries no gravity term of its own -- there is no driven joint for
+            # the per-body rule to find.
             apply_gravity_compensation(child)
 
         parent = self._mount_parent(spec)
@@ -405,24 +410,6 @@ class SpawnArmPlugin(Plugin):
             r = float(self.config.get("pedestal_half_width", 0.1))
             g.size = [r, r, self.pos[2] / 2.0]
             g.rgba = [0.25, 0.25, 0.27, 1.0]
-
-    def _compensate_gravity(self) -> bool:
-        """Whether this arm's bodies carry ``gravcomp``, and who decided.
-
-        Default: whatever the actuator law implies (:func:`servo_holds_against_gravity`). A
-        position, velocity or impedance servo is a model of hardware that holds its own weight, and
-        MuJoCo's actuator of that name does not -- it generates holding torque out of position
-        error, so the arm settles below where it was sent by an amount that grows as the gain
-        falls. The gain then reads as a stiffness and acts as a load rating.
-
-        ``gravity_compensation:`` overrides it in both directions, because both are real
-        experiments: ``false`` under a position servo asks for the raw actuator, and ``true`` under
-        ``effort`` says the torque controller under test is handed its own gravity term.
-        """
-        stated = self.config.get("gravity_compensation")
-        if stated is not None:
-            return bool(stated)
-        return servo_holds_against_gravity(self.actuator_table)
 
     def _add_carriage(self, spec: mujoco.MjSpec, frame):
         """Insert the rail carriage at *frame* and return the frame the arm should attach to.
