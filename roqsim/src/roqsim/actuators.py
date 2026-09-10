@@ -529,10 +529,15 @@ def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
     """Whether these actuators model hardware that holds a pose without external help.
 
     A position or velocity servo commanded to stand still does stand still: the drive's own loop
-    supplies whatever torque the arm's weight demands, and the joint's gain describes how hard it
-    resists a *disturbance*. Modelled without :func:`apply_gravity_compensation` the same gain has
-    to carry the arm as well, so the servo trades position error for holding torque and the arm
+    supplies whatever torque the load demands, and the joint's gain describes how hard it resists a
+    *disturbance*. Modelled without :func:`apply_gravity_compensation` the same gain has to carry
+    the mechanism as well, so the servo trades position error for holding torque and the joint
     stands somewhere it was never sent -- which is not a soft arm, it is a different arm.
+
+    **Only half the question, and the other half is not about actuators at all**: see
+    :func:`apply_gravity_compensation` before acting on this. A law that holds a pose says nothing
+    about whether the drives are what carry the weight, and on a legged or wheeled machine they
+    are not.
     """
     return any(row.control in _SELF_SUPPORTING for row in rows)
 
@@ -540,10 +545,18 @@ def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
 def apply_gravity_compensation(spec) -> int:
     """Compensate the weight of every body in *spec*, and report how many.
 
-    The half of ``control: impedance`` that is not an actuator parameter. A real joint-impedance
-    controller holds a pose against gravity so that its stiffness sets how hard the joint resists a
-    DISTURBANCE, not how much of the arm's own weight it can carry -- without this a stiffness of
-    2 N*m/rad does not hold a UR5e up, it folds it.
+    What it models: a drive whose own loop carries the mechanism, so its gain sets how hard the
+    joint resists a DISTURBANCE rather than how much weight it can hold -- without this a
+    stiffness of 2 N*m/rad does not hold a UR5e up, it folds it, and even a UR5e's shipped
+    2000 N*m/rad leaves the flange 9 mm low.
+
+    **For a FIXED-BASE mechanism only.** The condition is not the actuator law
+    (:func:`servo_holds_against_gravity` answers only that half) but where the weight goes: on an
+    arm bolted down, the drives are the entire load path and this is what they do. On a legged or
+    wheeled machine the GROUND carries the robot and the drives carry a share, so compensating
+    every body cancels the weight that presses it onto the floor -- a humanoid that stands on
+    nothing, a base that does not load its wheels. Neither falls over, which is what makes it
+    hard to notice.
 
     Called with the **whole entity's** spec, after anything is grafted onto the model and before it
     is attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
