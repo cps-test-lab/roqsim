@@ -27,6 +27,7 @@ import py_trees  # noqa: E402
 from scenario_execution.actions.base_action import ActionError  # noqa: E402
 
 from roqsim.context import Entity, SimContext  # noqa: E402
+from roqsim.plugin import Plugin  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
@@ -37,6 +38,7 @@ from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # no
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
+from scenario_execution_roqsim.actions.sim_command import SimCommand  # noqa: E402
 from scenario_execution_roqsim.actions.spawn_entity import SpawnEntity  # noqa: E402
 
 RUNNING = py_trees.common.Status.RUNNING
@@ -1175,3 +1177,177 @@ def test_every_call_type_can_be_asked_why_it_is_waiting():
 
     for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):
         assert hasattr(cls, "pending_reason"), cls.__name__
+
+
+class _FtScene(Plugin):
+    """A damped link carrying a tool, with an ``fts_site`` at the cut -- a real, nonzero wrench."""
+
+    def build(self, spec, _ctx):
+        spec.worldbody.add_geom(type=mujoco.mjtGeom.mjGEOM_PLANE, size=[5, 5, 0.1])
+        link = spec.worldbody.add_body(name="link", pos=[0, 0, 1])
+        link.add_joint(name="j", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=[0, 0, 1], damping=1000.0)
+        link.add_geom(type=mujoco.mjtGeom.mjGEOM_CAPSULE, fromto=[0, 0, 0, 0, 0, -0.1],
+                      size=[0.02, 0, 0], mass=0.5)
+        link.add_site(name="fts_site", pos=[0, 0, -0.1])
+        tool = link.add_body(name="tool", pos=[0, 0, -0.1])
+        tool.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.05, 0.05, 0.05], pos=[0, 0, -0.05],
+                      mass=2.0)
+
+
+# -- sim_command: the generic door ---------------------------------------------------------------
+
+
+def _button(ctx, address="ft/tare", namespace=""):
+    """Register the kind of endpoint a plugin declares for a no-argument command."""
+    from roqsim.context import Endpoint
+
+    pressed: list = []
+    ctx.interface.add(
+        Endpoint(
+            name=address.rsplit("/", 1)[-1],
+            direction="in",
+            owner=None,
+            namespace=namespace,
+            write=lambda _payload=None: pressed.append(True),
+            backend={"ros2": {"service": "std_srvs.srv.Trigger", "name": address}},
+        )
+    )
+    return pressed
+
+
+def test_a_command_reaches_the_endpoint_the_plugin_registered(world):
+    """The whole point: no code here names the plugin, and the button is still pressed.
+
+    A plugin becomes reachable from a scenario by registering an inbound endpoint. Nothing in this
+    package resolves it by a per-plugin blackboard key or a per-plugin method, which is what stops
+    each new command costing four files and a dependency on the plugin that owns it.
+    """
+    ctx, clock, sim = world
+    pressed = _button(ctx)
+    action = _start(SimCommand(), sim, clock, command="ft/tare")
+
+    assert action.update() is RUNNING, "the write is queued for the physics thread"
+    assert not pressed, "and must not have run on the tree's thread"
+
+    _step(ctx, clock)
+
+    assert action.update() is SUCCESS
+    assert pressed == [True]
+
+
+def test_the_address_is_the_one_the_bridge_advertises(world):
+    """One spelling on both transports, or a scenario cannot move between the shapes unedited.
+
+    The bridge serves an inbound endpoint at its namespace joined to its ``name`` hint, so that is
+    what an author types -- and what the stepped transport must resolve, rather than inventing a
+    second scheme out of the endpoint's own attributes.
+    """
+    ctx, clock, sim = world
+    pressed = _button(ctx, address="tare", namespace="robot")
+    action = _start(SimCommand(), sim, clock, command="robot/tare")
+
+    action.update()
+    _step(ctx, clock)
+
+    assert action.update() is SUCCESS and pressed == [True]
+
+
+def test_a_command_the_world_does_not_declare_is_an_authoring_error(world):
+    """A scenario naming a command the world has not got is written against a different world.
+
+    Raised rather than failed, on the same terms as an entity that was never spawned -- and the
+    message lists what this world does offer, because the usual cause is a name close to a real one.
+    """
+    ctx, clock, sim = world
+    _button(ctx, address="ft/tare")
+    action = _start(SimCommand(), sim, clock, command="ft/tair")
+
+    with pytest.raises(ActionError, match="declares no command"):
+        action.update()
+
+
+def test_the_refusal_lists_what_the_world_offers(world):
+    ctx, clock, sim = world
+    _button(ctx, address="ft/tare")
+    _button(ctx, address="robot/reset_odom")
+    action = _start(SimCommand(), sim, clock, command="nobody/tare")
+
+    with pytest.raises(ActionError) as caught:
+        action.update()
+
+    assert "ft/tare" in str(caught.value) and "robot/reset_odom" in str(caught.value)
+
+
+def test_two_producers_can_offer_the_same_command(world):
+    """The producer's scope is part of the address, so two sensors' tares are two buttons."""
+    ctx, clock, sim = world
+    left = _button(ctx, address="left_ft/tare")
+    right = _button(ctx, address="right_ft/tare")
+    action = _start(SimCommand(), sim, clock, command="right_ft/tare")
+
+    action.update()
+    _step(ctx, clock)
+    action.update()
+
+    assert right == [True] and left == []
+
+
+def test_an_empty_address_is_refused_at_execute(world):
+    _ctx, clock, sim = world
+    action = SimCommand()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="`command` is empty"):
+        action.execute(command="")
+
+
+def test_an_action_reached_twice_fires_twice(world):
+    """`execute` runs on every activation, so a loop that presses a button presses it each time."""
+    ctx, clock, sim = world
+    pressed = _button(ctx)
+    action = _start(SimCommand(), sim, clock, command="ft/tare")
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    action.execute(command="ft/tare")
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    assert pressed == [True, True]
+
+
+def test_it_presses_a_real_plugin_with_no_code_that_knows_the_plugin():
+    """The claim, against a shipped plugin rather than a stand-in.
+
+    ``force_torque`` registers a ``tare`` endpoint and this package contains no mention of it --
+    no access method, no action, no entry point. The scenario reaches it anyway, which is the only
+    evidence that the door is generic rather than merely written to look it.
+    """
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    engine = Engine(load_config_from_dict({
+        "sim": {},
+        "components": [
+            {f"{__name__}:_FtScene": {}},
+            {"force_torque": {"site": "fts_site"}, "name": "ft"},
+        ],
+    }))
+    engine.setup()
+    engine.reset()
+    for _ in range(200):
+        engine.step()
+
+    sensor = engine.ctx.blackboard.get("ft:ft")
+    assert abs(float(sensor.read()[0][2])) > 1.0, "the tool's weight is on the sensor"
+
+    clock = FakeClock()
+    action = _start(SimCommand(), FakeSim(engine.ctx), clock, command="ft/tare")
+    assert action.update() is RUNNING
+    engine.ctx.drain_commands()
+    engine.step()
+
+    assert action.update() is SUCCESS
+    assert abs(float(sensor.read()[0][2])) < 1e-6, "and the scenario zeroed it"
+    engine.shutdown()

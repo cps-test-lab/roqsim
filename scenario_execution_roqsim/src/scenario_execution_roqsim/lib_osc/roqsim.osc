@@ -127,6 +127,27 @@ action set_entity_state:
     pose: pose_3d
     twist: velocity_6d = velocity_6d()                # zero unless stated
 
+action sim_command:
+    # Press a button a plugin declared. The generic verb: it names no capability of its own, and
+    # reaches whatever the world's plugins registered as an inbound endpoint that takes no
+    # argument -- a force/torque sensor's `tare` is the first, and a plugin added later needs no
+    # action here at all.
+    #
+    # A COMMAND, not a query. It carries nothing and answers only whether the simulator ran it;
+    # there is no verdict to branch on, because a generic door cannot know what each plugin means
+    # by success. Where an effect must be checked, the plugin publishes it and the scenario reads
+    # that -- which is also why the specialised actions above stay: `set_model_override` waits on
+    # a verdict this one cannot.
+    #
+    # Over ROS this is `<owner>/<command>` as a `std_srvs/Trigger`, by the same convention
+    # `set_model_override` uses for `<instance>/override`. Stepped, it is the endpoint's own write,
+    # queued onto the physics thread. Fails the trial when the world declares no such command.
+    command: string                                   # the endpoint's ADDRESS, exactly as the
+                                                      # simulator advertises it: the producer's
+                                                      # scope and the endpoint's name, e.g.
+                                                      # 'ft/tare'. `roqsim scenes describe` lists
+                                                      # what a world offers
+
 action set_sensor_override:
     # Degrade a SENSOR mid-run: apply (or restore) the `fault:` block the sensor carries in its own
     # config. The report twin of set_model_override -- that one changes the physics, this one changes

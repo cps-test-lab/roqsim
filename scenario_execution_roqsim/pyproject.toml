@@ -49,6 +49,7 @@ entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:Entit
 set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntityState"
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
 set_model_override = "scenario_execution_roqsim.actions.set_model_override:SetModelOverride"
+sim_command = "scenario_execution_roqsim.actions.sim_command:SimCommand"
 set_sensor_override = "scenario_execution_roqsim.actions.set_sensor_override:SetSensorOverride"
 
 [tool.setuptools.packages.find]

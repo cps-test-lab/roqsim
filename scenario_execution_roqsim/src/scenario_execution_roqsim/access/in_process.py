@@ -19,6 +19,8 @@ from roqsim.placement import base_joint_of, place_body
 
 from . import (
     AccessError,
+    CommandCall,
+    CommandOutcome,
     NavCall,
     NavOutcome,
     OverrideCall,
@@ -29,6 +31,7 @@ from . import (
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
+    command_address,
 )
 
 _MISSING = object()
@@ -117,6 +120,34 @@ class InProcessAccess(WorldAccess):
         return self._bids[key]
 
     # -- the fault ------------------------------------------------------------------------------
+    def send_command(self, command: str) -> CommandCall:
+        """Find the endpoint the world declared and write to it. One tick to drain, no verdict.
+
+        Resolved from ``ctx.interface`` rather than from a blackboard key: that registry is what a
+        plugin declares its commands on and what the ROS bridge serves them from, so going through
+        it is what makes a command reachable on both transports the moment the plugin registers
+        one -- with nothing in this package naming the plugin.
+        """
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        inbound = [e for e in ctx.interface.by_direction("in") if e.write is not None]
+        wanted = [e for e in inbound if command_address(e) == command]
+        if not wanted:
+            offered = sorted(command_address(e) for e in inbound)
+            raise AccessError(
+                f"this world declares no command {command!r}. A command is an inbound endpoint a "
+                f"plugin registers, addressed as the bridge advertises it; this world offers: "
+                f"{', '.join(offered) if offered else '(none)'}. "
+                "`roqsim scenes describe <world>` lists what a world offers."
+            )
+        endpoint = wanted[0]
+        drained: dict = {}
+        # Posted rather than called: an endpoint's write runs on the physics thread, like every
+        # other mutation, and the queue is drained at the start of the next `pre_step`.
+        ctx.post(lambda _ctx: (endpoint.write(None), drained.update(done=True)))
+        return _PostedCommand(drained, command)
+
     def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         ctx = self._ctx()
         if ctx is None:
@@ -329,6 +360,28 @@ class _PostedTeleport(TeleportCall):
 
     def poll(self) -> TeleportOutcome | None:
         return self._box.get("outcome")
+
+
+class _PostedCommand(CommandCall):
+    """Waits for the queued write to be drained, and reports that it ran.
+
+    No verdict beyond that, deliberately: a command with no argument has no state for the caller
+    to compare against, and inventing one here would mean this package knowing what each plugin
+    does -- the coupling the generic door exists to avoid. A plugin whose effect a scenario must
+    branch on publishes it as its own endpoint, and the condition actions read that.
+    """
+
+    def __init__(self, drained: dict, command: str):
+        self._drained = drained
+        self._command = command
+
+    def poll(self) -> CommandOutcome | None:
+        if not self._drained.get("done"):
+            return None
+        return CommandOutcome(ok=True, detail=f"{self._command} was sent")
+
+    def pending_reason(self) -> str | None:
+        return "the simulation has not stepped since the command was queued"
 
 
 class _Settled(OverrideCall):

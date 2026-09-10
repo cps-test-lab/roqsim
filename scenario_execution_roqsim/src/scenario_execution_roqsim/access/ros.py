@@ -31,6 +31,8 @@ import numpy as np
 
 from . import (
     AccessError,
+    CommandCall,
+    CommandOutcome,
     NavCall,
     NavOutcome,
     OverrideCall,
@@ -111,7 +113,7 @@ class RosAccess(WorldAccess):
                 SetEntityState,
                 SpawnEntity,
             )
-            from std_srvs.srv import SetBool
+            from std_srvs.srv import SetBool, Trigger
         except ImportError as err:  # pragma: no cover - only when ROS is genuinely absent
             raise AccessError(
                 "this scenario is being run by the ROS runner, but the ROS interfaces this needs are "
@@ -126,6 +128,8 @@ class RosAccess(WorldAccess):
         self._spawn_type = SpawnEntity
         self._delete_type = DeleteEntity
         self._set_bool_type = SetBool
+        self._trigger_type = Trigger
+        self._command_clients: dict = {}
         # nav2_msgs and geometry_msgs are imported lazily in `navigate`, not here: a world with no
         # navigator never needs nav2 installed, and requiring it at construction would make every
         # ROS scenario depend on the stack a subset of them command.
@@ -201,6 +205,25 @@ class RosAccess(WorldAccess):
         )
 
     # -- the fault ------------------------------------------------------------------------------
+    def send_command(self, command: str) -> CommandCall:
+        """Call the command's own address as a ``Trigger``.
+
+        The address IS the service name -- the bridge advertises an inbound endpoint at exactly the
+        string :func:`~scenario_execution_roqsim.access.command_address` builds, so there is
+        nothing to derive here and nothing for the two transports to disagree about.
+
+        A dotted component address arrives as ``robot.lidar`` and is translated to slashes, since
+        a dot is not legal in a ROS name -- one translation, at the boundary that owns the naming.
+        """
+        service = command.replace(".", "/")
+        client = self._command_clients.get(service)
+        if client is None:
+            client = self._node.create_client(
+                self._trigger_type, service, callback_group=self._group
+            )
+            self._command_clients[service] = client
+        return _RosCommand(client, self._trigger_type.Request(), service)
+
     def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         """Call ``<instance>/override``. The REPLY is the outcome -- that is why it is a service.
 
@@ -327,6 +350,39 @@ class RosAccess(WorldAccess):
                 self._node.destroy_client(client)
             except Exception:  # noqa: BLE001 - teardown never fails a scenario
                 pass
+
+
+class _RosCommand(CommandCall):
+    """One ``Trigger`` round-trip. Sent on the first poll, so nothing is in flight before it is due."""
+
+    def __init__(self, client, request, service: str):
+        self._client = client
+        self._request = request
+        self._service = service
+        self._future = None
+
+    def poll(self) -> CommandOutcome | None:
+        if self._future is None:
+            if not self._client.service_is_ready():
+                # The simulator's bridge has not advertised it yet. Waiting beats failing: in a ROS
+                # run the stack and the simulator come up concurrently.
+                return None
+            self._future = self._client.call_async(self._request)
+            return None
+        if not self._future.done():
+            return None
+        resp = self._future.result()
+        if resp is None:  # pragma: no cover
+            raise AccessError(f"the call to {self._service} was dropped")
+        return CommandOutcome(
+            ok=bool(resp.success),
+            detail=f"{self._service} replied {str(resp.message or '')!r}",
+        )
+
+    def pending_reason(self) -> str | None:
+        if self._future is None and not self._client.service_is_ready():
+            return f"{self._service} is not advertised yet"
+        return None
 
 
 class _RosCall(OverrideCall):

@@ -124,6 +124,37 @@ class OverrideCall(PendingCall):
     def poll(self) -> OverrideOutcome | None: ...
 
 
+def command_address(endpoint) -> str:
+    """The one name a command answers to, on either transport.
+
+    The ROS bridge advertises an inbound endpoint at its namespace joined to its ``ros2`` ``name``
+    hint (falling back to the endpoint's own name), so that string is what a scenario author sees
+    and types. The stepped transport resolves the same string against the same registry rather
+    than inventing a second addressing scheme -- otherwise one scenario would need two spellings
+    and could not move between the shapes unedited, which is the property this vocabulary exists
+    to keep.
+    """
+    hints = (endpoint.backend or {}).get("ros2", {})
+    return "/".join(
+        part for part in (endpoint.namespace, hints.get("name") or endpoint.name) if part
+    )
+
+
+@dataclass(frozen=True)
+class CommandOutcome:
+    """What became of a plugin command. ``ok`` is the simulator's answer, not the transport's."""
+
+    ok: bool
+    detail: str = ""
+
+
+class CommandCall(PendingCall):
+    """A plugin command in flight. ``poll()`` returns ``None`` until the outcome is known."""
+
+    @abstractmethod
+    def poll(self) -> CommandOutcome | None: ...
+
+
 @dataclass(frozen=True)
 class TeleportOutcome:
     """What became of a teleport. ``ok`` is false only for an authoring-adjacent runtime fact that
@@ -228,6 +259,22 @@ class WorldAccess(ABC):
     }
 
     @abstractmethod
+    def send_command(self, command: str) -> CommandCall:
+        """Press a plugin's button: an ``in`` endpoint that takes no argument.
+
+        The generic door. Every other method here names one capability and is implemented twice;
+        this one names none, because what it can reach is whatever the world's plugins declared.
+        A plugin that registers a no-argument ``in`` endpoint is reachable from a scenario through
+        it with no code in this package -- which is what keeps a package that must depend only on
+        roqsim from having to know each plugin.
+
+        *command* is the endpoint's address, the string :func:`command_address` builds and the ROS
+        bridge advertises -- ``ft/tare`` for a world-level sensor labelled ``ft``. Raises
+        :class:`AccessError` when the world declares no such endpoint, because that is a scenario
+        naming something the world does not have -- the same class of mistake as an entity that
+        was never spawned.
+        """
+
     def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
         """Switch a fault on or off. Never blocks.
 
