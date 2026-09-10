@@ -40,6 +40,7 @@ from .config import SimConfig, instantiate_plugins
 from .context import SimContext
 from .plugin import Plugin
 from .presence import arm_gravity_compensation
+from .seed import PREVIEW_SEED
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -104,10 +105,30 @@ class Engine:
         plugins: list[Plugin] | None = None,
         logger: logging.Logger | None = None,
         profile: bool = False,
+        preview: bool = False,
     ):
+        """Build the engine for *config*.
+
+        *preview* says this driver compiles the world in order to LOOK at it -- a render, a map,
+        an export, a load check -- and will never step it into a run whose numbers anyone keeps.
+        It pins :data:`roqsim.seed.PREVIEW_SEED` on the context, which is what makes such a tool
+        work on a world whose plugins draw.
+
+        The seed is otherwise the driver's to resolve, and an unresolved one raises rather than
+        defaulting to zero -- deliberately, because a run whose randomness nobody chose cannot be
+        replayed. That rule has no useful meaning for a tool that produces a picture: there is no
+        run to replay, and the tool refused a world it could perfectly well have drawn, naming a
+        seed the caller has no way to supply. `preview` is how a driver says which of the two it
+        is, once, at the place where it is obvious.
+        """
         self.config = config
         self.logger = logger or logging.getLogger("roqsim.engine")
         self.ctx = SimContext(config.raw, logger=self.logger)
+        if preview:
+            # Assigned HERE and not in `setup`, because a driver may read or override it in
+            # between -- and because a fixed seed a caller can see is the whole point: two renders
+            # of one world are the same picture.
+            self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a

@@ -167,7 +167,6 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
     import sys
 
     from roqsim import Engine, config_for_input, drop_transport_plugins
-    from roqsim.seed import PREVIEW_SEED
 
     cfg = config_for_input(target)
     if skip_transport:
@@ -182,10 +181,9 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
                     file=sys.stderr,
                     flush=True,
                 )
-    engine = Engine(cfg)
-    # A preview is a driver and must resolve a seed; fixed, because settling a scene to look at it
-    # is not a measurement (`roqsim.seed.PREVIEW_SEED`).
-    engine.ctx.seed = PREVIEW_SEED
+    # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
+    # one rather than the driver's to resolve.
+    engine = Engine(cfg, preview=True)
     engine.setup()
     engine.reset()
     for _ in range(max(0, settle_steps)):
@@ -1078,12 +1076,10 @@ class _ReviewApp:
         """Recompile the world from the edited config (the sanctioned way to realise a pose change --
         never a live ``model.body_pos`` write) and re-point the renderer, keeping the camera."""
         from roqsim import Engine, FrameRenderer
-        from roqsim.seed import PREVIEW_SEED
 
         cfg = self.engine.config
         cam = self.fr.camera
-        new = Engine(cfg)
-        new.ctx.seed = PREVIEW_SEED  # a rebuilt preview, same reasoning as the first build
+        new = Engine(cfg, preview=True)  # a rebuilt preview, same reasoning as the first build
         new.setup()
         new.reset()
         for _ in range(max(0, self.settle_steps)):
