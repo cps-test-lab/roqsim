@@ -1,5 +1,17 @@
-"""Scene plugin: load a floorplan **mesh** as the world -- a ground plane (+light) fitted to the mesh,
-the mesh itself as visual + lidar walls, and exact convex wall colliders from its json-ld.
+"""Scene plugin: a floorplan as the world -- ground plane, light and walls, from a mesh or from
+wall segments.
+
+**Two sources, one plugin, because they are one thing.** A floorplan is a floorplan whether it
+arrives as geometry or as a layout, and a world author picks by what they HAVE:
+
+``mesh:``
+    the building already exists as geometry -- imported from CAD, or produced by
+    Floorplan-DSL / scenery_builder. The mesh is the walls; its json-ld gives exact colliders.
+``lines:`` / ``floorplan:``
+    the building is a layout: wall segments and door openings, built here as boxes with no mesh
+    anywhere. Reach for this when the walls are the experiment's VARIABLE -- a corridor width is
+    then an ordinary config value that a sweep varies and the run's provenance records, rather
+    than a file baked ahead of time that nothing downstream can tell apart from another file.
 
 Provides a ground plane named ``floor`` (the TurtleBot caster contact pair references that name) grown
 to the mesh's XY footprint, plus a ceiling light. The floorplan mesh (e.g. an ``.stl`` from
@@ -17,13 +29,30 @@ floorplan's json-ld source next to the mesh (``<env>/json-ld/``, see
 solid to physics, so the robot physically cannot drive through walls (doorways stay open). The json-ld
 is **required**: a mesh without it fails validation.
 
-This plugin requires a ``mesh``. A scene that only needs a bare floor + light should omit the plugin
-and use the engine's default world (``sim.world``; unset -> ``empty_room``).
+**From segments**, each wall becomes one box: visible AND collidable, because a box is already
+convex, so unlike the mesh source there is nothing to hide behind -- what is drawn is what is
+collided with, and the lidar sees the same wall the renderer does. A door is a hole with a beam
+above it rather than a full-height gap, so a room stays enclosed over head height. The arithmetic
+is :mod:`roqsim.floorplan_geometry`, shared with the mesh baker and the plan-view renderer, so a
+preview, a baked world and this plugin cut the same openings.
+
+Exactly one source, and naming neither is refused: a scene that only needs a bare floor + light
+should omit the plugin and use the engine's default world (``sim.world``; unset -> ``empty_room``).
 
 Config::
 
     floorplan:
-      mesh: <path>         # floorplan mesh (.stl); absolute, or relative to the process cwd (REQUIRED)
+      # --- one of these two sources ---
+      mesh: <path>         # floorplan mesh (.stl); absolute, or relative to the process cwd
+      # ...or the layout instead, in the floorplan JSON's own vocabulary:
+      floorplan: rooms.json  # what `roqsim scenes dxf-to-floorplan` and the sketch window write
+      lines:                 # ...or the segments inline
+        - {id: 0, x0_m: 0.0, y0_m: 0.0, x1_m: 6.0, y1_m: 0.0}
+      doors: [{line_id: 0, t: 0.5, width_m: 0.9}]   # t is 0..1 along that wall
+      height: 2.5          # segments only: ceiling height (m)
+      thickness: 0.12      # segments only: wall thickness (m)
+      opening_height: 2.0  # segments only: door height; the wall above one becomes a lintel
+      # --- the rest applies to both ---
       mesh_scale: 1.0      # float or [x, y, z]
       mesh_pos: [0, 0, 0]  # placement offset of the mesh in the world frame
       floor:               # ground-plane appearance + physics (all keys optional; default = light gray)
@@ -116,6 +145,25 @@ _LIGHT_DEFAULTS = {
 }
 
 
+def _boxes_as_points(boxes: list) -> list:
+    """Wall boxes as world-frame corner points, so one footprint rule serves both sources.
+
+    ``_footprint`` reduces vertex sets to an XY extent; giving it the boxes' own corners means the
+    ground plane is sized the same way whether the walls came from a mesh or from segments.
+    """
+    import math
+
+    out = []
+    for (cx, cy, _cz), (hx, hy, _hz), yaw in boxes:
+        ca, sa = math.cos(yaw), math.sin(yaw)
+        corners = []
+        for sx in (-hx, hx):
+            for sy in (-hy, hy):
+                corners.append([cx + sx * ca - sy * sa, cy + sx * sa + sy * ca, 0.0])
+        out.append(corners)
+    return out
+
+
 def _footprint(colliders: list) -> tuple[float, float, float, float]:
     """(center_x, center_y, half_x, half_y) of the floorplan's XY extent from its wall colliders.
 
@@ -140,13 +188,50 @@ class FloorplanPlugin(Plugin):
     # sim.world (see roqsim.world). This is the mobile-robot scene; fixed cells use sim.world.
     provides_world = True
 
+    #: Defaults for the segment source. A wall is a real wall, not a line: it has a thickness, and
+    #: a door is an opening in it with a beam above rather than a full-height gap.
+    SEGMENT_DEFAULTS = {"height": 2.5, "thickness": 0.12, "opening_height": 2.0}
+
+    def _validate_segments(self, config: dict) -> list[str]:
+        errors = []
+        if config.get("lines") is not None and config.get("floorplan") is not None:
+            errors.append(
+                "name one of 'lines' (inline) or 'floorplan' (a JSON file), not both: two layouts "
+                "with no rule for which wins"
+            )
+        if config.get("lines") is not None and not config.get("lines"):
+            # Told apart from naming no source at all: an author who wrote `lines: []` wrote
+            # something, and the message has to be about what they wrote.
+            errors.append("'lines' is empty: a floorplan with no walls builds nothing to drive in")
+        for key in ("lines", "doors"):
+            if config.get(key) is not None and not isinstance(config[key], list):
+                errors.append(f"'{key}' must be a list")
+        for key in self.SEGMENT_DEFAULTS:
+            if key in config and float(config[key]) <= 0:
+                errors.append(f"'{key}' must be > 0")
+        height = float(config.get("height", self.SEGMENT_DEFAULTS["height"]))
+        opening = float(config.get("opening_height", self.SEGMENT_DEFAULTS["opening_height"]))
+        if opening > height:
+            errors.append(
+                "'opening_height' is taller than 'height': a door cannot be higher than the wall "
+                "it is cut into"
+            )
+        return errors
+
     def validate_config(self, config: dict) -> list[str]:
         errors = []
         mesh = config.get("mesh")
-        if not mesh:
+        segments = config.get("lines") is not None or config.get("floorplan") is not None
+        if bool(mesh) == bool(segments):
             errors.append(
-                "'mesh' is required; omit the floorplan plugin to use the default empty_room world"
+                "name exactly one source: 'mesh' (a floorplan mesh with its json-ld colliders), or "
+                "'lines'/'floorplan' (wall segments, built as boxes with no mesh at all). Omit the "
+                "plugin entirely to use the default empty_room world."
             )
+        if segments:
+            errors.extend(self._validate_segments(config))
+        elif not mesh:
+            pass
         elif not os.path.exists(mesh):
             errors.append(f"'mesh' file does not exist: {mesh}")
         else:
@@ -270,16 +355,92 @@ class FloorplanPlugin(Plugin):
                 errors.append(f"'{prefix}.texture' {exc}")
         return errors
 
+    def _wall_boxes(self) -> list:
+        """``(centre, half_size, yaw)`` per wall box, from the segments this entry states.
+
+        The arithmetic is :mod:`roqsim.floorplan_geometry`, which the mesh baker and the plan-view
+        renderer already share -- so a preview, a baked world and this plugin cut the same openings.
+        A door is a hole with a beam over it, not a gap, which is what keeps a room enclosed above
+        head height.
+        """
+        import json
+        import math
+        from pathlib import Path
+
+        from roqsim.floorplan_geometry import wall_pieces
+
+        source = self.config.get("floorplan")
+        if source:
+            path = Path(source)
+            if not path.is_absolute():
+                path = Path(self.base_dir or ".") / path
+            if not path.is_file():
+                raise RuntimeError(
+                    f"floorplan[{self.label}]: {str(path)!r} does not exist. It is resolved "
+                    f"relative to the world file; `roqsim scenes dxf-to-floorplan` and the "
+                    f"scene-builder's sketch window both write this shape."
+                )
+            doc = json.loads(path.read_text(encoding="utf-8"))
+            lines, doors = list(doc.get("lines") or []), list(doc.get("doors") or [])
+        else:
+            lines = list(self.config.get("lines") or [])
+            doors = list(self.config.get("doors") or [])
+
+        cfg = {
+            **self.SEGMENT_DEFAULTS,
+            **{k: self.config[k] for k in self.SEGMENT_DEFAULTS if k in self.config},
+        }
+        thickness = float(cfg["thickness"])
+        boxes = []
+        for (x0, y0), (x1, y1), z0, z1 in wall_pieces(
+            lines, doors, float(cfg["height"]), float(cfg["opening_height"])
+        ):
+            length = math.hypot(x1 - x0, y1 - y0)
+            if length <= 0.0:
+                continue
+            boxes.append(
+                (
+                    ((x0 + x1) / 2.0, (y0 + y1) / 2.0, (z0 + z1) / 2.0),
+                    (length / 2.0, thickness / 2.0, (z1 - z0) / 2.0),
+                    math.atan2(y1 - y0, x1 - x0),
+                )
+            )
+        return boxes
+
+    def _add_wall_boxes(self, spec: mujoco.MjSpec, boxes: list, material: str) -> None:
+        """One box geom per wall piece: visible AND collidable, with no mesh anywhere.
+
+        Unlike the mesh source there is nothing to hide behind: a box is already convex, so the
+        thing that is drawn is the thing that is collided with and a lidar sees the same wall the
+        renderer does.
+        """
+        import math
+
+        for i, ((cx, cy, cz), half, yaw) in enumerate(boxes):
+            g = spec.worldbody.add_geom()
+            g.name = f"floorplan_wall_{i}"
+            g.type = mujoco.mjtGeom.mjGEOM_BOX
+            g.size = list(half)
+            g.pos = [cx, cy, cz]
+            g.quat = [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
+            g.material = material
+
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         from roqsim.floorplan_collision import wall_colliders
 
-        mesh = self.config.get("mesh")  # required; enforced by validate_config
+        mesh = self.config.get("mesh")  # one of the two sources; enforced by validate_config
         floor_raw = self.config.get("floor") or {}
         floor_cfg = {**_FLOOR_DEFAULTS, **floor_raw}
         # World-frame wall colliders from the json-ld (required, validated): also give the exact XY
         # footprint so the ground plane is centred + sized on the floorplan, which scenery_builder does
         # NOT place at the origin (an origin-centred plane would be ~4x too big and off to one corner).
-        colliders = wall_colliders(mesh)
+        boxes = [] if mesh else self._wall_boxes()
+        if not mesh and not boxes:
+            raise RuntimeError(
+                f"floorplan[{self.label}]: the segments produced no walls. A floorplan with "
+                f"nothing in it builds a world that quietly measures nothing."
+            )
+        colliders = wall_colliders(mesh) if mesh else _boxes_as_points(boxes)
         cx, cy, half_x, half_y = _footprint(colliders)
 
         surface_material(spec, "grid", "floor_mat", floor_raw, _FLOOR_DEFAULTS)
@@ -296,8 +457,11 @@ class FloorplanPlugin(Plugin):
 
         wall_raw = self.config.get("wall") or {}
         wall_mat = surface_material(spec, "wall_grid", "wall_mat", wall_raw, _WALL_DEFAULTS)
-        self._add_mesh(spec, mesh, wall_mat)
-        self._add_colliders(spec, colliders)
+        if mesh:
+            self._add_mesh(spec, mesh, wall_mat)
+            self._add_colliders(spec, colliders)
+        else:
+            self._add_wall_boxes(spec, boxes, wall_mat)
 
     def _add_lights(self, spec, floor_center) -> None:
         """A single overhead light at the floorplan centre + a uniform global ambient.

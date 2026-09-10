@@ -8,6 +8,28 @@ The static environment (ground + light) is **not** a plugin but a *world definit
 ``sim.world`` (default ``empty_room``; see :doc:`architecture`). A fixed cell needs no scene plugin;
 the mobile ``floorplan`` is the exception — it provides its own ground and overrides ``sim.world``.
 
+``floorplan`` takes its building from **one of two sources**, and you pick by what you have. A
+``mesh:`` is right when the building already exists as geometry (imported from CAD, or produced by
+Floorplan-DSL); its json-ld supplies exact colliders. Wall **segments** are right when the walls
+are the experiment's variable::
+
+   components:
+     - floorplan:
+         lines:
+           - {id: 0, x0_m: 0.0, y0_m: 0.0, x1_m: 6.0, y1_m: 0.0}
+           - {id: 1, x0_m: 6.0, y0_m: 0.0, x1_m: 6.0, y1_m: 4.0}
+         doors: [{line_id: 0, t: 0.5, width_m: 0.9}]
+         height: 2.5
+
+``floorplan: rooms.json`` reads the same shape from the file ``roqsim scenes dxf-to-floorplan`` and
+the scene-builder's sketch window write, which is the usual way in. Segments build one box per wall
+— visible *and* collidable, since a box is already convex, so there is no hidden companion collider
+to disagree with what is drawn. A corridor width is then an ordinary config value a sweep varies and
+the run's provenance records, rather than a mesh baked ahead of time that nothing downstream can
+tell apart from another mesh. Naming both sources, or neither, is refused. The wall arithmetic is
+shared with the mesh baker and the plan-view renderer, so a preview, a baked world and this plugin
+cut the same openings.
+
 Any endpoint-producing plugin below accepts an optional ``topics:`` map to **hardwire** an endpoint's
 ROS topic to an absolute name, overriding the namespace+default — e.g. ``topics: {image:
 /camera/color/image_raw}``. See :doc:`architecture` › Hardwired topics.
