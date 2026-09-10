@@ -174,6 +174,16 @@ The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` 
 arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
 in its ``realsense_d435`` capture plugin.
 
+An **eye-in-hand** camera, or any sensor that rides something that moves, is
+``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
+``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
+document, with ``pos``/``rpy`` then read relative to that body -- which is what a datasheet or a
+CAD drawing states, and what a world-frame pose cannot be once the carrier moves. An arm whose own
+MODEL ships a camera needs none of this (three do, and their manifests offer the capture plugin);
+this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
+invisible to anyone reading the world. It is mutually exclusive with ``motion:``: a mount that
+rides a body has its pose from that body, so moving the sensor means moving what carries it.
+
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
 is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
 scenario repositions between phases. ``static`` is the default and welds the mount into the model,
