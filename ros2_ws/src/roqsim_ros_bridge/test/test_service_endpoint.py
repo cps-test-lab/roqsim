@@ -159,3 +159,101 @@ def test_run_on_physics_reports_whether_it_ran():
 
 def test_the_handler_is_registered_under_its_type():
     assert get_service_handler("std_srvs.srv.SetBool") is set_bool
+
+
+# -- Trigger: a command that carries nothing -----------------------------------------------------
+
+
+class _Button:
+    """Stand-in for a plugin with a button and no argument, e.g. ``force_torque``'s tare."""
+
+    def __init__(self):
+        self.presses = 0
+
+    def press(self, _payload=None) -> None:
+        self.presses += 1
+
+
+def test_a_trigger_reaches_the_producer_on_the_physics_thread():
+    """The whole point of the kind: no argument to marshal, and still an answer.
+
+    A real FT driver's zero is a service taking nothing, and a scenario needs to know it landed --
+    a run that carried on believing it had tared would measure against an offset never applied.
+    """
+    button = _Button()
+    ctx, stop, thread = _wire()
+    endpoint = Endpoint(
+        name="tare", direction="in", owner="ft",
+        write=button.press,
+        backend={"ros2": {"service": "std_srvs.srv.Trigger"}},
+    )
+    handler = get_service_handler("std_srvs.srv.Trigger")
+    response = _Response()
+    try:
+        out = handler(object(), response, ctx, lambda p: run_on_physics(ctx, lambda _c: button.press(p)), endpoint)
+    finally:
+        stop.set()
+        thread.join(timeout=1.0)
+
+    assert out.success is True
+    assert out.message == "applied"
+    assert button.presses == 1
+
+
+def test_a_trigger_on_a_stalled_simulation_reports_that_it_did_not_land():
+    """Not a silent success: the barrier is the only thing that can tell the caller."""
+    button = _Button()
+    ctx, stop, _thread = _wire(steps=False)  # nothing drains the queue
+    endpoint = Endpoint(
+        name="tare", direction="in", owner="ft", write=button.press,
+        backend={"ros2": {"service": "std_srvs.srv.Trigger"}},
+    )
+    handler = get_service_handler("std_srvs.srv.Trigger")
+    response = _Response()
+    out = handler(object(), response, ctx, button.press, endpoint)
+    stop.set()
+
+    assert out.success is False
+    assert "did not apply" in out.message
+
+
+def test_every_service_a_shipped_plugin_declares_has_a_handler():
+    """The bridge resolves a handler by type path and RAISES when there is none.
+
+    So a plugin declaring a service type nobody serves does not fail at its own call -- it takes
+    the whole bridge down at configure, for every world that lists that plugin. The declaration
+    and the handler live in different packages, which is exactly how they come apart.
+
+    Every plugin package is scanned, not just core: the declaration that first came apart this way
+    was a sensor's, and a scan of ``roqsim.plugins`` alone would have watched the wrong shelf.
+    """
+    import importlib
+    from importlib.metadata import entry_points
+
+    declared: dict = {}
+    for entry in entry_points(group="roqsim.plugins"):
+        module_name = entry.value.split(":")[0]
+        try:
+            source = importlib.import_module(module_name).__file__
+        except Exception:  # noqa: BLE001 - an optional extra's plugin is not this test's business
+            continue
+        if not source:
+            continue
+        with open(source, encoding="utf-8") as handle:
+            text = handle.read()
+        for marker in ('"service": "', "'service': '"):
+            for chunk in text.split(marker)[1:]:
+                declared.setdefault(chunk.split(marker[-1])[0], set()).add(entry.name)
+
+    assert declared, "the scan found no service hints; has the declaration shape changed?"
+    missing = {}
+    for type_path, plugins in declared.items():
+        try:
+            get_service_handler(type_path)
+        except KeyError:
+            missing[type_path] = sorted(plugins)
+    assert not missing, (
+        f"declared by a plugin and served by nobody: {missing}. The bridge raises on this at "
+        "configure, so every world listing that plugin fails to start. Add a handler in "
+        "roqsim_ros_bridge.services, or advertise one from the declaring package."
+    )
