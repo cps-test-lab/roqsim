@@ -767,3 +767,82 @@ def test_an_unknown_motion_is_refused_by_name():
     """At config validation, before a world is built: the answer cannot depend on the model."""
     with pytest.raises(Exception, match="static, driven, physics"):
         Engine(_world(motion="floating"))
+
+
+# -- attach_to: riding something that moves ---------------------------------------------------
+
+
+def _arm_world(**spawn_config):
+    """A UR10e with a d435 welded to its wrist -- the eye-in-hand case, stated in a world."""
+    return load_config_from_dict({
+        "sim": {},
+        "components": [
+            {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
+            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+                              "attach_prefix": "ur10e_", **spawn_config},
+             "name": "eye"},
+        ],
+    })
+
+
+def test_a_mount_welded_to_a_wrist_rides_it():
+    """The capability this adds, and the only test of it that means anything.
+
+    A camera that compiles at the right pose and then stays behind when the arm moves is worse
+    than no camera: every frame is of somewhere the robot is not, and nothing says so.
+    """
+    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.05]))
+    engine.setup()
+    engine.reset()
+
+    mount = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    before = np.array(engine.ctx.data.xpos[mount])
+
+    handle = engine.ctx.blackboard.get("arm:ur10e")
+    handle.set_targets(handle.joint_names, [0.6] * len(handle.joint_names))
+    for _ in range(2000):
+        engine.step()
+
+    assert np.linalg.norm(np.array(engine.ctx.data.xpos[mount]) - before) > 0.1
+
+
+def test_the_pose_is_read_relative_to_the_body_it_rides():
+    """``pos``/``rpy`` mean something different once there is a carrier, and must.
+
+    Relative to the world they would be a pose the arm immediately invalidates; relative to the
+    flange they are the mount offset, which is what a datasheet or a CAD drawing states.
+    """
+    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.3]))
+    engine.setup()
+    engine.reset()
+
+    wrist = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "ur10e_wrist_3_link")
+    mount = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    offset = np.array(engine.ctx.data.xpos[mount]) - np.array(engine.ctx.data.xpos[wrist])
+
+    assert np.linalg.norm(offset) == pytest.approx(0.3, abs=1e-6)
+
+
+def test_a_carrier_that_is_not_in_the_scene_is_refused_by_name():
+    """Ordering is the usual mistake, so the refusal names it rather than only the body."""
+    engine = Engine(load_config_from_dict({
+        "sim": {},
+        "components": [
+            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+                              "attach_prefix": "ur10e_"}, "name": "eye"},
+            {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
+        ],
+    }))
+    with pytest.raises(Exception, match="BEFORE this entry"):
+        engine.setup()
+
+
+def test_a_ridden_mount_cannot_also_be_told_who_owns_its_pose():
+    """Two answers to one question, so the second is refused rather than silently ignored."""
+    with pytest.raises(Exception, match="mutually exclusive"):
+        Engine(_arm_world(motion="driven"))
+
+
+def test_attach_prefix_without_attach_to_is_refused():
+    with pytest.raises(Exception, match="attach_prefix"):
+        Engine(_world(attach_prefix="ur10e_"))

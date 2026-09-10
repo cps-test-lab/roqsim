@@ -17,6 +17,11 @@ Config::
         rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
         motion: static         # who owns the mount's pose: static (default; welded, nothing moves
                                #   it), driven (a plugin or scenario places it), physics (the solver)
+        attach_to: wrist_3_link # OPTIONAL: weld the mount to this body of an ALREADY-SPAWNED robot
+                               #   or arm instead of to the world, so it rides what carries it.
+                               #   `pos`/`rpy` are then relative to that body. Same spelling as
+                               #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
+        attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`
         show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
         fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
                                #   darkness step between single- and multi-sensor overlap
@@ -27,6 +32,21 @@ Config::
           {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
       name: camera_1           # the entry's label -- a sibling of the ref -- names this mount's
                                #   entity, which a capture plugin's `robot:` then points at
+
+**Mounting on something that moves: eye-in-hand and friends.** ``attach_to`` welds the mount to a
+named body of a robot or arm spawned EARLIER in the document, so the sensor rides the flange, the
+mast or the chassis and needs no pose of its own to be maintained. ``pos``/``rpy`` are then read
+relative to that body, and ``attach_prefix`` carries the carrier's MJCF prefix.
+
+This is what puts a sensor on an arm that does not ship one. An arm whose MODEL carries a camera
+needs nothing here -- its manifest offers the capture plugin and a world switches it on -- but that
+is a property of three models, not of arms, and the alternative for the rest is editing an MJCF.
+A model edited for one trial travels badly and is invisible to anyone reading the world, whereas a
+mount declared here is part of the world that states it.
+
+``attach_to`` and ``motion:`` are mutually exclusive, and the refusal says why: a mount that rides
+a body has its pose from that body, so there is nothing for a ``motion:`` answer to own. Placing
+such a sensor means moving what carries it.
 
 **Moving a mount after the world is built.** ``motion:`` is the same three-answer key
 ``spawn_model`` uses for a prop, and it is what a trial needs to place a sensor at run time -- a
@@ -457,6 +477,11 @@ class SpawnSensorPlugin(Plugin):
         # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
         # for a prop. `static` is the default: the mount is part of the model, and nothing can
         # move it.
+        # A body of an already-spawned carrier to ride, instead of the world. Same key and same
+        # spelling `fiducial_marker` uses for the same idea, so a world states "welded to that
+        # body" one way whatever it is welding.
+        self.attach_to = self.config.get("attach_to", "")
+        self.attach_prefix = self.config.get("attach_prefix", "")
         self.motion = self.config.get("motion", "static")
         self.driven = self.motion == "driven"
         self.free = self.motion == "physics"
@@ -492,6 +517,14 @@ class SpawnSensorPlugin(Plugin):
                 errors.append(str(exc))
         if "rpy" in config and len(config["rpy"]) != 3:
             errors.append("'rpy' must be [roll, pitch, yaw] in radians")
+        if config.get("attach_to") and config.get("motion"):
+            errors.append(
+                "'attach_to' and 'motion' are mutually exclusive: a mount welded to a body has "
+                "its pose FROM that body, so there is nothing for a 'motion' answer to own. To "
+                "move such a sensor, move what carries it."
+            )
+        if config.get("attach_prefix") and not config.get("attach_to"):
+            errors.append("'attach_prefix' prefixes 'attach_to', which is not set")
         if "motion" in config and config["motion"] not in {"static", "driven", "physics"}:
             errors.append(
                 f"'motion' must be one of static, driven, physics -- got {config['motion']!r}. "
@@ -554,10 +587,29 @@ class SpawnSensorPlugin(Plugin):
             # the world spec every time; camera-less paths (bundled envelope, lidar sector) ignore it.
             self._show_fov(child, asset, near, far, world_spec=spec)
         self._apply_motion(child, asset)
-        frame = spec.worldbody.add_frame()
+        frame = self._parent_body(spec).add_frame()
         frame.pos = self.pos
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
+
+    def _parent_body(self, spec: mujoco.MjSpec):
+        """What the mount hangs from: a carrier's body, or the world.
+
+        MjSpec returns ``None`` for an unknown name rather than raising, so the miss is checked
+        here -- letting it through surfaces as a ``TypeError`` inside ``add_frame`` that names
+        neither the body nor the ordering that caused it.
+        """
+        if not self.attach_to:
+            return spec.worldbody
+        body_name = self.attach_prefix + self.attach_to
+        parent = spec.body(body_name)
+        if parent is None:
+            raise ModelError(
+                f"spawn_sensor {self.sensor_name!r}: attach_to body {body_name!r} is not in the "
+                f"scene yet. Declare the robot or arm that carries it BEFORE this entry, and set "
+                f"`attach_prefix` to that carrier's prefix."
+            )
+        return parent
 
     def _apply_motion(self, child: mujoco.MjSpec, asset) -> None:
         """Give the mount's root body whatever ``motion:`` asked for. ``static`` adds nothing.
