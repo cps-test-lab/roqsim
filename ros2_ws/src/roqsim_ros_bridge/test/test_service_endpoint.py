@@ -183,14 +183,22 @@ def test_a_trigger_reaches_the_producer_on_the_physics_thread():
     button = _Button()
     ctx, stop, thread = _wire()
     endpoint = Endpoint(
-        name="tare", direction="in", owner="ft",
+        name="tare",
+        direction="in",
+        owner="ft",
         write=button.press,
         backend={"ros2": {"service": "std_srvs.srv.Trigger"}},
     )
     handler = get_service_handler("std_srvs.srv.Trigger")
     response = _Response()
     try:
-        out = handler(object(), response, ctx, lambda p: run_on_physics(ctx, lambda _c: button.press(p)), endpoint)
+        out = handler(
+            object(),
+            response,
+            ctx,
+            lambda p: run_on_physics(ctx, lambda _c: button.press(p)),
+            endpoint,
+        )
     finally:
         stop.set()
         thread.join(timeout=1.0)
@@ -205,7 +213,10 @@ def test_a_trigger_on_a_stalled_simulation_reports_that_it_did_not_land():
     button = _Button()
     ctx, stop, _thread = _wire(steps=False)  # nothing drains the queue
     endpoint = Endpoint(
-        name="tare", direction="in", owner="ft", write=button.press,
+        name="tare",
+        direction="in",
+        owner="ft",
+        write=button.press,
         backend={"ros2": {"service": "std_srvs.srv.Trigger"}},
     )
     handler = get_service_handler("std_srvs.srv.Trigger")
