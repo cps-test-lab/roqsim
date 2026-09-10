@@ -552,10 +552,19 @@ class ArmControllerPlugin(Plugin):
         # and the G1's own /lowstate carries per-motor tau_est. ``qfrc_actuator`` is the actuator force
         # already projected onto the joint's DOF, so it is the per-joint effort even for a gripper
         # finger driven through a tendon.
+        #
+        # ``qfrc_gravcomp`` is added because a compensated arm splits one physical quantity across
+        # two fields. A real drive that holds its own weight delivers that torque and its sensor
+        # reads it; MuJoCo's ``body_gravcomp`` supplies the same torque outside the actuator, so
+        # ``qfrc_actuator`` alone reports a motor doing nothing while the arm hangs off it. The sum
+        # is what the joint carries, and it matches an uncompensated arm's reading in the same pose.
         m, d = self._ctx.model, self._ctx.data
         pos = [float(d.qpos[m.jnt_qposadr[jid]]) for jid in self._report_jids]
         vel = [float(d.qvel[m.jnt_dofadr[jid]]) for jid in self._report_jids]
-        eff = [float(d.qfrc_actuator[m.jnt_dofadr[jid]]) for jid in self._report_jids]
+        eff = [
+            float(d.qfrc_actuator[m.jnt_dofadr[jid]] + d.qfrc_gravcomp[m.jnt_dofadr[jid]])
+            for jid in self._report_jids
+        ]
         return (self._report_names, pos, vel, eff)
 
     def read_controller_state(self):

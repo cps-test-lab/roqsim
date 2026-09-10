@@ -39,13 +39,22 @@ Four laws, and what each compiles to::
     position     joint position  p, d                  gaintype fixed, biastype affine
     velocity     joint velocity  d                     gaintype fixed, biastype affine
     effort       joint torque    --                    gaintype fixed, biastype none
-    impedance    joint position  stiffness, damping    affine, plus body_gravcomp on the subtree
+    impedance    joint position  stiffness, damping    the same affine law, in stiffness terms
 
-``impedance`` is not a second spelling of ``position``. A real joint-impedance controller (Franka's
-``joint_impedance``, a UR in force mode) compensates the arm's own weight, which is what lets a
-stiffness of 2 N*m/rad hold a pose at all rather than folding under gravity. That gravity term is the
-difference, and it is why the mode earns its own name -- in a world at zero gravity the two do
-coincide, and a reader should not conclude the mode did nothing.
+``impedance`` is not a second spelling of ``position``: it states the joint in the terms a
+compliance controller is specified in (Franka's ``joint_impedance``, a UR in force mode), and a
+paper that gives a stiffness should be transcribed without first converting it into somebody's
+servo gain.
+
+**All three of these carry their own weight**, because the hardware they name does: a drive
+commanded to a pose holds it, and its gain says how hard the joint resists a *disturbance*, not how
+much of the arm it can lift. That is :func:`servo_holds_against_gravity`, and
+:func:`apply_gravity_compensation` is how a spawn plugin honours it. ``effort`` is the exception --
+a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the
+controller's job, which is frequently the very thing under test.
+
+A drive that genuinely has no gravity term -- a hobby servo, a backdrivable joint -- is a real
+machine too, and a spawn plugin's ``gravity_compensation: false`` says so.
 
 **Shared keys sit on the block; per-actuator entries nest under** ``each:``. Nothing a world writes
 can then collide with an actuator name, and the common case -- one law for the whole arm, which is
@@ -400,7 +409,7 @@ def _apply(act, merged: dict, control: str, row: ResolvedActuator, source: str) 
         act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
         act.gainprm = _prm(gains["d"])
         act.biasprm = _prm(0.0, 0.0, -gains["d"])
-    else:  # position, impedance -- the same affine joint law, differing in gravity compensation
+    else:  # position, impedance -- one affine joint law, its gains named for the controller
         k = gains["p" if control == "position" else "stiffness"]
         c = gains["d" if control == "position" else "damping"]
         act.biastype = mujoco.mjtBias.mjBIAS_AFFINE
@@ -474,8 +483,9 @@ def _model_row(act) -> ResolvedActuator:
 def _model_control(act) -> str:
     """Which of the four laws the model already runs this actuator under.
 
-    ``impedance`` is never reported: gravity compensation is a property of a body, not of an
-    actuator, so a model cannot declare it here and a position servo is what this honestly is.
+    ``impedance`` is never reported: the two compile to the same affine law and differ only in
+    what their gains are called, so a model that declares one is declaring a position servo as far
+    as anything readable from the actuator goes.
     """
     if act.biastype == mujoco.mjtBias.mjBIAS_AFFINE:
         if act.biasprm[1] != 0.0:
@@ -507,24 +517,79 @@ def uses_impedance(rows: list[ResolvedActuator]) -> bool:
     return any(row.control == "impedance" for row in rows)
 
 
-def apply_gravity_compensation(spec) -> int:
-    """Compensate the weight of every body in *spec*, and report how many.
+#: Laws whose real hardware holds its own weight inside the joint's own servo loop, so a model of
+#: one that does not is a model of a different machine. ``effort`` is deliberately absent: a
+#: torque-commanded joint applies exactly the torque it is given, and supplying the gravity term is
+#: the *controller's* job -- compensating it here would quietly answer the question an experiment on
+#: gravity compensation is asking.
+_SELF_SUPPORTING = frozenset({"position", "velocity", "impedance"})
 
-    The half of ``control: impedance`` that is not an actuator parameter. A real joint-impedance
-    controller holds a pose against gravity so that its stiffness sets how hard the joint resists a
-    DISTURBANCE, not how much of the arm's own weight it can carry -- without this a stiffness of
-    2 N*m/rad does not hold a UR5e up, it folds it.
+#: The subset :func:`apply_gravity_compensation` acts on, per joint. ``velocity`` is out of it
+#: because that is how a WHEEL is driven, and a wheel carries the robot rather than being carried
+#: by it. No bundled arm ships velocity actuators, so nothing that holds a pose loses by it.
+_HELD_BY_A_DRIVE = frozenset({"position", "impedance"})
 
-    Called with the **whole entity's** spec, after anything is grafted onto the model and before it
-    is attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
-    purpose: ``body_gravcomp`` is per body and does not cascade to children, so an arm compensated
-    before its gripper was attached would sag by exactly the tool's weight. Compensating the tool is
-    also the right physics -- a real controller is told its payload and holds that too.
+
+def servo_holds_against_gravity(rows: list[ResolvedActuator]) -> bool:
+    """Whether these actuators model hardware that holds a pose without external help.
+
+    A position or velocity servo commanded to stand still does stand still: the drive's own loop
+    supplies whatever torque the load demands, and the joint's gain describes how hard it resists a
+    *disturbance*. Modelled without :func:`apply_gravity_compensation` the same gain has to carry
+    the mechanism as well, so the servo trades position error for holding torque and the joint
+    stands somewhere it was never sent -- which is not a soft arm, it is a different arm.
+
+    **Only half the question, and the other half is not about actuators at all**: see
+    :func:`apply_gravity_compensation` before acting on this. A law that holds a pose says nothing
+    about whether the drives are what carry the weight, and on a legged or wheeled machine they
+    are not.
     """
+    return any(row.control in _SELF_SUPPORTING for row in rows)
+
+
+def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None) -> int:
+    """Compensate the weight this mechanism's own drives carry, and report how many bodies.
+
+    What it models: a drive whose own loop carries what hangs off it, so its gain sets how hard
+    the joint resists a DISTURBANCE rather than how much weight it can hold -- without this a
+    stiffness of 2 N*m/rad does not hold a UR5e up, it folds it, and even a UR5e's shipped
+    2000 N*m/rad leaves the flange 9 mm low.
+
+    **Which bodies, and why not all of them.** Given *rows*, a body is compensated when the chain
+    from the world down to it passes a joint driven by a ``position`` or ``impedance`` actuator --
+    everything, that is, whose weight some drive is holding up. What that leaves out is the load
+    path to the ground: a mobile base hangs off nothing and its wheels are driven by ``velocity``,
+    so neither is compensated and the robot still presses on the floor. Compensate those and it
+    stands on nothing, which it does without falling over, so nothing says so. The arm bolted to
+    that base IS compensated, because its links really are held up by its motors.
+
+    ``velocity`` is excluded for that reason and no other: it is how a wheel is driven. No bundled
+    arm ships it, so nothing that holds a pose loses anything by its absence here.
+
+    Without *rows* every body is compensated. That is the whole-mechanism form, for a caller that
+    asks for it explicitly -- a torque controller handed its own gravity term -- and it is wrong
+    for anything that stands on the ground.
+
+    Called with the **whole entity's** spec, after anything is grafted onto it and before it is
+    attached into the world. That timing is load-bearing and differs from :func:`resolve`'s on
+    purpose: ``body_gravcomp`` is per body and does not cascade to children, so an arm compensated
+    before its gripper was attached would sag by exactly the tool's weight. Compensating the tool
+    is also the right physics -- a real controller is told its payload and holds that too.
+    """
+    held = None
+    if rows is not None:
+        held = {row.joint for row in rows if row.joint and row.control in _HELD_BY_A_DRIVE}
+
     compensated = 0
-    for body in spec.bodies:
-        if body.name == "world":
-            continue
-        body.gravcomp = 1.0
-        compensated += 1
+
+    def _walk(body, carried: bool) -> None:
+        nonlocal compensated
+        for child in body.bodies:
+            below = carried or held is None or any(j.name in held for j in child.joints)
+            if below:
+                child.gravcomp = 1.0
+                compensated += 1
+            _walk(child, below)
+
+    _walk(spec.worldbody, False)
     return compensated

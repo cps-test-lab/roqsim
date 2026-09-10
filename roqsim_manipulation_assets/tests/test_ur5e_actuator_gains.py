@@ -39,30 +39,35 @@ RATIO_LO, RATIO_HI = 8.0, 13.0
 #: Long enough for the arm to stop moving at the softest gain here.
 SETTLE_STEPS = 4000
 
-#: A soft POSITION servo cannot hold a UR5e up. Measured at ~2.3 rad; the bar only has to separate
-#: "folded" from "held".
+#: An uncompensated drive of this stiffness cannot hold a UR5e up. Measured at ~2.3 rad; the bar
+#: only has to separate "folded" from "held".
 SAG_RAD = 1.0
 
-#: What "held" means for the same stiffness under impedance -- a milliradian is already far below
-#: any joint tolerance a task states.
+#: What "held" means for the same stiffness on a drive that carries its own weight -- a
+#: milliradian is already far below any joint tolerance a task states.
 HELD_RAD = 1e-3
+
+#: The arm's weight put back as the load, so a gain can be measured against something. A drive
+#: that carries its own weight is the default (:mod:`roqsim.actuators`), which leaves a joint at
+#: its commanded angle whatever the gain -- correct, and nothing to measure a gain by.
+UNCOMPENSATED = "gravity_compensation: false"
 
 _WORLD = """
 sim: {{timestep: 0.002, gravity: [0.0, 0.0, -9.81]}}
 components:
-  - spawn_arm: {{model: ur5e, prefix: "ur5e_", actuators: {actuators}}}
+  - spawn_arm: {{model: ur5e, prefix: "ur5e_", actuators: {actuators}, {extra}}}
     name: ur5e
 """
 
 
-def _settled(tmp_path, actuators: str, steps: int = SETTLE_STEPS):
+def _settled(tmp_path, actuators: str, steps: int = SETTLE_STEPS, extra: str = ""):
     """|q - q_des| per joint after the arm has been asked to hold its home pose.
 
     The target is the home vector `spawn_arm` applies on reset and `arm_controller` then holds, so
     this measures the plant the gains describe rather than anything the test commands by hand.
     """
     world = tmp_path / "arm.yaml"
-    world.write_text(_WORLD.format(actuators=actuators), encoding="utf-8")
+    world.write_text(_WORLD.format(actuators=actuators, extra=extra), encoding="utf-8")
     engine = Engine(load_config(world))
     try:
         engine.setup()
@@ -77,9 +82,16 @@ def _settled(tmp_path, actuators: str, steps: int = SETTLE_STEPS):
 
 
 def test_steady_state_error_scales_inversely_with_stiffness(tmp_path):
-    """The gain a world declares is the gain the joint runs under -- measured, not read back."""
-    soft = _settled(tmp_path, f"{{control: position, p: {STIFF_LO}, d: {STIFF_D}}}").max()
-    stiff = _settled(tmp_path, f"{{control: position, p: {STIFF_HI}, d: {STIFF_D}}}").max()
+    """The gain a world declares is the gain the joint runs under -- measured, not read back.
+
+    Measured on an uncompensated arm, because a gain is only visible against a load and this is
+    the load the arm brings with it. A drive that carries its own weight -- the default -- sits at
+    its commanded angle whatever its gain, which is the point of it and leaves nothing to divide.
+    """
+    soft = _settled(tmp_path, f"{{control: position, p: {STIFF_LO}, d: {STIFF_D}}}",
+                    extra=UNCOMPENSATED).max()
+    stiff = _settled(tmp_path, f"{{control: position, p: {STIFF_HI}, d: {STIFF_D}}}",
+                     extra=UNCOMPENSATED).max()
     ratio = soft / stiff
     assert RATIO_LO < ratio < RATIO_HI, (
         f"p {STIFF_LO} sagged {soft:.5f} rad and p {STIFF_HI} sagged {stiff:.5f} rad, a ratio of "
@@ -88,28 +100,37 @@ def test_steady_state_error_scales_inversely_with_stiffness(tmp_path):
     )
 
 
-def test_a_soft_position_servo_folds_under_gravity(tmp_path):
-    """The baseline the next test is the contrast to, and the reason `impedance` is its own law."""
-    sag = _settled(tmp_path, f"{{control: position, p: {SOFT_STIFFNESS}, d: {SOFT_DAMPING}}}").max()
+def test_a_drive_that_does_not_carry_its_weight_folds(tmp_path):
+    """What ``gravity_compensation: false`` buys, and the baseline the next test contrasts with.
+
+    This is a real machine too -- a small hobby servo, a backdrivable joint, any drive with no
+    gravity term of its own -- and at this stiffness it cannot hold a UR5e out. It is not what a
+    UR5e is, which is why it has to be asked for.
+    """
+    sag = _settled(tmp_path, f"{{control: position, p: {SOFT_STIFFNESS}, d: {SOFT_DAMPING}}}",
+                   extra=UNCOMPENSATED).max()
     assert sag > SAG_RAD, (
-        f"a position servo of {SOFT_STIFFNESS} N*m/rad held the arm to {sag:.3f} rad. It should not "
-        f"be able to: without gravity compensation that gain cannot carry the arm's own weight."
+        f"an uncompensated servo of {SOFT_STIFFNESS} N*m/rad held the arm to {sag:.3f} rad. It "
+        f"should not be able to: that gain cannot carry the arm's own weight unaided."
     )
 
 
-def test_impedance_holds_the_pose_at_a_stiffness_position_cannot(tmp_path):
-    """The half of `control: impedance` that is not an actuator parameter.
+@pytest.mark.parametrize("law", [
+    f"{{control: position, p: {SOFT_STIFFNESS}, d: {SOFT_DAMPING}}}",
+    f"{{control: impedance, stiffness: {SOFT_STIFFNESS}, damping: {SOFT_DAMPING}}}",
+])
+def test_a_drive_that_carries_its_weight_holds_the_pose_at_that_stiffness(tmp_path, law):
+    """Same stiffness as above, opposite outcome -- and both laws, because both model a drive.
 
-    A real joint-impedance controller compensates the arm's weight, so its stiffness sets how hard
-    the joint resists a DISTURBANCE rather than how much of the arm it can hold up. Same gain as the
-    test above, opposite outcome -- which is what earns the mode its own name.
+    A real joint holds its own weight inside its own loop, so its gain says how hard it resists a
+    DISTURBANCE, not how much of the arm it can carry. That is true of an industrial position
+    servo and of a compliance controller alike; what separates ``position`` from ``impedance`` is
+    the law and the units its gains are stated in, not which of them fights gravity.
     """
-    held = _settled(
-        tmp_path, f"{{control: impedance, stiffness: {SOFT_STIFFNESS}, damping: {SOFT_DAMPING}}}"
-    ).max()
+    held = _settled(tmp_path, law).max()
     assert held < HELD_RAD, (
-        f"impedance at {SOFT_STIFFNESS} N*m/rad drifted {held:.5f} rad from the commanded pose; the "
-        f"body-level gravity term is not reaching the compiled model."
+        f"{law} drifted {held:.5f} rad from the commanded pose; the body-level gravity term is not "
+        f"reaching the compiled model."
     )
 
 
