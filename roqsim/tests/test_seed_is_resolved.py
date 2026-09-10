@@ -160,3 +160,69 @@ def test_the_seed_is_set_before_setup_so_configure_can_read_it():
         assert engine.ctx.blackboard.get("seed_probe::at_configure") == 17
     finally:
         engine.shutdown()
+
+
+# -- the compile-only drivers -------------------------------------------------------------------
+
+
+class _DrawsAtConfigure(Plugin):
+    """A randomised world, in one line: something is drawn while the world is being set up."""
+
+    PLUGIN_LABEL = "drawer"
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.blackboard.set("drawer::value", float(ctx.rng_for("drawer").normal(0.0, 1.0)))
+
+
+def _drawing_world():
+    return load_config_from_dict({"sim": {}, "plugins": [{f"{__name__}:_DrawsAtConfigure": {}}]})
+
+
+def test_a_driver_that_never_runs_still_cannot_forget_the_seed():
+    """The rule is unchanged where it means something: no seed, no draw, no silent zero."""
+    engine = Engine(_drawing_world())
+    with pytest.raises(SeedError):
+        engine.setup()
+    engine.shutdown()
+
+
+def test_preview_compiles_a_world_that_draws():
+    """The hole the rule left: a tool that produces a PICTURE refused a world it could draw.
+
+    ``roqsim render``, ``roqsim check``, the map and MoveIt exports and the scene preview all
+    compile a world in order to look at it. There is no run to replay and no seed the caller could
+    supply, so the refusal named a remedy that did not exist -- and the world check that a campaign
+    runs before spending anything reported a perfectly good randomised world as broken.
+    """
+    engine = Engine(_drawing_world(), preview=True)
+    engine.setup()
+    try:
+        assert engine.ctx.blackboard.get("drawer::value") is not None
+    finally:
+        engine.shutdown()
+
+
+def test_two_previews_of_one_world_are_the_same_picture():
+    """Fixed, not drawn: a render that differed run to run would be a diff nobody could review."""
+    values = []
+    for _ in range(2):
+        engine = Engine(_drawing_world(), preview=True)
+        engine.setup()
+        values.append(engine.ctx.blackboard.get("drawer::value"))
+        engine.shutdown()
+    assert values[0] == values[1]
+
+
+def test_a_preview_seed_is_still_the_drivers_to_override():
+    """Assigned at construction, so a driver that wants another seed can say so before setup.
+
+    A scene preview that wanted to look at a second draw of the same world would otherwise have to
+    reach past the flag it just used.
+    """
+    engine = Engine(_drawing_world(), preview=True)
+    engine.ctx.seed = 12345
+    engine.setup()
+    try:
+        assert engine.ctx.seed == 12345
+    finally:
+        engine.shutdown()

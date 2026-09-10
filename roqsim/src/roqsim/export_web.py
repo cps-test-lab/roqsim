@@ -47,7 +47,6 @@ from .config import (
     world_sources,
 )
 from .engine import Engine
-from .seed import PREVIEW_SEED
 
 # MuJoCo joint types (mjtJoint) -> the string the web loader switches on.
 _JOINT_TYPE = {
@@ -592,10 +591,9 @@ def _compile_from_world(
         if dropped:
             logger.info("skipping plugins: %s", ", ".join(dropped))
         cfg.plugins = kept
-    engine = Engine(cfg)
-    # A preview is a driver like any other and must resolve a seed; fixed, because settling a scene
-    # to look at it is not a measurement (`roqsim.seed.PREVIEW_SEED`).
-    engine.ctx.seed = PREVIEW_SEED
+    # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
+    # one rather than the driver's to resolve.
+    engine = Engine(cfg, preview=True)
     engine.setup()  # build + compile + configure (each spawn plugin's initial pose applied)
     engine.reset()  # on_reset: re-pose mocap walkers, re-seat robot bases
     mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # propagate re-posed mocap into data.xpos

@@ -496,7 +496,7 @@ def build_target(
             )
     if no_ceiling:
         _disable_ceiling(cfg)
-    engine = Engine(cfg)
+    engine = Engine(cfg, preview=True)
     engine.setup()
     engine.reset()
     reset_to_home(engine.ctx.model, engine.ctx.data)
