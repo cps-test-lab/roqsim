@@ -77,8 +77,11 @@ def _arm(gain: float, gravity_compensation: bool | None = None):
 def _track(gain: float, dz: float = GOAL_DZ, gravity_compensation: bool | None = None) -> dict:
     """Command a move of *dz* and report what the tool did after the transient.
 
-    ``final_mm`` is how far short of the goal it ended; ``ripple_mm`` is the peak-to-peak travel
-    over the measured window, which is zero for an arm that arrives and stays.
+    ``final_mm`` is how far short of the goal it ended; ``mean_mm`` is how far the tool sat from
+    the goal on average over the measured window; ``ripple_mm`` is the peak-to-peak travel over it,
+    which is zero for an arm that arrives and stays. For an arm that limit-cycles, ``final_mm`` is
+    wherever the cycle happened to be at the last sample, so a comparison between two such arms
+    uses ``mean_mm``.
     """
     engine, handle = _arm(gain, gravity_compensation)
     start, quat = handle.read_pose()
@@ -95,6 +98,7 @@ def _track(gain: float, dz: float = GOAL_DZ, gravity_compensation: bool | None =
 
     heights = np.array(heights)
     return {"final_mm": abs(heights[-1] - goal[2]) * 1e3,
+            "mean_mm": abs(heights.mean() - goal[2]) * 1e3,
             "ripple_mm": (heights.max() - heights.min()) * 1e3}
 
 
@@ -175,7 +179,10 @@ def test_an_uncompensated_arm_measures_its_own_weight_instead():
     compensated = _track(SOFT_GAIN)
     uncompensated = _track(SOFT_GAIN, gravity_compensation=False)
 
-    assert uncompensated["final_mm"] > 10 * compensated["final_mm"]
+    # Both arms limit-cycle at this gain, so where either one is at the last sample is the phase
+    # of its cycle, not its sag: the compensated arm's offset swings between about 0.6 and 5 mm
+    # within 0.3 s of the end. The mean over the window is the sag.
+    assert uncompensated["mean_mm"] > 2 * compensated["mean_mm"]
     assert uncompensated["ripple_mm"] > 3 * compensated["ripple_mm"]
 
 
