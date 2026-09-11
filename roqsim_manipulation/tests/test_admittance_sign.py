@@ -16,7 +16,7 @@ from roqsim_sensors.plugins.force_torque import WrenchReader
 
 
 def _law(measures="environment_on_tool", pressed_newtons=0.0):
-    """The admittance law alone, with a sensor reporting a steady contact.
+    """The force-controller law alone, with a sensor reporting a steady contact.
 
     Built rather than run in a world: the question is which way the law drives for a given reading,
     and a physics run answers it only after the divergence has already happened.
@@ -27,9 +27,10 @@ def _law(measures="environment_on_tool", pressed_newtons=0.0):
     plugin.C = np.zeros(6)
     plugin.w_d = np.array([0, 0, -10, 0, 0, 0], float)  # press DOWN with 10 N
     plugin._twist = np.zeros(6)
-    plugin._anchor_pos = np.zeros(3)
     plugin.max_twist = None
     plugin.axes = np.ones(6)
+    # The force controller: no stiffness, so no equilibrium pose takes part in the law.
+    plugin._uses_stiffness = False
 
     # A tool pressing down on a plate: the plate's reaction is UP, which is what a sensor in the
     # default convention reports. The other convention is the same contact, negated.
@@ -48,7 +49,7 @@ def test_the_target_contact_force_is_an_equilibrium(measures):
     """At exactly the target, the law commands nothing. That is what "regulates" means, and the
     reading it is computed from differs by a sign between the two conventions -- so a law that
     assumed one of them had an equilibrium in one and a runaway in the other."""
-    twist = _law(measures, pressed_newtons=10.0)._admittance_twist(0.01)
+    twist = _law(measures, pressed_newtons=10.0)._wrench_twist(0.01)
     assert twist[2] == pytest.approx(0.0, abs=1e-9)
 
 
@@ -56,7 +57,7 @@ def test_the_target_contact_force_is_an_equilibrium(measures):
 def test_pressing_too_hard_commands_a_retreat(measures):
     """Above the target the tool must back off. Before the fix this drove further in, which is the
     positive feedback that ran a 10 N target to about 300 N."""
-    twist = _law(measures, pressed_newtons=20.0)._admittance_twist(0.01)
+    twist = _law(measures, pressed_newtons=20.0)._wrench_twist(0.01)
     assert twist[2] > 0.0, "must retreat (+z) when the contact exceeds the target"
 
 
@@ -64,14 +65,14 @@ def test_pressing_too_hard_commands_a_retreat(measures):
 def test_free_space_still_seeks_the_contact(measures):
     """With nothing touching, a downward target still descends -- the fix must not merely invert
     the runaway into a controller that never makes contact."""
-    twist = _law(measures, pressed_newtons=0.0)._admittance_twist(0.01)
+    twist = _law(measures, pressed_newtons=0.0)._wrench_twist(0.01)
     assert twist[2] < 0.0, "must descend (-z) toward the contact it is asked to make"
 
 
 def test_the_response_is_monotonic_in_the_contact_force():
     """The property underneath all three: more contact, less push. A controller whose command grows
     with the thing it is regulating has no equilibrium at any target."""
-    commands = [_law(pressed_newtons=n)._admittance_twist(0.01)[2] for n in (0, 5, 10, 15, 20)]
+    commands = [_law(pressed_newtons=n)._wrench_twist(0.01)[2] for n in (0, 5, 10, 15, 20)]
     assert commands == sorted(commands), f"must rise monotonically toward retreat, got {commands}"
 
 
