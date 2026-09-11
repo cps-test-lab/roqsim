@@ -1185,6 +1185,47 @@ units belong to whatever node drives the trial, and that is the experiment's fil
 Manipulation: what a contact task needs
 ---------------------------------------
 
+**Driving one from outside.** A Cartesian controller takes its setpoints as topics, named the way
+the controllers that do this job on a real arm name theirs -- ``<controller>/target_wrench`` and
+``<controller>/target_frame``, with ``<controller>/current_pose`` coming back. Its *identity* is
+what decides its law, as it is under ros2_control, where what a controller does is settled by which
+one is loaded rather than by a mode key:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 42 58
+
+   * - ``controller_type``
+     - what runs
+   * - ``cartesian_motion_controller``
+     - pose tracking only, blind to contact
+   * - ``cartesian_force_controller``
+     - the wrench loop, no stiffness and so no equilibrium
+   * - ``cartesian_compliance_controller``
+     - both, with per-axis stiffness
+
+An axis given **zero stiffness** stays under pure force control while the others track the commanded
+frame. That superposition is the point: it is how a task-space motion is layered on a running force
+loop on real hardware, which means the thing driving that motion is an ordinary **publisher** rather
+than a second controller. Two controllers cannot claim the same joints, so an experiment that ships
+its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
+node that publishes ``target_frame`` instead.
+
+``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+
+**Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
+weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
+anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
+Tare through the service (see "Taring" above) before commanding anything.
+
+**A limit that stops the trial** is ``force_limit``: a measured wrench magnitude above a threshold
+latches, reports, releases whatever was driving the arm and asks the driver to stop. Named for the
+capability rather than for one vendor's word for it, with that word supplied by ``reports_as``. It
+is not a controller and does not pretend to be one -- on a real arm a stop of this kind comes from
+the controller box and is surfaced through the vendor's status interface, so reporting it as a
+controller switch would put a fiction in a results table's failure-mode column.
+
+
 ``contact_monitor`` (above) treats contact as the failure, and ``model_override`` (above) can take a
 contact away on command. A contact-rich manipulation task inverts both: contact *is* the task, and the
 measurement is the wrench, not the trajectory. Four plugins make

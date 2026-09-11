@@ -488,6 +488,20 @@ Will show a concrete before (monolithic script) → after (plugins + world YAML)
 7. Concurrency & threading model
 --------------------------------
 
+**Who commands an arm.** ``arm_controller`` is the only writer of an arm's actuators, and that
+write is the *hardware*: it never stops, or the joints would fall. What switches is its trajectory
+role. A Cartesian controller does not write ``ctrl``; it computes joint targets that the arm
+**pulls** once per step, stamped with the step it ran for, so whichever of the two reaches that
+point first does the work and declaration order cannot decide whether a command lands this step or
+the next. One command source per arm; a second is refused naming both.
+
+``roqsim.controllers`` holds the single source of truth for every controller's name, type,
+lifecycle state and claims -- transport-free, because those are facts about the robot. A plugin asks
+it whether it is active, the bridge serves ``controller_manager_msgs`` out of it, and a task plugin
+switches through it. Its scope is the **robot**: two arms may each have a controller of one name, as
+two real robots do, and claims are compared within a robot because joint names are unprefixed and
+identical across arms.
+
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
 External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. ``ctx.post`` is the substrate the ROS bridge (Phase 5) and synchronous mode (§10) build on.
