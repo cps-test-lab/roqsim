@@ -148,6 +148,16 @@ class ArmHandle:
     # `velocity_commands: true`; None otherwise, so a consumer can detect the capability rather than
     # discovering it by silent no-op.
     set_velocities: Callable[[list[str], list[float]], None] | None = None
+    #: Register the one plugin that computes this arm's targets each step (see
+    #: :meth:`ArmControllerPlugin.set_command_source`).
+    set_command_source: Callable[[Callable[[object], None], str], None] | None = None
+    #: Run that source for this step if it has not run yet. Whoever reaches it first triggers it,
+    #: so the result does not depend on where either plugin sits in the world file.
+    ensure_updated: Callable[[object], None] | None = None
+    #: Whether this controller currently holds the arm. An inactive one keeps its last target and
+    #: takes no new ones, the way a deactivated ros2_control controller does.
+    is_active: Callable[[], bool] | None = None
+    set_active: Callable[[bool], None] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -219,6 +229,16 @@ class ArmControllerPlugin(Plugin):
         self.velocity_commands = bool(self.config.get("velocity_commands", False))
         self.velocity_timeout_s = float(self.config.get("velocity_timeout_s", 0.5))
         self._vel_cmd: dict[str, float] = {}
+        # The one plugin that computes this arm's targets, and the step its work last ran
+        # for. Pulled from `pre_step`, so declaration order cannot decide whether a command
+        # lands this step or the next.
+        self._command_source = None
+        self._command_source_owner = ""
+        self._commanded_step = -1
+        # Whether this controller holds the arm. Active unless the world says otherwise, so a world
+        # that never switches behaves exactly as it always has; `inactive` is what ros2_control's
+        # `spawner --inactive` leaves behind.
+        self._active = str(self.config.get("initial_state", "active")) != "inactive"
         self._vel_stamp = -1.0  # sim time of the last velocity command; -1 = never
         self._jnt_range: dict[
             str, tuple[float, float]
@@ -341,6 +361,10 @@ class ArmControllerPlugin(Plugin):
                 set_targets=self.set_targets,
                 read_state=self.read_state,
                 set_velocities=self.set_velocities if self.velocity_commands else None,
+                set_command_source=self.set_command_source,
+                is_active=self.is_active,
+                set_active=self.set_active,
+                ensure_updated=self.ensure_updated,
             ),
         )
 
@@ -510,6 +534,11 @@ class ArmControllerPlugin(Plugin):
             self._target[jn] = float(ang)
 
     def set_targets(self, names, positions) -> None:
+        # An inactive controller holds what it had and takes nothing new. On real hardware the
+        # interfaces are simply not claimed while inactive, so a command has nowhere to land; here
+        # the equivalent is to drop it rather than to apply it and look active.
+        if not self._active:
+            return
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
             if n in self._target:
                 self._target[n] = float(p)
@@ -623,9 +652,58 @@ class ArmControllerPlugin(Plugin):
         # leaves ctrl alone for the user to drag.
         self._write_ctrl(ctx.data)
 
+    def set_command_source(self, update, owner: str = "") -> None:
+        """Name the plugin that computes this arm's targets, so its work can be PULLED.
+
+        One source per arm: two plugins computing targets for the same joints would each overwrite
+        the other's within a step, and which one won would be decided by their order in the world
+        file. Refused by naming both, rather than silently letting the later one win.
+        """
+        if self._command_source is not None and self._command_source_owner != owner:
+            raise RuntimeError(
+                f"arm_controller[{self.name}]: {owner!r} wants to command arm "
+                f"{self.arm!r}, but {self._command_source_owner!r} already does. An arm takes its "
+                f"targets from ONE controller; deactivate one, or give them separate `joints:`."
+            )
+        self._command_source = update
+        self._command_source_owner = owner
+
+    def ensure_updated(self, ctx: SimContext) -> None:
+        """Run the command source for this step, once, whoever asks first.
+
+        Pulled rather than ordered. A Cartesian controller can only be DECLARED after the arm --
+        its `configure` needs the handle this plugin publishes -- so in `pre_step` order the arm
+        wrote `ctrl` first and the controller computed the next targets immediately after, landing
+        them a step late, every tick. Stamping the work with the step it ran for makes the order
+        irrelevant instead of merely correct, which is the same reason the avoidance solve is
+        stamped rather than placed.
+        """
+        step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
+        if self._command_source is None or step == self._commanded_step:
+            return
+        self._commanded_step = step
+        self._command_source(ctx)
+
+    def is_active(self) -> bool:
+        return self._active
+
+    def set_active(self, active: bool) -> None:
+        """Take or release the arm. The held target survives either way.
+
+        Deactivating does not slacken the arm: `ctrl` keeps being written from the last target, so
+        the joints hold where they were rather than falling under gravity. That is what a real
+        position-controlled arm does when its trajectory controller is deactivated, and it is what
+        makes a hand-over to another controller safe to perform mid-run.
+        """
+        self._active = bool(active)
+
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
-            self._integrate_velocity(ctx.data)
+            # An inactive controller runs no command source and integrates no velocity: it only
+            # keeps writing the target it already holds.
+            if self._active:
+                self.ensure_updated(ctx)
+                self._integrate_velocity(ctx.data)
             self._write_ctrl(ctx.data)
 
     # joint / gripper state are computed on demand in read_state / read_gripper_state (the bridge reads
