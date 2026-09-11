@@ -206,6 +206,16 @@ caller is often not a roqsim process: something staging a world into a container
 reason to have roqsim installed, so it asks the image that does. ``packaged: true`` means the files
 arrive with an installed package and nothing has to travel.
 
+The walk is best-effort: a world that does not fully resolve yields what *was* resolved, so a
+caller about to report its own error is not pre-empted by this one. ``--require-complete`` is for
+the caller who cannot use that answer -- one copying these files somewhere the originals are
+unreachable -- and it fails instead, naming on stderr every part it gave up on: an ``extends`` that
+does not resolve, a YAML in the chain it cannot read, a world that does not load, a plugin it
+cannot ask. A file that is simply *absent* is not one of those: dropping it is the contract
+``Plugin.sources`` is written against, where an optional file needs no guard. Without the flag a
+short list and a whole one are the same value, and what is missing surfaces wherever the files were
+going -- after the copy.
+
 Listing what a world provides
 ------------------------------
 

@@ -18,6 +18,9 @@ A world that cannot be fully resolved yields what *was* resolved rather than fai
 caller about to report a different error is not pre-empted by this one -- pass
 ``--require-complete`` when an incomplete answer would be worse than no answer, which is
 the case when the files are about to be shipped somewhere the originals are unreachable.
+Then every part of the walk that gave up -- an ``extends`` that does not resolve, a world
+that does not load, a plugin that cannot be asked -- is a failure, named on stderr, rather
+than a line missing from a list that looks exactly like a complete one.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--require-complete",
         action="store_true",
-        help="fail if the world does not fully resolve, instead of listing what did",
+        help="fail if any part of the world did not resolve, instead of listing what did",
     )
     args = parser.parse_args(argv)
 
@@ -66,9 +69,16 @@ def main(argv=None) -> int:
         return 1
 
     world = Path(target).resolve()
-    inputs = world_sources(world)
+    skipped: list = []
+    inputs = world_sources(world, skipped=skipped)
     if args.require_complete and world not in inputs:
-        print(f"world {world} did not resolve", file=sys.stderr)
+        skipped.insert(0, f"world {world} did not resolve")
+    if args.require_complete and skipped:
+        # Named, every one of them: a caller that asked for a complete answer is staging these
+        # files somewhere the originals are not, and "something is missing" does not say which
+        # world, which parent or which plugin to go and fix.
+        for problem in skipped:
+            print(problem, file=sys.stderr)
         return 1
     # ``packaged`` says the files arrive with an installed package rather than needing to
     # travel with whatever is staging them. The list is reported either way -- a caller

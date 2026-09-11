@@ -102,3 +102,83 @@ def test_a_manifest_supplied_components_file_counts_as_an_input(tmp_path, monkey
     )
     monkeypatch.chdir(tmp_path.parent)  # a caller who is not standing in the world's directory
     assert tmp_path / "route.csv" in world_sources(world)
+
+
+def test_a_whole_walk_reports_nothing_skipped(tmp_path):
+    """The sink stays empty when nothing was given up on, which is what makes it readable.
+
+    A caller uses it to tell a short list from a complete one; a sink that collected ordinary
+    events would make every world look incomplete and the distinction worthless.
+    """
+    asset = tmp_path / "rooms.stl"
+    asset.write_bytes(b"solid\n")
+    world = _world(
+        tmp_path,
+        f"""\
+        plugins:
+          - "{__name__}:_NamesAFile":
+              file: {asset}
+    """,
+    )
+    skipped: list = []
+    assert set(world_sources(world, skipped=skipped)) == {world.resolve(), asset.resolve()}
+    assert skipped == []
+
+
+def test_an_absent_file_is_not_something_skipped(tmp_path):
+    """Dropping one is the contract `Plugin.sources` is written against, not a failure to look.
+
+    An optional file that is simply absent needs no guard in the plugin, so reporting it here
+    would make the ordinary case indistinguishable from a broken one.
+    """
+    world = _world(
+        tmp_path,
+        f"""\
+        plugins:
+          - "{__name__}:_NamesAFile":
+              file: {tmp_path / "absent.stl"}
+    """,
+    )
+    skipped: list = []
+    assert world_sources(world, skipped=skipped) == [world.resolve()]
+    assert skipped == []
+
+
+def test_a_plugin_that_cannot_be_asked_is_reported_as_skipped(tmp_path):
+    """Still best-effort -- and now it says so, naming the plugin it could not ask.
+
+    A caller staging these files somewhere the originals are unreachable cannot act on a list
+    that is short for a reason it never hears about.
+    """
+    world = _world(
+        tmp_path,
+        f"""\
+        plugins:
+          - "{__name__}:_Explodes": {{}}
+    """,
+    )
+    skipped: list = []
+    assert world_sources(world, skipped=skipped) == [world.resolve()]
+    assert len(skipped) == 1
+    assert "_Explodes" in skipped[0]
+
+
+def test_an_extends_that_does_not_resolve_is_reported_as_skipped(tmp_path):
+    """The parent carries plugins, an MJCF and its meshes: none of that is in the answer.
+
+    Reported twice over, and both are real losses rather than one said twice: the walk cannot
+    follow the parent, and the world does not load either -- so no plugin can be asked for its
+    files, which is the half no walk of the YAML would have found anyway.
+    """
+    world = _world(
+        tmp_path,
+        """\
+        extends: ./no_such_parent.yaml
+        plugins: []
+    """,
+    )
+    skipped: list = []
+    assert world_sources(world, skipped=skipped) == [world.resolve()]
+    assert skipped
+    assert all("no_such_parent.yaml" in problem for problem in skipped)
+    assert any("extends" in problem for problem in skipped)
