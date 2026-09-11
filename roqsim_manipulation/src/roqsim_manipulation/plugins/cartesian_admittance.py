@@ -245,10 +245,19 @@ class CartesianAdmittancePlugin(Plugin):
         # differently when run at the 1 kHz physics rate (the integrated twist grows ten times as
         # fast per unit time), so the rate is honoured rather than being whatever the world's
         # timestep happens to be.
-        if ctx.sim_time < self._next_t:
+        # Due within half a physics step of the scheduled time, and the next tick scheduled on the
+        # fixed grid rather than one period after this one. The sim clock is a floating-point sum of
+        # timesteps, so a tick due at exactly k periods can read a hair early; compared strictly and
+        # re-anchored on the current time, each such hair became a whole missed physics step.
+        half_step = 0.5 * ctx.model.opt.timestep
+        if ctx.sim_time < self._next_t - half_step:
             return
         dt = 1.0 / self.rate_hz
-        self._next_t = ctx.sim_time + dt
+        self._next_t += dt
+        if self._next_t < ctx.sim_time + half_step:
+            # Behind by more than a period (the controller was inactive): resume at the rate from
+            # here rather than catching up on the ticks that were missed.
+            self._next_t = ctx.sim_time + dt
 
         twist = self._admittance_twist(dt) if self.law == "admittance" else self._position_twist()
         twist = self._clamp(twist * self.axes)

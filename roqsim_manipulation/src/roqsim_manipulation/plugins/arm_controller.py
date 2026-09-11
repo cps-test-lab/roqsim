@@ -616,10 +616,12 @@ class ArmControllerPlugin(Plugin):
         if "test_target" in self.config:
             for name, val in zip(self._ctrl_names, self.config["test_target"], strict=False):
                 self._target[name] = float(val)
-        # Manual mode: seed ctrl to the home target once so the arm starts there (and the sliders
-        # open at that pose); pre_step then leaves ctrl alone for the user to drag.
-        if ctx.manual_control:
-            self._write_ctrl(ctx.data)
+        # The commands that hold this pose, written now rather than at the first step: a reset zeroes
+        # every actuator command, so until they are written the physics state is the arm pulled
+        # toward zero, and anything read before the first step -- a wrench, a tare -- reads that
+        # transient. In manual mode this is also what opens the sliders at the pose; pre_step then
+        # leaves ctrl alone for the user to drag.
+        self._write_ctrl(ctx.data)
 
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
