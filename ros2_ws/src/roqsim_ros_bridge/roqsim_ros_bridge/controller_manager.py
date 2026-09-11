@@ -32,6 +32,7 @@ from controller_manager_msgs.srv import (
     UnloadController,
 )
 from lifecycle_msgs.msg import TransitionEvent
+from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile
 
 from roqsim.controllers import ACTIVE, INACTIVE, UNCONFIGURED, registry_for
 
@@ -65,9 +66,20 @@ class ControllerManagerServices:
         # Every controller announces its own transitions, as a real one does. This is also the only
         # place a run can read the INSTANT of a hand-over rather than inferring it from when the
         # motion changed -- which is usually the thing being measured.
+        # Latched, and this is the whole reason the topic is worth having. A transition is a fact
+        # about a moment that has already passed, and everything that wants it subscribes
+        # afterwards: a trial that switches and then asks when the hand-over happened, a recorder
+        # attached after the run began, a scenario waiting on the event after its service call
+        # returned. Volatile, every one of those receives nothing -- the topic is there, the
+        # publisher is there, and the record is silently unreadable.
+        history = QoSProfile(
+            depth=20,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            history=HistoryPolicy.KEEP_LAST,
+        )
         self._events = {
             c.name: node.create_publisher(
-                TransitionEvent, f"{_join(c.namespace, c.name)}/transition_event", 10
+                TransitionEvent, f"{_join(c.namespace, c.name)}/transition_event", history
             )
             for c in self._mine()
         }
