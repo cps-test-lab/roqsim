@@ -60,7 +60,7 @@ Full-run sequence:
 ::
 
    setup():   build(p0)…build(pN)  →  spec.compile()  →  MjData  →  configure(p0)…configure(pN)
-   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → gates.reset()
+   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → gates.reset()
    step():    drain → pre_step(p0…pN) → mj_step → post_step(p0…pN) → publish_snapshot
    shutdown(): shutdown(pN)…shutdown(p0)   (best-effort; a failure is logged, others still run)
 
@@ -462,7 +462,7 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 
 -  **New robot / arm:** a scene plugin whose ``build`` attaches the robot MJCF into ``spec`` (``spec.attach`` / add body), registers an ``Entity(kind="robot")`` and a ``RobotHandle`` in ``configure``.
 -  **New sensor:** a ``post_step`` plugin that reads ``data`` (or renders via ``ctx.render``), optionally adds its own noise (§9), and hands the reading off (blackboard/bridge). Register a producer gate (§10) if it should participate in sync mode.
--  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Seeding ``ctrl`` once in ``on_reset`` stays right (it opens the sliders at the home pose); the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config.
+-  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Writing ``ctrl`` once in ``on_reset`` stays right, and a controller should do it in every mode: a reset zeroes ``data.ctrl``, so until the controller writes the commands that hold its pose, the state the engine's closing ``mj_forward`` derives -- and anything a sensor reads or tares before the first step -- is the robot pulled toward zero. In manual mode the same write opens the sliders at the home pose; the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config.
 -  **Environment/floorplan loader:** a ``build`` plugin that adds a mesh + collision geoms to ``spec``.
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction.
