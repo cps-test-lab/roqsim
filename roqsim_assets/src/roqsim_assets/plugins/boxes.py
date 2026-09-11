@@ -78,6 +78,13 @@ class BoxesPlugin(Plugin):
             for index, entry in enumerate(self.config.get("instances") or [])
         ]
 
+    #: The CHILDREN register the entities, and `apply_declared_presence` below forwards to them
+    #: -- but the key is validated against the entry that carries it, so without this a
+    #: population was refused `present:` outright ("registers none"). Declaring an entity absent
+    #: and spawning it in is the substrate's one way to reveal a prop, and it was the one kind of
+    #: entry that could not say it.
+    provides_entity = True
+
     def _child_label(self, entry: dict, index: int) -> str:
         return str((entry or {}).get("name") or f"{self.entity_name}_{index}")
 
@@ -88,6 +95,11 @@ class BoxesPlugin(Plugin):
         it a second box fails model compilation.
         """
         child = {k: v for k, v in (entry or {}).items() if k != "name"}
+        # This entry's `present:` is the default for every instance under it, so "the whole
+        # population starts absent" is one word rather than one per instance. An instance that
+        # states its own keeps it.
+        if "present" in self.config:
+            child.setdefault("present", self.declared_present)
         child.setdefault("prefix", f"{self._child_label(entry, index)}_")
         return child
 

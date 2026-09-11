@@ -186,3 +186,58 @@ def test_instances_is_required():
 def test_instances_must_be_a_list():
     plugin = CylindersPlugin({}, label="cylinders")
     assert "must be a list" in plugin.validate_config({"instances": {"pose": {"position": {"x": 0, "y": 0}}}})[0]
+
+
+# -- a population may be declared absent --------------------------------------------------------
+#
+# `present:` is how a world says an entity starts imperceptible, so a trial can spawn it in. The
+# children already carried their own and `apply_declared_presence` already forwarded to them --
+# but the key is validated against the ENTRY that carries it, and a population declared none, so
+# the entry was refused outright. The one pattern the substrate offers for revealing a prop was
+# the one thing a population could not say.
+
+def _cyl(**extra):
+    return {"radius": 0.1, "height": 0.2, "pose": {"position": {"x": 1.0, "y": 0.0}}, **extra}
+
+
+def test_a_population_entry_accepts_present():
+    """Through `config_errors`, which is what a world is actually held to -- `validate_config`
+    alone skips the presence check and would pass whatever this entry declared."""
+    config = {"instances": [_cyl()], "present": False}
+    assert CylindersPlugin({}, label="clutter").config_errors(config) == []
+
+
+def test_the_entry_is_the_default_for_every_instance():
+    _model, plugin, ctx = _build(instances=[_cyl(name="a"), _cyl(name="b")], present=False)
+    plugin.apply_declared_presence(ctx)
+    assert [ctx.entities.get(n).present for n in ("a", "b")] == [False, False]
+
+
+def test_an_instance_may_override_the_entry():
+    """An instance is a prop in its own right: the entry's key is the default, not the rule."""
+    _model, plugin, ctx = _build(
+        instances=[_cyl(name="kept", present=True), _cyl(name="spare")], present=False)
+    plugin.apply_declared_presence(ctx)
+    assert ctx.entities.get("kept").present is True
+    assert ctx.entities.get("spare").present is False
+
+
+def test_an_absent_instance_leaves_the_contact_set():
+    """Not bookkeeping: an absent instance must actually stop being perceivable."""
+    _model, plugin, ctx = _build(instances=[_cyl(name="spare")], present=False)
+    # By body NAME, not through `resolve_body_id`: that refuses an absent entity on purpose,
+    # which is itself the behaviour under test seen from the other side.
+    body = ctx.entities.get("spare").body
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body)
+    geoms = [g for g in range(ctx.model.ngeom) if ctx.model.geom_bodyid[g] == bid]
+    assert geoms, "precondition: the instance has geometry"
+    assert all(ctx.model.geom_contype[g] != 0 for g in geoms), "precondition: it collides"
+
+    plugin.apply_declared_presence(ctx)
+    assert all(ctx.model.geom_contype[g] == 0 for g in geoms)
+
+
+def test_saying_nothing_leaves_every_instance_present():
+    _model, plugin, ctx = _build(instances=[_cyl(name="a")])
+    plugin.apply_declared_presence(ctx)
+    assert ctx.entities.get("a").present is True

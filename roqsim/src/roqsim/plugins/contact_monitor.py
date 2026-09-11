@@ -39,13 +39,10 @@ wants the detail reads the fields directly.
 The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
 wheels, so a wheel clipping a box counts exactly as much as the bumper does.
 
-When the trial spawns the watched entity
-----------------------------------------
-
-``reset_on_spawn`` (default true) restarts the report when the watched entity GAINS PRESENCE. An
-entity that has just been spawned has no history: it was not in the world a moment ago, so nothing
-it touched before it went absent is a fact about it now, and with ``latch`` that would otherwise be
-a permanent one.
+**When the trial spawns the watched entity.** ``reset_on_spawn`` (default true) restarts the
+report when the watched entity GAINS PRESENCE. An entity that has just been spawned has no
+history: it was not in the world a moment ago, so nothing it touched before it went absent is a
+fact about it now, and with ``latch`` that would otherwise be a permanent one.
 
 Only presence does this. A ``SetEntityState`` does not, because the service is specified as "an
 instant change in its pose and/or twist" and nothing more -- a simulator that also cleared an
