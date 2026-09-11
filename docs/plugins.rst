@@ -986,6 +986,25 @@ place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. 
 that command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
+**Stamped or plain velocity commands.** All three take ``stamped_cmd_vel``, which selects
+``geometry_msgs/TwistStamped`` for the velocity command in place of the default
+``geometry_msgs/Twist``::
+
+   components:
+     - spawn_robot: {model: turtlebot4}
+       name: robot
+       components:
+         - diff_drive: {stamped_cmd_vel: true}
+
+Which of the two a stack publishes is a property of that stack, not of the kinematics: Nav2 switches
+with its own ``enable_stamped_cmd_vel``, the TurtleBot 4's shipped configuration sets it, and ROS 2
+is moving towards the stamped form. A subscription is one type, so a mismatch is not a degradation
+but **silence** -- the base receives no command at all, and the only symptom is a controller
+reporting that it cannot make progress. It is an ordinary key, so the stack a world is paired with
+can be matched from outside it rather than by editing the world::
+
+   roqsim sim world.yaml --set components.robot.diff_drive.stamped_cmd_vel=true
+
 ``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
 right -- plus the wheelbase and the widths its geometry comes from::
 
