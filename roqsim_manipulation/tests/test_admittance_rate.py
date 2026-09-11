@@ -24,8 +24,8 @@ def _ticks(
     """The physics steps at which the law runs, with the sim clock advanced as MuJoCo advances it."""
     plugin = CartesianAdmittancePlugin.__new__(CartesianAdmittancePlugin)
     plugin.rate_hz = rate_hz
-    plugin.law = "admittance"
     plugin.axes = np.ones(6)
+    plugin._uses_wrench = True
     plugin._active = True
     plugin._next_t = 0.0
     plugin._clamp = lambda t: t
@@ -36,7 +36,7 @@ def _ticks(
         model=SimpleNamespace(opt=SimpleNamespace(timestep=timestep)),
     )
     step = 0
-    plugin._admittance_twist = lambda dt: ticks.append(step) or np.zeros(6)
+    plugin._wrench_twist = lambda dt: ticks.append(step) or np.zeros(6)
     plugin._apply = lambda ctx, twist, dt: None
     for step in range(steps):
         plugin._active = not (inactive and inactive[0] <= step < inactive[1])
