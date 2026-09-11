@@ -392,6 +392,64 @@ Every hook receives a ``SimContext`` with:
   another thread.
 * ``control`` — run-control (play / pause / step / reset) consulted by the standalone driver.
 
+Switching an arm between controllers
+------------------------------------
+
+A robot that registers controllers is served a ``controller_manager`` at
+``/<namespace>/controller_manager``, with the message set and the semantics ros2_control uses --
+so ``ros2 control list_controllers`` and ``ros2 run controller_manager spawner`` work against a
+world, and a scenario that switches here is the scenario that switches on the robot. Nothing in a
+world asks for it: on real hardware nobody opts into a controller manager, and a robot with no
+controllers is served none.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - service
+     - what it does
+   * - ``list_controllers``
+     - every controller of that robot, with its state and what it holds
+   * - ``switch_controller``
+     - activate and deactivate, atomically
+   * - ``load_controller`` / ``configure_controller``
+     - move a **declared** controller to ``inactive``
+   * - ``unload_controller``
+     - refused while the controller is active, as upstream refuses it
+   * - ``list_hardware_interfaces``
+     - the command and state interfaces, and which are claimed
+
+Each controller also publishes ``<controller>/transition_event`` stamped with the **simulation**
+time, which is where a run reads the instant of a hand-over rather than inferring it from when the
+motion changed.
+
+**The world file is the parameter file.** ros2_control's manager is given its controllers as
+parameters and ``load_controller`` instantiates one of *those*; here the robot's ``components:`` is
+that list. A controller the world never declared cannot be loaded -- which is what ``spawner`` does
+against the real robot for a name absent from its parameters, so it is the behaviour rather than a
+limitation.
+
+Three semantics are worth stating because getting them wrong makes a scenario that works here fail
+on the arm:
+
+* **Only command interfaces are claimed, and only while a controller is active.** A broadcaster
+  claims nothing, which is why it reads a joint another controller drives. ``claimed_interfaces``
+  is empty while inactive; ``required_command_interfaces`` is what a controller *would* take.
+* **Neither ``STRICT`` nor ``BEST_EFFORT`` deactivates a controller the caller did not name.** A
+  hand-over names both sides in one request. ``FORCE_AUTO`` is the one that arbitrates.
+* **``strictness`` has no zero.** A default-constructed request carries one and it is read as best
+  effort, so pass the field explicitly from a scenario::
+
+      service_call('/ur5e/controller_manager/switch_controller',
+                   'controller_manager_msgs.srv.SwitchController',
+                   '{\"activate_controllers\": [\"cartesian_compliance_controller\"],
+                     \"deactivate_controllers\": [\"scaled_joint_trajectory_controller\"],
+                     \"strictness\": 2}')
+
+Controller parameters are **not** settable at runtime. A real controller is retuned with
+``ros2 param set``; here the gains are world-authored, because a campaign varies them by varying the
+world and a run whose gains changed mid-flight is not reproducible.
+
 Declaring a robot interface (endpoints)
 ---------------------------------------
 
