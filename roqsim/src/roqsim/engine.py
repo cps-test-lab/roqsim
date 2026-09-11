@@ -343,6 +343,10 @@ class Engine:
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
             # in one episode would still be in the room at the start of the next.
             plugin.apply_declared_presence(self.ctx)
+        # Once more, after every plugin has written its part of the initial state -- a pose, a
+        # command, a presence: until the next step, the derived quantities (site poses, sensor data,
+        # contacts) must describe that state and not the one before the plugins ran.
+        mujoco.mj_forward(self.ctx.model, self.ctx.data)
         for gate in self.ctx.gates():
             gate.reset()
 
