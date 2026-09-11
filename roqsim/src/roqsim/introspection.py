@@ -70,9 +70,12 @@ _COMMENT_ONLY_RE = re.compile(r"^\s*#\s?(.*)$")
 # the parse -- reporting a plugin's first few keys and silently dropping the rest.
 _CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
 # The line naming the plugin itself, which a block opens with one level above its keys. Written
-# either as a plain key ("sensor_coverage_probe:") or as the list entry a world YAML's
-# "components:" actually takes ("- spawn_sensor:"), so both spellings are skipped, not parsed.
-_CONFIG_WRAPPER_RE = re.compile(r"^\s+-?\s*[A-Za-z_]\w*:\s*(?:#\s*(.*))?$")
+# either as a plain key ("sensor_coverage_probe:"), as the list entry a world YAML's
+# "components:" actually takes ("- spawn_sensor:"), or -- in a base class documenting keys its
+# subclasses inherit -- as a placeholder standing in for whichever name they register under
+# ("<plugin short name>:"). All three are skipped rather than parsed, so the keys underneath are
+# read at the level they are written.
+_CONFIG_WRAPPER_RE = re.compile(r"^\s+-?\s*(?:[A-Za-z_]\w*|<[^>]+>):\s*(?:#\s*(.*))?$")
 
 
 def _config_header_span(lines: list[str]) -> tuple[int, int] | None:
@@ -106,8 +109,12 @@ def _own_or_module_doc(cls) -> str:
     # A class docstring that documents no config while its module does is a pointer to the module
     # ("See the module docstring."), and preferring it publishes the pointer and hides the block.
     # The catalog exists to say what a plugin's config keys are, so the docstring that has them wins.
-    if own and mod and _config_header_span(own.splitlines()) is None \
-            and _config_header_span(mod.splitlines()) is not None:
+    if (
+        own
+        and mod
+        and _config_header_span(own.splitlines()) is None
+        and _config_header_span(mod.splitlines()) is not None
+    ):
         return mod
     return own or mod
 
@@ -123,7 +130,7 @@ def _summary_and_config(doc: str) -> list[str]:
     config: list[str] = []
     span = _config_header_span(lines)
     if span is not None:
-        config = lines[span[0]:]
+        config = lines[span[0] :]
     out = list(summary)
     if config:
         out += ["", *config]
@@ -167,7 +174,7 @@ def _parse_config_block(doc: str) -> list[dict]:
     span = _config_header_span(lines)
     if span is None:
         return []
-    body = lines[span[1] + 1:]
+    body = lines[span[1] + 1 :]
 
     # The indent the plugin's own keys sit at. A block opens with the plugin key itself
     # ("sensor_coverage_probe:"), one level shallower than the keys under it; anchoring on the

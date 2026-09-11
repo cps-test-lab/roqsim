@@ -233,3 +233,15 @@ def test_every_installed_plugin_with_a_config_block_reports_at_least_one_key():
         if _config_header_span(doc.splitlines()) is not None and not details["parameters"]:
             silent.append(item["name"])
     assert not silent, f"Config:: block present but no keys parsed: {silent}"
+
+
+def test_a_base_class_block_keyed_by_a_placeholder_still_parses():
+    """A base documents keys its subclasses inherit, so it has no one name to key the block by."""
+    doc = (
+        "Shared depth-pass base.\n\n"
+        "Config (in addition to ``camera_common.CameraPlugin``'s)::\n\n"
+        "    <plugin short name>:\n"
+        "      clip_near: 0.3          # m\n"
+        "      clip_far: 100.0         # m\n"
+    )
+    assert set(_fields(doc)) == {"clip_near", "clip_far"}
