@@ -1,10 +1,15 @@
-"""nav2's two navigation actions, served by roqsim's own navigator.
+"""The navigation actions, served by roqsim's own navigator.
 
-This module is the whole ROS surface of ``roqsim_nav``. It registers two handlers into the bridge's
+This module is the whole ROS surface of ``roqsim_nav``. It registers its handlers into the bridge's
 shared registry and is imported at bridge start-up through the ``roqsim_ros_bridge.extensions``
 entry point -- so the core bridge never depends on ``nav2_msgs``, and ``roqsim_nav`` never imports
 ROS. The navigator declares its goal endpoints with the action type named as a *string*; the bridge
 resolves the string and finds what is registered here.
+
+Three types: nav2's ``NavigateToPose`` and ``NavigateThroughPoses``, which send a route, and
+``roqsim_nav_interfaces/StartRoute``, which releases the route the world configured. The last is a
+type of its own rather than an empty nav2 goal: a nav2 goal with no poses has nowhere to go, and
+giving it a meaning here alone would make one message mean two things. It is refused instead.
 
 **One package serves every mover, and that is a correctness requirement rather than tidiness.**
 ``ACTION_HANDLERS[type] = fn`` overwrites silently and extension modules are imported in unspecified
@@ -12,10 +17,10 @@ order, so two packages registering ``NavigateThroughPoses`` would make which han
 depend on install order, with nothing in the log. A pedestrian, a second robot and a navigating prop
 are all driven through one ``NavHandle``, so one handler is all there is to register.
 
-Goal execution is the same for both types: hand the route to the navigator, poll its progress in
-*sim* time, publish nav2's feedback, and succeed when it reports arrival **under the sequence number
-this goal was given**. That last part is what distinguishes our arrival from a stale one -- a
-navigator that finished whatever it was doing before is already "finished" when a new goal is queued.
+Goal execution is the same for every type: hand the request to the navigator, poll its progress in
+*sim* time, publish feedback, and succeed when it reports arrival **under the sequence number this
+goal was given**. That last part is what distinguishes our arrival from a stale one -- a navigator
+that finished whatever it was doing before is already "finished" when a new goal is queued.
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ import math
 import time
 
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
+from roqsim_nav_interfaces.action import StartRoute
 
 from roqsim_ros_bridge.actions import action_handler
 
@@ -60,20 +66,28 @@ def _duration(seconds: float):
     return Duration(sec=sec, nanosec=int(round((seconds - sec) * 1e9)))
 
 
-def _drive(goal_handle, ctx, endpoint, poses, result, feedback, fill):
-    """Send ``poses`` and block this handler's thread until the route resolves.
+def _through_poses_feedback(feedback, goals_left, dist_left, elapsed):
+    """``NavigateThroughPoses`` and ``StartRoute`` report progress in the same three fields."""
+    feedback.number_of_poses_remaining = int(goals_left)
+    feedback.distance_remaining = float(dist_left)
+    feedback.navigation_time = _duration(elapsed)
 
-    Shared by both action types, which differ only in their message shapes: the goal is the same
-    route, and so are cancellation, preemption and completion.
+
+def _drive(goal_handle, ctx, endpoint, send, result, feedback, fill):
+    """Hand the request to the navigator with ``send`` and block this thread until it resolves.
+
+    Shared by every action type, which differ only in their message shapes and in what they ask the
+    handle for: cancellation, preemption and completion are the same route either way. ``send``
+    raising ``ValueError`` is the navigator refusing the request, and aborts the goal.
     """
     handle = _handle_for(ctx, endpoint)
-    if not poses:
-        goal_handle.abort()
-        return result
-
     # Returns the sequence synchronously, before the route has been applied -- the change is
     # marshalled onto the physics thread. Holding the number is what lets us wait for *our* arrival.
-    seq = handle.send_goals(poses)
+    try:
+        seq = send(handle)
+    except ValueError:
+        goal_handle.abort()
+        return result
     start = ctx.sim_time
     while True:
         if goal_handle.is_cancel_requested:
@@ -109,7 +123,7 @@ def navigate_to_pose(goal_handle, ctx, on_payload, endpoint=None):
         goal_handle,
         ctx,
         endpoint,
-        poses,
+        lambda handle: handle.send_goals(poses),
         NavigateToPose.Result(),
         NavigateToPose.Feedback(),
         fill,
@@ -118,13 +132,7 @@ def navigate_to_pose(goal_handle, ctx, on_payload, endpoint=None):
 
 @action_handler("nav2_msgs.action.NavigateThroughPoses")
 def navigate_through_poses(goal_handle, ctx, on_payload, endpoint=None):
-    """Drive the mover through a list of poses."""
-
-    def fill(feedback, goals_left, dist_left, elapsed):
-        feedback.number_of_poses_remaining = int(goals_left)
-        feedback.distance_remaining = float(dist_left)
-        feedback.navigation_time = _duration(elapsed)
-
+    """Drive the mover through a list of poses. An empty list is refused by ``send_goals``."""
     poses = [
         (p.pose.position.x, p.pose.position.y, _yaw(p.pose.orientation))
         for p in goal_handle.request.poses
@@ -133,8 +141,22 @@ def navigate_through_poses(goal_handle, ctx, on_payload, endpoint=None):
         goal_handle,
         ctx,
         endpoint,
-        poses,
+        lambda handle: handle.send_goals(poses),
         NavigateThroughPoses.Result(),
         NavigateThroughPoses.Feedback(),
-        fill,
+        _through_poses_feedback,
+    )
+
+
+@action_handler("roqsim_nav_interfaces.action.StartRoute")
+def start_route(goal_handle, ctx, on_payload, endpoint=None):
+    """Run the route the mover was configured with, and finish when it does."""
+    return _drive(
+        goal_handle,
+        ctx,
+        endpoint,
+        lambda handle: handle.start(),
+        StartRoute.Result(),
+        StartRoute.Feedback(),
+        _through_poses_feedback,
     )

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Both nav2 actions, end to end against a running simulator.
+"""The navigation actions, end to end against a running simulator.
 
 Not a unit test of the handlers: it stands up the bridge, waits for a real ``ActionServer`` to
 appear, sends a real goal from a real ``ActionClient``, and checks the prop actually moved. The
@@ -23,6 +23,7 @@ roqsim = pytest.importorskip("roqsim")  # selects the GL backend before mujoco i
 rclpy = pytest.importorskip("rclpy")
 pytest.importorskip("nav2_msgs")
 pytest.importorskip("roqsim_ros_bridge")
+pytest.importorskip("roqsim_nav_interfaces")
 
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
@@ -30,6 +31,7 @@ from geometry_msgs.msg import PoseStamped  # noqa: E402
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose  # noqa: E402
 from rclpy.action import ActionClient  # noqa: E402
 from rclpy.node import Node  # noqa: E402
+from roqsim_nav_interfaces.action import StartRoute  # noqa: E402
 
 from roqsim.config import load_config_from_dict, with_transport  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
@@ -78,7 +80,28 @@ def sim(tmp_path_factory):
                         }
                     }
                 ],
-            }
+            },
+            {
+                # A route the world owns and the goal only releases (`autostart: false`).
+                "spawn_model": {
+                    "model": str(tmp / "crate.xml"),
+                    "pose": {"position": {"x": 0.0, "y": -3.0, "z": 0.25}},
+                    "motion": "driven",
+                    "prefix": "tram_",
+                },
+                "name": "tram",
+                "components": [
+                    {
+                        "navigator": {
+                            "speed": 1.0,
+                            "namespace": "tram",
+                            "goals": [[2.0, -3.0]],
+                            "autostart": False,
+                            "avoidance": {"stop": False},
+                        }
+                    }
+                ],
+            },
         ],
     }
     engine = Engine(load_config_from_dict(with_transport(raw, ros=True), base_dir=tmp))
@@ -107,9 +130,9 @@ def sim(tmp_path_factory):
         engine.shutdown()
 
 
-def _xy(engine):
+def _xy(engine, entity="cart"):
     model, data = engine.ctx.model, engine.ctx.data
-    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, engine.ctx.entities.get("cart").body)
+    bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, engine.ctx.entities.get(entity).body)
     return data.mocap_pos[int(model.body_mocapid[bid])][:2].copy()
 
 
@@ -157,10 +180,15 @@ def test_navigate_through_poses_visits_them_in_order(sim):
     assert np.linalg.norm(_xy(engine) - np.asarray([2.0, 2.0])) < 0.4
 
 
-def test_an_empty_route_is_rejected_rather_than_reported_as_arrival(sim):
-    """A goal with nowhere to go must not succeed: the caller would read that as "already there"."""
+@pytest.mark.parametrize("entity", ["cart", "tram"])
+def test_an_empty_route_is_rejected_rather_than_reported_as_arrival(sim, entity):
+    """A goal with nowhere to go must not succeed: the caller would read that as "already there".
+
+    The tram has a configured route, and an empty goal must not release it either: that is
+    `StartRoute`'s, and one message meaning two things is what that type exists to avoid.
+    """
     engine, node = sim
-    client = ActionClient(node, NavigateThroughPoses, "/cart/navigate_through_poses")
+    client = ActionClient(node, NavigateThroughPoses, f"/{entity}/navigate_through_poses")
     try:
         assert client.wait_for_server(timeout_sec=30.0)
         sent = client.send_goal_async(NavigateThroughPoses.Goal())
@@ -172,3 +200,15 @@ def test_an_empty_route_is_rejected_rather_than_reported_as_arrival(sim):
         assert result.result().status != STATUS_SUCCEEDED
     finally:
         client.destroy()
+
+
+def test_start_route_runs_the_configured_route(sim):
+    """How `entity_navigate_start` asks over ROS: the route is the world's, the goal only its cue."""
+    engine, node = sim
+    client = ActionClient(node, StartRoute, "/tram/start_route")
+    try:
+        status, _ = _send(node, client, StartRoute.Goal())
+    finally:
+        client.destroy()
+    assert status == STATUS_SUCCEEDED
+    assert np.linalg.norm(_xy(engine, "tram") - np.asarray([2.0, -3.0])) < 0.3

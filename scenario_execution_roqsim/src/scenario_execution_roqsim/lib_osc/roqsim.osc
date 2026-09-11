@@ -89,9 +89,14 @@ action entity_navigate_start:
     # visible in a campaign's config diff -- while its timing belongs to the trial. Sending the
     # route from the scenario instead puts both in the scenario. Both are legitimate; they answer
     # different questions.
+    #
+    # An entity with no configured route is refused rather than reported as arrived. Over ROS this
+    # is the simulator's own `roqsim_nav_interfaces/StartRoute` action at `<entity>/start_route`,
+    # which the navigator serves only when it has a configured route. Stopping it early is the
+    # scenario's, as for any action: `until`, `one_of` or `timeout` cancel the route.
     entity: string
     success_on_acceptance: bool = false
-    action_name: string = ''
+    action_name: string = ''              # ROS only; empty = `<entity>/start_route`
 
 action spawn_entity:
     # Make an entity the world DECLARED perceivable, at the pose it appears at. Activation, not

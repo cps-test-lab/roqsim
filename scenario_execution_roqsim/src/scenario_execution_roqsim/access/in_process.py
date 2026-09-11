@@ -161,6 +161,23 @@ class InProcessAccess(WorldAccess):
 
     # -- navigation --------------------------------------------------------------------------------
     def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        handle = self._nav_handle(name)
+        poses = [(float(p[0]), float(p[1])) for p in goal_poses]
+        try:
+            seq = handle.send_goals(poses)
+        except ValueError as err:
+            raise AccessError(str(err)) from None
+        return _PostedRoute(handle, seq, wait=wait)
+
+    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+        handle = self._nav_handle(name)
+        try:
+            seq = handle.start()
+        except ValueError as err:
+            raise AccessError(str(err)) from None
+        return _PostedRoute(handle, seq, wait=wait)
+
+    def _nav_handle(self, name: str):
         ctx = self._ctx()
         if ctx is None:
             raise AccessError("the world is not built yet; call ready() first")
@@ -177,12 +194,7 @@ class InProcessAccess(WorldAccess):
                 f"`mocap: true`, or walker). This world can navigate: "
                 f"{', '.join(offered) if offered else '(nothing)'}."
             )
-        poses = [(float(p[0]), float(p[1])) for p in goal_poses]
-        if poses:
-            seq = handle.send_goals(poses)
-        else:
-            seq = handle.start()
-        return _PostedRoute(handle, seq, wait=wait)
+        return handle
 
     # -- teleport ---------------------------------------------------------------------------------
     def set_entity_state(

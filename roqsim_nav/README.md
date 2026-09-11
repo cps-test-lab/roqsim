@@ -123,8 +123,10 @@ stamped with a **sequence number** so a caller can tell its own arrival from a s
 navigator that finished its previous route is already "finished" when a new one is queued.
 
 * in a scenario: `entity_navigate(entity: 'cart', goal_poses: [...])`, or `entity_navigate_start`
-* over ROS 2: nav2's `NavigateToPose` / `NavigateThroughPoses`, served by `roqsim_nav_ros`
-* in process: `ctx.blackboard.get("nav:cart:handle").send_goals([(2.0, 0.0)])`
+* over ROS 2: nav2's `NavigateToPose` / `NavigateThroughPoses`, served by `roqsim_nav_ros`, and the
+  configured route as `roqsim_nav_interfaces/StartRoute` at `<entity>/start_route` — served only by
+  a mover that has one. A nav2 goal with no poses is aborted, never read as "start".
+* in process: `ctx.blackboard.get("nav:cart:handle").send_goals([(2.0, 0.0)])`, or `.start()`
 
 ## Tests
 

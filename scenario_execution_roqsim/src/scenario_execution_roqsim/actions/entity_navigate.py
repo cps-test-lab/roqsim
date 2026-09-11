@@ -13,9 +13,9 @@ Keeping them as two actions rather than one with a flag is the point. They diffe
 a goal reached through nav2 says something about nav2, and a goal reached through this says only that
 the scenario's traffic arrived on cue.
 
-With no ``goal_poses``, this **starts the route the entity was configured with** rather than sending
-a new one. That is what lets a world own an opponent's trajectory -- identical in every repetition,
-and visible in a campaign's config diff -- while the scenario owns only its timing.
+``entity_navigate_start()`` is its sibling: it **starts the route the entity was configured with**
+rather than sending a new one. That is what lets a world own an opponent's trajectory -- identical in
+every repetition, and visible in a campaign's config diff -- while the scenario owns only its timing.
 """
 
 from __future__ import annotations
@@ -62,6 +62,12 @@ class EntityNavigate(SimAction):
                     action=self,
                 )
             self._poses.append((float(position.get("x", 0.0)), float(position.get("y", 0.0))))
+        if goal_poses is not None and not self._poses:
+            raise ActionError(
+                "entity_navigate: `goal_poses` is empty. A route needs at least one pose; to run "
+                "the route the entity was configured with, use entity_navigate_start().",
+                action=self,
+            )
         #: Cleared here rather than in ``__init__``: ``execute`` runs each time the action becomes
         #: active, so an action reached twice in one run sends the route twice instead of replaying
         #: the first outcome.
@@ -73,9 +79,7 @@ class EntityNavigate(SimAction):
 
         try:
             if self._call is None:
-                self._call = self._access.navigate(
-                    self._entity, self._poses, wait=self._wait, action_name=self._action_name
-                )
+                self._call = self._send()
             outcome = self._call.poll()
         except AccessError as err:
             self.reraise(err)
@@ -89,6 +93,11 @@ class EntityNavigate(SimAction):
         if not outcome.ok:
             return self.failed(f"{self._entity!r} did not arrive: {outcome.detail}")
         return self.satisfied(f"{self._entity!r} {outcome.detail}")
+
+    def _send(self):
+        return self._access.navigate(
+            self._entity, self._poses, wait=self._wait, action_name=self._action_name
+        )
 
     def request_cancel(self) -> bool:
         """Stop the mover when the branch this sits in is abandoned.
@@ -107,7 +116,8 @@ class EntityNavigateStart(EntityNavigate):
     """``entity_navigate_start()``: run the route the entity was configured with.
 
     The same machinery with no poses of its own -- one implementation, so the sequence-number
-    polling, the transports and the cancel path cannot drift between the two actions.
+    polling and the cancel path cannot drift between the two actions. Only what is sent differs:
+    ``start_route`` rather than a route.
     """
 
     def execute(  # noqa: D102 - the OSC signature is documented in roqsim.osc
@@ -118,4 +128,9 @@ class EntityNavigateStart(EntityNavigate):
             goal_poses=None,
             success_on_acceptance=success_on_acceptance,
             action_name=action_name,
+        )
+
+    def _send(self):
+        return self._access.start_route(
+            self._entity, wait=self._wait, action_name=self._action_name
         )

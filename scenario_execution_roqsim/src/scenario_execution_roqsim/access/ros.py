@@ -64,16 +64,20 @@ def _also_carries(offered, kind: str = "services") -> str:
 
 
 class _RosRoute(NavCall):
-    """A NavigateThroughPoses goal in flight.
+    """A navigation goal in flight: a ``NavigateThroughPoses`` or a ``StartRoute``.
 
     Three stages, none of which may block: wait for the server to appear (the stack and the simulator
     come up concurrently, so "not there yet" means wait, never fail), then for the goal to be
     accepted, then for the result. ``wait=False`` stops after acceptance.
     """
 
-    def __init__(self, client, goal, name: str, *, wait: bool, offered=None):
+    #: How a world comes to serve the action, for the message while it is not there yet.
+    SERVED_BY = "giving that entity a `navigator` component"
+
+    def __init__(self, client, goal, name: str, *, wait: bool, offered=None, served_by=SERVED_BY):
         self._client, self._goal, self._name, self._wait = client, goal, name, wait
         self._offered = offered
+        self._served_by = served_by
         self._send = None
         self._handle = None
         self._result = None
@@ -113,9 +117,8 @@ class _RosRoute(NavCall):
         if self._send is None and not self._client.server_is_ready():
             return (
                 f"the simulator is not advertising the action server {self._name!r}. A world "
-                "serves it by giving that entity a `navigator` component; without that this "
-                "waits until the scenario's own timeout"
-                + _also_carries(self._offered and self._offered(), "action servers")
+                f"serves it by {self._served_by}; without that this waits until the scenario's "
+                "own timeout" + _also_carries(self._offered and self._offered(), "action servers")
             )
         return None
 
@@ -300,6 +303,11 @@ class RosAccess(WorldAccess):
         Not ``simulation_interfaces``: that control plane has no navigation service, and inventing
         one there would put the same capability behind two different names.
         """
+        if not goal_poses:
+            raise AccessError(
+                f"no goal poses for {name!r}: a route needs at least one. Running the route the "
+                "entity was configured with is `start_route` (`entity_navigate_start`)."
+            )
         try:
             from geometry_msgs.msg import PoseStamped  # noqa: PLC0415
             from nav2_msgs.action import NavigateThroughPoses  # noqa: PLC0415
@@ -314,12 +322,7 @@ class RosAccess(WorldAccess):
         self._pose_stamped_type = PoseStamped
 
         topic = action_name or f"{name}/navigate_through_poses"
-        client = self._nav_clients.get(topic)
-        if client is None:
-            client = ActionClient(
-                self._node, NavigateThroughPoses, topic, callback_group=self._group
-            )
-            self._nav_clients[topic] = client
+        client = self._action_client(ActionClient, NavigateThroughPoses, topic)
         goal = NavigateThroughPoses.Goal()
         for point in goal_poses:
             pose = self._pose_stamped_type()
@@ -332,6 +335,44 @@ class RosAccess(WorldAccess):
             pose.pose.orientation.w = 1.0
             goal.poses.append(pose)
         return _RosRoute(client, goal, name, wait=wait, offered=self._advertised_actions)
+
+    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+        """Send a goal to the navigator's own ``StartRoute`` server, at ``<entity>/start_route``.
+
+        A type of its own rather than an empty ``NavigateThroughPoses``: a nav2 goal with no poses
+        has nowhere to go, and giving it a second meaning would leave one message meaning two
+        things. The navigator serves it only when it has a configured route, so an entity without
+        one leaves this waiting on a server that never appears, and the reason says so.
+        """
+        try:
+            from rclpy.action import ActionClient  # noqa: PLC0415
+            from roqsim_nav_interfaces.action import StartRoute  # noqa: PLC0415
+        except ImportError as err:  # pragma: no cover - only without the interfaces built
+            raise AccessError(
+                f"entity_navigate_start over ROS needs roqsim_nav_interfaces, which is not "
+                f"importable ({err}). The simulator serves a configured route as its StartRoute "
+                "action, so the scenario side needs that message type -- source a workspace that "
+                "built roqsim's ros2_ws, or run the stepped runner, where no ROS types are involved."
+            ) from None
+        topic = action_name or f"{name}/start_route"
+        client = self._action_client(ActionClient, StartRoute, topic)
+        return _RosRoute(
+            client,
+            StartRoute.Goal(),
+            name,
+            wait=wait,
+            offered=self._advertised_actions,
+            served_by="giving that entity a `navigator` component with a configured route (`goals:`)",
+        )
+
+    def _action_client(self, client_type, action_type, topic: str):
+        """One client per (type, name), kept for the run: an action reached twice reuses it."""
+        key = (action_type, topic)
+        client = self._nav_clients.get(key)
+        if client is None:
+            client = client_type(self._node, action_type, topic, callback_group=self._group)
+            self._nav_clients[key] = client
+        return client
 
     # -- teleport ---------------------------------------------------------------------------------
     def set_entity_state(

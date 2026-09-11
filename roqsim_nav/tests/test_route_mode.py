@@ -244,6 +244,37 @@ def test_starting_an_already_running_route_does_nothing(tmp_path):
         engine.shutdown()
 
 
+def test_starting_a_mover_with_no_configured_route_is_refused(tmp_path):
+    """Nothing to release is not an arrival: a caller polling for completion would read one."""
+    engine = _engine(tmp_path, goals=[])
+    engine.setup()
+    engine.reset()
+    try:
+        with pytest.raises(ValueError, match="no configured route"):
+            _navigator(engine).start()
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("goals, served", [([list(GOAL)], True), ([], False)])
+def test_start_route_is_an_endpoint_only_where_there_is_a_route_to_start(tmp_path, goals, served):
+    """Its own endpoint and type, not an empty nav2 goal -- and none where it could only refuse."""
+    engine = _engine(tmp_path, goals=goals)
+    engine.setup()
+    try:
+        endpoints = {e.name: e for e in engine.ctx.interface.all() if e.owner == "cart"}
+        assert {"navigate_to_pose", "navigate_through_poses"} <= set(endpoints)
+        assert ("start_route" in endpoints) is served
+        if served:
+            ros2 = endpoints["start_route"].backend["ros2"]
+            assert ros2 == {
+                "action": "roqsim_nav_interfaces.action.StartRoute",
+                "name": "start_route",
+            }
+    finally:
+        engine.shutdown()
+
+
 # -- tracker -------------------------------------------------------------------------------------
 # These assert that pure pursuit *works* -- that goals advance, routes finish and laps close under a
 # tracker that deliberately does not drive at its goals. They do NOT assert that it tracks better
