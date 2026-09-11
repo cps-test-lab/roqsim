@@ -267,6 +267,11 @@ class CartesianAdmittancePlugin(Plugin):
             dofs.append(int(m.jnt_dofadr[jid]))
         self._dofs = np.array(dofs, dtype=int)
 
+        # The arm pulls this each step. An older arm_controller has no such slot, so this stays
+        # optional -- the plugin then runs from its own `pre_step` as it always did.
+        if getattr(self._arm_handle, "set_command_source", None) is not None:
+            self._arm_handle.set_command_source(self.update, self.label or "cartesian_admittance")
+
         ctx.blackboard.set(
             f"cartesian:{self.arm}",
             CartesianHandle(
@@ -414,6 +419,16 @@ class CartesianAdmittancePlugin(Plugin):
         self._anchor_here()
 
     def pre_step(self, ctx: SimContext) -> None:
+        # Ask rather than act: the arm runs this through `ensure_updated` too, and whichever plugin
+        # reaches it first in this step does the work. Declaring this one before or after the arm
+        # therefore changes nothing -- which it used to, by a whole step.
+        if self._arm_handle is not None and self._arm_handle.ensure_updated is not None:
+            self._arm_handle.ensure_updated(ctx)
+        else:
+            self.update(ctx)
+
+    def update(self, ctx: SimContext) -> None:
+        """Compute this step's joint targets. Pulled by the arm; never called twice in a step."""
         if ctx.manual_control or not self._active:
             return
         # Fixed-rate control loop over a finer physics loop: a controller tuned at 100 Hz behaves
