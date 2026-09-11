@@ -998,6 +998,8 @@ class FakeNavHandle:
         self.routes: list[list] = []
         self.cancels = 0
         self.starts = 0
+        #: Whether the world gave this mover a route of its own; the real ``start`` refuses without.
+        self.configured = True
         self._next = 0
 
     def _stamp(self) -> int:
@@ -1009,6 +1011,8 @@ class FakeNavHandle:
         return self._stamp()
 
     def start(self) -> int:
+        if not self.configured:
+            raise ValueError("'parcel' has no configured route to start; send it goals instead")
         self.starts += 1
         return self._stamp()
 
@@ -1097,6 +1101,27 @@ def test_start_runs_the_configured_route_and_sends_no_goals(world):
     assert handle.routes == [], "it sent a route instead of starting the configured one"
     handle.apply(1, finished=True)
     assert action.update() == py_trees.common.Status.SUCCESS
+
+
+def test_start_on_a_mover_with_no_configured_route_fails_rather_than_arrives(world):
+    """Nothing to run is not an arrival, and the navigator's refusal reaches the scenario."""
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    handle.configured = False
+    action = _start(EntityNavigateStart(), sim, clock, entity="parcel")
+    with pytest.raises(ActionError, match="no configured route"):
+        action.update()
+
+
+def test_an_empty_route_is_refused_rather_than_read_as_start(world):
+    """Starting the configured route is `entity_navigate_start`; no poses is not a way to ask."""
+    ctx, clock, sim = world
+    handle = _nav(ctx)
+    action = EntityNavigate()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="goal_poses` is empty"):
+        action.execute(entity="parcel", goal_poses=[])
+    assert handle.starts == 0
 
 
 def test_an_abandoned_branch_stops_the_mover(world):

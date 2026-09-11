@@ -6,13 +6,15 @@
   <description>
     ROS 2 goal interface for anything roqsim navigates itself: a pedestrian, an opponent robot, a
     driven prop. Serves the navigator's goal endpoints as nav2 NavigateToPose and
-    NavigateThroughPoses, so a client that can drive nav2 can drive the simulator's own movers.
+    NavigateThroughPoses, so a client that can drive nav2 can drive the simulator's own movers, and
+    its configured route as roqsim_nav_interfaces StartRoute.
   </description>
   <maintainer email="frederik.pasch@h-ka.de">Frederik Pasch</maintainer>
   <license>Apache-2.0</license>
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>roqsim_nav_interfaces</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>roqsim_ros_bridge</exec_depend>
 

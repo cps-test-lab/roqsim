@@ -93,9 +93,19 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
     # interface, as it does for a robot or a prop -- which is why there are now TWO goal endpoints
     # rather than one. `navigate_through_poses` is unchanged in name and type, so an existing client
     # and an existing world are unaffected; `navigate_to_pose` is new surface a walker never had.
+    # `start_route` is there because this walker has a patrol: it runs the configured route.
     endpoints = {e.name: e for e in ctx.interface.all() if e.owner == "pedestrian"}
-    assert set(endpoints) == {"body_poses", "navigate_through_poses", "navigate_to_pose"}
+    assert set(endpoints) == {
+        "body_poses",
+        "navigate_through_poses",
+        "navigate_to_pose",
+        "start_route",
+    }
     assert endpoints["body_poses"].direction == "out"
+    assert (
+        endpoints["start_route"].backend["ros2"]["action"]
+        == "roqsim_nav_interfaces.action.StartRoute"
+    )
 
     through = endpoints["navigate_through_poses"]
     assert through.direction == "in"

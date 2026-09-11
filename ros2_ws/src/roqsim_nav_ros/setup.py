@@ -14,15 +14,18 @@ setup(
     zip_safe=True,
     maintainer="Frederik Pasch",
     maintainer_email="frederik.pasch@h-ka.de",
-    description="ROS 2 goal interface for roqsim navigators: nav2 NavigateToPose / ThroughPoses.",
+    description=(
+        "ROS 2 goal interface for roqsim navigators: nav2 NavigateToPose / ThroughPoses, and "
+        "StartRoute."
+    ),
     license="Apache-2.0",
     entry_points={
         # Imported once by roqsim_ros_bridge at start-up; the import registers this package's action
         # handlers into the bridge's registry. The generic seam by which any package teaches the
         # bridge a new action type -- no bridge edits, and no nav2_msgs dependency in the core bridge.
         #
-        # ONE package registers these two types. The registry overwrites silently and extension load
-        # order is unspecified, so a second package registering either one would decide by install
+        # ONE package registers these types. The registry overwrites silently and extension load
+        # order is unspecified, so a second package registering any of them would decide by install
         # order which handler serves a goal.
         "roqsim_ros_bridge.extensions": [
             "roqsim_nav = roqsim_nav_ros.actions",

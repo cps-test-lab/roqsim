@@ -240,14 +240,22 @@ class WorldAccess(ABC):
     def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
         """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
 
-        An empty ``goal_poses`` **starts the route the entity was configured with** rather than
-        sending a new one, which is what lets a world own an opponent's trajectory -- identical in
-        every repetition, and visible in a campaign's config diff -- while the scenario owns only
-        its timing.
+        ``goal_poses`` must not be empty; running the route the entity was configured with is
+        :meth:`start_route`, not a route with no poses.
 
         This drives the simulator's own mover. It is not ``osc.nav2``'s ``nav_to_pose``, which
         commands an external nav2 stack: that one is the subject of the experiment, this one is the
         apparatus around it.
+        """
+
+    @abstractmethod
+    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+        """Run the route ``name`` was configured with (``navigator: {goals: [...]}``). Never blocks.
+
+        What lets a world own an opponent's trajectory -- identical in every repetition, and visible
+        in a campaign's config diff -- while the scenario owns only its timing. An entity with no
+        configured route raises :class:`AccessError`: there is nothing to run, and succeeding would
+        read as an arrival.
         """
 
     @abstractmethod
