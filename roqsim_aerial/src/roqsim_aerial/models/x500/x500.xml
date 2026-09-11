@@ -1,0 +1,203 @@
+<mujoco model="x500">
+  <!--
+    Holybro X500 V2 class quadrotor (~2 kg, quad-X), the airframe PX4 ships as its default SITL
+    vehicle (`4001_gz_x500`). This model exists so PX4's stock mixer and control gains are valid
+    against it: PX4 commands four per-rotor normalized outputs, which the Crazyflie's
+    collective-thrust-plus-body-moments abstraction structurally cannot accept.
+
+    HAND-AUTHORED FROM PUBLISHED SPECIFICATIONS, NOT MESH-CONVERTED - deliberately. Every geom is a
+    primitive (boxes, cylinders, capsules), so the whole airframe is readable and checkable in this
+    one file and the model depends on NO mesh assets at all. That matters twice: a flight-dynamics
+    model is judged on its mass, inertia, arm length and thrust limits, none of which a mesh
+    carries; and a mesh-free model installs, loads and renders anywhere without an asset tree to
+    resolve. Provenance is therefore this comment plus the published numbers below, not an upstream
+    repository - nothing here is derived from another project's files, so there is no licence file
+    to accompany it.
+
+    Numbers, and where each came from:
+      * total mass 2.0 kg - Holybro X500 V2 kit ARF weight with a 4S 5000 mAh pack, and the value
+        PX4's own gz x500 model uses.
+      * rotor geometry: DERIVED FROM PX4's airframe definition, not chosen here and matched
+        afterwards. The direction matters: PX4's control allocator is configured with the rotor
+        positions below, and if the mixer's geometry and the airframe's geometry disagree, every
+        moment PX4 commands is scaled wrong and the drone flies badly in a way that reads as bad
+        tuning rather than as a geometry mismatch. From
+        ROMFS/px4fmu_common/init.d-posix/airframes/4001_gz_x500:
+
+            CA_ROTOR_COUNT 4
+            CA_ROTOR0_PX  0.174   CA_ROTOR0_PY  0.174   CA_ROTOR0_KM  0.05
+            CA_ROTOR1_PX -0.174   CA_ROTOR1_PY -0.174   CA_ROTOR1_KM  0.05
+            CA_ROTOR2_PX  0.174   CA_ROTOR2_PY -0.174   CA_ROTOR2_KM -0.05
+            CA_ROTOR3_PX -0.174   CA_ROTOR3_PY  0.174   CA_ROTOR3_KM -0.05
+            MPC_THR_HOVER 0.6
+
+        PX4's body frame is FRD (+x forward, +y RIGHT); MuJoCo's is FLU (+y LEFT), so the y sign
+        flips on the way into this file and the PX4 table above reads as front-right, rear-left,
+        front-left, rear-right in the quadrants written below. Offsets are therefore exactly
+        +/-0.174 m in x and y: arm length 0.174*sqrt(2) = 0.246 m, wheelbase 0.492 m, which is
+        what the '500' in X500 names.
+      * CA_ROTOR*_KM = 0.05 m is the yaw torque per newton of thrust. It is NOT in this file:
+        being a motor/propeller property it belongs to `multirotor_motors`, whose default is that
+        same 0.05. The two must agree with PX4's mixer or yaw control is mis-scaled.
+      * diaginertia 0.02 0.02 0.04 kg m^2 about the CoM - the range PX4's gz x500 model states for
+        a frame of this span and mass (Izz ~ 2*Ixx is the signature of a flat quad: all four motor
+        masses contribute fully to yaw inertia and only their in-plane component to roll/pitch).
+      * per-rotor ctrlrange 0 8.2 N, derived from PX4's MPC_THR_HOVER 0.6: PX4 boots expecting
+        this airframe to hover at 60% throttle, so full total thrust is 19.62/0.6 = 32.7 N, i.e.
+        8.175 N per rotor (written 8.2), and the unloaded thrust-to-weight ratio is 1.67. The
+        hover keyframe's 4.905 N per rotor divided by 8.2 is 0.6, which is the consistency check
+        between this model and PX4's parameter. A more generous ceiling is not free: at 15 N per
+        rotor PX4's hover-throttle prior would be wrong by nearly a factor of two and its thrust
+        feedforward mis-scaled with it. It also matters because the campaign built on this model
+        varies payload AGAINST this margin: change the ctrlrange and the independent variable
+        moves.
+
+    THE INERTIA IS STATED, NOT EMERGENT. `inertiafromgeom="false"` plus a single <inertial> on the
+    root body gives the airframe one citable mass and one citable inertia tensor; every geom is
+    zero-density and contributes nothing. The alternative - distributing real mass over arms and
+    motors and letting the compiler integrate it - produces an inertia that is a side effect of
+    primitive placement, cannot be compared against the published figure, and silently changes when
+    a leg is moved for looks. Collision geoms still collide; they just do not weigh anything.
+
+    NO <option> BLOCK, on purpose: integrator AND the medium terms (density, viscosity, wind) belong
+    to the world's `sim.physics`, because they describe the conditions an experiment runs in rather
+    than the vehicle. This one bites: MuJoCo defaults density/viscosity to 0, so a world that does
+    not ask for air flies this drone through a vacuum, with no aerodynamic damping at all.
+
+    Rotor order is PX4's quad-X motor order and is LOAD-BEARING - a permuted order flies a drone
+    that is stable in yaw and diverges in roll:
+
+      | ctrl | actuator      | position     | spin |
+      |    0 | rotor0_thrust | front-right  | CCW  |
+      |    1 | rotor1_thrust | rear-left    | CCW  |
+      |    2 | rotor2_thrust | front-left   | CW   |
+      |    3 | rotor3_thrust | rear-right   | CW   |
+
+    Yaw torque is NOT in any actuator's gear. The torque/thrust ratio and the spin direction are
+    motor and propeller properties, not frame properties, so the `multirotor_motors` plugin applies
+    each rotor's reaction torque; see its docstring.
+
+    Colours: dark frame, WHITE front rotors and RED rear rotors. A quad whose heading you cannot
+    read off the screen is a quad whose yaw error you cannot see.
+  -->
+  <compiler inertiafromgeom="false" autolimits="true" />
+
+  <default>
+    <default class="x500">
+      <!-- Zero density throughout: the root <inertial> is the whole mass model (see header). -->
+      <geom density="0" />
+      <default class="visual">
+        <geom group="2" contype="0" conaffinity="0" />
+      </default>
+      <default class="collision">
+        <!-- The legs and the centre plate are what a landing or a crash touches. -->
+        <geom group="3" contype="1" conaffinity="1" />
+      </default>
+      <site group="5" size="0.01" />
+    </default>
+  </default>
+
+  <asset>
+    <material name="x500_frame" rgba="0.10 0.10 0.11 1" />
+    <material name="x500_arm" rgba="0.18 0.18 0.20 1" />
+    <material name="x500_motor" rgba="0.55 0.56 0.58 1" />
+    <material name="x500_rotor_front" rgba="0.93 0.93 0.95 1" />
+    <material name="x500_rotor_rear" rgba="0.80 0.12 0.12 1" />
+    <material name="x500_leg" rgba="0.06 0.06 0.06 1" />
+  </asset>
+
+  <worldbody>
+    <body name="x500" pos="0 0 0" childclass="x500">
+      <freejoint name="base_free" />
+      <!-- Substrate convention: `spawn_robot` places, resets and teleports through `base_free`. -->
+      <inertial pos="0 0 0" mass="2.0" diaginertia="0.02 0.02 0.04" />
+      <camera name="track" pos="-1.6 0 0.8" xyaxes="0 -1 0 1 0 2" mode="trackcom" />
+
+      <!-- Centre plate: the 0.18 x 0.18 x 0.05 m stack of frame plates, FC, battery and companion. -->
+      <geom name="centre_plate" class="collision" type="box" size="0.09 0.09 0.025"
+            material="x500_frame" />
+
+      <!-- Four arms, hub to rotor axis, at 45 degrees. Capsules so a tumbling frame slides. -->
+      <geom name="arm0" class="visual" type="capsule" size="0.011"
+            fromto="0.035 -0.035 0 0.174 -0.174 0" material="x500_arm" />
+      <geom name="arm1" class="visual" type="capsule" size="0.011"
+            fromto="-0.035 0.035 0 -0.174 0.174 0" material="x500_arm" />
+      <geom name="arm2" class="visual" type="capsule" size="0.011"
+            fromto="0.035 0.035 0 0.174 0.174 0" material="x500_arm" />
+      <geom name="arm3" class="visual" type="capsule" size="0.011"
+            fromto="-0.035 -0.035 0 -0.174 -0.174 0" material="x500_arm" />
+
+      <!-- Motors: 2216-class cans, 0.028 m radius, sitting on the arm ends. -->
+      <geom name="motor0" class="visual" type="cylinder" size="0.014 0.018"
+            pos="0.174 -0.174 0.018" material="x500_motor" />
+      <geom name="motor1" class="visual" type="cylinder" size="0.014 0.018"
+            pos="-0.174 0.174 0.018" material="x500_motor" />
+      <geom name="motor2" class="visual" type="cylinder" size="0.014 0.018"
+            pos="0.174 0.174 0.018" material="x500_motor" />
+      <geom name="motor3" class="visual" type="cylinder" size="0.014 0.018"
+            pos="-0.174 -0.174 0.018" material="x500_motor" />
+
+      <!-- Propeller discs: 10 inch props, radius 0.127 m, drawn as thin visual-only cylinders in
+           the rotor plane. They must not collide: a spinning disc modelled as a solid cylinder
+           catches on everything and turns every near-miss into a contact. -->
+      <geom name="prop0" class="visual" type="cylinder" size="0.127 0.003"
+            pos="0.174 -0.174 0.040" material="x500_rotor_front" />
+      <geom name="prop1" class="visual" type="cylinder" size="0.127 0.003"
+            pos="-0.174 0.174 0.040" material="x500_rotor_rear" />
+      <geom name="prop2" class="visual" type="cylinder" size="0.127 0.003"
+            pos="0.174 0.174 0.040" material="x500_rotor_front" />
+      <geom name="prop3" class="visual" type="cylinder" size="0.127 0.003"
+            pos="-0.174 -0.174 0.040" material="x500_rotor_rear" />
+
+      <!-- Landing legs: four struts to 0.13 m below the plate, so the airframe stands on something
+           and a landing is a contact rather than the battery hitting the floor. -->
+      <geom name="leg0" class="collision" type="capsule" size="0.008"
+            fromto="0.06 -0.06 -0.02 0.10 -0.10 -0.15" material="x500_leg" />
+      <geom name="leg1" class="collision" type="capsule" size="0.008"
+            fromto="-0.06 0.06 -0.02 -0.10 0.10 -0.15" material="x500_leg" />
+      <geom name="leg2" class="collision" type="capsule" size="0.008"
+            fromto="0.06 0.06 -0.02 0.10 0.10 -0.15" material="x500_leg" />
+      <geom name="leg3" class="collision" type="capsule" size="0.008"
+            fromto="-0.06 -0.06 -0.02 -0.10 -0.10 -0.15" material="x500_leg" />
+
+      <!-- IMU at the CoM: PX4's EKF2 assumes the IMU is at the body origin, and an offset one adds
+           a centrifugal term to every rotation that the estimator will read as acceleration. -->
+      <site name="imu" pos="0 0 0" />
+
+      <!-- Thrust application points, one per rotor, in the rotor plane. Force is applied where the
+           propeller is, so the arm moment is geometry rather than a hand-written mixer.
+           x, y are PX4's CA_ROTOR table with the FRD->FLU y flip (see header). z = 0.040 m is a
+           flight-dynamics parameter, not decoration: it is the thrust-line-to-CoM offset, so it
+           sets the pitching moment a lateral acceleration produces and the coupling a flight
+           stack's attitude loop has to reject. PX4's CA_ROTOR table carries no PZ for this
+           airframe, so it is stated here: the propeller plane sits 40 mm above the CoM, on top of
+           the 25 mm half-height plate stack and the 18 mm motor cans. -->
+      <site name="rotor0" pos="0.174 -0.174 0.040" />
+      <site name="rotor1" pos="-0.174 0.174 0.040" />
+      <site name="rotor2" pos="0.174 0.174 0.040" />
+      <site name="rotor3" pos="-0.174 -0.174 0.040" />
+    </body>
+  </worldbody>
+
+  <actuator>
+    <!-- Thrust in NEWTONS along each rotor site's +z. 0..8.2 N per rotor, from PX4's
+         MPC_THR_HOVER 0.6: T/W = 1.67, hover at 60% of full deflection (see header). -->
+    <motor class="x500" name="rotor0_thrust" site="rotor0" gear="0 0 1 0 0 0" ctrlrange="0 8.2" />
+    <motor class="x500" name="rotor1_thrust" site="rotor1" gear="0 0 1 0 0 0" ctrlrange="0 8.2" />
+    <motor class="x500" name="rotor2_thrust" site="rotor2" gear="0 0 1 0 0 0" ctrlrange="0 8.2" />
+    <motor class="x500" name="rotor3_thrust" site="rotor3" gear="0 0 1 0 0 0" ctrlrange="0 8.2" />
+  </actuator>
+
+  <sensor>
+    <!-- Same names the Crazyflie uses, so a consumer is airframe-agnostic. -->
+    <gyro name="body_gyro" site="imu" />
+    <accelerometer name="body_linacc" site="imu" />
+    <framequat name="body_quat" objtype="site" objname="imu" />
+  </sensor>
+
+  <keyframe>
+    <!-- Hover: 2.0 kg * 9.81 / 4 = 4.905 N per rotor, which is 0.6 of the 8.2 N ctrlrange and
+         therefore agrees with PX4's MPC_THR_HOVER. At 0.1 m the legs clear the floor. -->
+    <key name="hover" qpos="0 0 0.1 1 0 0 0" ctrl="4.905 4.905 4.905 4.905" />
+  </keyframe>
+</mujoco>

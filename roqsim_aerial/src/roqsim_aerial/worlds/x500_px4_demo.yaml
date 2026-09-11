@@ -1,0 +1,86 @@
+# Holybro X500 V2 flown by PX4 SITL — standalone demo world (roqsim_aerial).
+#
+#   roqsim sim roqsim_aerial/src/roqsim_aerial/worlds/x500_px4_demo.yaml
+#
+# This world does NOT fly on its own, and that is not a defect. Unlike crazyflie_2_demo.yaml, whose
+# stabiliser is `quadrotor_controller` running inside the simulator, this airframe's stabiliser is
+# PX4 — a separate process. Started alone, the drone sits on the ground with its motors at zero and
+# `px4_sitl` waits on TCP 4560 for the autopilot to dial in, then fails by name after
+# `connect_timeout`. Start PX4 SITL against it:
+#
+#   PX4_SYS_AUTOSTART=10016 PX4_SIM_MODEL=none_iris \
+#     ./build/px4_sitl_default/bin/px4
+#
+# From a packaged PX4 (no build tree) the ROMFS root must be passed explicitly as the first
+# argument, or PX4 looks for the airframe under the current directory and dies with "no autostart
+# file found":
+#
+#   PX4_SYS_AUTOSTART=10016 PX4_SIM_MODEL=none_iris \
+#     px4 <romfs_root> <romfs_root>/etc/init.d-posix/rcS
+#
+# Verified end to end against PX4 v1.18.0-beta2: EKF2 reaches attitude + local + global position,
+# `commander takeoff` arms and the drone climbs and holds altitude here.
+#
+# `none_iris` is used here because PX4 ships no external-simulator variant of its own default
+# airframe: the only "none" airframe in its tree is the Iris, while the x500 exists only as
+# `4001_gz_x500`, which sets SIM_GZ_EN and therefore routes to Gazebo before it can ever reach
+# `simulator_mavlink`. PX4's default *airframe* and its portable *interface* are not available
+# together out of the box. An experiment that needs the mixer geometry to match this MJCF must add
+# an airframe file carrying the x500's CA_ROTOR table (see the model's XML header) — with the Iris
+# mixer the drone flies, but its moments are geared for a different frame.
+#
+# For ROS 2, add the ros2_bridge plugin from the roqsim_ros_bridge package. Note what it does and
+# does not carry here: it publishes the *simulator's* ground truth. The flight stack's own topics
+# reach ROS 2 the way they do on real hardware, through a uXRCE-DDS agent talking to PX4 as
+# px4_msgs on /fmu/in/* and /fmu/out/*. Having both is what lets an experiment measure the
+# estimator's error rather than trusting it.
+
+sim:
+  pacing: realtime
+
+  # NOT optional for an aerial world. MuJoCo defaults density and viscosity to 0, i.e. a vacuum:
+  # the drone still hovers, but nothing damps it, so a lateral step rings forever and the run reads
+  # as badly tuned gains rather than as missing air. rk4 because a quadrotor's attitude loop is
+  # stiff relative to the timestep.
+  integrator: rk4
+  density: 1.225        # kg/m^3, air at sea level
+  viscosity: 1.8e-5     # Pa*s, air
+  seed: 0               # governs the GNSS bias and the sensor noise, via ctx.rng_for
+
+  # An X500 is 0.5 m across and PX4 takes off to several metres, so the camera sits much further
+  # back than the Crazyflie demo's 2.4 m.
+  view:
+    track: drone
+    follow_heading: false
+    distance: 12.0
+    azimuth: 140
+    elevation: -25
+
+components:
+  # multirotor_motors comes from the x500 model manifest; the two plugins below are what turn a
+  # simulated airframe into one an autopilot can fly.
+  - spawn_robot:
+      model: x500
+      prefix: "x500_"
+      pos: [0.0, 0.0]           # spawn_robot places it on the floor; PX4 decides when it leaves
+      namespace: drone
+    name: drone
+
+    components:
+      # Where this world's origin is on Earth. Required, and deliberately so: a fix computed
+      # against an invented datum is a plausible-looking wrong answer, and EKF2 will happily fly
+      # on it. This is PX4's own default SITL home position, so a run here lands where PX4's
+      # documentation and its stock parameters expect to be.
+      - gnss:
+          datum: {lat: 47.397742, lon: 8.545594, alt: 488.0}
+          rate: 10.0
+
+      # The seam. Listens on TCP 4560; PX4 connects out to us (`simulator_mavlink start -c`).
+      # Named, so its log lines and its failure read `px4_sitl (px4)` rather than falling back to
+      # the class name -- worth the one line on a plugin whose whole failure mode is "PX4 never
+      # turned up".
+      - px4_sitl:
+          port: 4560
+          imu_rate: 250.0       # matches the IMU_INTEG_RATE PX4 sets on this path
+          lockstep: true        # without it the run is not reproducible; see the docstring
+        name: px4
