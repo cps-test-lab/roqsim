@@ -170,10 +170,24 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     # The producer's joint-state reader, so `actual` is measured rather than assumed. Same key
     # convention as the gripper handler; absent, feedback falls back to reporting the command.
     reader = None
+    handle = None
     if endpoint is not None:
         state_key = endpoint.backend.get("ros2", {}).get("arm_state_key", f"arm:{endpoint.owner}")
         handle = ctx.blackboard.get(state_key)
         reader = getattr(handle, "read_state", None)
+
+    # A deactivated controller does not execute. On real hardware it holds no command interfaces,
+    # so the goal is rejected outright -- and a scenario that hands the arm to a Cartesian
+    # controller and then sends a trajectory anyway must fail here rather than have the two fight
+    # over the joints, which is what it would do against the real robot.
+    is_active = getattr(handle, "is_active", None)
+    if is_active is not None and not is_active():
+        goal_handle.abort()
+        result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+        result.error_string = (
+            "the trajectory controller is not active; activate it before sending a goal"
+        )
+        return result
 
     def measured(commanded: list[float]) -> list[float]:
         if reader is None:

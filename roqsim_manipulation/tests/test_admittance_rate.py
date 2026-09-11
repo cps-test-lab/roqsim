@@ -21,7 +21,11 @@ from roqsim_manipulation.plugins.cartesian_admittance import CartesianAdmittance
 def _ticks(
     rate_hz: float, timestep: float, steps: int, inactive: tuple[int, int] | None = None
 ) -> list[int]:
-    """The physics steps at which the law runs, with the sim clock advanced as MuJoCo advances it."""
+    """The physics steps at which the law runs, with the sim clock advanced as MuJoCo advances it.
+
+    Drives `update`, which is where the rate gate lives: `pre_step` only asks the arm to pull this
+    for the step, so calling it here would test the pull rather than the schedule.
+    """
     plugin = CartesianAdmittancePlugin.__new__(CartesianAdmittancePlugin)
     plugin.rate_hz = rate_hz
     plugin.axes = np.ones(6)
@@ -40,7 +44,7 @@ def _ticks(
     plugin._apply = lambda ctx, twist, dt: None
     for step in range(steps):
         plugin._active = not (inactive and inactive[0] <= step < inactive[1])
-        plugin.pre_step(ctx)
+        plugin.update(ctx)
         ctx.sim_time += timestep
     return ticks
 
