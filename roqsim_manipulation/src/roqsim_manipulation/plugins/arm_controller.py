@@ -119,6 +119,7 @@ from dataclasses import dataclass
 import mujoco
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 
 from ._arm import (
@@ -235,6 +236,7 @@ class ArmControllerPlugin(Plugin):
         self._command_source = None
         self._command_source_owner = ""
         self._commanded_step = -1
+        self._registered = None
         # Whether this controller holds the arm. Active unless the world says otherwise, so a world
         # that never switches behaves exactly as it always has; `inactive` is what ros2_control's
         # `spawner --inactive` leaves behind.
@@ -351,6 +353,32 @@ class ArmControllerPlugin(Plugin):
                     f"controllers on one entity need distinct `controller_name` / "
                     f"`gripper_controller_name`, else they overwrite each other's handles."
                 )
+
+        # This arm's controllers, as ros2_control would list them. The trajectory controller
+        # claims the joints it drives; the broadcaster claims nothing and reads them, which is how
+        # both are active at once on every real robot.
+        registry = registry_for(ctx)
+        self._registered = registry.register(
+            Controller(
+                name=controller,
+                type="joint_trajectory_controller/JointTrajectoryController",
+                claims=tuple(f"{j}/position" for j in self._ctrl_names),
+                state=ACTIVE if self._active else INACTIVE,
+                namespace=ns,
+                owner=self.arm,
+                apply=self.set_active,
+            )
+        )
+        registry.register(
+            Controller(
+                name=self.config.get("joint_state_broadcaster_name", "joint_state_broadcaster"),
+                type="joint_state_broadcaster/JointStateBroadcaster",
+                reads=tuple(f"{j}/position" for j in self._ctrl_names),
+                state=ACTIVE,
+                namespace=ns,
+                owner=self.arm,
+            )
+        )
 
         # ArmHandle: for in-process consumers (scripted drivers, tests) that bypass any transport.
         ctx.blackboard.set(
@@ -534,11 +562,6 @@ class ArmControllerPlugin(Plugin):
             self._target[jn] = float(ang)
 
     def set_targets(self, names, positions) -> None:
-        # An inactive controller holds what it had and takes nothing new. On real hardware the
-        # interfaces are simply not claimed while inactive, so a command has nowhere to land; here
-        # the equivalent is to drop it rather than to apply it and look active.
-        if not self._active:
-            return
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
             if n in self._target:
                 self._target[n] = float(p)
@@ -667,6 +690,13 @@ class ArmControllerPlugin(Plugin):
             )
         self._command_source = update
         self._command_source_owner = owner
+        # A world that declares a Cartesian controller has declared which controller drives the
+        # arm. Leaving the trajectory role active as well would come up in a state real
+        # ros2_control refuses outright -- two active controllers claiming the same command
+        # interfaces -- so it releases them here and a scenario switches back when it wants them.
+        self._active = False
+        if self._registered is not None:
+            self._registered.state = INACTIVE
 
     def ensure_updated(self, ctx: SimContext) -> None:
         """Run the command source for this step, once, whoever asks first.
@@ -688,21 +718,24 @@ class ArmControllerPlugin(Plugin):
         return self._active
 
     def set_active(self, active: bool) -> None:
-        """Take or release the arm. The held target survives either way.
+        """Take or release the arm's TRAJECTORY role -- not its role as the joint command writer.
 
-        Deactivating does not slacken the arm: `ctrl` keeps being written from the last target, so
-        the joints hold where they were rather than falling under gravity. That is what a real
-        position-controlled arm does when its trajectory controller is deactivated, and it is what
-        makes a hand-over to another controller safe to perform mid-run.
+        Two things live in this plugin and only one of them is a ros2_control controller. Writing
+        `ctrl` from the held target is the hardware: it never stops, or the joints would fall.
+        Executing trajectories is the controller, and that is what activates and deactivates -- an
+        inactive one rejects goals and integrates no velocity, and the joints stay where they are
+        while another controller commands them through `set_targets`.
+
         """
         self._active = bool(active)
 
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
-            # An inactive controller runs no command source and integrates no velocity: it only
-            # keeps writing the target it already holds.
+            # The command source is a controller in its own right and gates itself, so the pull is
+            # not conditioned on the trajectory role. Velocity integration IS that role's, and
+            # stops with it.
+            self.ensure_updated(ctx)
             if self._active:
-                self.ensure_updated(ctx)
                 self._integrate_velocity(ctx.data)
             self._write_ctrl(ctx.data)
 
