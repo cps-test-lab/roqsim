@@ -629,7 +629,7 @@ def load_config(
     )
 
 
-def world_sources(path: str | Path) -> list[Path]:
+def world_sources(path: str | Path, *, skipped: list | None = None) -> list[Path]:
     """Every file a world is *defined by*: the YAML, its ``extends`` ancestors, the MJCF they
     name, that MJCF's mesh/texture assets, and whatever its plugins point at.
 
@@ -647,9 +647,22 @@ def world_sources(path: str | Path) -> list[Path]:
     Best-effort by design: a world that cannot be parsed yields what was resolved so far
     rather than raising, because a caller asking "what does this depend on?" is usually
     about to report a *different* error and should not be pre-empted by this one.
+
+    *skipped* is how a caller learns that the list is short. Every branch that gives up on a
+    part of the walk -- an ``extends`` that does not resolve, a YAML in the chain that cannot
+    be read, a world that does not load, a plugin that cannot be asked -- appends one line
+    naming what it could not follow. It stays empty when the walk was whole, so a caller for
+    whom a partial answer is *worse* than none (files about to be shipped somewhere the
+    originals are unreachable) can tell the two apart; without it a short list and a complete
+    one are the same value.
+
+    A path that simply does not exist is not in there: dropping those is the contract
+    :meth:`roqsim.plugin.Plugin.sources` is written against, where an optional file that is
+    absent needs no guard. Only a failure to *look* is reported here.
     """
     found: list[Path] = []
     seen: set[Path] = set()
+    problems: list = skipped if skipped is not None else []
 
     def _add(candidate: Path) -> None:
         candidate = candidate.resolve()
@@ -662,15 +675,18 @@ def world_sources(path: str | Path) -> list[Path]:
         try:
             with yaml_path.open() as fh:
                 raw = yaml.safe_load(fh) or {}
-        except (OSError, yaml.YAMLError):
+        except (OSError, yaml.YAMLError) as exc:
+            problems.append(f"cannot read {yaml_path}: {type(exc).__name__}: {exc}")
             return {}
         if not isinstance(raw, dict):
+            problems.append(f"{yaml_path} is not a mapping at the top level")
             return {}
         ext = raw.get("extends")
         if ext is not None:
             try:
                 _walk(_resolve_extends_target(ext, yaml_path.parent))
-            except PluginError:
+            except PluginError as exc:
+                problems.append(f"unresolvable 'extends' {ext!r} in {yaml_path}: {exc}")
                 _logger.debug("world_sources: unresolvable 'extends' %r in %s", ext, yaml_path)
         return raw
 
@@ -684,14 +700,16 @@ def world_sources(path: str | Path) -> list[Path]:
         cfg = load_config(leaf)
         world_name = cfg.sim.get("world")
         base_dir = cfg.base_dir
-    except Exception:  # noqa: BLE001 - see docstring: never pre-empt the caller's own error
+    except Exception as exc:  # noqa: BLE001 - see docstring: never pre-empt the caller's own error
+        problems.append(f"{leaf} does not load: {type(exc).__name__}: {exc}")
         world_name, base_dir = (raw.get("sim") or {}).get("world"), leaf.parent
     if world_name:
         from .world import world_file  # noqa: PLC0415 - avoids a config<->world import cycle
 
         try:
             mjcf = world_file(world_name, base_dir)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"cannot resolve world {world_name!r}: {type(exc).__name__}: {exc}")
             mjcf = None
         if mjcf:
             mjcf_path = Path(mjcf)
@@ -700,12 +718,12 @@ def world_sources(path: str | Path) -> list[Path]:
                 for asset in sorted(asset_dir.rglob("*")):
                     _add(asset)
 
-    for source in _plugin_sources(cfg, leaf):
+    for source in _plugin_sources(cfg, leaf, problems):
         _add(Path(source))
     return found
 
 
-def _plugin_sources(cfg, leaf: Path) -> list:
+def _plugin_sources(cfg, leaf: Path, problems: list) -> list:
     """What the world's components say they point at, asked component by component.
 
     Asked of the EFFECTIVE list, so a file named by a manifest-supplied component counts. It did not
@@ -716,7 +734,8 @@ def _plugin_sources(cfg, leaf: Path) -> list:
 
     Still **per spec, skipping what does not resolve**: this function's contract is best-effort (see
     :func:`world_sources`), the same tolerance the ``extends`` walk has, and a ROS world in a
-    pip-only environment must not become a hard failure here.
+    pip-only environment must not become a hard failure here. What it skipped goes into
+    *problems*, so a caller that cannot live with a short list can see that it got one.
     """
     if cfg is None:
         return []
@@ -731,6 +750,10 @@ def _plugin_sources(cfg, leaf: Path) -> list:
                 or []
             )
         except Exception as exc:  # noqa: BLE001 - see docstring: best-effort by design
+            problems.append(
+                f"cannot ask plugin {spec.ref!r} in {leaf} for its files: "
+                f"{type(exc).__name__}: {exc}"
+            )
             _logger.debug(
                 "world_sources: no sources from plugin %r in %s (%s)", spec.ref, leaf, exc
             )
