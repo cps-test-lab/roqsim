@@ -9,6 +9,8 @@ registered must report an error rather than a crash or a silently empty result.
 from __future__ import annotations
 
 from roqsim.introspection import (
+    _config_header_span,
+    _own_or_module_doc,
     _parse_config_block,
     get_plugin_details,
     list_plugins,
@@ -105,3 +107,129 @@ class TestParseConfigBlock:
         fields = _parse_config_block(doc)
         assert [f["name"] for f in fields] == ["extra"]
 
+
+
+# -- the shapes a real Config:: block is written in --------------------------------
+
+def _fields(doc):
+    return {f["name"]: f for f in _parse_config_block(doc)}
+
+
+def test_a_header_whose_qualifier_wraps_still_opens_the_block():
+    """The ``::`` need not sit on the same line as the word.
+
+    A plugin that lists the keys it inherits qualifies the header, and the qualifier is
+    routinely longer than a line. Requiring both on one line reported such a plugin as having
+    no configuration at all -- while its keys sat documented directly underneath.
+    """
+    doc = (
+        "Sensor plugin: a fan of rays.\n\n"
+        "Config (in addition to ``lidar_common``'s ``namespace``/``site``/\n"
+        "``range_min``/``max_range``/``rate_hz``)::\n\n"
+        "    lidar:\n"
+        "      rays: 360\n"
+        "      angle_min: 0.0\n"
+    )
+    assert set(_fields(doc)) == {"rays", "angle_min"}
+
+
+def test_prose_opening_with_the_word_is_not_a_header():
+    doc = (
+        "Config is read from the world YAML and validated on load.\n\n"
+        "Some other paragraph.\n"
+    )
+    assert _parse_config_block(doc) == []
+
+
+def test_nested_keys_are_reported_at_the_path_a_world_yaml_writes_them_at():
+    """A key opening a mapping used to END the block, hiding every key after it."""
+    doc = (
+        "Scene plugin: report coverage.\n\n"
+        "Config::\n\n"
+        "    sensor_coverage_probe:\n"
+        "      sensors: auto            # 'auto' = every camera\n"
+        "      sample:\n"
+        "        volume: true\n"
+        "        resolution: 0.25\n"
+        "      out: coverage            # output directory\n"
+    )
+    fields = _fields(doc)
+    assert set(fields) == {"sensors", "sample", "sample.volume", "sample.resolution", "out"}
+    # The key after the nested mapping is reached, and reported at the top level.
+    assert fields["out"]["doc"] == "output directory"
+    # The mapping itself carries no example -- its children are the value.
+    assert fields["sample"]["example"] is None
+
+
+def test_the_line_naming_the_plugin_is_not_itself_a_field():
+    doc = "Plugin.\n\nConfig::\n\n    contact_monitor:\n      min_force: 1.0\n"
+    assert set(_fields(doc)) == {"min_force"}
+
+
+def test_a_block_written_as_a_components_list_entry_parses_too():
+    """World YAML's ``components:`` takes a list, and some blocks are written that way."""
+    doc = (
+        "Spawn a sensor.\n\n"
+        "Config::\n\n"
+        "    - spawn_sensor:\n"
+        "        model: d435            # bundled model name\n"
+        "        prefix: \"\"\n"
+    )
+    assert set(_fields(doc)) == {"model", "prefix"}
+
+
+def test_a_class_docstring_pointing_at_the_module_does_not_hide_the_block():
+    """``\"\"\"See the module docstring.\"\"\"`` used to win and publish the pointer."""
+    import sys
+    import types
+
+    module = types.ModuleType("_roqsim_test_pointer_module")
+    module.__doc__ = "IMU sensor.\n\nConfig::\n\n    imu:\n      rate_hz: 100.0\n"
+    sys.modules[module.__name__] = module
+    try:
+        class Pointer:
+            """See the module docstring."""
+        Pointer.__module__ = module.__name__
+        doc = _own_or_module_doc(Pointer)
+        assert set(_fields(doc)) == {"rate_hz"}
+    finally:
+        del sys.modules[module.__name__]
+
+
+def test_a_class_docstring_that_documents_config_itself_still_wins():
+    import sys
+    import types
+
+    module = types.ModuleType("_roqsim_test_module_block")
+    module.__doc__ = "Module.\n\nConfig::\n\n    x:\n      from_module: 1\n"
+    sys.modules[module.__name__] = module
+    try:
+        class OwnBlock:
+            """Class.
+
+            Config::
+
+                x:
+                  from_class: 1
+            """
+        OwnBlock.__module__ = module.__name__
+        assert set(_fields(_own_or_module_doc(OwnBlock))) == {"from_class"}
+    finally:
+        del sys.modules[module.__name__]
+
+
+def test_every_installed_plugin_with_a_config_block_reports_at_least_one_key():
+    """A block that is present but unreadable is the failure this guards.
+
+    It reads as "this plugin takes no configuration", which is a wrong answer rather than a
+    missing one -- and the reader has no way to tell the two apart.
+    """
+    silent = []
+    for item in list_plugins()["items"]:
+        details = get_plugin_details(item["name"])
+        if "error" in details:
+            continue
+        doc = details.get("doc") or ""
+        if _config_header_span(doc.splitlines()) is not None and not details["parameters"]:
+            silent.append(item["name"])
+    assert not silent, f"Config:: block present but no keys parsed: {silent}"

@@ -884,6 +884,41 @@ foot interaction: 128 samples over 40 m is a 31 cm grid, which a 10 cm wheel rid
 ``resolution`` for a small rough patch rather than a large smooth one; the cost is quadratic and buys
 nothing where the ground is flat.
 
+Documenting a plugin's config
+-----------------------------
+
+A plugin's keys are written in a ``Config::`` block in its **module** docstring. Two readers parse
+that block and nothing else: ``roqsim plugins describe`` (and the MCP tool over it), and the page
+you are reading -- every plugin listed above renders from it. A block written in a shape they do
+not read is a plugin that publicly takes no configuration::
+
+   """Sensor plugin: 2D lidar via batched ray-casting.
+
+   Config::
+
+       lidar:
+         rays: 360
+         angle_min: 0.0             # trailing text after # is the key's doc, and may
+                                    #   wrap onto a bare comment line like this one
+         sample:
+           resolution: 0.25         # nested keys are published as sample.resolution
+   """
+
+Four things the readers rely on:
+
+* **The block opens with a line beginning** ``Config`` **and ending** ``::``. Qualify it freely
+  ("Config (in addition to ``lidar_common``'s ...)::") and let the qualifier wrap over up to three
+  lines -- but the ``::`` must arrive, or there is no block.
+* **One key per line, as** ``name: example``. The example is documentation, not a parsed value.
+* **Nest as the world YAML nests.** A key opening a mapping is published under the dotted path a
+  world writes it at, so the block and the YAML have one shape rather than two.
+* **Put it on the MODULE, not the class.** A class docstring that merely points at the module
+  ("See the module docstring.") is ignored in favour of the module's, but a class that documents
+  different keys than its module will publish its own.
+
+Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
+cannot be validated, so it drifts, and this block is read by a caller writing a world.
+
 Declaring a plugin's config
 ---------------------------
 
