@@ -19,6 +19,7 @@ import pytest
 from roqsim_manipulation.plugins.cartesian_admittance import CartesianAdmittancePlugin
 
 from roqsim.config import load_config_from_dict
+from roqsim.controllers import ACTIVE, INACTIVE, registry_for
 from roqsim.engine import Engine
 
 
@@ -114,9 +115,13 @@ def test_a_source_may_re_register_itself(tmp_path):
 # -- taking and releasing the arm ----------------------------------------------------------------
 
 
-def test_an_inactive_arm_controller_holds_its_target_and_takes_no_new_one(tmp_path):
-    """What a deactivated ros2_control controller does: the interfaces are not claimed, so a
-    command has nowhere to land -- but the joints hold rather than falling under gravity."""
+def test_an_inactive_trajectory_role_does_not_slacken_the_arm(tmp_path):
+    """Two things live in this plugin and only one is a ros2_control controller.
+
+    Writing `ctrl` from the held target is the HARDWARE -- it never stops, or the joints fall.
+    Executing trajectories is the controller, and that is what switches. So deactivating leaves the
+    arm exactly where it was rather than limp, which is what makes a mid-run hand-over safe.
+    """
     engine = Engine(_plain_world(tmp_path))
     engine.setup()
     engine.reset()
@@ -126,20 +131,46 @@ def test_an_inactive_arm_controller_holds_its_target_and_takes_no_new_one(tmp_pa
 
     held = np.array(engine.ctx.data.ctrl[:6], dtype=float)
     arm.set_active(False)
-    arm.set_targets(arm.joint_names, [0.9] * len(arm.joint_names))
-    for _ in range(20):
+    for _ in range(50):
         engine.step()
 
     assert np.array(engine.ctx.data.ctrl[:6]) == pytest.approx(held), (
-        "an inactive controller must neither take the command nor slacken"
+        "a deactivated controller releases its interfaces; it does not drop the joints"
     )
 
-    arm.set_active(True)
-    arm.set_targets(arm.joint_names, [0.9] * len(arm.joint_names))
+
+def test_the_command_interface_stays_open_for_whoever_holds_it(tmp_path):
+    """`set_targets` is the command interface, not the trajectory controller. Gating it on the
+    trajectory role would also have blocked the Cartesian controller that writes through it -- and
+    on real hardware it is the REGISTRY that decides who may write, not the interface itself."""
+    engine = Engine(_plain_world(tmp_path))
+    engine.setup()
+    engine.reset()
+    arm = engine.ctx.blackboard.require("arm:ur5e")
+    arm.set_active(False)
+
+    arm.set_targets(arm.joint_names, [0.5] * len(arm.joint_names))
     engine.step()
-    assert np.array(engine.ctx.data.ctrl[:6]) == pytest.approx([0.9] * 6), (
-        "an activated controller takes commands again"
-    )
+
+    assert np.array(engine.ctx.data.ctrl[:6]) == pytest.approx([0.5] * 6)
+
+
+def test_a_cartesian_controller_takes_the_trajectory_role_off_the_arm(tmp_path):
+    """A world that declares a Cartesian controller has declared which controller drives the arm.
+
+    Leaving both active would come up in the state real ros2_control refuses outright: two active
+    controllers claiming the same command interfaces.
+    """
+    engine = Engine(_world(tmp_path))
+    engine.setup()
+    registry = registry_for(engine.ctx)
+
+    trajectory = registry.get("arm_controller")
+    cartesian = registry.get("cartesian_force_controller")
+    assert trajectory.state == INACTIVE, "the trajectory role released the joints"
+    assert cartesian.state == ACTIVE
+    assert set(trajectory.claims) == set(cartesian.claims), "they compete for the same interfaces"
+    assert trajectory.claimed_interfaces == (), "and only the active one holds them"
 
 
 def test_initial_state_inactive_comes_up_not_holding_the_arm(tmp_path):
@@ -149,6 +180,6 @@ def test_initial_state_inactive_comes_up_not_holding_the_arm(tmp_path):
 
 
 def test_a_controller_with_no_initial_state_is_active(tmp_path):
-    engine = Engine(_world(tmp_path))
+    engine = Engine(_plain_world(tmp_path))
     engine.setup()
     assert engine.ctx.blackboard.require("arm:ur5e").is_active() is True
