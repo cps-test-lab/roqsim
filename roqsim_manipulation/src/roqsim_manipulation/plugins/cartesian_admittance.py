@@ -91,6 +91,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 
 #: The three ros2_control-shaped identities this implementation backs, and which terms each makes
@@ -99,6 +100,13 @@ _TYPES = {
     "cartesian_motion_controller": {"stiffness": True, "wrench": False, "needs_ft": False},
     "cartesian_force_controller": {"stiffness": False, "wrench": True, "needs_ft": True},
     "cartesian_compliance_controller": {"stiffness": True, "wrench": True, "needs_ft": True},
+}
+
+#: The class a real ros2_control deployment would report for each of the three.
+_TYPE_CLASSES = {
+    "cartesian_motion_controller": "CartesianMotionController",
+    "cartesian_force_controller": "CartesianForceController",
+    "cartesian_compliance_controller": "CartesianComplianceController",
 }
 
 #: Older config spelling, kept working. ``admittance`` resolves by whether a stiffness is configured.
@@ -267,6 +275,23 @@ class CartesianAdmittancePlugin(Plugin):
             dofs.append(int(m.jnt_dofadr[jid]))
         self._dofs = np.array(dofs, dtype=int)
 
+        ns = entity.meta.get("namespace", "") if entity else ""
+
+        # Listed and switched like any other controller. It claims the SAME command interfaces as
+        # the trajectory controller, which is what makes handing the arm from one to the other a
+        # switch rather than a race.
+        registry_for(ctx).register(
+            Controller(
+                name=self.controller_name,
+                type=f"cartesian_controllers/{_TYPE_CLASSES[self.controller_type]}",
+                claims=tuple(f"{j}/position" for j in self._joint_names),
+                state=ACTIVE if self._active else INACTIVE,
+                namespace=ns,
+                owner=self.arm,
+                apply=self.set_active,
+            )
+        )
+
         # The arm pulls this each step. An older arm_controller has no such slot, so this stays
         # optional -- the plugin then runs from its own `pre_step` as it always did.
         if getattr(self._arm_handle, "set_command_source", None) is not None:
@@ -286,7 +311,6 @@ class CartesianAdmittancePlugin(Plugin):
             ),
         )
 
-        ns = entity.meta.get("namespace", "") if entity else ""
         # Named as FZI's cartesian_controllers name them: a node that drives this controller drives
         # the real one unchanged. The setpoints are topics rather than services because they are a
         # stream -- a reference a task republishes as it moves, not a command with an outcome.

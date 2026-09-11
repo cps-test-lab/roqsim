@@ -470,6 +470,19 @@ class Ros2Bridge(BridgeBase):
             # Absolute name: /clock is the domain's time source, never namespaced.
             self._clock_pub = node.create_publisher(ClockMsg, "/clock", 10)
 
+        # The controller_manager surface, for every robot that registered controllers. No world
+        # entry asks for this: on real hardware nobody opts into a controller_manager, it is there
+        # because ros2_control is -- and a world with no controllers gets no services, which is the
+        # same answer. Imported here so a deployment without controller_manager_msgs still brings
+        # the bridge up for every world that does not need them.
+        try:
+            from .controller_manager import serve as _serve_controller_manager
+
+            self._controller_managers = _serve_controller_manager(node, ctx)
+        except ImportError:
+            self._controller_managers = []
+            ctx.logger.info("controller_manager_msgs absent; not serving the controller surface")
+
         self._executor.add_node(node)
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
         self._spin_thread.start()

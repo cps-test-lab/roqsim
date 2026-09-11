@@ -48,6 +48,7 @@ object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # computed against, plus the 2D boxes that fall out of the same mask.
 segmentation_camera = "roqsim_sensors.plugins.segmentation_camera:SegmentationCameraPlugin"
 force_torque = "roqsim_sensors.plugins.force_torque:ForceTorquePlugin"
+force_limit = "roqsim_sensors.plugins.force_limit:ForceLimitPlugin"
 # The one sensor every platform here carries in reality and none could publish: a strap-down IMU.
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
 # and attitude already; this makes them an observable with covariances, TF and a fault switch.

@@ -104,6 +104,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.controllers import ACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 
 _FRAMES = ("sensor", "base", "world")
@@ -280,6 +281,19 @@ class ForceTorquePlugin(Plugin):
                 measures="environment_on_tool" if self.invert else "tool_on_environment",
                 tare=self.tare,
             ),
+        )
+
+        # A broadcaster: it claims NO command interface, which is exactly why it can read the same
+        # hardware a command controller is driving without blocking it.
+        registry_for(ctx).register(
+            Controller(
+                name=self.config.get("controller_name", f"{self.name}_broadcaster"),
+                type="force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster",
+                reads=(f"{self.name}/force.x", f"{self.name}/force.y", f"{self.name}/force.z"),
+                state=ACTIVE,
+                namespace=ns,
+                owner=self.owner,
+            )
         )
 
         ctx.interface.add(
