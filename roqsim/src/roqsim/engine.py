@@ -36,7 +36,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
     ) from err
 
 from .assets import deduplicate_assets
-from .config import SimConfig, instantiate_plugins
+from .config import SIM_OPTION_KEYS, SimConfig, instantiate_plugins
 from .context import SimContext
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
@@ -236,20 +236,14 @@ class Engine:
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
         # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
         # than in whatever code happens to build it.
-        for key, attr in (
-            ("solver", "solver"),
-            ("iterations", "iterations"),
-            ("ls_iterations", "ls_iterations"),
-            ("noslip_iterations", "noslip_iterations"),
-            ("impratio", "impratio"),
-            # The medium. MuJoCo defaults both to 0 -- a vacuum -- which is right for a ground robot
-            # and wrong for anything that flies: a quadrotor still hovers there, but nothing damps
-            # it, so a lateral step rings forever and reads as bad gains rather than as missing air.
-            # Before these existed an aerial model had no honest option but to pin <option> itself,
-            # and thereby reconfigure every world it was spawned into.
-            ("density", "density"),
-            ("viscosity", "viscosity"),
-        ):
+        # SIM_OPTION_KEYS is the world vocabulary's own list (roqsim.config), so a key this loop
+        # applies is a key a document is allowed to carry, and neither can be added without the
+        # other. Each names its MuJoCo `opt.*` field directly. Among them the medium,
+        # `density`/`viscosity`: MuJoCo defaults both to 0 -- a vacuum -- which is right for a
+        # ground robot and wrong for anything that flies, where nothing damps a lateral step, so it
+        # rings forever and reads as bad gains rather than as missing air.
+        for key in SIM_OPTION_KEYS:
+            attr = key
             if (value := self.config.sim.get(key)) is not None:
                 setattr(
                     spec.option,
