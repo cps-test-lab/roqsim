@@ -149,3 +149,26 @@ def test_view_rejects_malformed_values():
         load_config_from_dict({"sim": {"view": {"distance": "near"}}, "plugins": []})
     with pytest.raises(PluginError, match="sim.view.track: expected an entity or body name"):
         load_config_from_dict({"sim": {"view": {"track": 3}}, "plugins": []})
+
+
+def test_unknown_top_level_key_is_refused():
+    # A world carries no parameter block, and accepting one silently leaves the placeholder it was
+    # written to fill in the document -- read much later as the literal string it is.
+    with pytest.raises(PluginError) as exc:
+        load_config_from_dict({"parameters": {"box_offset_y": 0.0}, "components": []})
+    msg = str(exc.value)
+    assert "'parameters'" in msg
+    assert "components.<name>.<key>" in msg
+
+
+def test_unknown_top_level_key_in_an_inherited_world_is_refused(tmp_path):
+    (tmp_path / "parent.yaml").write_text("parameters: {a: 1}\ncomponents: []\n")
+    with pytest.raises(PluginError, match="'parameters'"):
+        load_config_from_dict({"extends": "parent.yaml", "components": []}, base_dir=tmp_path)
+
+
+def test_override_rooted_outside_the_document_is_refused():
+    # It used to merge into the document, where nothing reads it: the world built unchanged and the
+    # run reported success against a value nobody applied.
+    with pytest.raises(PluginError, match="box_offset_y"):
+        load_config_from_dict({"components": []}, overrides={"box_offset_y": 0.03})
