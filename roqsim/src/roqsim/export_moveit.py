@@ -963,10 +963,18 @@ def main(argv: list | None = None) -> int:
     parser.add_argument(
         "--samples", type=int, default=10000, help="configurations sampled for the collision matrix"
     )
-    parser.add_argument(
+    # One reference scheme per export: two would mean the URDF says where its meshes are twice.
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
         "--mesh-package",
         default="",
         help="emit meshes as package://<PKG>/meshes/<file> instead of file://<abs path>",
+    )
+    where.add_argument(
+        "--mesh-prefix",
+        default="",
+        help="emit meshes as <PREFIX>/<file>: where they will be READ, when that is not where "
+        "they are written -- a campaign stages them into the container that plans",
     )
     parser.add_argument(
         "--manifest",
@@ -1111,6 +1119,7 @@ def _run(args, log) -> int:
                 mesh_dir=out / "meshes",
                 gripper_joint=one.urdf_gripper_joint,
                 mesh_package=args.mesh_package,
+                mesh_prefix=args.mesh_prefix,
                 tip_site=args.tip_site,
                 tip_link=f"{one.prefix}{args.tip_link}",
                 strip="",
@@ -1145,6 +1154,7 @@ def _run(args, log) -> int:
             mesh_dir=out / "meshes",
             gripper_joint=facts.gripper_joint,
             mesh_package=args.mesh_package,
+            mesh_prefix=args.mesh_prefix,
             tip_site=args.tip_site,
             tip_link=args.tip_link,
         )
