@@ -369,16 +369,32 @@ class ArmControllerPlugin(Plugin):
                 apply=self.set_active,
             )
         )
-        registry.register(
-            Controller(
-                name=self.config.get("joint_state_broadcaster_name", "joint_state_broadcaster"),
-                type="joint_state_broadcaster/JointStateBroadcaster",
-                reads=tuple(f"{j}/position" for j in self._ctrl_names),
-                state=ACTIVE,
-                namespace=ns,
-                owner=self.arm,
-            )
+        # A robot has ONE joint_state_broadcaster reading every joint, however many arms it has, so
+        # a second arm on the same entity extends the broadcaster the first one registered.
+        broadcaster = self.config.get("joint_state_broadcaster_name", "joint_state_broadcaster")
+        broadcaster_type = "joint_state_broadcaster/JointStateBroadcaster"
+        reads = tuple(f"{j}/position" for j in self._ctrl_names)
+        shared = next(
+            (
+                c
+                for c in registry.all(ns)
+                if c.owner == self.arm and c.name == broadcaster and c.type == broadcaster_type
+            ),
+            None,
         )
+        if shared is not None:
+            shared.reads += tuple(r for r in reads if r not in shared.reads)
+        else:
+            registry.register(
+                Controller(
+                    name=broadcaster,
+                    type=broadcaster_type,
+                    reads=reads,
+                    state=ACTIVE,
+                    namespace=ns,
+                    owner=self.arm,
+                )
+            )
 
         # ArmHandle: for in-process consumers (scripted drivers, tests) that bypass any transport.
         ctx.blackboard.set(
