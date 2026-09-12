@@ -33,6 +33,11 @@ defaults to the ref. An empty config is written ``<ref>: {}`` (or ``<ref>:``).
 ignored: no plugin reads either out of its own config, so there it can only be a misplaced sibling --
 and one that would otherwise leave every entry answering to the plugin's ref.
 
+Those two sections and the two inheritance keys below are the whole top level, and any other key
+there is refused. A world declares no parameters and substitutes nothing into itself: a value that
+varies per run is written as its ordinary literal and changed by an *override* (below), which
+addresses that key in place -- so an override rooted outside the document is refused too.
+
 A plugin ref containing a colon -- the ``module.path:Class`` and ``path/to/file.py:Class`` forms
 (see :func:`roqsim.registry.resolve_plugin`) -- **must be quoted** when used as the key, e.g.
 ``- "my_pkg.mod:MyPlugin": {rays: 90}``. Unquoted it still parses as long as no space follows the
@@ -116,6 +121,40 @@ class PluginSpec:
 #: one file is a merge nobody can predict, so it is refused rather than resolved.
 _ENTRIES_KEY = "components"
 _ENTRIES_KEY_LEGACY = "plugins"
+
+#: The whole top level of a world document: the settings block, the entry list under either
+#: spelling, and the two inheritance keys :func:`_resolve_inheritance` consumes. There is nothing
+#: else -- in particular no parameter or templating layer -- so any other key is a mistake.
+_SIM_KEY = "sim"
+_EXTENDS_KEY = "extends"
+_DISABLE_KEY = "disable"
+_DOCUMENT_KEYS = frozenset({_SIM_KEY, _ENTRIES_KEY, _ENTRIES_KEY_LEGACY})
+_INHERITANCE_KEYS = frozenset({_EXTENDS_KEY, _DISABLE_KEY})
+
+
+def _refuse_unknown_document_keys(doc: dict, where: str) -> None:
+    """Refuse a top-level key no world document has.
+
+    Ignoring one leaves the document looking accepted while the thing it was written to do never
+    happens, and the failure then surfaces wherever the value it was supposed to produce is read --
+    a pose parser refusing a string, an exporter refusing a world, a run placing an entity where
+    nobody asked for it. The key most often invented here is a parameter block, because a world
+    that varies per run looks like it needs one; it does not, which is why the message says where
+    a varying value actually goes.
+    """
+    unknown = sorted(set(doc) - _DOCUMENT_KEYS - _INHERITANCE_KEYS)
+    if not unknown:
+        return
+    keys = ", ".join(repr(k) for k in unknown)
+    one = len(unknown) == 1
+    raise PluginError(
+        f"{where}: unknown top-level key{'' if one else 's'} {keys}. A world document has only "
+        f"{', '.join(sorted(_DOCUMENT_KEYS | _INHERITANCE_KEYS))}.\n"
+        f"A world declares no parameters and substitutes nothing: a value that varies per run is "
+        f"written into the document as its ordinary literal and changed by an OVERRIDE -- "
+        f"'--set components.<name>.<key>=<value>' standalone, a campaign's 'sim:' channel -- "
+        f"which addresses that key in place."
+    )
 
 
 def document_entries(doc: dict, where: str = "document") -> list:
@@ -545,15 +584,22 @@ def _apply_disable(plugins: list, selectors: list) -> list:
     return out
 
 
-def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset()) -> dict:
+def _resolve_inheritance(
+    raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset(), *, where: str = "world config"
+) -> dict:
     """Expand an ``extends``/``disable`` world into a plain ``{sim, plugins}`` dict.
 
     Recursively merges the parent world (which may itself ``extends``): ``sim`` is deep-merged with
     the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
+
+    Every document in the chain passes through here, and only here, which is why the top-level key
+    check lives in this function: a parent's keys are read and its unknown ones dropped, so
+    checking only the leaf would accept in a parent exactly what is refused in a child.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    _refuse_unknown_document_keys(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
     if ext is None:
@@ -571,7 +617,9 @@ def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = froz
         parent_raw = yaml.safe_load(fh) or {}
     if not isinstance(parent_raw, dict):
         raise PluginError(f"extended world {parent_path} must be a mapping at the top level")
-    parent_raw = _resolve_inheritance(parent_raw, parent_path.parent, seen | {parent_path})
+    parent_raw = _resolve_inheritance(
+        parent_raw, parent_path.parent, seen | {parent_path}, where=str(parent_path)
+    )
 
     parent_sim = dict(parent_raw.get("sim") or {})
     if "world" in parent_sim:
@@ -621,7 +669,7 @@ def load_config(
         raise PluginError(f"world config {path} does not exist")
     with path.open() as fh:
         raw = yaml.safe_load(fh) or {}
-    raw = _resolve_inheritance(raw, path.parent)
+    raw = _resolve_inheritance(raw, path.parent, where=str(path))
     if transport:
         raw = with_transport(raw, **transport)
     return _from_dict(
@@ -949,6 +997,25 @@ def _did_you_mean(rest: tuple[str, ...], specs: list[PluginSpec]) -> str:
     return f" This document has: {known}."
 
 
+def _refuse_unknown_override_roots(assignments) -> None:
+    """Refuse an override whose first segment is no part of a world document.
+
+    A component override that matches nothing is already refused; one rooted anywhere else was
+    merged into the document, where nothing reads it. That is the same failure the document's own
+    key check prevents, arriving by the other door: the value is accepted, the world is built
+    without it, and the run reports success against the unchanged world.
+    """
+    for a in assignments:
+        if not a.path or a.path[0] in _DOCUMENT_KEYS:
+            continue
+        raise PluginError(
+            f"override '{'.'.join(a.path)}' is rooted at '{a.path[0]}', which is no part of a "
+            f"world document. An override addresses a settings key as 'sim.<key>' or a "
+            f"component's key as 'components.<name>.<key>'; a world declares no parameters for "
+            f"one to name."
+        )
+
+
 def apply_assignments(cfg_raw: dict, specs: list[PluginSpec], assignments) -> list[Assignment]:
     """Apply what these *specs* answer to; return the assignments that matched.
 
@@ -1171,6 +1238,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
     assignments = list(assignments or ())
+    _refuse_unknown_override_roots(assignments)
     # Non-component assignments (`sim.*`) merge into the document before anything reads it -- and
     # before it is validated, so a typo arriving by `--set` is refused exactly like one written in
     # the file.
