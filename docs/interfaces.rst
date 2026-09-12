@@ -91,6 +91,10 @@ callers never depend on list indices:
 Values deep-merge (scalars and lists replace). Overrides must be applied at load time -- the scene is
 compiled when the engine is built, so mutating a built ``SimConfig`` has no effect.
 
+An override addresses ``sim.<key>`` or ``components.<name>.<key>`` and nothing else: a world's top
+level holds only those two sections, so a path rooted anywhere else -- a parameter name, say -- is
+refused rather than merged into a document where nothing reads it.
+
 The standalone runner exposes the same thing on the command line, where
 ``roqsim.overrides_from_dotlist`` parses the ``path=value`` form::
 
