@@ -149,3 +149,57 @@ def test_view_rejects_malformed_values():
         load_config_from_dict({"sim": {"view": {"distance": "near"}}, "plugins": []})
     with pytest.raises(PluginError, match="sim.view.track: expected an entity or body name"):
         load_config_from_dict({"sim": {"view": {"track": 3}}, "plugins": []})
+
+
+# -- a key nothing reads is refused, not ignored ---------------------------------
+
+"""The failure these remove: `sim: {timstep: 0.004}` loaded clean, ran, and used the
+default step. Nothing said so, so the world did not do what its author wrote and every
+number it produced was a measurement of something else."""
+
+
+def test_a_misspelled_sim_key_is_refused_and_the_right_one_named():
+    with pytest.raises(PluginError) as e:
+        load_config_from_dict({"sim": {"timstep": 0.004}})
+    assert "timstep" in str(e.value)
+    assert "did you mean 'timestep'" in str(e.value)
+
+
+def test_a_misspelled_top_level_key_is_refused():
+    """`componets:` parsed and ran -- as an empty world, because the entries were under a
+    key nobody looked at. An empty world is a plausible result, which is what made it bad."""
+    with pytest.raises(PluginError) as e:
+        load_config_from_dict({"componets": [{REF: {"required_key": 1}}]})
+    assert "componets" in str(e.value)
+    assert "did you mean 'components'" in str(e.value)
+
+
+def test_an_unknown_key_with_no_near_match_still_lists_what_is_known():
+    with pytest.raises(PluginError) as e:
+        load_config_from_dict({"sim": {"banana": 1}})
+    assert "did you mean" not in str(e.value)
+    assert "timestep" in str(e.value)
+
+
+def test_every_mujoco_option_key_the_engine_applies_is_accepted():
+    """The allowlist and the loop that applies these read one list, so they cannot disagree.
+
+    Each of these silently did nothing under a hand-written allowlist that missed the
+    engine's generic loop -- which is the same class of failure, one level up.
+    """
+    from roqsim.config import SIM_OPTION_KEYS
+
+    load_config_from_dict({"sim": {key: 1 for key in SIM_OPTION_KEYS}})
+
+
+def test_a_deprecated_key_still_warns_rather_than_being_refused():
+    """`sim.headless` is deprecated, not unknown; refusing it would hide the warning that
+    says what to use instead."""
+    load_config_from_dict({"sim": {"headless": True}})
+
+
+def test_a_key_arriving_by_override_is_refused_like_one_in_the_file():
+    """Validation runs after overrides merge, so `--set sim.timstep=...` is refused too."""
+    with pytest.raises(PluginError) as e:
+        load_config_from_dict({"sim": {}}, overrides={"sim": {"timstep": 0.004}})
+    assert "timstep" in str(e.value)

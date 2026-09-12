@@ -1167,6 +1167,70 @@ def _validate_contact_override(override) -> None:
             raise PluginError(f"sim.contact_override.{key}: all entries must be numbers")
 
 
+#: Every key a world document may carry at the top level. `extends`/`disable` are consumed by
+#: inheritance and normally gone by the time this is checked; they stay listed so that a document
+#: using them without a parent is not refused for it.
+#:
+#: An allowlist, and refused rather than ignored, for the reason `sim.contact_override` gives:
+#: a key nothing reads is invisible. `componets:` parsed, loaded and ran -- as an empty world,
+#: because the entries were under a key no one looked at.
+_DOCUMENT_KEYS = frozenset({"sim", "components", "plugins", "extends", "disable"})
+
+#: The MuJoCo ``opt.*`` fields a world may set straight through, by their own names. Declared here
+#: rather than in the engine that applies them, so the key list and the allowlist that admits it
+#: are one thing: a key added to the loop and not to the allowlist would be refused as unknown,
+#: and one added here and not to the loop would be accepted and ignored -- the failure this
+#: allowlist exists to remove.
+SIM_OPTION_KEYS = (
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "impratio",
+    "density",
+    "viscosity",
+)
+
+
+#: Every key `sim:` may carry. `headless` is listed because it is DEPRECATED rather than unknown:
+#: it warns above and must not be refused here, or the warning could never be reached.
+_SIM_KEYS = frozenset(
+    {
+        "cone",
+        "contact_override",
+        "dedup_assets",
+        "gravity",
+        "headless",
+        "integrator",
+        "name",
+        "pacing",
+        "seed",
+        "sync",
+        "timestep",
+        "view",
+        "wind",
+        "world",
+    }
+) | frozenset(SIM_OPTION_KEYS)
+
+
+def _refuse_unknown(where: str, unknown: list[str], known: frozenset[str]) -> None:
+    """Refuse unknown keys, naming the nearest known one when there is an obvious near-miss.
+
+    The suggestion is what makes this cheap to act on: the keys are short and a typo is usually
+    one edit away, so the reader is told what to write rather than only what not to.
+    """
+    import difflib  # pylint: disable=import-outside-toplevel
+
+    hints = []
+    for key in unknown:
+        close = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.7)
+        hints.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+    raise PluginError(
+        f"{where}: unknown key(s) {', '.join(hints)}. Known: {', '.join(sorted(known))}."
+    )
+
+
 def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
@@ -1181,6 +1245,10 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
             "--headless (standalone) or the headless scenario parameter to suppress the window. "
             "Remove the key from the world YAML to silence this."
         )
+    if unknown_doc := sorted(set(raw) - _DOCUMENT_KEYS):
+        _refuse_unknown("world config", unknown_doc, _DOCUMENT_KEYS)
+    if unknown_sim := sorted(set(raw.get("sim") or {}) - _SIM_KEYS):
+        _refuse_unknown("sim", unknown_sim, _SIM_KEYS)
     unknown = sorted(set((raw.get("sim") or {}).get("view") or {}) - _VIEW_KEYS)
     if unknown:
         raise PluginError(
