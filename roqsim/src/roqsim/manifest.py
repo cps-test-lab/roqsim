@@ -15,7 +15,9 @@ from pathlib import Path
 import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
+from .frames import substitute
 from .models import resolve_model
+from .registry import resolve_plugin
 
 
 def manifest_path(model_file: Path) -> Path:
@@ -40,6 +42,49 @@ def manifest_fov(model_file: Path) -> dict:
         return {}
     data = yaml.safe_load(path.read_text()) or {}
     return data.get("fov", {}) or {}
+
+
+def manifest_frames(model_file: Path) -> list:
+    """The ``frames:`` block from a model's manifest, as written (``[]`` when there is none).
+
+    The fixed links a vendor description chains and the MJCF flattened (see :mod:`roqsim.frames`
+    for the shape and how they are built and published). Returned raw because a device's frame
+    names are templates its mount fills in, and validated by :func:`roqsim.frames.parse_frames`
+    once they are. Not inherited through ``extends:``: frames describe a model's geometry, and a
+    derived model keeps its own MJCF.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text()) or {}
+    frames = data.get("frames")
+    if frames is not None and not isinstance(frames, list):
+        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pos, rpy}}")
+    return list(frames or [])
+
+
+def manifest_frame_id(model_file: Path) -> str | None:
+    """The ``frame_id:`` a device model's manifest declares: the vendor's default scan-frame name.
+
+    A mount that sets no ``frame_id`` of its own takes this one, and it is what a device manifest's
+    ``{frame_id}`` placeholders are filled with then. ``None`` when there is no manifest or the
+    vendor names no default -- a device whose frame name is always its integrator's choice -- so
+    such a mount must name the frame itself. A value that is not a plain frame name raises: a
+    default that is itself a template would reach a TF tree as a literal brace.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text()) or {}
+    value = data.get("frame_id")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or "{" in value or "}" in value:
+        raise PluginError(
+            f"manifest {path}: 'frame_id' is the vendor's default scan-frame name, a non-empty "
+            f"string with no placeholder -- got {value!r}"
+        )
+    return value
 
 
 def manifest_license(model_file: Path) -> list[Path]:
@@ -119,8 +164,14 @@ def expand_manifest(
     world: list[PluginSpec],
     *,
     base_dir: Path | None = None,
+    substitutions: dict[str, str] | None = None,
 ) -> list[PluginSpec]:
     """Plugin specs a spawn plugin should inject for its model, wired to its entity.
+
+    ``substitutions`` fills ``{placeholder}`` fields in every string of the manifest's component
+    configs (nested ones included) before anything is merged, and refuses a placeholder it does not
+    name (:func:`roqsim.frames.substitute`). A mount uses it to hand its device the names only the
+    placement knows -- ``frame_id: "{frame_id}"``. ``None`` leaves strings as written.
 
     The model is resolved via :func:`roqsim.models.resolve_model` (so it may live in any installed
     package), and its ``<model>.manifest.yaml`` manifest is read from beside the resolved file. Each
@@ -143,35 +194,95 @@ def expand_manifest(
     (see :func:`roqsim.config.instantiate_plugins`), so it does not matter whether the spawn is
     declared before or after the plugin it fills in.
 
+    **A manifest may mount what has a manifest of its own.** An entry whose plugin itself provides an
+    entity (a ``spawn_sensor`` on a robot) gets the spawn's prefix as ``attach_prefix`` rather than
+    ``prefix`` -- it derives its own MJCF prefix from its carrier -- and its nested ``components:``
+    are kept: emitted right after it, owned by its address (``robot.scan_front.lidar``), and merged
+    by label exactly like the entries above. A robot manifest therefore overrides part of a mounted
+    device's defaults by nesting, and precedence is nearer-wins all the way down: the world's value,
+    then the robot manifest's, then the device manifest's (:func:`roqsim.config.expand_document`
+    expands the device after this, against what is already declared). Nested children get no
+    ``prefix``: their owner is the device, which fills its own in when it expands.
+
     Off with ``default_plugins: false`` on the spawn config; a no-op when there is no ``model``.
     """
     cfg = spec.config
     if not cfg.get("default_plugins", True) or not cfg.get("model"):
         return []
-    entity = spec.address
     model_file = resolve_model(cfg["model"], base_dir=base_dir).path
-    # Keyed on the LABEL, not on the plugin ref: a model may ship two of a kind (tiago_pro's front
-    # and rear lidars), and keying on the ref would collapse them onto one entry -- silently losing
-    # a sensor. A label is unique among an owner's components by construction, so this cannot.
+    # Keyed on the ADDRESS, whose last segment is the LABEL, not the plugin ref: a model may ship two
+    # of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto
+    # one entry -- silently losing a sensor. A label is unique among an owner's components by
+    # construction, and an address is unique in a document, so this cannot.
     declared: dict[str, PluginSpec] = {}
     for s in world:
-        if s.entity == entity:
-            declared.setdefault(s.label, s)
+        declared.setdefault(s.address, s)
     out: list[PluginSpec] = []
     prefix = cfg.get("prefix", "")
+    where = str(manifest_path(model_file))
     for entry in load_manifest(model_file, base_dir=base_dir):
         base = parse_plugin_entry(entry, "manifest plugin")
-        pcfg = base.config
-        pcfg.setdefault("prefix", prefix)
-        base.entity = entity
-        declared_spec = declared.get(base.label)
-        if declared_spec is not None:
-            # The world runs its own entry; give it the manifest's defaults for everything it did
-            # not say. Without this, a partial override silently drops the rest of the model's
-            # description -- e.g. a husky's diff_drive falling back to the plugin's TurtleBot
-            # wheel_radius/actuator names, which then fails to resolve against the husky's MJCF.
-            for key, value in pcfg.items():
-                declared_spec.config.setdefault(key, value)
-            continue
-        out.append(PluginSpec(ref=base.ref, name=base.name, config=pcfg, entity=entity))
+        if substitutions is not None:
+            _substitute_tree(base, substitutions, where)
+        if _provides_entity(base.ref, base_dir):
+            base.config.setdefault("attach_prefix", prefix)
+        else:
+            base.config.setdefault("prefix", prefix)
+        _merge_or_inject(base, spec.address, declared, out, where, base_dir)
     return out
+
+
+def _substitute_tree(spec: PluginSpec, values: dict[str, str], where: str) -> None:
+    spec.config = substitute(spec.config, values, f"{where}: {spec.label}")
+    for child in spec.children:
+        _substitute_tree(child, values, where)
+
+
+def _provides_entity(ref: str, base_dir: Path | None) -> bool:
+    """Whether *ref*'s plugin registers an entity; ``False`` for a ref that does not resolve.
+
+    An unresolvable ref is recorded and refused later, by :func:`roqsim.config.instantiate_plugins`,
+    the same way one declared in a world is -- so a scene-only consumer still loads the model.
+    """
+    try:
+        return resolve_plugin(ref, base_dir=base_dir).provides_entity
+    except PluginError:
+        return False
+
+
+def _merge_or_inject(
+    base: PluginSpec,
+    owner: str,
+    declared: dict[str, PluginSpec],
+    out: list[PluginSpec],
+    where: str,
+    base_dir: Path | None,
+) -> None:
+    """Inject *base* under *owner*, or merge it under the entry already declared there; then its children."""
+    address = f"{owner}.{base.label}"
+    if base.children and not _provides_entity(base.ref, base_dir):
+        try:
+            resolve_plugin(base.ref, base_dir=base_dir)
+        except PluginError:
+            pass  # unresolvable: refused at instantiation, with the rest of the document's
+        else:
+            raise PluginError(
+                f"{where}: '{address}' ({base.ref}) has a 'components:' block but registers no "
+                f"entity, so there is nothing for those {len(base.children)} entries to attach to."
+            )
+    target = declared.get(address)
+    if target is not None:
+        # The world runs its own entry; give it the manifest's defaults for everything it did
+        # not say. Without this, a partial override silently drops the rest of the model's
+        # description -- e.g. a husky's diff_drive falling back to the plugin's TurtleBot
+        # wheel_radius/actuator names, which then fails to resolve against the husky's MJCF.
+        for key, value in base.config.items():
+            target.config.setdefault(key, value)
+    else:
+        target = PluginSpec(
+            ref=base.ref, name=base.name, config=base.config, entity=owner, enabled=base.enabled
+        )
+        out.append(target)
+        declared[address] = target
+    for child in base.children:
+        _merge_or_inject(child, address, declared, out, where, base_dir)

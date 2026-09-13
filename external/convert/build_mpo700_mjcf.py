@@ -27,6 +27,11 @@ steering here is geometrically right and dynamically nominal.
 Meshes are millimetre-scale Collada (``scale="0.001 0.001 0.001"``), which is exactly the trap
 :func:`urdf_source.mesh_scales` exists to catch -- see its docstring.
 
+**The two SICK S300s are not in this model.** The manifest mounts the ``sick_s300`` device model at
+each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the housings,
+meshes and masses. This generator removes both links from the expanded tree before it reads it
+(:func:`neobotix.drop_scanner_links`), so the MJCF's mass sum is the description's minus their 1.201 kg.
+
 Usage::
 
     python external/convert/build_mpo700_mjcf.py           # fetch, convert, write
@@ -47,7 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from neobotix import (  # noqa: E402
-    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, drop_scanner_links, subs_for, wrapper,
 )
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
@@ -62,7 +67,7 @@ TARGET_FACES = 4000
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
-#: Massless-ish fixed links whose visual rides on the base but whose mass must be kept.
+#: Scanner links removed from the expanded tree: the manifest mounts a sick_s300 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
 
 
@@ -113,17 +118,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     base = links["base_link"]
     base_geoms = geoms(base, "        ", "collision")
 
-    # The sensor links stay their own bodies rather than being merged, so the mass audit reproduces
-    # the description's sum -- lidar_1 is 1.2 kg, not a rounding error on a 196.8 kg robot.
-    sensors = ""
-    for name in SENSOR_LINKS:
-        pos, quat = pose(joints[name])
-        sensors += SENSOR_BODY.format(
-            name=name, body_pos=pos, body_quat=quat,
-            geoms=geoms(links[name], "          ", "collision"),
-            **inertial(links[name]),
-        )
-
     corners = ""
     for corner in CORNERS:
         steer_link = f"mpo_700_caster_{corner}_link"
@@ -147,7 +141,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                    .find("collision/geometry/sphere").get("radius"))
     assets = asset_block(shipped, palette, scales)
     return TEMPLATE.format(
-        commit=NEO_COMMIT, assets=assets, base_geoms=base_geoms, sensors=sensors, corners=corners,
+        commit=NEO_COMMIT, assets=assets, base_geoms=base_geoms, corners=corners,
         rest_height=f"{radius - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
@@ -157,11 +151,6 @@ def _inertial_line(link: ET.Element) -> str:
     a = inertial(link)
     return f'<inertial pos="{a["pos"]}" mass="{a["mass"]}" diaginertia="{a["diaginertia"]}"/>'
 
-
-SENSOR_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
-          <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
-{geoms}        </body>
-"""
 
 CORNER_BODY = """        <body name="{steer_link}" pos="{steer_pos}"{steer_quat}>
           {steer_inertial}
@@ -197,6 +186,10 @@ TEMPLATE = """<mujoco model="mpo_700">
     wheel slip, so encoder odometry and ground truth coincide by construction. And the steering here
     is observational - a paper measuring steer rate limits or reorientation delay needs real steer
     actuation, which this is not.
+
+    The two SICK S300s are not in this file: the manifest mounts a `sick_s300` device model at each
+    of the vendor's lidar_1_joint and lidar_2_joint, and those devices carry the scanners' housings
+    and mass.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
   <!--
@@ -255,11 +248,7 @@ TEMPLATE = """<mujoco model="mpo_700">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
-      <!-- The vendor's own two scanner mounts, diagonally opposite. Neither sees 360 degrees on its
-           own; together they cover the robot. -->
-      <site name="lidar_1" pos="0.338 0.288 0.223" size="0.01" rgba="1 0 0 0.6"/>
-      <site name="lidar_2" pos="-0.338 -0.288 0.223" size="0.01" rgba="1 0 0 0.6"/>
-{base_geoms}{sensors}{corners}    </body>
+{base_geoms}{corners}    </body>
   </worldbody>
 
   <actuator>
@@ -304,6 +293,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_700.urdf.xacro"),
                             Path(tmp), wrapper=wrapper("mpo_700", "continuous"))
+    drop_scanner_links(urdf, SENSOR_LINKS)
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}

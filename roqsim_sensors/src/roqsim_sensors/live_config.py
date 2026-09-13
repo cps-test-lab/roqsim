@@ -20,13 +20,16 @@ own config, where the value being perturbed already lives::
       - spawn_robot: {model: turtlebot4}
         name: robot
         components:
-          - lidar:
-              range_stddev: 0.01
-              fault: {dropout_percent: 60.0, range_stddev: 0.35}
+          - spawn_sensor: {}          # the manifest's RPLIDAR mount, by its label
+            name: rplidar
+            components:
+              - lidar:
+                  range_stddev: 0.01
+                  fault: {dropout_percent: 60.0, range_stddev: 0.35}
 
 and a scenario switches it by the sensor's **address**::
 
-    set_sensor_override(instance: 'robot.lidar', active: true)
+    set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
 
 Three properties follow, each mirroring the physics channel rather than re-deciding it.
 
@@ -35,7 +38,7 @@ apply, or restore. A fault's timing is the experiment's independent variable, an
 it would put trial logic in the substrate.
 
 **Severity is configured, not sent.** The ``fault:`` block is ordinary config, so sweeping how bad
-the fault gets is ``components.robot.lidar.fault.dropout_percent`` -- an ordinary campaign factor,
+the fault gets is ``components.robot.rplidar.lidar.fault.dropout_percent`` -- an ordinary campaign factor,
 deterministic per cell, and in the run's provenance. Nothing about severity is on the wire.
 
 **Only keys read per frame may be written.** A sensor declares ``LIVE_WRITABLE`` (config key ->

@@ -106,7 +106,7 @@ which is how an experiment loads its own plugin without registering anything.
 `--set` and `--override` address a **component by its address** and set a key in its config:
 
 ```console
-$ roqsim sim world.yaml --set components.robot.lidar.rays=720
+$ roqsim sim world.yaml --set components.robot.rplidar.lidar.rays=720
 ```
 
 That reaches a lidar no file declares — it comes from the turtlebot4's manifest — and leaves every
@@ -115,14 +115,14 @@ is what `--override` takes:
 
 ```yaml
 components:
-  robot.lidar: {rays: 720}
+  robot.rplidar.lidar: {rays: 720}
 ```
 
 `*` matches one address segment, so a fleet-wide sweep needs no enumeration of entities the world
 may not have when the campaign is written:
 
 ```console
-$ roqsim sim world.yaml --set 'components.*.lidar.range_stddev=0.05'
+$ roqsim sim world.yaml --set 'components.*.rplidar.lidar.range_stddev=0.05'
 ```
 
 A wildcard that reaches nothing is refused like a typo — a sweep that changed nothing would otherwise
@@ -140,6 +140,20 @@ components:
 ```
 
 The added entry is wired, checked and merged exactly as though the document had declared it.
+
+The owner must be one the document declares. A component a model's manifest supplies (a robot's
+mounted `rplidar`) expands before an override can reach it, so adding under it is refused. Add
+through its declared owner instead, naming the component, and the manifest fills in the rest:
+
+```yaml
+components:
+  robot:
+    components:
+      - spawn_sensor: {}
+        name: rplidar
+        components:
+          - contact_monitor: {min_force: 2.0}
+```
 
 Setting `enabled: false` removes a component without deleting it:
 

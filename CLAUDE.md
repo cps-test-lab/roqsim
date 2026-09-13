@@ -19,7 +19,11 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   in `32FC1` metres or `16UC1` millimetres), `realsense_d415` (RGB only), `force_torque` (six-axis
   wrench at a site — the one contact-force observable), `fiducial_marker` (ArUco/AprilTag,
   OpenCV-generated; optional `markers` extra). Models are one folder per device
-  (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
+  (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`. The 2D scanners
+  (`sick_s300`, `sick_microscan3`, `sick_tim571`, `rplidar_a1`, `rplidar_c1`, `lds01`) are device
+  models too: datasheet values and their own housing (`exclude_body: mount`) live there, and a robot
+  mounts one from its manifest with a nested `spawn_sensor` at the vendor's parent frame and joint
+  origin, overriding a value only where its vendor configuration differs.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
   wheeled base models, and demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled
   **bases only**.
@@ -28,8 +32,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
     collision geometry with no plugin reading it), and the skid-steer rosbot, panther and warthog
     (260 kg, the largest).
   - `omni_drive`: ridgeback and lgdxrobot2 (mecanum), mpo_500 (omni wheels), mpo_700 (SWERVE —
-    four independently steered wheels). The two Neobotix are the only models declaring two lidars
-    each.
+    four independently steered wheels). The two Neobotix MPOs each mount two scanner devices, as
+    `roqsim_mobile_manipulation`'s tiago_pro does; every other model carries at most one lidar.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,

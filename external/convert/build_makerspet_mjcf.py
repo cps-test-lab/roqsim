@@ -13,7 +13,7 @@ difference; both vendors share the same self-contained, primitive-heavy, ``$(fin
 both use :func:`urdf_source.link_primitives`.
 
 **The joint rpy is load-bearing and is why this generator reads the joint's full frame.** The wheel
-joints carry ``rpy="-pi/2 0 0"``, the scanner ``rpy="-pi 0 0"`` (an inverted puck between the decks)
+joints carry ``rpy="-pi/2 0 0"``, the scanner ``rpy="0 -pi 0"`` (an inverted puck between the decks)
 and the tablet a 20-degree pitch. Reading only the xyz -- which four earlier generators got away with,
 because Clearpath, Husarion and RT all put their rotations on the *visual* -- leaves the wheels as
 flat discs clear of the floor and the robot resting on its body. See the OOMWOO port log.
@@ -36,7 +36,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from urdf_source import (  # noqa: E402
-    expand_xacro, inertial, link_primitives, mesh_scales, pose, write_license,
+    expand_xacro,
+    inertial,
+    link_primitives,
+    mesh_scales,
+    pose,
+    write_license,
 )
 
 #: model short name -> (repo, pinned commit on the jazzy branch, human name, body diameter mm)
@@ -116,6 +121,9 @@ def build(urdf: ET.Element, model: str, commit: str, human: str, meshes: dict[st
     wheel_joint = next(j for j in joints if j.find("child").get("link") == "wheel_left_link")
     wheel_z = float((wheel_joint.find("origin").get("xyz")).split()[2])
     scan_joint = next(j for j in joints if j.find("child").get("link") == "base_scan")
+    # The lidar site takes the scan joint's rotation as well as its height: the scan is stamped in
+    # base_scan, so a ray's bearing must be measured in that (inverted) frame.
+    _, lidar_quat = pose(scan_joint)
     scales = mesh_scales(urdf)
     assets = "".join(
         f'    <material name="{model}_{n}" rgba="{rgba}"/>\n' for n, rgba in sorted(PALETTE.items())
@@ -127,7 +135,7 @@ def build(urdf: ET.Element, model: str, commit: str, human: str, meshes: dict[st
         model=model, human=human, commit=commit, assets=assets,
         base_pos=base_attrs["pos"], base_mass=base_attrs["mass"],
         base_diaginertia=base_attrs["diaginertia"], base_geoms=base_geoms, bodies=bodies,
-        lidar_z=f'{float(scan_joint.find("origin").get("xyz").split()[2]):g}',
+        lidar_z=f'{float(scan_joint.find("origin").get("xyz").split()[2]):g}', lidar_quat=lidar_quat,
         rest_height=f'{float(wheel.get("radius")) - wheel_z:g}',
         top_speed=TOP_SPEED[model][0], top_yaw=TOP_SPEED[model][1],
         wheel_ctrl=f"{TOP_SPEED[model][0] / float(wheel.get('radius')) * 2:.0f}",
@@ -149,7 +157,7 @@ TEMPLATE = """<mujoco model="{model}">
     not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw.
 
     The scanner sits INVERTED between the two decks (the description's scan_joint carries
-    rpy="-pi 0 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
+    rpy="0 -pi 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
     vendor's; the scan parameters are not - see the manifest and the port log.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
@@ -192,8 +200,8 @@ TEMPLATE = """<mujoco model="{model}">
     <body name="base_link" childclass="{model}">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
-      <!-- The scan plane, off the description's own scan_joint. -->
-      <site name="lidar" pos="0 0 {lidar_z}" size="0.005" rgba="1 0 0 0.6"/>
+      <!-- The scan plane and frame: the description's own scan_joint, rotation included, so the site is base_scan's frame. -->
+      <site name="lidar" pos="0 0 {lidar_z}"{lidar_quat} size="0.005" rgba="1 0 0 0.6"/>
       <site name="base_imu" pos="0 0 0" size="0.005" rgba="0 0 0 0"/>
 {base_geoms}{bodies}    </body>
   </worldbody>

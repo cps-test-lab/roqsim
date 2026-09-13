@@ -18,11 +18,15 @@ from roqsim.config import load_config
 from roqsim.engine import Engine
 
 WORLD = pathlib.Path(roqsim_nav.WORLDS_DIR) / "nav_opponents.yaml"
+#: A test driving an Engine is the driver, and `ctx.seed` is driver-owned: the world's scanners carry
+#: range noise and refuse to draw without one.
+SEED = 0
 
 
 @pytest.fixture(scope="module")
 def sim():
     engine = Engine(load_config(str(WORLD)))
+    engine.ctx.seed = SEED
     engine.setup()
     engine.reset()
     yield engine
@@ -71,6 +75,7 @@ def test_the_omni_pair_passes_each_other():
     both, and the control law comes from what each drive declares itself to be.
     """
     engine = Engine(load_config(str(WORLD)))
+    engine.ctx.seed = SEED
     engine.setup()
     engine.reset()
     try:
@@ -96,6 +101,7 @@ def test_one_robot_stops_and_the_other_goes_around_it():
     the model altogether -- it was then invisible, and the two bumped.
     """
     engine = Engine(load_config(str(WORLD)))
+    engine.ctx.seed = SEED
     engine.setup()
     engine.reset()
     try:
@@ -150,6 +156,7 @@ def test_the_head_on_pair_gets_past_each_other():
     runs the shared world's pair has long since finished and is standing at the far end.
     """
     engine = Engine(load_config(str(WORLD)))
+    engine.ctx.seed = SEED
     engine.setup()
     engine.reset()
     try:

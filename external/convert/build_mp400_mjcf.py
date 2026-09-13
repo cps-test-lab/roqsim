@@ -15,6 +15,11 @@ trustworthy, and it is possible to say why rather than merely suspect it -- see 
 modules in the same repository: 50.8 kg of an 84.4 kg robot sits in four casters. The geometry and
 kinematics are sound; the mass distribution is upstream copy-paste.
 
+**The SICK S300 is not in this model.** The manifest mounts the ``sick_s300`` device model at the
+vendor's ``lidar_1_joint``, and that device carries the housing, mesh and mass. This generator removes
+``lidar_1_link`` from the expanded tree before it reads it (:func:`neobotix.drop_scanner_links`), so the
+MJCF's mass sum is the description's minus that link's 0.001 kg.
+
 Usage::
 
     python external/convert/build_mp400_mjcf.py           # fetch, convert, write
@@ -32,7 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from neobotix import (  # noqa: E402
-    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, drop_scanner_links, subs_for, wrapper,
 )
 from sources import resolve_source  # noqa: E402
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
@@ -42,6 +47,7 @@ PKG = ROOT / "roqsim_mobile/src/roqsim_mobile/models/mp_400"
 
 WHEELS = ("left", "right")
 CASTERS = ("front_left", "front_right", "back_left", "back_right")
+#: Scanner links removed from the expanded tree: the manifest mounts the sick_s300 device there.
 SENSOR_LINKS = ("lidar_1_link",)
 
 
@@ -73,13 +79,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
         return out
 
     base = links["base_link"]
-    sensors = ""
-    for name in SENSOR_LINKS:
-        pos, quat = pose(joints[name])
-        sensors += FIXED_BODY.format(
-            name=name, body_pos=pos, body_quat=quat,
-            geoms=geoms(links[name], "          "), **inertial(links[name]),
-        )
     # The casters are FIXED in this description -- passive spheres, not articulated wheels -- so they
     # are emitted as jointless bodies. They still need their own contact class: they slide rather
     # than roll, and at the floor's friction four of them fight every turn.
@@ -104,7 +103,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     wheel_z = float(pose(wheel_joint)[0].split()[2])
     radius = float(links["mp_400_fixed_wheel_left_link"]
                    .find("collision/geometry/sphere").get("radius"))
-    lidar, _ = pose(joints["lidar_1_link"])
     excludes = "".join(
         f'    <exclude body1="base_link" body2="mp_400_fixed_wheel_{s}_link"/>\n' for s in WHEELS
     ) + "".join(
@@ -112,8 +110,8 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     )
     return TEMPLATE.format(
         commit=NEO_COMMIT, assets=asset_block(shipped, palette, scales), excludes=excludes,
-        base_geoms=geoms(base, "        "), sensors=sensors, casters=casters, wheels=wheels,
-        lidar=lidar, rest_height=f"{radius - wheel_z:g}",
+        base_geoms=geoms(base, "        "), casters=casters, wheels=wheels,
+        rest_height=f"{radius - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
 
@@ -149,6 +147,9 @@ TEMPLATE = """<mujoco model="mp_400">
     slide rather than roll. They carry a low-friction contact class with `priority`, without which
     MuJoCo takes the MAXIMUM of the two contacting geoms' friction, the floor's value wins, and four
     loaded spheres fight every turn.
+
+    The SICK S300 is not in this file: the manifest mounts the `sick_s300` device model at the
+    vendor's lidar_1_joint, and that device carries the scanner's housing and mass.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
@@ -199,9 +200,7 @@ TEMPLATE = """<mujoco model="mp_400">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
-      <!-- The vendor's own single front scanner mount. -->
-      <site name="lidar" pos="{lidar}" size="0.01" rgba="1 0 0 0.6"/>
-{base_geoms}{sensors}{casters}{wheels}    </body>
+{base_geoms}{casters}{wheels}    </body>
   </worldbody>
 
   <actuator>
@@ -230,6 +229,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mp_400.urdf.xacro"),
                             Path(tmp), wrapper=wrapper("mp_400", "continuous"))
+    drop_scanner_links(urdf, SENSOR_LINKS)
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}

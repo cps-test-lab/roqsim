@@ -1,0 +1,45 @@
+# ROBOTIS LDS-01 (HLS-LFCD2) 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: ROBOTIS turtlebot3_description (see lds01.xml). Scan values: HLS-LFCD2
+# "LDS1.5 Specifications" (2017-02-14, pages marked tentative), section 2 "Standard Performance"
+# ("spec"), https://emanual.robotis.com/assets/docs/LDS_Basic_Specification.pdf, linked from
+# https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_lds_01/
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: base_scan         # the TurtleBot 3 link name
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      rays: 360                 # spec: angular range 360 deg, angular resolution 1 deg
+      # 0 .. 2 pi, the window the TurtleBot 3 simulation (turtlebot3_waffle model.sdf) uses.
+      angle_min: 0.0
+      angle_max: 6.283185307
+      range_min: 0.12           # spec: distance range 120 ~ 3,500 mm (white, Lambertian >= 80%)
+      max_range: 3.5            # spec: distance range 120 ~ 3,500 mm (white, Lambertian >= 80%)
+      rate_hz: 5.0              # spec: scan rate 300 +-10 rpm
+      # Spec: distance precision +-10 mm at 120-499 mm (+-3.5% at 500-3,500 mm, which a constant
+      # stddev cannot express). The spec does not say which sigma; taken as 1 sigma.
+      range_stddev: 0.01
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and range window above.
+fov:
+  near: 0.12
+  far: 3.5
+  h_min: 0.0
+  h_max: 6.283185307
+  v_min: 0.0
+  v_max: 0.0

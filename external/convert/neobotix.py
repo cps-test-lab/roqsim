@@ -18,7 +18,11 @@ Two MuJoCo facts this vendor's meshes force, worth stating once here rather than
 * **Colour lives in the split, not the OBJ.** MuJoCo reads no OBJ material, so a part keeps its
   colour only if ``dae2obj`` gave each bound material its own file and the MJCF names one material
   per sub-geom. Skipping that renders the whole robot flat grey — which for these platforms loses the
-  SICK scanners' signature yellow, the wheel accents and the status LEDs.
+  body's signature yellow, the wheel accents and the status LEDs.
+
+The SICK scanners are not part of any generated robot: they are device models in ``roqsim_sensors``
+(``sick_s300``, ``sick_microscan3``) that each robot's manifest mounts at the vendor's joint origin, so
+every generator removes the scanner links from the expanded tree first (:func:`drop_scanner_links`).
 """
 
 from __future__ import annotations
@@ -57,6 +61,28 @@ def wrapper(model: str, joint_type: str = "continuous") -> str:
   <xacro:include filename="$(find neo_simulation2)/robots/{model}/urdf/{model}_body.urdf.xacro"/>
 </robot>
 """
+
+
+def drop_scanner_links(urdf: ET.Element, names: tuple[str, ...]) -> None:
+    """Remove the scanner links *names*, and the fixed joints that attach them, from *urdf* in place.
+
+    The device model a manifest mounts carries the scanner's housing, mesh and mass, so the robot's
+    MJCF carries none of them. Removing the links before anything reads the tree keeps all three out
+    at once: :func:`convert_meshes` converts only the meshes the tree still references, the body loop
+    never sees the links, and the mass audit sums what is left. A name the tree lacks, or a link that
+    something else hangs from, is refused rather than skipped: either means the vendor description
+    changed under the pin.
+    """
+    for name in names:
+        link = next((lk for lk in urdf.findall("link") if lk.get("name") == name), None)
+        if link is None:
+            raise ValueError(f"{name!r} is not a link of the expanded description")
+        hung = [j.get("name") for j in urdf.findall("joint") if j.find("parent").get("link") == name]
+        if hung:
+            raise ValueError(f"{name!r} carries {hung}; removing it would orphan them")
+        urdf.remove(link)
+        for joint in [j for j in urdf.findall("joint") if j.find("child").get("link") == name]:
+            urdf.remove(joint)
 
 
 def convert_meshes(

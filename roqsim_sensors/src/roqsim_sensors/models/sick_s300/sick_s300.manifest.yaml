@@ -1,0 +1,52 @@
+# SICK S300 safety laser scanner, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: Neobotix neo_simulation2 (see sick_s300.xml). Scan values: SICK data
+# sheet S30B-2011BA (S300 Standard; its 2 m protective field makes it the Medium Range variant),
+# https://www.sick.com/media/pdf/5/45/845/dataSheet_S30B-2011BA_1026820_en.pdf ("data sheet"), and
+# the S300 operating instructions 8010948/ZD76,
+# https://www.sick.com/media/docs/3/13/613/operating_instructions_s300_safety_laser_scanner_en_im0017613.pdf
+# ("OI").
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
+# second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
+# `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
+frame_id: lidar_1_link      # the Neobotix link name of a robot's first scanner
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # Data sheet: scanning angle 270 deg, angular resolution 0.5 deg. Rays are spaced
+      # (angle_max - angle_min) / rays, so 540 rays over the 270 deg keep the 0.5 deg step.
+      rays: 540
+      angle_min: -2.356194490   # -135 deg
+      angle_max: 2.356194490    # +135 deg
+      # ASSUMPTION: neither the data sheet nor the OI states a minimum distance; this is the Neobotix
+      # simulation's value (mp_400_gazebo.urdf.xacro).
+      range_min: 0.1
+      max_range: 30.0           # data sheet: distance measuring range 30 m
+      # OI 12.3 "Response times": basic response time 80 ms at the default 2-fold multiple sampling,
+      # +40 ms per further sample, so one scan takes 40 ms. Derived; no scan rate is printed.
+      rate_hz: 25.0
+      # OI technical data, measured data output, Medium Range: statistical including systematic
+      # error at 1 sigma +-28 mm.
+      range_stddev: 0.028
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and range window above.
+fov:
+  near: 0.1
+  far: 30.0
+  h_min: -2.356194490
+  h_max: 2.356194490
+  v_min: 0.0
+  v_max: 0.0

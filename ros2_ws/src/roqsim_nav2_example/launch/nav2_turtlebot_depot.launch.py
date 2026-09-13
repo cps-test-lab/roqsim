@@ -153,7 +153,7 @@ def generate_launch_description():
             # comes from nav2_minimal_tb4_description.
             #
             # AMCL owns map->odom, so no static_transform_publisher stand-in here. The scan
-            # (rplidar_link, with its static base_link->rplidar_link TF from the sim), /odom and the
+            # (rplidar_link, placed by robot_state_publisher's base_link->shell_link->rplidar_link), /odom and the
             # Depot /map give AMCL everything it needs; the initial pose is set in
             # nav2_params_depot.yaml (identity: the robot spawns at the map origin) and refined by
             # the scenario's init_nav2.

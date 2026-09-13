@@ -28,7 +28,11 @@ from roqsim.engine import Engine
 from roqsim.models import resolve_model
 
 #: From Husarion's expanded rosbot_description @ 41fad021, not measured from our model.
-TOTAL_MASS = 2.024
+DESCRIPTION_MASS = 2.024
+#: The mounted RPLIDAR C1's inertial (husarion_components_description slamtec_rplidar.urdf.xacro:137
+#: @ 5f783f8), which the rplidar_c1 device carries.
+RPLIDAR_C1_MASS = 0.11
+TOTAL_MASS = DESCRIPTION_MASS + RPLIDAR_C1_MASS
 WHEEL_RADIUS = 0.0425
 #: rosbot_controller/config/rosbot/controllers.yaml. Note this is NOT the URDF's geometric track
 #: (2 x 0.096 = 0.192): the vendor's controller uses the smaller value its odometry is calibrated to.
@@ -47,6 +51,7 @@ def _engine(**diff_drive):
         }],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 1  # this test is the driver; the scanner's range noise draws from it
     engine.setup()
     engine.reset()
     return engine

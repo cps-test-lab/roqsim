@@ -29,28 +29,33 @@ components:
                mpo_500_omni_wheel_back_left, mpo_500_omni_wheel_back_right]
       wheel_actuators: [wheel_front_left_motor, wheel_front_right_motor,
                         wheel_back_left_motor, wheel_back_right_motor]
-  # TWO scanners, front and rear on the centreline -- the vendor's own mounts. SICK MicroScan3,
-  # whose published field is 275 degrees; range and rate here are ours. Same reasoning as the
-  # mpo_700: a single 360 scan would be simpler and would give the robot a sensor it does not have.
-  - lidar:
-      site: lidar_1
-      frame_id: lidar_1_link
-      rays: 550
-      angle_min: -2.399827722
-      angle_max: 2.399827722
-      range_min: 0.1
-      max_range: 40.0
-      rate_hz: 12.5
-      exclude_body: base_link
+  # TWO SICK microScan3s, front and rear on the centreline, each the `sick_microscan3` device model at
+  # the vendor's joint origin (neo_simulation2 @ 8320414, robots/mpo_500/urdf/mpo_500_body.urdf.xacro,
+  # lidar_1_joint :36-41 and lidar_2_joint :63-68). Both upright; the rear one faces backwards, with
+  # its yaw written 3.14 as the vendor writes it. Same reasoning as the mpo_700: a single 360 scan
+  # would be simpler and would give the robot a sensor it does not have.
+  #
+  # Field, rays, range, rate and noise are the device's datasheet values. The vendor's Gazebo sensors
+  # (720 rays over +-1.48 rad at 100 Hz, mpo_500_gazebo.urdf.xacro:25-50) describe its simulation
+  # rather than the scanners and are not copied; their topics are the robot's ROS interface and are:
+  # one topic per scanner, `scan` and `scan2`.
+  - spawn_sensor:
+      model: sick_microscan3
+      parent_frame: base_link
+      pos: [0.442, 0.0, 0.372]       # mpo_500_body.urdf.xacro:38, lidar_1_joint origin xyz
+      rpy: [0.0, 0.0, 0.0]           # mpo_500_body.urdf.xacro:38, lidar_1_joint origin rpy
+      frame_id: lidar_1_link         # mpo_500_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
-  - lidar:
-      site: lidar_2
-      frame_id: lidar_2_link
-      rays: 550
-      angle_min: -2.399827722
-      angle_max: 2.399827722
-      range_min: 0.1
-      max_range: 40.0
-      rate_hz: 12.5
-      exclude_body: base_link
+    components:
+      - lidar:
+          topics: {scan: scan}       # mpo_500_gazebo.urdf.xacro:36; relative, so the namespace scopes it
+  - spawn_sensor:
+      model: sick_microscan3
+      parent_frame: base_link
+      pos: [-0.442, 0.0, 0.372]      # mpo_500_body.urdf.xacro:65, lidar_2_joint origin xyz
+      rpy: [0.0, 0.0, 3.14]          # mpo_500_body.urdf.xacro:65, lidar_2_joint origin rpy
+      frame_id: lidar_2_link         # mpo_500_gazebo.urdf.xacro:41
     name: scan_rear
+    components:
+      - lidar:
+          topics: {scan: scan2}      # mpo_500_gazebo.urdf.xacro:50

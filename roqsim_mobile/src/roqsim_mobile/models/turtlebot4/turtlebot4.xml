@@ -26,7 +26,6 @@
     <mesh name="bumper_visual"      file="bumper_visual.obj"/>
     <mesh name="tower_standoff"     file="tower_standoff.obj"/>
     <mesh name="tower_sensor_plate" file="tower_sensor_plate.obj"/>
-    <mesh name="rplidar"            file="rplidar.obj"/>
     <mesh name="camera_bracket"     file="camera_bracket.obj"/>
   </asset>
 
@@ -79,14 +78,10 @@
       <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="-0.07607 0.09066 0.24177" quat="0.70711 0 0.70711 0"/>
       <geom class="tb4_visual" mesh="tower_standoff" material="tb4_grey" pos="-0.07607 -0.09066 0.24177" quat="0.70711 0 0.70711 0"/>
       <geom class="tb4_visual" mesh="tower_sensor_plate" material="tb4_black" pos="0 0 0.34677" quat="1 0 0 0"/>
-      <geom class="tb4_visual" mesh="rplidar" material="tb4_black" pos="-0.04 0 0.192915" quat="0.70711 0 0 0.70711"/>
 
-      <!-- Lidar scan origin (RPLIDAR), used by the Python ray-cast lidar. The
-           90 deg yaw matches the URDF rplidar_link frame (and the visual mesh
-           above), so ray angle 0 points along rplidar_link +x: the LaserScan the
-           bridge publishes in that frame is then geometrically correct in TF. -->
-      <site name="lidar" pos="-0.04 0 0.192915" quat="0.70711 0 0 0.70711"
-            size="0.005" rgba="1 0 0 0.6"/>
+      <!-- The RPLIDAR A1 is not part of this model: turtlebot4.manifest.yaml mounts the
+           `rplidar_a1` device model at the URDF's shell_link -> rplidar_link joint, and
+           declares shell_link as a frame of this body. -->
 
       <!-- The bracket that carries the camera (sensors/camera_bracket.urdf.xacro).
            Without it the camera body hangs in mid-air, which is what it looked

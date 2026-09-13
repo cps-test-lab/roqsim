@@ -27,16 +27,16 @@ WORLD = {
 
 def test_the_record_holds_what_ran_not_what_was_asked_for():
     """The manifest's components are in it, and the document never named them."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
     record = cfg.as_record()
     by_address = {c["address"]: c for c in record["components"]}
-    assert "robot.lidar" in by_address
-    assert by_address["robot.lidar"]["config"]["rays"] == 720
+    assert "robot.rplidar.lidar" in by_address
+    assert by_address["robot.rplidar.lidar"]["config"]["rays"] == 720
 
 
 def test_rebuilding_reads_the_tree_rather_than_re_resolving():
     """No document, no overrides, no resolution -- and the same components."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
     rebuilt = SimConfig.from_record(cfg.as_record())
     assert [s.address for s in rebuilt.plugins] == [s.address for s in cfg.plugins]
     assert [s.enabled for s in rebuilt.plugins] == [s.enabled for s in cfg.plugins]
@@ -47,9 +47,9 @@ def test_rebuilding_reads_the_tree_rather_than_re_resolving():
 def test_a_disabled_component_is_recorded_as_disabled():
     """Which is why `enabled: false` is a flag and not a deletion: the record can say so."""
     cfg = load_config_from_dict(
-        WORLD, overrides={"components": {"robot.lidar": {"enabled": False}}}
+        WORLD, overrides={"components": {"robot.rplidar.lidar": {"enabled": False}}}
     )
-    entry = next(c for c in cfg.as_record()["components"] if c["address"] == "robot.lidar")
+    entry = next(c for c in cfg.as_record()["components"] if c["address"] == "robot.rplidar.lidar")
     assert entry["enabled"] is False
 
 

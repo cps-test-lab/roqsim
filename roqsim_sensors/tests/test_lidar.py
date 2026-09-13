@@ -145,3 +145,63 @@ def test_a_resolved_exclude_body_is_still_the_parent():
     st = _scan_hints(engine)["static_tf"]
     assert st["parent"] == "mast"
     assert st["translation"] == [0.0, 0.0, 1.2]  # the mast sits at the origin
+
+
+# -- tf_parent: the frame's parent, decoupled from what the rays skip -----------------------------
+
+
+class _HousedScene(Plugin):
+    """A scanner in a housing body of its own, on a base: the housing is excluded, the base is the
+    link the vendor hangs the frame from."""
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="base", pos=[0, 0, 0.5])
+        base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.05])
+        housing = base.add_body(name="housing", pos=[0, 0, 0.5])
+        # The site sits INSIDE the housing geom, so only excluding the housing lets a ray out.
+        housing.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.05, 0.05, 0.05])
+        housing.add_site(name="lidar", pos=[0, 0, 0.0])
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX, pos=[2, 0, 1.0], size=[0.05, 5, 0.5]
+        )
+
+
+def _housed_world(**lidar_config):
+    return load_config_from_dict(
+        {
+            "sim": {},
+            "plugins": [
+                {f"{__name__}:_HousedScene": {}},
+                {"roqsim_sensors.plugins.lidar:LidarPlugin": lidar_config},
+            ],
+        }
+    )
+
+
+def test_tf_parent_names_and_measures_the_frame_independently_of_exclude_body():
+    engine = Engine(
+        _housed_world(site="lidar", exclude_body="housing", tf_parent="base", rays=4, max_range=4.0)
+    )
+    engine.setup()
+    st = _scan_hints(engine)["static_tf"]
+    assert st["parent"] == "base"
+    assert np.allclose(st["translation"], [0.0, 0.0, 0.5])  # housing sits 0.5 above the base
+    engine.reset()
+    engine.step()
+    # ...while the rays still skip the housing and reach the wall.
+    assert np.isclose(_scan(engine).ranges[0], 1.95, atol=1e-3)
+
+
+def test_without_tf_parent_the_excluded_body_is_still_the_parent():
+    engine = Engine(_housed_world(site="lidar", exclude_body="housing"))
+    engine.setup()
+    st = _scan_hints(engine)["static_tf"]
+    assert st["parent"] == "housing" and np.allclose(st["translation"], [0.0, 0.0, 0.0])
+
+
+def test_a_tf_parent_that_is_not_a_body_is_refused():
+    import pytest
+
+    engine = Engine(_housed_world(site="lidar", exclude_body="housing", tf_parent="chassis"))
+    with pytest.raises(RuntimeError, match="tf_parent 'chassis' not found"):
+        engine.setup()

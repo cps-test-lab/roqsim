@@ -11,7 +11,6 @@
     </default>
   </default>
   <asset>
-    <mesh name="meshes_laser_sick_tim551" file="meshes_laser_sick_tim551.stl"/>
     <mesh name="meshes_base_base_link" file="meshes_base_base_link.stl"/>
     <mesh name="meshes_base_base_dock_link" file="meshes_base_base_dock_link.stl"/>
     <mesh name="meshes_base_base_antenna_link" file="meshes_base_base_antenna_link.stl"/>
@@ -56,23 +55,11 @@
       <freejoint name="base_free"/>
       <camera name="track" mode="track" pos="-2.8 -2.8 2.4" xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
       <body name="base_link" pos="0 0 0.0762">
-        <site name="lidar_front" pos="0.2751 -0.183 0.13244" euler="0 0 -0.7853981634" size="0.006" rgba="1 0 0 0.6"/>
-        <site name="lidar_rear" pos="-0.2751 0.183 0.13244" euler="0 0 2.3561944902" size="0.006" rgba="1 0 0 0.6"/>
         <inertial pos="0.0026742 0.00027459 0.086363" quat="0.00180371 0.707337 -0.00172275 0.706872" mass="34.047" diaginertia="0.46036 0.299912 0.227768"/>
         <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="meshes_base_base_link" class="tiago_pro_visual"/>
         <geom size="0.3585 0.2485 0.04225" pos="0 0 0.18925" type="box" class="tiago_pro_collision"/>
         <geom size="0.29 0.195 0.015" pos="0 0 0.132" type="box" class="tiago_pro_collision"/>
         <geom size="0.3525 0.24 0.0835" pos="0 0 0.0335" type="box" class="tiago_pro_collision"/>
-        <body name="base_rear_laser_link" pos="-0.27512 0.18297 0.13244" quat="0 -0.382683 -0.92388 0">
-          <inertial pos="-0.02559 -0.00056 -0.05732" quat="0.00952961 0.665995 -0.011891 0.7458" mass="0.28922" diaginertia="5.87436e-05 3.37527e-05 2.58643e-05"/>
-          <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_laser_sick_tim551" class="tiago_pro_visual"/>
-          <geom size="0.01 0.005" type="cylinder" class="tiago_pro_collision"/>
-        </body>
-        <body name="base_front_laser_link" pos="0.27512 -0.18297 0.13244" quat="0 -0.92388 0.382683 0">
-          <inertial pos="-0.02559 -0.00056 -0.05732" quat="0.00952961 0.665995 -0.011891 0.7458" mass="0.28922" diaginertia="5.87436e-05 3.37527e-05 2.58643e-05"/>
-          <geom type="mesh" rgba="0.1 0.1 0.1 1" mesh="meshes_laser_sick_tim551" class="tiago_pro_visual"/>
-          <geom size="0.01 0.005" type="cylinder" class="tiago_pro_collision"/>
-        </body>
         <body name="virtual_base_laser_link" pos="0 0 0.13244"/>
         <body name="base_imu_link" pos="-0.287 0 0.092163" quat="0.707107 0 0 0.707107">
           <site name="base_imu" size="0.01" rgba="0 0 0 0"/>

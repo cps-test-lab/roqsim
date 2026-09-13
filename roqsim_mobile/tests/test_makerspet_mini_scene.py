@@ -1,6 +1,6 @@
 """Maker's Pet Mini: the substrate's smallest wheeled robot, and a description that states everything.
 
-Two findings this file pins.
+Three findings this file pins.
 
 ``test_no_value_here_is_an_assumption`` guards what makes this port unusual. Every drive and sensor
 number is the vendor's own -- ``params.xacro`` for the geometry, ``config/navigation.yaml`` for the
@@ -14,6 +14,12 @@ the mesh at 1:1 and it comes out ~1000x too large -- and *no physics check notic
 collision is a cylinder and only its visual is the mesh. That is exactly what happened on this
 vendor's 200 mm sibling before ``urdf_source.mesh_scales`` existed; the guard is why it did not happen
 again here.
+
+``test_the_vendor_head_occludes_every_ray`` pins a property of the description, not a wish. The lidar
+skips only its own housing (``base_scan``) and never other robot geometry, and its site is the vendor's
+``base_scan`` frame. The description puts that scan plane inside the head, so every ray returns from
+inside the head and reads ``range_min``. As written, this robot's scan sees nothing; the port log
+records it.
 """
 
 from __future__ import annotations
@@ -25,8 +31,10 @@ import numpy as np
 import pytest
 from mobile_scene_utils import named
 
+from roqsim import raycast
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import Plugin
 
 #: From the expanded makerspet/makerspet_mini description @ 77d196b6, not measured from our model.
 TOTAL_MASS = 0.800
@@ -249,5 +257,120 @@ def test_the_caster_carries_priority():
         for side in ("left", "right"):
             wheel = named(model, mujoco.mjtObj.mjOBJ_GEOM, f"k_wheel_{side}_link_collision0")
             assert model.geom_friction[wheel][0] >= 1.0, "the driven wheels must keep their grip"
+    finally:
+        engine.shutdown()
+
+
+# -- the scanner mount: the vendor's frame, and only its own housing excluded --------------------
+
+WALL_FACE = 1.0  # near face of the probe wall, along world +x from the robot's origin
+
+
+class _WallAhead(Plugin):
+    """A wall across world +x, ``WALL_FACE`` ahead of the spawned robot, spanning the scan plane."""
+
+    def build(self, spec: mujoco.MjSpec, ctx) -> None:
+        spec.worldbody.add_geom(name="scan_probe_wall", type=mujoco.mjtGeom.mjGEOM_BOX,
+                                pos=[WALL_FACE + 0.05, 0.0, 0.5], size=[0.05, 3.0, 0.5])
+
+
+def _scan_engine():
+    world = {
+        "sim": {"timestep": 0.002},
+        "components": [
+            {f"{__name__}:_WallAhead": {}},
+            {"spawn_robot": {"model": "makerspet_mini", "prefix": "k_"}, "name": "k"},
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.setup()
+    engine.reset()
+    engine.step()  # the rate gate starts open, so the first step casts
+    return engine
+
+
+def _lidar(engine):
+    return next(p for p in engine.plugins if type(p).__name__ == "LidarPlugin")
+
+
+def _recast(engine, **cast):
+    """The published scan's own rays, recast with normals: ``(world directions, hits)``."""
+    model, data = engine.ctx.model, engine.ctx.data
+    lidar = _lidar(engine)
+    scan = lidar.latest
+    sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "k_lidar")
+    angles = scan.angle_min + scan.angle_increment * np.arange(len(scan.ranges))
+    local = np.stack([np.cos(angles), np.sin(angles), np.zeros_like(angles)], axis=1)
+    dirs = local @ data.site_xmat[sid].reshape(3, 3).T
+    hits = raycast.buffers(len(dirs), normals=True)
+    raycast.cast(model, data, data.site_xpos[sid], dirs, cutoff=lidar.range_max,
+                 bodyexclude=named(model, mujoco.mjtObj.mjOBJ_BODY, "k_base_scan"), out=hits, **cast)
+    return dirs, hits
+
+
+def test_the_scan_is_stamped_in_the_vendors_base_scan_frame():
+    """plugins.xacro stamps the scan in base_scan; scan_joint hangs it off base_link, rpy 0 -pi 0."""
+    engine = _scan_engine()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        lidar = _lidar(engine)
+        assert lidar.exclude_body == "base_scan", "a lidar excludes its own housing and nothing else"
+        hints = next(e for e in engine.ctx.interface.all() if e.name == "scan").backend["ros2"]
+        assert hints["frame_id"] == "base_scan"
+        tf = hints["static_tf"]
+        assert tf["parent"] == "base_link"
+        assert np.allclose(tf["translation"], [0.0, 0.0, LIDAR_HEIGHT], atol=1e-9)
+        assert np.allclose(np.abs(tf["rotation"]), [0.0, 0.0, 1.0, 0.0], atol=1e-9)  # pi about y
+        sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "k_lidar")
+        puck = named(model, mujoco.mjtObj.mjOBJ_BODY, "k_base_scan")
+        assert np.allclose(data.site_xpos[sid], data.xpos[puck], atol=1e-9)
+        assert np.allclose(data.site_xmat[sid], data.xmat[puck], atol=1e-9), (
+            "the lidar site must be base_scan's frame, rotation included, or every bearing is "
+            "measured in a frame the scan is not stamped in")
+    finally:
+        engine.shutdown()
+
+
+def test_the_vendor_head_occludes_every_ray():
+    """Pinned as the description is, not as we would like it -- see the manifest and the port log.
+
+    The head is vendor geometry, so the lidar does not exclude it. The scan plane lies inside it, so
+    each ray returns 8.4 mm out from inside the head's hemisphere and is clamped to range_min: the
+    wall 1 m ahead is invisible. If this fails, the description or the mount has changed.
+    """
+    engine = _scan_engine()
+    try:
+        model = engine.ctx.model
+        lidar = _lidar(engine)
+        ranges = np.asarray(lidar.latest.ranges)
+        assert ranges.shape == (360,)
+        assert np.allclose(ranges, lidar.range_min), "a ray sees past the head"
+        dirs, hits = _recast(engine)
+        head = named(model, mujoco.mjtObj.mjOBJ_BODY, "k_head_link")
+        assert np.all(hits.geomid >= 0)
+        assert set(model.geom_bodyid[hits.geomid].tolist()) == {head}
+        assert np.allclose(hits.dist, 0.0084, atol=1e-4)
+        assert np.all(np.einsum("ij,ij->i", hits.normal, dirs) > 0), "every return is from inside"
+    finally:
+        engine.shutdown()
+
+
+def test_the_inverted_mount_mirrors_bearings_as_the_vendor_frame_does():
+    """base_scan's x points backwards, so bearing 0 looks behind the robot and a wall ahead is at pi.
+
+    Read against world geometry only (group 0): a diagnostic through the robot, since the head
+    occludes the scan itself.
+    """
+    engine = _scan_engine()
+    try:
+        model = engine.ctx.model
+        dirs, hits = _recast(engine, geomgroup=np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8))
+        assert np.allclose(dirs[0], [-1.0, 0.0, 0.0], atol=1e-9)
+        assert np.allclose(dirs[90], [0.0, 1.0, 0.0], atol=1e-9)
+        wall = named(model, mujoco.mjtObj.mjOBJ_GEOM, "scan_probe_wall")
+        on_wall = np.flatnonzero(hits.geomid == wall)
+        nearest = int(on_wall[np.argmin(hits.dist[on_wall])])
+        assert nearest == 180
+        assert hits.dist[nearest] == pytest.approx(WALL_FACE, abs=1e-3)
     finally:
         engine.shutdown()

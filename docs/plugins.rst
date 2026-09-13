@@ -37,9 +37,10 @@ tell apart from another mesh. Naming both sources, or neither, is refused. The w
 shared with the mesh baker and the plan-view renderer, so a preview, a baked world and this plugin
 cut the same openings.
 
-Any endpoint-producing plugin below accepts an optional ``topics:`` map to **hardwire** an endpoint's
-ROS topic to an absolute name, overriding the namespace+default — e.g. ``topics: {image:
-/camera/color/image_raw}``. See :doc:`architecture` › Hardwired topics.
+Any endpoint-producing plugin below accepts an optional ``topics:`` map to set an endpoint's ROS
+topic. An absolute name **hardwires** it, overriding the namespace+default — e.g. ``topics: {image:
+/camera/color/image_raw}``; a relative name renames it inside the namespace — e.g. ``topics: {scan:
+scan2}`` for a robot's second scanner. See :doc:`architecture` › Hardwired topics.
 
 .. The catalog below is generated at build time from the roqsim.plugins entry points (see
    docs/_ext/plugin_docs.py), so it always matches the installed plugins. This note is a source
@@ -212,6 +213,16 @@ MODEL ships a camera needs none of this (three do, and their manifests offer the
 this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
 invisible to anyone reading the world. It is mutually exclusive with ``motion:``: a mount that
 rides a body has its pose from that body, so moving the sensor means moving what carries it.
+
+A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
+in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
+robot declares in its manifest's ``frames:``) with the vendor joint origin as ``pos``/``rpy``. It
+inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
+are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
+the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
+else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
+none needs one on every mount. The ``spawn_sensor`` and
+``spawn_robot`` entries below have the keys.
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
 is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
@@ -969,27 +980,30 @@ there and needs no plugin of its own::
      - spawn_robot: {model: turtlebot4}
        name: robot
        components:
-         - lidar:
-             range_stddev: 0.01
-             dropout_percent: 2.0
-             fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
+         - spawn_sensor: {}          # the manifest's RPLIDAR mount, by its label
+           name: rplidar
+           components:
+             - lidar:
+                 range_stddev: 0.01
+                 dropout_percent: 2.0
+                 fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
 
 The sensor is nominal until the fault is switched on, so adding a ``fault:`` block changes nothing
 about a run that never fires it. A scenario switches it by the sensor's **address**::
 
-   set_sensor_override(instance: 'robot.lidar', active: true)
+   set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
    wait elapsed(8s)
-   set_sensor_override(instance: 'robot.lidar', active: false)
+   set_sensor_override(instance: 'robot.rplidar.lidar', active: false)
 
-and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/lidar/override``, with
-``robot/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
+and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
+``robot/rplidar/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
 path of labels with dots as slashes, because a dot is not legal in a ROS name; a bare ``lidar`` would
 name neither of a robot's two lidars.
 
 It mirrors ``model_override`` in the three ways that matter, rather than re-deciding them:
 
 * **Severity is configured, not sent.** The ``fault:`` values are ordinary config, so sweeping how bad
-  the fault gets is ``components.robot.lidar.fault.dropout_percent`` — an experiment factor,
+  the fault gets is ``components.robot.rplidar.lidar.fault.dropout_percent`` — an experiment factor,
   deterministic per cell and in the run's provenance. One bit crosses the wire.
 * **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
   experiment's independent variable.

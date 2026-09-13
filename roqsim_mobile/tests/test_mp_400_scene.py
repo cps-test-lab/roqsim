@@ -15,6 +15,12 @@ is +y in the base frame — a convention every other model satisfied only becaus
 wrote them. This description's axis is -y and the robot drove *backwards* (-0.984 of a forward
 command). The plugin now derives the sign off the model, so the vendor's axis is kept and the tests
 pin that the plugin copes rather than that the model was bent to suit it.
+
+The scanner is the ``sick_s300`` device model at the vendor's ``lidar_1_joint``, upside down as the
+vendor mounts it, and the scan tests at the end check it in a closed room. They also pin a third
+finding, as strict expected failures: the vendor's own body cover encloses that scan plane, so from
+the vendor origin almost every ray meets the cover's inside within 0.29 m. The mount is the vendor's;
+the port log records the occlusion and the open decision.
 """
 
 from __future__ import annotations
@@ -25,12 +31,27 @@ import mujoco
 import numpy as np
 import pytest
 from mobile_scene_utils import named
+from scan_mount_utils import (
+    assert_mounts,
+    assert_scan_frames,
+    assert_tf_chain,
+    forward_range,
+    lidar,
+    recast,
+    robot_hits,
+    spawn,
+)
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
 #: From the expanded neo_simulation2 humble xacro @ 83204145, not measured from our model.
-TOTAL_MASS = 84.4482
+VENDOR_MASS = 84.4482
+#: lidar_1_link as the vendor declares it (mp_400_body.urdf.xacro:45). That link is not in the MJCF:
+#: the sick_s300 device mounted there carries the scanner at its datasheet 1.2 kg instead.
+VENDOR_LIDAR_LINK_MASS = 0.001
+S300_MASS = 1.2
+TOTAL_MASS = VENDOR_MASS - VENDOR_LIDAR_LINK_MASS + S300_MASS
 BASE_MASS = 30.0
 CASTER_MASS = 12.7        # each, for a 38 mm sphere. See the module docstring.
 WHEEL_MASS = 1.82362
@@ -47,6 +68,9 @@ def _engine():
         "components": [{"spawn_robot": {"model": "mp_400", "prefix": "q_"}, "name": "q"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: the scanner's range
+    # noise refuses to draw without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     return engine
@@ -58,6 +82,7 @@ def _yaw(data, bid):
 
 
 def test_mass_matches_the_vendor_description():
+    """The description's sum, with its 1 g lidar_1_link replaced by the 1.2 kg S300 device."""
     engine = _engine()
     try:
         assert engine.ctx.model.body_mass.sum() == pytest.approx(TOTAL_MASS, abs=1e-3)
@@ -158,8 +183,7 @@ def test_manifest_brings_a_differential_drive_and_one_scanner():
             "two driven wheels with passive casters do not scrub, so no slip_factor -- the same line "
             "turtlebot3_waffle, raspimouse and oomwoo_one draw"
         )
-        scans = [p for p in engine.plugins if type(p).__name__ == "LidarPlugin"]
-        assert len(scans) == 1, f"the MP-400 ships one front S300, got {len(scans)}"
+        assert_mounts(engine, "q", MOUNTS)
     finally:
         engine.shutdown()
 
@@ -287,3 +311,73 @@ def test_b2_rotates_at_the_commanded_rate(commanded):
         assert 0.94 < ratio < 1.04, f"achieved/commanded yaw {ratio:.3f} at {commanded} rad/s"
     finally:
         engine.shutdown()
+
+
+# -- the scanner: the sick_s300 device at the vendor's lidar_1_joint ------------------------------
+
+#: neo_simulation2 @ 832041452c1a: robots/mp_400/urdf/mp_400_body.urdf.xacro:38 (the lidar_1_joint
+#: origin, written as the vendor writes it) and mp_400_gazebo.urdf.xacro:41,50 (the scan's link and
+#: topic). ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
+MOUNTS = {"scan_front": ("sick_s300", "lidar_1_link", (0.244, 0.0, 0.141), (3.14, 0.0, 0.0), "scan")}
+NAMESPACE = "neo"
+#: The robot bodies the scan meets from outside: the two driven wheels, whose tyres rise above the
+#: upside-down scan plane about 0.32 m to either side.
+OUTSIDE_HITS = {"mp_400_fixed_wheel_left_link", "mp_400_fixed_wheel_right_link"}
+WHEEL_HIT_DISTANCE = 0.32
+
+#: Why the two geometry checks below are expected to fail, measured rather than assumed. The vendor's
+#: MP-400-BODY.dae -- its visual and its collision mesh -- places the yellow cover's front face at
+#: x = 0.295, 51 mm ahead of the scanner, and the cover's inside meets 539 of 541 rays of a 270 degree
+#: fan within 0.35 m at every height from 0.13 to 0.33 m, including the vendor frame's 0.141 and the
+#: datasheet scan plane's 0.137. The undecimated vendor mesh and the shipped one agree ray for ray.
+BODY_ENCLOSES_SCAN = (
+    "neo_simulation2's MP-400 body cover encloses lidar_1_link's scan plane: from the vendor origin "
+    "the rays meet the cover's inside. See the port log."
+)
+
+
+@pytest.fixture(scope="module")
+def scan():
+    engine = spawn("mp_400", MOUNTS, owner="q", prefix="q_", namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
+
+
+def test_the_scan_frame_is_the_vendor_joint_origin(scan):
+    """Upside down (roll 3.14, as written), so the scan's +y bearing points to the robot's right."""
+    assert_scan_frames(scan, "q_", MOUNTS)
+
+
+def test_the_scan_skips_its_own_mount_and_nothing_else(scan):
+    model = scan.ctx.model
+    scanner = lidar(scan, "q.scan_front")
+    mount = named(model, mujoco.mjtObj.mjOBJ_BODY, "q_scan_front_mount")
+    assert scanner._bodyexclude == mount, "the device excludes its own housing, not the robot"
+    _, hits = recast(scan, scanner)
+    assert mount not in set(model.geom_bodyid[hits.geomid[hits.geomid >= 0]].tolist())
+
+
+@pytest.mark.xfail(strict=True, reason=BODY_ENCLOSES_SCAN)
+def test_the_forward_ray_reads_the_wall(scan):
+    published, true = forward_range(scan, lidar(scan, "q.scan_front"))
+    assert published == pytest.approx(true, abs=1e-3), (
+        f"reads {published:.4f} m against a wall at {true:.4f} m")
+
+
+@pytest.mark.xfail(strict=True, reason=BODY_ENCLOSES_SCAN)
+def test_no_ray_starts_inside_robot_geometry(scan):
+    scanner = lidar(scan, "q.scan_front")
+    inside, _ = robot_hits(scan, scanner, "q_")
+    assert not inside, {body: len(d) for body, d in inside.items()}
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+
+
+def test_the_robot_parts_the_scan_sees_from_outside_are_the_drive_wheels(scan):
+    _, outside = robot_hits(scan, lidar(scan, "q.scan_front"), "q_")
+    assert set(outside) == OUTSIDE_HITS, sorted(outside)
+    for body, distances in outside.items():
+        assert np.allclose(distances, WHEEL_HIT_DISTANCE, atol=0.01), (body, distances)
+
+
+def test_the_tf_chain_and_topic_are_the_vendors(scan):
+    assert_tf_chain(scan, "q", NAMESPACE, MOUNTS)

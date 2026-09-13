@@ -226,10 +226,12 @@ The other half of the same question, for a caller holding an *override* rather t
     "plugins": [{"address": "robot", "ref": "spawn_robot", "name": "robot",
                  "entity": null, "enabled": true, "origin": "document",
                  "paths": ["components.robot.model", "components.robot.pos"]},
-                {"address": "robot.lidar", "ref": "lidar", "name": null,
-                 "entity": "robot", "enabled": true, "origin": "manifest",
-                 "paths": ["components.robot.lidar.rays", "components.robot.lidar.max_range"]}],
-    "addresses": ["robot", "robot.diff_drive", "robot.lidar", "robot.oakd_camera"],
+                {"address": "robot.rplidar.lidar", "ref": "lidar", "name": null,
+                 "entity": "robot.rplidar", "enabled": true, "origin": "manifest",
+                 "paths": ["components.robot.rplidar.lidar.rays",
+                           "components.robot.rplidar.lidar.max_range"]}],
+    "addresses": ["robot", "robot.diff_drive", "robot.rplidar", "robot.rplidar.lidar",
+                  "robot.oakd_camera"],
     "entities": null}
 
 ``plugins`` reports every component that will **run** -- the document's own entries and everything its

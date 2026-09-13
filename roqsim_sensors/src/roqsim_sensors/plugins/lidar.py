@@ -10,7 +10,7 @@ endpoint -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file is t
 
 Config (in addition to ``lidar_common``'s ``namespace``/``site``/``frame_id``/
 ``range_min``/``max_range``/``rate_hz``/``exclude_body``/``range_stddev``/``dropout_percent``/
-``emit_static_tf``)::
+``emit_static_tf``/``tf_parent``)::
 
     lidar:
       rays: 360
@@ -19,6 +19,11 @@ Config (in addition to ``lidar_common``'s ``namespace``/``site``/``frame_id``/
 
 ``frame_id`` defaults to ``site``; set it when the robot's real description names the frame
 differently (the TurtleBot 4's URDF calls it ``rplidar_link``).
+
+The static mount TF (``emit_static_tf``, on by default) is ``tf_parent -> frame_id``, measured from
+that body. ``tf_parent`` defaults to the resolved ``exclude_body``, else ``world``; set it when the
+excluded body is the scanner's own housing rather than the link its frame hangs from. A device
+model mounted with ``spawn_sensor`` sets ``emit_static_tf: false``: the mount publishes the chain.
 """
 
 from __future__ import annotations

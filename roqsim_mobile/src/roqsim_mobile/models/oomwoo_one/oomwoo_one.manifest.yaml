@@ -21,14 +21,18 @@ components:
       right_joints: [wheel_right_joint]
   # The vendor's own scan, from plugins.xacro's laser_scan_sensor: 360 samples over a full turn,
   # 0.1-10 m, 5 Hz. The mount height is the description's scan_joint, not a guess -- 0.088 m above
-  # the floor, which is low, as a vacuum's must be to fit under furniture.
+  # the floor, which is low, as a vacuum's must be to fit under furniture. The scan is stamped in
+  # base_scan, the vendor's frame (upright, rpy 0), and its static TF hangs off base_link as the
+  # description's scan_joint does. The rays skip only the scanner's own housing -- the base_scan puck,
+  # which encloses the site -- and never the rest of the robot.
   - lidar:
       site: lidar
-      frame_id: laser
+      frame_id: base_scan
       rays: 360
       angle_min: 0.0
       angle_max: 6.283185307
       range_min: 0.1
       max_range: 10.0
       rate_hz: 5.0
-      exclude_body: base_link
+      exclude_body: base_scan
+      tf_parent: base_link

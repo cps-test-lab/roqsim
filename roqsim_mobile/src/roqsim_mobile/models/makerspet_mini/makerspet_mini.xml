@@ -10,7 +10,7 @@
     not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw.
 
     The scanner sits INVERTED between the two decks (the description's scan_joint carries
-    rpy="-pi 0 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
+    rpy="0 -pi 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
     vendor's; the scan parameters are not - see the manifest and the port log.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
@@ -60,8 +60,8 @@
     <body name="base_link" childclass="makerspet_mini">
       <freejoint name="base_free"/>
       <inertial pos="0 0 0" mass="0.25" diaginertia="0.00026158333333333334 0.00026158333333333334 0.00048049999999999997"/>
-      <!-- The scan plane, off the description's own scan_joint. -->
-      <site name="lidar" pos="0 0 0.0704" size="0.005" rgba="1 0 0 0.6"/>
+      <!-- The scan plane and frame: the description's own scan_joint, rotation included, so the site is base_scan's frame. -->
+      <site name="lidar" pos="0 0 0.0704" quat="6.123234e-17 0 -1 0" size="0.005" rgba="1 0 0 0.6"/>
       <site name="base_imu" pos="0 0 0" size="0.005" rgba="0 0 0 0"/>
         <geom class="visual" type="cylinder" size="0.062 0.016" material="makerspet_mini_white" pos="0 0 0.016"/>
         <geom class="collision" type="cylinder" size="0.062 0.016" name="base_link_collision0" pos="0 0 0.016"/>

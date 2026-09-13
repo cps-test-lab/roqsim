@@ -11,6 +11,10 @@ recollection rather than a file.
 same repository steers, this one does not, and their models must not converge by copy-paste. The
 ledger's unknown here was "mecanum or Swedish-roller … the macro was listed rather than opened";
 opened, the only wheel macro is ``mpo_500_omni_wheel`` and there is no caster macro at all.
+
+The two scanners are ``sick_microscan3`` device models at the vendor's ``lidar_1_joint`` and
+``lidar_2_joint``, the rear one facing backwards, and each publishes on its own vendor topic (``scan``,
+``scan2``). The scan tests at the end check them in a closed room.
 """
 
 from __future__ import annotations
@@ -21,11 +25,23 @@ import mujoco
 import numpy as np
 import pytest
 from mobile_scene_utils import named
+from scan_mount_utils import (
+    assert_mounts,
+    assert_scan_frames,
+    assert_tf_chain,
+    forward_range,
+    lidar,
+    recast,
+    robot_hits,
+    spawn,
+)
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
-#: From the expanded neo_simulation2 humble xacro @ 83204145, not measured from our model.
+#: From the expanded neo_simulation2 humble xacro @ 83204145, not measured from our model. Its two
+#: lidar links (0.0001 kg each, mpo_500_body.urdf.xacro:46,73) are not in the MJCF; the two
+#: sick_microscan3 devices mounted there carry the same 0.0001 kg each, so the sum is unchanged.
 TOTAL_MASS = 72.8002
 WHEEL_RADIUS = 0.117
 WHEEL_SEPARATION = 0.56
@@ -42,6 +58,9 @@ def _engine():
         "components": [{"spawn_robot": {"model": "mpo_500", "prefix": "p_"}, "name": "p"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: the scanners' range
+    # noise refuses to draw without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     return engine
@@ -103,12 +122,10 @@ def test_the_limits_are_not_isotropic():
         engine.shutdown()
 
 
-def test_manifest_brings_two_scanners():
+def test_manifest_mounts_the_vendors_two_microscan3s():
     engine = _engine()
     try:
-        scans = [p for p in engine.plugins if type(p).__name__ == "LidarPlugin"]
-        assert len(scans) == 2, f"expected the vendor's two MicroScan3s, got {len(scans)}"
-        assert {p.config["site"] for p in scans} == {"lidar_1", "lidar_2"}
+        assert_mounts(engine, "p", MOUNTS)
     finally:
         engine.shutdown()
 
@@ -214,3 +231,64 @@ def test_the_wheels_turn_and_turn_differently_when_strafing():
         assert signs == {-1, 1}, f"a strafe must split the wheel directions; physical rates {strafe}"
     finally:
         engine.shutdown()
+
+
+# -- the scanners: sick_microscan3 devices at the vendor's lidar joints ----------------------------
+
+#: neo_simulation2 @ 832041452c1a: robots/mpo_500/urdf/mpo_500_body.urdf.xacro:38 and :65 (the
+#: lidar_1_joint / lidar_2_joint origins, written as the vendor writes them) and
+#: mpo_500_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic).
+#: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
+MOUNTS = {
+    "scan_front": ("sick_microscan3", "lidar_1_link", (0.442, 0.0, 0.372), (0.0, 0.0, 0.0), "scan"),
+    "scan_rear": ("sick_microscan3", "lidar_2_link", (-0.442, 0.0, 0.372), (0.0, 0.0, 3.14), "scan2"),
+}
+NAMESPACE = "neo"
+
+
+@pytest.fixture(scope="module")
+def scan():
+    engine = spawn("mpo_500", MOUNTS, owner="p", prefix="p_", namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
+
+
+def test_each_scan_frame_is_the_vendor_joint_origin(scan):
+    """Both upright; the rear one yawed 3.14, as written, so it looks backwards."""
+    assert_scan_frames(scan, "p_", MOUNTS)
+
+
+def test_each_forward_ray_reads_the_wall(scan):
+    for label in MOUNTS:
+        published, true = forward_range(scan, lidar(scan, f"p.{label}"))
+        assert published == pytest.approx(true, abs=1e-3), (
+            f"{label} reads {published:.4f} m against a wall at {true:.4f} m")
+
+
+def test_each_scan_skips_its_own_mount_and_nothing_else(scan):
+    model = scan.ctx.model
+    for label in MOUNTS:
+        scanner = lidar(scan, f"p.{label}")
+        mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"p_{label}_mount")
+        assert scanner._bodyexclude == mount, f"{label} excludes something other than its housing"
+        _, hits = recast(scan, scanner)
+        assert mount not in set(model.geom_bodyid[hits.geomid[hits.geomid >= 0]].tolist())
+
+
+def test_no_ray_starts_inside_robot_geometry(scan):
+    for label in MOUNTS:
+        scanner = lidar(scan, f"p.{label}")
+        inside, _ = robot_hits(scan, scanner, "p_")
+        assert not inside, f"{label}: {({body: len(d) for body, d in inside.items()})}"
+        assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, f"{label}: a ray is clamped"
+
+
+def test_the_scans_see_no_part_of_the_robot(scan):
+    """Both scan planes lie above the body, at 0.372 m, so nothing of the robot is in either."""
+    for label in MOUNTS:
+        _, outside = robot_hits(scan, lidar(scan, f"p.{label}"), "p_")
+        assert not outside, f"{label}: {sorted(outside)}"
+
+
+def test_the_tf_chain_and_topics_are_the_vendors(scan):
+    assert_tf_chain(scan, "p", NAMESPACE, MOUNTS)

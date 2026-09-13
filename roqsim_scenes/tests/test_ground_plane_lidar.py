@@ -24,7 +24,8 @@ import pytest
 from roqsim.presence import visible_geomgroup_mask
 from roqsim_scenes.cli import scene_to_mjcf
 
-#: TurtleBot 4 rplidar site height above the floor (``roqsim_mobile`` turtlebot4.xml).
+#: TurtleBot 4 scan height: base_link -> shell_link -> rplidar_link, as ``roqsim_mobile``'s turtlebot4
+#: manifest mounts the RPLIDAR.
 LIDAR_Z = 0.192915
 #: ``max_range`` the nav worlds give the 2D lidar.
 MAX_RANGE = 12.0

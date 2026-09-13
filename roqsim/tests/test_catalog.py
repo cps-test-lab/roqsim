@@ -139,7 +139,7 @@ def test_a_model_row_names_the_components_its_manifest_brings():
     """ "What do I get when I spawn this" is not visible from the MJCF -- it is the manifest."""
     pytest.importorskip("roqsim_mobile", reason="the turtlebot4 manifest lives in roqsim_mobile")
     row = next(r for r in _rows(list_models()) if r["name"] == "turtlebot4")
-    assert {"diff_drive", "lidar"} <= set(row["components"])
+    assert {"diff_drive", "spawn_sensor"} <= set(row["components"])
     assert row["provenance"], "a vendored model ships its licence beside it"
 
 
@@ -172,10 +172,11 @@ def test_model_details_add_the_config_a_spawn_actually_injects():
     pytest.importorskip("roqsim_mobile", reason="the turtlebot4 manifest lives in roqsim_mobile")
     detail = get_model_details("roqsim_mobile:turtlebot4")
     assert "error" not in detail
-    lidar = next(c for c in detail["components"] if "lidar" in c)
-    # The manifest's own config, not just the plugin's name: this is where a TurtleBot 4's scan gets
-    # its 360 rays and the frame name the robot's URDF uses, and a spawn injects it verbatim.
-    assert lidar["lidar"]["frame_id"] == "rplidar_link"
+    mount = next(c for c in detail["components"] if "spawn_sensor" in c)
+    # The manifest's own config, not just the plugin's name: this is where a TurtleBot 4 says which
+    # scanner it carries and the frame name the robot's URDF uses, and a spawn injects it verbatim.
+    assert mount["spawn_sensor"]["model"] == "rplidar_a1"
+    assert mount["spawn_sensor"]["frame_id"] == "rplidar_link"
     # A component whose entry is bare is listed too (`diff_drive: {}` -- its geometry is in the
     # plugin's defaults), because what a spawn injects is the entry, empty or not.
     assert any("diff_drive" in c for c in detail["components"])

@@ -269,12 +269,15 @@ def resolve_enabled(specs: list[PluginSpec]) -> None:
     ``if entity else ""``), so a sensor resolves an unprefixed site and fails much later with a
     message about MJCF names -- which is the silent class of failure this design exists to remove.
     The cascade is computed rather than left to the reader, and each spec keeps its own ``enabled``
-    so the record shows what was turned off and what merely went with it.
+    so the record shows what was turned off and what merely went with it. Walked at every depth: a
+    device mounted on a robot is a component that owns components too.
     """
     for spec in specs:
         if not spec.enabled:
             for child in _subtree(spec):
                 child.enabled = False
+        else:
+            resolve_enabled(spec.children)
 
 
 def _subtree(spec: PluginSpec) -> list[PluginSpec]:
@@ -1203,13 +1206,17 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # a structural override work -- `--set components.robot.model=husky` lands before step two reads
     # `model:` -- and the second is what reaches a component a manifest supplied.
     declared_tree = [s for s in plugins if s.entity is None]
+    keys_before = {id(s): set(s.config) for s in _subtrees(declared_tree)}
     matched = apply_assignments(raw, declared_tree, component_assignments)
     # Re-flatten: pass one may have ADDED components (`components:` on an address), and those have
     # to be wired, checked and ordered exactly like the ones the document declared -- so they go
     # back through the same walk rather than being spliced in beside it.
     plugins = flatten_specs(declared_tree)
     effective, unresolved = expand_document(plugins, base_dir)
+    _refuse_late_expansion_overrides(component_assignments, _as_tree(effective), plugins, base_dir)
+    _refuse_late_additions(component_assignments, _as_tree(effective), plugins)
     matched += apply_assignments(raw, _as_tree(effective), component_assignments)
+    _drop_keys_that_named_injected_components(_as_tree(effective), keys_before)
     resolve_enabled(_as_tree(effective))
     unmatched = [a for a in component_assignments if a not in matched]
     if unmatched:
@@ -1231,6 +1238,95 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         base_dir=base_dir,
         raw=raw,
     )
+
+
+def _refuse_late_expansion_overrides(
+    assignments, tree: list[PluginSpec], declared: list[PluginSpec], base_dir: Path
+) -> None:
+    """Refuse an override of an expansion input on a component a manifest injected.
+
+    The first pass reaches only what the document declares; a manifest-injected mount is first
+    addressable after it has expanded. Setting its ``frame_id`` or ``model`` then would change the
+    mount and leave the components it brought in built from the old value -- a scan stamped in one
+    frame while the mount publishes another, with nothing to say so. The plugin names the keys its
+    ``expand`` reads (:attr:`roqsim.plugin.Plugin.expansion_keys`).
+    """
+    written = {id(s) for s in declared}
+    for a in assignments:
+        for spec, config_path in _resolve_targets(a.path[1:], tree):
+            if id(spec) in written or not config_path:
+                continue
+            try:
+                keys = resolve_plugin(spec.ref, base_dir=base_dir).expansion_keys
+            except PluginError:
+                continue
+            if config_path[0] in keys:
+                owner, _, label = spec.address.rpartition(".")
+                raise PluginError(
+                    f"override '{'.'.join(a.path)}' sets '{config_path[0]}' on '{spec.address}', "
+                    f"which a model manifest supplies -- and '{config_path[0]}' is read while that "
+                    f"component expands, which has already happened by the time an override can "
+                    f"reach it. Declare it in the world instead, where the value lands first: under "
+                    f"'{owner or '(root)'}', a '{_CHILDREN_KEY}:' entry "
+                    f"'- {spec.ref}: {{{config_path[0]}: ...}}' with name: {label}."
+                )
+
+
+def _refuse_late_additions(assignments, tree: list[PluginSpec], declared: list[PluginSpec]) -> None:
+    """Refuse an override that adds under a component a manifest injected.
+
+    Adding is a first-pass operation: what is added is flattened, expanded and merged with the
+    owner's manifest defaults like anything the document declares. A manifest-injected owner is first
+    addressable after expansion, so entries appended to it then would never be expanded or built,
+    and the run would report success without them. The same entries reach it when the override adds
+    an entry for that component under its nearest declared ancestor, which expansion then merges the
+    manifest's defaults under -- and the message writes that override out.
+    """
+    written = {id(s) for s in declared}
+    by_address = {s.address: s for s in _subtrees(tree)}
+    for a in assignments:
+        for spec, config_path in _resolve_targets(a.path[1:], tree):
+            if id(spec) in written or config_path != (_CHILDREN_KEY,):
+                continue
+            chain = [spec]
+            while chain[-1].entity is not None and id(by_address[chain[-1].entity]) not in written:
+                chain.append(by_address[chain[-1].entity])
+            ancestor = chain[-1].entity
+            nested = "[...]"
+            for link in chain:
+                nested = f"[{{{link.ref}: {{}}, name: {link.label}, {_CHILDREN_KEY}: {nested}}}]"
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' adds under '{spec.address}', which a model manifest "
+                f"supplies -- and what it owns is expanded and wired while that manifest expands, "
+                f"which has already happened by the time an override can reach it, so the entries "
+                f"would be dropped. Add them through its declared owner instead, where they land "
+                f"first: '{_ENTRIES_KEY}.{ancestor}.{_CHILDREN_KEY}: {nested}'. The manifest still "
+                f"fills in everything that entry does not say."
+            )
+
+
+def _drop_keys_that_named_injected_components(tree: list[PluginSpec], keys_before: dict) -> None:
+    """Remove what the first pass wrote under a name that turned out to be a component.
+
+    Pass one sees only what the document declares, so ``robot.rplidar.lidar.rays`` -- a scanner the
+    model's manifest mounts -- resolves there as the config key ``rplidar`` on ``robot``. Pass two
+    reaches the real component and sets the value where it belongs; the first write stays behind as a
+    key nothing reads, and the run record would carry it as though the spawn had been configured
+    with it. Only keys pass one ADDED are candidates, and a declared key can never share a
+    component's label (:func:`_check_label_vs_config`), so nothing the document wrote is touched.
+    """
+    for spec in _subtrees(tree):
+        before = keys_before.get(id(spec))
+        if before is None:
+            continue
+        labels = {child.label for child in spec.children}
+        for key in set(spec.config) - before:
+            if key in labels:
+                del spec.config[key]
+
+
+def _subtrees(roots: list[PluginSpec]) -> list[PluginSpec]:
+    return [s for root in roots for s in (root, *_subtree(root))]
 
 
 #: Plugin refs :func:`with_transport` appends, in order. Names rather than classes: they
@@ -1381,15 +1477,30 @@ def expand_document(
 
     Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
     build order still falls out of the document's shape. Whether to skip a default the document
-    already declares is the producing plugin's call: it is handed the declared specs and dedupes on
-    the label (see :func:`roqsim.manifest.expand_manifest`). One level deep, deliberately -- what
-    ``expand`` returns is not itself expanded.
+    already declares is the producing plugin's call: it is handed every spec declared or injected so
+    far and dedupes on the label (see :func:`roqsim.manifest.expand_manifest`).
+
+    **Recursive, depth-first.** What ``expand`` returns is expanded in turn, so a robot's manifest can
+    mount a device whose own manifest brings its capture plugin: robot, its first component, a
+    mounted sensor, the sensor's components, the robot's next component. An injected spec owned by
+    an entry that has not landed yet -- a manifest child of a component the world declared itself --
+    waits for that owner and follows it, so a carrier always builds before what it carries. A chain
+    that reaches the same model file twice, or nests deeper than :data:`_MAX_EXPANSION_DEPTH`, is
+    refused with the chain named.
 
     Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
     """
     effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
-    for spec in declared:
+    # Handed to every `expand`, and grown by what each returns, so a nested producer dedupes against
+    # what the world AND an outer manifest already said for its entity.
+    world: list[PluginSpec] = list(declared)
+    landed: set[str] = set()
+    waiting: dict[str, list[tuple[PluginSpec, tuple]]] = {}
+
+    def place(spec: PluginSpec, chain: tuple) -> None:
+        effective.append(spec)
+        landed.add(spec.address)
         try:
             cls = resolve_plugin(spec.ref, base_dir=base_dir)
         except PluginError as exc:
@@ -1399,17 +1510,75 @@ def expand_document(
             # `instantiate_plugins` is where the refusal happens -- with the same message it always
             # gave, including the "this is a ROS world, here are your two ways on" case.
             unresolved.append((spec.ref, str(exc)))
-            effective.append(spec)
-            continue
-        _check_ownership(spec, cls)
-        effective.append(spec)
-        for sub in cls.expand(spec, declared, base_dir):
-            effective.append(sub)
-            try:
-                resolve_plugin(sub.ref, base_dir=base_dir)
-            except PluginError as exc:
-                unresolved.append((sub.ref, str(exc)))
+            cls = None
+        if cls is not None:
+            _check_ownership(spec, cls)
+            link = (spec.address, _expansion_model(spec, base_dir))
+            inner = (*chain, link)
+            subs = cls.expand(spec, world, base_dir)
+            for sub in subs:
+                _check_expansion_chain(inner, sub, base_dir)
+            # All of them are visible before any is expanded: a mounted device's manifest must see
+            # the override its carrier's manifest nests under it, which is a later entry of `subs`.
+            world.extend(subs)
+            for sub in subs:
+                if sub.entity is not None and sub.entity not in landed:
+                    waiting.setdefault(sub.entity, []).append((sub, inner))
+                else:
+                    place(sub, inner)
+        for sub, sub_chain in waiting.pop(spec.address, []):
+            place(sub, sub_chain)
+
+    for spec in declared:
+        place(spec, ())
+    if waiting:
+        owners = ", ".join(sorted(waiting))
+        raise PluginError(
+            f"expansion injected components for {owners}, which no entry in this document is. An "
+            f"`expand` must wire what it returns to its own address or to one of its components."
+        )
     return effective, unresolved
+
+
+#: How many expansions one chain may nest: a world's robot, the device it mounts, a device on that
+#: device, and so on. Real carriers need two or three; the bound turns a runaway producer into a
+#: named refusal rather than a hang.
+_MAX_EXPANSION_DEPTH = 8
+
+
+def _expansion_model(spec: PluginSpec, base_dir: Path) -> str | None:
+    """The model file an expanding entry brings in, as the identity a cycle is detected on."""
+    model = spec.config.get("model")
+    if not model or not spec.config.get("default_plugins", True):
+        return None
+    from .models import ModelError, resolve_model
+
+    try:
+        return str(resolve_model(str(model), base_dir=base_dir).path)
+    except ModelError:
+        # The spawn's own `expand` and `validate_config` report an unresolvable model; as a cycle
+        # identity the name as written is still one.
+        return str(model)
+
+
+def _check_expansion_chain(chain: tuple, sub: PluginSpec, base_dir: Path) -> None:
+    """Refuse *sub* when expanding it would revisit a model on *chain* or nest past the bound."""
+
+    def shown(links) -> str:
+        return " -> ".join(f"{a} ({m})" if m else a for a, m in links)
+
+    if len(chain) > _MAX_EXPANSION_DEPTH:
+        raise PluginError(
+            f"manifest expansion nests deeper than {_MAX_EXPANSION_DEPTH} levels at "
+            f"'{sub.address}': {shown(chain)}. A carrier mounting a device mounting a device is "
+            f"two or three; this many is a manifest mounting itself through a chain of models."
+        )
+    model = _expansion_model(sub, base_dir)
+    if model is not None and any(m == model for _a, m in chain):
+        raise PluginError(
+            f"manifest expansion cycle: '{sub.address}' brings in {model} again, which this chain "
+            f"is already expanding: {shown((*chain, (sub.address, model)))}"
+        )
 
 
 def _check_ownership(spec: PluginSpec, cls: type[Plugin]) -> None:

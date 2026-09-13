@@ -25,7 +25,13 @@ dependencies = [
 # Note what is NOT here: `roqsim_mobile`. Mounting an arm on a wheeled base is tested in
 # `roqsim_mobile_manipulation`, the package that may depend on both families. A test that needs a base
 # does not belong to the arm plugins even when the plugin under test is theirs.
-test = ["pytest>=7.0", "roqsim_manipulation_assets"]
+#
+# `roqsim_sensors` IS here, test-only: the admittance tests measure the wrench an arm actually exerts
+# through `force_torque`, the substrate's one contact-force observable, rather than trusting the
+# controller's own account of it. At run time `cartesian_admittance` reads its wrench from a blackboard
+# key (`ft:<key>`), not from this package: the world that selects a force law declares the sensor that
+# publishes the key, so the runtime graph does not gain it.
+test = ["pytest>=7.0", "roqsim_manipulation_assets", "roqsim_sensors"]
 
 # Manipulator plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
