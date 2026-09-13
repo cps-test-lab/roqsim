@@ -31,18 +31,72 @@ components:
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
       left_joints:  [front_left_wheel_joint, rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
-  # The w200 description ships NO scanner -- Clearpath keeps sensors in attachments a unit is
-  # ordered with. Mount height is an assumption, and a consequential one here: the fenders reach
-  # 0.533 m above base_link, so a deck-height scan would see fender and nothing else.
-  - lidar:
-      site: lidar
-      frame_id: laser
-      rays: 720
-      angle_min: 0.0
-      angle_max: 6.274458661         # 2*pi - 0.5 deg: the full turn, last ray one step short of 2*pi
-      range_min: 0.3
-      max_range: 50.0
-      rate_hz: 10.0
-      # Nothing is excluded: at 0.6 m the fan clears the fenders and every other part of the robot, so
-      # no ray starts inside robot geometry, and a robot part in the scan plane would be a real return.
-      exclude_body: ''
+  # ---------------------------------------------------------------------------------------------
+  # Two Hokuyo UST-10LX, as Clearpath's dual-laser W200 sample mounts them
+  # (clearpath_config sample/w200/w200_dual_laser.yaml @ b2a64ba): each on a vertical PACS bracket at
+  # the front of a diff unit, the first on the left unit facing forward, the second on the right unit
+  # facing backward, so the two 180 deg fields cover the turn between them. Clearpath's default W200
+  # (w200_default.yaml) carries no scanner and its other sample a VLP-16 on a tower; see the port log.
+  #
+  # The chain is in `frames:` below, down to each bracket's `_vertical_mount`, and each device publishes
+  # `bracket_<i>_vertical_mount -> lidar2d_<i>_laser`, 47.4 mm up. The scan frames sit in base_link at
+  # (+-0.777, +-0.53821, 0.3706), 0.6585 m above the ground at the 0.287977 m rest height. The sample
+  # writes 1.5707 and 3.1415 where it means pi/2 and pi, so each scan plane is tilted 0.0055 deg and the
+  # rear one yawed 0.0053 deg short of a half turn; both are reproduced.
+  #
+  # The scan is the device's, as urg_node publishes it, but for the field: Clearpath configures
+  # urg_node with angle_min -1.5707 and angle_max 1.5707 (w200_dual_laser.yaml:41-42, 54-55).
+  # urg_node converts each to a device step, round to nearest at the UST-10LX's 1440 steps per turn
+  # (urg_node src/urg_c_wrapper.cpp:797-799, 822-824 @ 936abce8cd; urg_c current/src/urg_utils.c:144-157,
+  # 166-174, 182-190 @ 53136ab9cf), so +-360 steps: the header's angle_min and angle_max are exactly
+  # -pi/2 and +pi/2, and the scan has 721 rays at 0.25 deg, both ends included.
+  #
+  # Topics are Clearpath's, relative, so the robot's namespace scopes them:
+  # `<namespace>/sensors/lidar2d_<i>/scan` (clearpath_sensors_description urdf/hokuyo_ust.urdf.xacro:54
+  # @ b0f6d92).
+  # ---------------------------------------------------------------------------------------------
+  - spawn_sensor:
+      model: hokuyo_ust
+      parent_frame: bracket_0_vertical_mount   # w200_dual_laser.yaml:33
+      pos: [0.0, 0.0, 0.0]                     # :34
+      rpy: [0.0, 0.0, 0.0]                     # :35
+      frame_id: lidar2d_0_laser                # :38
+    name: lidar2d_0
+    components:
+      - lidar:
+          rays: 721                  # steps -360 .. +360; see above
+          angle_min: -1.570796327    # w200_dual_laser.yaml:41, -1.5707 as urg_node publishes it
+          angle_max: 1.570796327     # :42
+          topics: {scan: sensors/lidar2d_0/scan}
+  - spawn_sensor:
+      model: hokuyo_ust
+      parent_frame: bracket_1_vertical_mount   # w200_dual_laser.yaml:46
+      pos: [0.0, 0.0, 0.0]                     # :47
+      rpy: [0.0, 0.0, 0.0]                     # :48
+      frame_id: lidar2d_1_laser                # :51
+    name: lidar2d_1
+    components:
+      - lidar:
+          rays: 721                  # steps -360 .. +360; see above
+          angle_min: -1.570796327    # w200_dual_laser.yaml:54
+          angle_max: 1.570796327     # :55
+          topics: {scan: sensors/lidar2d_1/scan}
+
+# Fixed links Clearpath's generated description chains for that sample and this MJCF flattens into
+# the diff units, down to the mount each scanner hangs from. The brackets' geometry is in warthog.xml.
+frames:
+  # w200_dual_laser.yaml:14-17, as clearpath_platform_description urdf/links/frame.urdf.xacro:3-11
+  # @ b0f6d92 names it.
+  - {name: front_left_link, parent: left_diff_unit_link, pos: [0.68, -0.03, 0.35], rpy: [0.0, 1.5707, 0.0]}
+  # w200_dual_laser.yaml:24-25, clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:81-111
+  # @ 33e4b31: the bracket link at the parent, its mount mesh_thickness 0.010125 above it (:52-57), and
+  # the vertical mount on the upright plate (:59-64).
+  - {name: bracket_0_link, parent: front_left_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_0_mount, parent: bracket_0_link, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_0_vertical_mount, parent: bracket_0_mount, pos: [0.0518, 0.0, 0.086875], rpy: [0.0, -1.570796327, 0.0]}
+  # w200_dual_laser.yaml:18-21
+  - {name: rear_right_link, parent: right_diff_unit_link, pos: [-0.68, 0.03, 0.35], rpy: [3.1415, 1.5707, 0.0]}
+  # w200_dual_laser.yaml:26-27, bracket.urdf.xacro as above
+  - {name: bracket_1_link, parent: rear_right_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_1_mount, parent: bracket_1_link, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_1_vertical_mount, parent: bracket_1_mount, pos: [0.0518, 0.0, 0.086875], rpy: [0.0, -1.570796327, 0.0]}

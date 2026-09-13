@@ -62,6 +62,7 @@ def test_every_model_is_a_folder():
         "robin_w1g",
         "rplidar_a1",
         "rplidar_c1",
+        "rplidar_s3",
         "sick_lms1xx",
         "sick_microscan3",
         "sick_s300",

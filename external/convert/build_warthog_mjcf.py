@@ -25,6 +25,11 @@ declares ``wheel_separation: 1.5`` for a robot whose URDF track is 1.13642 m, th
 1.125. That is a 48% inflation of the geometric track, and it is the real driver's ICR compensation
 under another name.
 
+The w200 description ships no scanner. The model carries the two vertical PACS brackets Clearpath's
+dual-laser sample bolts to the front of each diff unit (``BRACKETS``), with the bracket mesh from
+``clearpath_mounts_description`` at a second pin; the manifest declares their frames and mounts a
+``hokuyo_ust`` device on each.
+
 Usage::
 
     python external/convert/build_warthog_mjcf.py           # fetch, expand, copy meshes, write
@@ -35,17 +40,42 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import struct
 import sys
 import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
-from urdf_source import expand_xacro, inertial, link_visuals, pose  # noqa: E402
+from urdf_source import expand_xacro, inertial, link_visuals, pose, rpy_to_quat  # noqa: E402
 
 CLEARPATH_URL = "https://github.com/clearpathrobotics/clearpath_common.git"
 CLEARPATH_COMMIT = "b0f6d920422ad302372a1c65e31d61648da884ed"
+#: `jazzy`, the first pin that carries clearpath_mounts_description/meshes/pacs/ (the pin
+#: convert_husky_meshes.py uses for the Husky's horizontal bracket).
+CLEARPATH_MOUNTS_COMMIT = "33e4b311dd9a2dcaa8e8d262ae75fab2c53e560b"
+BRACKET_MESH = "clearpath_mounts_description/meshes/pacs/bracket_vertical.stl"
+
+#: The two scanner brackets Clearpath's dual-laser W200 sample mounts, one per diff unit
+#: (clearpath_config sample/w200/w200_dual_laser.yaml @ b2a64ba): the `links: frame` entries
+#: `front_left` (:14-17) and `rear_right` (:18-21), each a `<name>_link` at that origin
+#: (clearpath_platform_description urdf/links/frame.urdf.xacro:3-11 @ b0f6d92), and a vertical PACS
+#: bracket on each (:22-27), named `bracket_<index>`. The rpy are the sample's 1.5707 and 3.1415, not
+#: pi/2 and pi. side -> (bracket name, frame xyz, frame rpy) in `<side>_diff_unit_link`.
+BRACKETS = {
+    "left": ("bracket_0", (0.68, -0.03, 0.35), (0.0, 1.5707, 0.0)),
+    "right": ("bracket_1", (-0.68, 0.03, 0.35), (3.1415, 1.5707, 0.0)),
+}
+#: clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:52-57, 81-96 @ 33e4b31: the vertical
+#: bracket's mesh sits `mesh_thickness` above `<name>_link`, and its mesh spans 0.1 x 0.09 x 0.1419 m.
+BRACKET_THICKNESS = 0.010125
+BRACKET_EXTENT = (0.1, 0.09, 0.141925)
+#: bracket.urdf.xacro:59-64: `<name>_vertical_mount` is 0.0518 m along x, on the inner face of the
+#: bracket's upright plate.
+VERTICAL_MOUNT_X = 0.0518
 #: clearpath_control is fetched so the description's `$(find ...)` default resolves -- and, unlike
 #: the other Clearpath ports, one file in it IS read: config/w200/control/diff_4wd.yaml supplies the
 #: published velocity and acceleration limits quoted in the manifest.
@@ -81,7 +111,7 @@ DIFF_UNIT_PARTS = ["headlight_link", "taillight_link"]
 SIDES = {"left": 1, "right": -1}
 
 
-def copy_meshes(description: Path) -> None:
+def copy_meshes(description: Path, mounts: Path) -> None:
     """STL straight through. MuJoCo loads STL, and the vendor already ships collision meshes."""
     (PKG / "meshes").mkdir(parents=True, exist_ok=True)
     for stale in (PKG / "meshes").glob("*.stl"):
@@ -94,9 +124,66 @@ def copy_meshes(description: Path) -> None:
                  "fenders.stl", "light.stl", "rocker.stl", "susp-link.stl"):
         shutil.copy2(meshes / name, PKG / "meshes" / name)
     shutil.copy2(meshes / "wheels/outdoor.stl", PKG / "meshes" / "outdoor.stl")
+    shutil.copy2(mounts / BRACKET_MESH, PKG / "meshes" / "bracket_vertical.stl")
 
 
-def build(urdf: ET.Element) -> str:
+def _stl_vertices(path: Path) -> np.ndarray:
+    """Every triangle corner of a binary STL, as an N x 3 array in the file's units (metres)."""
+    raw = path.read_bytes()
+    count = struct.unpack("<I", raw[80:84])[0] if len(raw) >= 84 else -1
+    if len(raw) != 84 + 50 * count:
+        raise ValueError(f"{path} is not a binary STL")
+    record = np.dtype([("normal", "<3f4"), ("corners", "<9f4"), ("attr", "<u2")])
+    corners = np.frombuffer(raw, dtype=record, count=count, offset=84)["corners"]
+    return np.asarray(corners, dtype=np.float64).reshape(-1, 3)
+
+
+def _urdf_rotation(rpy) -> np.ndarray:
+    r, p, y = rpy
+    rx = np.array([[1, 0, 0], [0, np.cos(r), -np.sin(r)], [0, np.sin(r), np.cos(r)]])
+    ry = np.array([[np.cos(p), 0, np.sin(p)], [0, 1, 0], [-np.sin(p), 0, np.cos(p)]])
+    rz = np.array([[np.cos(y), -np.sin(y), 0], [np.sin(y), np.cos(y), 0], [0, 0, 1]])
+    return rz @ ry @ rx
+
+
+def bracket_geoms(mounts: Path, side: str, indent: str) -> str:
+    """The scanner bracket on one diff unit: Clearpath's mesh, and collision fitted to its two plates.
+
+    The vertical PACS bracket is an L: a base plate against the part it is bolted to, and an upright
+    plate the scanner stands on, whose inner face carries `<name>_vertical_mount`. Clearpath's own
+    collision box for it (bracket.urdf.xacro:90-95, at `mesh_thickness - z/2`) lies on the far side
+    of the mounting face, inside what the bracket is bolted to, so the two plates are boxed from the
+    mesh instead: the base plate is every vertex at or below the mounting face's mesh z of 0, the
+    upright plate every vertex outboard of the vertical mount.
+    """
+    verts = _stl_vertices(mounts / BRACKET_MESH)
+    extent = verts.max(axis=0) - verts.min(axis=0)
+    if not np.allclose(extent, BRACKET_EXTENT, atol=5e-4):
+        raise ValueError(f"{BRACKET_MESH} @ {CLEARPATH_MOUNTS_COMMIT[:7]} spans {extent.round(4)}, "
+                         f"expected {BRACKET_EXTENT}")
+    lift = np.array([0.0, 0.0, BRACKET_THICKNESS])
+    plates = {
+        "base": verts[verts[:, 2] <= 1e-6],
+        "upright": verts[verts[:, 0] >= VERTICAL_MOUNT_X - 1e-6],
+    }
+    name, xyz, rpy = BRACKETS[side]
+    rot = _urdf_rotation(rpy)
+    quat = rpy_to_quat(*rpy)
+
+    def placed(local) -> str:
+        return " ".join(f"{v:.7g}" for v in np.asarray(xyz) + rot @ np.asarray(local))
+
+    out = (f'{indent}<geom class="visual" mesh="bracket_vertical" material="clearpath_dark_grey" '
+           f'pos="{placed(lift)}" quat="{quat}"/>\n')
+    for plate, pts in plates.items():
+        lo, hi = pts.min(axis=0) + lift, pts.max(axis=0) + lift
+        size = " ".join(f"{v:.7g}" for v in (hi - lo) / 2)
+        out += (f'{indent}<geom class="collision" type="box" name="{name}_{plate}_collision" '
+                f'pos="{placed((lo + hi) / 2)}" quat="{quat}" size="{size}"/>\n')
+    return out
+
+
+def build(urdf: ET.Element, mounts: Path) -> str:
     links = {link.get("name"): link for link in urdf.findall("link")}
     joints = {j.get("name"): j for j in urdf.findall("joint")}
 
@@ -128,6 +215,7 @@ def build(urdf: ET.Element) -> str:
             joint = next(j for j, e in joints.items() if e.find("child").get("link") == name)
             unit_geoms += link_visuals(links[name], "            ", offset_of(joint),
                                        default_material="clearpath_white")
+        unit_geoms += bracket_geoms(mounts, side, "            ")
         wheels = ""
         for end in ("front", "rear"):
             wheel = f"{end}_{side}_wheel_link"
@@ -224,10 +312,6 @@ TEMPLATE = """<mujoco model="warthog">
       <body name="chassis_link" pos="0 0 {chassis_z}">
         <inertial pos="{chassis_pos}" mass="{chassis_mass}" diaginertia="{chassis_diaginertia}"/>
 {chassis_geoms}        <geom class="collision" mesh="chassis-collision" name="chassis_collision"/>
-        <!-- The description ships no scanner. This one clears the fenders, which reach 0.533 m
-             above base_link and would otherwise be the only thing a deck-height scan could see.
-             The height is an assumption - see the port log. -->
-        <site name="lidar" pos="0.5 0 0.6" size="0.01" rgba="1 0 0 0.6"/>
 {units}      </body>
     </body>
   </worldbody>
@@ -263,12 +347,14 @@ def main() -> int:
         for name in PACKAGES
     }
     description = sources["clearpath_platform_description"]
+    mounts = resolve_source("clearpath_common_mounts", CLEARPATH_URL, CLEARPATH_MOUNTS_COMMIT,
+                            sparse="clearpath_mounts_description")
     target = PKG / "warthog.xml"
 
     def fresh() -> str:
         with tempfile.TemporaryDirectory() as tmp:
             return build(expand_xacro(sources, description / "urdf/w200/w200.urdf.xacro",
-                                      Path(tmp), wrapper=WRAPPER))
+                                      Path(tmp), wrapper=WRAPPER), mounts)
 
     if args.check:
         if not target.exists() or target.read_text() != fresh():
@@ -277,7 +363,7 @@ def main() -> int:
         print(f"{target}: up to date with {CLEARPATH_COMMIT[:12]}")
         return 0
 
-    copy_meshes(description)
+    copy_meshes(description, mounts)
     xml = fresh()
     shutil.copy2(description.parent / "LICENSE", PKG / "warthog_LICENSE")
     target.write_text(xml)

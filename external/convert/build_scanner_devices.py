@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the ten standalone scanner device models in ``roqsim_sensors/models/<device>/``.
+"""Build the eleven standalone scanner device models in ``roqsim_sensors/models/<device>/``.
 
-    python external/convert/build_scanner_devices.py            # all ten
+    python external/convert/build_scanner_devices.py            # all eleven
     python external/convert/build_scanner_devices.py sick_s300  # one
 
 Writes, per device: ``meshes/*.obj`` (converted and, where the source is heavy, decimated), the MJCF
@@ -22,6 +22,8 @@ port can hang the device at the vendor joint origin and get the vendor frame:
     sick_tim571      pal_urdf_utils meshes/laser/sick_tim551.stl (Apache)   <name>_link
     rplidar_a1       turtlebot4 turtlebot4_description/meshes/rplidar.dae    rplidar_link
     rplidar_c1       husarion_components_description meshes/rplidar/c1.glb  laser (child of rplidar_link)
+    rplidar_s3       husarion_components_description meshes/rplidar/s3.glb  <name>_laser (child of
+                     (Apache-2.0)                                            <name>_link)
     lds01            turtlebot3 turtlebot3_description/meshes/sensors/lds.stl base_scan
     hokuyo_ust       clearpath_common clearpath_sensors_description/        <name>_laser (child of
                      meshes/hokuyo_ust.stl (BSD-3-Clause)                    <name>_link)
@@ -333,6 +335,38 @@ DEVICES = {
     stays on the vendor frame.""",
             collision_note="The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing.",
             site_note="The vendor scan frame `laser`: 32 mm up and turned half a revolution.",
+        ),
+        Device(
+            name="rplidar_s3",
+            source=HUSARION,
+            mesh="meshes/rplidar/s3.glb",
+            scale=1.0,
+            budget=2000,  # 354 in the source
+            visual_pos=(0.0, 0.0, 0.0),
+            visual_rpy=(0.0, 0.0, 0.0),  # the vendor's (pi/2, 0, 0) is applied by the glTF import
+            rgba=None,
+            # slamtec_rplidar.urdf.xacro:50-55, model `s3`: a 55.6 x 55.6 x 41.3 mm box on the base.
+            collision='type="box" pos="0 0 0.02065" size="0.0278 0.0278 0.02065"',
+            # slamtec_rplidar.urdf.xacro:56-62: 0.115033 kg (the data sheet's 115 g), centred
+            # 1.8237 mm above the collision box's centre.
+            inertial='<inertial pos="0 0 0.0224737" mass="0.115033" '
+            'diaginertia="0.00004115765 0.00004115765 0.00004956023"/>',
+            site_pos=(0.0, 0.0, 0.0305),
+            site_rpy=(0.0, 0.0, 3.141592653589793),
+            header="""\
+    Slamtec RPLIDAR S3 2D lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Husarion `husarion_components_description` (urdf/slamtec_rplidar.urdf.xacro, model
+    `s3`), the component LDR06 of Husarion's UGVs: the body is `<name>_link`, whose origin is the
+    housing base, and the scan is stamped in its child `<name>_laser` at xyz (0, 0, 0.0305),
+    rpy (0, 0, pi).
+
+    Body-local axes: z = up, the housing spans z 0 .. 41.3 mm (data sheet Figure 4-1). The data
+    sheet's Figure 2-3 puts the optical centre 30.55 mm above the base, 0.05 mm above the vendor
+    frame; the site stays on the vendor frame.""",
+            collision_note="The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing.",
+            site_note="The vendor scan frame `<name>_laser`: 30.5 mm up and turned half a revolution.",
         ),
         Device(
             name="lds01",

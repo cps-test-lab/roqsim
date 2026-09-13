@@ -1,4 +1,4 @@
-"""The nine scanner device models: each scans from its declared site, past its own housing, as declared.
+"""The scanner device models: each scans from its declared site, past its own housing, as declared.
 
 Every device is mounted the way a world mounts it -- `spawn_sensor` with the manifest's own lidar --
 inside a closed room whose walls are at known planes, so each ray's true range is known analytically.
@@ -45,6 +45,7 @@ DEVICES = [
     "omron_os32c",
     "rplidar_a1",
     "rplidar_c1",
+    "rplidar_s3",
     "sick_lms1xx",
     "sick_microscan3",
     "sick_s300",
@@ -60,6 +61,7 @@ VENDOR_FRAME = {
     "omron_os32c": "laser",
     "rplidar_a1": "rplidar_link",
     "rplidar_c1": "laser",
+    "rplidar_s3": "laser",
     "sick_microscan3": "lidar_1_link",
     "sick_s300": "lidar_1_link",
     "sick_tim571": None,
@@ -74,6 +76,7 @@ DECLARED_OUTPUTS = {
     "omron_os32c": ("-inf", "50.0"),
     "rplidar_a1": ("-inf", "+inf"),
     "rplidar_c1": ("raw", "+inf"),
+    "rplidar_s3": ("raw", "+inf"),
     "sick_lms1xx": ("-inf", "+inf"),
     "sick_microscan3": ("-inf", "+inf"),
     "sick_s300": ("-inf", "+inf"),
