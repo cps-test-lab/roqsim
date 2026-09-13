@@ -70,6 +70,14 @@ CORNERS = ("front_left", "front_right", "back_left", "back_right")
 #: Scanner links removed from the expanded tree: the manifest mounts a sick_s300 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
 
+#: The wheel as Neobotix documents it: D = 180 mm, B = 30 mm (MPO-700 "Mechanical Properties",
+#: https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html). The vendor's shipped wheel
+#: mesh agrees: its tyre spans radius 0.090 and 0.0298 along the roll axis.
+WHEEL_RADIUS = 0.09
+WHEEL_WIDTH = 0.030
+#: A MuJoCo cylinder's axis is its local z; this turns it onto the roll joint's axis (0, -1, 0).
+TYRE_QUAT = "0.7071068 0.7071068 0 0"
+
 
 
 
@@ -104,9 +112,18 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
             xyz, quat = pose(collision)
             x, y, z = (float(a) + float(b) for a, b in zip(xyz.split(), offset, strict=True))
             if shape.tag == "sphere":
+                # The vendor's tyre is a sphere 180 mm across in every direction, six times the real
+                # wheel's width, and it reaches the S300 housings at Neobotix's documented scanner
+                # pose. The tyre here is the documented wheel instead; the vendor sphere is kept only
+                # as the check that both still describe the same wheel radius.
+                radius = float(shape.get("radius"))
+                if abs(radius - WHEEL_RADIUS) > 1e-9 or quat:
+                    raise ValueError(
+                        f"{link.get('name')}: vendor tyre sphere r {radius} with rotation {quat!r} "
+                        f"no longer matches the documented {WHEEL_RADIUS} m wheel on the roll axis")
                 out += (f'{indent}<geom class="{cls}" name="{link.get("name")}_tyre"'
-                        f' size="{float(shape.get("radius")):g}"'
-                        f' pos="{x:g} {y:g} {z:g}"{quat}/>\n')
+                        f' size="{WHEEL_RADIUS:g} {WHEEL_WIDTH / 2:g}"'
+                        f' pos="{x:g} {y:g} {z:g}" quat="{TYRE_QUAT}"/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
                 sub = subs_for(stem, shipped)[0]
@@ -208,10 +225,13 @@ TEMPLATE = """<mujoco model="mpo_700">
         <geom type="mesh" group="3" rgba="0.6 0.1 0.1 0.35"/>
       </default>
       <default class="wheel_collision">
-        <!-- Near-frictionless spheres: the base is driven through the planar actuators below, and
-             `priority` is what makes the low friction take effect at all - MuJoCo otherwise takes
-             the MAXIMUM of the two contacting geoms' friction and the floor's value wins. -->
-        <geom type="sphere" group="3" rgba="0.05 0.05 0.05 0.4"
+        <!-- The documented wheel, 180 mm across and 30 mm wide (Neobotix MPO-700 Mechanical
+             Properties, D and B), as a cylinder on the roll axis; the vendor's tyre is a sphere of
+             the same radius. Near-frictionless: the base is driven through the planar actuators
+             below, and `priority` is what makes the low friction take effect at all - MuJoCo
+             otherwise takes the MAXIMUM of the two contacting geoms' friction and the floor's
+             value wins. -->
+        <geom type="cylinder" group="3" rgba="0.05 0.05 0.05 0.4"
               friction="0.02 0.005 0.0001" priority="2"/>
       </default>
       <default class="steer">
@@ -230,9 +250,9 @@ TEMPLATE = """<mujoco model="mpo_700">
     <!--
       The vendor's base collision IS the full body mesh, and MuJoCo convex-hulls a collision mesh -
       so the hull closes over the wheel arches and overlaps the wheels inside them (measured: the
-      front-right tyre penetrates it by 1.4 mm at the reference pose). A wheel is a GRANDCHILD of
-      base_link, via its steering link, so MuJoCo's automatic parent-child exclusion does not cover
-      the pair and the robot fights itself at rest.
+      front-right tyre penetrates it by 2.3 mm at rest, and the tyres overlap it by more while they
+      steer). A wheel is a GRANDCHILD of base_link, via its steering link, so MuJoCo's automatic
+      parent-child exclusion does not cover the pair and the robot fights itself at rest.
 
       Excluded explicitly rather than by widening a contact group: these four pairs are the ones that
       cannot be real, and naming them leaves every other self-collision live.

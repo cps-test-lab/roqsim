@@ -13,7 +13,8 @@
 
     Wheel contact is the vendor's own SPHERE, not this 8.3 MB roller mesh: a sphere has no preferred
     rolling direction, which is what an omni wheel approximates. The mesh is cosmetic and decimated
-    accordingly.
+    accordingly. The sphere's radius, 0.127, is Neobotix's documented 254 mm wheel, which the
+    wheel mesh also spans; the description's sphere is 0.117. See build_mpo500_mjcf.WHEEL_RADIUS.
 
     One consequence to know: omni_drive integrates odometry from the ACHIEVED twist and models no
     wheel slip, so encoder odometry and ground truth coincide by construction. This platform cannot
@@ -105,28 +106,28 @@
           <joint name="mpo_500_omni_wheel_front_left_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_left_link_tyre" size="0.117" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_left_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
         <body name="mpo_500_omni_wheel_front_right_link" pos="0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
           <joint name="mpo_500_omni_wheel_front_right_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_right_link_tyre" size="0.117" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_500_omni_wheel_front_right_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
         <body name="mpo_500_omni_wheel_back_left_link" pos="-0.25 0.28 0.13">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
           <joint name="mpo_500_omni_wheel_back_left_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_left_link_tyre" size="0.117" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_left_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
         <body name="mpo_500_omni_wheel_back_right_link" pos="-0.25 -0.28 0.13" quat="0.0007963267 0 0 0.9999997">
           <inertial pos="0 0 0" mass="2.2" diaginertia="0.01 0.01 0.01"/>
           <joint name="mpo_500_omni_wheel_back_right_joint" class="wheel"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m0" material="MPO-500-WHEEL__m0_mat" pos="0 0 0"/>
             <geom class="visual" mesh="MPO-500-WHEEL__m1" material="MPO-500-WHEEL__m1_mat" pos="0 0 0"/>
-            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_right_link_tyre" size="0.117" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_500_omni_wheel_back_right_link_tyre" size="0.127" pos="0 0 0"/>
         </body>
     </body>
   </worldbody>
@@ -148,6 +149,6 @@
   <keyframe>
     <!-- base_link rides at wheel radius minus the wheel-centre height, which is NEGATIVE here as on
          the mpo_700: the vendor's base_link frame sits below the tyre contact. -->
-    <key name="home" qpos="0 0 -0.013 1 0 0 0  0 0 0 0"/>
+    <key name="home" qpos="0 0 -0.003 1 0 0 0  0 0 0 0"/>
   </keyframe>
 </mujoco>

@@ -6,7 +6,8 @@
 # https://www.sick.com/media/pdf/6/46/646/dataSheet_MICS3-ACAZ40PZ1_1083011_en.pdf ("data sheet"), and
 # the microScan3 Core I/O operating instructions 8016346/1WGY,
 # https://www.sick.com/media/docs/7/57/757/operating_instructions_microscan3_core_i_o_en_im0063757.pdf
-# ("OI"), Table 46 "Measurement data", column for 4.0 m / 5.5 m devices.
+# ("OI"), Table 46 "Measurement data", column for 4.0 m / 5.5 m devices. Published values: the driver
+# named at the lidar component.
 #
 # spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
 # second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
@@ -25,23 +26,41 @@ components:
       frame_id: "{frame_id}"
       exclude_body: mount
       emit_static_tf: false
-      # OI Table 46: 0.39 deg (715 safeHDDM measured values) at a 40 ms scan cycle, over the
-      # 275 deg scanning angle (data sheet; OI 14: -47.5 .. 227.5 deg in SICK's bearing convention,
-      # i.e. symmetric about straight ahead).
+      # What the driver publishes: SICKAG/sick_safetyscanners2 @ f30c60105d ("driver"), with
+      # SICKAG/sick_safetyscanners_base @ 08ae4b75d3. That Neobotix runs it for the microScan3 is
+      # unverified: its ROS 2 bringup names a microScan3 launch file that does not exist, and its
+      # nanoScan3 branch uses this driver.
+      #
+      # Layout: angle_min is the first beam's angle and angle_max the last beam's
+      # (src/utils/MessageCreator.cpp:57-61), so the last ray sits at angle_max. OI Table 46: 715
+      # beams at 0.39 deg and a 40 ms scan cycle, over the 275 deg scanning angle (OI 14: -47.5 ..
+      # 227.5 deg in SICK's bearing convention, which the driver's -90 deg offset centres on straight
+      # ahead).
       rays: 715
       angle_min: -2.399827721   # -137.5 deg
       angle_max: 2.399827721    # +137.5 deg
-      # ASSUMPTION: the OI states no minimum distance; this is the Neobotix simulation's value
-      # (mpo_500_gazebo.urdf.xacro).
+      # Header: range_min is hard-coded 0.1 (src/SickSafetyscanners.cpp:326). range_max is the
+      # device type code's maximum range (:327), unverified for this model, so the OI's figure
+      # stands in: distance measurement range <= 40 m at 100% remission (<= 12 m at 10%). The ray
+      # cast has no remission model, so the upper figure bounds it. The OI states no minimum
+      # distance, so the driver's range_min is also the near detection limit (unverified).
       range_min: 0.1
-      # OI Table 46: distance measurement range <= 40 m at 100% remission (<= 12 m at 10%). The
-      # ray cast has no remission model, so the upper figure bounds it.
       max_range: 40.0
+      # The driver publishes the raw distance for a near beam (the scanner's valid/infinite/glare
+      # bits are parsed but unused for LaserScan); what the scanner reports there is unverified, so
+      # the REP 117 default stands. A beam at or beyond 0.999 * range_max, or with reflectivity 0,
+      # is published as +inf (src/utils/MessageCreator.cpp:79-89).
+      too_close: -inf           # unverified device output; REP 117 default
+      no_return: +inf           # src/utils/MessageCreator.cpp:85-89
       rate_hz: 25.0             # OI Table 46: scan rate 25 Hz at the 40 ms scan cycle the 715 values need
-      range_stddev: 0.013       # OI Table 46: total measurement error (statistical and systematic) at 1 sigma +-13 mm
+      # OI Table 46: total measurement error (statistical and systematic) at 1 sigma +-13 mm, stated
+      # at the protective field range only. The +-10 mm systematic part has no stated distribution,
+      # so no per-instance bias is modelled.
+      range_stddev: 0.013
+      # Not modelled: the reflectivity (0-255) the driver publishes as intensities.
 
 # Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
-# field and range window above.
+# field and its physical detection limits.
 fov:
   near: 0.1
   far: 40.0

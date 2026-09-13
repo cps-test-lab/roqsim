@@ -211,9 +211,6 @@ TEMPLATE = """<mujoco model="panther">
       <body name="body_link" pos="0 0 0">
         <inertial pos="{body_pos}" mass="{body_mass}" diaginertia="{body_inertia}"/>
 {body_geoms}        <geom class="collision" mesh="base_collision"/>
-        <!-- The lidar mast. Height is an assumption (see the port log): the base description ships
-             no scanner, because Husarion keeps sensors in a separate package. -->
-        <site name="lidar" pos="0 0 0.2035" size="0.008" rgba="1 0 0 0.6"/>
 {wheels}      </body>
     </body>
   </worldbody>

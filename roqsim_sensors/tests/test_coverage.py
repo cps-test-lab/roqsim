@@ -9,7 +9,7 @@ import mujoco
 import numpy as np
 import pytest
 import yaml
-from external_meshes import needs_mid360, needs_robin, needs_zivid
+from external_meshes import needs_robin, needs_zivid
 from roqsim_sensors.coverage import adapters, optimize
 from roqsim_sensors.coverage.adapters import PlacedSensor, build_fov
 from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
@@ -409,7 +409,6 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
 # -- the CLI's two entry-point contracts -------------------------------------------------------------
 
 
-@needs_mid360
 @needs_zivid
 @needs_robin
 def test_load_world_accepts_a_world_yaml():

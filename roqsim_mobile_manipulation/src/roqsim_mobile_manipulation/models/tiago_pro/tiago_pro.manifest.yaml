@@ -150,12 +150,10 @@ components:
   # PAL's `<name>_link` (sick_tim571_laser.gazebo.xacro:25 @ 775cdd6), so frames and bearings are
   # PAL's: a return to the robot's left of a scanner's forward axis has a negative bearing.
   #
-  # The device carries the datasheet values; below are PAL's simulation values where they differ,
-  # each cited to pal_urdf_utils urdf/laser/sick_tim571_laser.gazebo.xacro @ 775cdd6 or
-  # base_sensors.urdf.xacro @ 251ecc4. Ray count and window follow the xacro's expression:
-  # samples = 818 * (max - min) / 270 deg with min/max -+135 deg (:32) is 818, the device's own,
-  # cast from min + 1 deg (:34, "a laserscan detecting ghost obstacle") to +135 deg. roqsim spaces
-  # them (max - min) / rays apart, so the last ray is one step short of +135 deg.
+  # The device carries the data sheet's field, rays, rate and noise; below, only what the sick_tim
+  # driver PAL runs publishes differently. PAL's Gazebo block (sick_tim571_laser.gazebo.xacro @
+  # 775cdd6: window from min + 1 deg :34, stddev 0.01 :46; update_rate 10, base_sensors.urdf.xacro:28)
+  # holds simulation values, not the TiM571's, and overrides none of them.
   #
   # Both scanners look out through the band between the lower and upper chassis. PAL's
   # base.urdf.xacro:64-69 gives base_link a 0.58 x 0.39 x 0.03 m collision box at z 0.132 that
@@ -175,9 +173,14 @@ components:
     name: base_front_laser
     components:
       - lidar:
-          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
-          rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
-          range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
+          # PAL runs sick_tim, not the device's sick_scan_xd (omni_base_laser_sensors; that TIAGo Pro
+          # uses it, and PAL's ROS 2 port, are unverified). Upstream uos/sick_tim's launch keeps the
+          # device's +-135 deg window (launch/sick_tim571_2050101.launch:9-10), publishes range_min
+          # 0.05 / range_max 25.0 (:18-20) and a device distance of 0 as +inf
+          # (src/sick_tim551_2050001_parser.cpp:254-258).
+          range_min: 0.05
+          max_range: 25.0
+          no_return: +inf
           topics: {scan: scan_front_raw}   # base_sensors.urdf.xacro:70
 
   - spawn_sensor:
@@ -189,7 +192,8 @@ components:
     name: base_rear_laser
     components:
       - lidar:
-          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
-          rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
-          range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
+          # sick_tim's header and no-return value, as for the front laser above.
+          range_min: 0.05
+          max_range: 25.0
+          no_return: +inf
           topics: {scan: scan_rear_raw}    # base_sensors.urdf.xacro:65

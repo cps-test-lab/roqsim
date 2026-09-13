@@ -1,4 +1,4 @@
-"""The nine scanner device models: each scans from its vendor frame, past its own housing, as declared.
+"""The scanner device models: each scans from its declared site, past its own housing, as declared.
 
 Every device is mounted the way a world mounts it -- `spawn_sensor` with the manifest's own lidar --
 inside a closed room whose walls are at known planes, so each ray's true range is known analytically.
@@ -9,10 +9,14 @@ What this pins, per device:
 * no ray stops on the device's own `mount` body, and no ray's first surface is met from inside a geom
   (hit normal against the ray), which is what a scan origin buried in geometry `exclude_body` does not
   cover would look like;
-* the scan's ray count, field and range window are the manifest's, and the manifest's `fov:` sector
-  is that same window;
-* the `scan` site in the MJCF sits where the manifest's `frames:` entry says, so the frame published
-  for the scan and the point it is cast from cannot drift apart.
+* the scan's ray count, field and header are the manifest's, its last ray sits at `angle_max`, and the
+  manifest's `fov:` sector is its field and physical detection limits;
+* a too-close surface and an empty bearing publish the values the manifest declares for them, which
+  are what the device's driver publishes (pinned in ``DECLARED_OUTPUTS``);
+* the `scan` site in the MJCF sits where the manifest's `frames:` entry says, moved by the scan-plane
+  offset the device's data sheet gives (``SCAN_PLANE_OFFSET``, zero unless listed), and the static
+  transform published for the scan frame is the frame's pose, not the site's -- so the frame and the
+  point the rays start from differ by exactly that offset and cannot drift apart silently.
 
 Needs nothing from roqsim_mobile: the room is a plugin defined here.
 """
@@ -38,8 +42,10 @@ from roqsim.pose import rpy_to_quat
 DEVICES = [
     "hokuyo_ust",
     "lds01",
+    "omron_os32c",
     "rplidar_a1",
     "rplidar_c1",
+    "rplidar_s3",
     "sick_lms1xx",
     "sick_microscan3",
     "sick_s300",
@@ -52,13 +58,32 @@ VENDOR_FRAME = {
     "hokuyo_ust": "lidar2d_0_laser",
     "sick_lms1xx": "lidar2d_0_laser",
     "lds01": "base_scan",
+    "omron_os32c": "laser",
     "rplidar_a1": "rplidar_link",
     "rplidar_c1": "laser",
+    "rplidar_s3": "laser",
     "sick_microscan3": "lidar_1_link",
     "sick_s300": "lidar_1_link",
     "sick_tim571": None,
     "velodyne_vlp16": "velodyne",
 }
+
+#: `(too_close, no_return)` each device declares, from its driver (see the manifests' citations).
+#: Every value its driver's source leaves unverified is the REP 117 default.
+DECLARED_OUTPUTS = {
+    "hokuyo_ust": ("0.004", "65.533"),
+    "lds01": ("-inf", "+inf"),
+    "omron_os32c": ("-inf", "50.0"),
+    "rplidar_a1": ("-inf", "+inf"),
+    "rplidar_c1": ("raw", "+inf"),
+    "rplidar_s3": ("raw", "+inf"),
+    "sick_lms1xx": ("-inf", "+inf"),
+    "sick_microscan3": ("-inf", "+inf"),
+    "sick_s300": ("-inf", "+inf"),
+    "sick_tim571": ("-inf", "+inf"),
+    "velodyne_vlp16": ("+inf", "+inf"),
+}
+_WORDS = {"-inf": -np.inf, "+inf": np.inf, "nan": np.nan}
 
 FRAME_ID = "scanner_frame"
 #: Inner faces of the room walls sit at x = +-HALF and y = +-HALF.
@@ -155,8 +180,10 @@ def _world_dirs(engine: Engine, lidar: LidarPlugin) -> tuple[np.ndarray, np.ndar
 def test_scan_reads_the_walls_at_their_true_range(device):
     engine = _engine(device)
     lidar = _lidar(engine)
-    # Noise off for this one check (a live-writable key): the range must be exact, not within 3 sigma.
+    # Noise and quantisation off for this one check (live-writable keys): the range must be exact.
     lidar.range_stddev = 0.0
+    lidar.range_stddev_relative = 0.0
+    lidar.range_resolution = 0.0
     engine.reset()
     engine.step()
     scan = lidar.latest
@@ -166,10 +193,7 @@ def test_scan_reads_the_walls_at_their_true_range(device):
     assert np.all(np.isfinite(scan.ranges)), "a closed room leaves no ray without a return"
     np.testing.assert_allclose(scan.ranges, expected, atol=1e-4)
     # The forward ray (bearing closest to 0 in the scan frame) on its own, for a readable failure.
-    bearings = (
-        lidar.angle_min
-        + np.arange(lidar.num_rays) * (lidar.angle_max - lidar.angle_min) / lidar.num_rays
-    )
+    bearings = np.linspace(lidar.angle_min, lidar.angle_max, lidar.num_rays)
     fwd = int(np.argmin(np.abs(np.angle(np.exp(1j * bearings)))))
     assert abs(scan.ranges[fwd] - expected[fwd]) < 1e-4
 
@@ -216,17 +240,101 @@ def test_scan_window_is_the_manifest_and_fov_matches_it(device):
     assert len(scan.ranges) == cfg["rays"] == lidar.num_rays
     assert scan.angle_min == pytest.approx(cfg["angle_min"])
     assert scan.angle_max == pytest.approx(cfg["angle_max"])
+    assert scan.angle_increment == pytest.approx(
+        (cfg["angle_max"] - cfg["angle_min"]) / (cfg["rays"] - 1)
+    )
+    last = lidar._build_directions()[-1]
+    np.testing.assert_allclose(
+        last, [np.cos(cfg["angle_max"]), np.sin(cfg["angle_max"]), 0.0], atol=1e-9
+    )
     assert scan.range_min == pytest.approx(cfg["range_min"])
     assert scan.range_max == pytest.approx(cfg["max_range"])
+    near = cfg.get("detection_min", cfg["range_min"])
+    far = cfg.get("detection_max", cfg["max_range"])
+    assert (lidar.detection_min, lidar.detection_max) == pytest.approx((near, far))
     assert lidar.rate_hz == pytest.approx(cfg["rate_hz"])
     assert lidar.range_stddev == pytest.approx(cfg["range_stddev"])
     assert lidar.frame_id == FRAME_ID
     assert lidar.exclude_body == "mount" and not lidar.emit_static_tf
 
     fov = _manifest(device)["fov"]
-    assert (fov["near"], fov["far"]) == pytest.approx((cfg["range_min"], cfg["max_range"]))
-    assert (fov["h_min"], fov["h_max"]) == pytest.approx((cfg["angle_min"], cfg["angle_max"]))
+    assert (fov["near"], fov["far"]) == pytest.approx((near, far))
+    # Each ray stands for one increment of azimuth: rays that fill the turn are a full-turn sector.
+    span = cfg["angle_max"] - cfg["angle_min"]
+    if span + scan.angle_increment >= 2 * np.pi - 1e-9:
+        assert fov["h_min"] == pytest.approx(cfg["angle_min"])
+        assert fov["h_max"] - fov["h_min"] == pytest.approx(2 * np.pi)
+    else:
+        assert (fov["h_min"], fov["h_max"]) == pytest.approx((cfg["angle_min"], cfg["angle_max"]))
     assert fov["v_min"] == fov["v_max"] == 0.0
+
+
+class _Plate(Plugin):
+    """A lidar site at the origin and one small plate straight ahead of it, 1 mm away.
+
+    Nearer than every device's detection_min; the OS32C's is 2 mm.
+    """
+
+    DISTANCE = 0.001
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        spec.worldbody.add_site(name="lidar", pos=[0.0, 0.0, 0.5])
+        t = 0.002
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[self.DISTANCE + t, 0.0, 0.5],
+            size=[t, self.DISTANCE, 0.05],
+        )
+
+
+def _declared(value: str) -> float | None:
+    """The published value a declared word or number stands for; ``None`` for ``raw``."""
+    if value == "raw":
+        return None
+    return _WORDS[value] if value in _WORDS else float(value)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_the_device_publishes_its_declared_too_close_and_no_return(device):
+    cfg = _lidar_config(device)
+    assert (str(cfg["too_close"]), str(cfg["no_return"])) == DECLARED_OUTPUTS[device]
+    near = cfg.get("detection_min", cfg["range_min"])
+    assert _Plate.DISTANCE < near, "the plate must be inside every device's detection_min"
+    lidar_cfg = {
+        **cfg,
+        "site": "lidar",
+        "frame_id": "scan",
+        "exclude_body": "",
+        "emit_static_tf": True,
+        "range_stddev": 0.0,
+        "range_stddev_relative": 0.0,
+        "range_resolution": 0.0,
+        # Short of the default world's walls, so the ray behind the plate meets nothing in range.
+        "max_range": 1.0,
+        "detection_max": 1.0,
+    }
+    engine = Engine(
+        load_config_from_dict(
+            {"sim": {}, "plugins": [{f"{__name__}:_Plate": {}}, {"lidar": lidar_cfg}]}
+        )
+    )
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    engine.step()
+    lidar = _lidar(engine)
+    ranges = np.asarray(lidar.latest.ranges)
+    bearings = np.angle(np.exp(1j * np.linspace(lidar.angle_min, lidar.angle_max, lidar.num_rays)))
+    ahead = int(np.argmin(np.abs(bearings)))
+    behind = int(np.argmin(np.abs(np.angle(np.exp(1j * (bearings - np.pi))))))
+
+    too_close = _declared(DECLARED_OUTPUTS[device][0])
+    if too_close is None:
+        assert ranges[ahead] == pytest.approx(_Plate.DISTANCE / np.cos(bearings[ahead]), abs=1e-6)
+    else:
+        assert ranges[ahead] == too_close
+    no_return = _declared(DECLARED_OUTPUTS[device][1])
+    assert np.isnan(ranges[behind]) if np.isnan(no_return) else ranges[behind] == no_return
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -235,8 +343,32 @@ def test_show_fov_draws_the_sector(device):
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "scan_fov") >= 0
 
 
+#: Where a device's data sheet puts the physical scan plane relative to its vendor scan frame, in that
+#: frame (m). The rays start there and the scan is stamped in the frame; a device not listed casts
+#: from the frame itself.
+SCAN_PLANE_OFFSET = {
+    # SICK data sheet S30B-2011BA, dimensional drawing: 116 mm above the housing bottom, 36.4 mm below
+    # its top. The converted housing's top is at z +0.0323 in the vendor frame.
+    "sick_s300": (0.0, 0.0, -0.0041),
+}
+
+
+def _compose_tf(chain: list[dict], child: str) -> tuple[np.ndarray, np.ndarray]:
+    """World pose of *child* composed along a device's published static transforms from ``world``."""
+    poses = {"world": (np.zeros(3), np.eye(3))}
+    for link in chain:
+        ppos, prot = poses[link["parent"]]
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, np.asarray(link["rotation"], dtype=float))
+        poses[link["child"]] = (
+            ppos + prot @ np.asarray(link["translation"], dtype=float),
+            prot @ rot.reshape(3, 3),
+        )
+    return poses[child]
+
+
 @pytest.mark.parametrize("device", DEVICES)
-def test_scan_site_is_the_manifest_frame(device):
+def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(device):
     frames = parse_frames(
         substitute(
             _manifest(device)["frames"], {"frame_id": FRAME_ID, "parent_frame": "world"}, device
@@ -262,27 +394,48 @@ def test_scan_site_is_the_manifest_frame(device):
         mujoco.mju_mulQuat(composed, quat, np.asarray(rpy_to_quat(*link.rpy), dtype=float))
         quat = composed
 
-    # In the MJCF as written: the site hangs directly off the mount at the composed chain's pose.
+    offset = np.asarray(SCAN_PLANE_OFFSET.get(device, (0.0, 0.0, 0.0)), dtype=float)
+    shift = np.zeros(3)
+    mujoco.mju_rotVecQuat(shift, offset, quat)
+
+    # In the MJCF as written: the site hangs directly off the mount, at the composed chain's pose moved
+    # by the declared offset in the frame, and turned as the frame is.
     spec = mujoco.MjSpec.from_file(str(MODELS_DIR / device / f"{device}.xml"))
     site = spec.site("scan")
     assert site is not None and site.parent.name == "mount"
-    np.testing.assert_allclose(site.pos, pos, atol=1e-9)
+    np.testing.assert_allclose(site.pos, pos + shift, atol=1e-9)
     assert abs(abs(float(np.asarray(site.quat) @ quat)) - 1.0) < 1e-9
 
-    # In the compiled world: the frame site spawn_sensor adds coincides with the scan site.
+    # In the compiled world: the scan site is the frame site spawn_sensor adds, moved by the offset.
     engine = _engine(device)
     m, d = engine.ctx.model, engine.ctx.data
     mujoco.mj_forward(m, d)
     scan = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "scan")
     framed = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, FRAME_ID)
     assert scan >= 0 and framed >= 0
-    np.testing.assert_allclose(d.site_xpos[framed], d.site_xpos[scan], atol=1e-9)
+    frame_rot = d.site_xmat[framed].reshape(3, 3)
+    np.testing.assert_allclose(d.site_xpos[scan], d.site_xpos[framed] + frame_rot @ offset, atol=1e-9)
     np.testing.assert_allclose(d.site_xmat[framed], d.site_xmat[scan], atol=1e-9)
+
+    # What is published is the frame's pose, not the site's: the static chain composes to the frame
+    # site, and the scan carries no transform of its own that could place the frame at the site.
+    tf_pos, tf_rot = _compose_tf(_frames_tf(engine, device), FRAME_ID)
+    np.testing.assert_allclose(tf_pos, d.site_xpos[framed], atol=1e-6)
+    np.testing.assert_allclose(tf_rot, frame_rot, atol=1e-6)
+    (scan_endpoint,) = [
+        e for e in engine.ctx.interface.all() if e.name == "scan" and e.owner == device
+    ]
+    assert scan_endpoint.backend["ros2"]["frame_id"] == FRAME_ID
+    assert "static_tf" not in scan_endpoint.backend["ros2"]
+
+
+def _frames_tf(engine: Engine, device: str) -> list[dict]:
+    (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == device]
+    return frames.backend["ros2"]["static_tf"]
 
 
 def _chain(engine: Engine, device: str) -> list[tuple[str, str]]:
-    (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == device]
-    return [(t["parent"], t["child"]) for t in frames.backend["ros2"]["static_tf"]]
+    return [(t["parent"], t["child"]) for t in _frames_tf(engine, device)]
 
 
 @pytest.mark.parametrize("device", DEVICES)

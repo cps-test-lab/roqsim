@@ -5,7 +5,8 @@ RL **locomotion controller**), and the **AgiBot Genie G2** wheeled dual-arm mobi
 
 The legged robots are the legged analogue of `roqsim_mobile`'s `diff_drive`: the world spawns the
 robot with the generic `spawn_robot` plugin, and the model's manifest injects the locomotion
-controller + `lidar` (+ depth cameras for the Oli). Each controller declares the same backend-neutral
+controller + a lidar (a `lidar` site for the Oli, with its depth cameras; the Livox Mid-360 device in
+the G1's head). Each controller declares the same backend-neutral
 endpoints (`cmd_vel` in, `odom` / `joint_states` out), so the ROS 2 bridge and nav2 drive either
 humanoid with no humanoid-specific wiring.
 
@@ -14,7 +15,8 @@ humanoid with no humanoid-specific wiring.
 A **wheeled dual-arm mobile manipulator** (contrast the legged G1/Oli): a 4-wheel swerve chassis,
 5-DoF torso lift, 3-DoF head, two 7-DoF arms and two omnipicker grippers. It reuses the mobile
 `diff_drive` for its base and adds `agibot_g2_controller` for the upper body — so it spawns and is
-driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_states`, `lidar`).
+driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_states`, and a lidar: a
+2D `lidar`, or a device model such as the G1's head-mounted Livox Mid-360).
 
 - `models/agibot_g2.xml` — **built** from AgiBot's `genie_sim` URDF (MPL-2.0; see `THIRD_PARTY.md` /
   `THIRD_PARTY.md`) by `external/convert/build_g2_mjcf.py`. The 4 swerve **steer** joints are
@@ -53,8 +55,9 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
   [unitree_rl_gym](https://github.com/unitreerobotics/unitree_rl_gym)'s
   `resources/robots/g1_description/g1_12dof.xml` (BSD-3-Clause). Head/torso/arms are rigid
   decorative geoms on the base; only the 12 leg joints are actuated (`<motor>` torque actuators).
-  The base body/joint are renamed `base_link`/`base_free` and a `lidar` site added, to match the
-  framework's spawn/odom/lidar conventions. Meshes under `models/meshes/` (decimated — see below).
+  The base body/joint are renamed `base_link`/`base_free`, to match the framework's spawn/odom
+  conventions. The manifest mounts the Livox Mid-360 device (`roqsim_sensors:mid360`) in the head at
+  Unitree's `mid360_joint`, publishing a `PointCloud2`; the head mesh carries the opening for it. Meshes under `models/meshes/` (decimated — see below).
 - `policy/motion.pt` — pretrained TorchScript walking policy (unitree_rl_gym `deploy/pre_train/g1`).
 - `policy/g1.yaml` — the deploy config it was trained with (PD gains, default angles, obs/action
   scales, 50 Hz policy / 500 Hz PD timing). Vendored verbatim.

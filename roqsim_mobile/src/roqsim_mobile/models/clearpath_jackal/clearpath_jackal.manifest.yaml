@@ -45,14 +45,11 @@ components:
       rpy: [0.0, 0.0, 0.0]
       frame_id: velodyne            # VLP-16.urdf.xacro default name, called without one by vlp16_mount
     name: velodyne
-    components:
-      - lidar:
-          # NOT the hardware's values: the two this model's scan carried before the VLP-16 became a
-          # device, kept so the experiments built on it measure what they measured. The device
-          # carries the real ones (driver min_range 0.9 m; data sheet +-3 cm range accuracy). Which
-          # one those experiments should read is open (spec gap g_lidar_params); see the port log.
-          range_min: 0.4
-          range_stddev: 0.0
+    # No override: the scan is the device's, as the VLP-16 driver publishes it. Clearpath's own driver
+    # configuration for the sensor (clearpath_robot clearpath_sensors/config/velodyne_lidar.yaml,
+    # branch jazzy: min_range 0.9, max_range 130.0, rpm 600.0, laserscan resolution 0.007, ring -1)
+    # sets the values the device already carries. An experiment whose paper states other values
+    # overrides them in its own world.
 
 # Fixed links the vendor chains and this MJCF flattens into base_link, which a device hangs from.
 frames:

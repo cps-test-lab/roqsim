@@ -5,13 +5,13 @@
 """An address that stops short of a mounted device is refused at load, with the address meant.
 
 A robot whose scanner is a device its manifest mounts (``robot.rplidar.lidar``) has no ``lidar`` of
-its own. Two spellings aimed at that lidar used to load cleanly and do nothing -- or fail far from the
-cause -- and both look like the address the component had before it moved:
+its own. Unrefused, two spellings aimed at that lidar would load cleanly and do nothing -- or fail far
+from the cause:
 
-* an override ``components.robot.lidar.rays`` stops where the tree ends, at ``robot``, and wrote a
-  ``lidar`` key there that nothing read while the real lidar kept its value;
-* a world nesting ``- lidar: {...}`` under the robot loaded a second lidar beside the device's, which
-  failed only once the model compiled, naming a site rather than the mount.
+* an override ``components.robot.lidar.rays`` stops where the tree ends, at ``robot``, and would write
+  a ``lidar`` key there that nothing reads while the real lidar keeps its value;
+* a world nesting ``- lidar: {...}`` under the robot would load a second lidar beside the device's,
+  which fails only once the model compiles, naming a site rather than the mount.
 """
 
 import copy
@@ -94,7 +94,7 @@ def test_the_full_address_still_loads_and_validates():
     instantiate_plugins(cfg)
 
 
-# -- an entry nested where the component used to be -----------------------------------------------
+# -- an entry nested under the carrier instead of under its mount ---------------------------------
 
 
 def test_a_stale_nested_lidar_names_the_mount_to_nest_it_under():

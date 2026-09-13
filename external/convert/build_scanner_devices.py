@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Build the nine standalone scanner device models in ``roqsim_sensors/models/<device>/``.
+"""Build the eleven standalone scanner device models in ``roqsim_sensors/models/<device>/``.
 
-    python external/convert/build_scanner_devices.py            # all nine
+    python external/convert/build_scanner_devices.py            # all eleven
     python external/convert/build_scanner_devices.py sick_s300  # one
 
 Writes, per device: ``meshes/*.obj`` (converted and, where the source is heavy, decimated), the MJCF
 ``<device>.xml`` and the licence sidecar ``<device>_LICENSE``. The ``<device>.manifest.yaml`` is
 authored by hand, because its numbers come from manufacturer datasheets rather than from a source
 tree. Thumbnails come from ``roqsim assets render-thumbnails``.
+
+One device has no redistributable mesh: the Omron OS32C (``omron_os32c``), whose housing is primitives
+dimensioned from its data sheet (``PRIMITIVE_DEVICES``). Its build fetches nothing and writes no
+meshes; its licence sidecar names the data sheet.
 
 Each device's geometry is taken from the vendor ROS description a robot mounts it with, so a robot
 port can hang the device at the vendor joint origin and get the vendor frame:
@@ -18,6 +22,8 @@ port can hang the device at the vendor joint origin and get the vendor frame:
     sick_tim571      pal_urdf_utils meshes/laser/sick_tim551.stl (Apache)   <name>_link
     rplidar_a1       turtlebot4 turtlebot4_description/meshes/rplidar.dae    rplidar_link
     rplidar_c1       husarion_components_description meshes/rplidar/c1.glb  laser (child of rplidar_link)
+    rplidar_s3       husarion_components_description meshes/rplidar/s3.glb  <name>_laser (child of
+                     (Apache-2.0)                                            <name>_link)
     lds01            turtlebot3 turtlebot3_description/meshes/sensors/lds.stl base_scan
     hokuyo_ust       clearpath_common clearpath_sensors_description/        <name>_laser (child of
                      meshes/hokuyo_ust.stl (BSD-3-Clause)                    <name>_link)
@@ -31,9 +37,13 @@ planar projection the robot that mounts it documents.
 
 The MJCF ``mount`` body is the link the vendor macro attaches to its parent. Visual geoms carry the
 vendor visual origin; the collision geom is the vendor's primitive, except for the two Neobotix
-devices whose vendor collision is the full mesh -- there it is the axis-aligned box around the
-converted housing -- and the LMS1xx, whose vendor collision mesh it bounds. The ``scan`` site is the
-vendor scan frame, never a datasheet optical offset.
+devices whose vendor collision is the full mesh -- there it is the S300's two convex hulls, of its
+housing block and of its optics head (``collision_hulls``, written as ``meshes/*_collision_*.obj``),
+and the axis-aligned box around the converted microScan3 housing -- and the LMS1xx, whose vendor
+collision mesh a box bounds. The ``scan`` site is where
+the rays start: the vendor scan frame, except where a device's data sheet places the physical scan
+plane off it and that offset is measured on the converted housing (the S300). The scan is always
+stamped in the vendor frame, which the manifest's ``frames:`` entry declares.
 
 Units and axes: every OBJ is written in metres (``--scale`` bakes the vendor mesh scale in), so the
 MJCF carries no mesh scale. The Neobotix Collada files declare metres but hold millimetre
@@ -157,7 +167,8 @@ class Device:
     visual_rpy: tuple[float, float, float]
     #: rgba for a source that carries no colour of its own (an STL); None reads the source's.
     rgba: tuple[float, float, float, float] | None
-    #: ``<geom .../>`` attributes of the collision primitive; None boxes the converted housing.
+    #: ``<geom .../>`` attributes of the collision primitive; None boxes the converted housing, unless
+    #: ``collision_hulls`` is set.
     collision: str | None
     inertial: str
     site_pos: tuple[float, float, float]
@@ -169,6 +180,10 @@ class Device:
     extra_meshes: tuple[str, ...] = ()
     #: For several STL meshes, which carry no colour: one rgba per entry of ``meshes``.
     mesh_rgba: tuple[tuple[float, float, float, float], ...] = ()
+    #: Collide as convex hulls of the converted housing rather than one geom: ``(part, sub-mesh
+    #: stems)`` per hull, written to ``meshes/<device>_collision_<part>.obj`` in the mount frame. Every
+    #: sub-mesh belongs to exactly one hull.
+    collision_hulls: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def meshes(self) -> tuple[str, ...]:
@@ -188,9 +203,23 @@ DEVICES = {
             visual_rpy=(-1.57, 0.0, 3.14),  # as the vendor writes it, not pi/2 and pi
             rgba=None,
             collision=None,
+            # Two convex hulls: the housing block (sub-meshes 1-6) and the round optics head (sub-mesh
+            # 0), which stands on the block's top. Primitives cannot follow the block: its top edges are
+            # chamfered up to the head, so a box over-fills those corners by 22.7 mm, and a union of
+            # primitives cannot cut a corner. A box around the whole housing also fills the corners
+            # around the head, which is where a wheel steering beside a mount meets it. The hulls add
+            # to the housing's outline only the head's recessed scan window (15 mm deep), which any
+            # convex shape fills. The head alone fits as cylinders to 1.4 mm, but MuJoCo 3.11's distance
+            # query between two cylinders reads spurious zeros at isolated poses, and a robot's
+            # self-clearance tests measure housings against cylinder tyres.
+            collision_hulls=(
+                ("body", tuple(f"SICK-S300__m{i}" for i in range(1, 7))),
+                ("head", ("SICK-S300__m0",)),
+            ),
             # mpo_700_body.urdf.xacro lidar_1_link; 1.2 kg is also the datasheet weight.
             inertial='<inertial pos="0 0 0" mass="1.2" diaginertia="0.11042056 0.11042056 0.11042056"/>',
-            site_pos=(0.0, 0.0, 0.0),
+            # The data sheet's scan plane, 36.4 mm below the housing top (z +0.0323 on the mesh).
+            site_pos=(0.0, 0.0, -0.0041),
             site_rpy=(0.0, 0.0, 0.0),
             header="""\
     SICK S300 safety laser scanner: a standalone mount (housing mesh + a `scan` site) for the
@@ -202,12 +231,15 @@ DEVICES = {
 
     Body-local axes: x = the scan's zero bearing, z = up with the device upright. The optics cover is
     the dark round head at z -0.025 .. +0.032; the black wedge at the bottom (z -0.12 .. -0.047) is
-    the system plug, at the rear. The datasheet puts the scan plane 116 mm above the housing bottom and
-    36.4 mm below its top, which is z = -0.004 here, inside the cover's window; the site stays on the
-    vendor frame.""",
-            collision_note="The vendor collides with the full mesh; this box bounds the converted "
-            "housing instead.",
-            site_note="The vendor scan frame (lidar_1_link) is the mount itself.",
+    the system plug, at the rear. The data sheet's dimensional drawing puts the scan plane 116 mm above
+    the housing bottom and 36.4 mm below its top; the converted housing spans z -0.1200 .. +0.0323, so
+    the plane is at z -0.0041 (-0.0040 from the bottom), inside the cover's window. The rays are cast
+    from there; the scan is stamped in the vendor frame, 4.1 mm above it, as a real S300's driver
+    stamps it.""",
+            collision_note="The vendor collides with the full mesh; these are the convex hulls of the "
+            "converted housing's block and of its optics head.",
+            site_note="The data sheet's scan plane, 4.1 mm below the vendor scan frame (lidar_1_link), "
+            "which is the mount itself.",
         ),
         Device(
             name="sick_microscan3",
@@ -323,6 +355,38 @@ DEVICES = {
     stays on the vendor frame.""",
             collision_note="The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing.",
             site_note="The vendor scan frame `laser`: 32 mm up and turned half a revolution.",
+        ),
+        Device(
+            name="rplidar_s3",
+            source=HUSARION,
+            mesh="meshes/rplidar/s3.glb",
+            scale=1.0,
+            budget=2000,  # 354 in the source
+            visual_pos=(0.0, 0.0, 0.0),
+            visual_rpy=(0.0, 0.0, 0.0),  # the vendor's (pi/2, 0, 0) is applied by the glTF import
+            rgba=None,
+            # slamtec_rplidar.urdf.xacro:50-55, model `s3`: a 55.6 x 55.6 x 41.3 mm box on the base.
+            collision='type="box" pos="0 0 0.02065" size="0.0278 0.0278 0.02065"',
+            # slamtec_rplidar.urdf.xacro:56-62: 0.115033 kg (the data sheet's 115 g), centred
+            # 1.8237 mm above the collision box's centre.
+            inertial='<inertial pos="0 0 0.0224737" mass="0.115033" '
+            'diaginertia="0.00004115765 0.00004115765 0.00004956023"/>',
+            site_pos=(0.0, 0.0, 0.0305),
+            site_rpy=(0.0, 0.0, 3.141592653589793),
+            header="""\
+    Slamtec RPLIDAR S3 2D lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Husarion `husarion_components_description` (urdf/slamtec_rplidar.urdf.xacro, model
+    `s3`), the component LDR06 of Husarion's UGVs: the body is `<name>_link`, whose origin is the
+    housing base, and the scan is stamped in its child `<name>_laser` at xyz (0, 0, 0.0305),
+    rpy (0, 0, pi).
+
+    Body-local axes: z = up, the housing spans z 0 .. 41.3 mm (data sheet Figure 4-1). The data
+    sheet's Figure 2-3 puts the optical centre 30.55 mm above the base, 0.05 mm above the vendor
+    frame; the site stays on the vendor frame.""",
+            collision_note="The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing.",
+            site_note="The vendor scan frame `<name>_laser`: 30.5 mm up and turned half a revolution.",
         ),
         Device(
             name="lds01",
@@ -573,11 +637,58 @@ def housing_box(device: Device, meshes: Path, parts) -> str:
     return f'type="box" pos="{_fmt((lo + hi) / 2)}" size="{_fmt((hi - lo) / 2)}"'
 
 
-def mjcf(device: Device, parts: dict, collision: str) -> str:
+def housing_hulls(device: Device, meshes: Path, parts) -> dict[str, str]:
+    """Write one convex hull OBJ per ``collision_hulls`` entry, in the mount frame.
+
+    Returns ``{part: mesh stem}``. Faces are wound outward, so MuJoCo compiles each as a closed solid.
+    """
+    from scipy.spatial import ConvexHull
+
+    named = [stem for _, stems in device.collision_hulls for stem in stems]
+    if sorted(named) != sorted(parts):
+        raise RuntimeError(
+            f"{device.name}: collision_hulls must name every converted sub-mesh exactly once; "
+            f"they name {sorted(named)}, the conversion wrote {sorted(parts)}"
+        )
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, np.array(rpy_to_quat(*device.visual_rpy)))
+    hulls = {}
+    for part, stems in device.collision_hulls:
+        verts = np.vstack([_vertices(meshes / f"{stem}.obj") for stem in stems])
+        placed = verts @ rot.reshape(3, 3).T + np.array(device.visual_pos)
+        hull = ConvexHull(placed)
+        index = {int(v): i for i, v in enumerate(hull.vertices)}
+        lines = [f"v {p[0]:.6f} {p[1]:.6f} {p[2]:.6f}" for p in placed[hull.vertices]]
+        for simplex, plane in zip(hull.simplices, hull.equations, strict=True):
+            a, b, c = placed[simplex]
+            if np.dot(np.cross(b - a, c - a), plane[:3]) < 0:
+                simplex = simplex[[0, 2, 1]]
+            lines.append("f " + " ".join(str(index[int(v)] + 1) for v in simplex))
+        stem = f"{device.name}_collision_{part}"
+        (meshes / f"{stem}.obj").write_text("\n".join(lines) + "\n")
+        hulls[part] = stem
+    return hulls
+
+
+def mjcf(device: Device, parts: dict, collision: str | None, hulls: dict[str, str]) -> str:
+    """The device MJCF: one collision geom from *collision*, or one mesh geom per entry of *hulls*."""
+    if (collision is None) == (not hulls):
+        raise RuntimeError(
+            f"{device.name}: give exactly one of a collision geom and collision hulls"
+        )
     materials = "".join(
         f'    <material name="{stem}_mat" rgba="{_fmt(rgba)}"/>\n' for stem, rgba in parts.items()
     )
-    meshes = "".join(f'    <mesh name="{stem}" file="{stem}.obj"/>\n' for stem in parts)
+    meshes = "".join(
+        f'    <mesh name="{stem}" file="{stem}.obj"/>\n' for stem in [*parts, *hulls.values()]
+    )
+    if hulls:
+        collisions = "".join(
+            f'      <geom name="{stem}" type="mesh" mesh="{stem}" group="3"/>\n'
+            for stem in hulls.values()
+        )
+    else:
+        collisions = f'      <geom name="{device.name}_collision" {collision} group="3"/>\n'
     placement = ""
     if any(device.visual_pos):
         placement += f' pos="{_fmt(device.visual_pos)}"'
@@ -610,8 +721,7 @@ def mjcf(device: Device, parts: dict, collision: str) -> str:
     <body name="mount">
       {device.inertial}
 {visuals}      <!-- {device.collision_note} -->
-      <geom name="{device.name}_collision" {collision} group="3"/>
-      <!-- {device.site_note}
+{collisions}      <!-- {device.site_note}
            Keep in step with the manifest's `frames:` entry. -->
       <site name="scan" {site} size="0.005"/>
     </body>
@@ -622,6 +732,12 @@ def mjcf(device: Device, parts: dict, collision: str) -> str:
 
 def licence(device: Device, source: Path) -> str:
     files = "\n".join(f"    file   {mesh}" for mesh in device.meshes)
+    derived = (
+        "\nThe collision hulls, meshes/*_collision_*.obj, are the convex hulls of those OBJs, computed by\n"
+        "the same script."
+        if device.collision_hulls
+        else ""
+    )
     return f"""The visual meshes in meshes/ are converted from
 
     {device.source.url.removesuffix(".git")}
@@ -632,12 +748,137 @@ Copyright (c) {device.source.copyright}
 Licence: {device.source.spdx}, full text below.
 Converted (and, where the source is heavy, decimated) to OBJ in metres by
 external/convert/build_scanner_devices.py; the MJCF's link frame, visual origin, collision
-primitive and inertial are read from the same repository.
+primitive and inertial are read from the same repository.{derived}
 
 --------------------------------------------------------------------------------
 
 {(source / device.source.licence).read_text().strip()}
 """
+
+
+@dataclass(frozen=True)
+class PrimitiveDevice:
+    """A device whose housing is primitives dimensioned from its data sheet, not a vendor mesh.
+
+    For a scanner whose manufacturer's CAD is not licensed for redistribution: the build writes the
+    MJCF and the licence sidecar from these fields, fetches nothing and writes no meshes.
+    """
+
+    name: str
+    #: ``(<geom .../> attributes, rgba)`` per housing primitive, each written as a visual and a
+    #: collision geom.
+    primitives: tuple[tuple[str, tuple[float, float, float, float]], ...]
+    inertial: str
+    site_pos: tuple[float, float, float]
+    header: str
+    site_note: str
+    #: The licence sidecar: where the primitives' dimensions come from.
+    licence: str
+
+
+PRIMITIVE_DEVICES = {
+    d.name: d
+    for d in (
+        PrimitiveDevice(
+            name="omron_os32c",
+            primitives=(
+                # Body: W 133.0 (y) x D 142.7 (x) (Z298 p. 5, "Dimensions (WxHxD)") and 57.0 tall (p. 8,
+                # back view). Its front face is flush with the sensor head (p. 8, side view: the head's
+                # 100.0 starts at the housing's front), so it lies 50.0 ahead of the head's axis.
+                (
+                    'type="box" pos="-0.02135 0 0.0285" size="0.07135 0.0665 0.0285"',
+                    (0.85, 0.7, 0.1, 1.0),
+                ),
+                # Sensor head with the window: 100.0 across (p. 8, side view), from the body's top to
+                # the 104.5 overall height (p. 5; p. 8).
+                ('type="cylinder" pos="0 0 0.08075" size="0.05 0.02375"', (0.1, 0.1, 0.1, 1.0)),
+            ),
+            # Z298 p. 5: 1.3 kg (main unit); a solid box over the 133.0 x 104.5 x 142.7 mm envelope.
+            inertial='<inertial pos="-0.02135 0 0.05225" mass="1.3" '
+            'diaginertia="0.0030993 0.003389 0.0041223"/>',
+            site_pos=(0.0, 0.0, 0.067),
+            header="""\
+    Omron OS32C safety laser scanner: a standalone mount (primitive housing + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its mounting face.
+
+    No mesh: Omron's CAD downloads are offered for personal reference only, and the one community
+    model carries no licence (see omron_os32c_LICENSE). The housing is two primitives dimensioned from
+    the data sheet, Omron "OS32C Safety Laser Scanner", Cat. No. Z298-E2-05-X ("Z298"): a 133.0 wide,
+    142.7 deep, 57.0 tall body and the 100.0 mm sensor head above it, 104.5 mm overall.
+
+    Body-local axes: x = the scan's zero bearing (the side the window faces, away from the I/O block),
+    z = up. The mount is the bottom face directly below the head's axis. Z298 p. 5: "Laser Scan Plane
+    Height 67 mm from the bottom of the scanner"; the site is there, on the axis. The driver stamps the
+    scan in `laser` (omron_os32c_driver), which is this site's frame.""",
+            site_note="The scan plane, 67.0 mm above the bottom face (Z298 p. 5, 8), on the head's axis.",
+            licence="""\
+The housing in omron_os32c.xml is not a vendor mesh. It is two primitives, a box and a cylinder,
+dimensioned from the ratings and the dimension drawing of
+
+    Omron, "OS32C Safety Laser Scanner" data sheet, Cat. No. Z298-E2-05-X, pp. 5 and 8
+    https://files.omron.eu/downloads/latest/datasheet/en/z298_os32c_safety_laser_scanner_datasheet_en.pdf
+
+It carries no third-party geometry and is part of roqsim_sensors, under that package's licence
+(Apache-2.0).
+
+No mesh is shipped because none found is licensed for redistribution: Omron's CAD downloads are
+offered under website terms that allow extracts for personal reference only
+(https://industrial.omron.eu/en/misc/terms-of-website-use), and the community Gazebo model
+https://github.com/prajval10/Omron_model declares no licence.
+""",
+        ),
+    )
+}
+
+
+def primitive_mjcf(device: PrimitiveDevice) -> str:
+    materials = "".join(
+        f'    <material name="{device.name}_mat_{i}" rgba="{_fmt(rgba)}"/>\n'
+        for i, (_, rgba) in enumerate(device.primitives)
+    )
+    visuals = "".join(
+        f'      <geom name="{device.name}_visual_{i}" {attrs} material="{device.name}_mat_{i}"\n'
+        f'            contype="0" conaffinity="0"/>\n'
+        for i, (attrs, _) in enumerate(device.primitives)
+    )
+    collisions = "".join(
+        f'      <geom name="{device.name}_collision_{i}" {attrs} group="3"/>\n'
+        for i, (attrs, _) in enumerate(device.primitives)
+    )
+    return f"""<mujoco model="{device.name}">
+  <!--
+{device.header}
+
+    Built by external/convert/build_scanner_devices.py from the data sheet; no source is fetched.
+    Scan parameters and the `frames:` entry for this site are in {device.name}.manifest.yaml; see
+    {device.name}_LICENSE for the housing's provenance.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+{materials}  </asset>
+
+  <worldbody>
+    <body name="mount">
+      {device.inertial}
+{visuals}      <!-- The same primitives, as the collision geometry. -->
+{collisions}      <!-- {device.site_note}
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="{_fmt(device.site_pos)}" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def build_primitive(device: PrimitiveDevice) -> None:
+    folder = MODELS / device.name
+    folder.mkdir(parents=True, exist_ok=True)
+    if (folder / "meshes").exists():
+        shutil.rmtree(folder / "meshes")
+    (folder / f"{device.name}.xml").write_text(primitive_mjcf(device))
+    (folder / f"{device.name}_LICENSE").write_text(device.licence)
+    print(f"{device.name}: {len(device.primitives)} primitive(s), from the data sheet")
 
 
 def build(device: Device) -> None:
@@ -648,8 +889,13 @@ def build(device: Device) -> None:
         shutil.rmtree(meshes)
     meshes.mkdir(parents=True)
     parts = convert(device, source, meshes)
-    collision = device.collision or housing_box(device, meshes, parts)
-    (folder / f"{device.name}.xml").write_text(mjcf(device, parts, collision))
+    if device.collision_hulls:
+        if device.collision is not None:
+            raise RuntimeError(f"{device.name}: set `collision` or `collision_hulls`, not both")
+        hulls, collision = housing_hulls(device, meshes, parts), None
+    else:
+        hulls, collision = {}, device.collision or housing_box(device, meshes, parts)
+    (folder / f"{device.name}.xml").write_text(mjcf(device, parts, collision, hulls))
     (folder / f"{device.name}_LICENSE").write_text(licence(device, source))
     faces = sum(
         sum(1 for line in (meshes / f"{s}.obj").open() if line.startswith("f ")) for s in parts
@@ -662,12 +908,16 @@ def build(device: Device) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("devices", nargs="*", help=f"any of {', '.join(DEVICES)}; default: all")
+    names = [*DEVICES, *PRIMITIVE_DEVICES]
+    parser.add_argument("devices", nargs="*", help=f"any of {', '.join(names)}; default: all")
     args = parser.parse_args(argv)
-    if unknown := sorted(set(args.devices) - set(DEVICES)):
+    if unknown := sorted(set(args.devices) - set(names)):
         parser.error(f"unknown device(s): {', '.join(unknown)}")
-    for name in args.devices or DEVICES:
-        build(DEVICES[name])
+    for name in args.devices or names:
+        if name in PRIMITIVE_DEVICES:
+            build_primitive(PRIMITIVE_DEVICES[name])
+        else:
+            build(DEVICES[name])
 
 
 if __name__ == "__main__":

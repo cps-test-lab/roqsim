@@ -13,11 +13,15 @@ This mirrors how :mod:`camera_common` + :mod:`depth_camera` already layer the ca
 for the same reason: the duplicated copies had diverged in ways that were bugs rather than choices.
 Two are fixed by being written once here.
 
-**A near return is either clamped or dropped, and that is a device property, not an accident.** A
-``LaserScan`` is a fixed-length array, so a return inside ``range_min`` is clamped up to it and the
-array keeps its shape; a point cloud is a list of real returns, so a blind-zone return is simply not
-a point. :data:`RayCastSensorPlugin.CLAMP_NEAR_RETURNS` names that difference instead of leaving it
-implicit in two hand-written expressions.
+**A return is classified against the physical detection limits, once, here.** A cast hit nearer
+than :attr:`RayCastSensorPlugin.detection_min` is *too close*: the device cannot measure it. A hit
+beyond :attr:`RayCastSensorPlugin.detection_max`, or no hit at all, is *no return*. What each becomes
+on the wire is the device's own format: :meth:`RayCastSensorPlugin._payload` receives the measured
+returns and the too-close mask separately. A ``LaserScan`` is a fixed-length array, so every ray keeps
+its slot and a too-close ray carries the value the device's driver publishes for it (REP 117's
+``-inf`` unless the device model says otherwise); a too-close ray is never raised to ``range_min`` and
+never published as a measured distance. A point cloud is a list of real returns, so a too-close return
+is not a point. For a point cloud the detection limits are ``range_min`` and ``max_range``.
 
 **``max_range`` is enforced here, for everyone.** ``mj_multiRay``'s ``cutoff`` is a culling hint and
 not a clamp -- it can still report a hit beyond it. The 2D lidar had always applied the window; the
@@ -58,11 +62,8 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     DEFAULT_RANGE_MIN = 0.164
     DEFAULT_MAX_RANGE = 20.0
     DEFAULT_RATE_HZ = 10.0
-    DEFAULT_EXCLUDE_BODY = "base_link"
-
-    #: True for a fixed-length scan (clamp a blind-zone return up to ``range_min``), False for a
-    #: point cloud (drop it). See the module docstring.
-    CLAMP_NEAR_RETURNS = True
+    #: Nothing: a scanner excludes only its own housing, which a device model names.
+    DEFAULT_EXCLUDE_BODY = ""
 
     #: Keys a ``fault:`` block may write WHILE THE RUN IS IN PROGRESS -> the attribute each lives in.
     #: Every row is read inside ``post_step`` on the frame it is used (see the noise block at the end
@@ -71,6 +72,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     #: same name, and a fault naming the attribute would silently write nothing.
     LIVE_WRITABLE = {
         "range_stddev": "range_stddev",
+        "range_stddev_relative": "range_stddev_relative",
+        "range_stddev_relative_from": "range_stddev_relative_from",
+        "range_resolution": "range_resolution",
         "dropout_percent": "dropout_percent",
         "max_range": "range_max",
         "range_min": "range_min",
@@ -108,13 +112,18 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         self._last_cast = float("-inf")
         self.exclude_body = self.config.get("exclude_body", self.DEFAULT_EXCLUDE_BODY)
         self.range_stddev = float(self.config.get("range_stddev", 0.0))
+        # Range-dependent sigma: at and beyond `range_stddev_relative_from` metres the sigma is this
+        # fraction of the true distance, nearer it is `range_stddev`. 0 = constant sigma.
+        self.range_stddev_relative = float(self.config.get("range_stddev_relative", 0.0))
+        self.range_stddev_relative_from = float(self.config.get("range_stddev_relative_from", 0.0))
+        # Quantisation step of a published distance (m); 0 = continuous.
+        self.range_resolution = float(self.config.get("range_resolution", 0.0))
         self.dropout_percent = float(self.config.get("dropout_percent", 0.0))
         # Publish base body -> sensor frame as a static TF (derived from the same site the rays are
         # cast from). On by default; disable when an external robot_state_publisher owns it.
         self.emit_static_tf = bool(self.config.get("emit_static_tf", True))
-        # The body that static TF hangs from. Unset, it is the resolved `exclude_body` (else the
-        # world): the two coincide for a scanner whose housing IS the robot's base, and part ways
-        # for one in a housing of its own, which is excluded without being the frame's parent.
+        # The body that static TF hangs from. Unset, it is the root body of the entity carrying the
+        # sensor (a robot's base), else the resolved `exclude_body`, else the world -- see _mount_tf.
         self.tf_parent = self.config.get("tf_parent", "")
         self._site_id = -1
         self._bodyexclude = -1
@@ -145,11 +154,22 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         """(nray, 3) unit ray directions in the site frame."""
         raise NotImplementedError
 
-    def _payload(self, dist: np.ndarray, valid: np.ndarray):
-        """Build the wire payload from per-ray ``dist`` and its ``valid`` mask.
+    @property
+    def detection_min(self) -> float:
+        """Nearest distance the device measures; a nearer hit is too close. See the module docstring."""
+        return self.range_min
 
-        ``dist`` is metres along each ray (meaningless where ``valid`` is False) and already carries
-        the range window, the near-return policy and any noise.
+    @property
+    def detection_max(self) -> float:
+        """Farthest distance the device measures; a farther hit is no return."""
+        return self.range_max
+
+    def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray):
+        """Build the wire payload from per-ray ``dist`` and two disjoint masks.
+
+        ``valid`` marks a measured return inside the detection limits, ``near`` a hit nearer than
+        ``detection_min``; a ray in neither is no return. ``dist`` is metres along each ray, carrying
+        any noise and quantisation where either mask is set, and is meaningless elsewhere.
         """
         raise NotImplementedError
 
@@ -172,6 +192,12 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             errors.append("'rate_hz' must be > 0")
         if float(config.get("range_stddev", 0.0)) < 0:
             errors.append("'range_stddev' must be >= 0")
+        if float(config.get("range_stddev_relative", 0.0)) < 0:
+            errors.append("'range_stddev_relative' must be >= 0")
+        if float(config.get("range_stddev_relative_from", 0.0)) < 0:
+            errors.append("'range_stddev_relative_from' must be >= 0")
+        if float(config.get("range_resolution", 0.0)) < 0:
+            errors.append("'range_resolution' must be >= 0")
         if not 0.0 <= float(config.get("dropout_percent", 0.0)) <= 100.0:
             errors.append("'dropout_percent' must be in [0, 100]")
         return errors + self._validate_extra(config) + self.validate_fault(config)
@@ -199,7 +225,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             **self._ros2_hints_extra(),
         }
         if self.emit_static_tf:
-            ros2_hints["static_tf"] = self._mount_tf(m, prefix)
+            ros2_hints["static_tf"] = self._mount_tf(m, prefix, entity)
 
         # The fault switch, if this sensor declares one. Registered here, beside the scan endpoint,
         # so both are in ctx.interface before a bridge binds it.
@@ -222,18 +248,15 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     def _resolve_exclude_body(self, m, prefix: str) -> int:
         """Body id whose geoms the rays skip, or ``-1`` for "exclude nothing".
 
-        An empty ``exclude_body`` means the latter explicitly. A body the *world asked for by name*
-        and that does not resolve is an error: silently casting through the chassis it meant to skip
+        Nothing is the default. A scanner excludes only its own housing, so a device model names that
+        body (``exclude_body: mount``), and robot geometry in the scan plane is a real return. A named
+        body that does not resolve is an error: silently casting through the housing it meant to skip
         is the kind of failure that shows up as inexplicable lidar returns much later.
-
-        The class default is deliberately not held to that. A sensor mounted on the worldbody -- a
-        static scanner on a tripod, or a bare test scene -- has no ``base_link`` and needs none, so
-        the default resolving to nothing is an ordinary world rather than a mistake.
         """
         if not self.exclude_body:
             return -1
         bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.exclude_body)
-        if bid < 0 and "exclude_body" in self.config:
+        if bid < 0:
             raise RuntimeError(
                 f"{self.PLUGIN_LABEL}: exclude_body {prefix + self.exclude_body!r} not found. "
                 f"Set 'exclude_body' to a body of this robot, or to '' to exclude nothing."
@@ -247,43 +270,51 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # same process, or the control cell silently becomes a faulted one.
         self.on_reset_fault()
 
-    def _mount_tf(self, m, prefix: str) -> dict:
-        """Static mount transform (base body -> sensor site) as plain numbers, for a bridge.
+    def _mount_tf(self, m, prefix: str, entity=None) -> dict:
+        """Static mount transform (parent body -> sensor site) as plain numbers, for a bridge.
 
-        Computed from the model on a throwaway ``MjData`` at the reference pose. The base<-site
+        Computed from the model on a throwaway ``MjData`` at the reference pose. The parent<-site
         transform is rigid, so it is independent of where the robot stands; deriving it from the same
         site the rays are cast from keeps the published frame consistent with the payload by
         construction. No ROS types here -- ``roqsim`` stays ROS-free.
+
+        The parent is, in order: ``tf_parent`` when set; else the root body of the entity carrying
+        the sensor (*entity*'s ``body``, a robot's base), the link a vendor description hangs a
+        scanner's frame from; else the resolved ``exclude_body``; else ``world`` for a sensor nothing
+        carries and that excludes nothing, whose transform is then its world pose. A named parent or
+        a carrier body that is not in the model raises: a transform measured from one body and
+        published under another's name is a frame bolted onto the wrong thing.
         """
         d0 = mujoco.MjData(m)
         mujoco.mj_forward(m, d0)
-        # Body 0 is ``world`` (origin, identity), which is the right reference for a site mounted on
-        # the worldbody -- the transform is then simply the site's world pose. Not a fallback for
-        # tidiness: read as an index, ``self._bodyexclude`` of -1 selects ``xpos[-1]``, the *last*
-        # body in the model, and publishes that unrelated body's transform under the declared
-        # parent's name.
-        #
-        # The PARENT NAME follows the reference. ``_bodyexclude`` is -1 whenever
-        # nothing was excluded: either the world said so (``exclude_body: ''``) or the class default
-        # ``base_link`` is absent, which is the ordinary case for a scanner on a tripod or a mast.
-        # Naming the parent after ``exclude_body`` regardless published numbers measured from the
-        # world under the header of a frame that does not exist -- an orphaned sensor frame, and in
-        # a world where some OTHER robot does have a ``base_link``, one bolted onto that robot at a
-        # pose measured from somewhere else entirely. For the explicit ``''`` spelling it published
-        # an empty ``frame_id``, which tf2 drops outright, so the frame never appeared at all.
-        world_mounted = self._bodyexclude < 0
-        ref = 0 if world_mounted else self._bodyexclude
-        parent = WORLD_FRAME if world_mounted else self.exclude_body
+        carrier = entity.body if entity is not None and entity.body else ""
         if self.tf_parent:
-            # Named, so it must exist: a transform measured from a body that is not there would
-            # have to be measured from something else and published under this name anyway.
             ref = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.tf_parent)
             if ref < 0:
                 raise RuntimeError(
                     f"{self.PLUGIN_LABEL}: tf_parent {prefix + self.tf_parent!r} not found. Set it "
-                    f"to a body of this robot, or leave it unset to hang the frame off exclude_body."
+                    f"to a body of this robot, or leave it unset to hang the frame off the root "
+                    f"body of the entity carrying the sensor."
                 )
             parent = self.tf_parent
+        elif carrier:
+            ref = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, carrier)
+            if ref < 0:
+                raise RuntimeError(
+                    f"{self.PLUGIN_LABEL}: the carrying entity {entity.name!r} names body "
+                    f"{carrier!r}, which is not in the model. Set 'tf_parent' to the body the frame "
+                    f"hangs from."
+                )
+            # Bare name, like every frame a bridge publishes; the bridge applies the namespace.
+            parent = carrier.removeprefix(prefix)
+        elif self._bodyexclude >= 0:
+            ref = self._bodyexclude
+            parent = self.exclude_body
+        else:
+            # Body 0 is ``world`` (origin, identity). Never index with -1: ``xpos[-1]`` is the last
+            # body in the model, whose transform would be published under the parent's name.
+            ref = 0
+            parent = WORLD_FRAME
         base_pos = d0.xpos[ref]
         base_mat = d0.xmat[ref].reshape(3, 3)
         site_pos = d0.site_xpos[self._site_id]
@@ -318,30 +349,42 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
             out=self._hits,
         )
         dist = self._hits.dist
-        # The range window. `cutoff` above is a culling hint, not a clamp, so a hit beyond
-        # `range_max` is still reported and is filtered here -- for every device, once.
-        valid = (dist >= 0.0) & (dist <= self.range_max)
-        if self.CLAMP_NEAR_RETURNS:
-            # Fixed-length scan: a blind-zone return keeps its slot, pushed out to range_min.
-            dist = np.maximum(dist, self.range_min)
-        else:
-            # Point cloud: a blind-zone return is not a point.
-            valid = valid & (dist >= self.range_min)
+        # Classified on the TRUE distance, against the physical limits. `cutoff` above is a culling
+        # hint, not a clamp, so a hit beyond the far limit is still reported and is filtered here --
+        # for every device, once.
+        hit = (dist >= 0.0) & (dist <= self.detection_max)
+        near = hit & (dist < self.detection_min)
+        valid = hit & ~near
 
-        if self.range_stddev > 0.0 or self.dropout_percent > 0.0:
+        noisy = (
+            self.range_stddev > 0.0
+            or self.range_stddev_relative > 0.0
+            or self.dropout_percent > 0.0
+        )
+        if noisy or self.range_resolution > 0.0:
+            # Copy before writing: `dist` is still the reused cast buffer.
+            dist = dist.copy()
+        if noisy:
             # One generator per (sensor, step), not per draw: counter-based, so the same noise is
             # reproducible from a recording without replaying the run. Keyed on this plugin's own
             # name so two sensors on one robot get independent streams.
             rng = ctx.rng_for(self.name or self.PLUGIN_LABEL)
-            # Copy before writing: `dist` may still be the reused cast buffer.
-            dist = dist.copy()
-            if self.range_stddev > 0.0:
-                dist[valid] += rng.normal(0.0, self.range_stddev, size=int(valid.sum()))
+            if self.range_stddev > 0.0 or self.range_stddev_relative > 0.0:
+                true = dist[hit]
+                sigma = np.full(true.shape, self.range_stddev)
+                if self.range_stddev_relative > 0.0:
+                    far = true >= self.range_stddev_relative_from
+                    sigma[far] = self.range_stddev_relative * true[far]
+                # A measured distance is never negative, however near the surface and wide the sigma.
+                dist[hit] = np.maximum(true + rng.standard_normal(true.shape) * sigma, 0.0)
             if self.dropout_percent > 0.0:
-                # Randomly drop this percentage of the potential returns per frame.
+                # Randomly drop this percentage of the potential returns per frame: a dropped ray is
+                # no return, whatever it would have been.
                 n_drop = int(round(self.num_rays * self.dropout_percent / 100.0))
                 if n_drop > 0:
                     drop = rng.choice(self.num_rays, size=n_drop, replace=False)
-                    valid = valid.copy()
                     valid[drop] = False
-        self._payload_value = self._payload(dist, valid)
+                    near[drop] = False
+        if self.range_resolution > 0.0:
+            dist[hit] = np.round(dist[hit] / self.range_resolution) * self.range_resolution
+        self._payload_value = self._payload(dist, valid, near)

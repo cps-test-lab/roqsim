@@ -21,8 +21,11 @@ components:
                                      # the magnitude of acc_lim_theta. An assumption.
       accel_limit: 0.25              # acc_lim_x / acc_lim_y
       angular_accel_limit: 1.0       # acc_lim_theta
-      # Geometry from the expanded xacro: wheel sphere radius 0.117, wheels at (+-0.25, +-0.28).
-      wheel_radius: 0.117
+      # Wheels at (+-0.25, +-0.28), from the expanded xacro. The radius is Neobotix's hardware
+      # documentation, not the xacro's 0.117 sphere: the MPO-500 "Mechanical Properties" page
+      # (https://neobotix-docs.de/hardware/en/platforms/mpo-500/mechanical.html) gives wheel diameter
+      # D 254 mm, which the vendor's wheel mesh also spans; the model's contact sphere is the same.
+      wheel_radius: 0.127
       wheel_separation: 0.56         # lateral, 2 x 0.28
       axis_separation: 0.50          # longitudinal, 2 x 0.25
       wheels: [mpo_500_omni_wheel_front_left, mpo_500_omni_wheel_front_right,
@@ -36,13 +39,22 @@ components:
   # would be simpler and would give the robot a sensor it does not have.
   #
   # Field, rays, range, rate and noise are the device's datasheet values. The vendor's Gazebo sensors
-  # (720 rays over +-1.48 rad at 100 Hz, mpo_500_gazebo.urdf.xacro:25-50) describe its simulation
-  # rather than the scanners and are not copied; their topics are the robot's ROS interface and are:
-  # one topic per scanner, `scan` and `scan2`.
+  # (720 rays over +-1.48 rad at 100 Hz, sigma 0.01, mpo_500_gazebo.urdf.xacro:25-50) come from a
+  # macro shared with the S300 robots whose noise comment derives the value for a Hokuyo
+  # (components/common_macro/gazebo_lidar_macro.xacro:41-44), so none is a value for the microScan3
+  # on this robot and none is copied; their topics are the robot's ROS interface and are: one topic
+  # per scanner, `scan` and `scan2`.
+  #
+  # POSITION: Neobotix's hardware documentation, not the description. The same Mechanical Properties
+  # page puts LS1 / LS2 at X +-454, Y 0, Z 372 mm in the platform frame, whose origin is on the floor
+  # under the platform centre (its coordinate-system figure), where the joints write (+-0.442, 0, 0.372)
+  # in base_link. The wheel joints sit at z 0.13 in base_link and the documented wheels are 254 mm
+  # across, so base_link is 3 mm below the floor and the documented height is z 0.375. The rotation
+  # stays the description's.
   - spawn_sensor:
       model: sick_microscan3
       parent_frame: base_link
-      pos: [0.442, 0.0, 0.372]       # mpo_500_body.urdf.xacro:38, lidar_1_joint origin xyz
+      pos: [0.454, 0.0, 0.375]       # Neobotix MPO-500 Positions of Sensors, LS1; see POSITION
       rpy: [0.0, 0.0, 0.0]           # mpo_500_body.urdf.xacro:38, lidar_1_joint origin rpy
       frame_id: lidar_1_link         # mpo_500_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
@@ -52,7 +64,7 @@ components:
   - spawn_sensor:
       model: sick_microscan3
       parent_frame: base_link
-      pos: [-0.442, 0.0, 0.372]      # mpo_500_body.urdf.xacro:65, lidar_2_joint origin xyz
+      pos: [-0.454, 0.0, 0.375]      # Neobotix MPO-500 Positions of Sensors, LS2; see POSITION
       rpy: [0.0, 0.0, 3.14]          # mpo_500_body.urdf.xacro:65, lidar_2_joint origin rpy
       frame_id: lidar_2_link         # mpo_500_gazebo.urdf.xacro:41
     name: scan_rear

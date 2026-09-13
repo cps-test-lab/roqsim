@@ -378,11 +378,11 @@ def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan):
 
 
 def test_c4_no_ray_starts_inside_robot_geometry(scan):
-    """The embedded site started every ray inside the housing cylinder modelled on base_link."""
+    """The site lies in no robot geometry but the VLP-16's own housing, which the scan skips."""
     scanner = lidar(scan, f"jk.{LABEL}")
     inside, _ = robot_hits(scan, scanner, "jk_")
     assert not inside, {body: len(d) for body, d in inside.items()}
-    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray reads too close"
 
 
 def test_c5_the_scan_sees_no_part_of_the_robot(scan):
@@ -406,20 +406,25 @@ def test_c6_the_tf_chain_and_topic(scan):
     assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 
-def test_c7_the_scan_keeps_the_values_the_experiments_were_run_with():
-    """C7: VLP-16 data sheet ray pattern, with the two values the manifest overrides kept as they were.
+def test_c7_the_scan_is_the_vlp16_devices():
+    """C7: the robot publishes what the VLP-16 driver publishes, with no robot-level override.
 
-    The device carries the hardware's range_min 0.9 m and 0.03 m range noise; the manifest keeps
-    0.4 m and no noise, the values this model's scan had when experiments were built on it.
+    velodyne_laserscan's layout and header, the transform node's 0.9 m near limit, the data sheet's
+    100 m and +-3 cm range accuracy. Clearpath's driver configuration for the Jackal
+    (clearpath_sensors/config/velodyne_lidar.yaml) sets the same values. An experiment whose paper
+    states others overrides them in its own world.
     """
     engine = spawn("clearpath_jackal", {LABEL: None}, owner="jk", prefix="jk_", namespace=NAMESPACE)
     try:
         scanner = lidar(engine, f"jk.{LABEL}")
-        assert scanner.num_rays == 1800  # 360 deg / 0.2 deg at 10 Hz
-        assert (scanner.angle_min, scanner.angle_max) == pytest.approx((0.0, 2 * math.pi))
-        assert (scanner.range_min, scanner.range_max) == pytest.approx((0.4, 100.0))
+        assert scanner.num_rays == 898  # velodyne_laserscan: round(2 pi / 0.007) bins
+        assert scanner.angle_min == pytest.approx(-math.pi)
+        assert scanner.angle_increment == pytest.approx(0.007)
+        assert (scanner.range_min, scanner.detection_min) == pytest.approx((0.0, 0.9))
+        assert (scanner.range_max, scanner.detection_max) == pytest.approx((200.0, 100.0))
+        assert (scanner.too_close, scanner.no_return) == (math.inf, math.inf)
         assert scanner.rate_hz == pytest.approx(10.0)
-        assert scanner.config["range_stddev"] == pytest.approx(0.0)
+        assert scanner.config["range_stddev"] == pytest.approx(0.03)
         model = engine.ctx.model
         mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"jk_{LABEL}_mount")
         assert float(model.body_mass[mount]) == pytest.approx(VLP16_MASS)

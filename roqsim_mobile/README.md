@@ -21,7 +21,7 @@ manifest does the rest, so a world is ~15 lines.
 |---|---|---|---|---|
 | `turtlebot4` | iRobot Create 3 + TurtleBot 4 | differential (front caster) | `rplidar_a1` device on `shell_link` + OAK-D (RGB-D) | — |
 | `turtlebot3_waffle` | ROBOTIS TurtleBot3 Waffle | differential (passive casters) | `lds01` device on `base_link` | |
-| `husky_a200` | Clearpath Husky A200 | skid-steer, 4 driven wheels (`slip_factor` 3.0) | planar, 1440 rays @ 30 Hz | |
+| `husky_a200` | Clearpath Husky A200 | skid-steer, 4 driven wheels (`slip_factor` 3.0) | `hokuyo_ust` device on a PACS bracket (`bracket_0_mount`) | |
 | `clearpath_jackal` | Clearpath Jackal | skid-steer, 4 driven wheels (`slip_factor` 1.7) | VLP-16, planar cast @ 10 Hz | |
 | `piracer` | Waveshare PiRacer AI Kit | **Ackermann** — two steered front wheels, rear pair driven; cannot turn in place | none (a `camera` site, unpopulated) | |
 

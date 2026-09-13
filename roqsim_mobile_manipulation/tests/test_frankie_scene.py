@@ -26,8 +26,12 @@ import pytest
 import yaml
 from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin
 
+from roqsim import raycast
+from roqsim.config import load_config_from_dict
 from roqsim.context import Entity, SimContext
+from roqsim.engine import Engine
 from roqsim.models import apply_assets, resolve_model
+from roqsim.plugin import Plugin
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile_manipulation" / "models"
@@ -112,38 +116,6 @@ def _arm(ctx, **overrides):
     p.configure(ctx)
     p.on_reset(ctx)
     return p
-
-
-def _mesh_verts(name: str) -> np.ndarray:
-    """Vertices of one of the base's OBJ meshes, in the base frame.
-
-    Read from the mesh FILE rather than the compiled model: these tests assert that the site agrees
-    with the CAD, and a compiled model that had lost the mesh would let that assertion pass against
-    whatever the site itself says.
-    """
-    path = MODEL_DIR / "meshes" / f"{name}.obj"
-    verts = [
-        [float(v) for v in line.split()[1:4]]
-        for line in path.read_text().splitlines()
-        if line.startswith("v ")
-    ]
-    assert verts, f"{path} has no vertices"
-    return np.array(verts)
-
-
-def _inside_chassis(model, pos) -> bool:
-    gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "chassis")
-    half, centre = model.geom_size[gid], model.geom_pos[gid]
-    return bool(np.all(np.abs(np.asarray(pos) - centre) <= half))
-
-
-def _scan(plugin, ctx, model, data) -> np.ndarray:
-    """One full sweep from a configured lidar plugin, as an array of ranges."""
-    plugin.configure(ctx)
-    plugin.on_reset(ctx)
-    mujoco.mj_forward(model, data)
-    plugin.post_step(ctx)
-    return np.asarray(plugin.latest.ranges, dtype=float)
 
 
 def _yaw(data) -> float:
@@ -436,91 +408,227 @@ def test_e6_gripper_closes(rig):
 
 
 # ------------------------------------------------------------------------------------ C: the laser
-# The base carries a safety scanner and, until it had a mount site, nothing on this robot could
-# navigate: `lidar` looks for a site of that name and this was the one mobile base in the substrate
-# without one. These check the three ways the mount can be right on paper and useless in practice.
+# The base's Safety Laser Scanner is the `omron_os32c` device the manifest mounts. Fixtures are Omron's
+# numbers and the CAD's, not the model's:
+#   * Omron LD-60/90 Platform User's Manual I611-E-09 ("I611") p. 1-6 and 2-13: a 240 deg field, the
+#     plane 190 mm above the floor;
+#   * Omron OS32C data sheet Z298-E2-05-X ("Z298") p. 5: the plane 67 mm above the scanner's base,
+#     0.4 deg resolution;
+#   * the CAD's scanner space (qut_frankie_description, the centre of its placeholder housing): x 0.265;
+#   * the LD skin's channel as the CAD carries it (I611 p. 1-19; build_frankie_mjcf.py CHANNEL_Z):
+#     open from z 0.1815 to 0.2235 over +-125 deg about the scan origin.
+LABEL = "lidar"
+SCAN_FRAME = "laser"  # the OS32C ROS 1 driver's default frame_id
+OWNER, PREFIX, NAMESPACE = "fk", "fk_", "frankie1"
+SCAN_ORIGIN = np.array([0.265, 0.0, 0.190])
+DEVICE_SCAN_HEIGHT = 0.067
+FIELD_HALF_DEG = 120.0
+RESOLUTION_DEG = 0.4
+CHANNEL_Z = (0.1815, 0.2235)
+CHANNEL_HALF_DEG = 125.0
+#: Inner wall faces at x, y = +-HALF around the spawn origin.
+HALF = 3.0
 
 
-def test_c1_lidar_site_sits_at_the_scanner_the_cad_models(rig):
-    """C1: the mount is the CAD's own sensor, not a plausible spot on the shell.
+class _Room(Plugin):
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        t = 0.05
+        for axis in (0, 1):
+            for sign in (-1.0, 1.0):
+                pos = [0.0, 0.0, 0.5]
+                pos[axis] = sign * (HALF + t)
+                size = [HALF + 2 * t, HALF + 2 * t, 0.5]
+                size[axis] = t
+                spec.worldbody.add_geom(
+                    name=f"room_wall_{axis}_{int(sign)}",
+                    type=mujoco.mjtGeom.mjGEOM_BOX,
+                    pos=pos,
+                    size=size,
+                )
 
-    The Omron mesh carries a 5 mm window slot (omron__m7) and a housing behind it (omron__m8). The
-    site must be at the housing's centre and in the slot's plane -- that pairing is what makes the
-    window subtend its 250 deg symmetrically, which C2 then relies on.
-    """
+
+@pytest.fixture(scope="module")
+def scan():
+    """Frankie spawned with a prefix and namespace in a room of known walls, its scanner cast once."""
+    world = {
+        "sim": {"timestep": VERIFIED_TIMESTEP},
+        "components": [
+            {f"{__name__}:_Room": {}},
+            {
+                "spawn_robot": {"model": "frankie", "prefix": PREFIX, "namespace": NAMESPACE},
+                "name": OWNER,
+            },
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 0  # a test driving an Engine is the driver, and the seed is driver-owned
+    engine.setup()
+    engine.reset()
+    engine.step()  # the rate gate starts open, so the first step casts
+    yield engine
+    engine.shutdown()
+
+
+def _scanner(engine: Engine):
+    (scanner,) = [
+        p
+        for p in engine.plugins
+        if type(p).__name__ == "LidarPlugin" and p.entity == f"{OWNER}.{LABEL}"
+    ]
+    return scanner
+
+
+def _pose_in_base(engine: Engine, site: str) -> tuple[np.ndarray, np.ndarray]:
+    m, d = engine.ctx.model, engine.ctx.data
+    base = m.body(PREFIX + "base_link").id
+    sid = m.site(site).id
+    rot = d.xmat[base].reshape(3, 3)
+    return rot.T @ (d.site_xpos[sid] - d.xpos[base]), rot.T @ d.site_xmat[sid].reshape(3, 3)
+
+
+def _cast(engine: Engine, bearings_rad: np.ndarray):
+    """``(world directions, hits)`` of horizontal rays from the scan site, only the housing skipped."""
+    m, d = engine.ctx.model, engine.ctx.data
+    scanner = _scanner(engine)
+    local = np.stack(
+        [np.cos(bearings_rad), np.sin(bearings_rad), np.zeros_like(bearings_rad)], axis=1
+    )
+    dirs = local @ d.site_xmat[scanner._site_id].reshape(3, 3).T
+    mount = m.body(f"{PREFIX}{LABEL}_mount").id
+    hits = raycast.cast(
+        m,
+        d,
+        d.site_xpos[scanner._site_id].copy(),
+        dirs,
+        cutoff=scanner.range_max,
+        bodyexclude=mount,
+        out=raycast.buffers(len(dirs), normals=True),
+    )
+    return dirs, hits
+
+
+def _robot_bodies(engine: Engine, hits) -> list[str]:
+    m = engine.ctx.model
+    return [
+        mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.geom_bodyid[g]))
+        for g in hits.geomid
+        if g >= 0 and m.geom_bodyid[g] != 0
+    ]
+
+
+def test_c1_the_scan_frame_is_at_omrons_plane(scan):
+    """C1: the scan frame at base_link (0.265, 0, 0.190) -- 190 mm above the floor base_link rests on
+    (A1) -- as the device's 67 mm scan height over its mounting face (0.265, 0, 0.123)."""
+    mount = next(
+        p.config
+        for p in scan.plugins
+        if type(p).__name__ == "SpawnSensorPlugin" and p.address == f"{OWNER}.{LABEL}"
+    )
+    assert mount["model"] == "omron_os32c" and mount["parent_frame"] == "base_link"
+    assert np.allclose(mount["pos"], SCAN_ORIGIN - (0.0, 0.0, DEVICE_SCAN_HEIGHT), atol=1e-12)
+    for site in (f"{PREFIX}{LABEL}_scan", f"{PREFIX}{LABEL}_{SCAN_FRAME}"):
+        pos, rot = _pose_in_base(scan, site)
+        assert np.allclose(pos, SCAN_ORIGIN, atol=1e-6), f"{site} at {pos}"
+        assert np.allclose(rot, np.eye(3), atol=1e-6), f"{site} rotation {rot}"
+    model = scan.ctx.model
+    meshes = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, i) for i in range(model.nmesh)}
+    assert PREFIX + "omron__m8" not in meshes, "the CAD's placeholder housing is back"
+
+
+def test_c2_the_field_is_omrons_setting_for_the_ld(scan):
+    """C2: 240 deg at the OS32C's 0.4 deg: 601 beams over +-120 deg (I611 p. 1-6, 2-13; Z298 p. 5),
+    narrower than the device's own 270 deg and inside the skin's +-125 deg channel."""
+    scanner = _scanner(scan)
+    assert scanner.num_rays == round(2 * FIELD_HALF_DEG / RESOLUTION_DEG) + 1 == 601
+    assert scanner.angle_min == pytest.approx(-math.radians(FIELD_HALF_DEG))
+    assert scanner.angle_max == pytest.approx(math.radians(FIELD_HALF_DEG))
+    assert scanner.latest.angle_increment == pytest.approx(math.radians(RESOLUTION_DEG))
+    assert FIELD_HALF_DEG < CHANNEL_HALF_DEG
+    # The device's own scan values are not overridden: range, rate and the driver's conventions.
+    assert (scanner.range_min, scanner.range_max) == pytest.approx((0.002, 50.0))
+    assert (scanner.detection_min, scanner.detection_max) == pytest.approx((0.002, 15.0))
+    assert scanner.rate_hz == pytest.approx(25.0)
+
+
+def test_c3_the_scan_leaves_through_the_channel(scan):
+    """C3: with only the scanner's own housing skipped, no ray starts inside robot geometry and none
+    meets the robot: the 240 deg field leaves through the channel. The channel is not wider than the
+    CAD's: just inside +-125 deg the rays leave, just outside they meet the skin."""
+    m = scan.ctx.model
+    scanner = _scanner(scan)
+    assert scanner._bodyexclude == m.body(f"{PREFIX}{LABEL}_mount").id, (
+        "it skips more than its housing"
+    )
+    bearings = scanner.latest.angle_min + scanner.latest.angle_increment * np.arange(
+        scanner.num_rays
+    )
+    dirs, hits = _cast(scan, bearings)
+    on_robot = (hits.geomid >= 0) & (m.geom_bodyid[np.maximum(hits.geomid, 0)] != 0)
+    inside = on_robot & (np.einsum("ij,ij->i", hits.normal, dirs) > 0)
+    assert not inside.any(), f"rays start inside robot geometry: {_robot_bodies(scan, hits)}"
+    assert not on_robot.any(), (
+        f"the field meets the robot: {sorted(set(_robot_bodies(scan, hits)))}"
+    )
+    np.testing.assert_array_equal(hits.geomid, scanner._hits.geomid)
+
+    edge = np.radians([CHANNEL_HALF_DEG - 0.5, -(CHANNEL_HALF_DEG - 0.5)])
+    _, hits = _cast(scan, edge)
+    assert not _robot_bodies(scan, hits), "the channel is closed inside its +-125 deg"
+    beyond = np.radians([CHANNEL_HALF_DEG + 1.5, -(CHANNEL_HALF_DEG + 1.5)])
+    _, hits = _cast(scan, beyond)
+    assert _robot_bodies(scan, hits) == [PREFIX + "base_link"] * 2, (
+        "the skin does not close the channel"
+    )
+
+
+def test_c4_the_forward_ray_reads_the_wall(scan):
+    """C4: the forward ray reads the wall ahead at its true distance from the scan origin."""
+    scanner = _scanner(scan)
+    ranges = np.asarray(scanner.latest.ranges)
+    fwd = scanner.num_rays // 2
+    assert scanner.latest.angle_min + fwd * scanner.latest.angle_increment == pytest.approx(
+        0.0, abs=1e-9
+    )
+    d = scan.ctx.data
+    origin = d.site_xpos[scanner._site_id]
+    direction = d.site_xmat[scanner._site_id].reshape(3, 3)[:, 0]
+    true = (HALF - origin[0]) / direction[0]
+    assert ranges[fwd] == pytest.approx(true, abs=1e-3), (
+        f"reads {ranges[fwd]:.4f} m, wall at {true:.4f} m"
+    )
+
+
+def test_c5_the_tf_chain_and_topic(scan):
+    """C5: the mount publishes base_link -> laser at the scan origin; the scan is stamped in `laser`."""
+    address = f"{OWNER}.{LABEL}"
+    (frames,) = [e for e in scan.ctx.interface.all() if e.name == "frames" and e.owner == address]
+    assert frames.namespace == NAMESPACE
+    tf = frames.backend["ros2"]["static_tf"]
+    assert [(t["parent"], t["child"]) for t in tf] == [("base_link", SCAN_FRAME)], tf
+    assert np.allclose(tf[0]["translation"], SCAN_ORIGIN, atol=1e-6)
+    (endpoint,) = [e for e in scan.ctx.interface.all() if e.name == "scan" and e.owner == address]
+    assert endpoint.backend["ros2"]["frame_id"] == SCAN_FRAME
+    assert "static_tf" not in endpoint.backend["ros2"]
+
+
+def test_c6_the_collision_geometry_is_cut_at_the_channel(rig):
+    """C6: the URDF's collision box keeps its footprint (A4) and loses exactly the channel: below it,
+    above it, and behind the plane where a +-125 deg ray leaves the box's side face."""
     model = rig[0]
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert sid >= 0, "frankie has no `lidar` site, so no lidar can be mounted on it"
-    pos = model.site_pos[sid]
 
-    verts = _mesh_verts("omron__m8")
-    assert pos[0] == pytest.approx((verts[:, 0].min() + verts[:, 0].max()) / 2, abs=1e-3), (
-        "the mount is not at the sensor housing's centre"
-    )
-    window = _mesh_verts("omron__m7")
-    assert pos[2] == pytest.approx((window[:, 2].min() + window[:, 2].max()) / 2, abs=1e-3), (
-        "the mount is not in the window slot's plane"
-    )
-    assert pos[1] == pytest.approx(0.0, abs=1e-6), "the scanner is on the base's centreline"
+    def span(name):
+        gid = model.geom(name).id
+        return model.geom_pos[gid] - model.geom_size[gid], model.geom_pos[gid] + model.geom_size[
+            gid
+        ]
 
-
-def test_c2_the_fan_matches_the_window_the_rays_leave_through(rig):
-    """C2: the configured fan is the aperture the CAD provides, not a wider one.
-
-    A scan wider than the window is a scan through the robot's own shell. The manifest's +-125 deg
-    is asserted against the slot's measured angular extent about the mount, so a later change to
-    either the geometry or the config that breaks their agreement fails here.
-    """
-    cfg = _manifest("lidar")
-    window = _mesh_verts("omron__m7")
-    model = rig[0]
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    sx = model.site_pos[sid][0]
-    bearings = np.degrees(np.arctan2(window[:, 1], window[:, 0] - sx))
-
-    assert math.degrees(cfg["angle_min"]) == pytest.approx(bearings.min(), abs=0.5)
-    assert math.degrees(cfg["angle_max"]) == pytest.approx(bearings.max(), abs=0.5)
-    span = math.degrees(cfg["angle_max"] - cfg["angle_min"])
-    assert span == pytest.approx(250.0, abs=1.0), f"fan spans {span:.0f} deg, window is 250"
-
-
-def test_c3_the_scan_is_not_swallowed_by_the_chassis():
-    """C3: the mount is inside the chassis collision box, so `exclude_body` decides everything.
-
-    This is the failure the site alone does not prevent and the one that looks like a working
-    sensor: every ray returns a fraction of a metre, a costmap fills with the robot itself, and the
-    planner reports it is boxed in. Both halves are run against a wall at a known distance --
-    without the manifest's `exclude_body` the scan MUST be blocked, and with it the wall must come
-    back where it actually is.
-    """
-    wall_x = 6.0
-    model, data = _build(wall_x=wall_x)
-    ctx = _ctx(model, data)
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert _inside_chassis(model, model.site_pos[sid]), (
-        "the mount left the chassis box -- this test no longer proves what it claims"
-    )
-
-    from roqsim_sensors.plugins.lidar import LidarPlugin
-
-    cfg = _manifest("lidar")
-    assert cfg.get("exclude_body") == "base_link", (
-        "the manifest must exclude the chassis or its default scan is unusable"
-    )
-
-    blocked = _scan(LidarPlugin({**cfg, "exclude_body": None}, entity="robot"), ctx, model, data)
-    clear = _scan(LidarPlugin(cfg, entity="robot"), ctx, model, data)
-
-    # Blinded, not merely degraded: the chassis surrounds the mount, so every return is clamped to
-    # range_min and the scan carries no information about the world at all.
-    assert blocked.max() < 0.5, (
-        f"without exclude_body the chassis should swallow the whole scan, "
-        f"farthest return was {blocked.max():.2f} m"
-    )
-    # The forward ray, against the wall's true distance from the mount.
-    sx = float(model.site_pos[sid][0])
-    expected = wall_x - 0.05 - sx
-    forward = clear[len(clear) // 2]
-    assert forward == pytest.approx(expected, abs=0.05), (
-        f"the forward ray reads {forward:.2f} m, the wall is at {expected:.2f} m from the mount"
-    )
+    rear_x = SCAN_ORIGIN[0] + (BOX[1] / 2) / math.tan(math.radians(CHANNEL_HALF_DEG))
+    for name, lo, hi in (
+        ("chassis", (-0.34, -0.235, CHANNEL_Z[1]), (0.34, 0.235, BOX[2])),
+        ("chassis_below_channel", (-0.34, -0.235, 0.125), (0.34, 0.235, CHANNEL_Z[0])),
+        ("chassis_behind_channel", (-0.34, -0.235, CHANNEL_Z[0]), (rear_x, 0.235, CHANNEL_Z[1])),
+    ):
+        got_lo, got_hi = span(name)
+        assert np.allclose(got_lo, lo, atol=2e-4) and np.allclose(got_hi, hi, atol=2e-4), (
+            f"{name} spans {got_lo}..{got_hi}"
+        )

@@ -22,5 +22,3 @@ components:
       # Nothing is excluded: the site stands 0.12 m above the body, clear of every geom, so no ray starts
       # inside robot geometry, and a robot part in the scan plane would be a real return.
       exclude_body: ''
-      # The TF parent is named, because unset it follows exclude_body, which is now empty.
-      tf_parent: base_link

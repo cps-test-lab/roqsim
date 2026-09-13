@@ -72,7 +72,7 @@
       <!-- Chassis collision + inertia. The box spans the plate in x/y and clears the floor by
            0.015 m so the robot rides on wheels and casters, never on the hull. The vendor's base
            inertial (1.8 kg at base_footprint z 0.06 -> base_link 0.05) includes the LDS-01 it draws
-           on the base, and the manifest now mounts that scanner as a 0.114 kg device at base_scan
+           on the base, and the manifest mounts that scanner as a 0.114 kg device at base_scan
            (-0.064, 0, 0.122). So this is the vendor's base less the scanner: 1.686 kg, with the COM
            lowered to 0.0451 so base and scanner together keep the vendor's COM. Inertia unchanged. -->
       <geom name="tb3_body_collision" type="box" size="0.136 0.138 0.050"

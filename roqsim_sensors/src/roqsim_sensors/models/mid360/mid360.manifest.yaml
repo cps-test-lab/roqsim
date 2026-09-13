@@ -1,26 +1,54 @@
-# Default capture plugin shipped with the mid360 mount.
+# Livox Mid-360 3D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin.
 #
-# `spawn_sensor: {model: mid360}` pulls this in automatically, so a world does not re-declare the
-# capture plugin. To override, declare livox_mid360 for the same mount in the world (it wins); to opt
-# out, set spawn_sensor config `default_plugins: false`. `robot` is filled in from the spawn_sensor
-# `name`. `exclude_body: mount` skips the sensor's own housing (a standalone mount has no chassis);
-# `frame_id: livox_frame` matches Livox's own ROS driver.
+# Housing and axes: see mid360.xml. Values: Livox Mid-360 User Manual v1.2 (2024) ("manual"),
+# https://www.livoxtech.com/mid-360, and the driver Livox's manual points to,
+# Livox-SDK/livox_ros_driver2 @ 4a1def929e5b59c7a8122d19fce6efba581ce9f7 ("driver").
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: livox_frame       # driver launch_ROS2/msg_MID360_launch.py `frame_id = 'livox_frame'`
+
+frames:
+  - name: "{frame_id}"      # the point-cloud frame O-XYZ (manual p. 12): the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
 components:
   - livox_mid360:
       site: mid360
-      frame_id: livox_frame
+      frame_id: "{frame_id}"
       exclude_body: mount
+      emit_static_tf: false
+      # Manual "Specifications" (p. 20): close proximity blind zone 0.1 m; detection range 40 m at 10%
+      # reflectivity (70 m at 80%); frame rate 10 Hz; distance random error (1 sigma) <= 2 cm at 10 m.
+      range_min: 0.1
+      max_range: 40.0
+      rate_hz: 10.0
+      range_stddev: 0.02    # the 10 m figure at every range; the <= 3 cm at 0.2 m is not modelled
+      # What the published cloud carries. Manual "Point Cloud Data" (p. 13): with no object within the
+      # detection range, a point's coordinates are (0, 0, 0). The driver passes every point through
+      # unfiltered (src/comm/pub_handler.cpp:370-393 copies each raw point; src/lddc.cpp:311-331
+      # writes all of them into the PointCloud2 and sets is_dense true), so both a return nearer than
+      # the blind zone and no return reach a consumer as a point at the origin.
+      too_close: origin
+      no_return: origin
+      # Not modelled: the non-repetitive scan pattern (see the livox_mid360 plugin); the reflectivity,
+      # tag, line and timestamp fields the driver adds; the angular random error (<= 0.15 deg, 1 sigma).
+      # The driver's msg_MID360_launch.py defaults to xfer_format 1, Livox's CustomMsg; the plugin
+      # publishes the PointCloud2 its xfer_format 0 selects, on the driver's `livox/lidar`.
 
-# Field of view for `spawn_sensor: {show_fov: true}`. The Mid-360 is camera-less, so there is no
-# `<camera>` to synthesise a frustum from and (since the baked CAD envelope was dropped) no bundled
-# `_fov` mesh to reveal; instead spawn_sensor synthesises a translucent angular SECTOR from these
-# datasheet angles. The angular band mirrors the `livox_mid360` capture plugin's own FoV defaults
-# (a >= 2*pi azimuth span is a full 360deg dome); `near`/`far` are the shell's inner/outer radii.
-# A world may override the drawn radii per placement via `fov_near`/`fov_range`.
+# Field of view for `spawn_sensor: {show_fov: true}`. The Mid-360 is camera-less, so spawn_sensor
+# synthesises a translucent angular SECTOR from these angles, the same ray convention the
+# `livox_mid360` capture plugin casts with (a >= 2*pi azimuth span is a full 360deg dome);
+# `near`/`far` are the physical detection limits above. A world may override the drawn radii per
+# placement via `fov_near`/`fov_range`.
 fov:
-  near: 0.1              # blind zone (m)
-  far: 40.0             # datasheet detection range @ 10% reflectivity (m); 70 m @ 80%
+  near: 0.1              # manual p. 20: blind zone
+  far: 40.0              # manual p. 20: 40 m at 10% reflectivity
   h_min: 0.0
-  h_max: 6.283185307    # 2*pi -> full 360deg dome (azimuth wraps)
-  v_min: -0.122173048   # -7 deg
-  v_max: 0.907571211    # +52 deg
+  h_max: 6.283185307     # 2*pi -> full 360deg dome (azimuth wraps)
+  v_min: -0.122173048    # -7 deg (manual p. 20, FOV vertical -7 ~ 52 deg)
+  v_max: 0.907571211     # +52 deg

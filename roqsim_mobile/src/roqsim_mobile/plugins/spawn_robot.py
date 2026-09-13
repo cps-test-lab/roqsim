@@ -24,7 +24,7 @@ Config::
         - {name: cover_link, parent: body_link, pos: [0, 0, 0.05], rpy: [0, 0, 0]}
 
 **Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
-after it -- names the fixed links the vendor description chains and the MJCF flattened
+after it -- names the fixed links the vendor description chains and the MJCF flattens
 (:mod:`roqsim.frames`). Each becomes a site ``<prefix><name>`` on its parent's body at build, so a
 mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and is published at configure
 as a static transform ``parent -> name`` read from the compiled model, in the robot's namespace.

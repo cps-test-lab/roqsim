@@ -9,11 +9,12 @@
     A TRUE two-wheel differential drive with a modelled caster, so there is no slip_factor - it does
     not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw.
 
-    The scanner sits INVERTED between the two decks (the description's scan_joint carries
-    rpy="0 -pi 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
-    vendor's; the scan parameters are not - see the manifest and the port log.
+    The scan frame is INVERTED (the description's scan_joint carries rpy="0 -pi 0"), and kept: it is
+    the frame the robot stamps its scan in. Its height is not the description's 0.0704 but the
+    manufacturer's CAD, the LD14P's optical block 72.25 mm above the floor - see
+    build_makerspet_mjcf.CAD_SCAN_HEIGHT, the manifest and the port log.
 
-    DEVIATION: the head ends at z 0.0624 in base_link, the bottom face of the scanner puck. The
+    DEVIATION: the head ends at z 0.04935 in base_link, the bottom face of the scanner puck. The
     description's head encloses the scan plane; the real robot carries its LiDAR in an open gap. The
     collision cylinder is shortened to that height and the hemisphere visual ships cut there as
     hemisphere_scan_gap.stl; the head's mass and inertia are the description's. See
@@ -66,8 +67,8 @@
     <body name="base_link" childclass="makerspet_mini">
       <freejoint name="base_free"/>
       <inertial pos="0 0 0" mass="0.25" diaginertia="0.00026158333333333334 0.00026158333333333334 0.00048049999999999997"/>
-      <!-- The scan plane and frame: the description's own scan_joint, rotation included, so the site is base_scan's frame. -->
-      <site name="lidar" pos="0 0 0.0704" quat="6.123234e-17 0 -1 0" size="0.005" rgba="1 0 0 0.6"/>
+      <!-- The scan plane and frame: base_scan's, the description's scan_joint rotation at the CAD's height. -->
+      <site name="lidar" pos="0 0 0.05735" quat="6.123234e-17 0 -1 0" size="0.005" rgba="1 0 0 0.6"/>
       <site name="base_imu" pos="0 0 0" size="0.005" rgba="0 0 0 0"/>
         <geom class="visual" type="cylinder" size="0.062 0.016" material="makerspet_mini_white" pos="0 0 0.016"/>
         <geom class="collision" type="cylinder" size="0.062 0.016" name="base_link_collision0" pos="0 0 0.016"/>
@@ -88,7 +89,7 @@
             <geom class="visual" type="cylinder" size="0.0215 0.00275" material="makerspet_mini_red" pos="0 0 0"/>
             <geom class="collision" type="cylinder" size="0.0215 0.00275" name="wheel_right_link_collision0" pos="0 0 0"/>
           </body>
-          <body name="base_scan" pos="0.0 0 0.07039999999999999" quat="6.123234e-17 0 -1 0">
+          <body name="base_scan" pos="0.0 0 0.05735" quat="6.123234e-17 0 -1 0">
             <inertial pos="0 0 0" mass="0.15" diaginertia="3.695e-05 3.695e-05 6.749999999999999e-05"/>
             <geom class="visual" type="cylinder" size="0.03 0.008" material="makerspet_mini_black" pos="0 0 0"/>
             <geom class="collision" type="cylinder" size="0.03 0.008" name="base_scan_collision0" pos="0 0 0"/>
@@ -101,7 +102,7 @@
           <body name="head_link" pos="0 0 0.032">
             <inertial pos="0 0 0" mass="0.2" diaginertia="0.0001069888 0.0001069888 0.00015376000000000002"/>
             <geom class="visual" type="mesh" mesh="hemisphere_scan_gap" material="makerspet_mini_red" pos="0 0 0"/>
-            <geom class="collision" type="cylinder" size="0.062 0.0152" name="head_link_collision0" pos="0 0 0.0152"/>
+            <geom class="collision" type="cylinder" size="0.062 0.008675" name="head_link_collision0" pos="0 0 0.008675"/>
           </body>
     </body>
   </worldbody>

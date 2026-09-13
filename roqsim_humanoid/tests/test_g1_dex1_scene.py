@@ -29,13 +29,21 @@ def _world(tmp_path, loco=None):
     )
 
 
+def _engine(tmp_path, loco=None):
+    engine = Engine(_world(tmp_path, loco=loco))
+    # A test driving an Engine is the driver, and the seed is driver-owned: the head Mid-360's range
+    # noise draws from it.
+    engine.ctx.seed = 1
+    return engine
+
+
 def _run(engine, steps):
     for _ in range(steps):
         engine.step()
 
 
-def test_manifest_brings_locomotion_two_arms_and_a_lidar(tmp_path):
-    engine = Engine(_world(tmp_path))
+def test_manifest_brings_locomotion_two_arms_and_the_head_mid360(tmp_path):
+    engine = _engine(tmp_path)
     engine.setup()
     kinds = [type(p).__name__ for p in engine.plugins]
     # Three: left arm, right arm, and the waist. The waist one exists so the three waist joints are
@@ -43,13 +51,26 @@ def test_manifest_brings_locomotion_two_arms_and_a_lidar(tmp_path):
     # silently assumes zero for the joints the arms hang off.
     assert kinds.count("ArmControllerPlugin") == 3
     assert kinds.count("G1LocomotionPlugin") == 1
+    # The Mid-360 inherited from unitree_g1, and no planar lidar beside it.
+    assert [
+        p.address
+        for p in engine.plugins
+        if type(p).__name__ in ("LidarPlugin", "LivoxMid360Plugin")
+    ] == ["robot.mid360.livox_mid360"]
+    # It rides the waist chain: the mount hangs from the torso_link body, not the pelvis.
+    model = engine.ctx.model
+    mount = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "mid360_mount")
+    assert (
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.body_parentid[mount])
+        == "torso_link"
+    )
     # 12 leg + 3 waist + 14 arm + 2 gripper tendon actuators.
     assert engine.ctx.model.nu == 31
 
 
 def test_each_arm_owns_only_its_own_joints_and_gripper(tmp_path):
     """The regression that matters: the arms must not claim the legs."""
-    engine = Engine(_world(tmp_path))
+    engine = _engine(tmp_path)
     engine.setup()
     model = engine.ctx.model
     leg_actuators = {mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, n) for n in LEG_JOINTS}
@@ -68,7 +89,7 @@ def test_each_arm_owns_only_its_own_joints_and_gripper(tmp_path):
 
 
 def test_legs_are_torque_driven_by_the_policy(tmp_path):
-    engine = Engine(_world(tmp_path))
+    engine = _engine(tmp_path)
     engine.setup()
     engine.reset()
     _run(engine, 500)
@@ -79,7 +100,7 @@ def test_legs_are_torque_driven_by_the_policy(tmp_path):
 
 
 def test_grippers_open_and_close_independently(tmp_path):
-    engine = Engine(_world(tmp_path))
+    engine = _engine(tmp_path)
     engine.setup()
     engine.reset()
     _run(engine, 500)
@@ -102,7 +123,7 @@ def test_station_keeping_bounds_the_drift(tmp_path):
     """
     drift = {}
     for label, loco in (("off", {}), ("on", {"station_keeping": True})):
-        engine = Engine(_world(tmp_path, loco=loco))
+        engine = _engine(tmp_path, loco=loco)
         engine.setup()
         engine.reset()
         model, data = engine.ctx.model, engine.ctx.data

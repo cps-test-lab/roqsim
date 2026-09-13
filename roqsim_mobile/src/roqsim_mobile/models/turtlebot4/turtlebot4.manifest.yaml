@@ -16,9 +16,11 @@ frames:
 components:
   - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
   # The RPLIDAR A1 device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:31-33,
-  # 114-117 @ 7fd29fb. Scan values are the device's datasheet defaults: no TurtleBot 4 hardware
-  # configuration differs from them, and the vendor's Gazebo sensor block (62 Hz, 640 samples) is a
-  # simulation setting, not the scanner's. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
+  # 114-117 @ 7fd29fb. Scan values are the device's except the angular resolution, which Clearpath's
+  # TurtleBot 4 datasheet states for this robot's lidar: 0.15-12 m range, 8 kHz sampling rate, 360 deg
+  # angular range, 1 deg angular resolution. Range and sampling equal the device's; 1 deg over the
+  # device's 0 .. 359 deg layout is 360 rays. The vendor's Gazebo block (sensors/rplidar.urdf.xacro:38-41)
+  # is a simulation and overrides nothing. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
   # in the robot's namespace, stamped `rplidar_link`.
   - spawn_sensor:
       model: rplidar_a1
@@ -27,6 +29,9 @@ components:
       rpy: [0.0, 0.0, 1.5707963267948966]
       frame_id: rplidar_link
     name: rplidar
+    components:
+      - lidar:
+          rays: 360                              # TurtleBot 4 datasheet: 1 deg angular resolution
   - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
       camera: oakd_rgb                           # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).

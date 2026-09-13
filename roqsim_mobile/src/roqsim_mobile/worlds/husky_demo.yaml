@@ -8,8 +8,8 @@ sim:
   pacing: realtime      # realtime | asap | {factor: N}
 
 components:
-  # diff_drive (skid-steer, 4 driven wheels + slip_factor) and the 360 deg / 30 Hz lidar come from
-  # the husky_a200 model manifest (models/husky_a200/husky_a200.manifest.yaml).
+  # diff_drive (skid-steer, 4 driven wheels + slip_factor) and the Hokuyo UST-10LX on its PACS bracket
+  # come from the husky_a200 model manifest (models/husky_a200/husky_a200.manifest.yaml).
   - spawn_robot:
       model: husky_a200
       pose:

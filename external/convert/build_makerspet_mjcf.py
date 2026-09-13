@@ -76,16 +76,42 @@ PALETTE = {
     "white": "1.0 1.0 1.0 1",
 }
 
+#: The scan plane's height above the floor (m), from the manufacturer's CAD rather than the description.
+#: makerspet/store @ e338516e4e4c19bec75d947f9c32589d32a29387,
+#: ``MINI-BDC30P-BODY/v1.0.1/makerspet_mini-bdc30p_v1_0_1.step``, whose z = 0 is the floor: the LD14P
+#: stands upright on its skirt (lower shell ``XIAKE_360`` 58.3-69.0 mm) and its rotating optical block
+#: (``GJZJ_ASM``) spans 68.0-76.5 mm, so the plane is taken at that block's centre, 72.25 mm. The
+#: description's ``scan_joint`` puts it at 85.3 mm.
+CAD_SCAN_HEIGHT = 0.07225
+
 #: ``(vendor mesh stem, shipped stem)`` of the head's visual. It ships cut at the scanner gap (see
 #: :func:`open_scan_gap`) under its own name, so the file is not mistaken for the vendor's.
 HEAD_MESH = ("hemisphere", "hemisphere_scan_gap")
 
 
+def place_scan_at_cad_height(urdf: ET.Element) -> float:
+    """Move ``scan_joint`` to :data:`CAD_SCAN_HEIGHT` above the floor, in *urdf* in place; its z in base_link.
+
+    base_link stands ``wheel radius - wheel joint z`` above the floor (the description's
+    ``floor_clearance``). The joint's x, y and rotation stay the description's: the rotation is the frame
+    the scan is stamped in, and moving it would mirror every bearing a consumer reads.
+    """
+    links = {link.get("name"): link for link in urdf.findall("link")}
+    joints = {j.find("child").get("link"): j for j in urdf.findall("joint")}
+    radius = float(links["wheel_left_link"].find("collision/geometry/cylinder").get("radius"))
+    wheel_z = float(joints["wheel_left_link"].find("origin").get("xyz").split()[2])
+    origin = joints["base_scan"].find("origin")
+    x, y, _ = origin.get("xyz").split()
+    z = CAD_SCAN_HEIGHT - (radius - wheel_z)
+    origin.set("xyz", f"{x} {y} {z:g}")
+    return z
+
+
 def open_scan_gap(urdf: ET.Element) -> tuple[float, float]:
     """Open the scanner's gap in the head, in *urdf* in place: ``(gap bottom in base_link, in head_link)``.
 
-    The description places the scan plane (``scan_joint``, 0.0704 m) 0.4 mm below the top of
-    ``head_link`` (0.032-0.0708 m), so the head encloses it. The real Mini carries its LiDAR in an open
+    The head (``head_link``, 0.032-0.0708 m) encloses the scan plane, at the description's 0.0704 m and
+    at the CAD height :func:`place_scan_at_cad_height` sets alike. The real Mini carries its LiDAR in an open
     gap: the makerspet/store ``MINI-BDC30P-BODY`` print files stand it on four 38.8 mm posts
     (``Lidar_Post_LD14P_x4``) under a ring skirt (``Lidar_Skirt_LD14P``), with no body material beside
     it. The head therefore ends at the bottom face of the vendor's own scanner puck -- ``scan_joint``
@@ -231,6 +257,7 @@ def build(urdf: ET.Element, model: str, commit: str, human: str, meshes: dict[st
     )
     return TEMPLATE.format(
         model=model, human=human, commit=commit, assets=assets, gap=f"{gap:g}",
+        cad_mm=f"{CAD_SCAN_HEIGHT * 1000:g}",
         head_mesh=meshes[HEAD_MESH[0]],
         base_pos=base_attrs["pos"], base_mass=base_attrs["mass"],
         base_diaginertia=base_attrs["diaginertia"], base_geoms=base_geoms, bodies=bodies,
@@ -255,9 +282,10 @@ TEMPLATE = """<mujoco model="{model}">
     A TRUE two-wheel differential drive with a modelled caster, so there is no slip_factor - it does
     not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw.
 
-    The scanner sits INVERTED between the two decks (the description's scan_joint carries
-    rpy="0 -pi 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
-    vendor's; the scan parameters are not - see the manifest and the port log.
+    The scan frame is INVERTED (the description's scan_joint carries rpy="0 -pi 0"), and kept: it is
+    the frame the robot stamps its scan in. Its height is not the description's 0.0704 but the
+    manufacturer's CAD, the LD14P's optical block {cad_mm} mm above the floor - see
+    build_makerspet_mjcf.CAD_SCAN_HEIGHT, the manifest and the port log.
 
     DEVIATION: the head ends at z {gap} in base_link, the bottom face of the scanner puck. The
     description's head encloses the scan plane; the real robot carries its LiDAR in an open gap. The
@@ -305,7 +333,7 @@ TEMPLATE = """<mujoco model="{model}">
     <body name="base_link" childclass="{model}">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
-      <!-- The scan plane and frame: the description's own scan_joint, rotation included, so the site is base_scan's frame. -->
+      <!-- The scan plane and frame: base_scan's, the description's scan_joint rotation at the CAD's height. -->
       <site name="lidar" pos="0 0 {lidar_z}"{lidar_quat} size="0.005" rgba="1 0 0 0.6"/>
       <site name="base_imu" pos="0 0 0" size="0.005" rgba="0 0 0 0"/>
 {base_geoms}{bodies}    </body>
@@ -367,6 +395,7 @@ def main() -> int:
                   source=source) -> tuple[str, bytes]:
             with tempfile.TemporaryDirectory() as tmp:
                 urdf = expand_xacro({}, source / "urdf/robot.urdf.xacro", Path(tmp))
+            place_scan_at_cad_height(urdf)
             gap, head_cut = open_scan_gap(urdf)
             scale_z = float(mesh_scales(urdf)[HEAD_MESH[0]].split()[2])
             head = clip_below(vendor_mesh(source, HEAD_MESH[0]).read_bytes(), head_cut / scale_z)

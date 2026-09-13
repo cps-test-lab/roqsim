@@ -9,7 +9,8 @@ sim:
 
 components:
   # diff_drive (skid-steer, 4 driven wheels + slip_factor 1.7) and the VLP-16 planar scan
-  # (1800 rays / 10 Hz at 0.3852 m above ground) come from the model manifest
+  # (898 rays, as velodyne_laserscan publishes it, at 10 Hz and 0.3852 m above ground) come from
+  # the model manifest
   # (models/clearpath_jackal/clearpath_jackal.manifest.yaml).
   - spawn_robot:
       model: clearpath_jackal

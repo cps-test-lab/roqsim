@@ -67,10 +67,10 @@ def spawn(
     has cast.
 
     *mounts* are the labels of the scanners the manifest mounts (a ``{label: ...}`` fixture works);
-    each one's range noise is switched off on the running scanner only (``range_stddev`` is
-    live-writable), because the checks compare a published range with a wall's exact distance, while
-    its config keeps the datasheet noise the manifest states. *disabled* are component addresses
-    switched off (a camera that would need a GL context).
+    each one's range noise and quantisation are switched off on the running scanner only (all three
+    keys are live-writable), because the checks compare a published range with a wall's exact
+    distance, while its config keeps the datasheet noise the manifest states. *disabled* are
+    component addresses switched off (a camera that would need a GL context).
     """
     world = {
         "sim": {"timestep": 0.002},
@@ -89,7 +89,10 @@ def spawn(
     engine.setup()
     engine.reset()
     for label in mounts:
-        lidar(engine, f"{owner}.{label}").range_stddev = 0.0
+        scanner = lidar(engine, f"{owner}.{label}")
+        scanner.range_stddev = 0.0
+        scanner.range_stddev_relative = 0.0
+        scanner.range_resolution = 0.0
     engine.step()  # the rate gate starts open, so the first step casts
     return engine
 
@@ -334,20 +337,32 @@ def assert_mounts(engine: Engine, owner: str, mounts) -> None:
     assert len(set(topics)) == len(topics), "two scanners on one topic publish over each other"
 
 
+#: Where a device's data sheet puts its physical scan plane relative to its vendor scan frame, in that
+#: frame (m). The rays start there; the scan is stamped in the vendor frame. A device not listed casts
+#: from the vendor frame itself.
+SCAN_PLANE_OFFSET = {
+    # SICK data sheet S30B-2011BA, dimensional drawing: the plane 36.4 mm below the housing top.
+    "sick_s300": (0.0, 0.0, -0.0041),
+}
+
+
 def assert_scan_frames(engine: Engine, prefix: str, mounts) -> None:
-    """Each scan site, and the device's own frame site, at the base pose composed with the vendor origin.
+    """The device's frame site at the base pose composed with the vendor origin, and its scan site
+    that pose composed with the device's declared scan-plane offset.
 
     *mounts* is ``{label: (model, frame_id, pos, rpy, topic)}`` with ``pos``/``rpy`` as the vendor's
     joint origin relative to ``base_link``.
     """
     pb, rb = _pose(engine, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base_link")
-    for label, (_model, frame, pos, rpy, _topic) in mounts.items():
+    for label, (model, frame, pos, rpy, _topic) in mounts.items():
         want_p, want_r = pb + rb @ np.asarray(pos, dtype=np.float64), rb @ urdf_rotation(rpy)
-        for site in (f"{prefix}{label}_scan", f"{prefix}{label}_{frame}"):
+        offset = np.asarray(SCAN_PLANE_OFFSET.get(model, (0.0, 0.0, 0.0)), dtype=np.float64)
+        for site, site_p in (
+            (f"{prefix}{label}_{frame}", want_p),
+            (f"{prefix}{label}_scan", want_p + want_r @ offset),
+        ):
             got_p, got_r = _pose(engine, mujoco.mjtObj.mjOBJ_SITE, site)
-            assert np.allclose(got_p, want_p, atol=1e-6), (
-                f"{site} at {got_p}, vendor origin {want_p}"
-            )
+            assert np.allclose(got_p, site_p, atol=1e-6), f"{site} at {got_p}, expected {site_p}"
             assert np.allclose(got_r, want_r, atol=1e-6), (
                 f"{site} rotation {got_r}, vendor {want_r}"
             )

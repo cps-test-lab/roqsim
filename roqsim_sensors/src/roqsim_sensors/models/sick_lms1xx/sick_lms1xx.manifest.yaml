@@ -18,23 +18,6 @@
 # sensors/types/lidars_2d.py @ b2a64ba), so the scan frame is `lidar2d_0_laser` for the first. The
 # intermediate `<name>_link` is not published, for the reason hokuyo_ust.manifest.yaml gives.
 #
-# What the real driver publishes (not modelled by the lidar plugin; recorded for it). Clearpath runs
-# `lms1xx` from clearpathrobotics/LMS1xx (clearpath_robot clearpath_sensors/launch/sick_lms1xx.launch.py
-# @ 74362fc, params config/sick_lms1xx.yaml: publish_min_range_as_inf false), the jazzy release
-# branch humble-devel @ 90001ac.
-#   * Ray count and angle_max: angle_min/angle_max are the device's configured start/stop angle
-#     less 90 deg, and when the window divides evenly by the resolution the endpoints are both
-#     included (src/LMS1xx_node.cpp:157-173): 541 rays over -135 .. +135 deg at 0.5 deg, angle_max
-#     INCLUSIVE. The plugin spaces `rays` over [angle_min, angle_max) instead, so 540 rays here keep
-#     the 0.5 deg.
-#   * range_min / range_max are fixed at 0.01 m and 20.0 m, whatever the unit (LMS1xx_node.cpp:154-155).
-#   * Too-close and no return: every raw distance is published as value * 0.001 m, with no
-#     filtering (LMS1xx_node.cpp:243-253; parsed as-is, src/LMS1xx.cpp:384-394). A distance the unit
-#     does not measure therefore arrives as whatever the unit sends for it, 0 -> 0.0 m below
-#     range_min; that SICK sends 0 is not stated in the data sheet or the OI and is unverified here.
-#     With publish_min_range_as_inf true the driver's test reads range_min's truthiness rather than
-#     comparing the range, so every ray would be published as +inf; Clearpath leaves it false.
-#
 # spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
 # second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
 # `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
@@ -52,24 +35,45 @@ components:
       frame_id: "{frame_id}"
       exclude_body: mount
       emit_static_tf: false
-      # Data sheet: aperture angle 270 deg; scanning frequency 25 Hz or 50 Hz with angular resolution
-      # 0.25 deg or 0.5 deg (OI 10.1: 0.5 deg at 50 Hz). The 50 Hz / 0.5 deg setting, the one
-      # Clearpath's simulation uses (sick_lms1xx.urdf.xacro:4). 540 rays keep the 0.5 deg step.
-      rays: 540
+      # What the driver publishes: clearpathrobotics/LMS1xx @ 90001ac2849c (humble-devel, the jazzy
+      # release branch), src/LMS1xx_node.cpp ("driver"), the `lms1xx` node Clearpath launches
+      # (clearpath_robot clearpath_sensors/launch/sick_lms1xx.launch.py @ 74362fc, params
+      # config/sick_lms1xx.yaml: publish_min_range_as_inf false).
+      #
+      # Layout: angle_min/angle_max are the device's configured start/stop angle less 90 deg, and a
+      # window that divides evenly by the resolution includes both endpoints (:157-173): at the data
+      # sheet's 0.5 deg over -135 .. +135 deg that is 541 rays, the last at angle_max. Data sheet:
+      # aperture 270 deg; 25 Hz or 50 Hz at 0.25 deg or 0.5 deg (OI 10.1: 0.5 deg at 50 Hz).
+      rays: 541
       angle_min: -2.356194490   # -135 deg
       angle_max: 2.356194490    # +135 deg
-      # Data sheet: working range 0.5 m ... 20 m (OI 10.1: operating range LMS10x/LMS11x 0.5 m .. 20 m).
-      # Clearpath's simulation uses 0.05 .. 25 m (sick_lms1xx.urdf.xacro:5); the hardware figure wins.
-      range_min: 0.5
-      # Data sheet: scanning range 18 m at 10% remission, 20 m at 90% remission.
+      # Header: hard-coded range_min 0.01 and range_max 20.0, whatever the unit (:154-155). These are
+      # only published; the physical limits below decide which rays measure.
+      range_min: 0.01
       max_range: 20.0
+      # Physical limits: data sheet working range 0.5 m ... 20 m (OI 10.1: operating range LMS10x/
+      # LMS11x 0.5 m .. 20 m; scanning range 18 m at 10% remission, 20 m at 90%). Clearpath's
+      # simulation uses 0.05 .. 25 m (sick_lms1xx.urdf.xacro:5); the hardware figure wins.
+      detection_min: 0.5
+      detection_max: 20.0
+      # The driver publishes every raw distance as value * 0.001 m with no mapping (:243-253; parsed
+      # as-is, src/LMS1xx.cpp:384-394), so a ray the unit does not measure arrives as whatever the
+      # unit sends for it. What the LMS111 sends for a return inside 0.5 m, and for no return, is not
+      # stated in the data sheet or the OI, so both keep the REP 117 defaults.
+      too_close: -inf           # unverified device output; REP 117 default
+      no_return: +inf           # unverified device output; REP 117 default
       rate_hz: 50.0             # data sheet: scanning frequency 50 Hz (at 0.5 deg)
       # OI 10.1: statistical error (1 sigma) 12 mm typical, 20 mm maximum (data sheet: 12 mm, typical).
-      # The +-30 mm systematic error is not modelled. Clearpath's simulation has no noise.
+      # The +-30 mm systematic error has no stated distribution, so no per-instance bias is modelled.
+      # Clearpath's simulation has no noise.
       range_stddev: 0.012
+      # Not modelled: the RSSI intensities the driver publishes; and a known driver defect -- with
+      # publish_min_range_as_inf true its test reads range_min's truthiness (the constant 0.01)
+      # instead of comparing the range, so every ray would be published as +inf. Clearpath leaves
+      # the parameter false.
 
 # Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
-# field and range window above.
+# field and its physical detection limits.
 fov:
   near: 0.5
   far: 20.0

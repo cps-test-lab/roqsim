@@ -35,8 +35,17 @@ Config (in addition to ``lidar_common``'s shared keys)::
       h_fov_max: 6.283185307     # 2*pi (full 360deg)
       v_fov_min: -0.122173048    # -7 deg
       v_fov_max: 0.907571211     # +52 deg
-      range_min: 0.1             # blind zone; nearer returns are dropped
+      range_min: 0.1             # blind zone: a nearer hit is too close
       max_range: 40.0
+      too_close: drop            # a hit nearer than range_min: drop (not in the cloud) or origin
+      no_return: drop            # nothing within max_range: drop or origin
+
+**What a cloud carries follows the device.** A measured return is a point at its distance along the
+ray. A too-close hit and a ray with no return are left out (``drop``) unless the device's driver
+publishes them: ``origin`` puts a point at (0, 0, 0) of the sensor frame for each such ray, which is
+what the Livox Mid-360 and ``livox_ros_driver2`` publish (see ``mid360.manifest.yaml``). A point
+cloud is not a fixed-length array, so neither keeps a slot as a ``LaserScan`` ray does; with both set
+to ``origin`` the cloud has one point per ray, in ray order.
 """
 
 from __future__ import annotations
@@ -52,6 +61,10 @@ from .payloads import PointCloud
 _V_FOV_MIN = math.radians(-7.0)
 _V_FOV_MAX = math.radians(52.0)
 
+#: What ``too_close``/``no_return`` accept: leave the ray out of the cloud, or publish it as a point at
+#: the sensor origin.
+_CLOUD_OUTPUTS = ("drop", "origin")
+
 
 class LivoxMid360Plugin(RayCastSensorPlugin):
     ENDPOINT_NAME = "cloud"
@@ -63,10 +76,6 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
     DEFAULT_SITE = "lidar"
     DEFAULT_RANGE_MIN = 0.1
     DEFAULT_MAX_RANGE = 40.0
-
-    #: A point cloud lists real returns, so a blind-zone return is not a point (unlike a
-    #: fixed-length ``LaserScan``, which clamps it to ``range_min`` to keep its slot).
-    CLAMP_NEAR_RETURNS = False
 
     #: Azimuth spans a full 360deg dome and wraps, so the last sample is one step short of
     #: ``h_fov_max`` (no duplicate ray at 2*pi). A bounded, forward-facing FoV subclass (see
@@ -80,6 +89,8 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
     DEFAULT_H_FOV_MAX = 2.0 * math.pi
     DEFAULT_V_FOV_MIN = _V_FOV_MIN
     DEFAULT_V_FOV_MAX = _V_FOV_MAX
+    DEFAULT_TOO_CLOSE = "drop"
+    DEFAULT_NO_RETURN = "drop"
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -89,6 +100,8 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
         self.h_fov_max = float(self.config.get("h_fov_max", self.DEFAULT_H_FOV_MAX))
         self.v_fov_min = float(self.config.get("v_fov_min", self.DEFAULT_V_FOV_MIN))
         self.v_fov_max = float(self.config.get("v_fov_max", self.DEFAULT_V_FOV_MAX))
+        self.too_close = str(self.config.get("too_close", self.DEFAULT_TOO_CLOSE))
+        self.no_return = str(self.config.get("no_return", self.DEFAULT_NO_RETURN))
 
     @property
     def num_rays(self) -> int:
@@ -96,6 +109,12 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
 
     def _validate_extra(self, config: dict) -> list[str]:
         errors = []
+        for key, default in (
+            ("too_close", self.DEFAULT_TOO_CLOSE),
+            ("no_return", self.DEFAULT_NO_RETURN),
+        ):
+            if config.get(key, default) not in _CLOUD_OUTPUTS:
+                errors.append(f"'{key}' must be one of {', '.join(_CLOUD_OUTPUTS)}")
         if int(config.get("horizontal_rays", self.DEFAULT_H_RAYS)) <= 0:
             errors.append("'horizontal_rays' must be > 0")
         if int(config.get("vertical_rays", self.DEFAULT_V_RAYS)) <= 0:
@@ -132,8 +151,16 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
             -1, 3
         )
 
-    def _payload(self, dist: np.ndarray, valid: np.ndarray) -> PointCloud:
-        # Points in the sensor frame: direction * range for each valid return. Frame-independent, so
-        # the cloud needs no world transform -- the static TF places the sensor frame in the tree.
-        points = self._local_dirs[valid] * dist[valid, None]
-        return PointCloud(points=np.ascontiguousarray(points, dtype=np.float32))
+    def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray) -> PointCloud:
+        # Points in the sensor frame: direction * range for each measured return, in ray order. A
+        # too-close or no-return ray is a point at the origin where the device publishes one (see
+        # the module docstring), and absent otherwise. Frame-independent, so the cloud needs no
+        # world transform -- the static TF places the sensor frame in the tree.
+        keep = valid.copy()
+        if self.too_close == "origin":
+            keep |= near
+        if self.no_return == "origin":
+            keep |= ~(valid | near)
+        points = np.zeros((self.num_rays, 3), dtype=np.float32)
+        points[valid] = self._local_dirs[valid] * dist[valid, None]
+        return PointCloud(points=np.ascontiguousarray(points[keep]))

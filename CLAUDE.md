@@ -21,8 +21,9 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   OpenCV-generated; optional `markers` extra). Models are one folder per device
   (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`. The 2D scanners
   (`sick_s300`, `sick_microscan3`, `sick_tim571`, `sick_lms1xx`, `hokuyo_ust`, `rplidar_a1`,
-  `rplidar_c1`, `lds01`, and the VLP-16 as `velodyne_vlp16`, cast as one horizontal plane) are device
-  models too: datasheet values and their own housing (`exclude_body: mount`) live there, and a robot
+  `rplidar_c1`, `rplidar_s3`, `lds01`, `omron_os32c`, and the VLP-16 as `velodyne_vlp16`, cast as one horizontal
+  plane) are device models too: datasheet values and their own housing (`exclude_body: mount`; the
+  OS32C's is primitives from its data sheet, no mesh being redistributable) live there, and a robot
   mounts one from its manifest with a nested `spawn_sensor` at the vendor's parent frame and joint
   origin, overriding a value only where its vendor configuration differs.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
@@ -33,8 +34,9 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
     collision geometry with no plugin reading it), and the skid-steer rosbot, panther and warthog
     (260 kg, the largest).
   - `omni_drive`: ridgeback and lgdxrobot2 (mecanum), mpo_500 (omni wheels), mpo_700 (SWERVE —
-    four independently steered wheels). The two Neobotix MPOs each mount two scanner devices, as
-    `roqsim_mobile_manipulation`'s tiago_pro does; every other model carries at most one lidar.
+    four independently steered wheels). The two Neobotix MPOs and the warthog each mount two scanner
+    devices, as `roqsim_mobile_manipulation`'s tiago_pro does; every other model carries at most one
+    lidar.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,

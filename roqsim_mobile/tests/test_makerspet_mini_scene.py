@@ -2,11 +2,11 @@
 
 Three findings this file pins.
 
-``test_no_value_here_is_an_assumption`` guards what makes this port unusual. Every drive and sensor
-number is the vendor's own -- ``params.xacro`` for the geometry, ``config/navigation.yaml`` for the
-limits, ``plugins.xacro`` for the scan (360 samples over a full turn, 0.1-10 m, 5 Hz). Most mobile
-ports here have to invent at least a scanner mount height. This vendor's other model in the substrate,
-the OOMWOO vacuum, has the same property.
+``test_no_value_here_is_an_assumption`` guards what makes this port unusual. Every drive number is the
+vendor's own -- ``params.xacro`` for the geometry, ``config/navigation.yaml`` for the limits -- and the
+scan is the real robot's: its LD14P as Maker's Pet's ``config/telem.yaml`` has ``kaiaai_telemetry``
+publish it (720 bins of 0.5 deg, 0.1-8 m, nothing measured published as 0.0), at 6 Hz, the LD14P's
+default speed.
 
 ``test_the_head_mesh_is_scaled_correctly`` pins the trap this vendor's descriptions set. The head is
 the model's only mesh and it carries a **non-uniform** scale of ``0.000124 0.000124 7.76e-05``. Emit
@@ -17,9 +17,10 @@ again here.
 
 ``test_the_scan_sees_the_wall_through_the_head_gap`` pins the one deviation from the description. The
 lidar skips only its own housing (``base_scan``), and the description's head encloses the scan plane.
-The real Mini carries its LiDAR in an open gap, so the model's head ends at the bottom face of the
-vendor's scanner puck, collision and visual alike, with the head's mass and inertia unchanged: every
-ray leaves the robot, and no robot geometry is left in the scan plane.
+The real Mini carries its LiDAR clear above its body, so the model's head ends at the bottom face of the
+scanner puck, collision and visual alike, with the head's mass and inertia unchanged: every ray leaves
+the robot, and no robot geometry is left in the scan plane. The scan plane is the manufacturer's CAD
+height, not the description's.
 """
 
 from __future__ import annotations
@@ -42,13 +43,21 @@ WHEEL_RADIUS = 0.0215          # params.xacro wheel_diameter 0.043
 WHEEL_SEPARATION = 0.105043    # params.xacro wheel_base
 MAX_LINEAR_VEL = 0.1           # config/navigation.yaml max_vel_x
 MAX_ANGULAR_VEL = 0.5          # config/navigation.yaml max_vel_theta
-LIDAR_HEIGHT = 0.0704          # the description's scan_joint, in the base_link frame
+#: The LD14P's optical block centre in the manufacturer's CAD, 72.25 mm above the floor (makerspet/store
+#: @ e338516e, MINI-BDC30P-BODY v1.0.1 STEP, GJZJ_ASM 68.0-76.5 mm), less base_link's 14.9 mm above the
+#: floor (wheel radius 0.0215 less the wheel joints' z 0.0066). The description's scan_joint says 0.0704.
+LIDAR_HEIGHT = 0.07225 - (0.0215 - 0.0066)
+#: kaiaai_telemetry @ 7ea0d663 config/telem.yaml:13-19 for LDROBOT-LD14P, as makerspet_mini's
+#: config/telem.yaml selects it: 720 bins from 0 deg, range 0.1-8.0 m.
+SCAN_RAYS = 720
+SCAN_RANGE = (0.1, 8.0)
+SCAN_RATE_HZ = 6.0             # LDROBOT LD14P Development Manual V0.2, 1.2: default 6 Hz
 BODY_RADIUS = 0.062            # params.xacro base_diameter 0.124
 HEAD_HEIGHT = 0.0388           # params.xacro head_height
 HEAD_JOINT_Z = 0.032           # params.xacro lower_cylinder_height, head_joint's origin
-#: The bottom face of the scanner puck, where the model's head ends: scan_joint's 0.0704 less half of
+#: The bottom face of the scanner puck, where the model's head ends: the scan plane less half of
 #: params.xacro laser_puck_height 0.016.
-SCAN_GAP_BOTTOM = 0.0624
+SCAN_GAP_BOTTOM = LIDAR_HEIGHT - 0.008
 HEAD_MASS = 0.200              # params.xacro head_mass
 #: head_link's solid_semi_ellipsoid_inertia over base_diameter/2 and head_height, as expanded.
 HEAD_DIAGINERTIA = (0.0001069888, 0.0001069888, 0.00015376)
@@ -96,9 +105,13 @@ def test_no_value_here_is_an_assumption():
             "slip_factor -- the same line turtlebot3_waffle, raspimouse and oomwoo_one draw"
         )
         scan = next(p for p in engine.plugins if type(p).__name__ == "LidarPlugin")
-        assert scan.config["rays"] == 360
-        assert scan.config["rate_hz"] == pytest.approx(5.0)
-        assert scan.config["max_range"] == pytest.approx(10.0)
+        assert scan.num_rays == SCAN_RAYS
+        assert scan.angle_min == pytest.approx(0.0)
+        assert scan.angle_increment == pytest.approx(np.radians(0.5))
+        assert (scan.range_min, scan.range_max) == pytest.approx(SCAN_RANGE)
+        assert (scan.detection_min, scan.detection_max) == pytest.approx(SCAN_RANGE)
+        assert (scan.too_close, scan.no_return) == (0.0, 0.0), "kaiaai_telemetry publishes 0.0"
+        assert scan.rate_hz == pytest.approx(SCAN_RATE_HZ)
     finally:
         engine.shutdown()
 
@@ -171,7 +184,7 @@ def test_wheels_spin_about_the_robot_y_axis():
 
 
 def test_the_scanner_is_inverted_under_the_head():
-    """A 360-degree puck mounted upside down is how this design fits one under a head."""
+    """The scan frame is the description's inverted base_scan, at the CAD's optical height."""
     engine = _engine()
     try:
         model, data = engine.ctx.model, engine.ctx.data
@@ -369,7 +382,7 @@ def test_the_scan_sees_the_wall_through_the_head_gap():
         model = engine.ctx.model
         lidar = _lidar(engine)
         ranges = np.asarray(lidar.latest.ranges)
-        assert ranges.shape == (360,)
+        assert ranges.shape == (SCAN_RAYS,)
         dirs, hits = _recast(engine)
         np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
         struck = hits.geomid >= 0
@@ -377,10 +390,10 @@ def test_the_scan_sees_the_wall_through_the_head_gap():
         assert not robot.any(), "a ray meets robot geometry"
         wall = named(model, mujoco.mjtObj.mjOBJ_GEOM, "scan_probe_wall")
         on_wall = hits.geomid == wall
-        assert on_wall.sum() > 90, "the wall ahead spans well over a quarter of the turn"
+        assert on_wall.sum() > SCAN_RAYS // 4, "the wall ahead spans well over a quarter of the turn"
         # The wall's face is the plane x = WALL_FACE in the world; the site stands at x = 0.
         np.testing.assert_allclose(ranges[on_wall], WALL_FACE / dirs[on_wall, 0], atol=1e-6)
-        assert ranges[180] == pytest.approx(WALL_FACE, abs=1e-6), "the forward ray (bearing pi)"
+        assert ranges[SCAN_RAYS // 2] == pytest.approx(WALL_FACE, abs=1e-6), "the forward ray (bearing pi)"
     finally:
         engine.shutdown()
 
@@ -396,11 +409,11 @@ def test_the_inverted_mount_mirrors_bearings_as_the_vendor_frame_does():
         model = engine.ctx.model
         dirs, hits = _recast(engine, geomgroup=np.array([1, 0, 0, 0, 0, 0], dtype=np.uint8))
         assert np.allclose(dirs[0], [-1.0, 0.0, 0.0], atol=1e-9)
-        assert np.allclose(dirs[90], [0.0, 1.0, 0.0], atol=1e-9)
+        assert np.allclose(dirs[SCAN_RAYS // 4], [0.0, 1.0, 0.0], atol=1e-9)
         wall = named(model, mujoco.mjtObj.mjOBJ_GEOM, "scan_probe_wall")
         on_wall = np.flatnonzero(hits.geomid == wall)
         nearest = int(on_wall[np.argmin(hits.dist[on_wall])])
-        assert nearest == 180
+        assert nearest == SCAN_RAYS // 2
         assert hits.dist[nearest] == pytest.approx(WALL_FACE, abs=1e-3)
     finally:
         engine.shutdown()
