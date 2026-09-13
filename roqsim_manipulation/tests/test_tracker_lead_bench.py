@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """The Cartesian tracker against a servo that cannot keep up: a bench, and an open defect.
 
-``_apply`` evaluates the Jacobian at the MEASURED configuration and integrates the result onto an
+The motion law measures its pose error on the arm and integrates the resolved step onto an
 accumulated joint target. That target is an absolute setpoint the servo chases, so the tracker is
 an integrator wrapped around a lag -- and when the lag is large enough the tool runs past the goal,
 comes back, and limit-cycles instead of arriving.
