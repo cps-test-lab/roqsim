@@ -21,6 +21,11 @@ sits rather than a config key::
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
       stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
       test_cmd: [0.15, 0.4]        # optional [v, w] applied every tick (standalone demo)
+      odom_noise:                  # optional odometry error (see below); omitted = exact odometry
+        linear_stddev: 0.0         # m/s, white noise on the reported linear velocity
+        angular_stddev: 0.0        # rad/s, white noise on the reported yaw rate
+        linear_scale: 1.0          # multiplicative bias (e.g. a wheel radius off by 1 %)
+        angular_scale: 1.0         # multiplicative bias on the yaw rate (e.g. an effective track error)
 
 Skid-steer (>1 wheel per side, e.g. Husky A200): give the per-side actuator/joint *lists* instead of
 the singular keys; every left wheel gets the same command, every right wheel the same, and odometry
@@ -55,6 +60,18 @@ would leave a planner unable to rotate. The factor inflates the yaw term of the 
 divided back out of odometry, so commanded yaw is achieved and odometry stays consistent with the
 base's real motion. It is a per-robot *calibration* against the model's contact/friction setup --
 re-measure it (achieved vs commanded yaw rate) if wheel friction, mass, or the timestep change.
+
+``odom_noise`` makes the odometry wrong the way real wheel odometry is wrong, and leaves the robot's
+motion alone. The error is applied to the velocities read off the wheels, before they are integrated,
+so the reported pose drifts rather than jitters: a ``linear_scale`` of 1.01 is a wheel radius stated
+1 % too small and overstates every metre by a centimetre, and the ``*_stddev`` terms are zero-mean
+white noise on each reading, drawn per physics step. A white velocity error integrates to a random
+walk, so the pose spread grows with the square root of the distance driven and shrinks with the
+timestep; state the stddev together with the world's ``sim.timestep``. Everything downstream that
+consumes odometry sees it -- the ``odom`` endpoint, its TF, the ``RobotHandle`` -- and nothing that
+reports the truth does: the body's pose, ``sim_poses`` and a ground-truth pose plugin are exact.
+Draws come from ``ctx.rng_for`` (``docs/architecture.rst`` §9.1), so a noisy run needs a seed and
+reproduces from it; with the block omitted nothing is drawn and the odometry is exact, as before.
 """
 
 from __future__ import annotations
@@ -95,6 +112,16 @@ class DiffDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: Odometry error: (linear_stddev, angular_stddev, linear_scale, angular_scale), or None.
+        noise = self.config.get("odom_noise")
+        self._odom_noise = None
+        if noise:
+            self._odom_noise = (
+                float(noise.get("linear_stddev", 0.0)),
+                float(noise.get("angular_stddev", 0.0)),
+                float(noise.get("linear_scale", 1.0)),
+                float(noise.get("angular_scale", 1.0)),
+            )
         self._sign_l: list[float] = []
         self._sign_r: list[float] = []
         self._target_v = 0.0
@@ -144,6 +171,23 @@ class DiffDrivePlugin(Plugin):
                 errors.append(f"'{side}_actuators' and '{side}_joints' must have the same length")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
+        noise = config.get("odom_noise")
+        if noise is not None:
+            known = ("linear_stddev", "angular_stddev", "linear_scale", "angular_scale")
+            if not isinstance(noise, dict):
+                errors.append("'odom_noise' must be a mapping of " + ", ".join(known))
+            else:
+                unknown = sorted(set(noise) - set(known))
+                if unknown:
+                    errors.append(
+                        f"'odom_noise' has unknown keys {unknown}; it takes {list(known)}"
+                    )
+                for key in ("linear_stddev", "angular_stddev"):
+                    if key in noise and float(noise[key]) < 0:
+                        errors.append(f"'odom_noise.{key}' must be >= 0")
+                for key in ("linear_scale", "angular_scale"):
+                    if key in noise and float(noise[key]) <= 0:
+                        errors.append(f"'odom_noise.{key}' must be > 0")
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -329,6 +373,13 @@ class DiffDrivePlugin(Plugin):
         # Invert the same slip model used to command the wheels, so odometry tracks the base's
         # actual yaw rather than the (inflated) ideal-differential prediction.
         w = self.r * (wr - wl) / (self.L * self.slip)
+        if self._odom_noise is not None:
+            # Wrong the way wheel odometry is wrong: on the readings, before integration, so the pose
+            # drifts. One draw per step for both terms, keyed on the time it happens (§9.1).
+            lin_sd, ang_sd, lin_scale, ang_scale = self._odom_noise
+            n = ctx.rng_for(f"{self.name or 'diff_drive'}.odometry").standard_normal(2)
+            v = v * lin_scale + lin_sd * float(n[0])
+            w = w * ang_scale + ang_sd * float(n[1])
         o = self._odom
         o[0] += v * np.cos(o[2]) * ctx.dt
         o[1] += v * np.sin(o[2]) * ctx.dt
