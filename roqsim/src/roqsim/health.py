@@ -52,7 +52,7 @@ there is reason to think it is still alive**:
 Either way a message states what was *observed* -- how long since the last row, and where -- and
 never asserts a cause.
 
-Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every root body and
+Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every recorded body and
 the clock, with the sim-to-wall rate. It is here rather than in a command of its own because both
 answers come from the same two records in the same read, and a caller asking "is anything wrong"
 almost always wants "and where is it" next. A *latest-value* answer, not an interpolation to the
@@ -493,7 +493,7 @@ class RobotMoves:
             set()
         )  # every frame the record offers, for the "no such robot" report
         self._span: tuple[float, float] | None = None
-        self._samples = 0  # distinct sample stamps seen; every sample writes every root body
+        self._samples = 0  # distinct sample stamps seen; every sample writes every named body
 
     def on_new_series(self) -> None:
         """Re-anchor every robot. A reset either teleports it home (a delta that would mask a real
@@ -502,7 +502,7 @@ class RobotMoves:
         self._anchor.clear()
 
     def update(self, rows: list[PoseRow]) -> None:
-        # One row per root body per sample, so a frame is revisited once per sample. Each row is a
+        # One row per named body per sample, so a frame is revisited once per sample. Each row is a
         # coherent snapshot of `sim - dt` carrying the label `sim` (capture.py states the
         # convention): a one-step lag that cancels in any difference, and this check differences
         # over a minute. Do not "correct" it -- it is what makes this table and the TF one describe
@@ -573,7 +573,7 @@ class RobotMoves:
         nothing wrong about a robot it never once looked at.
 
         Held only until a second sample has been seen, not until a full motion window: every sample
-        writes every root body, so two of them establish the whole roster. Waiting the window would
+        writes every named body, so two of them establish the whole roster. Waiting the window would
         mean a mistyped name went unreported on every run shorter than a simulated minute -- which
         is the run most likely to be a quick check with a mistyped name in it.
         """
@@ -660,7 +660,7 @@ class Monitor:
                 "check 1 (robot-motion): nothing to watch. "
                 + (
                     no_robots
-                    or f"{SIM_POSE_FILENAME} names root bodies; it does not say which "
+                    or f"{SIM_POSE_FILENAME} names bodies; it does not say which "
                     f"are robots, and no {ENTITIES_FILENAME} said either."
                 )
             )
@@ -834,7 +834,7 @@ def read_roster(directory: Path) -> tuple[dict, str | None]:
     """``{frame: (entity name, kind, present)}`` from the recorder's roster, or why there is none.
 
     The roster is what turns check 1 from a per-world configuration job into something that runs
-    unattended: the pose record names root bodies, and only the entity registry knows which of them
+    unattended: the pose record names bodies, and only the entity registry knows which of them
     is a robot. See ``capture.ENTITIES_FILENAME``.
 
     Keyed by the *body* name, because that is what the pose record's ``frame`` column holds; an

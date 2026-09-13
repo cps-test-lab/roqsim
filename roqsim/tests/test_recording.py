@@ -652,3 +652,51 @@ def test_a_rate_is_read_back_as_the_exact_rational(tmp_path):
     }
     rec = Recording(tmp_path / "x.npz", meta, samples)
     assert rec.fps == CaptureRate(snap_fps(30, 0.002).fps, 17, snap_fps(30, 0.002).fps, 0).fps
+
+
+# -- the pose record --------------------------------------------------------------------------------
+
+# A free base carrying a hinged link, a tool welded to that link, and one unnamed body: the three
+# kinds of thing below a robot's root that a success rule may read, plus the one the record cannot
+# name.
+_ARM_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <worldbody>
+    <body name="base" pos="0 0 .5">
+      <freejoint/>
+      <geom type="box" size=".1 .1 .1"/>
+      <body name="link" pos="0 0 .1">
+        <joint type="hinge" axis="0 1 0"/>
+        <geom type="capsule" size=".02" fromto="0 0 0 .3 0 0"/>
+        <body name="tool" pos=".3 0 0"><geom type="sphere" size=".02"/></body>
+        <body pos="0 0 .05"><geom type="sphere" size=".01"/></body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_the_pose_record_carries_every_named_body_not_only_roots(tmp_path, caplog):
+    model = mujoco.MjModel.from_xml_string(_ARM_XML)
+    data = mujoco.MjData(model)
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(
+        ctx, tmp_path / "run.npz", snap_fps(1 / model.opt.timestep, model.opt.timestep),
+        sim_poses=True,
+    )
+    with caplog.at_level(logging.INFO):
+        for _ in range(20):
+            mujoco.mj_step(model, data)
+            rec.sample(ctx)
+
+    rows = [line.split(",") for line in (tmp_path / "sim_poses.csv").read_text().splitlines()[1:]]
+    assert {r[2] for r in rows} == {"base", "link", "tool"}, "every named body, and only those"
+    last_tool = [r for r in rows if r[2] == "tool"][-1]
+    # xpos after the last step is the pose the last row was taken from (capture.py's one-step note).
+    tool = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "tool")
+    assert [float(v) for v in last_tool[3:6]] == pytest.approx(data.xpos[tool], abs=1e-5)
+    # The unnamed body is reported, with its parent, rather than silently absent.
+    assert "1 unnamed bodies have no row (under link)" in caplog.text
+    rec.close()

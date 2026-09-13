@@ -323,13 +323,19 @@ The pose series
 ~~~~~~~~~~~~~~~
 
 ``ROQSIM_SIM_POSES`` streams a plain ``sim_poses.csv`` beside the recording: one row per sample per
-free-standing body (those parented to the world — every robot, prop and walker, but not a wheel or an
-arm link), with the world pose as a **quaternion** and the world **twist** read from the solver via
+**named body** — robot bases, links, wheels, attached tools and workpieces, props and walkers — with
+the world pose as a **quaternion** and the world **twist** read from the solver via
 ``mj_objectVelocity``:
 
 .. code-block:: text
 
    timestamp,wall_time,frame,position.x/y/z,orientation.x/y/z/w,twist.linear.x/y/z,twist.angular.x/y/z
+
+Every named body, and not only the ones parented to the world, because what a trial is judged on is
+often welded below a robot — a tool on a flange, a workpiece in a gripper — and a reader cannot know in
+advance which. The price is rows: a manipulator world writes several times as many as a mobile one.
+Sites and unnamed bodies have no row (the run log counts the unnamed ones and names their parents);
+the recording itself is the complete state, from which those are derivable.
 
 Two reasons it exists rather than leaving callers to difference the recording. A velocity obtained by
 differencing positions is only ever as good as the interval it is divided by, and a consumer reading
@@ -494,7 +500,7 @@ error-level finding, and ``2`` when the checks could not run at all. Exiting on 
 a backgrounded command's output is invisible until it exits.
 
 **Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
-free-standing body and cannot say which is which, so the recorder writes ``entities.json`` beside it
+named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
 from the entity registry — name, ``kind``, ``body``, ``present`` — and check 1 watches the entities of
 kind ``robot`` that are currently there. That is what makes one command correct for every world:
 a check whose names have to be passed per world is a check that is absent from the run that needed
