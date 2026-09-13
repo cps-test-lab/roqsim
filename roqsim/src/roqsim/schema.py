@@ -94,7 +94,7 @@ class Field:
     unit: str = ""
     doc: str = ""
     #: Keys whose value this plugin reads once at configure -- documented as such so a caller knows
-    #: writing it later takes effect nowhere (the lesson `model_override` records about geom_size).
+    #: writing it later takes effect nowhere (what `model_override` documents about geom_size).
     static: bool = dataclass_field(default=False)
 
     def describe(self, name: str) -> dict:

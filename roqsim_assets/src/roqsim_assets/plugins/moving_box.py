@@ -5,8 +5,8 @@ The dynamic counterpart of :mod:`roqsim_assets.plugins.box`. `box` is welded sce
 without physics ever pushing it around. Being mocap also means it has infinite effective mass: a robot
 that drives into it is stopped by it, which is what an obstacle is for.
 
-Why this exists as its own plugin rather than a flag on `box`: the substrate had exactly one
-kinematically driven mover, ``roqsim_walker``'s ``walker``, and that one is a *pedestrian* — a humanoid
+Why this exists as its own plugin rather than a flag on `box`: the substrate's other
+kinematically driven mover, ``roqsim_walker``'s ``walker``, is a *pedestrian* — a humanoid
 blueprint with locomotion clips and ORCA avoidance. A great many navigation papers instead put
 anonymous boxes in the robot's way and state only a speed (this plugin was written to reconstruct a
 maze paper whose four cubes "move randomly with fixed velocity"), and
@@ -382,14 +382,13 @@ class MovingBoxPlugin(Plugin):
         list. The mover's own geoms are excluded by id.
 
         Through `roqsim.raycast.cast`, so an entity that has been made *absent* is not an obstacle:
-        a prop nothing can collide with should not make the mover turn. This was the last raycaster
-        in the tree that passed `geomgroup=None` and saw absent entities.
+        a prop nothing can collide with should not make the mover turn.
         """
         direction = np.array([math.cos(self._heading), math.sin(self._heading), 0.0])
         origin = np.array([xy[0], xy[1], self.pos[2]])
         # Half the diagonal, so the corner leading the way is what has to fit, not the centre.
         half = 0.5 * math.hypot(self.size[0], self.size[1])
-        # Deliberately generous: `cutoff` culls geoms beyond it, and `mj_ray` (which this replaced)
+        # Deliberately generous: `cutoff` culls geoms beyond it, and a plain `mj_ray`
         # has no cutoff at all, so a large value keeps the predicate identical rather than making
         # the answer depend on a culling distance.
         hits = raycast.cast(ctx.model, ctx.data, origin, direction, cutoff=_NO_CUTOFF)

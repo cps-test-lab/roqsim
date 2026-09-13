@@ -405,7 +405,7 @@ def test_a_retired_spelling_is_refused_and_says_where_it_went(tmp_path, old, poi
 
 
 def test_avoidance_as_a_bare_value_is_refused(tmp_path):
-    """It used to name a model; it is a block now, and the message has to say so."""
+    """It is a block rather than a model name, and the message has to say so."""
     with pytest.raises(PluginError, match="is a block, not a value"):
         Engine(_world(tmp_path, nav={"avoidance": "give_way"}))
 
@@ -422,12 +422,12 @@ def test_reroute_without_stopping_is_refused(tmp_path):
 
 
 def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
-    """A fixed scan height is a guess about other people's robots, and it was wrong.
+    """A fixed scan height is a guess about other people's robots, and one will be wrong.
 
-    0.30 m was chosen so a walker's rays would not pass over a tall base. It is above the roof of a
-    TurtleBot 4, whose collision geometry stops at 0.25 m -- so in a world of them every probe saw
-    nothing and nothing ever stopped for anything. Taking the height from the band the planner
-    already rasterizes ties it to what this mover treats as an obstacle.
+    0.30 m keeps a walker's rays from passing over a tall base, but it is above the roof of a
+    TurtleBot 4, whose collision geometry stops at 0.25 m -- so in a world of them every probe would
+    see nothing and nothing would ever stop for anything. Taking the height from the band the
+    planner already rasterizes ties it to what this mover treats as an obstacle.
     """
     probe = CautionProbe({"band": (0.1, 1.8)})
     assert probe.height == pytest.approx(0.15)
@@ -437,7 +437,7 @@ def test_the_probe_scans_inside_the_movers_own_obstacle_band(tmp_path):
 
 
 def test_a_short_robot_is_seen_by_another_short_robot(tmp_path):
-    """The regression itself: two movers no taller than the old fixed scan height."""
+    """The case itself: two movers no taller than a 0.30 m fixed scan height."""
     engine = Engine(_world(tmp_path, blocker=(0.0, 0.0), blocker_half_height=0.12))
     engine.setup()
     engine.reset()

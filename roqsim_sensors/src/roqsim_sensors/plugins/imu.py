@@ -16,12 +16,11 @@
 
 """Sensor plugin: a strap-down IMU -- angular rate, proper acceleration, and attitude at a site.
 
-The one sensor a mobile robot carries that the substrate had no plugin for. Every wheeled platform
-here ships an IMU in reality, and the stacks these experiments run are built on it: ``robot_localization``
-fuses ``sensor_msgs/Imu`` with wheel odometry, AMCL's motion model degrades without it, and a legged
-or aerial controller reads it every cycle. Without the plugin a world could only publish *odometry*,
-so an experiment whose independent variable is sensor quality had no rate channel to degrade and a
-paper's "EKF over wheel odom + IMU" could not be reconstructed at all.
+Every wheeled platform here ships an IMU in reality, and the stacks these experiments run are built
+on it: ``robot_localization`` fuses ``sensor_msgs/Imu`` with wheel odometry, AMCL's motion model
+degrades without it, and a legged or aerial controller reads it every cycle. Without it a world can
+only publish *odometry*, so an experiment whose independent variable is sensor quality has no rate
+channel to degrade and a paper's "EKF over wheel odom + IMU" cannot be reconstructed at all.
 
 Nothing here is new physics. MuJoCo already computes all three signals; a site carries an
 ``<accelerometer>``/``<gyro>``/``<framequat>`` triple that reads them, and this plugin turns that
@@ -413,7 +412,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # weldid 0 is the world's weld group: this body has no degrees of freedom at all.
         self._world_fixed = int(m.body_weldid[self._mount_bid]) == 0
         if self._world_fixed:
-            # Logged, not silent: the reading no longer comes from the MJCF sensor, and a reader of
+            # Logged, not silent: the reading does not come from the MJCF sensor, and a reader of
             # the run's log should be able to see which branch produced it.
             _log.info(
                 "imu[%s]: %s is welded to the world, so MuJoCo computes no acceleration for it; "

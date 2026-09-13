@@ -23,8 +23,7 @@ lidar as well. A baked scene's ground uses that deliberately -- ``floor`` is alp
 ``floor_visual`` is opaque and does not.
 
 So the world looks right in every render, reads as passable on ``/scan``, and stops the robot dead.
-That is not a defect a human or an agent can see; it has to be measured. secorolab shipped this way
-and 87 % of the building was unreachable through eight walled doorways, through four campaigns.
+That is not a defect a human or an agent can see; it has to be measured.
 
 What is measured, and why it is not per-part
 --------------------------------------------

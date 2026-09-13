@@ -1,10 +1,10 @@
 """Scene plugin: a **parametric** rectangular box obstacle placed from the world YAML.
 
-The plainest possible piece of scenery, and the one the library was missing. Every other prop here
+The plainest possible piece of scenery. Every other prop here
 is a specific object (a shelf, a workbench, a duct); ``spawn_model`` places a modelled asset but
 scales it only **uniformly**, so it cannot make a 0.4 x 0.4 x 0.8 m pillar out of a 0.67 x 0.53 x
 0.22 m carton. Navigation experiments are full of anonymous boxes whose only meaningful properties
-are *where* and *how big*, and until now the only way to place one was to bake it into a scene.
+are *where* and *how big*, and without this the only way to place one is to bake it into a scene.
 
 Baking is the wrong home for an obstacle the robot is not supposed to know about. A scene is what the
 occupancy grid is generated from, so a box baked into the scene lands in the map -- and an experiment
@@ -80,15 +80,14 @@ class BoxPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         self.size = self._vec3(self.config.get("size"), (0.4, 0.4, 0.4))
         # One way to state a pose, in the shape SpawnEntity uses, so a box a world places and a
-        # box a scenario moves are written the same. An omitted z sits it on the floor, which is
-        # what a two-element `pos` used to mean.
+        # box a scenario moves are written the same. An omitted z sits it on the floor.
         self.pos, self.quat = self._pose(self.config.get("pose"), self.size[2])
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
         # `motion` names who owns this body's pose -- one question with three answers, rather
         # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
-        # was meaningless and had to be refused wherever they were offered.
+        # is meaningless and would have to be refused wherever they are offered.
         self.motion = self.config.get("motion", "physics")
         self.free = self.motion == "physics"
         self.mocap = self.motion == "driven"
@@ -189,7 +188,7 @@ class BoxPlugin(Plugin):
         ):
             if gone in config:
                 # Refused rather than translated: a removed key that quietly still worked would
-                # leave two vocabularies for one question, which is what this replaced.
+                # leave two vocabularies for one question.
                 errors.append(
                     f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
                     "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "

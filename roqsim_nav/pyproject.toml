@@ -32,7 +32,7 @@ test = ["pytest>=7.0", "roqsim_mobile", "roqsim_walker", "roqsim_assets"]
 # yielding, and logs why.
 #
 # This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
-# publishes no wheel, so the alternatives were vendoring the Cython source or having no ORCA at all.
+# publishes no wheel, so the alternatives are vendoring the Cython source or having no ORCA at all.
 # Two consequences a downstream consumer has to plan for, because pip does not warn about either:
 # PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
 # with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or

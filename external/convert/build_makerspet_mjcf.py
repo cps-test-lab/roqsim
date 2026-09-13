@@ -3,8 +3,8 @@
 
 Parameterised by robot, because the vendor ships one design at four sizes (Mini 170 mm, Loki 200 mm,
 Fido 250 mm, Snoopy 300 mm) and they differ in dimensions rather than in kind. Only the ones in
-:data:`ROBOTS` are built; adding a sibling is a line there plus its pinned commit -- which is how
-this generator was repointed from Loki to Mini without touching anything below it.
+:data:`ROBOTS` are built; adding or switching a sibling is a line there plus its pinned commit, with
+nothing below it touched.
 
 Unlike ``build_oomwoo_one_mjcf.py``, which walks a flat list of links hanging off ``base_link``,
 these have a **nested** tree -- the Mini hangs its lidar motor off the scanner puck, and the Loki
@@ -14,8 +14,8 @@ both use :func:`urdf_source.link_primitives`.
 
 **The joint rpy is load-bearing and is why this generator reads the joint's full frame.** The wheel
 joints carry ``rpy="-pi/2 0 0"``, the scanner ``rpy="0 -pi 0"`` (an inverted puck between the decks)
-and the tablet a 20-degree pitch. Reading only the xyz -- which four earlier generators got away with,
-because Clearpath, Husarion and RT all put their rotations on the *visual* -- leaves the wheels as
+and the tablet a 20-degree pitch. Reading only the xyz -- which suffices for the Clearpath, Husarion
+and RT generators, because those vendors put their rotations on the *visual* -- leaves the wheels as
 flat discs clear of the floor and the robot resting on its body. See the OOMWOO port log.
 
 Usage::

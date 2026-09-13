@@ -1,6 +1,6 @@
 """Sensor plugin: a six-axis force/torque sensor at a site.
 
-The substrate's first *contact-force* observable. Every sensor here so far reports geometry —
+The substrate's *contact-force* observable. Every other sensor here reports geometry —
 where things are (lidar, cameras, fiducials, ground-truth pose). None of them reports what a robot
 is pushing against, and for a contact-rich manipulation task that is the whole measurement: an
 insertion, a polishing pass, or a compliant assembly is judged by its wrench, not by its trajectory.
@@ -8,7 +8,7 @@ insertion, a polishing pass, or a compliant assembly is judged by its wrench, no
 MuJoCo computes the constraint wrench already; a ``<force>``/``<torque>`` sensor pair on a site
 reads it, and this plugin turns that pair into a first-class observable — a rate-limited endpoint, a
 blackboard reader for in-process controllers, and an optional per-trial log. Nothing here is novel
-physics. It is the plumbing that was missing.
+physics; it is plumbing.
 
 **Where the sensor goes matters more than it looks.** A site sensor measures the wrench transmitted
 *through* that site's body from its children, so it must sit on a body between the tool flange and
@@ -119,7 +119,7 @@ class WrenchReader:
     which frame it is commanding in, and getting that wrong produces a controller that pushes in a
     plausible-looking wrong direction rather than one that fails.
 
-    ``measures`` is carried for exactly the same reason, and was missing for longer: a wrench has a
+    ``measures`` is carried for exactly the same reason: a wrench has a
     direction as well as a frame, and the two conventions are negatives of each other. It is
     ``"environment_on_tool"`` (what a real FT sensor and its users assume, this sensor's default)
     or ``"tool_on_environment"`` (MuJoCo's raw site sensor). A consumer comparing a measured wrench

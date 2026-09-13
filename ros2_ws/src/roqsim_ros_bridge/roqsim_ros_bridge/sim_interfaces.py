@@ -110,8 +110,8 @@ def _unsupported_spawn_request(req):
     """``(result_code, message)`` for a request this simulator cannot serve as asked, else ``None``.
 
     EVERY field of the request is either honoured or named here, and that is the point rather than
-    tidiness: each one used to be read off the request and discarded under a ``RESULT_OK``, which
-    is the failure this module is shaped against -- a trial that believes it spawned something. A
+    tidiness: a field read off the request and discarded under a ``RESULT_OK`` is the failure this
+    module is shaped against -- a trial that believes it spawned something. A
     field added to the service later must join one list or the other.
 
     The codes are the service's OWN extended ones where it defines a fitting one, which
@@ -301,8 +301,8 @@ class SimInterfacesPlugin(Plugin):
             )
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
-        # means the entity really has appeared. Posting and answering OK immediately (which this did)
-        # reports success before the flip has run, so a paused or stalled simulator accepts spawns
+        # means the entity really has appeared. Posting and answering OK immediately would report
+        # success before the flip has run, so a paused or stalled simulator accepts spawns
         # that never happen and the caller has no way to tell.
         #
         # Pose first, then presence, in ONE transaction: placing an entity that is already
@@ -386,9 +386,9 @@ class SimInterfacesPlugin(Plugin):
         o = req.state.pose.orientation
         quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
         pose = ((p.x, p.y, p.z), quat)
-        # The twist is part of the state, and was being dropped: `EntityState` carries one, the
-        # GETTER reports one, and this reported RESULT_OK while ignoring whatever was asked for.
-        # A caller could read a velocity it could not set.
+        # The twist is part of the state: `EntityState` carries one and the GETTER reports one, so
+        # answering RESULT_OK while ignoring whatever was asked for would let a caller read a
+        # velocity it could not set.
         #
         # Absent rather than zero when the request has no twist at all, which a real EntityState
         # always does but a partial caller may not: `None` is what `place_body` already reads as

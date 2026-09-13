@@ -142,8 +142,8 @@ def set_present(ctx, entity, present: bool) -> bool:
     # A transition leaves NO other trace. It writes model fields, while a recording stores
     # `mjData` state (roqsim.capture's STATE_SPEC is MuJoCo's keyframe notion), and the pose
     # deliberately does not move -- so afterwards nothing in a run's recorded data can say
-    # whether an obstacle ever appeared. That made "did it spawn?" unanswerable on a campaign
-    # whose service call had returned OK. Until presence rides in the capture, this line is
+    # whether an obstacle ever appeared, and "did it spawn?" is unanswerable on a campaign
+    # whose service call returned OK. Until presence rides in the capture, this line is
     # the record: stamped with sim time, so it lands on the run's clock like every other event.
     _log.info(
         "presence: %s %s at t=%.3f (%d geoms)",

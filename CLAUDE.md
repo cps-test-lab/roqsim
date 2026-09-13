@@ -80,12 +80,12 @@ plugins intrinsic to it, and the plugins know nothing about any particular model
 
 **The substrate ships mechanism; an experiment ships what it is measuring.** The test is reuse, not
 file type. `arm_controller` serves every arm and `ur10e` is a robot anyone can mount — those stay.
-Four things did not, and each was a *what* rather than a *how*:
+These live downstream, and each is a *what* rather than a *how*:
 
-| left | to | because |
+| not here | but in | because |
 | --- | --- | --- |
 | `peg_in_hole` | a downstream experiment | a bored block with a swept clearance (+7.7 MB of meshes) |
-| `insertion_task` | a downstream experiment | one paper's trial protocol — its defaults were that paper's constants |
+| `insertion_task` | a downstream experiment | one paper's trial protocol — its defaults are that paper's constants |
 | `pipe_weldment`, `welding_torch` | a downstream experiment | a workpiece we sized ourselves |
 | `pick_place_metrics` | a downstream experiment | a rule for what counts as success in one trial |
 
@@ -130,7 +130,7 @@ widen a family's dependencies to accommodate it.
   not an error but a choice, and it resolves to **glfw**, which aborts on a headless node with
   `mujoco.FatalError: gladLoadGL error`. The package `__init__` is the only place that runs before
   every `roqsim.*` submodule and therefore before every `import mujoco` of ours. Do not "tidy" that
-  call into a driver's `main` (it lived in `runner.main` and was inert for every headless run), do
+  call into a driver's `main` (a selection in `runner.main` is inert for every headless run), do
   not let isort merge it into the import block below it (the `E402` per-file-ignore in
   `pyproject.toml` is what keeps it separable), and do not let `roqsim/gl.py` import mujoco even
   transitively. This class of bug is invisible in testing: without a camera no `mujoco.Renderer` is
@@ -143,7 +143,7 @@ widen a family's dependencies to accommodate it.
   package READMEs, module/config docstrings, and the commented example worlds — and update what the
   change made stale.
 - Sensor noise is per-sensor config (e.g. lidar `range_stddev`); there is no generic error-model
-  framework (it was removed on purpose — see architecture.rst §9).
+  framework, on purpose — see architecture.rst §9.
 - **Draw randomness from `ctx.rng_for(name)`, never from a module-level `np.random` or a stateful
   generator.** It is counter-based (Philox) and keyed on `(seed, episode, sim_time, name)`, so a draw is a
   pure function of the world rather than of how many draws happened before it. A shared stateful

@@ -10,10 +10,10 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 # A mobile manipulator belongs to NEITHER of the two family packages it is made of, and this package
-# exists to say so. `roqsim_mobile` is wheeled bases; `roqsim_manipulation` is arms. A robot that is both was
-# previously kept in `roqsim_mobile`, which forced that package to declare `roqsim_manipulation` -- inverting
-# its own documented contract ("Depends on roqsim + roqsim_sensors. Add arms/manipulators as sibling
-# packages") and making anyone who wanted a TurtleBot install every arm, gripper and their meshes.
+# exists to say so. `roqsim_mobile` is wheeled bases; `roqsim_manipulation` is arms. A robot that is both,
+# kept in `roqsim_mobile`, would force that package to declare `roqsim_manipulation` -- inverting its own
+# documented contract ("Depends on roqsim + roqsim_sensors. Add arms/manipulators as sibling packages")
+# and making anyone who wants a TurtleBot install every arm, gripper and their meshes.
 #
 # Depending on both is correct HERE, because these robots genuinely are both, and it is not circular:
 # neither `roqsim_mobile` nor `roqsim_manipulation` depends on the other, or on this.

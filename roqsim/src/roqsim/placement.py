@@ -93,8 +93,8 @@ def base_joint_of(entity) -> str | None:
 #:
 #: Shared for the same reason :func:`place_body` is. A refusal is part of the placement contract,
 #: and a transport that phrases its own advice is describing this module rather than reusing it --
-#: which is how the ROS bridge came to recommend the one mode a placed obstacle must not have,
-#: while the in-process transport recommended both.
+#: so two transports drift apart, and one ends up recommending the mode a placed obstacle must not
+#: have.
 PLACEABLE_MODES_HINT = (
     "Give it 'motion: driven' in the world (placeable and immovable) or 'motion: physics' "
     "(placeable and owned by the solver from the next step)."

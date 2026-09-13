@@ -116,8 +116,8 @@ class EntityCondition(SimAction):
 
         if len(hits) < quorum:
             # The dwell is over the AGGREGATE predicate and restarts whenever it stops holding: a
-            # threshold CROSSING flatters the result (measured elsewhere in this repo: a parcel
-            # crossed 50 mm, success was recorded, and 0.95 s later it was back on the table), and
+            # threshold CROSSING flatters the result (a parcel can cross 50 mm, record success,
+            # and be back on the table 0.95 s later), and
             # per-entity dwells would let two entities each satisfy it at different times.
             self._since = None
             return self.waiting(f"{summary} ({self._require} of {len(self._entities)})")

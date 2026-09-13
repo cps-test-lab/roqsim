@@ -155,11 +155,11 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   given to you (a dynamic-grasping benchmark's object motion).
 - **`conveyor`** — a velocity-driven belt an object rides via a friction pair; live speed over ROS.
   It is a **benchtop** unit (feet at z=0.76): put a table under it with `spawn_model` — the
-  `industrial_table` prop is the one the model used to bundle (spawn it at the belt's local
+  `industrial_table` prop is the one the belt is laid out for (spawn it at the belt's local
   `[-0.13, 0.6, 0]`), and any other ~0.76 m top (e.g. `desk_diy`, 0.758) does just as well.
 - **`shelf`** — a parametric chipboard shelf built from boxes (`layers`/`width`/`depth`/`height`).
 - **`palm_tree`** — a parametric artificial palm-like tree: trunk on a pot, a two-tier crown of
-  arching fronds, and fruit-bunch clusters with a site at each bunch centre. The library's first
+  arching fronds, and fruit-bunch clusters with a site at each bunch centre. The library's
   foliage, and not decoration: a palm crown is a *thin, radially arranged, self-occluding* obstacle
   set with narrow passages between the fronds and the target tucked underneath — a different planning
   problem from boxes and shelves, and the reason the harvesting literature treats palm-like trees

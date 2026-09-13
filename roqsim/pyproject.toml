@@ -57,8 +57,8 @@ payload = "roqsim.plugins.payload:PayloadPlugin"
 # (force * velocity) is the same for a wheel, a joint and a rotor.
 energy_monitor = "roqsim.plugins.energy_monitor:EnergyMonitorPlugin"
 
-# Ground that is not flat. Everything this substrate could stand a robot on was a plane, while four
-# of its ported platforms are outdoor machines whose papers are about what happens when it is not.
+# Ground that is not flat. Without it everything this substrate can stand a robot on is a plane, while
+# four of its ported platforms are outdoor machines whose papers are about what happens when it is not.
 heightfield = "roqsim.plugins.heightfield:HeightfieldPlugin"
 
 [project.scripts]

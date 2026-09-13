@@ -229,14 +229,13 @@ map_server:
     yaml_filename: ""   # set from the launch file
 
 # --- nodes the standard nav2 bringup runs, added so BOTH backends run the same stack ---
-# nav2_bringup's navigation_launch.py brings up ten lifecycle nodes; this file originally
-# configured only the six that roqsim_nav2_example started, so Gazebo's bringup aborted on the
-# first extra node with no parameters (collision_monitor -> 'observation_sources is not
-# initialized' -> 'Failed to bring up all requested nodes').
+# nav2_bringup's navigation_launch.py brings up ten lifecycle nodes, and this file configures all
+# of them: Gazebo's bringup aborts on the first node with no parameters (collision_monitor ->
+# 'observation_sources is not initialized' -> 'Failed to bring up all requested nodes').
 #
 # Two of these sit in the command path -- velocity_smoother rewrites commanded velocities and
 # collision_monitor can slow or stop the robot -- so running them on one backend only would
-# have made every trajectory difference unattributable to the simulator. Values are nav2's own
+# make every trajectory difference unattributable to the simulator. Values are nav2's own
 # reference defaults (jazzy nav2_bringup/params/nav2_params.yaml), unmodified: the point is
 # that both sides run the identical stack, not that we tune it.
 

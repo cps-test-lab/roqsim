@@ -143,14 +143,14 @@ def test_min_force_filters_grazing_contacts():
 
 # -- ownership and identity -------------------------------------------------
 #
-# Both of these were latent: the plugin has needed an owner since ownership became
-# structural, and its blackboard handle has been keyed on a name that defaults to the class.
+# Both follow from ownership being structural: the plugin needs an owner, and its blackboard
+# handle must not be keyed on a name that defaults to the class.
 
 def test_declared_at_the_top_of_a_document_it_is_refused():
     """It watches an entity, so there is nothing for it to watch at the top of a document.
 
-    Before this it resolved `base_link` by accident when a robot happened to use that name,
-    and failed confusingly when one did not -- both worse than being told to nest it.
+    Accepted there, it would resolve `base_link` by accident when a robot happens to use that name,
+    and fail confusingly when one does not -- both worse than being told to nest it.
     """
     from roqsim.config import PluginError, load_config_from_dict
 
@@ -164,7 +164,7 @@ def test_declared_at_the_top_of_a_document_it_is_refused():
 
 def test_two_monitors_get_two_handles():
     """Keyed on the address, not on `name` -- which defaults to the CLASS name, so two
-    unnamed instances wrote to one key and the second silently replaced the first."""
+    unnamed instances would write to one key and the second silently replace the first."""
     model, data = _build()
     ctx = SimContext(config={})
     ctx.model, ctx.data = model, data

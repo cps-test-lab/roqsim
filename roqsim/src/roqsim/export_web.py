@@ -5,7 +5,7 @@ This is the build-time half of "render MuJoCo's geometry in the web UI" (see
 URDF for the web), we compile the *same* world the sim runs and walk the resulting :class:`MjModel`,
 emitting a compact descriptor a small three.js loader (``ts_web/src/lib/mujocoSceneLoader.ts``)
 renders. Because we compile the whole world, the conveyor, floorplan walls, furniture, turtlebot and
-pedestrian all export for free -- the old URDF path could only ever show the arm.
+pedestrian all export for free -- a URDF path could only ever show the arm.
 
 Usage::
 

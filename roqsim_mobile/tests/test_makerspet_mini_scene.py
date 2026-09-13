@@ -11,9 +11,8 @@ default speed.
 ``test_the_head_mesh_is_scaled_correctly`` pins the trap this vendor's descriptions set. The head is
 the model's only mesh and it carries a **non-uniform** scale of ``0.000124 0.000124 7.76e-05``. Emit
 the mesh at 1:1 and it comes out ~1000x too large -- and *no physics check notices*, because the head's
-collision is a cylinder and only its visual is the mesh. That is exactly what happened on this
-vendor's 200 mm sibling before ``urdf_source.mesh_scales`` existed; the guard is why it did not happen
-again here.
+collision is a cylinder and only its visual is the mesh. ``urdf_source.mesh_scales`` carries the
+scale through, and this test pins that it does.
 
 ``test_the_scan_sees_the_wall_through_the_head_gap`` pins the one deviation from the description. The
 lidar skips only its own housing (``base_scan``), and the description's head encloses the scan plane.
@@ -202,8 +201,7 @@ def test_the_scanner_is_inverted_under_the_head():
 def test_the_lidar_motor_hangs_off_the_puck():
     """A nested link, which is why this port needs the recursive emitter and not the flat one.
 
-    The ledger's recorded unknown for this row was whether the Mini wants the flat emitter (like the
-    OOMWOO, whose links all hang off base_link) or the nested one. It is nested: `scan_motor` is a
+    Unlike the OOMWOO, whose links all hang off base_link, the Mini is nested: `scan_motor` is a
     child of `base_scan`, not of `base_link`.
     """
     engine = _engine()

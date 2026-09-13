@@ -1,7 +1,5 @@
 """Motion clips for the mocap-driven human + a procedural bootstrap.
 
-Ported from our earlier in-house nav prototype's ``mujoco_nav.motion``.
-
 A :class:`Clip` is the compact runtime format the CARLA/BVH converters write and the walker player
 samples: per-joint **local** rotations over time, with the root's XY + heading stripped out (those
 come from the nav stack). Root vertical bob is kept. The joint order matches

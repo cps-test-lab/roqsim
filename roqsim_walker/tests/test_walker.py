@@ -272,8 +272,8 @@ def test_a_foreign_package_can_ship_a_blueprint(tmp_path, monkeypatch):
 
     Blueprints resolve across every registered ``roqsim.models`` provider, so a downstream package
     ships its own people without this one being edited -- and a world still names only the walker.
-    Without this, a blueprint outside ``roqsim_walker/models`` is unreachable no matter how it is
-    registered, because the lookup used to be one hardcoded directory.
+    A lookup of one hardcoded directory would leave a blueprint outside ``roqsim_walker/models``
+    unreachable no matter how it is registered.
     """
     from roqsim_walker import blueprint
 

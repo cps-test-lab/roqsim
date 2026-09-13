@@ -70,7 +70,7 @@ def test_the_whole_visible_robot_travels(exported):
 
 
 def test_the_camera_is_carried_by_its_bracket(exported):
-    """Regression: the bracket mesh was missing from the port, so the camera body hung in mid-air.
+    """The camera sits on its bracket mesh; without the bracket the camera body hangs in mid-air.
 
     Asserted as a distance rather than as "the mesh exists", because a bracket present but misplaced
     looks the same in a part list and still leaves the camera floating. The chain the numbers come from

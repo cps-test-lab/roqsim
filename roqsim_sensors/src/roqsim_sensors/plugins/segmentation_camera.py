@@ -16,7 +16,7 @@
 
 """Sensor plugin: per-pixel class and instance labels, and the 2D boxes that fall out of them.
 
-The perception ground truth the substrate was missing. ``object_detector`` answers *where is the
+Per-pixel perception ground truth. ``object_detector`` answers *where is the
 parcel, in the robot's frame* -- the input a manipulation stack wants. It cannot answer *which pixels
 are the parcel*, and that is what a segmentation or detection experiment is measured against: a
 labelled frame is what an IoU, a mask AP or a training set is computed from, and it is the one
@@ -271,7 +271,7 @@ class SegmentationCameraPlugin(CameraPlugin):
             )
             ctx.interface.add(detections_ep)
             # Gated too: the boxes come off the same render, so a consumer that wants only boxes
-            # must still get frames -- the lesson camera_common's _gate_endpoints records for depth.
+            # must still get frames -- the rule camera_common's _gate_endpoints states for depth.
             self._extra_outputs.append(detections_ep)
 
     def _build_lookups(self, ctx: SimContext, prefix: str) -> None:

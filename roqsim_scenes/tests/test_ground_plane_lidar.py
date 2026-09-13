@@ -1,10 +1,10 @@
 """The drawn floor is a real surface, and that is deliberate -- but it must stay out of a level scan.
 
-The baked ground plane was hidden (``rgba`` alpha 0) for a while, on the argument that drawing it makes
-it a lidar return that closes doorways in a costmap. The measurement behind that used a **15 deg** down
-tilt. A TurtleBot 4 on a flat floor does not reach it: over the whole of campaign
-``doorway-rebake-pilot-2026-08-13-12462389`` its pitch never exceeded **0.78 deg** (mean 0.62 -- close to
-its resting attitude on the caster), and the first floor return needs more than that: 1.35 deg in this
+Hiding the baked ground plane (``rgba`` alpha 0) rests on the argument that drawing it makes it a
+lidar return that closes doorways in a costmap, and the measurement behind that uses a **15 deg**
+down tilt. A TurtleBot 4 on a flat floor does not reach it: over a full trial its pitch stays under
+**0.78 deg** (mean 0.62 -- close to its resting attitude on the caster), and the first floor return
+needs more than that: 1.35 deg in this
 fixture, 1.25 deg in secorolab. That threshold is a property of the *world*, not of the sensor -- a ray
 returns only where it meets the plane within the plane's extent, so a bigger room lowers it.
 
@@ -111,8 +111,8 @@ def test_a_level_scan_does_not_see_the_drawn_floor(tmp_path, pitch):
 def test_the_floor_is_a_real_surface_when_a_sensor_is_actually_tilted(tmp_path):
     """The other half of the contract: this is a floor, not a decoration.
 
-    A downward-looking sensor *should* get returns from the ground. Asserting it here keeps the
-    previous fix -- hiding the floor with alpha 0 -- from creeping back as a way to silence the test
+    A downward-looking sensor *should* get returns from the ground. Asserting it here keeps
+    hiding the floor with alpha 0 from becoming a way to silence the test
     above, which would take the ground away from every 3D sensor to protect a 2D one.
     """
     assert _floor_returns(_room(tmp_path), 5.0) > 0

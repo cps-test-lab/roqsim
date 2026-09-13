@@ -84,8 +84,7 @@
            declares shell_link as a frame of this body. -->
 
       <!-- The bracket that carries the camera (sensors/camera_bracket.urdf.xacro).
-           Without it the camera body hangs in mid-air, which is what it looked
-           like: the mesh was simply never converted with its five siblings.
+           Without it the camera body hangs in mid-air.
            pos = shell_link (0 0 0.0942) + the bracket origin (-0.118 0 0.05257).
            The URDF joint has no rpy, so no reorientation applies. -->
       <geom class="tb4_visual" mesh="camera_bracket" material="tb4_black"
@@ -120,11 +119,11 @@
 
       <!-- Wheels. `armature` is reflected drivetrain inertia (a geared motor's rotor inertia x
            ratio^2) and it is load-bearing here, not a tuning knob: the bare wheel spin inertia is
-           1.28e-4 kg*m^2, so the kv=2.0 velocity servo ran at kv*dt/I = 31 at the 2 ms campaign step
-           -- far past what the integrator can follow. The model diverged (NaN in QACC at t = 0.036 s)
-           and the robot was flung across the floor at 4.5 m/s on a 0.2 m/s command. 0.01 brings that
-           to 0.39 and the drive tests to the datasheet. Same failure the Jackal port hit, same fix;
-           `test_a4_wheel_servo_is_stable_at_dt` asserts the ratio so it cannot come back. -->
+           1.28e-4 kg*m^2, so without armature the kv=2.0 velocity servo runs at kv*dt/I = 31 at the
+           2 ms campaign step -- far past what the integrator can follow. The model diverges (NaN in
+           QACC at t = 0.036 s) and flings the robot across the floor at 4.5 m/s on a 0.2 m/s command.
+           0.01 brings that to 0.39 and the drive tests to the datasheet, as on the Jackal;
+           `test_a4_wheel_servo_is_stable_at_dt` asserts the ratio. -->
       <body name="left_wheel" pos="0 0.1165 0.0402">
         <joint name="left_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
         <geom class="tb4_wheel"/>
@@ -139,12 +138,12 @@
            max(friction), so `condim="1"` alone loses to any ordinary floor
            (condim 3, friction ~1-2) and the caster drags. A higher priority makes
            THESE parameters win outright, in any scene.
-           This replaced an explicit <pair> against a geom named `floor`: that
-           worked, but only in worlds using that name -- elsewhere MuJoCo silently
-           dropped the pair (compiles fine, npair 0) and the robot drove on a
-           high-friction ball. The sibling turtlebot3_waffle port measured what that
-           costs: 13.3 N of tangential drag per caster at 0.2 m/s, a 22% speed and
-           48% yaw deficit. Both models now use the one mechanism. -->
+           An explicit <pair> against a geom named `floor` works only in worlds
+           using that name -- elsewhere MuJoCo silently drops the pair (compiles
+           fine, npair 0) and the robot drives on a high-friction ball. On the
+           sibling turtlebot3_waffle that costs 13.3 N of tangential drag per
+           caster at 0.2 m/s, a 22% speed and 48% yaw deficit. Both models use the
+           one mechanism. -->
       <geom name="caster" type="sphere" size="0.01" pos="0.125 0 0.0139"
             material="tb4_grey" priority="1" condim="1"
             friction="0.0001 0.0001 0.0001" solref="0.02 1" solimp="0.95 0.99 0.001"/>

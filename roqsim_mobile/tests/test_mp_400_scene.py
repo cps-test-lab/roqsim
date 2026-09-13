@@ -9,12 +9,12 @@ is provably copy-paste, not a plausible figure, and it is why this model is fit 
 for dynamics. The test exists so nobody "fixes" the mass audit by quietly substituting our own number:
 the audit's value is that it checks the vendor's.
 
-``test_the_vendors_wheel_axis_is_kept_and_still_drives_forward`` pins a sign. ``diff_drive`` used to write the commanded
-wheel rate straight to the actuator with no sign derivation, so it silently required wheels whose axis
-is +y in the base frame — a convention every other model satisfied only because our own generators
-wrote them. This description's axis is -y and the robot drove *backwards* (-0.984 of a forward
-command). The plugin now derives the sign off the model, so the vendor's axis is kept and the tests
-pin that the plugin copes rather than that the model was bent to suit it.
+``test_the_vendors_wheel_axis_is_kept_and_still_drives_forward`` pins a sign. This description's
+wheel axis is -y in the base frame, where every other model's is +y only because our own generators
+write them. A drive that wrote the commanded wheel rate straight to the actuator would silently
+require +y and drive this robot *backwards*. ``diff_drive`` derives the sign off the model, so the
+vendor's axis is kept and the tests pin that the plugin copes rather than that the model was bent to
+suit it.
 
 The scanner is the ``sick_s300`` device model at the vendor's ``lidar_1_joint``, upside down as the
 vendor mounts it, at the height Neobotix's hardware documentation gives (110 mm above the floor)
@@ -114,12 +114,11 @@ def test_the_caster_masses_are_upstream_nonsense():
 def test_the_vendors_wheel_axis_is_kept_and_still_drives_forward():
     """This description's wheel axis is -y, the opposite of every other model here, and that is fine.
 
-    A revolute axis is arbitrary up to sign, so a vendor may express the same wheel either way. The
-    axis was briefly flipped in this port because ``diff_drive`` wrote the commanded rate straight to
-    the actuator and so silently required +y -- a convention the other models satisfied only because
-    our own generators wrote them, and which drove this robot backwards. The plugin now derives the
-    sign off the model, as ``omni_drive`` does, so the vendor's axis is kept and this test pins that
-    the *plugin* copes rather than that the model was bent to suit it.
+    A revolute axis is arbitrary up to sign, so a vendor may express the same wheel either way.
+    ``diff_drive`` derives the roll sign off the model, as ``omni_drive`` does, rather than requiring
+    +y -- a convention the other models satisfy only because our own generators write them, and one
+    that would drive this robot backwards. So the vendor's axis is kept, and this test pins that the
+    *plugin* copes rather than that the model was bent to suit it.
     """
     engine = _engine()
     try:
@@ -236,10 +235,9 @@ def test_b1_drives_straight():
     """Windows are sized to the room, not to patience.
 
     The vendor's acceleration limit is 0.25 m/s^2, so reaching 0.8 m/s takes 3.2 s -- and at that
-    speed the robot crosses `empty_room`'s 5 m half-extent in about six more. A first draft measured
-    over eight seconds and read 0.82 of commanded from a model whose steady state is 0.985, because
-    the window ended against a wall. That is the third time this batch; measure the ramp out, then
-    take a short sample.
+    speed the robot crosses `empty_room`'s 5 m half-extent in about six more. An eight-second window
+    reads 0.82 of commanded from a model whose steady state is 0.985, because it ends against a wall.
+    So measure the ramp out, then take a short sample.
     """
     engine = _engine()
     try:
@@ -276,7 +274,7 @@ def test_the_wheels_grip_rather_than_slip():
             engine.step()
         # Signed by the wheel's axis in the base frame: this vendor's axis is -y, so the raw joint
         # velocity is negative while the robot drives forward. Comparing the raw number to the base
-        # speed is the frame error this batch has now made four times.
+        # speed is a frame error.
         base = named(model, mujoco.mjtObj.mjOBJ_BODY, "q_base_link")
         rot = data.xmat[base].reshape(3, 3)
         axis_y = float((rot.T @ (data.xmat[model.jnt_bodyid[jid]].reshape(3, 3)

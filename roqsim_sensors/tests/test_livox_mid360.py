@@ -118,12 +118,11 @@ def test_vertical_fov_spreads_points_in_z():
     assert np.all(np.abs(cloud.points[:, 2]) <= horiz * math.tan(0.2) + 1e-3)
 
 
-# -- the two things the 3D lidars used to get wrong ------------------------------------------------
+# -- the presence mask and the range clamp, shared with the 2D lidar -------------------------------
 #
-# Both were live until the raycast seam and the shared lidar base landed: this plugin passed
-# ``geomgroup=None`` (so an absent obstacle was still a cloud point) and never applied ``max_range``
-# (so a return past the device's range was still a point, because ``cutoff`` is a culling hint and
-# not a clamp). The 2D ``lidar`` had always done both; these keep the pair from drifting again.
+# Passing ``geomgroup=None`` would make an absent obstacle a cloud point, and skipping ``max_range``
+# would keep a return past the device's range (``cutoff`` is a culling hint, not a clamp). The 2D
+# ``lidar`` does both; these keep the 3D lidars in step with it.
 
 
 class _SingleWallScene(Plugin):
@@ -172,7 +171,7 @@ def _settled_cloud(engine: Engine, steps: int = 120):
 
 
 def test_an_absent_obstacle_is_not_a_cloud_point():
-    """The presence mask, which this plugin used to skip by passing ``geomgroup=None``.
+    """The presence mask, which passing ``geomgroup=None`` would skip.
 
     The geom is left fully OPAQUE, so the alpha-zeroing half of ``presence.set_present`` cannot be
     what hides it -- only the ``geomgroup`` mask can.

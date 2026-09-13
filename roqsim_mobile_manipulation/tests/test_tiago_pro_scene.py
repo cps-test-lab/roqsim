@@ -617,7 +617,7 @@ def test_e5_gripper_linkage_is_a_closed_four_bar(rig):
 
 
 def test_e5b_jaws_are_more_parallel_than_the_urdf_linearisation(rig):
-    """E5b: closing the loop must keep the pads closer to parallel than the mimic fit did.
+    """E5b: closing the loop must keep the pads closer to parallel than the mimic fit does.
 
     The measured baseline is the URDF's own linearisation: 34.8 deg of splay at the grasp opening. The
     loop closure roughly halves it. This is a regression guard on the modelling choice, not a claim

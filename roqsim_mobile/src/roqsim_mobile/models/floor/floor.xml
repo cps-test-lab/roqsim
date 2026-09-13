@@ -3,9 +3,9 @@
     Scene floor: a checker ground plane plus its material, kept regardless of the
     chosen environment. The geom is named `floor` because that is the name the rest
     of the substrate refers to a ground plane by. No robot model depends on the name
-    any more -- a caster that needs to be frictionless says so with `priority="1"` on
-    its own geom rather than pairing against `floor`, which silently did nothing in a
-    world that named its ground otherwise.
+    -- a caster that needs to be frictionless says so with `priority="1"` on its own
+    geom rather than pairing against `floor`, which silently does nothing in a world
+    that names its ground otherwise.
     Default size is 6 x 6 m to match the empty_room environment.
   -->
   <asset>

@@ -310,7 +310,7 @@ def test_parts_of_one_body_can_carry_different_classes():
 
 
 def test_a_geom_class_does_not_leak_to_the_rest_of_its_body():
-    """Selecting a part must label THAT part. Labelling by body was the bug being fixed."""
+    """Selecting a part must label THAT part. Labelling by body would label the whole prop."""
     labels = _plugin(_engine(classes=[BOARDS]))._labels
     values = set(np.unique(labels).tolist())
 

@@ -203,7 +203,7 @@ def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict
 
     # --- origin: footprint centred on x/y, base on the floor (min z == 0) ---
     # x/y off-centre is a real defect: the origin is off the geometry, so a scene placing the body over
-    # a point puts the prop somewhere else (the shelf-at-y=-5.86 bug). => FAIL.
+    # a point puts the prop somewhere else (a shelf whose origin sits at y=-5.86). => FAIL.
     # z-not-grounded is a *convention* question: an origin at the centroid (base = -height/2) is correct
     # for a wall/ceiling-mounted prop and wrong for floor-standing furniture -- the tool can't tell
     # which, so it WARNs and points at --fix-origin (which grounds it) rather than failing.

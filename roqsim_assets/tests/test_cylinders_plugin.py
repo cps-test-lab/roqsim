@@ -191,10 +191,10 @@ def test_instances_must_be_a_list():
 # -- a population may be declared absent --------------------------------------------------------
 #
 # `present:` is how a world says an entity starts imperceptible, so a trial can spawn it in. The
-# children already carried their own and `apply_declared_presence` already forwarded to them --
-# but the key is validated against the ENTRY that carries it, and a population declared none, so
-# the entry was refused outright. The one pattern the substrate offers for revealing a prop was
-# the one thing a population could not say.
+# children carry their own and `apply_declared_presence` forwards to them -- but the key is
+# validated against the ENTRY that carries it, so a population that declared none would be refused
+# outright, and the one pattern the substrate offers for revealing a prop would be the one thing a
+# population could not say.
 
 def _cyl(**extra):
     return {"radius": 0.1, "height": 0.2, "pose": {"position": {"x": 1.0, "y": 0.0}}, **extra}

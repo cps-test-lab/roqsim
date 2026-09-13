@@ -118,8 +118,8 @@ def test_station_keeping_bounds_the_drift(tmp_path):
     """A zero cmd_vel means "walk at zero speed" to this policy, not "stay here".
 
     Without station keeping the robot drifts ~0.9 m in 10 s -- enough to walk away from the table it is
-    reaching for. Pre-existing behaviour (unitree_g1 drifts 0.625 m over the same span), so this guards
-    the fix rather than a regression.
+    reaching for. unitree_g1 drifts too (0.625 m over the same span), so this guards station keeping
+    rather than a defect of this model.
     """
     drift = {}
     for label, loco in (("off", {}), ("on", {"station_keeping": True})):

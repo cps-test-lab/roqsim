@@ -84,7 +84,7 @@ from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in
 )
 
 # color_for / rgba_hex are re-exported here so callers (and tests) can import the whole annotation
-# vocabulary from the 3D window module as before the theme moved to annotate_ui.
+# vocabulary from the 3D window module, although the theme lives in annotate_ui.
 __all__ = [
     "Dot",
     "DotModel",
@@ -524,7 +524,7 @@ class _ReviewApp:
 
         # Footer FIRST, pinned to the bottom, so Pass/Fail are reachable however long the caller's
         # message is and however many dots are dropped. Tk hands out parcels in packing order: packed
-        # last, as this was, the buttons got whatever cavity the text above had not already eaten.
+        # last, the buttons get whatever cavity the text above has not already eaten.
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         self.comment = build_comment_box(tk, footer)

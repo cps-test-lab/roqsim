@@ -3,7 +3,7 @@
 The scene is the body the failure happens to: 1.7 m of cylinder on a free joint, standing on a
 floor with friction. Drive such a thing at its centre of mass and the drive force at the middle
 and the floor's friction at the base make a couple, so it tips -- correct physics about a model
-that was wrong, and before this the run carried on reporting positions and distances about a
+that was wrong, and without this plugin the run carries on reporting positions and distances about a
 pedestrian lying on its side.
 
 The load-bearing behaviour is the pair of negatives: a body driving along the floor, and one

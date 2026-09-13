@@ -237,30 +237,29 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
       </default>
       <default class="f_wheel">
         <!-- `fromto` rather than size+quat: a `quat` on a geom DEFAULT is silently dropped by
-             MjSpec's XML round-trip, which left the wheel cylinders unrotated -- flat discs lying on
-             the floor instead of upright wheels, with the bbox and mass unchanged. fromto states the
-             axis in the geom itself and survives. -->
+             MjSpec's XML round-trip, which leaves the wheel cylinders unrotated -- flat discs lying
+             on the floor instead of upright wheels, with the bbox and mass unchanged. fromto states
+             the axis in the geom itself and survives. -->
         <geom type="cylinder" fromto="0 {-WHEEL_HW} 0 0 {WHEEL_HW} 0" size="{WHEEL_R}"
               friction="1.2 0.005 0.0001" condim="4" group="3" rgba="0.15 0.15 0.15 1"/>
         <!-- `armature` is the drivetrain's reflected rotor inertia (rotor inertia x gear ratio^2), as
              on the jackal; `frictionloss` is the Coulomb term that makes zero velocity an ATTRACTOR.
              Both are needed for stability, not realism: a bare wheel (I~0.003) under a kv=40 velocity
-             servo at dt=2 ms has kv*dt/I >> 1, and the first build of this model sat in a permanent
-             +/-10 rad/s limit cycle -- wheels chattering while the base stood still, which also shook
-             the arm at ~1 rad/s. armature raises the effective inertia to make the servo loop stable
-             (kv*dt/I ~ 1) and frictionloss stops the residual hunting. The husky uses frictionloss
-             2.0, the jackal armature 0.02 + frictionloss 0.15. -->
+             servo at dt=2 ms has kv*dt/I >> 1, and without them the model sits in a permanent
+             +/-10 rad/s limit cycle -- wheels chattering while the base stands still, which also
+             shakes the arm at ~1 rad/s. armature raises the effective inertia to make the servo
+             loop stable (kv*dt/I ~ 1) and frictionloss stops the residual hunting. The husky uses
+             frictionloss 2.0, the jackal armature 0.02 + frictionloss 0.15. -->
         <joint type="hinge" axis="0 1 0" armature="0.08" frictionloss="1.0"/>
       </default>
       <default class="f_caster">
         <!-- A passive ball caster must not resist yaw, and a LOW `friction` ON THE GEOM DOES NOT
              ACHIEVE THAT: MuJoCo combines the two geoms' friction as the element-wise MAX, so a
-             0.02-friction sphere on a 1.0-friction floor still drags at 1.0. The first build made
-             exactly that mistake. The turtlebot4's pattern is the reliable one -- disable automatic
-             collision (contype/conaffinity 0) and give the caster a single explicit <pair> with
-             condim="1" (normal force only, genuinely frictionless). Modelled as a sphere rather than
-             an articulated swivel: the LD-60's casters are small and their swivel dynamics do not
-             matter at 0.2-0.5 m/s. -->
+             0.02-friction sphere on a 1.0-friction floor still drags at 1.0. The turtlebot4's
+             pattern is the reliable one -- disable automatic collision (contype/conaffinity 0) and
+             give the caster a single explicit <pair> with condim="1" (normal force only, genuinely
+             frictionless). Modelled as a sphere rather than an articulated swivel: the LD-60's
+             casters are small and their swivel dynamics do not matter at 0.2-0.5 m/s. -->
         <geom type="sphere" size="{CASTER_R}" contype="0" conaffinity="0" group="3"
               rgba="0.2 0.2 0.2 1"/>
       </default>
@@ -429,8 +428,8 @@ def main() -> int:
         stage = Path(tmp) / "meshes"
         stage.mkdir()
         # Resolve the borrowed arm through `resolve_model`, not a hardcoded package path: `panda.xml`
-        # and its meshes have already moved once (roqsim_manipulation -> roqsim_manipulation_assets), and a
-        # literal path turns that into a silent break in a *build* script, which nothing tests.
+        # and its meshes live in another package, and a literal path turns any move of them into a
+        # silent break in a *build* script, which nothing tests.
         arm = resolve_model("panda")
         # roqsim_manipulation_assets is laid out one folder per model, so the borrowed provider's mesh
         # root is its MODELS dir and the arm's own meshes sit one level down in `panda/meshes/` --
@@ -491,9 +490,9 @@ def main() -> int:
         check_scan_channel(model, data)
 
         # Settle test. The composition spec already carries the `floor` plane its contact pairs
-        # reference, so it is reused as-is here. (A bare model MJCF has no floor at all -- before that
-        # plane existed the settle test dropped the robot to z = -78 m, which read as a physics bug and
-        # was only a missing ground.)
+        # reference, so it is reused as-is here. (A bare model MJCF has no floor at all -- without
+        # that plane the settle test drops the robot to z = -78 m, which reads as a physics bug and
+        # is only a missing ground.)
         repaired = _repair_defaults(spec.to_xml())
         gspec = mujoco.MjSpec.from_string(repaired)
         gspec.meshdir = str(stage)
@@ -504,8 +503,9 @@ def main() -> int:
             gdata.qpos[gmodel.joint(name).qposadr[0]] = val
             # HOLD the arm at the rest pose, as arm_controller does every pre_step. Without this the
             # position servos drive toward ctrl=0, i.e. all-zeros -- a pose where the stock Panda's
-            # link5 and hand collision geoms genuinely overlap (-0.030 m). Leaving ctrl at 0 made the
-            # settle test report a "self-collision" that is an artifact of not commanding the arm.
+            # link5 and hand collision geoms genuinely overlap (-0.030 m). Leaving ctrl at 0 makes
+            # the settle test report a "self-collision" that is an artifact of not commanding the
+            # arm.
             gdata.ctrl[gmodel.actuator(f"actuator{arm_joints.index(name) + 1}").id] = val
         for _ in range(3000):  # 6 s at the default 2 ms timestep
             mujoco.mj_step(gmodel, gdata)
@@ -532,7 +532,7 @@ def main() -> int:
         print(f"  contacts at rest: {gdata.ncon} on {[c for c in carriers if c != 'floor']}")
         # Load-bearing check, time-AVERAGED. A single-frame contact snapshot is worthless here: with
         # four near-coplanar contacts it reports whichever geom happens to be penetrating this tick,
-        # and it once showed the robot balanced on one caster with both drive wheels off the ground.
+        # and it can show the robot balanced on one caster with both drive wheels off the ground.
         fl = gmodel.geom("floor").id
         force = {}
         for _ in range(500):
@@ -596,8 +596,8 @@ def main() -> int:
         # TRACTION UNDER DRIVE. The static support check passes even when the base rocks the wheels off
         # the ground the moment it moves, so the wheels must also be shown loaded WHILE driving: spin
         # them open-loop and require the hull to actually travel at the wheels' surface speed. This is
-        # the check that caught the see-saw (wheels at full commanded speed, robot creeping at a third
-        # of it, normal force periodically 0 N on both).
+        # the check that detects a see-saw (wheels at full commanded speed, robot creeping at a
+        # third of it, normal force periodically 0 N on both).
         lw = gmodel.actuator("left_wheel_motor").id
         rw = gmodel.actuator("right_wheel_motor").id
         wheel_cmd = 0.3 / WHEEL_R  # 0.3 m/s of wheel surface speed

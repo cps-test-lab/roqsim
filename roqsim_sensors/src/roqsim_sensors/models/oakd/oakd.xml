@@ -5,8 +5,8 @@
 
     NO MESH, on purpose. roqsim_mobile's turtlebot4 carries this same device as a visual-only box at
     the URDF's collision dimensions, and this model matches it rather than diverging: the source
-    package's oakd_pro.dae is 12 MB / 152k triangles, and a decimated copy of it was reviewed against
-    the box side by side and judged not worth carrying. What this model exists to provide is the
+    package's oakd_pro.dae is 12 MB / 152k triangles, and a decimated copy of it is not worth
+    carrying over the box. What this model exists to provide is the
     CAMERA -- the pose, lens and stereo frames below -- which is all `spawn_sensor`, the capture
     plugin and the coverage catalog ever read from it. Should a mesh be wanted later, convert
     nav2_minimal_tb4_description/meshes/oakd_pro.dae (Apache-2.0) and swap `oakd_visual` for it; every

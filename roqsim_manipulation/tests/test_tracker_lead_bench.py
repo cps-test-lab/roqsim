@@ -10,9 +10,9 @@ comes back, and limit-cycles instead of arriving.
 **What the arm's weight has to do with it, and why it is held out.** A position servo models a
 drive that holds its own weight; without :func:`roqsim.actuators.apply_gravity_compensation` the
 same joint gain has to carry the arm too, and the tracker's accumulated lead becomes the only thing
-holding it up. Measured on an uncompensated UR10e, roughly two thirds of the peak lead was that,
-not commanded motion -- which is why the two obvious fixes each looked refuted: both discard or
-bound the total lead, so both dropped the arm. Compensation is the default now, so this file
+holding it up. Measured on an uncompensated UR10e, roughly two thirds of the peak lead is that,
+not commanded motion -- which is why the two obvious fixes each look refuted there: both discard
+or bound the total lead, so both drop the arm. Compensation is the default, so this file
 measures the tracker rather than the arm's weight, and pins the difference below.
 
 This is a bench before it is a test. Its guards pass today and are here because a candidate fix

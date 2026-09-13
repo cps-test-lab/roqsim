@@ -66,8 +66,8 @@ _CONFIG_FIELD_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(.+?)\s*(?:#\s*(.*))?$")
 # doc rather than end the block.
 _COMMENT_ONLY_RE = re.compile(r"^\s*#\s?(.*)$")
 # A key that opens a nested mapping rather than carrying a value: "  sample:" with the keys under
-# it indented further. The world YAML nests, so the block does too, and a key like this used to end
-# the parse -- reporting a plugin's first few keys and silently dropping the rest.
+# it indented further. The world YAML nests, so the block does too, and ending the parse at a key
+# like this would report a plugin's first few keys and silently drop the rest.
 _CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
 # The line naming the plugin itself, which a block opens with one level above its keys. Written
 # either as a plain key ("sensor_coverage_probe:"), as the list entry a world YAML's

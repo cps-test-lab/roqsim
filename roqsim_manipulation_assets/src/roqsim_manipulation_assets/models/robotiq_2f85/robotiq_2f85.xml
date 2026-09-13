@@ -1,11 +1,10 @@
 <mujoco model="robotiq_2f85">
   <!-- Robotiq 2F-85 parallel gripper, standalone and attachable to ANY arm flange.
 
-       Factored out of gen3.xml, which welded this same subtree inline. Both now describe one gripper
-       in one place: gen3 keeps its inline copy for the Kinova it ships as an assembled unit, and this
-       file is what `spawn_arm`'s `end_effector:` welds onto an arm that ships bare -- a UR10e/UR5e,
-       whose MJCF ends at a tool flange. Ported from MuJoCo Menagerie's robotiq_2f85 (see
-       ROBOTIQ_2F85_LICENSE, BSD-3, ROS-Industrial).
+       gen3.xml welds this same subtree inline for the Kinova it ships as an assembled unit, and
+       this file is what `spawn_arm`'s `end_effector:` welds onto an arm that ships bare -- a
+       UR10e/UR5e, whose MJCF ends at a tool flange. Ported from MuJoCo Menagerie's robotiq_2f85
+       (see ROBOTIQ_2F85_LICENSE, BSD-3, ROS-Industrial).
 
        FRAME CONVENTION (what makes it attachable): the root body `base_mount` sits at the origin with
        the fingers extending along +z, which is the tool-flange convention MuJoCo Menagerie uses for
@@ -14,8 +13,8 @@
 
        JOINT NAMES ARE THE URDF'S, not Menagerie's. `robotiq_85_left_knuckle_joint` is the name in
        ros-jazzy-robotiq-description (robotiq_2f_85_macro.urdf.xacro), so the joint MoveIt plans and
-       the joint MuJoCo simulates carry one name. Menagerie calls it `left_driver_joint`; gen3.xml had
-       already renamed it, and that choice is kept here rather than reverted.
+       the joint MuJoCo simulates carry one name. Menagerie calls it `left_driver_joint`; gen3.xml
+       uses the URDF name as well.
 
        The gripper is driven as ONE degree of freedom through a tendon, not through its joints:
        `fingers_actuator` (ctrlrange 0..255, 0 open) pulls the `split` tendon, which sums the two

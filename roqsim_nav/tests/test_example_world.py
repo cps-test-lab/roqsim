@@ -97,8 +97,8 @@ def test_one_robot_stops_and_the_other_goes_around_it():
     """The asymmetry the pair exists to show: both LOOK, only one GIVES WAY.
 
     `stopper` names no avoidance model, so it holds its line and stops; `dodger` names one, so it
-    steers around. It is also the regression for a mover that opts out of yielding being left out of
-    the model altogether -- it was then invisible, and the two bumped.
+    steers around. It also guards that a mover which opts out of yielding stays in the model: left
+    out, it would be invisible, and the two would bump.
     """
     engine = Engine(load_config(str(WORLD)))
     engine.ctx.seed = SEED

@@ -242,9 +242,8 @@ STATE_FIELDS = (
 )
 
 #: The recording's own format version, so a future change is refused by name rather than misread.
-#: Bumped when the provenance's shape changes. It is READ (see :meth:`Recording.describe`), which it
-#: was not: written in two places and checked nowhere, an unrecognised record was silently
-#: mis-handled rather than refused.
+#: Bumped when the provenance's shape changes. It is READ (see :meth:`Recording.describe`): written
+#: and checked nowhere, an unrecognised record would be silently mis-handled rather than refused.
 FORMAT_VERSION = 2
 
 #: Header of the streamed clock record, written beside the recording while the run proceeds.
@@ -397,14 +396,14 @@ class _SampleStream:
     """The samples on disk while the run is still going -- the recording's live half.
 
     A raw stream of fixed-width records, appended as each is taken and packed into the ``.npz`` at
-    the end. Accumulating them in RAM instead cost memory linear in the run's *length*, peaking at
-    about twice the file size in the moment the whole run was materialised for the write. That memory
-    is anonymous, so a container under pressure can reclaim none of it: a long run either fit or was
+    the end. Accumulating them in RAM instead costs memory linear in the run's *length*, peaking at
+    about twice the file size in the moment the whole run is materialised for the write. That memory
+    is anonymous, so a container under pressure can reclaim none of it: a long run either fits or is
     OOM-killed. Streamed, the footprint is flat and what pages remain are file-backed and evictable.
 
-    Measured on 40 000 samples of a pedestrian world (58 MB of records): the loop's footprint stopped
-    growing entirely where the lists had added 61 MB to it, and peak RSS across the whole recording
-    fell from 409 MB to 309 MB -- the remainder being the mapping and the archive's own write pages,
+    Measured on 40 000 samples of a pedestrian world (58 MB of records): the loop's footprint does not
+    grow at all where lists add 61 MB to it, and peak RSS across the whole recording is 309 MB against
+    409 MB -- the remainder being the mapping and the archive's own write pages,
     which are file-backed and so are the kernel's to reclaim rather than the run's to hold.
 
     **Deliberately not flushed per sample.** The two CSVs beside it are, because they exist for
@@ -598,7 +597,7 @@ class StateRecorder:
         )
         # Views onto the record's fields, taken once. Naming a field of a structured array builds a
         # new view every time, which measured as much again as the write it feeds; through these, a
-        # sample is cheaper than the list append this replaced.
+        # sample is cheaper than a list append.
         record = self._stream.record
         self._t, self._w, self._s = record["t"], record["w"], record["s"]
         self._cam = record["cam"] if camera else None

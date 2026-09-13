@@ -3,8 +3,8 @@
 The whole point of generating the URDF instead of shipping a vendor one is that MoveIt then plans
 against the kinematics MuJoCo simulates. That claim is only worth anything if it is measured, so the
 central test here is the FK round trip: load the exported URDF back into MuJoCo, pose both models at
-the same joint values, and compare every link. It caught a real 2.5 m error (a gimbal-lock branch in
-the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e uses on four links).
+the same joint values, and compare every link. It exposes a 2.5 m error from a gimbal-lock branch in
+the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e uses on four links.
 """
 
 from __future__ import annotations
@@ -219,13 +219,13 @@ def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path, robot):
 def test_round_trip_survives_a_rotated_root_body(tmp_path):
     """A robot whose ROOT body carries a rotation must still round-trip.
 
-    Regression. The UR arms follow the vendor convention of a base yawed 180 deg
+    The UR arms follow the vendor convention of a base yawed 180 deg
     (``ur5e.xml``: ``<body name="base" quat="0 0 0 -1">``); ``ur10e.xml`` has no such quat, and the
-    round-trip test above happens to use the ur10e -- so every rotated-root export went unchecked.
-    The comparison offset each link by the root's POSITION but left the root's ORIENTATION in, which
-    is not a property the two models share: in the MJCF every link is rotated with the base, while
-    in the URDF the base IS the frame they are expressed in. A ur5e whose URDF matched its MJCF body
-    for body was reported as diverging by 1.7 m, i.e. the check condemned a correct export.
+    round-trip test above uses the ur10e -- so without this test no rotated-root export is checked.
+    Offsetting each link by the root's POSITION but leaving the root's ORIENTATION in compares
+    something the two models do not share: in the MJCF every link is rotated with the base, while
+    in the URDF the base IS the frame they are expressed in. A ur5e whose URDF matches its MJCF body
+    for body then reads as diverging by 1.7 m, i.e. the check condemns a correct export.
     """
     cfg = load_config_from_dict(
         {

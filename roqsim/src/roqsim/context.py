@@ -138,8 +138,8 @@ class Endpoint:
 
     A plugin that produces or consumes data (a controller, a sensor) registers its ports on
     ``ctx.interface`` in ``configure()``. A transport/bridge plugin (ROS 2, zenoh, zmq, ...) reads
-    the registry and wires each port to its wire protocol -- so the robot and its bridge no longer
-    duplicate a hand-maintained key contract.
+    the registry and wires each port to its wire protocol -- so the robot and its bridge share no
+    hand-maintained key contract.
 
     The robot package imports nothing backend-specific: ``read``/``write`` traffic in *neutral*
     payloads (numpy arrays, tuples, small dataclasses), never wire messages. Backend particulars

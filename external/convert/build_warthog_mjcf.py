@@ -10,16 +10,16 @@ Every mass, inertia, link offset and collision primitive below is Clearpath's ow
 the expanded w200 xacro. The drive limits are Clearpath's own too, from
 ``clearpath_control/config/w200/control/diff_4wd.yaml``.
 
-Three things this port did not have to pay for:
+Three things this port gets for free:
 
 * **The meshes need no conversion.** STL, loaded by MuJoCo directly. No Collada, no Blender, and
-  none of the axis or scale traps that cost the ROSbot and the Doosan their iterations.
+  none of the axis or scale traps the ROSbot and Doosan conversions have to handle.
 * **The vendor ships real collision meshes.** ``chassis-collision.stl`` is 56 triangles against the
   visual's 2489, and ``fenders.stl`` is 60. Both are used as shipped.
 * **Nothing is articulated but the wheels.** The rocker/differential suspension is a set of fixed
   joints in this description, so the tree is a chassis, two diff units and four wheels.
 
-The one thing it did pay for is the yaw calibration -- see ``slip_factor`` in the manifest and the
+The one thing it does need is the yaw calibration -- see ``slip_factor`` in the manifest and the
 port log. Clearpath publishes its own compensation here, and unusually it is legible: ``diff_4wd``
 declares ``wheel_separation: 1.5`` for a robot whose URDF track is 1.13642 m, then multiplies it by
 1.125. That is a 48% inflation of the geometric track, and it is the real driver's ICR compensation
@@ -119,7 +119,7 @@ def copy_meshes(description: Path, mounts: Path) -> None:
     meshes = description / "meshes/w200"
     # Only what the default w200 (no attachments) actually references. bulkhead/generator/
     # arm-mount-plate belong to attachments this model does not instantiate, and shipping an unused
-    # 215 kB mesh is what left the Raspberry Pi Mouse carrying a top plate nothing references.
+    # mesh leaves the package carrying geometry nothing references.
     for name in ("chassis.stl", "chassis-collision.stl", "diff-link.stl", "e-stop.stl",
                  "fenders.stl", "light.stl", "rocker.stl", "susp-link.stl"):
         shutil.copy2(meshes / name, PKG / "meshes" / name)

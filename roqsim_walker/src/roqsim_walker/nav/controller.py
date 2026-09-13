@@ -1,7 +1,7 @@
 """Walkers that follow a route, yield to the robot (ORCA), and animate (mocap).
 
-Ported from an earlier in-house navigation prototype, with two additions for roqsim:
-a runtime **goal route** interface (:meth:`WalkerController.set_route`, driving the
+Two runtime controls sit on top of the route patrol:
+a **goal route** interface (:meth:`WalkerController.set_route`, driving the
 ``NavigateThroughPoses`` endpoint) and a per-walker **avoidance toggle**.
 
 Each walker is a kinematic articulated **humanoid** (a flat set of mocap bodies, see

@@ -1,9 +1,9 @@
 """Reciprocal give-way: enough to get two movers past each other, with no compiler.
 
-The default, and it exists because the alternative was not one. ORCA is the better model and it
-needs ``rvo2``, which publishes no wheel and is built from source -- so a plain ``pip install
-roqsim_nav`` could only ever *stop* for traffic, and two movers meeting head-on stopped facing each
-other for the rest of the trial. "Avoidance is available if you have a compiler" is not avoidance.
+The default, because ORCA cannot be. ORCA is the better model and it needs ``rvo2``, which
+publishes no wheel and is built from source -- so without this a plain ``pip install roqsim_nav``
+could only ever *stop* for traffic, and two movers meeting head-on would stop facing each other
+for the rest of the trial. "Avoidance is available if you have a compiler" is not avoidance.
 
 What it does, per agent, per solve:
 

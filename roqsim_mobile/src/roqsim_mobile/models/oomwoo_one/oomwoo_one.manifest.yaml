@@ -5,7 +5,7 @@
 #
 # Unusually, NOTHING here is an assumption: every value is the description's own, from
 # makerspet/oomwoo-one @ 5305e6c5 (urdf/params.xacro, urdf/plugins.xacro, config/navigation.yaml).
-# Every other mobile port in this batch had to invent at least a scanner mount height.
+# Most other mobile models here supply at least a scanner mount height of their own.
 components:
   # A TRUE two-wheel differential drive with a modelled caster -- so no slip_factor, the same line
   # turtlebot3_waffle and raspimouse draw. It does not turn by scrubbing.

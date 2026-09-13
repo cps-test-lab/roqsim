@@ -130,8 +130,8 @@ ROUTE_MODES = ("plan", "exact")
 #: stopped for it.
 AVOIDANCE_KEYS = ("steer", "stop", "reroute", "params")
 
-#: Keys that used to say this, and where each went. Refused by name rather than quietly ignored: a
-#: world that still spells it the old way is asking for behaviour it will not get.
+#: Keys `avoidance:` supersedes, and what each maps to. Refused by name rather than quietly ignored:
+#: a world that spells it that way is asking for behaviour it will not get.
 _RETIRED_KEYS = {
     "traffic": "`traffic: respect` is `avoidance: {stop: true}` (the default); `traffic: ignore` "
     "is `avoidance: {stop: false}`.",
@@ -142,7 +142,7 @@ _RETIRED_KEYS = {
 #: How the planned path is turned into motion.
 #:
 #: ``waypoint`` steers at the active goal and advances when within ``arrival_radius`` -- the
-#: pedestrian stack's historical follower, and the default. A corner is rounded by about that radius,
+#: pedestrian stack's follower, and the default. A corner is rounded by about that radius,
 #: because the mover aims at the *end* of the leg rather than at the path.
 #:
 #: ``pure_pursuit`` steers at a carrot a fixed ``lookahead`` along the route and advances on arc
@@ -321,7 +321,7 @@ class NavigatorPlugin(Plugin):
         if config.get("loop") and not (config.get("goals") or []):
             # The route is the mover's start plus its goals, so ONE goal is already a two-point
             # shuttle -- which is exactly what a two-waypoint patrol is. Counting goals rather than
-            # route points refused that.
+            # route points would refuse that.
             errors.append("'loop: true' needs at least one goal to cycle through")
 
         kin = config.get("kinematics", "auto")
@@ -646,10 +646,10 @@ class NavigatorPlugin(Plugin):
         # is atomic where writing into a shared array is not.
         self._pose_snapshot = (x, y, yaw)
 
-        # Order: plan, then AVOID, then decide whether to stop. Caution used to run first, against
-        # the raw preferred velocity, and that made steering impossible: it stopped the mover, a
-        # stopped mover has no velocity to steer, so the avoidance model saw nothing to shape and two
-        # movers meeting head-on stopped nose to nose however good the model was. Stopping is the
+        # Order: plan, then AVOID, then decide whether to stop. Caution run first, against the raw
+        # preferred velocity, makes steering impossible: it stops the mover, a stopped mover has no
+        # velocity to steer, so the avoidance model sees nothing to shape and two movers meeting
+        # head-on stop nose to nose however good the model is. Stopping is the
         # fallback for what steering cannot clear, so it has to judge the steered velocity.
         # The blocker is last tick's, which is what there is: caution runs after the tree, because
         # it has to judge the velocity avoidance produced rather than the raw one. A tick of lag is
@@ -732,7 +732,7 @@ class NavigatorPlugin(Plugin):
 
         A patrolling opponent that is sent somewhere should resume patrolling when it gets there,
         rather than standing wherever the last goal left it -- which is what the pedestrian stack
-        always did, and is the sensible behaviour for a cart on a loop too. The completion latch is
+        does, and is the sensible behaviour for a cart on a loop too. The completion latch is
         left alone: the caller that sent the route still has to be able to observe its arrival, and
         restoring the patrol clears ``done``.
         """
@@ -776,7 +776,7 @@ class NavigatorPlugin(Plugin):
             return
         namespace = cfg.get("namespace") or (entity.meta or {}).get("namespace", "")
         names = cfg.get("action_names") or {}
-        # `action_name` (singular) is the walker's legacy spelling for the through-poses name.
+        # `action_name` (singular) is the walker's own spelling for the through-poses name.
         legacy = cfg.get("action_name")
         for endpoint, action_type in self.ACTIONS.items():
             if endpoint not in (cfg.get("actions") or self.ACTIONS):
@@ -814,16 +814,16 @@ class NavigatorPlugin(Plugin):
 
         Measured by default, because a declared one is a number a world has to get right about a
         robot it did not build -- and getting it wrong is quiet. An mpo_500 is 0.64 m across the
-        diagonal; declaring the 0.35 that looks right made the avoidance model believe two of them
-        cleared at 0.70 m when they need 1.29, and they ground past each other in contact for the
+        diagonal; declaring the 0.35 that looks right makes the avoidance model believe two of them
+        clear at 0.70 m when they need 1.29, and they grind past each other in contact for the
         whole pass. The model already computes this for the caution probe, so the default costs
         nothing and cannot be wrong.
         """
         if self._radius is None:
             # `geom_xpos` is only refreshed by a forward pass, and this runs during `on_reset` --
             # after the owner has written the body's new pose but before anything has stepped.
-            # Measuring without this read the PREVIOUS positions: a walker's skeleton still parked
-            # where the model compiled it, which came out as a 4.2 m radius and was then cached for
+            # Measuring without this reads the PREVIOUS positions: a walker's skeleton still parked
+            # where the model compiled it, which comes out as a 4.2 m radius and is then cached for
             # the run.
             mujoco.mj_forward(ctx.model, ctx.data)
             configured = self.config.get("radius")

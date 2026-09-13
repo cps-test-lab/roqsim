@@ -726,7 +726,8 @@ def write_result(json_out: str | None, comment: str, sketch: SketchModel) -> dic
 
     result = {
         "comment": comment,
-        # floorplan-level placement intent -- omitted when empty so old sketches stay unchanged
+        # floorplan-level placement intent -- omitted when empty so sketches without one stay
+        # unchanged
         **({"description": desc} if (desc := sketch.description.strip()) else {}),
         "rooms": [
             {

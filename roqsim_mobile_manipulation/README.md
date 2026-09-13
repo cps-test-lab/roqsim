@@ -20,11 +20,11 @@ thumbnail and its own `meshes/`. The port log beside a model is where every numb
 ## Why this package exists
 
 `roqsim_mobile`'s contract is *"depends on `roqsim` + `roqsim_sensors`; add arms/manipulators as sibling
-packages."* Keeping these two robots there broke it: their manifests declare `arm_controller`, so
-`roqsim_mobile` had to declare `roqsim_manipulation`, and every consumer of a plain TurtleBot then pulled in
-every arm, gripper and their meshes. It also made the sibling family packages a dependency mesh rather
-than a tree, and silently reordered the wheel install graph for anyone deploying them (which broke a
-container image build with `No matching distribution found for roqsim_manipulation`).
+packages."* Keeping these two robots there would break it: their manifests declare `arm_controller`, so
+`roqsim_mobile` would have to declare `roqsim_manipulation`, and every consumer of a plain TurtleBot would
+pull in every arm, gripper and their meshes. It would also make the sibling family packages a dependency
+mesh rather than a tree, and silently reorder the wheel install graph for anyone deploying them (where a
+container image build fails with `No matching distribution found for roqsim_manipulation`).
 
 Depending on both is correct *here*, because these robots genuinely are both, and it is not circular —
 neither base nor arm package depends on the other or on this one. `roqsim_assets` is *not* declared for
@@ -36,9 +36,9 @@ provenance are all that ships here; what an experiment measures with them belong
 
 ## No new plugins, on purpose
 
-Both platforms are assembled from plugins that already existed: `spawn_robot`, `diff_drive` /
+Both platforms are assembled from general-purpose plugins: `spawn_robot`, `diff_drive` /
 `omni_drive`, `arm_controller`, `lidar`. Each port log carries a "substrate extensions" table, and a
-composite robot that needed a *new* plugin would be evidence the composition mechanism is missing
+composite robot that needs a *new* plugin would be evidence the composition mechanism is missing
 something rather than evidence of a hard robot.
 
 `tests/test_mounted_arm_composition.py` is what that claim is measured by: it bolts a stock `ur10e`

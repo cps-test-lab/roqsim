@@ -3,9 +3,9 @@
 
 """A robot that is both an arm and a base gets the arm's physics and the base's, separately.
 
-`spawn_arm` and `spawn_robot` had different answers to who holds a joint up, so the same Panda
-arm carried its own weight on a bench and not on a base. It does now, and the base does not --
-which is the half a wheeled machine needs, because a compensated base presses on the floor with
+`spawn_arm` and `spawn_robot` give the same answer to who holds a joint up: the same Panda arm
+carries its own weight on a bench and on a base, and the base does not -- which is the half a
+wheeled machine needs, because a compensated base presses on the floor with
 less than it weighs and stays upright while doing it.
 """
 

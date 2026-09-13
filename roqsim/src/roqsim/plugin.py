@@ -114,7 +114,7 @@ class Plugin:
         self.name: str = name or type(self).__name__
         #: How this entry is addressed among its siblings: its ``name:``, else its plugin ref. For a
         #: ``provides_entity`` plugin this IS the name of the entity it registers -- one spelling, so
-        #: an entity name can no longer be written in a config key *and* in a sibling and disagree.
+        #: an entity name cannot be written in a config key *and* in a sibling and disagree.
         self.label: str = label or (name or type(self).__name__)
         #: The entity this instance belongs to -- the label of the entry it is nested under, filled
         #: in by the loader. ``None`` for an entry at the top of a document, which belongs to the
@@ -198,10 +198,10 @@ class Plugin:
         """Check ``present:``, and refuse it where it would do nothing.
 
         Read here rather than left to each plugin because the plugins that register an entity are
-        the ones this applies to, and they say so already (:attr:`provides_entity`). Thirteen of
-        the fourteen used to ACCEPT the key and drop it: a world declaring a prop absent got a
-        present one, silently, which is the reading of ``present: false`` nobody wants and the one
-        that looks like it worked.
+        the ones this applies to, and they say so already (:attr:`provides_entity`). A plugin that
+        ACCEPTS the key and drops it gives a world declaring a prop absent a present one, silently,
+        which is the reading of ``present: false`` nobody wants and the one that looks like it
+        worked.
         """
         if "present" not in config:
             return []
@@ -227,8 +227,8 @@ class Plugin:
         the next episode begins, and a world that declares a spare means it every episode.
 
         Driven from the engine rather than from each plugin's own hooks, so a plugin registering an
-        entity gets this by declaring that it does. The alternative was the same three lines copied
-        into every prop, which is how they came to disagree in the first place.
+        entity gets this by declaring that it does. The alternative is the same three lines copied
+        into every prop, where the copies drift apart.
         """
         if not self.provides_entity:
             return

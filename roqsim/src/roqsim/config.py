@@ -18,7 +18,7 @@ The YAML has two top-level sections::
         follow_heading: true # optional: chase cam -- azimuth becomes an offset from the robot's yaw
       sync: {enabled: false} # foreseen lockstep mode (inert in M1)
 
-    components:            # ``plugins:`` is the former spelling of this key, still accepted
+    components:            # ``plugins:`` is accepted as an alias of this key
       - floorplan:                                # a short-name ref is the entry's key
           size: 3.0                               # its config: opaque, validated by the plugin itself
         name: ground                              # reserved sibling key; identifies this instance
@@ -111,8 +111,8 @@ class PluginSpec:
         return f"{self.entity}.{self.label}" if self.entity else self.label
 
 
-#: The document key holding the list of entries. ``plugins`` is the former spelling: a document may
-#: use either while worlds and manifests are swept over, but never both -- two spellings of one key in
+#: The document key holding the list of entries. ``plugins`` is an accepted alias: a document may
+#: use either, but never both -- two spellings of one key in
 #: one file is a merge nobody can predict, so it is refused rather than resolved.
 _ENTRIES_KEY = "components"
 _ENTRIES_KEY_LEGACY = "plugins"
@@ -602,10 +602,10 @@ def load_config(
     after the overrides. Injected here rather than authored into the world so a checked-in world
     stays ROS-free and standalone-runnable.
     """
-    # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. `roqsim sim` and the
-    # scenario adapter each resolved one before calling in, so the ref was a property of those two
-    # entry points rather than of a world -- and `roqsim-export-web` (which no human types, but which
-    # a consumer's scene cache runs to build a run view's geometry) got the ref verbatim and reported
+    # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. Resolved only by
+    # `roqsim sim` and the scenario adapter, the ref would be a property of those two entry points
+    # rather than of a world -- and `roqsim-export-web` (which no human types, but which a consumer's
+    # scene cache runs to build a run view's geometry) would get the ref verbatim and report
     # "world config /abs/cwd/pick_cell:pick_cell_ros2 does not exist". Downstream that surfaces
     # as "no 3D geometry" for every run, so the whole batch looks broken rather than one caller.
     #
@@ -884,7 +884,7 @@ def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assign
     return out
 
 
-#: Roots an assignment may address. ``plugins`` is the former spelling of the container key and is
+#: Roots an assignment may address. ``plugins`` is an alias of the container key and is
 #: accepted here for the same reason it is accepted in a document.
 _COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
 

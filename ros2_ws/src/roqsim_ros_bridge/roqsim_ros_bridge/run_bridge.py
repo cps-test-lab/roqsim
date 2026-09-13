@@ -21,7 +21,7 @@ def main(argv=None):
     """Translate ``--world <path>`` into the runner's positional target.
 
     ``--world`` stays this entry point's interface -- it is what the launch files and the ROS-side
-    documentation pass -- while :mod:`roqsim.runner` now takes the world as a positional ``target`` (it
+    documentation pass -- while :mod:`roqsim.runner` takes the world as a positional ``target`` (it
     also accepts scenes and model references, which a flag named ``--world`` would misdescribe).
     """
     argv = list(sys.argv[1:] if argv is None else argv)

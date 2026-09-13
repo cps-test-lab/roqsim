@@ -80,16 +80,17 @@ no mention here at all; nest an entry only to add something the model does not s
 Plugins are referenced by registered name, by `module:Class`, or by `file.py:Class` beside the world —
 which is how an experiment loads its own plugin without registering anything.
 
-> **Two changes to the world format.**
+> **Two rules of the world format.**
 >
-> `plugins:` was renamed to **`components:`**. The former spelling still loads, so existing worlds and
-> model manifests keep working; a document carrying *both* keys is refused, because two spellings of
-> one key in one file is a merge nobody can predict. Anything that reads a loaded world back — `roqsim
-> scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — now emits `components:`.
+> The entry list is **`components:`**. `plugins:` is accepted as an alias, so worlds and model
+> manifests spelled that way keep working; a document carrying *both* keys is refused, because two
+> spellings of one key in one file is a merge nobody can predict. Anything that reads a loaded world
+> back — `roqsim scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — emits
+> `components:`.
 >
 > **Ownership is nesting, and `name:` is a sibling.** A sensor or controller belongs to the entry it
-> is nested under, so the per-family `robot:` / `arm:` config keys are gone. An entry's `name:` moved
-> out of the plugin's config to sit beside the plugin ref, and it is now the *one* name an entry has:
+> is nested under, so there are no per-family `robot:` / `arm:` config keys. An entry's `name:` sits
+> beside the plugin ref rather than in the plugin's config, and it is the *one* name an entry has:
 > it labels the entry, names the entity a `spawn_*` or prop creates, and is what `disable:` and an
 > override address.
 >
@@ -164,8 +165,8 @@ $ roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
 That makes "is this sensor present" a value a campaign can sweep rather than an edit to the world
 file. The component stays addressable and stays in the run's record saying it was turned off, and a
 later override can turn it back on. Disabling an entry disables everything it owns, so switching off
-a robot switches off its sensors too rather than leaving them aimed at an entity that no longer
-exists. `disable:` in an `extends` chain is the same thing under another name.
+a robot switches off its sensors too rather than leaving them aimed at an entity that does not
+exist. `disable:` in an `extends` chain is the same thing under another name.
 
 Overriding `components.robot.model` swaps the model *and* what its manifest contributes, because
 assignments are applied before expansion reads `model:` as well as after. An assignment that names no

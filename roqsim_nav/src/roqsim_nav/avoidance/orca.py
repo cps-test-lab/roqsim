@@ -5,8 +5,7 @@ so two agents heading at each other both step aside and neither has to know the 
 reciprocity is why a crowd of them does not deadlock the way a crowd of stop-for-anything movers
 would.
 
-Hoisted out of the pedestrian controller, where it was the only local-avoidance policy the substrate
-had and was reachable only through a walker. Nothing here is pedestrian-specific.
+Nothing here is pedestrian-specific: any navigator can name it, not only a walker.
 
 Needs ``rvo2``, which is an optional extra because it publishes no wheel and must be built from
 source. Without it this model refuses to load, and a world that named it is told so at load time
@@ -119,8 +118,8 @@ class OrcaModel(AvoidanceModel):
             # scripted prop. For a yielding one it would be catastrophic and silent: `doStep` writes
             # its answer into the agent's velocity and `getAgentVelocity` is how we read it back, so
             # overwriting that with the body's measured velocity discards the answer. Every mover
-            # then executed zero and the whole world stood still, while ORCA reported no error and
-            # the agents were plainly registered.
+            # then executes zero and the whole world stands still, while ORCA reports no error and
+            # the agents are plainly registered.
             self._sim.setAgentVelocity(aid, (float(vel[0]), float(vel[1])))
         if not present:
             # Absent entities deflect nobody, exactly as they are seen by no raycaster. Parking the

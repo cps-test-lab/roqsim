@@ -301,7 +301,7 @@ Internals
 Roadmap
 -------
 
-* **Sketch-authored hinge side.** A door opening now gets a real swing leaf (the ``door`` plugin),
+* **Sketch-authored hinge side.** A door opening gets a real swing leaf (the ``door`` plugin),
   but which edge is hinged / which way it swings still comes from the generator's ``--doors-map`` (or
   its defaults), not the 2D sketch. Capturing hinge side + swing direction as the human draws the
   opening is future work.

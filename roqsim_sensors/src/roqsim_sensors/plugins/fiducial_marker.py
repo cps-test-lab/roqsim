@@ -18,12 +18,12 @@ emission does keep a tag legible in a dim scene, but it also lifts the *black* t
 saturates the white ones, which shifts the detector's threshold outward and makes the decoded square
 larger than the geometry. That is not cosmetic: a pose estimator scales range by (declared size /
 apparent size), so an apparently-larger tag is reconstructed closer. Measured against a world's own
-projected marker corners (1280x720, 19 cm tag with the 5 mm quiet
-zone a real 20 cm cube leaves), ``emission: 0.4`` -- the previous default -- inflated the decoded tag
-by up to **9 %**, i.e. ~13 cm of range error at 1.2 m, where ``emission: 0`` was stable to ~1.5 %.
-The effect is strongly coupled to the quiet zone: with a generous margin it disappears, which is why
-it went unnoticed at the 0.15 default ``quiet_zone``. Raise it only when a tag would otherwise not be
-found at all, and never in a run whose numbers are poses.
+projected marker corners (1280x720, 19 cm tag with the 5 mm quiet zone a real 20 cm cube leaves),
+``emission: 0.4`` inflated the decoded tag by up to **9 %**, i.e. ~13 cm of range error at 1.2 m,
+where ``emission: 0`` was stable to ~1.5 %. The effect is strongly coupled to the quiet zone: with a
+generous margin it disappears, which is why it is easy to miss at the 0.15 default ``quiet_zone``.
+Raise it only when a tag would otherwise not be found at all, and never in a run whose numbers are
+poses.
 
 Config::
 

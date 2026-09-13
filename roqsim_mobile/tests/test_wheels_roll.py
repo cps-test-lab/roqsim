@@ -1,11 +1,10 @@
 """Every wheeled base's wheels must ROLL, not spin backwards. One invariant, all models.
 
-This file exists because a real defect survived a full suite. ``omni_drive`` derived its wheel roll
-sign from ``-axis_y`` where the physics gives ``+axis_y``, so all five holonomic bases span their
-wheels exactly backwards from 2026-08-28 and earlier. Nothing caught it: the wheels of an
-``omni_drive`` base are deliberately near-frictionless load carriers and the base is driven through
-planar actuators, so the sign never touched the dynamics. It was wrong only where those servos
-actually matter — the viewer, and ``joint_states``.
+A backwards roll sign survives every other test. The wheels of an ``omni_drive`` base are
+deliberately near-frictionless load carriers and the base is driven through planar actuators, so the
+sign never touches the dynamics: deriving it from ``-axis_y`` where the physics gives ``+axis_y``
+spins every holonomic base's wheels exactly backwards and shows only where those servos actually
+matter — the viewer, and ``joint_states``.
 
 The check is the definition of rolling rather than a convention, which is the point. For a wheel
 rolling without slip the **contact point is stationary**:
@@ -13,9 +12,9 @@ rolling without slip the **contact point is stationary**:
     v_contact = v_centre + omega x r,  r = (0, 0, -R)  ->  0
 
 Get the sign backwards and ``|v_contact|`` is twice the base speed instead of nearly zero. That is
-measurable without agreeing on which way is positive, which is what made it able to settle a
-question two plugins disagreed about: at 0.2 m/s the diff_drive bases read 0.0001-0.002 m/s and the
-omni_drive bases read 0.379-0.383.
+measurable without agreeing on which way is positive, so it can arbitrate between plugins that
+derive the sign independently: at 0.2 m/s a rolling wheel reads a few mm/s at most, and a backwards
+one about 0.38 m/s.
 
 Per-model scene tests check each robot against its own vendor's numbers. This one checks every robot
 against physics, and is deliberately indifferent to which drive plugin it uses.

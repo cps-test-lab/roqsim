@@ -9,7 +9,7 @@ description = "Shared, reusable assets for roqsim scenes: surface textures (roqs
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-# The conveyor plugin drives a MuJoCo belt, so this package now carries a light runtime dependency on
+# The conveyor plugin drives a MuJoCo belt, so this package carries a light runtime dependency on
 # the core simulator + mujoco (the texture/prop assets themselves remain code-free data).
 dependencies = [
     "roqsim",
@@ -63,7 +63,7 @@ conveyor = "roqsim_assets.plugins.conveyor:ConveyorPlugin"
 # staying in contact. Mocap blocks; a force-driven joint carries. See the plugin docstring.
 prop_trajectory = "roqsim_assets.plugins.prop_trajectory:PropTrajectoryPlugin"
 shelf = "roqsim_assets.plugins.shelf:ShelfPlugin"
-# Foliage: the one prop class the library had none of. A palm crown is a thin, radially arranged,
+# Foliage: a prop class of its own. A palm crown is a thin, radially arranged,
 # self-occluding obstacle set -- a different planning problem from boxes and shelves.
 palm_tree = "roqsim_assets.plugins.palm_tree:PalmTreePlugin"
 door = "roqsim_assets.plugins.door:DoorPlugin"
