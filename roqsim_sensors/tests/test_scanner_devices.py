@@ -48,6 +48,7 @@ DEVICES = [
     "rplidar_s3",
     "sick_lms1xx",
     "sick_microscan3",
+    "sick_nanoscan3",
     "sick_s300",
     "sick_tim571",
     "velodyne_vlp16",
@@ -63,6 +64,7 @@ VENDOR_FRAME = {
     "rplidar_c1": "laser",
     "rplidar_s3": "laser",
     "sick_microscan3": "lidar_1_link",
+    "sick_nanoscan3": "lidar_1_link",
     "sick_s300": "lidar_1_link",
     "sick_tim571": None,
     "velodyne_vlp16": "velodyne",
@@ -79,6 +81,7 @@ DECLARED_OUTPUTS = {
     "rplidar_s3": ("raw", "+inf"),
     "sick_lms1xx": ("-inf", "+inf"),
     "sick_microscan3": ("-inf", "+inf"),
+    "sick_nanoscan3": ("-inf", "+inf"),
     "sick_s300": ("-inf", "+inf"),
     "sick_tim571": ("-inf", "+inf"),
     "velodyne_vlp16": ("+inf", "+inf"),
@@ -466,3 +469,36 @@ def test_an_explicit_frame_id_wins_over_the_vendor_default(device):
 def test_a_device_with_no_vendor_default_refuses_a_mount_without_frame_id():
     with pytest.raises(PluginError, match="declares no default 'frame_id'"):
         _engine("sick_tim571", frame_id=None)
+
+
+def test_the_nanoscan3_keeps_the_vendors_frame_and_scan_plane():
+    """Both of this device's origins are Neobotix's, and "correcting" either one breaks a ROX.
+
+    The mesh carries the vendor visual origin rpy (pi, 0, pi/2); a ROX hangs the link at rpy
+    (pi, 0, pi/4). Each is a roll of pi, so the link's z points at the floor on the robot while the
+    two rolls cancel to a pure yaw for the housing. Rotating the mesh z-up would reverse the scan's
+    angular sense against the vendor's driver, and moving the site off the link would move the scan
+    plane -- which the data sheet puts within 1.6 mm of the link, so there is nothing to move it to.
+    """
+    spec = mujoco.MjSpec.from_file(str(MODELS_DIR / "sick_nanoscan3/sick_nanoscan3.xml"))
+    visuals = [g for g in spec.geoms if g.name.startswith("sick_nanoscan3_visual_")]
+    assert visuals, "the device ships no visual geoms"
+    want = rpy_to_quat(np.pi, 0.0, np.pi / 2)
+    for geom in visuals:
+        assert np.allclose(geom.pos, (0.0, 0.0, -0.02), atol=1e-9)
+        assert np.allclose(np.abs(geom.quat), np.abs(want), atol=1e-6)
+
+    # The vendor joint origin a ROX mounts it at: z-down for the link, pure yaw for the housing.
+    mount = np.asarray(rpy_to_quat(np.pi, 0.0, np.pi / 4), dtype=float)
+    link_z = np.zeros(3)
+    mujoco.mju_rotVecQuat(link_z, np.array([0.0, 0.0, 1.0]), mount)
+    assert np.allclose(link_z, (0.0, 0.0, -1.0), atol=1e-6), "the vendor link is z-down on a ROX"
+    composed, housing_z = np.zeros(4), np.zeros(3)
+    mujoco.mju_mulQuat(composed, mount, np.asarray(want, dtype=float))
+    mujoco.mju_rotVecQuat(housing_z, np.array([0.0, 0.0, 1.0]), composed)
+    assert np.allclose(housing_z, (0.0, 0.0, 1.0), atol=1e-6), "the two rolls must cancel"
+
+
+def test_the_nanoscan3_rate_is_the_operating_instructions_scan_cycle():
+    """OI Table 33 gives a 30 ms scan cycle; Table 43's "33 Hz" is that rounded, so 30 ms is exact."""
+    assert abs(_lidar_config("sick_nanoscan3")["rate_hz"] * 0.030 - 1.0) < 1e-6
