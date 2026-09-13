@@ -51,22 +51,28 @@ components:
   # MPO-500's microScan3s share, so none is a value for the S300 on this robot and none is copied;
   # their topics are the robot's ROS interface and are: one topic per scanner, `scan` and `scan2`.
   #
-  # HEIGHT: Neobotix's hardware documentation, not the description. The MPO-700 "Mechanical
-  # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html) puts the
-  # optional diagonal scanners at Z 201.5 mm in the platform frame, whose origin is on the floor (the
-  # centre scanners' Z 181 is the same page's "height of scan plane"). Its wheels are 180 mm across, and
-  # the description's wheel centres sit 0.10 above base_link, so base_link is 10 mm below the floor and
-  # the scans are at z 0.2115, where the description writes 0.223.
+  # POSE: Neobotix's hardware documentation, not the description's joint xyz. The MPO-700 "Mechanical
+  # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html, Positions
+  # of Sensors) puts the optional diagonal scanners at X +-327, Y +-277, Z 201.5 mm in the platform frame.
   #
-  # X, Y stay the description's +-0.338 / +-0.288, 11 mm further out on each axis than the same page's
-  # X +-327 / Y +-277 from the platform centre (which the steering axes at +-0.24, +-0.18 share). At the
-  # documented position each S300's collision housing touches its corner wheel's vendor tyre sphere
-  # (r 0.09) at rest and pins that wheel's steering; at the description's it clears by 8.4 mm. The
-  # conflict is between that sphere and the documented pose -- see the port log.
+  # HEIGHT (applied): Z is the height of the scan plane above the floor (the same table's centre
+  # scanners are Z 181, "Height of scan plane"). The page's wheels are 180 mm across (D) and the
+  # description's wheel centres sit 0.10 above base_link, so base_link is 10 mm below the floor and the
+  # plane is at z 0.2115. The sick_s300 device casts 4.1 mm above its frame on these upside-down mounts,
+  # so the frame is at z 0.2074. The description writes 0.223.
+  #
+  # X, Y (not applied): the page measures X +-327 / Y +-277 from the platform centre, which the
+  # description's steering axes (+-0.24, +-0.18) share, so they would apply unchanged in base_link. The
+  # mounts keep the description's +-0.338 / +-0.288. At the documented x, y the sick_s300 device's
+  # collision box reaches the corner wheel while it steers and pins it; the device's own housing mesh
+  # clears the same wheel there. The box is the blocker -- see the port log.
+  #
+  # The wheels collide as the same page's 30 mm wide wheel (B), not the vendor's 180 mm tyre sphere,
+  # which reaches the housings even at this pose; test_mpo_700_scene.py asserts no housing touches a tyre.
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [0.338, 0.288, 0.2115]    # x, y: mpo_700_body.urdf.xacro:38 lidar_1_joint; z: see HEIGHT
+      pos: [0.338, 0.288, 0.2074]    # x, y: mpo_700_body.urdf.xacro:38 lidar_1_joint; z: see HEIGHT
       rpy: [3.14, 0.0, 0.79]         # mpo_700_body.urdf.xacro:38, lidar_1_joint origin rpy
       frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
@@ -76,7 +82,7 @@ components:
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [-0.338, -0.288, 0.2115]  # x, y: mpo_700_body.urdf.xacro:65 lidar_2_joint; z: see HEIGHT
+      pos: [-0.338, -0.288, 0.2074]  # x, y: mpo_700_body.urdf.xacro:65 lidar_2_joint; z: see HEIGHT
       rpy: [3.14, 0.0, 3.93]         # mpo_700_body.urdf.xacro:65, lidar_2_joint origin rpy
       frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear

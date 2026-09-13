@@ -184,6 +184,63 @@ def test_the_wheels_do_not_fight_the_body():
         engine.shutdown()
 
 
+def _tyres_and_housings(model):
+    tyres = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"n_mpo_700_wheel_{c}_link_tyre")
+             for c in CORNER_NAMES]
+    housings = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"n_{label}_sick_s300_collision")
+                for label in MOUNTS]
+    return tyres, housings
+
+
+def _assert_no_housing_touches_a_tyre(engine, tyres, housings, when):
+    """Neither by distance nor in the contact list: a touching pair pins that wheel's steering."""
+    model, data = engine.ctx.model, engine.ctx.data
+    fromto = np.zeros(6)
+    for h in housings:
+        for t in tyres:
+            gap = mujoco.mj_geomDistance(model, data, h, t, 0.05, fromto)
+            assert gap > 0.0, (
+                f"{when}: {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, h)} reaches "
+                f"{mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, t)} ({gap * 1000:+.2f} mm)")
+    pairs = {frozenset((int(data.contact[i].geom1), int(data.contact[i].geom2)))
+             for i in range(data.ncon)}
+    assert not any(frozenset((h, t)) in pairs for h in housings for t in tyres), when
+
+
+def test_no_scanner_housing_touches_a_tyre_at_rest():
+    """The documented scanner height beside the documented 30 mm wheel.
+
+    The vendor's tyre is a sphere 180 mm across in every direction, and at this height it reaches the
+    S300 housings and pins the steering. The documented wheel clears them.
+    """
+    engine = _engine()
+    try:
+        tyres, housings = _tyres_and_housings(engine.ctx.model)
+        for _ in range(2500):
+            engine.step()
+        _assert_no_housing_touches_a_tyre(engine, tyres, housings, "at rest")
+    finally:
+        engine.shutdown()
+
+
+@pytest.mark.parametrize("command", [(0.6, 0.0, 0.0), (0.0, 0.6, 0.0), (0.4, 0.4, 0.0),
+                                     (0.0, 0.0, 0.6), (0.3, -0.2, 0.4)])
+def test_no_scanner_housing_touches_a_tyre_while_steering(command):
+    """Every wheels-aim command, checked through the ramp as each wheel slews to its heading."""
+    engine = _engine()
+    try:
+        tyres, housings = _tyres_and_housings(engine.ctx.model)
+        for _ in range(500):
+            engine.step()
+        engine.ctx.blackboard.get("robot:n").drive(*command)
+        for step in range(2600):
+            engine.step()
+            if step % 5 == 0:
+                _assert_no_housing_touches_a_tyre(engine, tyres, housings, f"{command}, step {step}")
+    finally:
+        engine.shutdown()
+
+
 @pytest.mark.parametrize("command", [(0.6, 0.0, 0.0), (0.0, 0.6, 0.0), (0.4, 0.4, 0.0),
                                      (0.0, 0.0, 0.6), (0.3, -0.2, 0.4)])
 def test_the_wheels_aim(command):
@@ -307,17 +364,17 @@ def test_joint_states_carries_the_steer_joints_it_actuates():
 
 # -- the scanners: sick_s300 devices at the vendor's lidar joints ----------------------------------
 
-#: neo_simulation2 @ 832041452c1a: robots/mpo_700/urdf/mpo_700_body.urdf.xacro:38 and :65 (the
-#: lidar_1_joint / lidar_2_joint rotations, written as the vendor writes them) and
-#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic), with the joints' x and y.
-#: The height is Neobotix's hardware documentation (MPO-700 Mechanical Properties, Positions of
-#: Sensors) instead of the joints' 0.223: Z 201.5 mm above the floor, with base_link 10 mm below it
-#: (180 mm wheels, wheel centres 0.10 above base_link). The same table's X +-327, Y +-277 are not
-#: applied: there each housing touches its corner wheel's tyre sphere and pins the steering.
-#: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
+#: Rotations: neo_simulation2 @ 832041452c1a, robots/mpo_700/urdf/mpo_700_body.urdf.xacro:38 and :65
+#: (lidar_1_joint / lidar_2_joint, written as the vendor writes them); scan links and topics:
+#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50; x and y: the same joints. Height: Neobotix's hardware
+#: documentation (MPO-700 Mechanical Properties, Positions of Sensors), the scan plane at Z 201.5 mm
+#: above the floor. base_link is 10 mm below the floor (180 mm wheels, wheel centres 0.10 above
+#: base_link), so the plane is at z 0.2115 and the frame, 4.1 mm below it on these upside-down devices,
+#: at z 0.2074. The same table's X +-327, Y +-277 are not applied: there the sick_s300 collision box
+#: reaches the corner wheel while it steers. ``{label: (device, scan frame, xyz, rpy, topic)}``.
 MOUNTS = {
-    "scan_front": ("sick_s300", "lidar_1_link", (0.338, 0.288, 0.2115), (3.14, 0.0, 0.79), "scan"),
-    "scan_rear": ("sick_s300", "lidar_2_link", (-0.338, -0.288, 0.2115), (3.14, 0.0, 3.93), "scan2"),
+    "scan_front": ("sick_s300", "lidar_1_link", (0.338, 0.288, 0.2074), (3.14, 0.0, 0.79), "scan"),
+    "scan_rear": ("sick_s300", "lidar_2_link", (-0.338, -0.288, 0.2074), (3.14, 0.0, 3.93), "scan2"),
 }
 NAMESPACE = "neo"
 

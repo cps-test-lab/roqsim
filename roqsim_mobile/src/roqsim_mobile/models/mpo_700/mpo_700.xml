@@ -44,10 +44,13 @@
         <geom type="mesh" group="3" rgba="0.6 0.1 0.1 0.35"/>
       </default>
       <default class="wheel_collision">
-        <!-- Near-frictionless spheres: the base is driven through the planar actuators below, and
-             `priority` is what makes the low friction take effect at all - MuJoCo otherwise takes
-             the MAXIMUM of the two contacting geoms' friction and the floor's value wins. -->
-        <geom type="sphere" group="3" rgba="0.05 0.05 0.05 0.4"
+        <!-- The documented wheel, 180 mm across and 30 mm wide (Neobotix MPO-700 Mechanical
+             Properties, D and B), as a cylinder on the roll axis; the vendor's tyre is a sphere of
+             the same radius. Near-frictionless: the base is driven through the planar actuators
+             below, and `priority` is what makes the low friction take effect at all - MuJoCo
+             otherwise takes the MAXIMUM of the two contacting geoms' friction and the floor's
+             value wins. -->
+        <geom type="cylinder" group="3" rgba="0.05 0.05 0.05 0.4"
               friction="0.02 0.005 0.0001" priority="2"/>
       </default>
       <default class="steer">
@@ -84,9 +87,9 @@
     <!--
       The vendor's base collision IS the full body mesh, and MuJoCo convex-hulls a collision mesh -
       so the hull closes over the wheel arches and overlaps the wheels inside them (measured: the
-      front-right tyre penetrates it by 1.4 mm at the reference pose). A wheel is a GRANDCHILD of
-      base_link, via its steering link, so MuJoCo's automatic parent-child exclusion does not cover
-      the pair and the robot fights itself at rest.
+      front-right tyre penetrates it by 2.3 mm at rest, and the tyres overlap it by more while they
+      steer). A wheel is a GRANDCHILD of base_link, via its steering link, so MuJoCo's automatic
+      parent-child exclusion does not cover the pair and the robot fights itself at rest.
 
       Excluded explicitly rather than by widening a contact group: these four pairs are the ones that
       cannot be real, and naming them leaves every other self-collision live.
@@ -119,7 +122,7 @@
             <joint name="mpo_700_wheel_front_left_joint" class="roll"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m0" material="MPO-700-WHEEL__m0_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m1" material="MPO-700-WHEEL__m1_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
-            <geom class="wheel_collision" name="mpo_700_wheel_front_left_link_tyre" size="0.09" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_700_wheel_front_left_link_tyre" size="0.09 0.015" pos="0 0 0" quat="0.7071068 0.7071068 0 0"/>
           </body>
         </body>
         <body name="mpo_700_caster_front_right_link" pos="0.24 -0.18 0.22">
@@ -132,7 +135,7 @@
             <joint name="mpo_700_wheel_front_right_joint" class="roll"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m0" material="MPO-700-WHEEL__m0_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m1" material="MPO-700-WHEEL__m1_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
-            <geom class="wheel_collision" name="mpo_700_wheel_front_right_link_tyre" size="0.09" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_700_wheel_front_right_link_tyre" size="0.09 0.015" pos="0 0 0" quat="0.7071068 0.7071068 0 0"/>
           </body>
         </body>
         <body name="mpo_700_caster_back_left_link" pos="-0.24 0.18 0.22">
@@ -145,7 +148,7 @@
             <joint name="mpo_700_wheel_back_left_joint" class="roll"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m0" material="MPO-700-WHEEL__m0_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m1" material="MPO-700-WHEEL__m1_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
-            <geom class="wheel_collision" name="mpo_700_wheel_back_left_link_tyre" size="0.09" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_700_wheel_back_left_link_tyre" size="0.09 0.015" pos="0 0 0" quat="0.7071068 0.7071068 0 0"/>
           </body>
         </body>
         <body name="mpo_700_caster_back_right_link" pos="-0.24 -0.18 0.22">
@@ -158,7 +161,7 @@
             <joint name="mpo_700_wheel_back_right_joint" class="roll"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m0" material="MPO-700-WHEEL__m0_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
             <geom class="visual" mesh="MPO-700-WHEEL__m1" material="MPO-700-WHEEL__m1_mat" pos="0 0 0" quat="0.0007963267 0 0 0.9999997"/>
-            <geom class="wheel_collision" name="mpo_700_wheel_back_right_link_tyre" size="0.09" pos="0 0 0"/>
+            <geom class="wheel_collision" name="mpo_700_wheel_back_right_link_tyre" size="0.09 0.015" pos="0 0 0" quat="0.7071068 0.7071068 0 0"/>
           </body>
         </body>
     </body>
