@@ -132,6 +132,36 @@ def test_mass_and_friction_overrides_are_campaign_factors(tmp_path):
     assert model.geom_friction[gid][0] == pytest.approx(0.4)
 
 
+def test_friction_on_a_root_with_no_geoms_is_refused(tmp_path):
+    """A friction override lands on the root body's geoms; with none there it would change nothing.
+
+    The prop's geom sits on a child body, which is a valid model: the override is refused rather than
+    applied to nothing, so a friction sweep cannot run with every level identical.
+    """
+    from roqsim.models import ModelError
+
+    prop = tmp_path / "nested.xml"
+    prop.write_text(
+        '<mujoco model="nested"><worldbody><body name="nested">'
+        '<body name="part"><geom type="box" size="0.05 0.05 0.05"/></body>'
+        "</body></worldbody></mujoco>"
+    )
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {
+                    "spawn_model": {"model": str(prop), "motion": "static", "friction": [0.4]},
+                    "name": "n",
+                }
+            ],
+        },
+        base_dir=tmp_path,
+    )
+    with pytest.raises(ModelError, match="friction override needs geoms"):
+        Engine(cfg).setup()
+
+
 def test_static_publish_tf_is_refused_for_a_free_prop(tmp_path):
     """A latched one-shot pose for a body that moves is a frame frozen at the spawn pose."""
     from roqsim.config import instantiate_plugins
