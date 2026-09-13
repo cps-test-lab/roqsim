@@ -402,7 +402,8 @@ class RosAccess(WorldAccess):
                     "absent entity keeps the pose it had so it can come back where it was."
                 )
             req = self._delete_type.Request()
-            req.name = name
+            # `entity`, not `name`: DeleteEntity.srv names its one field that, unlike SpawnEntity.
+            req.entity = name
             return _RosSpawn(
                 self._delete_client,
                 req,

@@ -113,6 +113,17 @@ action spawn_entity:
     entity: string                                    # roqsim entity name -- the world's `name:`
     pose: pose_3d
 
+action delete_entity:
+    # Make an entity the world declared ABSENT, where it is: no sensor sees it, nothing touches it,
+    # and the control plane stops listing it. Absence, not removal -- roqsim never recompiles the
+    # model -- so the pose is kept and a later `spawn_entity` brings it back. `spawn_entity` run the
+    # other way, which is why it takes no pose.
+    #
+    # Fails the trial when the delete does not land, including for an entity already absent.
+    #
+    # `scenario_execution_sim` declares one of these too; importing `osc.roqsim` selects this one.
+    entity: string                                    # roqsim entity name -- the world's `name:`
+
 action set_entity_state:
     # Put a free-jointed entity in a state: at `pose`, moving at `twist`. The name and shape are
     # `simulation_interfaces`' SetEntityState, because it is the same operation -- and `twist`
