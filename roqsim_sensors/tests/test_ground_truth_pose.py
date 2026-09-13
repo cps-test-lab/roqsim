@@ -99,7 +99,7 @@ def test_an_unowned_entry_is_refused():
         load_config_from_dict(
             {
                 "sim": {},
-                # Declared BESIDE the robot rather than nested under it -- the pre-ownership dialect.
+                # Declared BESIDE the robot rather than nested under it -- the unowned form.
                 "components": [
                     {f"{__name__}:_RobotScene": {}, "name": "robot"},
                     {"ground_truth_pose": {}},

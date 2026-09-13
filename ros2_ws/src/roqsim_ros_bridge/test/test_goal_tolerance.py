@@ -1,11 +1,10 @@
 """Grading a trajectory on where the JOINTS ended, not on the trajectory's clock running out.
 
-Guards the gap this closed. ``follow_joint_trajectory`` used to call ``goal_handle.succeed()`` as
-soon as the last waypoint had been fed, so an arm that never got there -- blocked by a collision,
-saturated, or following a plan that went through the furniture -- returned ``SUCCESSFUL``. MoveIt
-forwards that verdict, so the caller saw a clean execution and a scene that had not changed.
-Measured on a manipulation cell that planned through its own bench: the arm stalled 5.59 rad from
-the last waypoint and this action still reported success.
+``follow_joint_trajectory`` must not call ``goal_handle.succeed()`` merely because the last waypoint
+has been fed: an arm that never got there -- blocked by a collision, saturated, or following a plan
+that went through the furniture -- would return ``SUCCESSFUL``. MoveIt forwards that verdict, so the
+caller would see a clean execution and a scene that had not changed. The stalled-arm case below is a
+manipulation cell that planned through its own bench: the arm stops 5.59 rad from the last waypoint.
 
 The policy is deliberately pure (`_goal_tolerances`, `_worst_violation`) so it is testable without
 an action server, a live ROS graph or a stepping simulation -- which is what makes it *tested*
@@ -88,7 +87,7 @@ def test_an_arm_that_arrived_reports_no_violation():
 
 
 def test_the_stalled_arm_is_caught():
-    """The measured case: 5.59 rad short, previously reported SUCCESSFUL."""
+    """The measured case: 5.59 rad short, which must not read as SUCCESSFUL."""
     tol = dict.fromkeys(JOINTS, DEFAULT_GOAL_TOLERANCE)
     worst = _worst_violation(JOINTS, [5.004, 1.698], [-0.581, 1.663], tol)
     assert worst is not None, "a 5.59 rad miss must not read as a completed trajectory"

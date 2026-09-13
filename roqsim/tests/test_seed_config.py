@@ -4,11 +4,10 @@
 
 """``sim.seed`` — the run's noise seed as a world setting, not only a CLI flag.
 
-Sensor noise is seeded through ``SimContext.rng_for``, but the seed could only be
-given on the command line. Everything else about a run is configurable in the world
-YAML and therefore overridable by ``--set`` / ``--override``; the seed was the one
-thing that was not, so the noise a run uses could not be chosen from a world file the
-way every other simulator setting can.
+Sensor noise is seeded through ``SimContext.rng_for``. Everything else about a run is
+configurable in the world YAML and therefore overridable by ``--set`` / ``--override``,
+and the seed is too, so the noise a run uses can be chosen from a world file the way
+every other simulator setting can.
 """
 
 import logging

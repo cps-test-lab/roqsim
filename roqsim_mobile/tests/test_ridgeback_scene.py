@@ -2,9 +2,8 @@
 
 Every other robot in `roqsim_mobile` is differential or skid-steer and uses ``diff_drive``. The
 Ridgeback's four mecanum wheels strafe, so it uses ``omni_drive`` -- the plugin written for PAL's
-OMNI base and, until this port, used by nothing else in the package. ``test_strafes`` is the test
-that matters: it is the one behaviour no other base here can produce, and the reason the platform
-ledger recorded this port as adding no new capability.
+OMNI base. ``test_strafes`` is the test that matters: it is the one behaviour no other base here can
+produce, and ``omni_drive`` already provides it, so this model adds no new capability.
 
 ``test_has_no_slip_factor`` guards the other half of that. A holonomic base does not turn by
 scrubbing, so unlike husky_a200 / clearpath_jackal / rosbot / panther it must not acquire the ICR
@@ -64,9 +63,9 @@ def _engine():
 def _twist(engine):
     """The base's achieved twist in its OWN frame: (vx, vy, wz).
 
-    Read from the free joint's DOFs rather than by integrating world poses. An earlier version of
-    this measurement reset the engine inside the loop and reported both a wrong magnitude and a
-    wrong yaw *sign* for a model that was correct all along.
+    Read from the free joint's DOFs rather than by integrating world poses. A measurement that
+    resets the engine inside the loop reports both a wrong magnitude and a wrong yaw *sign* for a
+    correct model.
     """
     model, data = engine.ctx.model, engine.ctx.data
     bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "rb_base_link")
@@ -151,8 +150,8 @@ def test_has_no_slip_factor():
 def test_wheels_are_upright_and_the_riser_survives():
     """Wheel axes on y, and every non-mesh visual present.
 
-    The riser's box visual was silently dropped while this generator hand-picked mesh visuals --
-    the same omission that left the Raspberry Pi Mouse's scanner floating. Both are why the shared
+    A generator that hand-picks mesh visuals silently drops the riser's box visual -- the same
+    omission that leaves the Raspberry Pi Mouse's scanner floating. That is why the shared
     `urdf_source.link_visuals` emits primitives as well as meshes.
     """
     engine = _engine()

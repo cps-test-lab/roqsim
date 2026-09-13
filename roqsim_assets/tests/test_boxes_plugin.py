@@ -83,7 +83,8 @@ def test_an_override_changes_the_population_count():
     """The whole point: a campaign varies "how many" without editing the world's structure.
 
     An override sets a key on a component that exists; it cannot append a second `box:` entry. With
-    one entry per obstacle, obstacle count was a structural edit and therefore not a factor at all.
+    one entry per obstacle, obstacle count would be a structural edit and therefore not a factor at
+    all.
     """
     world = {"sim": {}, "components": [{"boxes": {"instances": _TWO}, "name": "obstacles"}]}
     five = [{"pose": {"position": {"x": float(i), "y": 0.0}}, "size": [0.3, 0.3, 0.3]} for i in range(5)]

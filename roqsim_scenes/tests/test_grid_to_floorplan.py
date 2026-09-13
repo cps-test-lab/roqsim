@@ -28,9 +28,9 @@ def test_y_depends_on_the_grid_height_not_on_the_grid_width():
     """A wide plan must not be pushed up the y axis by its own width.
 
     `fixed` is a row for an 'h' segment but a COLUMN for a 'v' one, so deriving the row count from
-    the segments makes every y a function of the aspect ratio. On a 10 x 30 m room that put the whole
-    floorplan at y in [20, 30] -- correct shape, wrong frame, and the tracer's debug overlay (which
-    uses the grid's real height) then drew the walls off the image entirely.
+    the segments makes every y a function of the aspect ratio. On a 10 x 30 m room that puts the
+    whole floorplan at y in [20, 30] -- correct shape, wrong frame, and the tracer's debug overlay
+    (which uses the grid's real height) then draws the walls off the image entirely.
     """
     rows, cols = 100, 300  # 10 m x 30 m at CELL
     segs = [

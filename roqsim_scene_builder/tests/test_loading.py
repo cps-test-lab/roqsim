@@ -82,8 +82,8 @@ def test_scene_window_selects_the_gl_backend_before_importing_mujoco():
     MUJOCO_GL is read once, while ``import mujoco`` runs. This module imports mujoco directly rather
     than through roqsim, so it has to call ``select_offscreen_gl`` itself first -- and isort sorts
     first-party ``roqsim`` *below* third-party ``mujoco``, so the ordering is one re-sort away from
-    breaking. When it broke, every review window died in ``check_gl_backend`` with "MuJoCo bound the
-    glfw (on-screen) GL backend", which names neither this module nor the ordering.
+    breaking. Broken, it makes every review window die in ``check_gl_backend`` with "MuJoCo bound
+    the glfw (on-screen) GL backend", which names neither this module nor the ordering.
 
     Run in a subprocess with MUJOCO_GL unset: the variable is bound at first import, so an in-process
     check would only observe whatever the test session already bound.

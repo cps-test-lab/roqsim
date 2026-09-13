@@ -1,8 +1,6 @@
 """Static wall footprints for the walker planner and ORCA, read from the compiled MuJoCo model --
 the single source of truth.
 
-Ported from an earlier in-house navigation prototype.
-
 Walls live in the model as *collidable, static, non-floor* geoms: the ``floorplan`` plugin's wall
 colliders, and any environment MJCF attached as welded bodies -- so reading the model needs no
 external map files. "Static" means welded to the world (``body_weldid == 0``); the robot has DOFs

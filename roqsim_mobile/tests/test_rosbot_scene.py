@@ -2,7 +2,7 @@
 
 Two tests carry the port's real risk.
 
-``test_body_mesh_is_in_metres`` guards the trap this port actually hit. The URDF carries
+``test_body_mesh_is_in_metres`` guards the trap this description sets. The URDF carries
 ``scale="0.001 0.001 0.001"`` on ``body.glb`` and ``1.0`` on the wheels, so a converter that treats
 the tree uniformly ships a chassis 1000x too large around correctly sized wheels. Every other check
 here passes in that state -- the model compiles, the masses are right, and only looking at it (or
@@ -82,9 +82,9 @@ def test_body_mesh_is_in_metres():
 
 
 def test_manifest_is_expanded():
-    # A directory beside the world sharing this model's name used to shadow the packaged model, and
-    # the manifest then vanished silently -- the robot spawned with no drive and no lidar while the
-    # world loaded and ran. resolve_model now requires a file; this asserts the components arrive.
+    # A directory beside the world sharing this model's name must not shadow the packaged model:
+    # the manifest would vanish silently -- the robot spawning with no drive and no lidar while the
+    # world loads and runs. resolve_model requires a file; this asserts the components arrive.
     engine = _engine()
     try:
         assert engine.ctx.blackboard.get("robot:rb") is not None, "diff_drive did not attach"
@@ -193,15 +193,15 @@ def test_uncompensated_rotation_is_why_slip_factor_exists():
 def test_wheels_are_upright_and_coloured():
     """Wheel axles on Y, and the vendor's materials present.
 
-    Two bugs this caught, both of which every other test passed through. The GLB source is Y-up and
-    `reduce-mesh` already exports Z-up, so re-applying the URDF's own rpy to the visual mesh rotated
-    the wheels a second time and laid them flat -- while the collision cylinders, which genuinely do
-    need that rotation because MuJoCo cylinders run along local z, stayed correct. Visual and
-    collision disagreeing is invisible to a drive test: the robot drove perfectly on invisible
-    upright cylinders while its wheels rendered as plates.
+    Two defects this catches, both of which every other test passes through. The GLB source is Y-up
+    and `reduce-mesh` already exports Z-up, so re-applying the URDF's own rpy to the visual mesh
+    rotates the wheels a second time and lays them flat -- while the collision cylinders, which
+    genuinely do need that rotation because MuJoCo cylinders run along local z, stay correct. Visual
+    and collision disagreeing is invisible to a drive test: the robot drives perfectly on invisible
+    upright cylinders while its wheels render as plates.
 
-    And the meshes were converted joined, so MuJoCo -- which loads one mesh per OBJ and reads no OBJ
-    material -- rendered a uniformly grey robot instead of a black one with red fenders.
+    And meshes converted joined make MuJoCo -- which loads one mesh per OBJ and reads no OBJ
+    material -- render a uniformly grey robot instead of a black one with red fenders.
     """
     engine = _engine()
     try:

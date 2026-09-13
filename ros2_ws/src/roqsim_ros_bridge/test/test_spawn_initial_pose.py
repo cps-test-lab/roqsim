@@ -79,9 +79,9 @@ class _Request:
 def test_a_default_request_states_the_origin():
     """There is no "unset" to detect: geometry_msgs/Quaternion declares w=1.
 
-    The heuristic this replaces read an all-zero quaternion as "no pose given" -- a value no real
-    ROS request ever carries, so every plain spawn was read as a request for the origin anyway,
-    silently. Stating it as the contract is what makes that visible.
+    Reading an all-zero quaternion as "no pose given" keys on a value no real ROS request ever
+    carries, so every plain spawn would be read as a request for the origin anyway, silently.
+    Stating it as the contract is what makes that visible.
     """
     assert _pose_of(_Request()) == ((0.0, 0.0, 0.0), IDENTITY)
 

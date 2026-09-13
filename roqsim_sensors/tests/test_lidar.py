@@ -314,8 +314,8 @@ def _scan_hints(engine: Engine) -> dict:
 def test_frame_id_defaults_to_the_site():
     """The scan is stamped in the frame the rays are cast from, not a hardcoded robot's frame.
 
-    This used to be hardwired to "rplidar_link" for every robot, so a Husky published its scan in a
-    TurtleBot's frame. The static mount TF's child comes from the same hint, so the two cannot
+    A frame hardwired to "rplidar_link" for every robot would put a Husky's scan in a TurtleBot's
+    frame. The static mount TF's child comes from the same hint, so the two cannot
     disagree.
     """
     engine = Engine(_world(site="lidar"))
@@ -376,9 +376,9 @@ def _mast_world(**lidar_config):
 def test_a_world_mounted_scanner_hangs_its_frame_off_the_world():
     """No exclude_body resolves, so the transform is measured from the world -- and says so.
 
-    It used to name the parent `base_link` regardless, which in a world with no base_link is an
-    orphaned frame and in a world where some other robot has one is a frame bolted onto that robot
-    at a pose measured from somewhere else.
+    Naming the parent `base_link` regardless would, in a world with no base_link, orphan the frame,
+    and in a world where some other robot has one, bolt the frame onto that robot at a pose measured
+    from somewhere else.
     """
     engine = Engine(_mast_world(site="lidar"))
     engine.setup()
@@ -389,8 +389,8 @@ def test_a_world_mounted_scanner_hangs_its_frame_off_the_world():
 
 
 def test_excluding_nothing_explicitly_is_not_an_empty_parent_frame():
-    """`exclude_body: ''` used to publish a transform whose frame_id was the empty string, which
-    tf2 drops -- so the sensor frame never entered the tree at all."""
+    """`exclude_body: ''` must not publish a transform whose frame_id is the empty string, which
+    tf2 drops -- the sensor frame would never enter the tree at all."""
     engine = Engine(_mast_world(site="lidar", exclude_body=""))
     engine.setup()
     assert _scan_hints(engine)["static_tf"]["parent"] == "world"

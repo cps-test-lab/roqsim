@@ -170,7 +170,7 @@ def test_an_existing_sensor_pair_is_reused_not_duplicated():
 def test_two_sensors_cannot_share_a_blackboard_key():
     """Two entries answering to one label is refused when the document LOADS, before anything is
     built -- the blackboard key it would collide on is derived from that label. The plugin keeps its
-    own guard for a directly-constructed pair (below), but a world can no longer reach it."""
+    own guard for a directly-constructed pair (below), but a world cannot reach it."""
     from roqsim.config import PluginError
 
     with pytest.raises(PluginError, match="labelled 'ft'"):
@@ -329,7 +329,7 @@ def test_the_offset_is_the_mean_so_what_remains_is_the_noise_alone():
 
 
 def test_the_reader_on_the_blackboard_can_tare():
-    """The in-process half of the ticket: a controller zeroes at a moment it chooses."""
+    """The in-process half: a controller zeroes at a moment it chooses."""
     engine = _settled(name="ft")
     reader = engine.ctx.blackboard.get("ft:ft")
     assert reader.tare is not None

@@ -13,17 +13,16 @@ m=0.2 kg, ``wheel_separation`` 0.233 m, caster r=0.01 m, OAK-D stereo baseline 0
 The RPLIDAR A1 is not in the MJCF: the manifest mounts the ``rplidar_a1`` device model at the vendor
 joint, and section D pins that mount against ``turtlebot4_description`` @ 7fd29fb.
 
-**This battery was written after the model shipped, and it found two defects on its first run** --
-which is the argument for writing one per port rather than trusting a model that looks fine in a
-viewer:
+**Two defects here look fine in a viewer and fail this battery** -- which is the argument for
+writing one per port rather than trusting a model by eye:
 
-* the wheel servos had no ``armature``, so ``kv*dt/I`` was 31 at the 2 ms step: the model diverged
-  (NaN in QACC at t = 0.036 s) and a 0.2 m/s command threw the robot across the floor at 4.5 m/s. A1
+* wheel servos without ``armature`` run at ``kv*dt/I`` = 31 at the 2 ms step: the model diverges
+  (NaN in QACC at t = 0.036 s) and a 0.2 m/s command throws the robot across the floor at 4.5 m/s. A1
   and A4 are the two tests that catch it;
-* the caster was made frictionless by an explicit ``<pair geom2="floor">``, which MuJoCo silently
-  drops in a world whose ground geom has another name -- compiles clean, ``npair`` 0, and the robot
-  then drives on a high-friction ball. B7 asserts the ``priority``/``condim`` mechanism that replaced
-  it, and asserts the pair is gone.
+* a caster made frictionless by an explicit ``<pair geom2="floor">`` is silently dropped by MuJoCo
+  in a world whose ground geom has another name -- compiles clean, ``npair`` 0, and the robot then
+  drives on a high-friction ball. B7 asserts the ``priority``/``condim`` mechanism instead, and
+  asserts there is no pair.
 
 Like the TurtleBot3 and unlike the two skid-steers, this is a true differential drive: two driven
 wheels and one passive caster, so turning rolls instead of scrubbing. There is no ``slip_factor`` and
@@ -158,7 +157,7 @@ def _run(v, w, seconds):
 def test_a1_loads_and_steps_without_warnings():
     """A1: 10 s of stepping at the campaign timestep — no divergence, no MuJoCo warnings.
 
-    This is the test the model failed before it had an `armature`: mjWARN_BADQACC at t = 0.036 s.
+    This is the test the model fails without a wheel `armature`: mjWARN_BADQACC at t = 0.036 s.
     """
     model, data = _build(settle=0.0)
     for _ in range(int(10.0 / model.opt.timestep)):
@@ -333,10 +332,9 @@ def test_b7_caster_does_not_drag():
 
     MuJoCo combines two geoms' contact parameters by taking max(condim) and max(friction), so
     `condim="1"` alone loses to an ordinary floor and the caster drags. `priority="1"` makes the
-    caster's own parameters win outright. The model used to get this from an explicit
-    `<pair geom1="caster" geom2="floor">` instead, which MuJoCo silently drops in a world that names
-    its ground anything else — so the mechanism is asserted here, not just its outcome, and the pair
-    is asserted GONE.
+    caster's own parameters win outright. An explicit `<pair geom1="caster" geom2="floor">` gets the
+    same outcome only until MuJoCo silently drops it in a world that names its ground anything else —
+    so the mechanism is asserted here, not just its outcome, and the pair is asserted ABSENT.
     """
     model, _ = _build(settle=0.0)
     gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "caster")
@@ -345,15 +343,15 @@ def test_b7_caster_does_not_drag():
     assert int(model.geom_priority[gid]) > 0, "caster must win contact params by priority"
     assert float(model.geom_friction[gid][0]) < 0.01
     assert model.npair == 0, "an explicit contact pair is world-name-dependent; use priority"
-    # And it must actually collide -- the old model switched the caster's collision off entirely.
+    # And it must actually collide -- a caster with its collision switched off passes every check above.
     assert model.geom_contype[gid] != 0 and model.geom_conaffinity[gid] != 0
 
 
 def test_b8_drives_in_a_world_whose_floor_is_not_called_floor():
     """B8: the robot behaves identically on a ground geom with a different name.
 
-    The regression test for the dropped-`<pair>` defect: before the fix this same run rolled on a
-    friction-2.0 caster, which is worth ~48% of yaw rate by the TurtleBot3 port's measurement.
+    Guards against a world-name-dependent caster: with a dropped `<pair>` this same run rolls on a
+    friction-2.0 caster, which is worth ~48% of yaw rate by the TurtleBot3 measurement.
     """
     asset = resolve_model("roqsim_mobile:turtlebot4")
     spec = mujoco.MjSpec.from_file(str(asset.path))
@@ -446,8 +444,8 @@ def test_c3b_the_oakd_lens_matches_the_standalone_sensor_model():
 
     The camera element cannot literally be shared -- it sits inside this robot's body chain, while the
     standalone mount is its own MJCF -- so the two files each hold the numbers and this asserts they
-    agree. Without it "one definition" is a comment in two files that nothing enforces, which is how
-    the coverage catalog's copy of these same optics drifted before it was made to derive them.
+    agree. Without it "one definition" is a comment in two files that nothing enforces, and a copy of
+    these optics that does not derive them drifts.
 
     The dependency runs the way it already does: roqsim_mobile requires roqsim_sensors, never the
     reverse, so the check lives here rather than beside the sensor model.

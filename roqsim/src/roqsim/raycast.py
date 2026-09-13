@@ -20,8 +20,8 @@ it. Hammering one ``mjData`` with 8 threads x 40000 single-ray casts, a sampler 
 ``pstack`` peak at **2112** bytes (eight-plus overlapping 96-byte frames) and, on return,
 ``pstack`` was **1632 rather than 0** -- MuJoCo documents that a function restores ``pstack`` on
 return, and concurrency breaks that invariant. The leak is monotonic, so a long trial (1800 s at
-10 Hz is ~18k casts) walks toward stack exhaustion; the failure mode observed while developing this
-module was a core dump, not a wrong number.
+10 Hz is ~18k casts) walks toward stack exhaustion; the failure mode is a core dump, not a wrong
+number.
 
 Results were *correct* in every one of those 320000 casts, which is exactly what makes this worth
 writing down: the race corrupts an allocator invariant rather than the output, so it survives any
@@ -162,7 +162,7 @@ def cast_many(
     What this still buys over a hand-written loop is the allocation discipline and a caller that can
     then classify every point at once: the flat views are computed before the loop, so each iteration
     passes slices rather than building a fresh array. Measured on a 26569-point grid that is ~1.5x
-    faster than the per-point loop with per-point classification it replaced -- from the vectorised
+    faster than a per-point loop with per-point classification -- from the vectorised
     numpy, not from concurrency, which this module refuses (see the module docstring).
     """
     o = np.ascontiguousarray(origins, dtype=np.float64).reshape(-1, 3)

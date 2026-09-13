@@ -245,7 +245,7 @@ def test_the_steer_split_is_measured_across_the_steering_axes():
 
 
 def test_steer_track_defaults_to_track():
-    """A model that states one width gets it for both splits, as before the key existed."""
+    """A model that states one width gets it for both splits."""
     assert _plugin(_engine()).steer_track == TRACK
 
 

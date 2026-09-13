@@ -1,6 +1,6 @@
 """Sensor plugin: Intel RealSense D415 colour stream, via ``mujoco.Renderer`` (GL, offscreen).
 
-RGB only -- no depth/IR yet (unlike :mod:`realsense_d435`, which grew an opt-in depth +
+RGB only -- no depth/IR yet (unlike :mod:`realsense_d435`, which has an opt-in depth +
 point-cloud path; add one here the same way once a D415 world needs it). Topic/frame naming follows
 ``realsense-ros``'s conventions (``<ns>/camera/color/image_raw``, ``<ns>/camera/color/camera_info``,
 ``camera_color_optical_frame``), so a world can point an unmodified RealSense-based stack at it.

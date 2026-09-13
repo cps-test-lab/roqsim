@@ -1,6 +1,6 @@
 """Shared machinery for every ray-casting range sensor: 2D laser scanners and 3D lidars alike.
 
-:class:`RayCastSensorPlugin` owns everything the devices had in common and had drifted apart on --
+:class:`RayCastSensorPlugin` owns everything the devices have in common --
 config keys and their validation, site/``exclude_body`` resolution, the reusable ray buffers, the
 static mount TF, the ``rate_hz`` gate, the range window, the noise model, and endpoint registration.
 A device then declares only what actually distinguishes it:
@@ -10,8 +10,8 @@ A device then declares only what actually distinguishes it:
 * a handful of ``DEFAULT_*`` class attributes -- its datasheet.
 
 This mirrors how :mod:`camera_common` + :mod:`depth_camera` already layer the cameras, and it exists
-for the same reason: the duplicated copies had diverged in ways that were bugs rather than choices.
-Two are fixed by being written once here.
+for the same reason: duplicated copies diverge in ways that are bugs rather than choices. Two rules
+are written once here.
 
 **A return is classified against the physical detection limits, once, here.** A cast hit nearer
 than :attr:`RayCastSensorPlugin.detection_min` is *too close*: the device cannot measure it. A hit
@@ -24,8 +24,8 @@ never published as a measured distance. A point cloud is a list of real returns,
 is not a point. For a point cloud the detection limits are ``range_min`` and ``max_range``.
 
 **``max_range`` is enforced here, for everyone.** ``mj_multiRay``'s ``cutoff`` is a culling hint and
-not a clamp -- it can still report a hit beyond it. The 2D lidar had always applied the window; the
-3D lidars had not, so a Mid-360 with a 40 m range could emit points from further away.
+not a clamp -- it can still report a hit beyond it. Without the
+window, a Mid-360 with a 40 m range would emit points from further away.
 """
 
 from __future__ import annotations
@@ -68,8 +68,8 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     #: Keys a ``fault:`` block may write WHILE THE RUN IS IN PROGRESS -> the attribute each lives in.
     #: Every row is read inside ``post_step`` on the frame it is used (see the noise block at the end
     #: of this file), so a write takes effect on the very next cast and reads back honestly.
-    #: ``max_range`` -> ``range_max`` because the config key and the attribute have never had the
-    #: same name, and a fault naming the attribute would silently write nothing.
+    #: ``max_range`` -> ``range_max`` because the config key and the attribute do not share a
+    #: name, and a fault naming the attribute would silently write nothing.
     LIVE_WRITABLE = {
         "range_stddev": "range_stddev",
         "range_stddev_relative": "range_stddev_relative",

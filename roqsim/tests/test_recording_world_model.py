@@ -4,8 +4,8 @@
 
 """A recording carries the components that RAN, and is rebuilt by reading them.
 
-It used to carry only the recipe -- a world reference and the override document -- so replaying meant
-re-running the whole load path. That coupled every recording to the override grammar: a change to how
+Carrying only the recipe -- a world reference and the override document -- would make replaying mean
+re-running the whole load path. That couples every recording to the override grammar: a change to how
 an override resolves would silently rebuild a *different* world, or refuse one that had been fine.
 Recording the resolved tree makes rebuilding a read.
 """

@@ -1,7 +1,5 @@
 """Per-walker behaviour: navigate to goals, recover when stuck.
 
-Ported from an earlier in-house navigation prototype.
-
 The high-level decisions a walker makes each step live here, on top of the controller's global plan
 (where to route) and ORCA (how to avoid collisions right now). The behaviour is a small py-trees
 tree::
@@ -132,9 +130,9 @@ class NavCore:
         self._pos = np.asarray(pos, dtype=float)
         self._blocker = None if blocker is None else np.asarray(blocker, dtype=float)
         # `max_recovery` bounds CONSECUTIVE recoveries, so getting somewhere has to clear the
-        # count. Resetting only on goal arrival made that false for the case it matters in: a mover
-        # working its way out of a pocket takes several recover-and-replan cycles to get free, and
-        # would exhaust its budget and abandon the goal while it was still making progress. The
+        # count. Resetting only on goal arrival would make that false for the case it matters in: a
+        # mover working its way out of a pocket takes several recover-and-replan cycles to get free,
+        # and would exhaust its budget and abandon the goal while it was still making progress. The
         # threshold is the distance a backup itself covers -- having moved further than the last
         # manoeuvre pushed it is the evidence that this is not the same wedge.
         if self._recover_count and self._recover_from is not None:
@@ -292,8 +290,8 @@ class NavCore:
           plane through it perpendicular to the approach -- not when it comes within
           ``arrival_radius`` of it. This is the half that cannot be omitted: pure pursuit
           deliberately does not drive at the goal, so a follower still waiting for proximity reaches
-          that radius late or never, and the mover stalls short of the corner. (It did, measurably,
-          when this was first tried as an override of the steering alone.)
+          that radius late or never, and the mover stalls short of the corner. (It does, measurably,
+          when only the steering is overridden.)
 
         The final goal of a non-looping route is the exception and still uses ``arrival_radius``:
         there is nothing to round onto, and the mover has to stop *at* the goal rather than cross it.
@@ -522,7 +520,7 @@ def build_tree(core: NavCore, *, recovery: bool = True, lookahead: float | None 
     ``lookahead`` selects the path tracker: ``None`` keeps the waypoint follower (steer at the goal,
     advance on proximity), a distance switches to pure pursuit (steer at a carrot on the path,
     advance on crossing the goal). The pedestrian stack keeps the former by default -- a walker
-    rounding corners by its arrival radius is what it has always looked like.
+    rounding corners by its arrival radius is how a pedestrian looks.
 
     ``recovery=False`` drops the higher-priority recovery branch, leaving ``navigate`` alone. That is
     the difference between an agent that gets itself unstuck -- backing up and re-planning, so its

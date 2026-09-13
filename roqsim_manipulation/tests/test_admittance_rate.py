@@ -4,9 +4,9 @@
 
 The simulator's clock is a sum of timesteps in floating point, so a tick due at exactly k periods
 can read a hair early. A gate that compares strictly and re-anchors each period on the current time
-turns every such hair into a whole missed physics step: at 500 Hz on a 1 ms step it ticked at
+turns every such hair into a whole missed physics step: at 500 Hz on a 1 ms step it ticks at
 472 Hz, while integrating each tick as a full period -- a systematic shortfall in commanded motion
-that reported nothing.
+that reports nothing.
 """
 
 from __future__ import annotations

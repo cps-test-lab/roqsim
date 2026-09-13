@@ -166,9 +166,9 @@ def test_a_mover_that_does_not_yield_still_joins_the_model(tmp_path):
     """Opting out of yielding is not opting out of existing.
 
     A mover the others cannot see is one they drive into. "One stops and the other goes around it"
-    needs the stopping one to be *in* the model as something that must be gone around -- which is
-    exactly what broke when a non-yielding mover skipped joining: two robots meeting head-on bumped,
-    because the one with avoidance could not see the one without.
+    needs the stopping one to be *in* the model as something that must be gone around. A
+    non-yielding mover that skipped joining would leave two robots meeting head-on to bump, because
+    the one with avoidance could not see the one without.
     """
     engine = Engine(_world(tmp_path, movers=2, avoidance={"model": STUB}))
     engine.setup()

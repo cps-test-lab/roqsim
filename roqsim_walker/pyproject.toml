@@ -18,15 +18,15 @@ dependencies = [
     "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)
     # trimesh soft-imports scipy and re-raises the wrapped ImportError the first time the grouped
     # OBJ path touches it, so scipy is a hard dependency of our skinning use. skin.py's KD-tree
-    # fast path (formerly the 'fast' extra) needs only `scipy.spatial`, stable since 0.x.
+    # fast path needs only `scipy.spatial`, stable since 0.x.
     #
-    # 1.11, not 1.13, and the reason is that the floor must not encode a NUMPY fact. This used to
-    # say >=1.13 as "the first numpy-2-compatible line", but scipy declares its own numpy range --
+    # 1.11, not 1.13 ("the first numpy-2-compatible line"), because the floor must not encode a
+    # NUMPY fact: scipy declares its own numpy range --
     # 1.11.4 requires numpy<1.28, 1.13 requires numpy<2.3 -- so a resolver in a numpy-2
-    # environment cannot pick 1.11 and lands on 1.13+ without being told. Stating it here only
-    # over-constrained the environments that pin numpy<2, where 1.13 is not required and not
+    # environment cannot pick 1.11 and lands on 1.13+ without being told. Stating it here would only
+    # over-constrain the environments that pin numpy<2, where 1.13 is not required and not
     # always available: the ROS base image ships DEBIAN-packaged scipy 1.11.4, which has no RECORD
-    # file, so pip cannot uninstall it and a >=1.13 floor failed the image build outright with
+    # file, so pip cannot uninstall it and a >=1.13 floor fails the image build outright with
     # "Cannot uninstall SciPy 1.11.4". Same floor `roqsim_scenes` already uses, for that reason.
     "scipy>=1.11",
 ]

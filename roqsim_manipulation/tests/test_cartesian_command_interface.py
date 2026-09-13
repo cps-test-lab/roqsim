@@ -4,8 +4,8 @@
 
 A contact task is driven from outside: a scenario switches to this controller, tells it what to press
 with and where to be, and layers a task-space motion on the running force loop. That needs three
-things to hold, and each failed quietly before -- a commanded frame that changed nothing, a masked
-axis that came back saturated, and a speed cap that capped no speed.
+things to hold, and each fails quietly when broken -- a commanded frame that changes nothing, a
+masked axis that comes back saturated, and a speed cap that caps no speed.
 """
 
 from __future__ import annotations
@@ -90,12 +90,12 @@ def test_rotational_stiffness_opposes_a_rotational_deflection():
     assert law._wrench_twist(0.01)[5] < 0.0, "must rotate back toward the equilibrium"
 
 
-# -- the two latent bugs -------------------------------------------------------------------------
+# -- the mask and the clamp ----------------------------------------------------------------------
 
 
 def test_a_masked_axis_does_not_wind_up_behind_the_mask():
-    """The mask used to be applied to the RESULT, leaving the integrator free to run to the clamp
-    behind it -- so enabling an axis mid-run dumped a saturated velocity into the arm in one step."""
+    """A mask applied to the RESULT leaves the integrator free to run to the clamp behind it -- so
+    enabling an axis mid-run dumps a saturated velocity into the arm in one step."""
     law = _law(axes=[1, 1, 0, 1, 1, 1], w_d=[0, 0, -50, 0, 0, 0])
     for _ in range(200):
         law._wrench_twist(0.01)
@@ -106,8 +106,8 @@ def test_a_masked_axis_does_not_wind_up_behind_the_mask():
 
 
 def test_the_translational_clamp_limits_magnitude_and_keeps_direction():
-    """Per-axis clipping capped each component at the limit, so it allowed sqrt(3) times it in
-    magnitude -- and turned the commanded direction, which for a task-space path points it somewhere
+    """Per-axis clipping caps each component at the limit, so it allows sqrt(3) times it in
+    magnitude -- and turns the commanded direction, which for a task-space path points it somewhere
     nobody asked for."""
     law = _law()
     law.v_lin, law.v_ang = 0.1, 1.0
@@ -137,7 +137,7 @@ def test_the_clamp_leaves_a_twist_inside_the_limit_alone():
 )
 def test_the_legacy_law_key_derives_a_controller_type(law, stiffness, expected):
     """`law` is the older spelling and worlds still carry it; it must land on the identity that
-    behaves the way it always did."""
+    behaves the way that `law` specifies."""
     assert _type_from_law(law, stiffness) == expected
 
 
@@ -265,8 +265,8 @@ def test_current_pose_reads_back_as_position_and_quaternion(tmp_path):
 
 def test_activating_anchors_on_the_arm_state_now(tmp_path):
     """The hand-over instant is only well defined if the controller starts from where the arm IS.
-    The equilibrium used to be captured once per episode, so a controller activated later pulled the
-    tool back to wherever the episode began."""
+    An equilibrium captured once per episode would make a controller activated later pull the tool
+    back to wherever the episode began."""
     engine = Engine(_world(tmp_path, {"initial_state": "inactive"}))
     engine.setup()
     engine.reset()

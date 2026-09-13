@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
 """Build roqsim's Clearpath Ridgeback MJCF from `clearpathrobotics/clearpath_common`.
 
-The batch's first **holonomic** base. Every other wheeled robot here is differential or skid-steer
-and uses ``diff_drive``; the Ridgeback's four mecanum wheels strafe, so it uses ``omni_drive`` -- the
-plugin written for PAL's OMNI base and, until now, used by nothing else. That is the whole reason
-the platform ledger recorded this port as **no new capability**: the assessment checked
-``roqsim_mobile/plugins/omni_drive.py`` rather than reasoning about mecanum, and found the capability
-already there.
+A **holonomic** base. The differential and skid-steer robots use ``diff_drive``; the Ridgeback's
+four mecanum wheels strafe, so it uses ``omni_drive`` -- the plugin written for PAL's OMNI base.
+That is why the platform ledger records this port as **no new capability**:
+``roqsim_mobile/plugins/omni_drive.py`` already provides it.
 
 Same source package as ``husky_a200`` (a200) and ``clearpath_jackal`` (j100), so the conversion path
-was proven before this started. Every mass, inertia, link offset and collision primitive below is
+is a proven one. Every mass, inertia, link offset and collision primitive below is
 Clearpath's own value, read out of the expanded xacro.
 
 Three things make this the cheapest port of the batch:
 
 * **The meshes need no conversion at all.** They are STL, which MuJoCo loads directly, and the
   largest is 39 kB. No Collada, no Blender, no decimation, and therefore none of the axis and scale
-  traps that cost the ROSbot and the Doosan their iterations.
+  traps the ROSbot and Doosan conversions have to handle.
 * **The vendor ships a real collision mesh**, ``body-collision.stl`` (16 kB against the 29 kB
   visual), used as shipped.
 * **The rocker suspension is fixed** in this description, so the tree is a chassis, two rockers and

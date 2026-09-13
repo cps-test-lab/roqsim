@@ -233,7 +233,7 @@ class Recording:
 
         **The spec is checked before the size**, because a spec mismatch fully explains a size mismatch
         and the size message would otherwise accuse the world falsely -- it prints the recorded and
-        rebuilt dimensions, which for an old ``FULLPHYSICS`` recording are *identical*, so the reader is
+        rebuilt dimensions, which for a ``FULLPHYSICS`` recording are *identical*, so the reader is
         told the world does not match when the world is fine and the format is not.
         """
         spec = int(self.meta.get("state_spec", 0))

@@ -1,11 +1,10 @@
 """Pure-pursuit geometry: the carrot on the path, and the arc curvature to it.
 
-These are the pieces a path-tracking follower is built from, tested as pure geometry. They are not
-yet wired into the ``navigator``: doing so correctly means replacing the follower's
-**goal-advancement** as well, because pure pursuit deliberately does not drive at the end of the
-current leg, so a follower that advances on proximity to that endpoint reaches it late or never.
-Overriding only the commanded direction leaves the two disagreeing, which measurably stalls the
-mover. The geometry lands first, and is correct on its own terms.
+These are the pieces a path-tracking follower is built from, tested as pure geometry. The
+``navigator``'s ``pure_pursuit`` tracker pairs them with its own **goal-advancement**, because pure
+pursuit deliberately does not drive at the end of the current leg, so a follower that advances on
+proximity to that endpoint reaches it late or never. Overriding only the commanded direction leaves
+the two disagreeing, which measurably stalls the mover; the geometry is correct on its own terms.
 """
 
 from __future__ import annotations

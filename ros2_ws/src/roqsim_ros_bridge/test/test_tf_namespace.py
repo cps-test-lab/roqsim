@@ -1,11 +1,11 @@
 """The ``ros2_bridge`` plugin's ``tf_namespace``: TF on ``/<ns>/tf``, frames untouched.
 
-Guards the failure that motivated the option. tf2_ros's broadcasters hardwire the absolute ``/tf``, so
-the bridge could only ever publish to the global tree. A namespaced Nav2 follows the multi-robot
+Guards the failure the option exists for. tf2_ros's broadcasters hardwire the absolute ``/tf``, so
+without it the bridge can only publish to the global tree. A namespaced Nav2 follows the multi-robot
 convention (``/tf -> tf`` remap) and lives on ``/<robot>/tf``, and scenario_execution's
-``NamespacedTransformListener`` subscribes ``<namespace>/tf`` — so the bridge's transforms were
-invisible to both, and a scenario hung forever on "Waiting for transform map -> base_link" while the
-stack looked healthy.
+``NamespacedTransformListener`` subscribes ``<namespace>/tf`` — so the bridge's transforms would be
+invisible to both, and a scenario hangs forever on "Waiting for transform map -> base_link" while the
+stack looks healthy.
 """
 
 from rclpy.qos import DurabilityPolicy

@@ -171,9 +171,8 @@ def main() -> None:
     here = Path(__file__).resolve().parent  # roqsim/external/convert/
     pkg = here.parents[1] / "roqsim_humanoid"  # sibling of external/
     ap = argparse.ArgumentParser()
-    # Default to the pinned upstream fetched into external/sources/ (see sources.resolve_source).
-    # These were absolute paths into an agent session scratchpad that no longer exists, which made
-    # the documented rebuild path unrunnable on every machine including the one that wrote it.
+    # Default to the pinned upstream fetched into external/sources/ (see sources.resolve_source),
+    # so the documented rebuild path runs on any machine.
     ap.add_argument("--desc-dir", type=Path, default=None)
     ap.add_argument("--deploy-dir", type=Path, default=None)
     args = ap.parse_args()

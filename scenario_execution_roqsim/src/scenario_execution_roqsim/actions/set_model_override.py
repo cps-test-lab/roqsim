@@ -9,9 +9,9 @@ exactly. It deliberately owns no trigger: a fault's timing is the experiment's i
 and severity is the world's configured ``to:`` value, so both stay campaign factors instead of message
 payloads. This action is the trigger, and it is the ONLY thing that crosses the wire: one bit.
 
-Composes with ``entity_moved`` rather than fusing with it. Its predecessor in ``tiago_pick`` did
-both jobs plus a never-succeed composition policy, and three would-be reusers wanted the condition
-alone, one wanted a different effect, and one wanted the opposite terminal policy.
+Composes with ``entity_moved`` rather than fusing with it. Fused, one action
+would carry the condition, the effect and a terminal policy, while a reuser may want the condition
+alone, a different effect, or the opposite terminal policy.
 
 **A fault that did not land fails the trial** (``require_landed``), because the alternative is a row
 that claims a fault which never happened -- an unfaulted outcome wearing a faulted label, which is

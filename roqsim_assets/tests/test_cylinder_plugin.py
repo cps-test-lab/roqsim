@@ -63,7 +63,7 @@ def test_three_element_pos_places_the_centre():
 
 def _geom_rgba(model, gid):
     """Colour lives on the geom's MATERIAL, not on `geom_rgba` (which stays at its 0.5 default
-    whenever a material is assigned) -- the trap that made the first version of these tests fail."""
+    whenever a material is assigned) -- a trap for any test that reads `geom_rgba`."""
     matid = int(model.geom_matid[gid])
     assert matid >= 0, "geom has no material"
     return list(model.mat_rgba[matid])

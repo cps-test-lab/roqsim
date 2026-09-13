@@ -621,7 +621,7 @@ class UrdfExporter:
         )
 
         # Type and effort come from the MODEL, exactly as `_write_joint` derives them for every other
-        # joint. Hardcoding `revolute` here was wrong for the common case: a parallel-jaw gripper's
+        # joint. A hardcoded `revolute` is wrong for the common case: a parallel-jaw gripper's
         # commanded DOF is usually a SLIDE (the PAL PRO's `gripper_*_finger_joint` is a 0..0.07 m
         # travel), and calling it revolute silently turns 70 mm of jaw opening into 0.07 rad of
         # rotation in every planning-side computation, while the number in /joint_states stays the
@@ -901,10 +901,10 @@ def round_trip_error(
 
     text = Path(urdf).read_text(encoding="utf-8")
     # Every mesh URI is resolved against the directory the meshes were WRITTEN to, not by guessing
-    # a package root from the URDF's location. Guessing assumed `--mesh-package` was a bare package
+    # a package root from the URDF's location. Guessing assumes `--mesh-package` is a bare package
     # name with the mesh dir one level under the URDF; a value carrying a subpath (needed when the
-    # installed layout is share/<pkg>/config/<platform>/meshes) then produced `config/config/...` and
-    # the check failed on a file that was never missing. Only the basename is taken from the URI, so
+    # installed layout is share/<pkg>/config/<platform>/meshes) then produces `config/config/...` and
+    # the check fails on a file that is not missing. Only the basename is taken from the URI, so
     # any `--mesh-package` or `--mesh-prefix` value works -- including one naming a path that exists
     # only in the container that will read it -- and the check stays honest about the geometry it
     # loads rather than passing because it found none.
@@ -971,9 +971,9 @@ def round_trip_error(
         # models do not share it: a model whose root body carries a rotation (the UR arms' base is
         # `quat="0 0 0 -1"`, the standard UR convention) has every link rotated with it in world
         # coordinates, while the URDF's root -- correctly -- is the frame those links are expressed
-        # in. That showed up as a ~1.7 m "error" on a UR5e whose URDF matched the MJCF exactly, body
+        # in. Left in, it reads as a ~1.7 m "error" on a UR5e whose URDF matches the MJCF exactly, body
         # for body: a false alarm that condemns a correct export. Rotating into the root frame makes
-        # the check what its comment always claimed it was, a frame-independent shape comparison.
+        # the check a frame-independent shape comparison.
         uroot, mroot = ud.xpos[body_pairs[0][1]], md.xpos[body_pairs[0][2]]
         urot = ud.xmat[body_pairs[0][1]].reshape(3, 3)
         mrot = md.xmat[body_pairs[0][2]].reshape(3, 3)

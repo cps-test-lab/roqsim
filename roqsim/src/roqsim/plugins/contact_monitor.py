@@ -174,7 +174,7 @@ class ContactMonitorPlugin(Plugin):
         # class name -- which is what the handle convention exists to retire (architecture.rst §12).
         # `read_state` rather than the report itself, because the report is REPLACED each step.
         # Keyed on the ADDRESS. `self.name` falls back to the class name, so two unnamed
-        # monitors in one world wrote to a single key and the second silently replaced the
+        # monitors in one world would write to a single key and the second silently replace the
         # first -- one robot's collisions reported as another's.
         ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 

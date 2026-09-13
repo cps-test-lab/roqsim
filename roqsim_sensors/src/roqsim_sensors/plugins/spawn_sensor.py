@@ -261,7 +261,7 @@ def _double_sided(faces: np.ndarray) -> np.ndarray:
     viewpoint is inside it -- exactly when you most want to notice you are standing in a sensor's field
     of view. The reversed twin gives every facet a front side from both directions. Doubling the facets
     with opposite winding makes the mesh non-manifold, so callers must set shell inertia (its volume is
-    no longer well defined); the FOV geoms are non-colliding, so that inertia is never used."""
+    not well defined); the FOV geoms are non-colliding, so that inertia is never used."""
     return np.vstack([faces, faces[:, ::-1]])
 
 
@@ -672,7 +672,7 @@ class SpawnSensorPlugin(Plugin):
         #: where `roqsim.placement.place_body` looks it up.
         self._base_joint = ""
         # This UNIT's measured lens, written onto the model's camera at build time so MuJoCo renders
-        # through it (see :meth:`_apply_intrinsics`). Empty is the historical path: the model's own
+        # through it (see :meth:`_apply_intrinsics`). Empty keeps the model's own
         # fovy, an ideal pinhole, a centred principal point.
         self._intrinsics = dict(self.config.get("intrinsics") or {})
         self.show_fov = bool(self.config.get("show_fov", False))
@@ -1081,12 +1081,13 @@ class SpawnSensorPlugin(Plugin):
 
         Clipped against ``world_spec`` exactly as a camera frustum is: the sector's own direction grid
         is cast from the scan site and each ray clamped at its first hit, so the drawn volume stops at
-        walls instead of passing through them. A lidar was long exempted here for having "no pinhole to
-        raycast from", but :func:`_lidar_sector_dirs` *is* an origin plus a direction grid -- the same
-        two things :meth:`_add_camera_frustums` casts with. Un-clipped, a long-range lidar drew its
-        full physical reach through the building: the Robin W1G's 200 m cone and the Mid-360's 40 m
-        dome bounded an otherwise 10 m room, and MuJoCo's model-derived default camera framed *that*,
-        so every render of such a world came out as a few dark pixels in an empty frame.
+        walls instead of passing through them. A lidar has no pinhole, but
+        :func:`_lidar_sector_dirs` *is* an origin plus a direction grid -- the same two things
+        :meth:`_add_camera_frustums` casts with. Un-clipped, a long-range lidar would draw its full
+        physical reach through the building: the Robin W1G's 200 m cone and the Mid-360's 40 m dome
+        would bound an otherwise 10 m room, and MuJoCo's model-derived default camera would frame
+        *that*, so every render of such a world would come out as a few dark pixels in an empty
+        frame.
 
         Returns 0 when the manifest declares no angular band (the model is not a lidar), so the caller
         falls through to the 'nothing to show' error rather than this silently doing nothing."""

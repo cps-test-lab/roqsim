@@ -19,9 +19,9 @@ from .engine import CoverageResult
 # Discrete colour ramp by coverage count. Two palettes, same shape (index = coverage count, clamped):
 #
 # * ``coverage`` (default) -- 0 sensors -> red, then warm -> cool green as coverage grows. Answers
-#   "is this covered?" (green = safe); the historical ramp the coverage-search workflow expects.
+#   "is this covered?" (green = safe); the ramp the coverage-search workflow expects.
 # * ``density`` -- 0 sensors -> lightest, then progressively DARKER as more sensors overlap. Answers
-#   "how densely is this covered?" -- overlap reads as darkness (what the user asked to see).
+#   "how densely is this covered?" -- overlap reads as darkness.
 _RAMP = np.array(
     [
         [0.85, 0.15, 0.15, 1.0],  # 0

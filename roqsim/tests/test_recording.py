@@ -1,10 +1,10 @@
 """What a recording must preserve, and what it must refuse.
 
-The first test in this file is the important one. ``mjSTATE_FULLPHYSICS`` -- the obvious choice, and the
-one the deleted ``recorder`` plugin used -- silently drops ``ctrl`` and the mocap fields, so a recording
+The first test in this file is the important one. ``mjSTATE_FULLPHYSICS`` -- the obvious choice --
+silently drops ``ctrl`` and the mocap fields, so a recording
 made with it replays every pedestrian and moving prop frozen at its compile-time pose and every door
-driven toward 0. A fidelity test on a *static* world passes the whole time that is happening, which is
-exactly how the bug survived the first draft of this work. So the world here has a mocap body and a
+driven toward 0. A fidelity test on a *static* world passes the whole time that is happening. So the
+world here has a mocap body and a
 nonzero ``ctrl``, and the assertion is field by field.
 """
 
@@ -406,7 +406,7 @@ def test_replay_after_close_still_works(tmp_path, moving):
 
 
 def test_a_recording_path_without_the_suffix_is_still_found_where_it_says(tmp_path, moving):
-    """np.savez used to append the .npz behind our backs, leaving close() returning a missing path."""
+    """np.savez appends .npz behind our backs; close() must not return a missing path."""
     model, data = moving
     ctx = _Ctx(model, data)
     rec = StateRecorder(ctx, tmp_path / "out", snap_fps(25, model.opt.timestep), world="w")
@@ -531,7 +531,7 @@ def test_a_dtype_that_disagrees_with_the_provenance_is_refused(tmp_path):
 
 
 def test_a_fullphysics_recording_is_refused_not_rendered(tmp_path, moving):
-    """The whole point: an old recording must fail loudly, not replay with frozen pedestrians."""
+    """The whole point: a FULLPHYSICS recording must fail loudly, not replay with frozen pedestrians."""
     model, data = moving
     ctx = _Ctx(model, data)
     rec = StateRecorder(ctx, tmp_path / "old.npz", snap_fps(25, 0.002), world="w")

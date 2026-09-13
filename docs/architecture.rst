@@ -195,7 +195,7 @@ linear velocity, which the humanoids do not use) -- by rebuilding each from a sp
 element-wise with the plugin's own builder. Neither plugin is migrated: they work and are covered, and
 swapping a live observation builder would risk a silent regression for no present gain.
 
-A useful thing that fell out of writing those tests: Unitree's ``get_gravity_orientation`` and Isaac
+Those tests also show that Unitree's ``get_gravity_orientation`` and Isaac
 Lab's ``quat_rotate_inverse(q, [0,0,-1])`` are bit-identical (max difference 0 over 500 random
 quaternions), so one ``projected_gravity`` term serves a humanoid and a quadruped alike.
 
@@ -281,7 +281,7 @@ stepping. Physics-thread only, like every other write on ``SimContext``; the fir
 Actuator overrides (``actuators:``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so used to mean editing the shared MJCF: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
+A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so by editing the shared MJCF would leak: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
 
 The vocabulary is the robot's, not MuJoCo's: ``control`` names a ros2_control command interface and the gains are the ones a real controller's yaml carries, because a port transcribing a paper reads its numbers out of a controller config and a key it has to translate is a key it can get wrong. ``effort_limit`` is URDF's ``<limit effort=>``, which ``export_urdf`` already emits from ``actuator_forcerange``.
 
@@ -369,9 +369,9 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - **A run records the components that ran, and a recording is rebuilt by reading them.** The
   provenance carries the resolved tree and the ``sim`` block beside the recipe (the world reference
   and the override document, which stay because they are what a reader needs to see how the run was
-  asked for, and what an external consumer uses as world identity). Replay no longer re-runs the load
+  asked for, and what an external consumer uses as world identity). Replay does not re-run the load
   path, so no later change to how an override resolves can make a recording rebuild a *different*
-  world while looking correct. ``format_version`` is now **read**: a newer record is refused rather
+  world while looking correct. ``format_version`` is **read**: a newer record is refused rather
   than partly understood, and an older one still reads -- its samples, times and clock are intact --
   but will not rebuild from overrides that would resolve differently today.
 
@@ -411,7 +411,7 @@ A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model`
 - **Package-qualified** ``<package>:<model>`` (``roqsim_manipulation_assets:ur10e``) — resolved within that provider; use it to disambiguate a name shipped by two packages, or to self-document a dependency. A dotted ``module:name`` exposing ``MODELS_DIR`` also works for models outside the group.
 - **Filesystem path** (absolute, or relative to ``base_dir``) — loaded directly.
 
-``resolve_model`` returns a ``ModelAsset(path, meshdirs, texturedirs)``. Crucially, **the asset dirs follow the model to its own package** (a provider exposes ``MODELS_DIR`` and optionally ``MESHES_DIR``/``TEXTUREDIR``): a spawn plugin calls ``apply_assets`` to rewrite the child spec's mesh/texture refs to absolute paths found across those dirs, so it no longer forces its own package's ``meshdir`` onto a foreign model — which is what made a cross-package model impossible before. A model that reuses other packages' meshes adds an ``assets:`` key to its ``<model>.manifest.yaml`` naming the provider(s) to borrow from — a single name or a **list**. Search order: the model's **own** declared ``meshdir`` always comes first — its assets can never be shadowed by same-named files elsewhere (Menagerie-style link names recur across robots, e.g. the Oli and the G1 both ship a ``left_hip_yaw_link.STL``) — then the borrowed providers in order, then the provider default and the model file's dir. Since MuJoCo allows only one ``meshdir`` per model, resolving to absolute paths is what lets meshes from *several* packages coexist. A package registers its models with::
+``resolve_model`` returns a ``ModelAsset(path, meshdirs, texturedirs)``. Crucially, **the asset dirs follow the model to its own package** (a provider exposes ``MODELS_DIR`` and optionally ``MESHES_DIR``/``TEXTUREDIR``): a spawn plugin calls ``apply_assets`` to rewrite the child spec's mesh/texture refs to absolute paths found across those dirs, so it does not force its own package's ``meshdir`` onto a foreign model — which would make a cross-package model impossible. A model that reuses other packages' meshes adds an ``assets:`` key to its ``<model>.manifest.yaml`` naming the provider(s) to borrow from — a single name or a **list**. Search order: the model's **own** declared ``meshdir`` always comes first — its assets can never be shadowed by same-named files elsewhere (Menagerie-style link names recur across robots, e.g. the Oli and the G1 both ship a ``left_hip_yaw_link.STL``) — then the borrowed providers in order, then the provider default and the model file's dir. Since MuJoCo allows only one ``meshdir`` per model, resolving to absolute paths is what lets meshes from *several* packages coexist. A package registers its models with::
 
     [project.entry-points."roqsim.models"]
     roqsim_assets = "roqsim_assets.models"   # a module exposing MODELS_DIR
@@ -433,7 +433,7 @@ Types are *roles* (which hooks you implement), not separate base classes:
 -  **Render** (future): viewer overlays, debug markers.
 -  **Perturbation**: a sensor's own noise config, switchable mid-run through its ``fault:`` block
    (§9.1), or ``model_override`` changing a named model value mid-run on an external trigger (§9.2).
-   There is no shared error-model framework; the one that existed was removed (§9.1).
+   There is no shared error-model framework, on purpose (§9.1).
 
 ``DummyPlugin`` (``plugins/dummy.py``) is a minimal end-to-end example implementing every hook.
 
@@ -535,7 +535,7 @@ Anti-patterns (do not do)
 8. Rendering
 ------------
 
-A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built, which is why the heading no longer says otherwise.
+A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built.
 
 -  **Lidar** uses ``mujoco.mj_multiRay`` — **no GL**, works headless everywhere (M1 uses this; nav2 needs a ``LaserScan``).
 -  **Camera / RGB-D** uses ``mujoco.Renderer`` (offscreen). Cameras render **only when consumed** (lazy), and their expensive endpoints are not *published* to nobody either: ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points`` set ``Endpoint.lazy``, so a subscriber-less stream costs neither a GL pass nor a serialisation. The two checks answer different questions — the render gate ORs over every endpoint one pass feeds, the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames, and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG, since RVL has no C library behind it).
@@ -557,7 +557,7 @@ A ``RenderService`` on the context that owns all GL/EGL contexts and camera rend
 9.1 Sensor noise
 ~~~~~~~~~~~~~~~~
 
-**Design note:** an earlier generic, composable error-model framework (a ``roqsim.error_models`` registry wired into sensors via an ``error_model:`` config key) was **removed**. In practice noise is sensor-specific — its parameters, where it applies, and how it degrades only make sense in the context of one sensor — so a generic cross-sensor abstraction added indirection without real reuse.
+**Design note:** there is **no** generic, composable error-model framework (a registry wired into sensors through an ``error_model:`` config key). Noise is sensor-specific — its parameters, where it applies, and how it degrades only make sense in the context of one sensor — so a generic cross-sensor abstraction adds indirection without real reuse.
 
 Instead, each sensor owns its noise as plain config:
 
@@ -584,7 +584,7 @@ go through it. Three things live there because they must be decided once:
    ``mjData``. Hammering one ``mjData`` with 8 threads × 40000 casts, a sampler saw ``pstack`` peak
    at 2112 bytes and return **1632 instead of 0** — MuJoCo guarantees a function restores ``pstack``,
    and concurrency breaks it. The leak is monotonic, so a long trial walks toward stack exhaustion;
-   the observed failure while developing this was a core dump. Every one of those 320000 casts
+   the failure it produces is a core dump. Every one of those 320000 casts
    returned the *right answer*, which is the point: the race corrupts an allocator invariant, not the
    output, so it survives any amount of parity testing and then crashes in a long run. MuJoCo's own
    guidance is one ``mjData`` per thread and the ray functions are not exempt. If 3D-lidar throughput

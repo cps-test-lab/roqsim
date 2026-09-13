@@ -447,12 +447,12 @@ def test_fov_rays_config_validation():
 
 
 def test_lidar_sector_is_clipped_by_the_walls():
-    """A synthesised lidar sector must stop at world geometry, like a camera frustum already did.
+    """A synthesised lidar sector must stop at world geometry, like a camera frustum.
 
-    It used to draw its full physical reach straight through the building. That is wrong on its own
-    terms -- the volume claims to show what the sensor sees -- and it wrecked every render of such a
-    world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bounded an otherwise 10 m room, so
-    MuJoCo's model-derived default camera framed a ~160 m box and the room came out as a few dark
+    Drawn to its full physical reach straight through the building, it would be wrong on its own
+    terms -- the volume claims to show what the sensor sees -- and would wreck every render of such
+    a world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bound an otherwise 10 m room, so
+    MuJoCo's model-derived default camera frames a ~160 m box and the room comes out as a few dark
     pixels.
 
     Asserted below the wall tops, where the default empty_room actually encloses the sensor. The room
@@ -591,7 +591,7 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
     """The claim the whole feature rests on: MuJoCo RENDERS the stated lens.
 
     A pure ``camera_info`` change would leave the image identical and tell every consumer the
-    principal point is somewhere it is not -- which is the failure this replaces, so it is the one
+    principal point is somewhere it is not -- which is the failure this prevents, so it is the one
     thing a test must not take on trust. Shifting the principal point right by N px must move the
     image content left by N px, which a column correlation reads off directly.
     """

@@ -1,7 +1,5 @@
 """A kinematic, mocap-driven articulated human (capsule skeleton).
 
-Ported from our earlier in-house nav prototype's ``mujoco_nav.humanoid``.
-
 The walker's *body pose* comes from a motion clip while its *nav root* (x, y, heading) comes from
 the nav stack (see :mod:`roqsim_walker.nav`). To stay perfectly kinematic and add zero DOFs to
 the physics solver, the human is **not** a joint tree: it is a flat set of MuJoCo **mocap bodies**

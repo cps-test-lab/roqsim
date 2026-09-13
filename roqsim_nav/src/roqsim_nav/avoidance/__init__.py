@@ -194,7 +194,7 @@ def service_for(ctx, spec, base_dir=None) -> AvoidanceService:
 
     There is no world-level entry to declare: a navigator that wants to yield says so, and the model
     appears. That is what makes avoidance a property of the mover rather than a checklist item --
-    the alternative shipped an example with the model commented out and every mover politely
+    a world-level entry is one a world can leave commented out, with every mover politely
     yielding to nobody.
 
     ``spec`` is one navigator's ``avoidance:`` value: the NAME of a model, or a mapping naming one

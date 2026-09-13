@@ -470,8 +470,8 @@ def _log_gl_once() -> None:
     """Log the backend *and* the device it bound, once, then verify the device.
 
     This is the line that answers "did this run use the GPU", and it is worth a log entry
-    because the alternative -- inferring it from wall-clock afterwards -- is how a mis-bound
-    backend went unnoticed across every campaign this substrate had run.
+    because the alternative -- inferring it from wall-clock afterwards -- lets a mis-bound
+    backend go unnoticed across any number of campaigns.
 
     The verification lives here because this is the first point in the process where a GL
     context exists, and :func:`check_bound_device` cannot answer anything before one does.

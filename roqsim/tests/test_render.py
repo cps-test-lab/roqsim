@@ -223,9 +223,9 @@ def test_unwritable_output_directory_is_refused(tmp_path):
 def test_headless_without_a_backend_names_both_options(tmp_path, monkeypatch):
     """The verdict comes from the backend mujoco BOUND, not from DISPLAY.
 
-    ``DISPLAY`` is deliberately set here, and must not rescue the render. The old spelling was
-    ``not os.environ.get("MUJOCO_GL") and not has_display()``, which a container defeats twice
-    over: a base image exports ``DISPLAY=:0`` with no X server behind it, and
+    ``DISPLAY`` is deliberately set here, and must not rescue the render. A check spelled
+    ``not os.environ.get("MUJOCO_GL") and not has_display()`` is defeated twice over by a
+    container: a base image exports ``DISPLAY=:0`` with no X server behind it, and
     ``MUJOCO_GL`` can be set long after ``import mujoco`` already bound something else. Both let a
     doomed render past this guard and into ``mujoco.FatalError: gladLoadGL error``.
     """
@@ -495,9 +495,9 @@ def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp
     """--view must reach the camera on the recording path too, not just on a live render.
 
     A live render gets its overrides through the world config, which is loaded with them. A
-    recording rebuilds its world from its own provenance and never sees that config, so the flag was
-    accepted and silently did nothing -- the worst shape a bug can take, because the render succeeds
-    and only the framing is wrong. The docstring in `_render_recording` promised the opposite.
+    recording rebuilds its world from its own provenance and never sees that config, so unless it is
+    handed on the flag is accepted and silently does nothing -- the worst shape a bug can take,
+    because the render succeeds and only the framing is wrong.
     """
     _scene, npz = a_recording
     record = render.render_target(

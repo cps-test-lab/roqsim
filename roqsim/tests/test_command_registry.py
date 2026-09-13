@@ -1,10 +1,8 @@
 """The `roqsim` command tree must stay complete, cheap, and free of parent-repo assumptions.
 
-Every rule here was a convention first and decayed anyway. The run command in the checked-in scene
-Makefiles named a binary that never existed and a flag that had been removed, and it stayed broken
-because nothing looked; one tool's --help cost more tokens than the rest of the tree put together
-because nothing measured it. A convention that is not checked is a comment about the past, so each of
-these is a check.
+A convention that nothing checks decays: a run command in a checked-in Makefile names a binary that
+does not exist and stays broken because nothing looks; a tool's --help grows to cost more tokens than
+the rest of the tree put together because nothing measures it. So each rule here is a check.
 
 The tests walk the repository rather than the installed distributions: they are about what this source
 tree promises, and they must give the same answer in a bare clone as in a checkout nested inside
@@ -235,7 +233,7 @@ _FOREIGN = (".claude/skills", "robovast", "RoboVAST", "kubernetes", "Kubernetes"
 #: none of those. It resolves fine in a bare clone, and renaming it to avoid the word would make this
 #: writer's output unreadable by the very consumer whose specification defines it. Keep this list
 #: short, per-line rather than per-file, and each entry justified -- an unexplained entry here is how
-#: the check decays into the convention it replaced.
+#: the check decays into a convention.
 _FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
     # The wire identifier a consumer matches on, and the citation saying where that format is
     # specified. Renaming either would not make this file standalone -- it would make its output

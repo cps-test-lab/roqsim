@@ -362,9 +362,9 @@ def main(argv=None) -> int:
     if args.override:
         # A caller holding overrides is asking about the world its RUN will load, not about the
         # file: the entities a campaign's own obstacle placement compiles in exist only once its
-        # overrides are applied, so describing the base world answered a different question than
-        # the one asked -- and a caller comparing entity names against that answer concluded a
-        # working campaign was broken.
+        # overrides are applied, so describing the base world answers a different question than
+        # the one asked -- and a caller comparing entity names against that answer concludes a
+        # working campaign is broken.
         if not Path(args.override).exists():
             print(f"overrides file {args.override!r} does not exist", file=sys.stderr)
             return 1

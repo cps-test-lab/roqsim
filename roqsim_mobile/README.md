@@ -25,7 +25,7 @@ manifest does the rest, so a world is ~15 lines.
 | `clearpath_jackal` | Clearpath Jackal | skid-steer, 4 driven wheels (`slip_factor` 1.7) | VLP-16, planar cast @ 10 Hz | |
 | `piracer` | Waveshare PiRacer AI Kit | **Ackermann** — two steered front wheels, rear pair driven; cannot turn in place | none (a `camera` site, unpopulated) | |
 
-`turtlebot4` has no port log yet — it predates the convention. Its provenance
+`turtlebot4` has no port log yet. Its provenance
 (`nav2_minimal_tb4_description`, Apache-2.0) is in `turtlebot4_LICENSE` and its MJCF comments, and
 `tests/test_turtlebot4_scene.py` pins the numbers; `tests/test_model_layout.py` carries the gap as a strict
 xfail so writing the log is what clears it.
@@ -58,12 +58,12 @@ so a constant would only make the estimate look better than the sensor it stands
 
 Depends on `roqsim` + `roqsim_sensors` only. **Wheeled bases only** — a robot that is also an arm belongs in
 a package that depends on both this and `roqsim_manipulation`, which is
-[`roqsim_mobile_manipulation`](../roqsim_mobile_manipulation). Keeping two such robots here is what once
-forced this package to declare `roqsim_manipulation`: it inverted this package's own contract, made
-anyone who wanted a TurtleBot install every arm and gripper, and reordered the wheel install graph
-for deployments (which broke a campaign image build). `roqsim_assets` is not a dependency either —
+[`roqsim_mobile_manipulation`](../roqsim_mobile_manipulation). Keeping one here would force this
+package to declare `roqsim_manipulation`, inverting its own contract, making anyone who wants a
+TurtleBot install every arm and gripper, and reordering the wheel install graph for deployments
+(which breaks an image build). `roqsim_assets` is not a dependency either —
 `floorplan` resolves a texture only from an explicit `<package>:<name>`, so a world that wants a prop
 library's texture depends on that library itself.
 
-`omni_drive` lives here rather than with the robot it was written for (the TIAGo Pro, a mobile
-manipulator): it is base kinematics, and the composite package depends on this one.
+`omni_drive` lives here rather than with the TIAGo Pro, the mobile manipulator whose base it models:
+it is base kinematics, and the composite package depends on this one.

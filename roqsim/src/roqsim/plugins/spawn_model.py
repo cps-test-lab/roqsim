@@ -173,7 +173,7 @@ class SpawnModelPlugin(Plugin):
         self.scale = float(self.config.get("scale", 1.0))
         # `motion` names who owns this body's pose -- one question with three answers, rather
         # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
-        # was meaningless and had to be refused wherever they were offered.
+        # is meaningless and would have to be refused wherever they were offered.
         self.motion = self.config.get("motion", "physics")
         self.free = self.motion == "physics"
         self.mocap = self.motion == "driven"
@@ -252,7 +252,7 @@ class SpawnModelPlugin(Plugin):
         ):
             if gone in config:
                 # Refused rather than translated: a removed key that quietly still worked would
-                # leave two vocabularies for one question, which is what this replaced.
+                # leave two vocabularies for one question.
                 errors.append(
                     f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
                     "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "

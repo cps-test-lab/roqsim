@@ -21,7 +21,7 @@ uses that mesh for BOTH visual and collision geometry. In roqsim the meshes are 
 collision is authored as primitives (chassis box, wheel cylinders, caster spheres) — so the budget here
 is about model size and render cost, not physics.
 
-**Budgets are per-part and were chosen by LOOKING at the result, not by ratio.** The tires are
+**Budgets are per-part and are chosen by LOOKING at the result, not by ratio.** The tires are
 smooth solids and survive aggressive collapse; the chassis is a lattice and does
 not (see the comment on its entry below). Rendering the converted mesh is the only check that catches
 this — extents, vertex counts and masses all pass on a shredded mesh.

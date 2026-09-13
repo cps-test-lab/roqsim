@@ -4,7 +4,7 @@ Three things this file pins.
 
 ``test_no_value_here_is_an_assumption`` guards what makes this port unusual: every drive and sensor
 number is the vendor's own, from ``params.xacro``, ``plugins.xacro`` and ``config/navigation.yaml``.
-Every other mobile port in this batch had to invent at least a scanner mount height. If someone later
+Most other mobile models here supply at least a scanner mount height of their own. If someone
 "tunes" one of these, the test should stop them and make them say so.
 
 ``test_the_caster_barely_carries_load`` pins a property of the platform rather than of our model. The
@@ -97,11 +97,11 @@ def test_no_value_here_is_an_assumption():
 
 
 def test_it_rests_on_two_wheels_and_the_caster():
-    """The check that caught the real defect in this port.
+    """The check that catches a wheel pose read without its rotation.
 
-    The wheel joints carry ``rpy="-pi/2 0 0"``, and reading only their xyz left the wheel cylinders
-    axis-vertical -- flat discs 28 mm clear of the floor. The robot then settled onto its bumper ring
-    with the wheels touching nothing, which every other check in this file tolerated.
+    The wheel joints carry ``rpy="-pi/2 0 0"``, and reading only their xyz leaves the wheel cylinders
+    axis-vertical -- flat discs 28 mm clear of the floor. The robot then settles onto its bumper ring
+    with the wheels touching nothing, which every other check in this file tolerates.
     """
     engine = _engine()
     try:

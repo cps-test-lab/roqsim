@@ -44,7 +44,7 @@ convention, and a future airframe need not share it.
 moment and the model's actuator gear converts it to ``ctrl``. They are sized from the airframe: for a
 body inertia I and a target attitude bandwidth wn with damping zeta, ``kp_att ~ I*wn^2`` and
 ``kd_att ~ 2*zeta*I*wn``. The defaults are I = 2.4e-5 kg*m^2 at wn = 20 rad/s, zeta = 0.9. This is
-also why the Crazyflie's moment gear had to be tuned during the port: at the arbitrary 1e-5 N*m
+also why the Crazyflie's moment gear is tuned rather than upstream's: at the arbitrary 1e-5 N*m
 upstream ships, full deflection buys 0.42 rad/s^2 and no attitude loop can track a position
 controller's tilt command -- the drone hovers perfectly and flies away the moment it is asked to
 translate. See the port log.

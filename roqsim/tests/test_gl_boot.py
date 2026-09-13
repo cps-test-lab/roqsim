@@ -5,11 +5,11 @@ while ``import mujoco`` executes, and both mujoco and roqsim are already importe
 process by the time any of this runs -- so an in-process test could only ever observe the decision
 that was made before it started.
 
-The bug being guarded: roqsim used to select the backend in ``runner.main``, which lives in a module
-whose own imports pull in mujoco. The selection therefore ran *after* the binding it was meant to
-control, and had no effect. Nothing noticed, because a world with no camera never constructs a
-``mujoco.Renderer``, so the wrong backend was never instantiated -- until a camera world reached a
-headless cluster and aborted with ``mujoco.FatalError: gladLoadGL error``.
+The failure being guarded: a backend selected in ``runner.main``, which lives in a module whose own
+imports pull in mujoco, is selected *after* the binding it is meant to control, and has no effect.
+Nothing notices, because a world with no camera never constructs a ``mujoco.Renderer``, so the
+wrong backend is never instantiated -- until a camera world reaches a headless node and aborts with
+``mujoco.FatalError: gladLoadGL error``.
 """
 
 from __future__ import annotations
@@ -146,7 +146,7 @@ def _fake_devices(monkeypatch, *, nvidiactl, render_node, names=None):
     """Point gl.py's two probes at a scripted answer, without touching /dev.
 
     *names* is what ``/dev/dri`` contains, so a test can pin WHICH node is present rather
-    than only whether one is -- the distinction the ``renderD129`` regression turns on.
+    than only whether one is -- the distinction a ``renderD129``-only container turns on.
     ``render_node=False`` scripts a directory holding no render node at all, which is what
     a GPU handed over without the ``graphics`` capability actually looks like.
     """
@@ -190,12 +190,12 @@ def test_the_ordinary_shapes_are_not_mistaken_for_it(monkeypatch):
 
 
 def test_a_discrete_card_numbered_past_128_is_a_render_node(monkeypatch):
-    """The regression this detection was written without.
+    """The case a probe for one fixed node name gets wrong.
 
     Render nodes are numbered from 128 in probe order, so a machine with an integrated chip
     and a discrete card puts the discrete one at ``renderD129`` -- and a container handed
-    only that card sees no ``renderD128``. Probing the fixed name read a working RTX 4090 as
-    a GPU with no render node and REFUSED THE RUN, which is the worst direction for this
+    only that card sees no ``renderD128``. Probing the fixed name reads a working card as
+    a GPU with no render node and REFUSES THE RUN, which is the worst direction for this
     check to fail in: it turns a correct fast configuration into a hard error.
     """
     from roqsim import gl

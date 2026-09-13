@@ -2,9 +2,8 @@
 
 The finding this file pins is ``test_vendor_multiplier_is_not_the_sim_factor``. Husarion publishes
 ``wheel_separation_multiplier: 1.5`` in its controller config -- the ICR compensation a skid-steer
-needs on the real robot, and the same *quantity* as our ``slip_factor``. The assessment expected that
-to make this port cheaper than the husky's blind calibration. It did not: at 1.5 this base achieves
-only 0.40 of commanded yaw in MuJoCo, because point-contact scrub is far worse than a real tyre's.
+needs on the real robot, and the same *quantity* as our ``slip_factor`` -- but not the same value:
+at 1.5 this base achieves only 0.40 of commanded yaw in MuJoCo, because point-contact scrub is far worse than a real tyre's.
 The simulator needs 3.4. A vendor's real-robot correction is a starting point, not an answer, and
 that is worth a test rather than a sentence.
 """
@@ -117,7 +116,7 @@ def test_uses_the_vendor_collision_hull():
     """Husarion ships a real simplified hull; it must be what we collide against.
 
     base_collision.stl is 9.7 kB against the 1.4 MB visual mesh -- unlike Doosan, whose *_collision
-    files are byte-for-byte copies of its visual CAD and had to be replaced.
+    files are byte-for-byte copies of its visual CAD and are replaced in its port.
     """
     meshes = resolve_model("roqsim_mobile:panther").path.parent / "meshes"
     assert (meshes / "base_collision.stl").is_file()
@@ -181,7 +180,7 @@ def test_vendor_multiplier_is_not_the_sim_factor():
 def test_wheels_are_upright_and_coloured():
     """Wheel axles on y, and the vendor's materials present.
 
-    The same regression the ROSbot needed: a mesh can be rotated 90 degrees or stripped of every
+    The same guard the ROSbot carries: a mesh can be rotated 90 degrees or stripped of every
     colour without moving a number any drive test measures, because the robot drives on its
     collision cylinders.
     """

@@ -67,7 +67,7 @@ def test_free_prop_falls_and_settles_on_the_table(tmp_path):
     engine.reset()
     entity = engine.ctx.entities.get("box")
     # kind flips to "object", and base_joint is what lets SetEntityState re-seat it (the service
-    # rejects any entity without one, which is why every prop used to be un-teleportable).
+    # rejects any entity without one, which would leave the prop un-teleportable).
     assert entity.kind == "prop"
     assert entity.meta["base_joint"] == "b_free"
 

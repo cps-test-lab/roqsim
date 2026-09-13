@@ -57,9 +57,9 @@ def test_a_wide_room_traces_to_its_true_metric_extent(tmp_path):
 def test_the_overlay_draws_every_wall_the_plan_holds(tmp_path):
     """The overlay is the mandated human check, so it must share the plan's frame.
 
-    It renders in the rasterised grid's own height; when `to_floorplan` derived its row count from
-    the segments instead, a non-square image put the horizontal walls on row 0 and clipped the
-    vertical ones out of the picture entirely -- an overlay that looked plausible and showed a
+    It renders in the rasterised grid's own height; a `to_floorplan` that derived its row count from
+    the segments instead would put a non-square image's horizontal walls on row 0 and clip the
+    vertical ones out of the picture entirely -- an overlay that looks plausible and shows a
     different world from the one being written.
     """
     png = tmp_path / "wide.png"

@@ -33,7 +33,7 @@ resolution forms:
 #. **module.path:Class** — imported off ``PYTHONPATH``.
 #. **path/to/file.py:Class** — loaded directly from a file (relative to the YAML).
 
-Because forms 2 and 3 contain a colon and the ref is now the entry's *key*, **quote it**
+Because forms 2 and 3 contain a colon and the ref is the entry's *key*, **quote it**
 (``- "my_pkg.mod:MyPlugin": {...}``): unquoted it parses only while no space follows the colon, so a
 stray ``key: value`` space would silently truncate the ref. Short names have no colon and need no
 quotes.
@@ -177,10 +177,10 @@ cannot know.
 
 The **package** ``__init__`` is the call site, not a driver's ``main``, and that is load-bearing
 rather than tidy. A driver's own module-level imports reach mujoco long before its ``main`` body
-executes, so a selection made there is made too late to bind anything -- which is exactly what
-happened: the choice lived in ``roqsim.runner.main``, was silently ineffective for every headless
-run, and stayed invisible because a world with no camera never constructs a ``Renderer``. The first
-camera world dispatched to a cluster is what finally instantiated the mis-bound backend.
+executes, so a selection made there (in ``roqsim.runner.main``, say) is made too late to bind
+anything. It is silently ineffective for every headless run, and stays invisible because a world
+with no camera never constructs a ``Renderer``: the first camera world on a headless node is what
+instantiates the mis-bound backend.
 
 Because the residual case -- a consumer that imports ``mujoco`` before ``roqsim`` -- cannot be
 reached from here, :func:`roqsim.rendering.check_gl_backend` guards every renderer in the tree and
