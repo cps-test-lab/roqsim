@@ -140,6 +140,7 @@ class UrdfExporter:
         gripper_joint: str = "",
         strip: str | None = None,
         mesh_package: str = "",
+        mesh_prefix: str = "",
         tip_site: str = "",
         tip_link: str = "tcp",
         link_strip: str | None = None,
@@ -170,6 +171,8 @@ class UrdfExporter:
         self.mesh_dir = mesh_dir
         # Non-empty -> meshes are referenced as package://<pkg>/... instead of file://<abs path>.
         self.mesh_package = mesh_package
+        # Non-empty -> meshes are referenced as <prefix>/<file>: where they will be READ.
+        self.mesh_prefix = mesh_prefix
         self.dropped_dofs: list[str] = []
         self.mesh_files: dict[int, Path] = {}
         # body id -> the frame shift its URDF link absorbed (non-zero only for a joint anchor).
@@ -189,11 +192,22 @@ class UrdfExporter:
         ``file://<abs path>`` by default, which is right for a URDF generated and consumed in the same
         tree. It is wrong for one that SHIPS: an ament package installs to a different prefix, and a
         container to a different path again, so a baked absolute path resolves to nothing there.
-        ``--mesh-package`` emits ``package://<pkg>/<mesh-dir name>/<file>`` instead, which resolves
-        wherever the package is installed.
+
+        Two ways to say where the meshes will actually be read:
+
+        * ``--mesh-package`` emits ``package://<pkg>/<mesh-dir name>/<file>``, which resolves
+          wherever the package is installed.
+        * ``--mesh-prefix`` emits ``<prefix>/<file>``, for a consumer that is neither this tree nor
+          an ament package -- a campaign stages the meshes into the container that plans, at a path
+          that exists only there, and nothing about where they were WRITTEN can name it.
+
+        Neither is cosmetic: a reference that does not resolve gives ``move_group`` a robot whose
+        links have no geometry, and it plans through the table and reports success.
         """
         if self.mesh_package:
             return f"package://{self.mesh_package}/{Path(path).parent.name}/{Path(path).name}"
+        if self.mesh_prefix:
+            return f"{self.mesh_prefix.rstrip('/')}/{Path(path).name}"
         return f"file://{path}"
 
     def _strip(self, s: str) -> str:
@@ -885,24 +899,27 @@ def round_trip_error(
     import re
     import tempfile
 
-    text = Path(urdf).read_text(encoding="utf-8").replace('filename="file://', 'filename="')
-    # A `package://` URI is resolved against the directory the meshes were WRITTEN to, not by guessing
+    text = Path(urdf).read_text(encoding="utf-8")
+    # Every mesh URI is resolved against the directory the meshes were WRITTEN to, not by guessing
     # a package root from the URDF's location. Guessing assumed `--mesh-package` was a bare package
     # name with the mesh dir one level under the URDF; a value carrying a subpath (needed when the
     # installed layout is share/<pkg>/config/<platform>/meshes) then produced `config/config/...` and
     # the check failed on a file that was never missing. Only the basename is taken from the URI, so
-    # any `--mesh-package` value works and the check stays honest about the geometry it loads.
+    # any `--mesh-package` or `--mesh-prefix` value works -- including one naming a path that exists
+    # only in the container that will read it -- and the check stays honest about the geometry it
+    # loads rather than passing because it found none.
     if mesh_dir is not None:
         # Absolute: the rewritten copy is compiled from a temporary directory, so a relative
         # --mesh-dir (the CLI's default is the bare `meshes`) would resolve against the temp dir and
         # the check would fail on files that are present.
         abs_mesh_dir = Path(mesh_dir).resolve()
         text = re.sub(
-            r'filename="package://[^"]*/([^/"]+)"',
+            r'filename="(?:package|file)://[^"]*?([^/"]+)"',
             lambda m: f'filename="{abs_mesh_dir}/{m.group(1)}"',
             text,
         )
     else:
+        text = text.replace('filename="file://', 'filename="')
         text = re.sub(
             r'filename="package://[^/"]+/', f'filename="{Path(urdf).resolve().parent.parent}/', text
         )

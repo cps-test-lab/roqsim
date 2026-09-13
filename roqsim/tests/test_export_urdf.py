@@ -10,6 +10,7 @@ the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import mujoco
 import numpy as np
@@ -137,6 +138,57 @@ def test_export_round_trips_to_the_mjcf(tmp_path, robot):
     )
     err, where = round_trip_error(out, robot, "ur10e_", samples=32)
     assert err < 1e-6, f"URDF diverges from the MJCF by {err:.3e} m at {where!r}"
+
+
+def _mesh_refs(tree):
+    return [m.get("filename") for m in tree.iter("mesh") if m.get("filename")]
+
+
+def test_a_mesh_is_referenced_as_the_file_it_was_written_to(tmp_path, robot):
+    """The default: URDF and meshes are read out of the tree they were written into."""
+    _out, exporter, tree = _export(tmp_path, robot)
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r == f"file://{exporter.mesh_dir / Path(r).name}" for r in refs)
+
+
+def test_a_mesh_package_is_referenced_by_package_and_file(tmp_path, robot):
+    _out, _exporter, tree = _export(tmp_path, robot, mesh_package="my_robot_description")
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r.startswith("package://my_robot_description/meshes/") for r in refs)
+
+
+def test_a_mesh_prefix_names_where_the_mesh_will_be_read(tmp_path, robot):
+    """Where a URDF is consumed somewhere its meshes were never written -- a campaign stages them
+    into the container that plans -- neither the written path nor an ament package can name them."""
+    _out, _exporter, tree = _export(tmp_path, robot, mesh_prefix="file:///config/files/gen/meshes/")
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r == f"file:///config/files/gen/meshes/{Path(r).name}" for r in refs)
+
+
+def test_the_round_trip_check_reads_the_geometry_however_it_is_referenced(tmp_path, robot):
+    """The check must measure the real meshes, not pass because it found none.
+
+    A URDF referencing a path that exists only in the container that will read it still has to be
+    checkable here -- otherwise the one test that proves the export correct is silently skipped for
+    exactly the export that needs it most, and move_group is handed links with no geometry.
+    """
+    for kwargs in (
+        {},
+        {"mesh_package": "my_robot_description"},
+        {"mesh_prefix": "file:///nowhere/on/this/host/meshes"},
+    ):
+        out, exporter, _tree = _export(
+            tmp_path / str(len(kwargs)),
+            robot,
+            collapse=("base_mount",),
+            gripper_joint="robotiq_85_left_knuckle_joint",
+            **kwargs,
+        )
+        err, where = round_trip_error(out, robot, "ur10e_", samples=8, mesh_dir=exporter.mesh_dir)
+        assert err < 1e-6, f"{kwargs}: diverges by {err:.3e} m at {where!r}"
 
 
 def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path, robot):
