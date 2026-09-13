@@ -511,8 +511,8 @@ def test_c3_the_scan_is_not_swallowed_by_the_chassis():
     blocked = _scan(LidarPlugin({**cfg, "exclude_body": None}, entity="robot"), ctx, model, data)
     clear = _scan(LidarPlugin(cfg, entity="robot"), ctx, model, data)
 
-    # Blinded, not merely degraded: the chassis surrounds the mount, so every return is clamped to
-    # range_min and the scan carries no information about the world at all.
+    # Blinded, not merely degraded: the chassis surrounds the mount, so every ray reads the shell or
+    # too close (-inf) and the scan carries no information about the world at all.
     assert blocked.max() < 0.5, (
         f"without exclude_body the chassis should swallow the whole scan, "
         f"farthest return was {blocked.max():.2f} m"

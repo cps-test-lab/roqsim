@@ -537,10 +537,11 @@ def test_d3_no_ray_starts_inside_the_robot_or_returns_from_its_own_mount(mounted
 
 
 def test_d4_what_the_scan_sees_of_the_robot_is_pinned(mounted):
-    """D4: 29 of 360 rays return the four tower standoffs and the camera bracket, from outside.
+    """D4: 90 of 1080 rays return the four tower standoffs and the camera bracket, from outside.
 
     Real returns: the scan plane passes through the tower, as on the robot. All of them lie nearer
-    than the A1's 0.15 m minimum range, so the published scan carries them clamped to ``range_min``.
+    than the A1's 0.15 m minimum range, so the published scan carries them as too close (``-inf``),
+    never as a measured distance.
     """
     engine, lidar = mounted
     _, hits = scan_mount.recast(engine, lidar)
@@ -548,8 +549,9 @@ def test_d4_what_the_scan_sees_of_the_robot_is_pinned(mounted):
     assert bodies == {"r_base_link"}
     assert meshes == {"r_tower_standoff", "r_camera_bracket"}
     robot = scan_mount.robot_rays(engine, hits)
-    assert int(robot.sum()) == 29
-    assert float(hits.dist[robot].max()) < lidar.range_min
+    assert int(robot.sum()) == 90
+    assert float(hits.dist[robot].max()) < lidar.detection_min
+    assert np.all(np.asarray(lidar.latest.ranges)[robot] == -np.inf)
 
 
 def test_d5_the_static_tf_chain_is_published(mounted):

@@ -67,10 +67,10 @@ def spawn(
     has cast.
 
     *mounts* are the labels of the scanners the manifest mounts (a ``{label: ...}`` fixture works);
-    each one's range noise is switched off on the running scanner only (``range_stddev`` is
-    live-writable), because the checks compare a published range with a wall's exact distance, while
-    its config keeps the datasheet noise the manifest states. *disabled* are component addresses
-    switched off (a camera that would need a GL context).
+    each one's range noise and quantisation are switched off on the running scanner only (all three
+    keys are live-writable), because the checks compare a published range with a wall's exact
+    distance, while its config keeps the datasheet noise the manifest states. *disabled* are
+    component addresses switched off (a camera that would need a GL context).
     """
     world = {
         "sim": {"timestep": 0.002},
@@ -89,7 +89,10 @@ def spawn(
     engine.setup()
     engine.reset()
     for label in mounts:
-        lidar(engine, f"{owner}.{label}").range_stddev = 0.0
+        scanner = lidar(engine, f"{owner}.{label}")
+        scanner.range_stddev = 0.0
+        scanner.range_stddev_relative = 0.0
+        scanner.range_resolution = 0.0
     engine.step()  # the rate gate starts open, so the first step casts
     return engine
 

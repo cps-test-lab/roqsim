@@ -9,8 +9,10 @@ What this pins, per device:
 * no ray stops on the device's own `mount` body, and no ray's first surface is met from inside a geom
   (hit normal against the ray), which is what a scan origin buried in geometry `exclude_body` does not
   cover would look like;
-* the scan's ray count, field and range window are the manifest's, and the manifest's `fov:` sector
-  is that same window;
+* the scan's ray count, field and header are the manifest's, its last ray sits at `angle_max`, and the
+  manifest's `fov:` sector is its field and physical detection limits;
+* a too-close surface and an empty bearing publish the values the manifest declares for them, which
+  are what the device's driver publishes (pinned in ``DECLARED_OUTPUTS``);
 * the `scan` site in the MJCF sits where the manifest's `frames:` entry says, so the frame published
   for the scan and the point it is cast from cannot drift apart.
 
@@ -59,6 +61,18 @@ VENDOR_FRAME = {
     "sick_tim571": None,
     "velodyne_vlp16": "velodyne",
 }
+
+#: `(too_close, no_return)` each device declares, from its driver (see the manifests' citations).
+#: Every value its driver's source leaves unverified is the REP 117 default.
+DECLARED_OUTPUTS = {
+    "lds01": ("-inf", "+inf"),
+    "rplidar_a1": ("-inf", "+inf"),
+    "rplidar_c1": ("raw", "+inf"),
+    "sick_microscan3": ("-inf", "+inf"),
+    "sick_s300": ("-inf", "+inf"),
+    "sick_tim571": ("-inf", "+inf"),
+}
+_WORDS = {"-inf": -np.inf, "+inf": np.inf, "nan": np.nan}
 
 FRAME_ID = "scanner_frame"
 #: Inner faces of the room walls sit at x = +-HALF and y = +-HALF.
@@ -155,8 +169,10 @@ def _world_dirs(engine: Engine, lidar: LidarPlugin) -> tuple[np.ndarray, np.ndar
 def test_scan_reads_the_walls_at_their_true_range(device):
     engine = _engine(device)
     lidar = _lidar(engine)
-    # Noise off for this one check (a live-writable key): the range must be exact, not within 3 sigma.
+    # Noise and quantisation off for this one check (live-writable keys): the range must be exact.
     lidar.range_stddev = 0.0
+    lidar.range_stddev_relative = 0.0
+    lidar.range_resolution = 0.0
     engine.reset()
     engine.step()
     scan = lidar.latest
@@ -166,10 +182,7 @@ def test_scan_reads_the_walls_at_their_true_range(device):
     assert np.all(np.isfinite(scan.ranges)), "a closed room leaves no ray without a return"
     np.testing.assert_allclose(scan.ranges, expected, atol=1e-4)
     # The forward ray (bearing closest to 0 in the scan frame) on its own, for a readable failure.
-    bearings = (
-        lidar.angle_min
-        + np.arange(lidar.num_rays) * (lidar.angle_max - lidar.angle_min) / lidar.num_rays
-    )
+    bearings = np.linspace(lidar.angle_min, lidar.angle_max, lidar.num_rays)
     fwd = int(np.argmin(np.abs(np.angle(np.exp(1j * bearings)))))
     assert abs(scan.ranges[fwd] - expected[fwd]) < 1e-4
 
@@ -216,17 +229,95 @@ def test_scan_window_is_the_manifest_and_fov_matches_it(device):
     assert len(scan.ranges) == cfg["rays"] == lidar.num_rays
     assert scan.angle_min == pytest.approx(cfg["angle_min"])
     assert scan.angle_max == pytest.approx(cfg["angle_max"])
+    assert scan.angle_increment == pytest.approx(
+        (cfg["angle_max"] - cfg["angle_min"]) / (cfg["rays"] - 1)
+    )
+    last = lidar._build_directions()[-1]
+    np.testing.assert_allclose(
+        last, [np.cos(cfg["angle_max"]), np.sin(cfg["angle_max"]), 0.0], atol=1e-9
+    )
     assert scan.range_min == pytest.approx(cfg["range_min"])
     assert scan.range_max == pytest.approx(cfg["max_range"])
+    near = cfg.get("detection_min", cfg["range_min"])
+    far = cfg.get("detection_max", cfg["max_range"])
+    assert (lidar.detection_min, lidar.detection_max) == pytest.approx((near, far))
     assert lidar.rate_hz == pytest.approx(cfg["rate_hz"])
     assert lidar.range_stddev == pytest.approx(cfg["range_stddev"])
     assert lidar.frame_id == FRAME_ID
     assert lidar.exclude_body == "mount" and not lidar.emit_static_tf
 
     fov = _manifest(device)["fov"]
-    assert (fov["near"], fov["far"]) == pytest.approx((cfg["range_min"], cfg["max_range"]))
-    assert (fov["h_min"], fov["h_max"]) == pytest.approx((cfg["angle_min"], cfg["angle_max"]))
+    assert (fov["near"], fov["far"]) == pytest.approx((near, far))
+    # Each ray stands for one increment of azimuth: rays that fill the turn are a full-turn sector.
+    span = cfg["angle_max"] - cfg["angle_min"]
+    if span + scan.angle_increment >= 2 * np.pi - 1e-9:
+        assert fov["h_min"] == pytest.approx(cfg["angle_min"])
+        assert fov["h_max"] - fov["h_min"] == pytest.approx(2 * np.pi)
+    else:
+        assert (fov["h_min"], fov["h_max"]) == pytest.approx((cfg["angle_min"], cfg["angle_max"]))
     assert fov["v_min"] == fov["v_max"] == 0.0
+
+
+class _Plate(Plugin):
+    """A lidar site at the origin and one small plate straight ahead of it, 3 cm away."""
+
+    DISTANCE = 0.03
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        spec.worldbody.add_site(name="lidar", pos=[0.0, 0.0, 0.5])
+        t = 0.002
+        spec.worldbody.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX,
+            pos=[self.DISTANCE + t, 0.0, 0.5],
+            size=[t, self.DISTANCE, 0.05],
+        )
+
+
+def _declared(value):
+    return None if value == "raw" else _WORDS.get(value, value)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_the_device_publishes_its_declared_too_close_and_no_return(device):
+    cfg = _lidar_config(device)
+    assert (str(cfg["too_close"]), str(cfg["no_return"])) == DECLARED_OUTPUTS[device]
+    near = cfg.get("detection_min", cfg["range_min"])
+    assert _Plate.DISTANCE < near, "the plate must be inside every device's detection_min"
+    lidar_cfg = {
+        **cfg,
+        "site": "lidar",
+        "frame_id": "scan",
+        "exclude_body": "",
+        "emit_static_tf": True,
+        "range_stddev": 0.0,
+        "range_stddev_relative": 0.0,
+        "range_resolution": 0.0,
+        # Short of the default world's walls, so the ray behind the plate meets nothing in range.
+        "max_range": 1.0,
+        "detection_max": 1.0,
+    }
+    engine = Engine(
+        load_config_from_dict(
+            {"sim": {}, "plugins": [{f"{__name__}:_Plate": {}}, {"lidar": lidar_cfg}]}
+        )
+    )
+    engine.ctx.seed = 1
+    engine.setup()
+    engine.reset()
+    engine.step()
+    lidar = _lidar(engine)
+    ranges = np.asarray(lidar.latest.ranges)
+    bearings = np.angle(np.exp(1j * np.linspace(lidar.angle_min, lidar.angle_max, lidar.num_rays)))
+    ahead = int(np.argmin(np.abs(bearings)))
+    behind = int(np.argmin(np.abs(np.angle(np.exp(1j * (bearings - np.pi))))))
+
+    too_close = _declared(DECLARED_OUTPUTS[device][0])
+    if too_close is None:
+        assert ranges[ahead] == pytest.approx(_Plate.DISTANCE / np.cos(bearings[ahead]), abs=1e-6)
+    else:
+        assert ranges[ahead] == too_close
+    no_return = _declared(DECLARED_OUTPUTS[device][1])
+    assert np.isnan(ranges[behind]) if np.isnan(no_return) else ranges[behind] == no_return
 
 
 @pytest.mark.parametrize("device", DEVICES)

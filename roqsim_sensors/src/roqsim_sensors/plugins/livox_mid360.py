@@ -64,10 +64,6 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
     DEFAULT_RANGE_MIN = 0.1
     DEFAULT_MAX_RANGE = 40.0
 
-    #: A point cloud lists real returns, so a blind-zone return is not a point (unlike a
-    #: fixed-length ``LaserScan``, which clamps it to ``range_min`` to keep its slot).
-    CLAMP_NEAR_RETURNS = False
-
     #: Azimuth spans a full 360deg dome and wraps, so the last sample is one step short of
     #: ``h_fov_max`` (no duplicate ray at 2*pi). A bounded, forward-facing FoV subclass (see
     #: :class:`~roqsim_sensors.plugins.seyond_robin_w1g.SeyondRobinW1GPlugin`) sets this ``False`` to
@@ -132,8 +128,9 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
             -1, 3
         )
 
-    def _payload(self, dist: np.ndarray, valid: np.ndarray) -> PointCloud:
-        # Points in the sensor frame: direction * range for each valid return. Frame-independent, so
+    def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray) -> PointCloud:
+        # Points in the sensor frame: direction * range for each measured return. A point cloud
+        # lists real returns, so a blind-zone (`near`) return is not a point. Frame-independent, so
         # the cloud needs no world transform -- the static TF places the sensor frame in the tree.
         points = self._local_dirs[valid] * dist[valid, None]
         return PointCloud(points=np.ascontiguousarray(points, dtype=np.float32))

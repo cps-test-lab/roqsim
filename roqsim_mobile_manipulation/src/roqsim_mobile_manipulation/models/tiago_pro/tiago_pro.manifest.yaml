@@ -175,7 +175,18 @@ components:
     name: base_front_laser
     components:
       - lidar:
-          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
+          # -134 deg: min_angle + 1 deg (gazebo.xacro:34). sick_tim crops the device's 1/3 deg
+          # layout to its min_ang/max_ang in whole steps, last ray included, so -134 .. +135 deg is
+          # 269 * 3 + 1 = 808 rays.
+          angle_min: -2.338741177
+          rays: 808
+          # PAL runs sick_tim, not the device's sick_scan_xd (omni_base_laser_sensors; that TIAGo Pro
+          # uses it, and PAL's ROS 2 port, are unverified). Upstream uos/sick_tim publishes the
+          # launch's range_min 0.05 / range_max 25.0 (launch/sick_tim571_2050101.launch:18-20) and a
+          # device distance of 0 as +inf (src/sick_tim551_2050001_parser.cpp:254-258).
+          range_min: 0.05
+          max_range: 25.0
+          no_return: +inf
           rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
           range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
           topics: {scan: scan_front_raw}   # base_sensors.urdf.xacro:70
@@ -189,7 +200,18 @@ components:
     name: base_rear_laser
     components:
       - lidar:
-          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
+          # -134 deg: min_angle + 1 deg (gazebo.xacro:34). sick_tim crops the device's 1/3 deg
+          # layout to its min_ang/max_ang in whole steps, last ray included, so -134 .. +135 deg is
+          # 269 * 3 + 1 = 808 rays.
+          angle_min: -2.338741177
+          rays: 808
+          # PAL runs sick_tim, not the device's sick_scan_xd (omni_base_laser_sensors; that TIAGo Pro
+          # uses it, and PAL's ROS 2 port, are unverified). Upstream uos/sick_tim publishes the
+          # launch's range_min 0.05 / range_max 25.0 (launch/sick_tim571_2050101.launch:18-20) and a
+          # device distance of 0 as +inf (src/sick_tim551_2050001_parser.cpp:254-258).
+          range_min: 0.05
+          max_range: 25.0
+          no_return: +inf
           rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
           range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
           topics: {scan: scan_rear_raw}    # base_sensors.urdf.xacro:65

@@ -32,7 +32,7 @@ components:
       site: lidar
       rays: 1440                     # 360 deg / 0.25 deg
       angle_min: 0.0
-      angle_max: 6.283185307         # 2*pi (full 360 deg)
+      angle_max: 6.278821984         # 2*pi - 0.25 deg: the full turn, last ray one step short of 2*pi
       range_min: 0.1
       max_range: 10.0                # assumption; costmap clips to 2.5/3.0 m anyway
       rate_hz: 30.0                  # code repo: 30 Hz

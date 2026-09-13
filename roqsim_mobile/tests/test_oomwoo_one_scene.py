@@ -15,7 +15,7 @@ mounted forward of the axle, tips it onto its bumper ring.
 
 ``test_the_wall_reads_its_true_range`` pins the lidar mount. The site lies inside the vendor's lidar
 puck (``base_scan``), so the rays skip that one housing body and no other robot geometry. Excluding
-any other body leaves the puck in the way, and every ray then reads ``range_min`` from inside it.
+any other body leaves the puck in the way, and every ray then reads too close (``-inf``) from inside it.
 """
 
 from __future__ import annotations
@@ -291,7 +291,7 @@ def test_the_wall_reads_its_true_range():
         scan = lidar.latest
         ranges = np.asarray(scan.ranges)
         assert ranges[0] == pytest.approx(WALL_FACE, abs=1e-3), "bearing 0 looks along +x"
-        assert ranges.min() > lidar.range_min, "a ray is clamped to range_min"
+        assert ranges.min() > lidar.range_min, "a ray reads too close"
         sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "o_lidar")
         angles = scan.angle_min + scan.angle_increment * np.arange(len(ranges))
         local = np.stack([np.cos(angles), np.sin(angles), np.zeros_like(angles)], axis=1)

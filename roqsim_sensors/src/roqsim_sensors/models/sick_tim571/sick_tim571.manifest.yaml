@@ -22,20 +22,37 @@ components:
       frame_id: "{frame_id}"
       exclude_body: mount
       emit_static_tf: false
-      # Data sheet: aperture angle 270 deg, angular resolution 0.33 deg; 270 / 0.33 = 818 rays, the
-      # count PAL's simulation uses too.
-      rays: 818
+      # What the driver publishes: SICKAG/sick_scan_xd @ a562c5d098de ("driver"), SICK's ROS 2 driver,
+      # with its launch/sick_tim_5xx.launch. A robot whose vendor runs another driver overrides the
+      # published values in its own manifest (PAL's TIAGo Pro runs sick_tim).
+      #
+      # Layout: angle_max = angle_min + (n - 1) * increment (driver/src/sick_lmd_scandata_parser.cpp:
+      # 156-158), so the last ray sits at angle_max; the launch's min_ang/max_ang +-135 deg are written
+      # to the scanner, which crops to them. Data sheet: aperture 270 deg at 0.33 deg, so
+      # 270 * 3 + 1 = 811 rays (computed; the device's count is unverified).
+      rays: 811
       angle_min: -2.356194490   # -135 deg
       angle_max: 2.356194490    # +135 deg
-      range_min: 0.05           # data sheet: working range 0.05 m ... 25 m
-      max_range: 25.0           # data sheet: working range 0.05 m ... 25 m (8 m typical at 10% remission)
+      # Header: launch/sick_tim_5xx.launch:52-53 sets range_min 0.0 and range_max 100.0, copied into
+      # the message (driver/src/sick_generic_parser.cpp:1477-1478). Only published; the data sheet's
+      # working range 0.05 m ... 25 m (8 m typical at 10% remission) decides which rays measure.
+      range_min: 0.0
+      max_range: 100.0
+      detection_min: 0.05
+      detection_max: 25.0
+      # The driver passes the device's distance through (range_filter_handling 0, min_intensity 0).
+      # The TiM's code for a near or absent echo is unverified, so both keep the REP 117 defaults.
+      too_close: -inf           # unverified device code; REP 117 default
+      no_return: +inf           # unverified device code; REP 117 default
       rate_hz: 15.0             # data sheet: scanning frequency 15 Hz
       # Data sheet: statistical error < 20 mm (typical, 90% remission up to maximum range). The data
-      # sheet does not say which sigma; taken as 1 sigma.
+      # sheet does not say which sigma; taken as 1 sigma. Its systematic error (+-60 mm) has no
+      # stated distribution, so no per-instance bias is modelled.
       range_stddev: 0.02
+      # Not modelled: the RSSI the launch publishes as intensities.
 
 # Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
-# field and range window above.
+# field and its physical detection limits.
 fov:
   near: 0.05
   far: 25.0

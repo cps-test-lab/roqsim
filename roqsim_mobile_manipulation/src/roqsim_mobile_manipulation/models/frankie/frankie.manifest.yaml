@@ -74,7 +74,7 @@ components:
   # rather than inherit these. Range is likewise the plugin's default rather than a rated figure.
   - lidar:
       site: lidar
-      rays: 500                     # 250 deg at 0.5 deg spacing
+      rays: 501                     # 250 deg at 0.5 deg spacing, both edges sampled
       angle_min: -2.1816615649      # -125 deg
       angle_max: 2.1816615649       # +125 deg
       rate_hz: 15.0

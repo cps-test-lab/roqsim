@@ -370,18 +370,23 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
 
 
 def test_c2_the_mounted_scan_is_the_lds01(mounted):
-    """C2: the scan the robot publishes is the LDS-01's datasheet window and noise.
+    """C2: the scan the robot publishes is the LDS-01's driver layout, datasheet window and noise.
 
     The paper states no lidar parameter at all (spec gap g_lidar_params), so these values are the
     assumption of record -- pinned here so a change to the device or the mount is deliberate.
     """
     _, lidar = mounted
     assert lidar.num_rays == 360
-    assert (lidar.angle_min, lidar.angle_max) == pytest.approx((0.0, 2 * math.pi), abs=1e-6)
+    # hls_lfcd_lds_driver: 0 .. 2 pi - 1 deg, last ray at angle_max.
+    assert (lidar.angle_min, lidar.angle_max) == pytest.approx(
+        (0.0, 2 * math.pi - math.radians(1.0)), abs=1e-6
+    )
     assert lidar.range_min == pytest.approx(0.12)
     assert lidar.range_max == pytest.approx(3.5)
     assert lidar.rate_hz == pytest.approx(5.0)
     assert lidar.config["range_stddev"] == pytest.approx(0.01)
+    assert lidar.config["range_stddev_relative"] == pytest.approx(0.035)
+    assert lidar.config["range_stddev_relative_from"] == pytest.approx(0.5)
     assert lidar.frame_id == "base_scan"
 
 

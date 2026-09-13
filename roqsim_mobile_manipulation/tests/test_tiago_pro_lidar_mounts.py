@@ -214,10 +214,14 @@ def test_the_static_tf_and_topic_are_pals(engine, label):
 def test_scan_values_are_pals_where_pal_differs_from_the_datasheet(engine, label):
     lidar = _lidars(engine)[label]
     assert lidar.address == f"tp.{label}.lidar"
-    assert lidar.num_rays == 818  # 818 * 270 deg / 270 deg
+    assert lidar.num_rays == 808  # -134 .. +135 deg at 1/3 deg, both edges sampled
     assert lidar.angle_min == pytest.approx(-134 * DEG)
     assert lidar.angle_max == pytest.approx(135 * DEG)
+    assert lidar.angle_increment == pytest.approx(DEG / 3)
+    # sick_tim's header, where the device's sick_scan_xd would publish 0.0 / 100.0.
     assert (lidar.range_min, lidar.range_max, lidar.rate_hz) == (0.05, 25.0, 10.0)
+    assert (lidar.detection_min, lidar.detection_max) == (0.05, 25.0)
+    assert (lidar.too_close, lidar.no_return) == (-np.inf, np.inf)
     assert lidar.config["range_stddev"] == 0.01  # zeroed on the instance by the fixture
     assert lidar.exclude_body == "mount" and not lidar.emit_static_tf
 

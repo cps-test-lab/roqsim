@@ -31,7 +31,7 @@ components:
       frame_id: laser
       rays: 720
       angle_min: 0.0
-      angle_max: 6.283185307
+      angle_max: 6.274458661         # 2*pi - 0.5 deg: the full turn, last ray one step short of 2*pi
       range_min: 0.2
       max_range: 40.0
       rate_hz: 10.0

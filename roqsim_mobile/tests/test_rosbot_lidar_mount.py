@@ -170,21 +170,26 @@ def test_topic_frame_and_scan_values():
         assert "static_tf" not in scan.backend["ros2"]
         lidar = _lidar(engine)
         assert lidar.address == "rb.rplidar.lidar"
-        # RPLIDAR C1 datasheet (the device) and Husarion's std_dev 0.02 override.
+        # RPLIDAR C1 as sllidar_ros2 publishes it (the device) and Husarion's std_dev 0.02 override.
         assert (lidar.num_rays, lidar.range_min, lidar.range_max, lidar.rate_hz) == (
-            500,
+            720,
             0.05,
             12.0,
             10.0,
         )
         assert lidar.range_stddev == 0.02
         assert (lidar.angle_min, lidar.angle_max) == (-3.141592654, 3.141592654)
+        assert lidar.too_close is None, "a too-close surface is published at its distance"
     finally:
         engine.shutdown()
 
 
 def test_bearings_follow_the_vendor_laser_frame():
-    """`laser` is yawed pi: bearing 0 looks backwards along the robot, +pi/2 to the robot's right."""
+    """`laser` is yawed pi: bearing 0 looks backwards along the robot, +pi/2 to the robot's right.
+
+    720 rays over -pi .. pi inclusive put no ray exactly on either bearing, so each is checked on the
+    ray nearest it, which lies within half an increment.
+    """
     engine = _engine()
     try:
         lidar, scan, origin, dirs, bearings = _scan(engine)
@@ -193,21 +198,25 @@ def test_bearings_follow_the_vendor_laser_frame():
         backward = -np.array([math.cos(yaw), math.sin(yaw), 0.0])
         right = np.array([math.sin(yaw), -math.cos(yaw), 0.0])
         for bearing, expect in ((0.0, backward), (math.pi / 2, right)):
-            i = int(np.argmin(np.abs(np.angle(np.exp(1j * (bearings - bearing))))))
-            assert abs(bearings[i] - bearing) < 1e-9, "a ray lands exactly on this bearing"
-            np.testing.assert_allclose(dirs[i], expect, atol=1e-9)
             np.testing.assert_allclose(
                 rot @ [math.cos(bearing), math.sin(bearing), 0], expect, atol=1e-9
             )
-        # The wall behind the robot, straight down bearing 0: its face lies on the plane through
-        # the room centre offset -HALF along world x, reached along `backward`.
+            i = int(np.argmin(np.abs(np.angle(np.exp(1j * (bearings - bearing))))))
+            assert abs(bearings[i] - bearing) <= lidar.angle_increment / 2 + 1e-12
+            np.testing.assert_allclose(
+                dirs[i], rot @ [math.cos(bearings[i]), math.sin(bearings[i]), 0], atol=1e-9
+            )
+            np.testing.assert_allclose(dirs[i], expect, atol=math.sin(lidar.angle_increment))
+        # The wall behind the robot, along the ray nearest bearing 0: its face lies on the plane
+        # through the room centre offset HALF along a world axis.
+        fwd = int(np.argmin(np.abs(bearings)))
+        ray = dirs[fwd]
         centre = np.array([SPAWN[0], SPAWN[1]])
         t = np.inf
         for axis in (0, 1):
             for sign in (-1.0, 1.0):
-                if backward[axis] * sign > 1e-12:
-                    t = min(t, (centre[axis] + sign * HALF - origin[axis]) / backward[axis])
-        fwd = int(np.argmin(np.abs(bearings)))
+                if ray[axis] * sign > 1e-12:
+                    t = min(t, (centre[axis] + sign * HALF - origin[axis]) / ray[axis])
         assert abs(scan.ranges[fwd] - t) < 1e-4, (scan.ranges[fwd], t)
     finally:
         engine.shutdown()
@@ -233,7 +242,8 @@ def test_no_ray_starts_inside_the_robot_and_the_mount_never_returns():
     The body mesh is an open shell (Husarion's GLB, reduced), so a ray that grazes one of its open
     edges can meet a back face, and a ray between two of its faces can pass through to the room.
     Such a back-face ray is an isolated one: a neighbour meets the same geom from outside at nearly
-    the same range. A scan origin buried in geometry would meet it from inside on a run of rays.
+    the same range -- within a centimetre, since a ray behind an open edge lands on the shell's far
+    side. A scan origin buried in geometry would meet it from inside on a run of rays.
     """
     engine = _engine()
     try:
@@ -254,23 +264,24 @@ def test_no_ray_starts_inside_the_robot_and_the_mount_never_returns():
             assert any(
                 hits.geomid[j] == hits.geomid[i]
                 and facing[j] < 0
-                and abs(hits.dist[j] - hits.dist[i]) < 0.005
+                and abs(hits.dist[j] - hits.dist[i]) < 0.01
                 for j in ((i - 1) % n, (i + 1) % n)
             ), (
                 f"ray {i} meets geom {hits.geomid[i]} from inside and no neighbour meets it from "
                 f"outside: the scan origin is inside robot geometry"
             )
-        assert int((facing >= 0).sum()) == 3, "the open-edge rays of the body mesh changed"
+        assert int((facing >= 0).sum()) == 5, "the open-edge rays of the body mesh changed"
 
         bodies = {
             mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.geom_bodyid[g]))
             for g in hits.geomid[robot]
         }
         assert bodies == OUTSIDE_HIT_BODIES
-        assert int(robot.sum()) == 36
-        # Where the body returns, the published scan reads it -- pushed out to range_min where it is
-        # inside the C1's 0.05 m blind zone -- and everywhere else it reads the room.
-        np.testing.assert_allclose(scan.ranges, np.maximum(hits.dist, lidar.range_min), atol=1e-4)
-        assert int((robot & (hits.dist < lidar.range_min)).sum()) == 6
+        assert int(robot.sum()) == 51
+        # Where the body returns, the published scan reads it -- at its true distance even inside
+        # the C1's 0.05 m range_min, which sllidar_ros2 publishes unmapped -- and everywhere else it
+        # reads the room.
+        np.testing.assert_allclose(scan.ranges, hits.dist, atol=1e-4)
+        assert int((robot & (hits.dist < lidar.detection_min)).sum()) == 8
     finally:
         engine.shutdown()

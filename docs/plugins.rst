@@ -1013,8 +1013,9 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
   nothing to verify and reports ``untested``.
 
 **Only keys the sensor reads per frame may be written.** Each sensor declares its own allowlist; on
-the ray-casting sensors that is ``range_stddev``, ``dropout_percent``, ``max_range``, ``range_min``
-and ``rate_hz``, and on the ``imu`` it is the noise, the biases and ``orientation`` -- so a trial can
+the ray-casting sensors that is ``range_stddev``, ``range_stddev_relative``,
+``range_stddev_relative_from``, ``range_resolution``, ``dropout_percent``, ``max_range``, ``range_min``
+and ``rate_hz``, plus ``detection_min`` and ``detection_max`` on the 2D ``lidar``, and on the ``imu`` it is the noise, the biases and ``orientation`` -- so a trial can
 drop the attitude channel or triple the rate noise partway through, which is what an IMU failure
 looks like to a localisation filter. Everything else is refused **at load**, by name, with the reason — ``rays``,
 ``angle_min`` and ``angle_max`` because they change a ``LaserScan``'s length or the bearing its

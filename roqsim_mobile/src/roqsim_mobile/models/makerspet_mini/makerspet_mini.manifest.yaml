@@ -37,7 +37,7 @@ components:
       frame_id: base_scan
       rays: 360
       angle_min: 0.0
-      angle_max: 6.283185307
+      angle_max: 6.265732015         # 2*pi - 1 deg: the full turn, last ray one step short of 2*pi
       range_min: 0.1
       max_range: 10.0
       rate_hz: 5.0

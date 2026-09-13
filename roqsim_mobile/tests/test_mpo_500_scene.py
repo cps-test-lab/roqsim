@@ -280,7 +280,7 @@ def test_no_ray_starts_inside_robot_geometry(scan):
         scanner = lidar(scan, f"p.{label}")
         inside, _ = robot_hits(scan, scanner, "p_")
         assert not inside, f"{label}: {({body: len(d) for body, d in inside.items()})}"
-        assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, f"{label}: a ray is clamped"
+        assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, f"{label}: a ray reads too close"
 
 
 def test_the_scans_see_no_part_of_the_robot(scan):

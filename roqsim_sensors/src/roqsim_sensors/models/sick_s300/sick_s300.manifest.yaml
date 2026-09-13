@@ -25,26 +25,49 @@ components:
       frame_id: "{frame_id}"
       exclude_body: mount
       emit_static_tf: false
-      # Data sheet: scanning angle 270 deg, angular resolution 0.5 deg. Rays are spaced
-      # (angle_max - angle_min) / rays, so 540 rays over the 270 deg keep the 0.5 deg step.
-      rays: 540
+      # What the driver publishes: neobotix/neo_sick_s300-2 @ c3d9f4aaf1 ("driver"), the ROS 2 driver
+      # Neobotix's bringup launches for its S300 robots.
+      #
+      # Layout: the driver hard-codes angle_min/angle_max -135/+135 deg and publishes
+      # angle_increment = (angle_max - angle_min) / (num_points - 1) (src/neo_sick_s300_node.cpp:49-50,
+      # 86-90), so the last ray sits at +135 deg. At the data sheet's 0.5 deg that is 541 rays; the
+      # driver takes the count from the telegram, and the device's own count is unverified.
+      rays: 541
       angle_min: -2.356194490   # -135 deg
       angle_max: 2.356194490    # +135 deg
-      # ASSUMPTION: neither the data sheet nor the OI states a minimum distance; this is the Neobotix
-      # simulation's value (mp_400_gazebo.urdf.xacro).
-      range_min: 0.1
-      max_range: 30.0           # data sheet: distance measuring range 30 m
+      # Header: hard-coded range_min 0.01 and range_max 29.0 (src/neo_sick_s300_node.cpp:51-52). These
+      # are only published; the physical limits below decide which rays measure.
+      range_min: 0.01
+      max_range: 29.0
+      # Physical limits: OI 4.3.2.1, a 5 cm wide area in front of the optics cover is not measured;
+      # data sheet, distance measuring range 30 m. A return between 29 and 30 m is published above
+      # the header's range_max, as the driver does.
+      detection_min: 0.05
+      detection_max: 30.0
+      # The driver publishes the telegram's distance unmapped (no inf, NaN or clamp). What the S300
+      # encodes for a return inside its near range, and for no return, is unverified, so both keep
+      # the REP 117 defaults.
+      too_close: -inf           # unverified device code; REP 117 default
+      no_return: +inf           # unverified device code; REP 117 default
+      # Distance = (block & 0x1FFF) * 0.01 m (src/SickS300Receiver.cpp:320): 10 mm steps.
+      range_resolution: 0.01
       # OI 12.3 "Response times": basic response time 80 ms at the default 2-fold multiple sampling,
-      # +40 ms per further sample, so one scan takes 40 ms. Derived; no scan rate is printed.
+      # +40 ms per further sample, so one scan takes 40 ms; the driver's scan_cycle_time default is
+      # the same 0.040 s. Derived; no scan rate is printed.
       rate_hz: 25.0
       # OI technical data, measured data output, Medium Range: statistical including systematic
-      # error at 1 sigma +-28 mm.
+      # error at 1 sigma +-28 mm, stated up to 2 m and applied here at every range. The systematic
+      # part (+-20 mm) is inside that figure; the OI gives no distribution for it, so no separate
+      # per-instance bias is modelled.
       range_stddev: 0.028
+      # Not modelled: the reflector flag the driver publishes as intensity 0/1; and the Neobotix
+      # neo_scan_filter_node, whose masked sectors read 0.0 and which, a known defect, also zeroes
+      # the last ray of every scan (src/neo_scan_filter_node.cpp:146-149).
 
 # Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
-# field and range window above.
+# field and its physical detection limits.
 fov:
-  near: 0.1
+  near: 0.05
   far: 30.0
   h_min: -2.356194490
   h_max: 2.356194490
