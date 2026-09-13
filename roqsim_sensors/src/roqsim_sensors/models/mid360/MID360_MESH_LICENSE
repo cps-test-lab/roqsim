@@ -22,9 +22,9 @@ Conversion pipeline (no geometry authored by hand):
                    x=y=0), decimated (body ~6.5k tris, dome ~0.9k tris), exported axes
                    1:1 with Z up.
 
-The underlying CAD geometry is Livox Technology's and its copyright remains with Livox;
-it is redistributed here only as a decimated simulation asset for the Mid-360 sensor
-model. Refer to Livox's terms for the original CAD. If Livox's terms do not permit
-redistribution of this derived mesh, remove these .obj files and the mesh geoms in
-mid360.xml -- the `livox_mid360` capture plugin does not need them (it casts from the
-`mid360` site), and a primitive-only housing can stand in.
+The underlying CAD geometry is Livox Technology's and its copyright remains with Livox.
+Because redistribution of the derived meshes is not clearly permitted, they are generated
+locally and git-ignored (external/external_assets.yaml), and mid360.xml does not reference
+them: the device's housing is primitives sized from the dimensional drawing in Livox's
+Mid-360 User Manual, so the model compiles in a checkout without these files. Refer to
+Livox's terms before redistributing the .obj files.

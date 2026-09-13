@@ -251,3 +251,124 @@ def test_a_return_beyond_max_range_is_not_a_cloud_point():
     clamped.setup()
     clamped.reset()
     assert len(_settled_cloud(clamped).points) == 0
+
+
+# -- too close and no return, as the device's driver publishes them -------------------------------
+
+
+def test_too_close_and_no_return_are_dropped_by_default():
+    # One ray at a wall 0.05 m away (inside the 0.1 m blind zone), one into the void.
+    engine = Engine(_single_ray_world(0.1, max_range=10.0))
+    engine.setup()
+    engine.reset()
+    assert len(_settled_cloud(engine).points) == 0
+
+
+def test_origin_publishes_a_point_at_the_sensor_for_too_close_and_no_return():
+    # The wall face is at 0.05 m: nearer than range_min 0.1, so the device cannot measure it.
+    near = Engine(_single_ray_world(0.1, max_range=10.0, too_close="origin"))
+    near.setup()
+    near.reset()
+    np.testing.assert_array_equal(_settled_cloud(near).points, [[0.0, 0.0, 0.0]])
+
+    void = Engine(_single_ray_world(20.0, max_range=10.0, no_return="origin"))
+    void.setup()
+    void.reset()
+    np.testing.assert_array_equal(_settled_cloud(void).points, [[0.0, 0.0, 0.0]])
+
+
+def test_a_measured_return_is_unaffected_by_the_output_settings():
+    engine = Engine(_single_ray_world(2.0, max_range=10.0, too_close="origin", no_return="origin"))
+    engine.setup()
+    engine.reset()
+    (point,) = _settled_cloud(engine).points
+    assert np.isclose(point[0], 1.95, atol=1e-3)
+
+
+def test_validate_config_refuses_an_unknown_output():
+    errors = LivoxMid360Plugin().validate_config({"too_close": "-inf", "no_return": "nan"})
+    assert any("too_close" in e for e in errors) and any("no_return" in e for e in errors)
+
+
+# -- the mid360 device model -----------------------------------------------------------------------
+
+MANUAL_ORIGIN_ABOVE_BOTTOM = 0.047  # Livox Mid-360 User Manual v1.2, Appendix, p. 19
+MANUAL_HEIGHT = 0.060
+MANUAL_FOOTPRINT = 0.065
+
+
+def _device_world(**spawn):
+    return load_config_from_dict(
+        {
+            "sim": {},
+            "plugins": [{"spawn_sensor": {"model": "mid360", **spawn}, "name": "lidar"}],
+        }
+    )
+
+
+def test_the_device_compiles_from_committed_files_only():
+    from roqsim_sensors.models import MODELS_DIR
+
+    xml = (MODELS_DIR / "mid360" / "mid360.xml").read_text()
+    assert "<mesh" not in xml, "a mesh reference would make the device depend on a generated asset"
+    mujoco.MjModel.from_xml_path(str(MODELS_DIR / "mid360" / "mid360.xml"))
+
+
+def test_the_scan_site_is_the_manual_origin_above_the_housing():
+    from roqsim_sensors.models import MODELS_DIR
+
+    m = mujoco.MjModel.from_xml_path(str(MODELS_DIR / "mid360" / "mid360.xml"))
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    site = d.site_xpos[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "mid360")]
+    body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    lo = np.full(3, np.inf)
+    hi = np.full(3, -np.inf)
+    for g in range(m.ngeom):
+        if m.geom_bodyid[g] != body or g == mujoco.mj_name2id(
+            m, mujoco.mjtObj.mjOBJ_GEOM, "mid360_connector"
+        ):
+            continue
+        lo = np.minimum(lo, d.geom_xpos[g] - m.geom_aabb[g][3:])
+        hi = np.maximum(hi, d.geom_xpos[g] + m.geom_aabb[g][3:])
+    np.testing.assert_allclose(site[2] - lo[2], MANUAL_ORIGIN_ABOVE_BOTTOM, atol=1e-4)
+    np.testing.assert_allclose(hi[2] - lo[2], MANUAL_HEIGHT, atol=2e-4)
+    np.testing.assert_allclose(hi[:2] - lo[:2], [MANUAL_FOOTPRINT] * 2, atol=1e-4)
+    np.testing.assert_allclose(m.body_mass[body], 0.265)
+
+
+def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_conventions():
+    engine = Engine(_device_world(pos=[0.0, 0.0, 1.0]))
+    engine.setup()
+    (plugin,) = [p for p in engine.plugins if isinstance(p, LivoxMid360Plugin)]
+    assert (plugin.frame_id, plugin.too_close, plugin.no_return) == (
+        "livox_frame",
+        "origin",
+        "origin",
+    )
+    assert (plugin.range_min, plugin.range_max, plugin.exclude_body) == (0.1, 40.0, "mount")
+    cloud = _endpoint(engine).backend["ros2"]
+    assert cloud["frame_id"] == "livox_frame" and cloud["topic"] == "livox/lidar"
+    assert "static_tf" not in cloud  # the mount publishes the frames: chain instead
+    frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
+    (tf,) = frames.backend["ros2"]["static_tf"]
+    assert (tf["parent"], tf["child"]) == ("world", "livox_frame")
+    np.testing.assert_allclose(tf["translation"], [0.0, 0.0, 1.0], atol=1e-9)
+    m, d = engine.ctx.model, engine.ctx.data
+    mujoco.mj_forward(m, d)
+    np.testing.assert_allclose(d.site_xpos[plugin._site_id], [0.0, 0.0, 1.0], atol=1e-9)
+
+
+def test_the_device_publishes_one_point_per_ray_with_nothing_in_range():
+    # The default world is a walled room, so point the dome at the open sky: every ray is no return.
+    engine = Engine(_device_world(pos=[0.0, 0.0, 50.0]))
+    engine.ctx.seed = (
+        1  # the manifest's range noise draws, and a test driving an Engine owns the seed
+    )
+    engine.setup()
+    engine.reset()
+    (plugin,) = [p for p in engine.plugins if isinstance(p, LivoxMid360Plugin)]
+    engine.step()
+    points = plugin.latest.points
+    assert len(points) == plugin.num_rays
+    assert not points.any()

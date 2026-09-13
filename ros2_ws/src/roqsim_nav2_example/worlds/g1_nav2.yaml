@@ -1,10 +1,13 @@
 # Unitree G1 world for the nav2 example.
 #
-# spawn_robot pulls in the unitree_g1 robot description (its g1_locomotion controller + lidar), so
-# this world only places the robot and wires transport. The ros2_bridge publishes clock/odom/
-# tf(odom->base_link)/scan/joint_states, and -- because the lidar declares its mount frame -- the
-# static base_link->lidar TF, so the launch file needs no robot_state_publisher / URDF chain.
-# A static map->odom identity transform (in the launch file) stands in for localization.
+# spawn_robot pulls in the unitree_g1 robot description (its g1_locomotion controller and the Livox
+# Mid-360 in its head), so this world only places the robot and wires transport. The ros2_bridge
+# publishes clock/odom/tf(odom->base_link)/joint_states, the Mid-360's point cloud on livox/lidar
+# (sensor_msgs/PointCloud2, frame mid360_link), and the static chain base_link->torso_link->mid360_link
+# from the robot's and the sensor mount's frames, so the launch file needs no robot_state_publisher /
+# URDF chain. nav2 reads a LaserScan: nav2_g1.launch.py projects the cloud into /scan with
+# pointcloud_to_laserscan. A static map->odom identity transform (in the launch file) stands in for
+# localization.
 #
 # timestep 0.002 (500 Hz): the G1 locomotion policy's PD loop is tuned for this step.
 
@@ -14,7 +17,8 @@ sim:
   pacing: realtime
 
 components:
-  # g1_locomotion + lidar come from the unitree_g1 model manifest (models/unitree_g1.manifest.yaml).
+  # g1_locomotion + the mid360 mount come from the unitree_g1 model manifest
+  # (models/unitree_g1.manifest.yaml).
   - spawn_robot:
       model: unitree_g1
       pose:
@@ -22,8 +26,7 @@ components:
         orientation: {yaw: 0.0}
     name: robot
 
-  # The bridge reads the robot's declared endpoints from ctx.interface and publishes
-  # clock/odom/tf(odom->base_link)/scan/joint_states + the static base_link->lidar TF.
+  # The bridge reads the robot's declared endpoints from ctx.interface and publishes them.
   - ros2_bridge: {}
 
   - sim_interfaces: {}
