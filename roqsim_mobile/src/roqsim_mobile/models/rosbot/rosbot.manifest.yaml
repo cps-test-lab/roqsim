@@ -35,6 +35,10 @@ components:
   # the vendor chain rplidar_link -> laser; Husarion builds it with use_tf_prefix False, so the scan
   # frame is the bare `laser`. The C1 skips only its own housing, so the camera-mount post of the
   # body mesh beside it is a real return -- see the port log.
+  #
+  # The scan is the device's, as sllidar_ros2 publishes it; only the topic is overridden. Husarion's
+  # C1 block gives a Gazebo std_dev of 0.02 m (slamtec_rplidar.urdf.xacro:126 @ 5f783f8), a
+  # simulation value, so the data sheet's accuracy stands.
   - spawn_sensor:
       model: rplidar_c1
       parent_frame: cover_link
@@ -44,10 +48,6 @@ components:
     name: rplidar
     components:
       - lidar:
-          # Husarion's value for the C1 on this robot: its C1 block states std_dev 0.02 m
-          # (slamtec_rplidar.urdf.xacro:126 @ 5f783f8), where the device takes the data sheet's
-          # +-30 mm accuracy as 1 sigma.
-          range_stddev: 0.02
           # Relative, so the robot's namespace scopes it: `<ns>/scan` (slamtec_rplidar.urdf.xacro:286).
           topics: {scan: scan}
 

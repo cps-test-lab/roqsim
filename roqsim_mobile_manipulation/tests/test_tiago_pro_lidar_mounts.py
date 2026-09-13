@@ -11,13 +11,15 @@ Fixtures are PAL's numbers, not the model's:
   ``omni_base_description/urdf/base/base_sensors.urdf.xacro``: ``laser_height`` 0.13244 (:62); rear
   laser at (-0.27512, 0.18297), rpy (-180, 0, 135) deg, topic ``scan_rear_raw`` (:65-67); front laser
   at (0.27512, -0.18297), rpy (-180, 0, -45) deg, topic ``scan_front_raw`` (:70-72); both on
-  ``base_link``, ``update_rate`` 10 (:28). ``urdf/base/base.urdf.xacro:64-69``: base_link's
+  ``base_link``. ``urdf/base/base.urdf.xacro:64-69``: base_link's
   0.58 x 0.39 x 0.03 m collision box at z 0.132. ``meshes/base/base_link.stl``: across that box's
   z-range the visual body is a 0.500 x 0.318 m waist.
 * ``pal_urdf_utils`` @ 775cdd6886296e6c00f17dbdfd9bcdd20e0e6622,
-  ``urdf/laser/sick_tim571_laser.gazebo.xacro``: scan stamped in ``${name}_link`` (:25); 818 samples
-  over 270 deg (:32) from min + 1 deg (:34) to max; 0.05-25 m (:39-40); stddev 0.01 (:46), PAL's
-  value for the TiM571 on this robot, over the device's data sheet 0.02.
+  ``urdf/laser/sick_tim571_laser.gazebo.xacro``: scan stamped in ``${name}_link`` (:25). Its window,
+  update rate and noise are simulation values and set nothing here.
+* uos/sick_tim ``launch/sick_tim571_2050101.launch``, the driver PAL runs: min_ang/max_ang +-135 deg
+  (:9-10), range_min 0.05, range_max 25.0 (:18-20). Field, rays, rate and noise are the TiM571 data
+  sheet's, as the ``sick_tim571`` device carries them.
 
 **The scanners look out through the base's waist.** PAL's collision box at the scan height encloses
 both scan origins; PAL's visual body is recessed there, and both scanners stand outside that recess.
@@ -212,19 +214,20 @@ def test_the_static_tf_and_topic_are_pals(engine, label):
 
 
 @pytest.mark.parametrize("label", list(LASERS))
-def test_scan_values_are_pals_where_pal_differs_from_the_datasheet(engine, label):
+def test_scan_values_are_the_devices_as_sick_tim_publishes_them(engine, label):
     lidar = _lidars(engine)[label]
     assert lidar.address == f"tp.{label}.lidar"
-    assert lidar.num_rays == 808  # -134 .. +135 deg at 1/3 deg, both edges sampled
-    assert lidar.angle_min == pytest.approx(-134 * DEG)
+    assert lidar.num_rays == 811  # -135 .. +135 deg at 1/3 deg, both edges sampled
+    assert lidar.angle_min == pytest.approx(-135 * DEG)
     assert lidar.angle_max == pytest.approx(135 * DEG)
     assert lidar.angle_increment == pytest.approx(DEG / 3)
-    # sick_tim's header, where the device's sick_scan_xd would publish 0.0 / 100.0.
-    assert (lidar.range_min, lidar.range_max, lidar.rate_hz) == (0.05, 25.0, 10.0)
+    # sick_tim's header, where the device's sick_scan_xd would publish 0.0 / 100.0; the data sheet's
+    # 15 Hz, not PAL's Gazebo update_rate 10.
+    assert (lidar.range_min, lidar.range_max, lidar.rate_hz) == (0.05, 25.0, 15.0)
     assert (lidar.detection_min, lidar.detection_max) == (0.05, 25.0)
     assert (lidar.too_close, lidar.no_return) == (-np.inf, np.inf)
-    # PAL's stddev 0.01, not the device's data sheet 0.02; zeroed on the instance by the fixture.
-    assert lidar.config["range_stddev"] == 0.01
+    # The data sheet's < 20 mm, not PAL's Gazebo stddev 0.01; zeroed on the instance by the fixture.
+    assert lidar.config["range_stddev"] == 0.02
     assert lidar.exclude_body == "mount" and not lidar.emit_static_tf
 
 

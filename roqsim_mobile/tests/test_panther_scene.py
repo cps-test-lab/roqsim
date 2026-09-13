@@ -313,15 +313,17 @@ def test_c6_the_tf_chain_and_topic(scan):
 
 
 def test_c7_the_scan_is_the_s3_devices(scan):
-    """C7: the robot publishes what sllidar_ros2 publishes for an S3, with Husarion's range noise."""
+    """C7: the robot publishes what sllidar_ros2 publishes for an S3, with the device's range noise.
+
+    Husarion's Gazebo std_dev 0.015 (slamtec_rplidar.urdf.xacro:48 @ 5f783f8) is a simulation value
+    and overrides nothing.
+    """
     from roqsim_sensors.models import MODELS_DIR
 
     manifest = yaml.safe_load((MODELS_DIR / "rplidar_s3" / "rplidar_s3.manifest.yaml").read_text())
     (device,) = [c["lidar"] for c in manifest["components"] if "lidar" in c]
     scanner = lidar(scan, f"{OWNER}.{LABEL}")
     for key in ("rays", "angle_min", "angle_max", "range_min", "max_range", "too_close",
-                "no_return", "rate_hz"):
+                "no_return", "rate_hz", "range_stddev"):
         assert scanner.config[key] == device[key], f"{key}: {scanner.config[key]} != {device[key]}"
-    # husarion_components_description slamtec_rplidar.urdf.xacro:48 @ 5f783f8
-    assert scanner.config["range_stddev"] == 0.015
     assert scanner.num_rays == 3240

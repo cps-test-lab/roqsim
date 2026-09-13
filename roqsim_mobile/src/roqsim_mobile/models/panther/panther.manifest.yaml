@@ -33,8 +33,9 @@ components:
   # Husarion's macro names the mount link and the scan frame after the component
   # (slamtec_rplidar.urdf.xacro:249-278 @ 5f783f8): `second_lidar_link` at the joint origin, declared
   # below, and `second_lidar_laser` 30.5 mm above it, turned half a revolution, which the device
-  # publishes. The scan is the device's, as sllidar_ros2 publishes it, but for Husarion's range noise
-  # and the topic.
+  # publishes. The scan is the device's, as sllidar_ros2 publishes it, but for the topic. Husarion's
+  # S3 block gives a Gazebo std_dev of 0.015 m (slamtec_rplidar.urdf.xacro:48 @ 5f783f8), a
+  # simulation value, so the data sheet's accuracy stands.
   #
   # The scan frame is 0.202 m above body_link, 0.3845 m above the ground at the 0.1825 m wheel radius.
   - spawn_sensor:
@@ -46,10 +47,6 @@ components:
     name: second_lidar
     components:
       - lidar:
-          # Husarion's value for the S3: its S3 block states std_dev 0.015 m
-          # (slamtec_rplidar.urdf.xacro:48 @ 5f783f8), where the device takes the data sheet's
-          # +-30 mm accuracy as 1 sigma.
-          range_stddev: 0.015
           # Relative, so the robot's namespace scopes it: `<ns>/second_lidar/scan`
           # (slamtec_rplidar.urdf.xacro:286 @ 5f783f8).
           topics: {scan: second_lidar/scan}
