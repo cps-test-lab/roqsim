@@ -401,8 +401,9 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     """C2: the manifest mounts the TurtleBot 4's stock scanner and camera, with the URDF's frame ids.
 
     `frame_id: rplidar_link` is load-bearing: it is the name the TurtleBot 4's URDF gives the scan
-    frame, so the LaserScan is locatable in the robot's own TF tree. No lidar override: every scan
-    value is the RPLIDAR A1 device's datasheet default.
+    frame, so the LaserScan is locatable in the robot's own TF tree. One lidar override, from
+    Clearpath's TurtleBot 4 datasheet: 1 deg angular resolution, so 360 rays; every other scan value
+    is the RPLIDAR A1 device's.
     """
     manifest = yaml.safe_load(MANIFEST.read_text())
     assert manifest["frames"] == [
@@ -417,7 +418,7 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
         "rpy": [*RPLIDAR_JOINT[1]],
         "frame_id": "rplidar_link",
     }
-    assert "components" not in mount
+    assert mount["components"] == [{"lidar": {"rays": 360}}]
     assert not any("lidar" in c for c in manifest["components"])
     assert _manifest_plugin("oakd_camera")["camera"] == "oakd_rgb"
 
@@ -537,19 +538,21 @@ def test_d3_no_ray_starts_inside_the_robot_or_returns_from_its_own_mount(mounted
 
 
 def test_d4_what_the_scan_sees_of_the_robot_is_pinned(mounted):
-    """D4: 90 of 1080 rays return the four tower standoffs and the camera bracket, from outside.
+    """D4: 29 of 360 rays return the four tower standoffs and the camera bracket, from outside.
 
-    Real returns: the scan plane passes through the tower, as on the robot. All of them lie nearer
-    than the A1's 0.15 m minimum range, so the published scan carries them as too close (``-inf``),
-    never as a measured distance.
+    360 rays because Clearpath's TurtleBot 4 datasheet gives this robot's lidar a 1 deg angular
+    resolution, which the manifest overrides onto the device. Real returns: the scan plane passes
+    through the tower, as on the robot. All of them lie nearer than the A1's 0.15 m minimum range, so
+    the published scan carries them as too close (``-inf``), never as a measured distance.
     """
     engine, lidar = mounted
+    assert lidar.num_rays == 360
     _, hits = scan_mount.recast(engine, lidar)
     bodies, meshes = scan_mount.robot_returns(engine, hits)
     assert bodies == {"r_base_link"}
     assert meshes == {"r_tower_standoff", "r_camera_bracket"}
     robot = scan_mount.robot_rays(engine, hits)
-    assert int(robot.sum()) == 90
+    assert int(robot.sum()) == 29
     assert float(hits.dist[robot].max()) < lidar.detection_min
     assert np.all(np.asarray(lidar.latest.ranges)[robot] == -np.inf)
 
