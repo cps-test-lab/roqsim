@@ -296,7 +296,7 @@ SIM_POSE_FIELDS = (
 #: observable, so it is named for that and nothing else.
 SIM_POSE_FILENAME = "sim_poses.csv"
 
-#: Roster of what the pose record's rows *are*, written beside it. The record names root bodies and
+#: Roster of what the pose record's rows *are*, written beside it. The record names bodies and
 #: cannot say which of them is a robot, which is a distinction only the entity registry holds -- so a
 #: consumer asking "did the robots move" would otherwise have to be handed the names per world, and a
 #: check that must be configured per world is one that is absent from the run that needed it.
@@ -340,22 +340,27 @@ def env_flag(name: str) -> bool:
     return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _root_bodies(model) -> list[tuple[int, str]]:
-    """Named bodies parented directly to the world -- the free-standing things a trial is about.
+def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
+    """Every named body, in body order, and the parents of the unnamed ones left out.
 
-    Every robot base, prop and walker is one of these; a wheel, a link or a gripper finger is not.
-    That is the line worth drawing by default: the whole body list is mostly a robot's internal
-    kinematics, which multiplies the row count by an order of magnitude to record what the joint
-    columns already imply.
+    All of them rather than only those parented to the world: what a trial's success rule reads is
+    often welded below a robot -- a tool on a flange, a workpiece in a gripper -- and a consumer
+    cannot know in advance which one it will need. The price is rows, several times more on a
+    manipulator world than on a mobile one. The ``.npz`` remains the complete record (sites, and
+    anything between samples, are derivable only from it).
+
+    An unnamed body has no value for the ``frame`` column, so it is left out and reported instead:
+    a tool missing from the record then shows up in the run log rather than as an absent row.
     """
-    out = []
+    out, skipped = [], []
     for bid in range(1, model.nbody):  # 0 is the world body itself
-        if int(model.body_parentid[bid]) != 0:
-            continue
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid)
         if name:
             out.append((bid, name))
-    return out
+        else:
+            parent = int(model.body_parentid[bid])
+            skipped.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, parent) or "world")
+    return out, skipped
 
 
 def package_versions() -> dict:
@@ -619,7 +624,7 @@ class StateRecorder:
         # asks for it, because it is a second file per run and only a campaign wants one.
         self._pose_path = (self.path.parent / SIM_POSE_FILENAME) if sim_poses else None
         self._pose_file = None
-        self._pose_bodies = _root_bodies(ctx.model) if sim_poses else []
+        self._pose_bodies, self._pose_skipped = _named_bodies(ctx.model) if sim_poses else ([], [])
         # The roster that says what those rows are. Held as a live reference to the registry, not a
         # copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
         # construction would describe a world the trial has since left.
@@ -743,7 +748,7 @@ class StateRecorder:
             self._clock_file = None
 
     def _write_sim_pose_sample(self, ctx, wall: float, sim: float) -> None:
-        """Append this sample's world pose and twist, one row per root body.
+        """Append this sample's world pose and twist, one row per named body.
 
         Streamed and flushed per row for the reason :meth:`_write_clock_sample` gives, and one more:
         this file is a *run's ground truth*, so it is exactly what somebody wants from the run that
@@ -770,6 +775,14 @@ class StateRecorder:
                     self._pose_path, "w", encoding="utf-8", buffering=1
                 )
                 self._pose_file.write(",".join(SIM_POSE_FIELDS) + "\n")
+                skipped = sorted(set(self._pose_skipped))
+                self.log.info(
+                    "recording: %s carries %d named bodies; %d unnamed bodies have no row%s",
+                    SIM_POSE_FILENAME,
+                    len(self._pose_bodies),
+                    len(self._pose_skipped),
+                    f" (under {', '.join(skipped)})" if skipped else "",
+                )
             data = ctx.data
             for bid, name in self._pose_bodies:
                 pos, quat = data.xpos[bid], data.xquat[bid]
