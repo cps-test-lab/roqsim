@@ -107,14 +107,15 @@ Robotiq 2F-85) is mapped linearly onto the tendon actuator's ctrlrange.
 
 **Grip force.** Beside the position the plugin publishes a :class:`GripperEffort` under
 ``gripper_effort:<arm>``, the key the endpoint's ``effort_key`` hint names. It takes GripperCommand's
-``max_effort`` -- the force each jaw may apply, in newtons -- the way ros2_control's parallel gripper
-forwards that value to a ``max_effort`` command interface beside the position one. The gripper
-actuator's force range is capped at ``max_effort`` carried back through the transmission, which is
-exact only where the transmission's moment is constant: an actuator on a slide joint, or on a fixed
-tendon over slide joints (the Schunk PG+70). A linkage gripper such as the Robotiq 2F-85 closes
-revolute knuckles whose force at the pads changes with the grasp width, so it is rated 0 N and a
-positive ``max_effort`` is refused. ``max_effort <= 0`` and every reset restore the model's own force
-range. Gripper config::
+``max_effort`` as ros2_control's gripper action controller does: a clamp on the gripper joint's
+effort, in that joint's own unit -- newtons for a slide jaw, newton-metres for a knuckle, the unit
+``/joint_states`` reports -- which is what that controller's effort adapter applies
+(``gripper_controllers/hardware_interface_adapter.hpp``). A goal is never refused for its effort: a
+request at or above the model's own limit saturates there, as a drive does, and ``max_effort <= 0``
+and every reset restore the model's own force range. The clamp reaches the actuator through the
+transmission, so it needs a constant moment -- a joint transmission or a fixed tendon, which every
+shipped gripper has. Any other keeps its range and executes the position alone, as a
+position-interface controller does. Gripper config::
 
       gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd
       gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
@@ -142,17 +143,15 @@ from ._arm import (
 )
 
 
-def jaw_force_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
-    """Newtons at the jaw on ``joint_id`` per unit of the actuator's force, or 0.0 where undefined.
+def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
+    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
 
-    Read from the model alone, so it holds in every configuration or not at all: an actuator on a
-    slide joint carries its gear, and one on a fixed tendon over slide joints carries gear times the
-    tendon's coefficient on that joint. Anything else -- a hinge, a spatial tendon, a joint the
-    transmission does not reach -- has a moment that moves with the configuration or no moment at
-    all, and a newton figure there would be a guess.
+    Read from the model alone, so it holds in every configuration or not at all: an actuator on the
+    joint carries its gear, and one on a fixed tendon carries gear times the tendon's coefficient on
+    that joint. The unit is the joint's own -- newtons for a slide joint, newton-metres for a hinge --
+    the unit ``/joint_states`` reports its effort in. A spatial tendon, a site transmission, or a joint
+    the transmission does not reach has no constant moment, and gets 0.0.
     """
-    if model.jnt_type[joint_id] != mujoco.mjtJoint.mjJNT_SLIDE:
-        return 0.0
     gear = abs(float(model.actuator_gear[actuator_id][0]))
     target = int(model.actuator_trnid[actuator_id][0])
     trn = model.actuator_trntype[actuator_id]
@@ -165,26 +164,23 @@ def jaw_force_per_actuator_force(model, actuator_id: int, joint_id: int) -> floa
     for wrap in range(first, first + int(model.tendon_num[target])):
         if model.wrap_type[wrap] != mujoco.mjtWrap.mjWRAP_JOINT:
             return 0.0
-        joint = int(model.wrap_objid[wrap])
-        if model.jnt_type[joint] != mujoco.mjtJoint.mjJNT_SLIDE:
-            return 0.0
-        if joint == joint_id:
+        if int(model.wrap_objid[wrap]) == joint_id:
             coef = abs(float(model.wrap_prm[wrap]))
     return gear * coef
 
 
 @dataclass
 class GripperEffort:
-    """How hard a gripper's jaws may close: GripperCommand's ``max_effort``, in newtons per jaw.
+    """GripperCommand's ``max_effort`` for one gripper: a clamp on its joint's effort.
 
     Published by :class:`ArmControllerPlugin` beside the gripper's position reader, under the key the
-    ``gripper_cmd`` endpoint names in its ``effort_key`` hint. ``rated`` is the most one jaw can apply
-    (the actuator's force range carried to the jaw), 0.0 where newtons at the jaw are undefined.
-    ``set_max_effort`` runs on the physics thread; ``read_effort`` computes the force one jaw applies
-    now, and is NaN where ``rated`` is 0.
+    ``gripper_cmd`` endpoint names in its ``effort_key`` hint. ``limit`` is the most effort the
+    gripper joint can carry, in its own unit (N or N*m), and 0.0 where no clamp can be applied.
+    ``set_max_effort`` runs on the physics thread; ``read_effort`` returns the joint's effort now, the
+    value ``/joint_states`` reports for it.
     """
 
-    rated: float
+    limit: float
     set_max_effort: Callable[[float], None]
     read_effort: Callable[[], float]
 
@@ -324,11 +320,13 @@ class ArmControllerPlugin(Plugin):
         self._grip_ctrl_lo = 0.0
         self._grip_ctrl_hi = 255.0
         self._gripper_key = ""  # set in configure; the reader key the bridge is pointed at
-        # Grip force: the model's own force range on the gripper actuator (what a reset restores),
-        # newtons at one jaw per unit of actuator force, and the most one jaw can apply.
+        # Grip force: the model's own force range on the gripper actuator (what a reset restores), the
+        # gripper joint's effort per unit of actuator force, and the joint-effort limit that range
+        # allows. `_grip_cap_warned` keeps a gripper that cannot take a clamp to one warning.
         self._grip_forcerange: tuple[float, float] | None = None
-        self._grip_jaw_gain = 0.0
-        self._grip_rated = 0.0
+        self._grip_gain = 0.0
+        self._grip_limit = 0.0
+        self._grip_cap_warned = False
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = (
@@ -603,13 +601,13 @@ class ArmControllerPlugin(Plugin):
             grip = self._aux_acts[0]
             self._grip_forcerange = tuple(float(v) for v in m.actuator_forcerange[grip])
             if self._grip_jid is not None and m.actuator_forcelimited[grip]:
-                self._grip_jaw_gain = jaw_force_per_actuator_force(m, grip, self._grip_jid)
-            self._grip_rated = min(abs(v) for v in self._grip_forcerange) * self._grip_jaw_gain
+                self._grip_gain = joint_effort_per_actuator_force(m, grip, self._grip_jid)
+            self._grip_limit = min(abs(v) for v in self._grip_forcerange) * self._grip_gain
             effort_key = self._gripper_key.replace("gripper:", "gripper_effort:", 1)
             ctx.blackboard.set(
                 effort_key,
                 GripperEffort(
-                    rated=self._grip_rated,
+                    limit=self._grip_limit,
                     set_max_effort=self.set_gripper_max_effort,
                     read_effort=self.read_gripper_effort,
                 ),
@@ -628,7 +626,7 @@ class ArmControllerPlugin(Plugin):
                             # Tell the bridge's handler which reader to watch; its default is
                             # gripper:<owner>, which cannot distinguish two grippers on one entity.
                             "state_key": self._gripper_key,
-                            # Where the handler finds the jaws' force cap (GripperCommand's
+                            # Where the handler finds the gripper's effort clamp (GripperCommand's
                             # max_effort), a second command beside the position.
                             "effort_key": effort_key,
                         }
@@ -737,37 +735,37 @@ class ArmControllerPlugin(Plugin):
             self._grip_ctrl_hi - self._grip_ctrl_lo
         )
 
-    def set_gripper_max_effort(self, newtons: float) -> None:
-        """Cap the force each jaw may apply, as GripperCommand's ``max_effort`` asks. Physics thread.
+    def set_gripper_max_effort(self, effort: float) -> None:
+        """Clamp the gripper joint's effort at GripperCommand's ``max_effort``. Physics thread.
 
-        ``newtons <= 0`` restores the model's own force range. A positive value is refused where the
-        jaws have no rating in newtons, and above the rating, rather than clamped: a cap quietly lower
-        than the one asked for is a weaker grasp that reads as the one requested.
+        The unit is the joint's own. ``effort <= 0``, and ``effort`` at or above the model's limit,
+        leave the model's own force range: a drive saturates at what it can give. A gripper that cannot
+        take a clamp (``limit == 0``) keeps its range and executes the position alone, as a
+        position-interface controller does, and says so once.
         """
         grip = self._aux_acts[0]
-        if newtons <= 0.0:
+        if self._grip_limit <= 0.0 and effort > 0.0 and not self._grip_cap_warned:
+            self._grip_cap_warned = True
+            self._ctx.logger.warning(
+                "arm_controller[%s]: the gripper actuator has no constant moment on its joint, so "
+                "max_effort cannot be applied; the position runs with the model's own force range",
+                self.arm,
+            )
+        if effort <= 0.0 or effort >= self._grip_limit:
             self._ctx.model.actuator_forcerange[grip] = self._grip_forcerange
             return
-        if self._grip_rated <= 0.0:
-            raise ValueError(
-                f"arm_controller[{self.arm}]: this gripper has no force rating in newtons (its "
-                f"actuator does not drive a slide joint through a constant moment), so max_effort "
-                f"must be 0, got {newtons:g}"
-            )
-        if newtons > self._grip_rated:
-            raise ValueError(
-                f"arm_controller[{self.arm}]: max_effort {newtons:g} N exceeds the "
-                f"{self._grip_rated:g} N each jaw is rated for"
-            )
-        limit = newtons / self._grip_jaw_gain
+        limit = effort / self._grip_gain
         self._ctx.model.actuator_forcerange[grip] = (-limit, limit)
 
     def read_gripper_effort(self) -> float:
-        """The force one jaw applies now, in newtons; NaN where the gripper has no rating."""
-        if self._grip_jaw_gain <= 0.0:
+        """The gripper joint's effort now, as ``/joint_states`` reports it.
+
+        NaN when the arm has no gripper joint.
+        """
+        if self._grip_jid is None:
             return float("nan")
-        force = float(self._ctx.data.actuator_force[self._aux_acts[0]])
-        return abs(force) * self._grip_jaw_gain
+        d = self._ctx.data
+        return float(d.qfrc_actuator[self._grip_dofadr] + d.qfrc_gravcomp[self._grip_dofadr])
 
     def read_gripper_state(self):
         # Computed on demand (see read_state); (0, 0) when the arm has no gripper joint.
