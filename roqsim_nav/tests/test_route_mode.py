@@ -355,6 +355,32 @@ def test_pure_pursuit_corner_error_scales_with_the_lookahead(tmp_path):
     assert corners[0.15] < corners[0.6]
 
 
+def test_pure_pursuit_drives_a_route_that_returns_to_its_start(tmp_path):
+    """Out and back: the goal after the first is the point the mover starts from.
+
+    The carrot's polyline carries one goal past the current one, so here it ends where the mover
+    stands. Unless it also carries the leg the mover is on, the mover projects onto that far end,
+    the remaining length reads as zero, and it never sets off.
+    """
+    engine = _engine(
+        tmp_path,
+        route_mode="exact",
+        goals=[[-2.5, 2.0], list(START)],
+        tracker="pure_pursuit",
+        lookahead=0.6,
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        core = _navigator(engine)._core
+        track = _track(engine, seconds=14.0)
+        assert float(track[:, 1].max()) > 1.7, "the mover never went out"
+        assert core.st.done, "the route never completed"
+        assert np.linalg.norm(track[-1] - np.asarray(START)) < 0.3
+    finally:
+        engine.shutdown()
+
+
 def test_a_looping_route_wraps_the_carrot_onto_its_own_start(tmp_path):
     """Otherwise the mover stops dead at the end of a lap and turns on the spot."""
     engine = _engine(
