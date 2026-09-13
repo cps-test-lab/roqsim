@@ -43,17 +43,13 @@ CASES = {
     # The chassis body's side panels stand in the scan plane ~0.29 m out, over a narrow sector.
     "panther": {"body_link": 12},
     "warthog": {},
-    "husky_a200": {},
 }
 
 #: model -> the robot body its manifest still excludes from the published scan.
-STILL_EXCLUDES = {"panther": "base_link", "husky_a200": "base_link"}
+STILL_EXCLUDES = {"panther": "base_link"}
 
 #: Pinned failures, each a property of the model as it stands rather than of the test.
-XFAIL = {
-    "husky_a200": "the site sits inside the modelled scanner housing (a visual cylinder on base_link); "
-    "no vendor mount for the model's top plate is settled -- see the husky_a200 port log",
-}
+XFAIL: dict[str, str] = {}
 
 
 def _spawn(model: str) -> Engine:

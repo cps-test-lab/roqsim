@@ -1,0 +1,13 @@
+The housing in omron_os32c.xml is not a vendor mesh. It is two primitives, a box and a cylinder,
+dimensioned from the ratings and the dimension drawing of
+
+    Omron, "OS32C Safety Laser Scanner" data sheet, Cat. No. Z298-E2-05-X, pp. 5 and 8
+    https://files.omron.eu/downloads/latest/datasheet/en/z298_os32c_safety_laser_scanner_datasheet_en.pdf
+
+It carries no third-party geometry and is part of roqsim_sensors, under that package's licence
+(Apache-2.0).
+
+No mesh is shipped because none found is licensed for redistribution: Omron's CAD downloads are
+offered under website terms that allow extracts for personal reference only
+(https://industrial.omron.eu/en/misc/terms-of-website-use), and the community Gazebo model
+https://github.com/prajval10/Omron_model declares no licence.

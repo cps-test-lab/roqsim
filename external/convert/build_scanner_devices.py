@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""Build the nine standalone scanner device models in ``roqsim_sensors/models/<device>/``.
+"""Build the ten standalone scanner device models in ``roqsim_sensors/models/<device>/``.
 
-    python external/convert/build_scanner_devices.py            # all nine
+    python external/convert/build_scanner_devices.py            # all ten
     python external/convert/build_scanner_devices.py sick_s300  # one
 
 Writes, per device: ``meshes/*.obj`` (converted and, where the source is heavy, decimated), the MJCF
 ``<device>.xml`` and the licence sidecar ``<device>_LICENSE``. The ``<device>.manifest.yaml`` is
 authored by hand, because its numbers come from manufacturer datasheets rather than from a source
 tree. Thumbnails come from ``roqsim assets render-thumbnails``.
+
+One device has no redistributable mesh: the Omron OS32C (``omron_os32c``), whose housing is primitives
+dimensioned from its data sheet (``PRIMITIVE_DEVICES``). Its build fetches nothing and writes no
+meshes; its licence sidecar names the data sheet.
 
 Each device's geometry is taken from the vendor ROS description a robot mounts it with, so a robot
 port can hang the device at the vendor joint origin and get the vendor frame:
@@ -646,6 +650,131 @@ primitive and inertial are read from the same repository.
 """
 
 
+@dataclass(frozen=True)
+class PrimitiveDevice:
+    """A device whose housing is primitives dimensioned from its data sheet, not a vendor mesh.
+
+    For a scanner whose manufacturer's CAD is not licensed for redistribution: the build writes the
+    MJCF and the licence sidecar from these fields, fetches nothing and writes no meshes.
+    """
+
+    name: str
+    #: ``(<geom .../> attributes, rgba)`` per housing primitive, each written as a visual and a
+    #: collision geom.
+    primitives: tuple[tuple[str, tuple[float, float, float, float]], ...]
+    inertial: str
+    site_pos: tuple[float, float, float]
+    header: str
+    site_note: str
+    #: The licence sidecar: where the primitives' dimensions come from.
+    licence: str
+
+
+PRIMITIVE_DEVICES = {
+    d.name: d
+    for d in (
+        PrimitiveDevice(
+            name="omron_os32c",
+            primitives=(
+                # Body: W 133.0 (y) x D 142.7 (x) (Z298 p. 5, "Dimensions (WxHxD)") and 57.0 tall (p. 8,
+                # back view). Its front face is flush with the sensor head (p. 8, side view: the head's
+                # 100.0 starts at the housing's front), so it lies 50.0 ahead of the head's axis.
+                (
+                    'type="box" pos="-0.02135 0 0.0285" size="0.07135 0.0665 0.0285"',
+                    (0.85, 0.7, 0.1, 1.0),
+                ),
+                # Sensor head with the window: 100.0 across (p. 8, side view), from the body's top to
+                # the 104.5 overall height (p. 5; p. 8).
+                ('type="cylinder" pos="0 0 0.08075" size="0.05 0.02375"', (0.1, 0.1, 0.1, 1.0)),
+            ),
+            # Z298 p. 5: 1.3 kg (main unit); a solid box over the 133.0 x 104.5 x 142.7 mm envelope.
+            inertial='<inertial pos="-0.02135 0 0.05225" mass="1.3" '
+            'diaginertia="0.0030993 0.003389 0.0041223"/>',
+            site_pos=(0.0, 0.0, 0.067),
+            header="""\
+    Omron OS32C safety laser scanner: a standalone mount (primitive housing + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its mounting face.
+
+    No mesh: Omron's CAD downloads are offered for personal reference only, and the one community
+    model carries no licence (see omron_os32c_LICENSE). The housing is two primitives dimensioned from
+    the data sheet, Omron "OS32C Safety Laser Scanner", Cat. No. Z298-E2-05-X ("Z298"): a 133.0 wide,
+    142.7 deep, 57.0 tall body and the 100.0 mm sensor head above it, 104.5 mm overall.
+
+    Body-local axes: x = the scan's zero bearing (the side the window faces, away from the I/O block),
+    z = up. The mount is the bottom face directly below the head's axis. Z298 p. 5: "Laser Scan Plane
+    Height 67 mm from the bottom of the scanner"; the site is there, on the axis. The driver stamps the
+    scan in `laser` (omron_os32c_driver), which is this site's frame.""",
+            site_note="The scan plane, 67.0 mm above the bottom face (Z298 p. 5, 8), on the head's axis.",
+            licence="""\
+The housing in omron_os32c.xml is not a vendor mesh. It is two primitives, a box and a cylinder,
+dimensioned from the ratings and the dimension drawing of
+
+    Omron, "OS32C Safety Laser Scanner" data sheet, Cat. No. Z298-E2-05-X, pp. 5 and 8
+    https://files.omron.eu/downloads/latest/datasheet/en/z298_os32c_safety_laser_scanner_datasheet_en.pdf
+
+It carries no third-party geometry and is part of roqsim_sensors, under that package's licence
+(Apache-2.0).
+
+No mesh is shipped because none found is licensed for redistribution: Omron's CAD downloads are
+offered under website terms that allow extracts for personal reference only
+(https://industrial.omron.eu/en/misc/terms-of-website-use), and the community Gazebo model
+https://github.com/prajval10/Omron_model declares no licence.
+""",
+        ),
+    )
+}
+
+
+def primitive_mjcf(device: PrimitiveDevice) -> str:
+    materials = "".join(
+        f'    <material name="{device.name}_mat_{i}" rgba="{_fmt(rgba)}"/>\n'
+        for i, (_, rgba) in enumerate(device.primitives)
+    )
+    visuals = "".join(
+        f'      <geom name="{device.name}_visual_{i}" {attrs} material="{device.name}_mat_{i}"\n'
+        f'            contype="0" conaffinity="0"/>\n'
+        for i, (attrs, _) in enumerate(device.primitives)
+    )
+    collisions = "".join(
+        f'      <geom name="{device.name}_collision_{i}" {attrs} group="3"/>\n'
+        for i, (attrs, _) in enumerate(device.primitives)
+    )
+    return f"""<mujoco model="{device.name}">
+  <!--
+{device.header}
+
+    Built by external/convert/build_scanner_devices.py from the data sheet; no source is fetched.
+    Scan parameters and the `frames:` entry for this site are in {device.name}.manifest.yaml; see
+    {device.name}_LICENSE for the housing's provenance.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+{materials}  </asset>
+
+  <worldbody>
+    <body name="mount">
+      {device.inertial}
+{visuals}      <!-- The same primitives, as the collision geometry. -->
+{collisions}      <!-- {device.site_note}
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="{_fmt(device.site_pos)}" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def build_primitive(device: PrimitiveDevice) -> None:
+    folder = MODELS / device.name
+    folder.mkdir(parents=True, exist_ok=True)
+    if (folder / "meshes").exists():
+        shutil.rmtree(folder / "meshes")
+    (folder / f"{device.name}.xml").write_text(primitive_mjcf(device))
+    (folder / f"{device.name}_LICENSE").write_text(device.licence)
+    print(f"{device.name}: {len(device.primitives)} primitive(s), from the data sheet")
+
+
 def build(device: Device) -> None:
     source = resolve_source(device.source.name, device.source.url, device.source.commit)
     folder = MODELS / device.name
@@ -668,12 +797,16 @@ def build(device: Device) -> None:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    parser.add_argument("devices", nargs="*", help=f"any of {', '.join(DEVICES)}; default: all")
+    names = [*DEVICES, *PRIMITIVE_DEVICES]
+    parser.add_argument("devices", nargs="*", help=f"any of {', '.join(names)}; default: all")
     args = parser.parse_args(argv)
-    if unknown := sorted(set(args.devices) - set(DEVICES)):
+    if unknown := sorted(set(args.devices) - set(names)):
         parser.error(f"unknown device(s): {', '.join(unknown)}")
-    for name in args.devices or DEVICES:
-        build(DEVICES[name])
+    for name in args.devices or names:
+        if name in PRIMITIVE_DEVICES:
+            build_primitive(PRIMITIVE_DEVICES[name])
+        else:
+            build(DEVICES[name])
 
 
 if __name__ == "__main__":

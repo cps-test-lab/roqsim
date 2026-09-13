@@ -10,30 +10,61 @@ components:
   # match the paper's DWB-RPP-MPPI Nav2 config (max_vel_x 1.0 m/s, max_vel_theta 1.0 rad/s,
   # acc_lim 1.0), so the model saturates where the stack does.
   - diff_drive:
-      wheel_radius: 0.17775          # husky_description
+      # Clearpath's A200 wheel: clearpath_platform_description urdf/a200/drivetrain/wheels/
+      # outdoor.urdf.xacro:4 @ b0f6d92, the value its diff_drive controller is given
+      # (a200.urdf.xacro:93); ROS 1 husky_description husky.urdf.xacro:161 @ 41e15d2 states the same.
+      wheel_radius: 0.1651
       wheel_separation: 0.5708       # track width (2 * 0.2854)
       max_linear_vel: 1.0            # DWB-RPP-MPPI configs: max_vel_x / vx_max
       max_angular_vel: 1.0           # DWB-RPP-MPPI configs: max_vel_theta / wz_max
       wheel_accel_limit: 1.0         # DWB-RPP-MPPI configs: acc_lim_x
       # Skid-steer ICR slip compensation, calibrated against this model's wheel friction/contacts:
       # without it the base yaws at ~15% of commanded (lateral scrub) and a planner cannot rotate.
-      # chi=3.0 -> achieved/commanded yaw 0.83/0.92/1.01/1.04 at w = 0.3/0.5/0.8/1.0 rad/s.
-      # Re-measure if wheel friction, actuator kv, mass or timestep change. See the port log.
+      # chi=3.0 -> achieved/commanded yaw 0.93/1.00/1.09/1.14 at w = 0.3/0.5/0.8/1.0 rad/s.
+      # Re-measure if wheel friction, wheel radius, actuator kv, mass or timestep change. See the port log.
       slip_factor: 3.0
       left_actuators:  [front_left_wheel_motor,  rear_left_wheel_motor]
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
-  # 2D planar LiDAR (lidar2d_0). Source description has no lidar; params from the paper's code repo
-  # (360 deg, 0.25 deg resolution -> 1440 rays, 30 Hz). Mount height (scan plane 0.51 m above ground =
-  # 0.14493 base_link rest height + 0.36507 mount, matching the MJCF and port-log C1) and 10 m max
-  # range are documented assumptions (Hokuyo-family sensor on a top-plate bracket); see the port log.
-  - lidar:
-      site: lidar
-      rays: 1440                     # 360 deg / 0.25 deg
-      angle_min: 0.0
-      angle_max: 6.278821984         # 2*pi - 0.25 deg: the full turn, last ray one step short of 2*pi
-      range_min: 0.1
-      max_range: 10.0                # assumption; costmap clips to 2.5/3.0 m anyway
-      rate_hz: 30.0                  # code repo: 30 Hz
-      exclude_body: base_link
+  # 2D lidar: the Hokuyo UST-10LX on a horizontal PACS bracket at top_plate_mount_d1, as Clearpath's
+  # ROS 2 sample configuration mounts it (clearpath_config sample/a200/a200_sample.yaml:17-19, 32-37,
+  # 61-74 @ b2a64ba: `hokuyo_ust`, parent `bracket_0_mount`, xyz and rpy 0). No Clearpath document
+  # names one scanner as the Husky's standard 2D lidar; the ROS 2 samples all use this one.
+  #
+  # The scan is the device's, as urg_node publishes it: Clearpath's configuration requests
+  # angle_min -pi and angle_max pi (a200_sample.yaml:73-74), which urg_node limits to the UST-10LX's
+  # own +-135 deg, the device's default. So nothing is overridden but the topic. Clearpath's Gazebo
+  # xacro simulates the requested +-pi instead; an experiment that ran that simulation states it in
+  # its own world.
+  #
+  # The scan frame `lidar2d_0_laser` is 0.0474 m above bracket_0_mount: base_link
+  # (0.32825, 0, 0.287875), 0.4202 m above the ground at the 0.13228 m rest height.
+  - spawn_sensor:
+      model: hokuyo_ust
+      parent_frame: bracket_0_mount
+      pos: [0.0, 0.0, 0.0]          # a200_sample.yaml:65-67
+      rpy: [0.0, 0.0, 0.0]
+      frame_id: lidar2d_0_laser     # a200_sample.yaml:70, Clearpath's first 2D lidar
+    name: lidar2d_0
+    components:
+      - lidar:
+          # Relative, so the robot's namespace scopes it: Clearpath publishes
+          # `<namespace>/sensors/lidar2d_0/scan` (clearpath_sensors_description
+          # urdf/hokuyo_ust.urdf.xacro:54 @ b0f6d92).
+          topics: {scan: sensors/lidar2d_0/scan}
+
+# Fixed links Clearpath's description chains and this MJCF flattens into base_link, down to the
+# bracket the scanner hangs from. `top_plate_adjust_link`, an identity joint between default_mount and
+# top_plate_link in the PACS macro, is left out.
+frames:
+  # clearpath_platform_description urdf/a200/a200.urdf.xacro:153-159 @ b0f6d92
+  - {name: default_mount, parent: base_link, pos: [0.0, 0.0, 0.224], rpy: [0.0, 0.0, 0.0]}
+  # urdf/a200/attachments/top_plate.urdf.xacro:138-142 (PACS model)
+  - {name: top_plate_link, parent: default_mount, pos: [0.04825, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  # top_plate.urdf.xacro:145-154 with common.urdf.xacro full_mounts/row_mounts (:75-125): row 1 at
+  # x 0.28, column a at y 0.24 stepping -0.08, so column d is y 0.
+  - {name: top_plate_mount_d1, parent: top_plate_link, pos: [0.28, 0.0, 0.00635], rpy: [0.0, 0.0, 0.0]}
+  # clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:36-42, 106-110 @ 33e4b31: horizontal
+  # bracket, mount mesh_thickness 0.010125 above the bracket link at top_plate_mount_d1.
+  - {name: bracket_0_mount, parent: top_plate_mount_d1, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}

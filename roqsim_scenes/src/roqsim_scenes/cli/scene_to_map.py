@@ -19,7 +19,7 @@ the inside of walls.
 
 Why the scan height is a parameter and not a constant: a planar scan at height h is *exactly* what a
 2D costmap sees, so h decides what counts as an obstacle. Take it from the robot model's lidar mount
-(husky_a200: 0.51 m). On non-planar terrain, a slope projects into spurious occupancy at some heights
+(husky_a200: 0.4202 m). On non-planar terrain, a slope projects into spurious occupancy at some heights
 and not others — frequently the phenomenon under study, so never round it for convenience.
 
 ``--resolution`` and ``--origin`` exist to honour a *published* map's metadata even when the grid

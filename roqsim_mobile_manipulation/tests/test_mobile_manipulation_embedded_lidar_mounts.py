@@ -1,10 +1,9 @@
-"""Every mobile manipulator whose manifest declares its ``lidar`` directly: what its scan hits of itself.
+"""Every mobile manipulator whose manifest declares its own base lidar: what that scan hits of itself.
 
-A robot that mounts a scanner device model (``spawn_sensor``, as ``tiago_pro`` does) is covered by its
-own mount test. This module covers the rest: robots whose lidar is a site in the robot's MJCF. The
-rule a lidar follows is that it never excludes robot geometry, so the scan is cast here with **no
-exclusion at all**, from the plugin's own ray pattern and site, and two properties are pinned per
-robot:
+The rule a lidar follows is that it never excludes robot geometry, so the scan is cast here from the
+plugin's own ray pattern and site with **no robot geometry excluded**: nothing at all for a lidar on a
+site in the robot's MJCF, and only the device's own housing (``<label>_mount``) for a scanner device
+the manifest mounts with ``spawn_sensor``. Two properties are pinned per robot:
 
 * **No ray starts inside robot geometry.** A first surface met from inside (normal . ray > 0) means
   the scan origin lies within a geom, and a published scan would read that geom's inner face on every
@@ -12,7 +11,8 @@ robot:
 * **The robot bodies hit from outside, with their ray counts.** These are real returns of a sensor
   that sees part of its own robot; a change to the model or the mount shows up here.
 
-A manifest that still excludes robot geometry is pinned in ``STILL_EXCLUDES``.
+A manifest that still excludes robot geometry is pinned in ``STILL_EXCLUDES``. ``tiago_pro`` mounts
+two scanner devices and has its own mount test.
 
 The robot is spawned through ``spawn_robot`` with a prefix into the default world (``empty_room``: a
 floor and perimeter walls), so every non-world body is the robot's.
@@ -33,19 +33,22 @@ from roqsim.engine import Engine
 
 PREFIX = "r_"
 
-#: model -> {robot body hit from outside: ray count}, cast with no exclusion.
+#: model -> {robot body hit from outside: ray count}.
 CASES = {
+    # The OS32C's 240 deg field leaves through the LD skin's scanner channel, which the model carries
+    # open; nothing of the robot is in it.
     "frankie": {},
 }
 
+#: model -> label of the scanner device its manifest mounts; the lidar is `robot.<label>` and the one
+#: body it may skip is its housing, `<label>_mount`. A model not listed declares its lidar on a site.
+DEVICE_MOUNTS = {"frankie": "lidar"}
+
 #: model -> the robot body its manifest still excludes from the published scan.
-STILL_EXCLUDES = {"frankie": "base_link"}
+STILL_EXCLUDES: dict[str, str] = {}
 
 #: Pinned failures, each a property of the model as it stands rather than of the test.
-XFAIL = {
-    "frankie": "the site sits inside the Omron CAD's scanner housing (omron__m8) and the chassis "
-    "collision box; the LD-60's scanner has no device model yet -- see the frankie port log",
-}
+XFAIL: dict[str, str] = {}
 
 
 def _spawn(model: str) -> Engine:
@@ -76,31 +79,41 @@ def _body(model, bid: int) -> str:
 )
 def test_the_scan_meets_no_robot_geometry_from_inside(model):
     expected_outside = CASES[model]
+    device = DEVICE_MOUNTS.get(model)
     engine = _spawn(model)
     try:
         m, d = engine.ctx.model, engine.ctx.data
         lidars = [p for p in engine.plugins if type(p).__name__ == "LidarPlugin"]
-        assert [p.address for p in lidars] == ["robot.lidar"]
+        if device is None:
+            assert [p.address for p in lidars] == ["robot.lidar"]
+        else:
+            assert [p.entity for p in lidars] == [f"robot.{device}"]
         (lidar,) = lidars
         foreign = [_body(m, b) for b in range(1, m.nbody) if not _body(m, b).startswith(PREFIX)]
         assert not foreign, f"bodies not of the spawned robot: {foreign}"
         bid = lidar._bodyexclude
         excluded = _body(m, bid).removeprefix(PREFIX) if bid >= 0 else None
-        assert excluded == STILL_EXCLUDES.get(model), f"the manifest excludes {excluded!r}"
+        own_housing = f"{device}_mount" if device else None
+        assert excluded == STILL_EXCLUDES.get(model, own_housing), (
+            f"the manifest excludes {excluded!r}"
+        )
 
         # The plugin's own rays from its own site: `_local_dirs @ rot.T`, as post_step casts them.
         origin = d.site_xpos[lidar._site_id].copy()
         dirs = lidar._build_directions() @ d.site_xmat[lidar._site_id].reshape(3, 3).T
+        housing = (
+            mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, PREFIX + own_housing) if device else -1
+        )
         hits = raycast.cast(
             m,
             d,
             origin,
             dirs,
             cutoff=lidar.range_max,
-            bodyexclude=-1,
+            bodyexclude=housing,
             out=raycast.buffers(len(dirs), normals=True),
         )
-        if excluded is None:
+        if excluded == own_housing:
             np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
 
         on_robot = (hits.geomid >= 0) & (m.geom_bodyid[np.maximum(hits.geomid, 0)] != 0)

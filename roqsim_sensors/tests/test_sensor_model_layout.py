@@ -58,6 +58,7 @@ def test_every_model_is_a_folder():
         "lds01",
         "mid360",
         "oakd",
+        "omron_os32c",
         "robin_w1g",
         "rplidar_a1",
         "rplidar_c1",

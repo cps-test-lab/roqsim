@@ -1,0 +1,81 @@
+# Omron OS32C safety laser scanner, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the scanner's mounting face.
+#
+# Housing: primitives dimensioned from the data sheet (see omron_os32c.xml and omron_os32c_LICENSE).
+# Scan values: Omron "OS32C Safety Laser Scanner" data sheet, Cat. No. Z298-E2-05-X ("data sheet"),
+# https://files.omron.eu/downloads/latest/datasheet/en/z298_os32c_safety_laser_scanner_datasheet_en.pdf,
+# and the ROS driver ros-drivers/omron @ b1ceff72854f3f0f993bffac295ef029d20351f1 (kinetic-devel),
+# package omron_os32c_driver ("driver"). The driver is released for ROS 1 only (kinetic, melodic,
+# noetic) and no ROS 2 driver exists, so every publisher convention below -- layout, header, the
+# no-return value and the frame name -- is that ROS 1 driver's. The field, range, rate and scan
+# height are the data sheet's and hold for any driver.
+#
+# Frames: the driver stamps the scan in its `frame_id` parameter, default `laser`
+# (src/os32c_node.cpp:66). The data sheet puts the scan plane 67 mm above the bottom of the scanner
+# (p. 5, and the dimension drawing on p. 8), so the frame sits 0.067 m above the mount, on the head's
+# axis. spawn_sensor publishes `parent_frame -> {frame_id}` at the joint origin composed with it.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: laser             # driver src/os32c_node.cpp:66
+
+frames:
+  - name: "{frame_id}"      # data sheet p. 5 "Laser Scan Plane Height 67 mm from the bottom"
+    parent: mount
+    pos: [0.0, 0.0, 0.067]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # Layout (ROS 1 driver): beams ANGLE_MIN -135.2 deg to ANGLE_MAX +135.2 deg at ANGLE_INC 0.4 deg
+      # (src/os32c.cpp:55-57); the node's defaults request start_angle ANGLE_MAX and end_angle
+      # ANGLE_MIN (os32c_node.cpp:67-68), published as angle_min = the end beam's centre, angle_max =
+      # the start beam's, increment 0.4 deg (os32c.cpp:100-103, :152-159): 677 beams. The data sheet
+      # rates a 270 deg detection angle at 0.4 deg angular resolution (p. 5). The driver's example
+      # launch file (launch/os32c.launch) requests +-2.2899 rad instead of the node defaults.
+      rays: 677
+      angle_min: -2.359685166   # -135.2 deg
+      angle_max: 2.359685166    # +135.2 deg
+      # Header (ROS 1 driver): DISTANCE_MIN 0.002 and DISTANCE_MAX 50 (os32c.cpp:58-59, :157-158).
+      range_min: 0.002
+      max_range: 50.0
+      # Physical limits. Far: the warning zone of the OS32C-@@@-4M, 15.0 m (data sheet p. 5; 10.0 m
+      # for the other variants), the farthest distance the data sheet rates; its safety zones reach
+      # 1.75 to 4.0 m. Near: the data sheet states no minimum, so the driver's DISTANCE_MIN is taken;
+      # unverified.
+      detection_min: 0.002
+      detection_max: 15.0
+      # The ROS 1 driver publishes a raw 0xFFFF (no return) as DISTANCE_MAX, 50.0, and a raw 0x0001
+      # ("noisy beam") as 0 (os32c.cpp:177-192). It has no code for a target too close, so that value
+      # is REP 117's -inf; unverified.
+      too_close: -inf
+      no_return: 50.0           # driver os32c.cpp:184-188; ROS 1
+      # DERIVED, not stated: the shortest response time is "80 ms (2 scans)" and the longest "680 ms
+      # (up to 17 scans)" (data sheet p. 5), so one scan takes 40 ms, 25 Hz. "Pollution Tolerance mode
+      # will add 6 ms to each scan time" (p. 5, note 2). The ROS 1 driver polls the scanner at its
+      # `frequency` parameter, default 12.856 Hz (os32c_node.cpp:69), so it publishes slower than this.
+      rate_hz: 25.0
+      # No noise: the data sheet gives a maximum measurement error of 100 mm up to 3 m and 110 mm from
+      # 3 to 4 m (p. 5) -- a bound, with a note that reflective backgrounds may add to it -- and no
+      # standard deviation, which is what range_stddev would need.
+      range_stddev: 0.0
+      # Not modelled: the "noisy beam" 0 above; the order of the range array, which the driver reverses
+      # only with `invert_scan` ("if z-axis is needed to point upwards", os32c_node.cpp:151-155), so the
+      # direction the unreversed array runs was not verified; intensities (publish_intensities false by
+      # default, os32c_node.cpp:75); the 6 mm beam (14 mm at 3 m) and the 30 to 70 mm minimum object
+      # size (p. 5).
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and its physical detection limits.
+fov:
+  near: 0.002
+  far: 15.0
+  h_min: -2.359685166
+  h_max: 2.359685166
+  v_min: 0.0
+  v_max: 0.0

@@ -42,6 +42,7 @@ from roqsim.pose import rpy_to_quat
 DEVICES = [
     "hokuyo_ust",
     "lds01",
+    "omron_os32c",
     "rplidar_a1",
     "rplidar_c1",
     "sick_lms1xx",
@@ -56,6 +57,7 @@ VENDOR_FRAME = {
     "hokuyo_ust": "lidar2d_0_laser",
     "sick_lms1xx": "lidar2d_0_laser",
     "lds01": "base_scan",
+    "omron_os32c": "laser",
     "rplidar_a1": "rplidar_link",
     "rplidar_c1": "laser",
     "sick_microscan3": "lidar_1_link",
@@ -69,6 +71,7 @@ VENDOR_FRAME = {
 DECLARED_OUTPUTS = {
     "hokuyo_ust": ("0.004", "65.533"),
     "lds01": ("-inf", "+inf"),
+    "omron_os32c": ("-inf", "50.0"),
     "rplidar_a1": ("-inf", "+inf"),
     "rplidar_c1": ("raw", "+inf"),
     "sick_lms1xx": ("-inf", "+inf"),
@@ -264,9 +267,12 @@ def test_scan_window_is_the_manifest_and_fov_matches_it(device):
 
 
 class _Plate(Plugin):
-    """A lidar site at the origin and one small plate straight ahead of it, 1 cm away."""
+    """A lidar site at the origin and one small plate straight ahead of it, 1 mm away.
 
-    DISTANCE = 0.01
+    Nearer than every device's detection_min; the OS32C's is 2 mm.
+    """
+
+    DISTANCE = 0.001
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         spec.worldbody.add_site(name="lidar", pos=[0.0, 0.0, 0.5])

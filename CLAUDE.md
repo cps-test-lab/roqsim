@@ -21,8 +21,9 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   OpenCV-generated; optional `markers` extra). Models are one folder per device
   (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`. The 2D scanners
   (`sick_s300`, `sick_microscan3`, `sick_tim571`, `sick_lms1xx`, `hokuyo_ust`, `rplidar_a1`,
-  `rplidar_c1`, `lds01`, and the VLP-16 as `velodyne_vlp16`, cast as one horizontal plane) are device
-  models too: datasheet values and their own housing (`exclude_body: mount`) live there, and a robot
+  `rplidar_c1`, `lds01`, `omron_os32c`, and the VLP-16 as `velodyne_vlp16`, cast as one horizontal
+  plane) are device models too: datasheet values and their own housing (`exclude_body: mount`; the
+  OS32C's is primitives from its data sheet, no mesh being redistributable) live there, and a robot
   mounts one from its manifest with a nested `spawn_sensor` at the vendor's parent frame and joint
   origin, overriding a value only where its vendor configuration differs.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
