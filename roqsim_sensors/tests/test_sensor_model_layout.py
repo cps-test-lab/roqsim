@@ -65,6 +65,7 @@ def test_every_model_is_a_folder():
         "rplidar_s3",
         "sick_lms1xx",
         "sick_microscan3",
+        "sick_nanoscan3",
         "sick_s300",
         "sick_tim571",
         "velodyne_vlp16",
