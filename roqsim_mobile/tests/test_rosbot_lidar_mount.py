@@ -170,14 +170,15 @@ def test_topic_frame_and_scan_values():
         assert "static_tf" not in scan.backend["ros2"]
         lidar = _lidar(engine)
         assert lidar.address == "rb.rplidar.lidar"
-        # RPLIDAR C1 as sllidar_ros2 publishes it (the device) and Husarion's std_dev 0.02 override.
+        # RPLIDAR C1 as sllidar_ros2 publishes it, with the data sheet's noise (the device). Husarion's
+        # simulated std_dev 0.02 is not the scanner's and is not applied.
         assert (lidar.num_rays, lidar.range_min, lidar.range_max, lidar.rate_hz) == (
             720,
             0.05,
             12.0,
             10.0,
         )
-        assert lidar.range_stddev == 0.02
+        assert lidar.config["range_stddev"] == 0.03  # zeroed on the instance by _scan
         assert (lidar.angle_min, lidar.angle_max) == (-3.141592654, 3.141592654)
         assert lidar.too_close is None, "a too-close surface is published at its distance"
     finally:

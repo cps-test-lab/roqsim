@@ -10,9 +10,9 @@ robot:
 * **The robot bodies hit from outside, with their ray counts.** These are real returns of a sensor
   that sees part of its own robot; a change to the model, the stance or the mount shows up here.
 
-No manifest here sets ``exclude_body``, so each still relies on the plugin's default (``base_link``);
-``STILL_EXCLUDES`` pins that, so the exclusion is a visible exception rather than a default nobody
-chose.
+No manifest here sets ``exclude_body`` and the plugin's default excludes nothing, so each published
+scan is the cast here. A manifest that excludes robot geometry would be pinned in ``STILL_EXCLUDES``,
+so the exclusion is a visible exception rather than a default nobody chose.
 
 Each robot is spawned as a world spawns it -- ``spawn_robot`` with a prefix, its manifest's controller
 setting the stance at reset (a humanoid's legs, the G2's hanging arms) -- into the default world
@@ -42,18 +42,19 @@ CASES = {
     # question about the mount pose, not about the exclusion.
     "oli": (0.001, {"waist_pitch_link": 360}),
     # The torso column stands behind the chassis-front site and fills the rear of the fan, and the
-    # chassis itself (base_link) returns from outside over another sector -- returns the manifest's
-    # default exclusion hides from the published scan.
+    # chassis itself (base_link) returns from outside over another sector. Both are real returns in
+    # the published scan.
     "agibot_g2": (0.002, {"body_link1": 89, "base_link": 98}),
 }
 
 #: model -> the robot body its manifest still excludes from the published scan.
-STILL_EXCLUDES = {"unitree_g1": "base_link", "oli": "base_link", "agibot_g2": "base_link"}
+STILL_EXCLUDES: dict[str, str] = {}
 
 #: Pinned failures, each a property of the model as it stands rather than of the test.
 XFAIL = {
-    "unitree_g1": "the site sits inside the torso mesh on base_link; the real G1's scanner is a "
-    "Livox MID-360 in the head (unitree_ros mid360_joint) -- see the unitree_g1_dex1 port log",
+    "unitree_g1": "mount error, pending a user decision: the site sits inside the torso mesh on "
+    "base_link, so the published scan fills with torso hits; the real G1's scanner is a Livox "
+    "MID-360 in the head (unitree_ros mid360_joint) -- see the unitree_g1_dex1 port log",
 }
 
 

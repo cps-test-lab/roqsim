@@ -292,10 +292,13 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml
    components:
      - diff_drive: {}
-     - lidar:
-         site: lidar
-         rays: 360
-         max_range: 12.0
+     - spawn_sensor:                  # the RPLIDAR A1 device model, at the vendor joint origin
+         model: rplidar_a1
+         parent_frame: shell_link
+         pos: [-0.04, 0.0, 0.098715]
+         rpy: [0.0, 0.0, 1.5707963267948966]
+         frame_id: rplidar_link
+       name: rplidar
      - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
          camera: oakd_rgb
 

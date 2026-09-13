@@ -14,7 +14,7 @@ import pytest
 from roqsim_sensors.plugins.lidar import LidarPlugin
 
 from roqsim.config import load_config_from_dict
-from roqsim.context import SimContext
+from roqsim.context import Entity, SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 
@@ -397,12 +397,56 @@ def test_excluding_nothing_explicitly_is_not_an_empty_parent_frame():
 
 
 def test_a_resolved_exclude_body_is_still_the_parent():
-    """The ordinary case is untouched: the transform is measured from that body and named for it."""
+    """With no carrier, the transform is measured from the excluded body and named for it."""
     engine = Engine(_mast_world(site="lidar", exclude_body="mast"))
     engine.setup()
     st = _scan_hints(engine)["static_tf"]
     assert st["parent"] == "mast"
     assert st["translation"] == [0.0, 0.0, 1.2]  # the mast sits at the origin
+
+
+class _Robot(Plugin):
+    """A robot as far as a lidar can tell: a prefixed root body carrying the scan site, and an entity
+    naming that body. The root is not called ``base_link``, so the parent can only come from the
+    entity."""
+
+    provides_entity = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        chassis = spec.worldbody.add_body(name="rb_chassis", pos=[0.0, 0.0, 0.3])
+        chassis.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.05])
+        chassis.add_site(name="rb_lidar", pos=[0.1, 0.0, 0.2])
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(name=self.address, kind="robot", body="rb_chassis", meta={"prefix": "rb_"})
+        )
+
+
+def test_a_robot_carried_scanner_without_exclude_body_hangs_its_frame_off_the_robots_base():
+    """Nothing is excluded by default, and the frame's parent is the carrying robot's root body."""
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {},
+                "components": [
+                    {
+                        f"{__name__}:_Robot": {},
+                        "name": "robot",
+                        "components": [
+                            {"roqsim_sensors.plugins.lidar:LidarPlugin": {"site": "lidar"}}
+                        ],
+                    }
+                ],
+            }
+        )
+    )
+    engine.setup()
+    (lidar,) = [p for p in engine.plugins if isinstance(p, LidarPlugin)]
+    assert lidar.exclude_body == "" and lidar._bodyexclude == -1
+    st = _scan_hints(engine)["static_tf"]
+    assert st["parent"] == "chassis"
+    assert np.allclose(st["translation"], [0.1, 0.0, 0.2])
 
 
 # -- tf_parent: the frame's parent, decoupled from what the rays skip -----------------------------

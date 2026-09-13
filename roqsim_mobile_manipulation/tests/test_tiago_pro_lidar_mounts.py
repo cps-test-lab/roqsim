@@ -16,7 +16,8 @@ Fixtures are PAL's numbers, not the model's:
   z-range the visual body is a 0.500 x 0.318 m waist.
 * ``pal_urdf_utils`` @ 775cdd6886296e6c00f17dbdfd9bcdd20e0e6622,
   ``urdf/laser/sick_tim571_laser.gazebo.xacro``: scan stamped in ``${name}_link`` (:25); 818 samples
-  over 270 deg (:32) from min + 1 deg (:34) to max; 0.05-25 m (:39-40); stddev 0.01 (:46).
+  over 270 deg (:32) from min + 1 deg (:34) to max; 0.05-25 m (:39-40). Its stddev 0.01 (:46) is a
+  Gazebo setting and not applied: the device's data sheet sigma is.
 
 **The scanners look out through the base's waist.** PAL's collision box at the scan height encloses
 both scan origins; PAL's visual body is recessed there, and both scanners stand outside that recess.
@@ -222,7 +223,8 @@ def test_scan_values_are_pals_where_pal_differs_from_the_datasheet(engine, label
     assert (lidar.range_min, lidar.range_max, lidar.rate_hz) == (0.05, 25.0, 10.0)
     assert (lidar.detection_min, lidar.detection_max) == (0.05, 25.0)
     assert (lidar.too_close, lidar.no_return) == (-np.inf, np.inf)
-    assert lidar.config["range_stddev"] == 0.01  # zeroed on the instance by the fixture
+    # The device's data sheet sigma, not PAL's simulated 0.01; zeroed on the instance by the fixture.
+    assert lidar.config["range_stddev"] == 0.02
     assert lidar.exclude_body == "mount" and not lidar.emit_static_tf
 
 

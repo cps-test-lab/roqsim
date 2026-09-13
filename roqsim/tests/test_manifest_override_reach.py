@@ -40,7 +40,7 @@ def test_a_model_default_is_addressable_with_nothing_declared():
 def test_the_manifest_still_supplies_everything_the_override_did_not_name():
     """An override is partial, like a declaration: it sets keys, it does not replace a component."""
     lidar = _components({"components": {"robot.rplidar.lidar": {"range_stddev": 0.05}}})["robot.rplidar.lidar"]
-    assert lidar["rays"] == 360
+    assert lidar["rays"] == 1080  # the rplidar_a1 device, as rplidar_ros bins a TurtleBot 4's scan
     assert lidar["max_range"] == 12.0
     assert lidar["frame_id"] == "rplidar_link"
 

@@ -109,7 +109,7 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
         outside = Counter(_body(m, m.geom_bodyid[g]) for g in hits.geomid[on_robot])
         assert dict(outside) == {PREFIX + b: n for b, n in expected_outside.items()}
 
-        # The TF parent is named now that nothing is excluded, so the frame still hangs off the base.
+        # No tf_parent is set, so the frame hangs off the root body of the robot carrying the lidar.
         tf = next(e for e in engine.ctx.interface.all() if e.name == "scan").backend["ros2"]
         assert tf["static_tf"]["parent"] == "base_link"
     finally:

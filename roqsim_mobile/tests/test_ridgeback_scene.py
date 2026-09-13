@@ -232,7 +232,7 @@ def test_no_ray_starts_inside_robot_geometry(scan):
     scanner = lidar(scan, f"rb.{LABEL}")
     inside, _ = robot_hits(scan, scanner, "rb_")
     assert not inside, {body: len(d) for body, d in inside.items()}
-    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray reads too close"
 
 
 def test_the_scan_sees_no_part_of_the_robot(scan):
@@ -254,13 +254,15 @@ def test_the_tf_chain_and_topic_are_clearpaths(scan):
 
 
 def test_the_scanner_is_the_ust_10lx():
-    """The device's specification values, not the 720-ray 360 degree scan the model used to carry."""
+    """The UST-10LX as urg_node publishes it, not the 720-ray 360 degree scan the model used to carry."""
     engine = spawn("ridgeback", {LABEL: None}, owner="rb", prefix="rb_", namespace=NAMESPACE)
     try:
         scanner = lidar(engine, f"rb.{LABEL}")
-        assert scanner.num_rays == 1080
+        assert scanner.num_rays == 1081  # steps 0..1080, the last on +135 deg
         assert (scanner.angle_min, scanner.angle_max) == pytest.approx((-2.35619449, 2.35619449))
-        assert (scanner.range_min, scanner.range_max) == pytest.approx((0.06, 30.0))
+        assert (scanner.range_min, scanner.range_max) == pytest.approx((0.06, 10.0))
+        assert (scanner.detection_min, scanner.detection_max) == pytest.approx((0.021, 30.0))
+        assert (scanner.too_close, scanner.no_return) == pytest.approx((0.004, 65.533))
         assert scanner.rate_hz == pytest.approx(40.0)
         assert scanner.config["range_stddev"] == pytest.approx(0.03)
     finally:

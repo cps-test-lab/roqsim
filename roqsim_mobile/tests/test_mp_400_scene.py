@@ -329,7 +329,7 @@ NAMESPACE = "neo"
 OUTSIDE_HITS = {
     "base_link": 104,
     "mp_400_fixed_wheel_left_link": 26,
-    "mp_400_fixed_wheel_right_link": 25,
+    "mp_400_fixed_wheel_right_link": 26,
 }
 HIT_DISTANCE = {
     "base_link": (0.128, 0.186),

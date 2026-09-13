@@ -46,5 +46,3 @@ components:
       # Nothing is excluded: at 0.6 m the fan clears the fenders and every other part of the robot, so
       # no ray starts inside robot geometry, and a robot part in the scan plane would be a real return.
       exclude_body: ''
-      # The TF parent is named, because unset it follows exclude_body, which is now empty.
-      tf_parent: base_link

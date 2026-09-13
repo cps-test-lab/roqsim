@@ -19,24 +19,6 @@
 # only `{frame_id}` carries, and a fixed name would collide on a robot with two. spawn_sensor publishes
 # `parent_frame -> {frame_id}` at the joint origin composed with the 0.0474 m.
 #
-# What the real driver publishes (not modelled by the lidar plugin; recorded for it). Clearpath runs
-# `urg_node_driver` (clearpath_robot clearpath_sensors/launch/hokuyo_ust.launch.py @ 74362fc, params
-# config/hokuyo_ust.yaml: angle_min -3.14, angle_max 3.14, cluster 1).
-#   * Ray count and angle_max: urg_node clamps the requested window to the device's steps and
-#     publishes steps first..last INCLUSIVE, angle_max = step2rad(last_step)
-#     (urg_node @ 1b3e550, src/urg_c_wrapper.cpp:207-209,660-668,791-826). Over the full 270 deg that
-#     is 1081 rays (spec 2-2: "Measurement steps 1081", step 0..1080), angle_increment 0.25 deg. The
-#     plugin spaces `rays` over [angle_min, angle_max) instead, so 1080 rays here keep the 0.25 deg.
-#   * Too-close return: the device reports the error code 4 for x < 21 mm (spec 5, "Measurement
-#     Data"); urg_c passes the raw decoded value through (urg_c @ 53136ab, current/src/urg_sensor.c:
-#     542-544) and urg_node divides every non-zero value by 1000 (urg_c_wrapper.cpp:241-249), so it
-#     is published as 0.004 m, below range_min.
-#   * No return: the device reports 65533 for x > 30000 mm, "object does not exist or low
-#     reflectivity" (spec 5); published as 65.533 m, above range_max. A raw 0 is published as NaN
-#     (urg_c_wrapper.cpp:247-248).
-#   * range_min / range_max are the device's own DMIN / DMAX (urg_c_wrapper.cpp:645-658,
-#     urg_sensor.c:315-320), read from the unit at connect.
-#
 # spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
 # second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
 # `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
@@ -54,24 +36,46 @@ components:
       frame_id: "{frame_id}"
       exclude_body: mount
       emit_static_tf: false
-      # spec 4: scan angle 270 deg, angular resolution 0.25 deg. 1080 rays spaced over the plugin's
-      # [angle_min, angle_max) keep the 0.25 deg step; the driver publishes 1081 (see above).
-      rays: 1080
+      # What the driver publishes: ros-drivers/urg_node @ 936abce8cd (ros2-devel), src/urg_c_wrapper.cpp
+      # ("driver"), with ros-drivers/urg_c @ 53136ab9cf, as Clearpath runs it (clearpath_robot
+      # clearpath_sensors/launch/hokuyo_ust.launch.py @ 74362fc, params config/hokuyo_ust.yaml:
+      # angle_min -3.14, angle_max 3.14, cluster 1).
+      #
+      # Layout: the requested window is converted to device steps, limited to the device's own
+      # (urg_c current/src/urg_utils.c:153-156), and published as steps first..last with
+      # angle_max = step2rad(last_step) (:207-209, :688-690, :791-823). Over the UST-10LX's 270 deg
+      # that is 1081 rays (spec 2-2: "Measurement steps 1081", step 0..1080), 0.25 deg apart, the last
+      # at +135 deg.
+      rays: 1081
       angle_min: -2.356194490   # -135 deg
       angle_max: 2.356194490    # +135 deg
-      range_min: 0.06           # spec 4: detection range 0.06 m to 10 m (white Kent sheet)
-      # spec 4: max. detection distance 30 m; the guaranteed range is 10 m on white Kent sheet and
-      # 4 m at 10% diffuse reflectance. Clearpath's simulation also uses 30 m (hokuyo_ust.urdf.xacro:5).
-      max_range: 30.0
+      # Header: the device's own DMIN / DMAX, read from the unit at connect (:212-213, :645-657;
+      # urg_c current/src/urg_sensor.c:315-320). Taken as the spec's detection range 0.06 m to 10 m
+      # (white Kent sheet); what the unit reports is unverified.
+      range_min: 0.06           # unverified device DMIN; spec 4
+      max_range: 10.0           # unverified device DMAX; spec 4
+      # Physical limits: the device reports the error code 4 for x < 21 mm and 65533 for x > 30000 mm
+      # (spec 5, "Measurement Data"); spec 4: max. detection distance 30 m.
+      detection_min: 0.021
+      detection_max: 30.0
+      # urg_c passes the decoded value through (current/src/urg_sensor.c:542-544) and the driver
+      # divides every non-zero value by 1000 (:241-249), so the error codes are published as metres:
+      # too close 0.004 m, below range_min, and no return 65.533 m ("object does not exist or low
+      # reflectivity"), above range_max. The codes are the spec's; not observed on hardware.
+      too_close: 0.004          # spec 5 code 4 / 1000; unverified on hardware
+      no_return: 65.533         # spec 5 code 65533 / 1000; unverified on hardware
       rate_hz: 40.0             # spec 4: scan speed 25 ms (motor speed 2400 rpm)
       # spec 4: repeated accuracy sigma < 30 mm (white Kent sheet), taken as 1 sigma. The +-40 mm
       # accuracy is a systematic bound and is not modelled. Clearpath's simulation has no noise.
       range_stddev: 0.03
+      # Not modelled: a raw 0 the driver publishes as NaN (:247-248), which the spec lists no
+      # condition for; intensities, which Clearpath leaves off (publish_intensity false); and the
+      # spec's note that detection errors near an edge last one or two steps.
 
 # Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
-# field and range window above.
+# field and its physical detection limits.
 fov:
-  near: 0.06
+  near: 0.021
   far: 30.0
   h_min: -2.356194490
   h_max: 2.356194490

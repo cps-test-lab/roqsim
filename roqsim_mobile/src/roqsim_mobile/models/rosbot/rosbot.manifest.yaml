@@ -44,9 +44,8 @@ components:
     name: rplidar
     components:
       - lidar:
-          # Husarion's C1 simulation: gaussian std_dev 0.02 m (slamtec_rplidar.urdf.xacro:126
-          # @ 5f783f8), where the device takes the datasheet's +-30 mm accuracy as 1 sigma.
-          range_stddev: 0.02
+          # Range noise is the device's data sheet sigma: Husarion's simulated std_dev 0.02 m
+          # (slamtec_rplidar.urdf.xacro:126 @ 5f783f8) is a Gazebo setting, not the scanner's.
           # Relative, so the robot's namespace scopes it: `<ns>/scan` (slamtec_rplidar.urdf.xacro:286).
           topics: {scan: scan}
 

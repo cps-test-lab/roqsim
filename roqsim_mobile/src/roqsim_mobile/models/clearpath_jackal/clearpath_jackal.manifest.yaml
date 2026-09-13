@@ -47,11 +47,15 @@ components:
     name: velodyne
     components:
       - lidar:
-          # NOT the hardware's values: the two this model's scan carried before the VLP-16 became a
-          # device, kept so the experiments built on it measure what they measured. The device
-          # carries the real ones (driver min_range 0.9 m; data sheet +-3 cm range accuracy). Which
-          # one those experiments should read is open (spec gap g_lidar_params); see the port log.
+          # NOT the hardware's values: a spec-preserving override, pending a user decision. The range
+          # limit and noise this model's scan carried before the VLP-16 became a device, kept so the
+          # experiments built on it measure what they measured. The device carries the real ones (the
+          # driver drops returns nearer than 0.9 m; data sheet +-3 cm range accuracy). The device
+          # separates the published header (range_min) from the limit that decides a return
+          # (detection_min), so the old 0.4 m takes both keys to keep deciding it. Which values those
+          # experiments should read is open (spec gap g_lidar_params); see the port log.
           range_min: 0.4
+          detection_min: 0.4
           range_stddev: 0.0
 
 # Fixed links the vendor chains and this MJCF flattens into base_link, which a device hangs from.

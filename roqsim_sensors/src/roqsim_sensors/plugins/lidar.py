@@ -60,10 +60,13 @@ carries past a header limit is published as the device would publish it, outside
 ``frame_id`` defaults to ``site``; set it when the robot's real description names the frame
 differently (the TurtleBot 4's URDF calls it ``rplidar_link``).
 
+``exclude_body`` defaults to nothing: a scanner skips only its own housing, which a device model names
+(``exclude_body: mount``), and any other robot geometry in the scan plane is a real return.
+
 The static mount TF (``emit_static_tf``, on by default) is ``tf_parent -> frame_id``, measured from
-that body. ``tf_parent`` defaults to the resolved ``exclude_body``, else ``world``; set it when the
-excluded body is the scanner's own housing rather than the link its frame hangs from. A device
-model mounted with ``spawn_sensor`` sets ``emit_static_tf: false``: the mount publishes the chain.
+that body. ``tf_parent`` defaults to the root body of the entity carrying the lidar (a robot's base),
+else the resolved ``exclude_body``, else ``world`` for a lidar nothing carries. A device model mounted
+with ``spawn_sensor`` sets ``emit_static_tf: false``: the mount publishes the chain.
 """
 
 from __future__ import annotations

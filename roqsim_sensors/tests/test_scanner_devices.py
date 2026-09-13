@@ -65,12 +65,15 @@ VENDOR_FRAME = {
 #: `(too_close, no_return)` each device declares, from its driver (see the manifests' citations).
 #: Every value its driver's source leaves unverified is the REP 117 default.
 DECLARED_OUTPUTS = {
+    "hokuyo_ust": ("0.004", "65.533"),
     "lds01": ("-inf", "+inf"),
     "rplidar_a1": ("-inf", "+inf"),
     "rplidar_c1": ("raw", "+inf"),
+    "sick_lms1xx": ("-inf", "+inf"),
     "sick_microscan3": ("-inf", "+inf"),
     "sick_s300": ("-inf", "+inf"),
     "sick_tim571": ("-inf", "+inf"),
+    "velodyne_vlp16": ("+inf", "+inf"),
 }
 _WORDS = {"-inf": -np.inf, "+inf": np.inf, "nan": np.nan}
 
@@ -259,9 +262,9 @@ def test_scan_window_is_the_manifest_and_fov_matches_it(device):
 
 
 class _Plate(Plugin):
-    """A lidar site at the origin and one small plate straight ahead of it, 3 cm away."""
+    """A lidar site at the origin and one small plate straight ahead of it, 1 cm away."""
 
-    DISTANCE = 0.03
+    DISTANCE = 0.01
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         spec.worldbody.add_site(name="lidar", pos=[0.0, 0.0, 0.5])
@@ -273,8 +276,11 @@ class _Plate(Plugin):
         )
 
 
-def _declared(value):
-    return None if value == "raw" else _WORDS.get(value, value)
+def _declared(value: str) -> float | None:
+    """The published value a declared word or number stands for; ``None`` for ``raw``."""
+    if value == "raw":
+        return None
+    return _WORDS[value] if value in _WORDS else float(value)
 
 
 @pytest.mark.parametrize("device", DEVICES)

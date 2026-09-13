@@ -303,7 +303,7 @@ def test_no_ray_starts_inside_robot_geometry(scan):
     scanner = lidar(scan, f"g.{LABEL}")
     inside, _ = robot_hits(scan, scanner, "g_")
     assert not inside, {body: len(d) for body, d in inside.items()}
-    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray reads too close"
 
 
 def test_the_scan_sees_no_part_of_the_robot(scan):
@@ -327,12 +327,13 @@ def test_the_tf_chain_and_topic(scan):
 
 
 def test_the_scanner_is_the_c1():
-    """The C1 data sheet's values, not the 360-ray LDS-class scan the model used to carry."""
+    """The C1 as sllidar_ros2 publishes it, not the 360-ray LDS-class scan the model used to carry."""
     engine = spawn("lgdxrobot2", {LABEL: None}, owner="g", prefix="g_", namespace=NAMESPACE)
     try:
         scanner = lidar(engine, f"g.{LABEL}")
-        assert scanner.num_rays == 500
+        assert scanner.num_rays == 720  # -pi .. pi, the last ray on pi
         assert (scanner.angle_min, scanner.angle_max) == pytest.approx((-np.pi, np.pi))
+        assert scanner.too_close is None, "a too-close surface is published at its distance"
         assert (scanner.range_min, scanner.range_max) == pytest.approx((0.05, 12.0))
         assert scanner.rate_hz == pytest.approx(10.0)
         assert scanner.config["range_stddev"] == pytest.approx(0.03)
