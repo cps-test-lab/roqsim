@@ -28,18 +28,20 @@ hand-assemble.
 
 - **One YAML file per world.** Robots, sensors, props and scene declared together; plugins hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **35 robot models across 6 families** — 16 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
-  Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, LGDXRobot2, MakerSpet Mini,
-  Raspimouse, OOMWOO ONE, PiRacer), 9 arms and 2 grippers (UR10e, UR5e, Panda, Gen3, xArm7, M1013,
-  OpenManipulator-X, ViperX 300s, WidowX 250s; Robotiq 2F-85, Schunk PG+70), 2 mobile manipulators
-  (TIAGo Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli, AgiBot G2), Boston Dynamics
-  Spot, and the Crazyflie 2 — each vendored with pinned upstream provenance.
-- **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with six
-  vendor-CAD sensor models. The IMU reports proper acceleration, true attitude (or none, marked as
-  such) and covariances built from its declared noise, so a `robot_localization` stack has the input
-  it expects; a segmentation camera adds per-pixel class and instance labels with tight 2D boxes,
-  measured from the mask, so a perception experiment has ground truth to be scored against. Coverage
-  analysis answers the question that actually blocks you: *how many cameras, and where?*
+- **36 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+  Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, ROX-Diff, LGDXRobot2,
+  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 9 arms and 2 grippers (UR10e, UR5e, Panda,
+  Gen3, xArm7, M1013, OpenManipulator-X, ViperX 300s, WidowX 250s; Robotiq 2F-85, Schunk PG+70),
+  2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli,
+  AgiBot G2), Boston Dynamics Spot, and the Crazyflie 2 — each vendored with pinned upstream
+  provenance.
+- **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with
+  19 bundled sensor device models. The IMU reports proper acceleration, true attitude (or none,
+  marked as such) and covariances built from its declared noise, so a `robot_localization` stack
+  has the input it expects; a segmentation camera adds per-pixel class and instance labels with
+  tight 2D boxes, measured from the mask, so a perception experiment has ground truth to be scored
+  against. Coverage analysis answers the question that actually blocks you: *how many cameras, and
+  where?*
 - **Scenes from what you already have.** Import Gazebo SDF, USD or CAD — or draw a floorplan in a window
   and get a world back.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus
