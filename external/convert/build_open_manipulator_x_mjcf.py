@@ -32,8 +32,8 @@ from pathlib import Path
 
 DEFAULT_URDF = "/opt/ros/{distro}/share/open_manipulator_description/urdf/open_manipulator_x/open_manipulator_x.urdf"
 DEFAULT_SRDF = "/opt/ros/{distro}/share/open_manipulator_moveit_config/config/open_manipulator_x/open_manipulator_x.srdf"
-# roqsim_manipulation_assets, NOT roqsim_manipulation: the models moved to the asset half of that package
-# when it was split (roqsim_manipulation kept the plugins). external/ is a sibling of the family packages,
+# roqsim_manipulation_assets, NOT roqsim_manipulation: the models live in the asset package, and
+# roqsim_manipulation holds the plugins. external/ is a sibling of the family packages,
 # so anchor back through parents[2] -- see external/convert/README.md.
 OUT = (
     Path(__file__).resolve().parents[2]

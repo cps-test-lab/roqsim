@@ -6,7 +6,7 @@ ROS 2 **TurtleBot3 World** (from ROBOTIS `turtlebot3_simulations`, Apache-2.0) �
 with nine pillars that TurtleBot 3's and nav2's own tutorials navigate.
 
 There is **no runtime plugin**. An offline pipeline turns a source scene into a committed `.xml` world;
-roqsim loads it via `sim.world` (which now accepts an MJCF file path), and so does
+roqsim loads it via `sim.world` (which accepts an MJCF file path), and so does
 `python -m mujoco.viewer --mjcf …`.
 
 A world can be baked from an **already-materialled MJCF building** — an export whose semantic
@@ -81,8 +81,8 @@ objects means each wall/column/desk becomes its own **convex collider** — the 
 collidable, no external collider file.
 
 USD hands that split over for free (one prim per object). **SDF does not**, and `sdf_to_scene.py`
-exists mostly to recover it. Three rules there are load-bearing — each was a bug that reached a
-running world, and all three look identical from the outside ("the robot sinks into the floor"),
+exists mostly to recover it. Four rules there are load-bearing — each guards a failure that reaches a
+running world, and all four look identical from the outside ("the robot sinks into the floor"),
 because the MJCF loads and steps happily in every case:
 
 - **Split connected components, then cut at reflex edges.** Components alone are not enough: a

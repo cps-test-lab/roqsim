@@ -109,7 +109,7 @@ def main(argv: list | None = None) -> None:
 
     spec = _load_spec(os.path.abspath(args.mjcf))
     # The source shell bakes its own directional lights but no <visual>; a small ambient headlight fill
-    # lifts the shadows the way the scene_to_mjcf baker did, without washing out the materials.
+    # lifts the shadows the way the scene_to_mjcf baker does, without washing out the materials.
     if args.headlight_ambient > 0:
         spec.visual.headlight.ambient = [args.headlight_ambient] * 3
     if args.shadow_lights is not None:

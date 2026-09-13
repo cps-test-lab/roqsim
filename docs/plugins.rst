@@ -865,9 +865,9 @@ collision -- a scenario reads the endpoint and stops the run itself.
 Ground that is not flat
 -----------------------
 
-Everything a robot could stand on here was a plane, while four of the ported platforms -- Spot, the
-Husky, the Jackal, the Warthog -- are outdoor machines whose papers are about what happens when it is
-not. ``heightfield`` is MuJoCo's own height field wired into a world::
+Without it everything a robot can stand on here is a plane, while four of the ported platforms --
+Spot, the Husky, the Jackal, the Warthog -- are outdoor machines whose papers are about what happens
+when it is not. ``heightfield`` is MuJoCo's own height field wired into a world::
 
    components:
      - heightfield: {size: [40, 40], height: 2.5, resolution: 128, seed: 3}
@@ -1023,7 +1023,7 @@ drop the attitude channel or triple the rate noise partway through, which is wha
 looks like to a localisation filter. Everything else is refused **at load**, by name, with the reason — ``rays``,
 ``angle_min`` and ``angle_max`` because they change a ``LaserScan``'s length or the bearing its
 indices mean, and ``site``/``frame_id``/``exclude_body`` because they are consumed once at
-``configure``. This is the ``geom_size`` lesson from the physics channel: a value that writes fine,
+``configure``. This is the ``geom_size`` rule from the physics channel: a value that writes fine,
 takes effect nowhere, and reads back as though it had is worse than one that is refused.
 
 A fault does not survive ``reset``: one process serves several trials, and a fault leaking into the

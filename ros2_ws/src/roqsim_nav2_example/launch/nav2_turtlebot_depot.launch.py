@@ -118,10 +118,10 @@ def generate_launch_description():
             # tb4_simulation_launch.py uses -- so the TF tree is identical by construction rather
             # than by maintenance. It consumes the bridge's /joint_states and publishes base_link
             # and everything below it (base_footprint, wheels, rplidar_link, ...). Without it the
-            # bridge's hand-published subset was the whole tree, and any consumer expecting a
-            # standard TB4 frame failed: nav2's collision_monitor defaults to
-            # base_frame_id: base_footprint, could not transform its scan, and -- sitting in the
-            # cmd_vel path -- failed closed and stopped the robot.
+            # bridge's hand-published subset is the whole tree, and any consumer expecting a
+            # standard TB4 frame fails: nav2's collision_monitor defaults to
+            # base_frame_id: base_footprint, cannot transform its scan, and -- sitting in the
+            # cmd_vel path -- fails closed and stops the robot.
             #
             # The world sets ``publish_static_tf: false`` on the bridge so the sensor-mount
             # transforms come from here only; two publishers for one static transform is a TF

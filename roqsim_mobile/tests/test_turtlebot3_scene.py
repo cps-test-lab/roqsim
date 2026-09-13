@@ -424,7 +424,7 @@ def test_c4_odometry_tf_points_at_the_description_root():
 
 
 def test_c5_odometry_tf_default_is_base_link():
-    """C5: platforms that say nothing keep base_link, so this change moves no existing robot."""
+    """C5: platforms that say nothing keep base_link, so only a platform that opts in moves."""
     model, data = _build()
     cfg = {k: v for k, v in _manifest_plugin("diff_drive").items() if k != "odom_child_frame"}
     ctx = SimContext(config={})

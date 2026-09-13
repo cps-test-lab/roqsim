@@ -95,8 +95,8 @@ def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
 #: arm never arrived. A position servo converges asymptotically, so a healthy execution ends a few
 #: hundredths of a radian out and any threshold tight enough to grade that would abort real work.
 #: Half a radian is ~29 degrees -- no arm that followed its trajectory ends there, and an arm that
-#: was blocked does. Measured on a manipulation cell that planned through its own bench: the arm
-#: stalled 5.59 rad from the last waypoint and this action still reported SUCCESSFUL.
+#: is blocked does. Measured on a manipulation cell that plans through its own bench: the arm
+#: stalls 5.59 rad from the last waypoint.
 DEFAULT_GOAL_TOLERANCE = 0.5
 #: ...and how long after the final waypoint the joints are given to get inside it.
 DEFAULT_GOAL_TIME_TOLERANCE = 1.0
@@ -153,8 +153,8 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
 
     Feedback reports ``desired`` (the commanded waypoint) against ``actual`` (what the joints are
     really at, read back through the producer's state reader) and their difference as ``error``, the
-    way a ros2_control JointTrajectoryController does. Reporting the command as both -- which this did
-    -- makes the tracking error identically zero, hiding exactly the saturation or gain problem the
+    way a ros2_control JointTrajectoryController does. Reporting the command as both would make the
+    tracking error identically zero, hiding exactly the saturation or gain problem the
     feedback exists to expose.
 
     The result is graded on where the JOINTS ended, not on the trajectory's clock running out: the
@@ -247,10 +247,10 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         feedback.error.positions = [a - c for a, c in zip(actual, positions, strict=True)]
         goal_handle.publish_feedback(feedback)
 
-    # FEEDING the last waypoint is not ARRIVING at it. Without the check below this action reported
-    # SUCCESSFUL the moment the trajectory's clock ran out, whatever the arm was actually doing --
-    # so an arm held back by a collision, a saturated actuator or a plan through the furniture came
-    # back indistinguishable from one that did the job. Nothing downstream could tell: MoveIt
+    # FEEDING the last waypoint is not ARRIVING at it. Without the check below this action would
+    # report SUCCESSFUL the moment the trajectory's clock runs out, whatever the arm is actually doing
+    # -- so an arm held back by a collision, a saturated actuator or a plan through the furniture
+    # would come back indistinguishable from one that did the job. Nothing downstream can tell: MoveIt
     # forwards this verdict, so the caller sees a clean execution and a scene that did not change.
     hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
     tol = _goal_tolerances(goal_handle.request, hints, names)

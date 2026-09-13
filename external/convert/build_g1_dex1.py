@@ -33,8 +33,8 @@ value:
   * Both finger joints are prismatic on OPPOSING axes and their origins coincide at q=0 -- from which
     "q=0 is fully closed" follows and is FALSE. The pads sit ~23 mm outboard each, so q=0 already
     stands 45.9 mm open and the whole useful closing range is upstream's NEGATIVE half. Measured, not
-    inferred: see the aperture table below. An earlier version of this script clamped that half away as
-    a "crossed" state and produced a gripper that could not grip anything.
+    inferred: see the aperture table below. Clamping that half away as a "crossed" state leaves a
+    gripper that cannot grip anything.
 
 The head carries the Livox Mid-360 the ``unitree_g1`` manifest mounts at ``mid360_joint``; its mesh is
 cut with the sensor's housing and field by ``g1_head_window.py``, so the scan leaves the head.
@@ -131,8 +131,8 @@ GAINS = {
 # sides: aperture(q) = PAD_GAP_AT_ZERO + 2q. MEASURED from the collision-mesh vertices, because the
 # body origins are coincident at q=0 and reasoning from those says the fingers touch there, which is
 # wrong -- the pads sit ~23 mm outboard each, so q=0 already stands 45.9 mm open. The whole useful
-# closing range is therefore the NEGATIVE half of upstream's limits, which an earlier version of this
-# script clamped away as a "crossed" state, leaving a gripper that could not grip anything.
+# closing range is therefore the NEGATIVE half of upstream's limits; clamping it away as a "crossed"
+# state leaves a gripper that cannot grip anything.
 #
 #   q = -0.0200 -> 5.9 mm aperture (closed)
 #   q =  0.0000 -> 45.9 mm
@@ -444,13 +444,13 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
                 "ctrlrange": f"{2 * FINGER_OPEN * TENDON_COEF} {2 * FINGER_CLOSE * TENDON_COEF}",
                 # Stiff and force-limited, which is how a real gripper grasps: the servo saturates
                 # against `forcerange` (the URDF's 20 N finger effort limit) rather than being told a
-                # gentle position. Both numbers were arrived at by failing:
-                #   * kp=200 gave only kp*err = 2 N at a 10 mm over-closure, so friction (~4.8 N) barely
-                #     matched the 0.5 kg box's weight (4.9 N) and the parcel slid out of the jaws. At
+                # gentle position. Both numbers are set by how lower ones fail:
+                #   * kp=200 gives only kp*err = 2 N at a 10 mm over-closure, so friction (~4.8 N) barely
+                #     matches the 0.5 kg box's weight (4.9 N) and the parcel slides out of the jaws. At
                 #     kp=2000 the same command saturates at 20 N -> ~48 N of friction.
-                #   * kv=5 was underdamped: the servo overshot the commanded aperture by ~9 mm, which
-                #     squeezed a 40 mm box to 28 mm and extruded it sideways before settling on target.
-                #     kv is now near-critical for the ~0.17 kg of moving finger (2*sqrt(kp*m) ~= 37).
+                #   * kv=5 is underdamped: the servo overshoots the commanded aperture by ~9 mm, which
+                #     squeezes a 40 mm box to 28 mm and extrudes it sideways before settling on target.
+                #     kv=40 is near-critical for the ~0.17 kg of moving finger (2*sqrt(kp*m) ~= 37).
                 # The failure in both cases looks like insufficient friction and is not.
                 "kp": "2000",
                 "kv": "40",

@@ -266,11 +266,10 @@ class OmniDrivePlugin(Plugin):
         # distance R below the axle, v_contact = v_centre + omega x r = 0 gives omega_y = +V/R. So a
         # wheel spinning about the base's **+y** carries it forward, and sign = +axis_y.
         #
-        # This read `-axis_y` until 2026-08-28, so every omni_drive wheel span backwards. It was
-        # invisible in the dynamics -- these wheels are deliberately near-frictionless load carriers
-        # and the base is driven through the planar actuators -- but it was wrong in the viewer and in
-        # `joint_states`, which is most of what these servos exist for. Found by measuring contact
-        # slip: the four omni bases showed |v_contact| ~ 2V while the diff_drive bases showed ~0.
+        # A wrong sign is invisible in the dynamics -- these wheels are deliberately near-frictionless
+        # load carriers and the base is driven through the planar actuators -- but it shows in the
+        # viewer and in `joint_states`, which is most of what these servos exist for. A backwards
+        # wheel shows |v_contact| ~ 2V instead of ~0, which is what tests/test_wheels_roll.py measures.
         #
         # Derived rather than hardcoded because a source URDF may mirror left/right wheels, as the
         # Neobotix descriptions do -- exactly the kind of thing that should not be assumed.

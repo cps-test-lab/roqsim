@@ -39,8 +39,8 @@ def test_pacer_factor_parsing():
 # -- pacing shortfall ---------------------------------------------------------------------
 # Falling behind is absorbed on purpose: catching up would deliver sim time faster than the
 # requested rate, which against a live stack is worse than being slow. Counting it is what
-# stops that absorption from being silent -- a run that held 0.34x realtime for five minutes
-# reported nothing until its job deadline killed it, and the shortfall had to be
+# stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
+# minutes reports nothing until its job deadline kills it, and the shortfall has to be
 # reconstructed from run.clock_map.csv afterwards.
 
 

@@ -99,7 +99,7 @@ class CautionProbe:
 
     def __init__(self, config: dict | None = None):
         cfg = config or {}
-        # Set by the navigator from its `traffic:` policy, not written in a world directly.
+        # Set by the navigator from its `avoidance: {stop: ...}`, not written in a world directly.
         self.enabled = bool(cfg.get("enabled", True))
         self.reroute = bool(cfg.get("reroute", False))
         self.lookahead = float(cfg.get("lookahead", 1.2))
@@ -113,13 +113,13 @@ class CautionProbe:
         #: Height above the floor to look at, like a scanning plane -- NOT the mover's body origin.
         #: The origin means something different on every platform: a TurtleBot's is 3 cm up, an
         #: omni base's is a centimetre BELOW the floor, and a walker's pelvis is at 0.9 m. Casting
-        #: from the walker's origin sent its rays straight over the top of a 0.88 m robot.
+        #: from the walker's origin sends its rays straight over the top of a 0.88 m robot.
         #:
         #: The height is taken from the bottom of the mover's own ``obstacle_height`` band, the same
         #: declaration the planner rasterizes: scan where the things that stand on floors actually
         #: are. Any *fixed* height is a guess about other people's robots and will be wrong for some
-        #: of them -- 0.30 m looked reasonable and was above the roof of a TurtleBot 4, whose
-        #: collision geometry stops at 0.25 m, so every probe in a world of them saw nothing at all.
+        #: of them -- 0.30 m looks reasonable and is above the roof of a TurtleBot 4, whose
+        #: collision geometry stops at 0.25 m, so every probe in a world of them would see nothing.
         #: Scanning low cannot have that failure: a mover that cannot pass over something must have
         #: geometry near the floor, or it would not be an obstacle.
         band = cfg.get("band") or (0.1, 1.8)
@@ -131,12 +131,10 @@ class CautionProbe:
         #: going to move, the clock runs, and recovery becomes reachable -- which is the only way out
         #: of a pocket whose exit the mover must drive toward an obstacle to reach.
         self.yield_time = float(cfg.get("yield_time", 3.0))
-        #: `replan` only: how long a remembered blockage keeps steering the planner away. Long
+        #: `reroute` only: how long a remembered blockage keeps steering the planner away. Long
         #: enough to get round what is there, short enough that a mover forgets an obstacle which
         #: has since moved on rather than treating the world as permanently narrower.
         self.forget_after = float(cfg.get("forget_after", 5.0))
-        #: Radius of the disc a remembered blockage marks out. Defaults to the corridor's own half
-        #: width, so a mark is as wide as the gap the mover just failed to fit through.
         #: Radius of the disc a remembered blockage marks out, defaulting to the corridor's own
         #: half width -- a mark as wide as the gap the mover just failed to fit through.
         self.blockage_radius = float(cfg.get("blockage_radius", 0.0)) or self.width / 2.0
@@ -155,7 +153,7 @@ class CautionProbe:
         #: which is only the right way out when it drove in head-on.
         self.blocker_xy: np.ndarray | None = None
         #: World xy of EVERY blocking hit of the last check, one per ray that found something.
-        #: `replan` marks all of them, and that is what lets it discover an obstacle wider than a
+        #: `reroute` marks all of them, and that is what lets it discover an obstacle wider than a
         #: single ray: one point tells a planner where the mover stopped, a fan of them outlines how
         #: far the thing that stopped it extends across the corridor.
         self.blocker_points: list = []
@@ -299,9 +297,9 @@ class CautionProbe:
         **The ray starts at the front of the footprint, not at the body origin, and that is load
         bearing.** ``mj_multiRay`` reports only the *nearest* hit per ray, so a ray cast from inside
         the mover's own box hits its own far face first -- and discarding that by geom id does not
-        reveal what is behind it, it just yields "nothing there". The probe then stayed silent until
-        an obstacle came closer than the mover's own half-width, which is well inside the distance it
-        was supposed to stop at. (:mod:`roqsim.raycast` documents the same trap for GPU backends:
+        reveal what is behind it, it just yields "nothing there". Such a probe stays silent until
+        an obstacle comes closer than the mover's own half-width, which is well inside the distance
+        it is supposed to stop at. (:mod:`roqsim.raycast` documents the same trap for GPU backends:
         "rejecting a hit does not reveal what is behind it".)
 
         Starting at the footprint edge also gives ``lookahead`` the meaning a world author expects:

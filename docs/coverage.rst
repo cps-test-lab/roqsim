@@ -166,10 +166,10 @@ housing is the first thing it hits. So every FOV carries the body it is mounted 
 (``SensorFov.body_exclude``, from ``cam_bodyid``/``site_bodyid``) and the ray cast excludes it — the
 same ``bodyexclude`` mechanism the ``lidar`` plugin's ``exclude_body`` uses for a scanner's own housing.
 
-Worth stating because the symptom did not look like occlusion. The D435 mount's ``d435_front`` sits
-4.3 mm ahead of its camera, which blocked the whole central cone while wide-angle fringe rays still
-escaped — so a mounted camera reported a *plausible but low* number rather than an obvious zero, and
-a narrow long-range sensor (the Zivid, near 1.3 m) reported exactly **0** coverage in a room it saw
-perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
+Worth stating because the symptom does not look like occlusion. The D435 mount's ``d435_front`` sits
+4.3 mm ahead of its camera, which unexcluded blocks the whole central cone while wide-angle fringe
+rays still escape — so a mounted camera reports a *plausible but low* number rather than an obvious
+zero, and a narrow long-range sensor (the Zivid, near 1.3 m) reports exactly **0** coverage in a room
+it sees perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
 ``spawn_sensor``-mounted sensor. A *hypothetical* placement (``pos``/``rpy``, not
 spawned) is unaffected: it has no body, because nothing of it exists to get in the way.

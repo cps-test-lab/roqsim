@@ -298,7 +298,7 @@ def _run_route(tmp_path, seconds=20.0, **nav):
 
 
 def test_pure_pursuit_finishes_the_route_and_reports_done(tmp_path):
-    """The end-to-end regression for two silent bugs, both of which let the mover keep moving.
+    """End to end, the two silent failures goal advancement must avoid: both keep the mover moving.
 
     A follower that advances goals on *proximity* stalls at the corner, because pure pursuit does
     not drive at the corner. Fixing that with a "have I crossed the plane through the goal" test

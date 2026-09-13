@@ -3,10 +3,10 @@
 At 0.74 kg and 117 mm it is an order of magnitude below anything else here, and the two tests worth
 having are both about that rather than about kinematics.
 
-``test_rotation_and_straight_line_track_the_command`` pins a servo gain that had to be calibrated for
-the scale. At the ``kv=0.05`` first written -- a plausible-looking number for a tiny robot -- the
-velocity servo needs a large error before it makes any torque at all, and the base reached 0.62 of
-commanded yaw. Nothing else noticed: it drove, it rested, its mass was right.
+``test_rotation_and_straight_line_track_the_command`` pins a servo gain calibrated for the scale. At
+``kv=0.05`` -- a plausible-looking number for a tiny robot -- the velocity servo needs a large error
+before it makes any torque at all, and the base reaches 0.62 of commanded yaw. Nothing else notices:
+it drives, it rests, its mass is right.
 
 ``test_rests_on_wheels_and_chassis`` pins the fact that this base has **no caster in the
 description**. It tips ~2 degrees onto its chassis box and drives on that edge, as the real robot

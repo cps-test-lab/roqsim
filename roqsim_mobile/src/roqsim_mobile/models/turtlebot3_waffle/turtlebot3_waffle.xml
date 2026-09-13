@@ -105,11 +105,10 @@
            geoms' contact parameters by taking max(condim) and max(friction), so `condim="1"` alone
            loses to any ordinary floor (condim 3, friction ~1-2) and the caster drags. Measured with
            condim alone: 13.3 N of tangential force per caster while driving at 0.2 m/s, a 22% speed
-           deficit and a 48% yaw deficit -- i.e. the robot was being braked by its own casters.
+           deficit and a 48% yaw deficit -- i.e. the robot is braked by its own casters.
            A higher priority makes THESE parameters win outright, in any scene, without depending on
            the floor geom's name -- unlike an explicit <pair geom2="floor">, which MuJoCo silently
-           drops in a world that names its ground otherwise (turtlebot4 shipped that way until this
-           port measured the cost, and now uses this mechanism too).
+           drops in a world that names its ground otherwise. turtlebot4 uses the same mechanism.
            Vendor poses, shifted to base_link; each sphere touches the floor at rest height. -->
       <geom name="tb3_caster_left" type="sphere" size="0.005" pos="-0.177 0.064 -0.005"
             material="tb3_grey" priority="1" condim="1" friction="0.0001 0.0001 0.0001"

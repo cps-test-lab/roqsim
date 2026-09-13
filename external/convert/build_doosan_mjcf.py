@@ -3,8 +3,7 @@
 
 A xacro-tree port, like the ROSbot's: there is no upstream MJCF. The vendor's own ``dsr_mujoco``
 package is *not* one -- opening it (rather than trusting the name) shows two small Python helpers and
-three controller YAMLs, a runtime scene builder over the URDF. That discovery is what moved this
-port's estimate from 3 iterations to 6 before any of it was written.
+three controller YAMLs, a runtime scene builder over the URDF.
 
 Every mass, inertia tensor, centre of mass, link offset, joint limit, velocity limit and effort limit
 below is Doosan's own value, read out of the expanded xacro. What the source does *not* give usable
@@ -15,8 +14,8 @@ same sizes, ~7 MB. Colliding against those is the porting playbook's first anti-
 here is the **convex hull of each decimated visual mesh** (MuJoCo hulls a mesh geom for collision),
 which the playbook allows alongside primitives.
 
-Fitted primitives were tried first, as the xArm's are, and measured against the vendor meshes as
-ground truth over 1500 uniformly sampled configurations:
+Measured against the vendor meshes as ground truth over 1500 uniformly sampled configurations,
+fitted primitives (as the xArm uses) compare as:
 
     vendor meshes (ground truth)   11.7%
     one capsule per mesh, s=0.90   62.4%
@@ -214,7 +213,7 @@ TEMPLATE = """<mujoco model="m1013">
       <!-- Servo gains scale with the vendor's own effort limits, which fall 7x along the chain
            (346, 346, 163, 50, 50, 50 N*m). A single stiff setting chatters on the distal joints:
            at kv=150 against link_6's effective inertia of ~0.105 kg*m^2, kv*dt/I is 2.9 at a 2 ms
-           timestep -- past the explicit-damping stability threshold -- and joints 5 and 6 sat at
+           timestep -- past the explicit-damping stability threshold -- and joints 5 and 6 sit at
            their force limit flipping sign every step while barely moving. Sized so kv*dt/I stays
            below ~0.5 for each class. -->
       <default class="joint">

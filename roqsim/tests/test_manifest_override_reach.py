@@ -5,14 +5,13 @@
 """Reaching a MODEL DEFAULT component's config from outside the document.
 
 ``spawn_robot`` pulls a model's components in from its manifest, so a world that just spawns a robot
-never names its lidar. It used to be unable to reach one either: overrides resolved against the
-parsed YAML, before expansion, so ``plugins.lidar.rays`` named nothing and was refused. The refusal
-was right -- silently ignoring a swept parameter lets a campaign look healthy while changing nothing
--- but it left a model default unreachable, and the documented way out was a stub entry whose only
-job was to exist.
+never names its lidar, and an override must still reach it. Resolved against the parsed YAML, before
+expansion, ``plugins.lidar.rays`` would name nothing and be refused. The refusal is right --
+silently ignoring a swept parameter lets a campaign look healthy while changing nothing -- but it
+would leave a model default unreachable except through a stub entry whose only job is to exist.
 
-Expansion now happens while the document loads, so an override resolves against what will actually
-run. This is the file that says so, and it is the reason for the whole change.
+Expansion happens while the document loads, so an override resolves against what will actually
+run. This is the file that says so.
 """
 
 import pytest

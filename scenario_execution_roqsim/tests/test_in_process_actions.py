@@ -133,9 +133,8 @@ def _start(action, sim, clock, **args):
 def test_the_baseline_is_where_the_entity_was_when_the_action_started(world):
     """Not its absolute pose, and not a world-side plugin's reference: the crate starts at z = 0.4.
 
-    A trigger measuring absolute z would fire instantly on any sensible threshold. That is exactly the
-    bug the predecessor action needed an `_armed` hysteresis flag to survive, and it disappears when the
-    action owns its own baseline.
+    A trigger measuring absolute z would fire instantly on any sensible threshold. An action that
+    owns its own baseline needs no hysteresis flag to avoid that.
     """
     ctx, clock, sim = world
     action = _start(
@@ -590,12 +589,12 @@ def test_set_entity_state_raises_on_an_unknown_entity(teleport_world):
 
 
 def test_set_entity_state_applies_roll_and_pitch(teleport_world):
-    """A full orientation, the same one `SetEntityState` has always accepted.
+    """A full orientation, the same one `SetEntityState` accepts.
 
-    This action used to convert yaw itself and refuse roll or pitch, on the grounds that it places
-    a wheeled base on its floor. That made the OSC verb the only place in the substrate where an
-    orientation meant something narrower than everywhere else -- while the service behind it took
-    a whole quaternion -- and it blocked aiming a sensor, which is a pose with no floor in it. The
+    Converting yaw alone and refusing roll or pitch, on the grounds that the action places a wheeled
+    base on its floor, would make the OSC verb the only place in the substrate where an orientation
+    meant something narrower than everywhere else -- while the service behind it takes a whole
+    quaternion -- and would block aiming a sensor, which is a pose with no floor in it. The
     real constraint is whether the body has a free joint, and the simulator already reports that.
     """
     ctx, clock, sim = teleport_world
@@ -617,7 +616,7 @@ def test_set_entity_state_applies_roll_and_pitch(teleport_world):
     assert action.update() is SUCCESS
 
     # Compared against roqsim's own conversion rather than a hand-written quaternion: the point is
-    # that this action no longer has a convention of its own, and pinning a literal here would put
+    # that this action has no convention of its own, and pinning a literal here would put
     # a second one back into the tests.
     from roqsim.pose import rpy_to_quat
 
@@ -662,10 +661,9 @@ def test_set_entity_state_refuses_a_malformed_pose_naming_the_key(teleport_world
 def test_set_entity_state_applies_a_stated_twist(teleport_world):
     """A twist is part of the state, and a stated one has to arrive.
 
-    `SetEntityState` carries a twist, the GETTER reports one, and both this action and the bridge
-    behind it used to drop it while replying OK -- so a caller could read a velocity it could not
-    set. Written in the scenario's own vocabulary (`velocity_6d` spells its halves
-    `translational`/`angular`).
+    `SetEntityState` carries a twist, the GETTER reports one, and dropping it while replying OK
+    would let a caller read a velocity it cannot set. Written in the scenario's own vocabulary
+    (`velocity_6d` spells its halves `translational`/`angular`).
     """
     ctx, clock, sim = teleport_world
     jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
@@ -1200,7 +1198,7 @@ def test_waiting_without_a_call_is_unchanged():
 
 def test_every_call_type_can_be_asked_why_it_is_waiting():
     """The contract is shared, so an action never has to know which kind of call it holds --
-    which is how the nav call was missed when the question was first added."""
+    and every call type has to answer."""
     from scenario_execution_roqsim.access import NavCall, OverrideCall, SpawnCall, TeleportCall
 
     for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):

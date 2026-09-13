@@ -9,10 +9,9 @@ The filename is deliberately not ``test_wheels_roll.py`` as well. These test dir
 "import file mismatch" -- the same hazard that made the shared helper here ``mobile_scene_utils.py``
 rather than a second ``conftest.py``.
 
-It exists because ``tiago_pro`` was one of the five bases affected by ``omni_drive`` deriving its
-wheel roll sign from ``-axis_y`` where rolling gives ``+axis_y`` — and it was the one the sibling
-test could not have caught, so it was verified by hand at the time. Verified by hand once is not a
-guard.
+It exists because ``tiago_pro`` is an ``omni_drive`` base the sibling test cannot reach, and a roll
+sign derived from ``-axis_y`` where rolling gives ``+axis_y`` spins its wheels backwards without
+touching the dynamics. A check by hand is not a guard.
 
 The invariant is the definition of rolling rather than a convention: without slip the **contact point
 is stationary**, ``v_contact = v_centre + omega x r = 0``. Get the sign backwards and its magnitude

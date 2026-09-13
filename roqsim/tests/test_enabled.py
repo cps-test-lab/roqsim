@@ -59,7 +59,7 @@ def test_enabled_must_be_a_boolean_wherever_it_is_written():
 
 def test_the_ceiling_plugin_refuses_enabled_by_name():
     """It is SUBTRACTIVE -- it opens a roof by removing geometry -- so `enabled: false` would leave
-    the ceiling standing, the opposite of what the key used to mean. Silence there would be a
+    the ceiling standing, the opposite of what the key means everywhere else. Silence there would be a
     world that quietly stopped doing what it said."""
     cfg = load_config_from_dict(
         {"sim": {}, "components": [{"ceiling": {"enabled": False, "above_z": 2.6}}]}

@@ -1,10 +1,9 @@
 """Resolve a pinned upstream source tree for the per-model converters.
 
 Every converter in this directory rebuilds a vendored model from an upstream repository at a pinned
-commit. Each used to resolve that source its own way, and both ways were broken: ``build_oli.py``
-defaulted to an absolute path inside a long-dead agent session scratchpad (so the documented rebuild
-never worked on any machine), and ``build_g2_mjcf.py`` used bare relative filenames (so it only
-worked from one CWD). This module is the single answer: sources land in ``external/sources/<name>/``,
+commit. Resolving that source per converter breaks in both obvious ways: an absolute default path
+works on one machine only, and bare relative filenames work from one CWD only. This module is the
+single answer: sources land in ``external/sources/<name>/``,
 pinned by commit, and a converter names what it needs rather than where it happens to sit.
 
 A checkout is reused if it is already at the requested commit, so re-running a converter costs

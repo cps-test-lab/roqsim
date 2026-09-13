@@ -24,8 +24,8 @@ distortion = ["opencv-python>=4.6"]  # CameraPlugin `distortion:`: forward lens 
 coverage = ["matplotlib>=3.8"]  # coverage 2D heatmap; the 3D render uses mujoco + numpy only
 
 [project.scripts]
-# Legacy alias of `roqsim sensors coverage` (the documented entry point, registered below). Kept because
-# the bare name is already written into notes and run scripts -- same reason roqsim keeps `roqsim-export-*`.
+# Alias of `roqsim sensors coverage` (the documented entry point, registered below), because the
+# bare name is written into notes and run scripts -- same reason roqsim keeps `roqsim-export-*`.
 roqsim-coverage = "roqsim_sensors.coverage.cli:main"
 
 # Sensor plugins, registered into the shared roqsim.plugins group.

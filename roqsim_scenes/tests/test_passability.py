@@ -1,8 +1,7 @@
 """The check a picture cannot make: did the convex hulls wall off a way through?
 
 MuJoCo collides a mesh by its convex hull, so a wall with a doorway cut out of it is a solid wall --
-while every renderer and ``mj_ray`` still show the doorway open. secorolab shipped that way and 87 %
-of the building was unreachable, through four campaigns, because nothing anyone looked at could show
+while every renderer and ``mj_ray`` still show the doorway open, so nothing anyone looks at can show
 it. These tests pin the shapes that must and must not trip the check.
 """
 
@@ -99,8 +98,8 @@ def test_a_zero_thickness_wall_is_someone_else_s_failure():
 
     Its 2D hull is a line, so it seals nothing here -- and it seals nothing in MuJoCo either, which
     refuses to hull it at all ("coplanar vertices, cannot compute convex hull") when the scene is
-    baked. That refusal is the one the secorolab port actually hit, and read as a substrate quirk to
-    work around with a thickening script instead of as a wrong-route signal.
+    baked. That refusal is a wrong-route signal, not a substrate quirk to work around by
+    thickening the part.
 
     Pinned as a test because the tempting "fix" is to make this check fire on zero-thickness parts
     too. It must not: the part never becomes a collider, so no passage is closed, and a check that

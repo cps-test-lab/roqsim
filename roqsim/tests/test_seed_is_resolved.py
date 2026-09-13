@@ -74,7 +74,7 @@ def test_a_seed_of_zero_is_a_chosen_seed_not_an_absent_one():
 
 
 def test_an_adapter_driven_run_never_leaves_the_seed_unset(tmp_path: Path, caplog):
-    """A recording from this path can no longer say ``seed: None``."""
+    """A recording from this path never says ``seed: None``."""
     with caplog.at_level(logging.INFO):
         seed, _ = _seeded_run(tmp_path)
     assert isinstance(seed, int)
@@ -82,9 +82,9 @@ def test_an_adapter_driven_run_never_leaves_the_seed_unset(tmp_path: Path, caplo
 
 
 def test_two_unseeded_runs_draw_differently(tmp_path: Path):
-    """The reported symptom, as a test: repetitions of one configuration must be samples.
+    """Repetitions of one configuration must be samples.
 
-    This is the assertion that failed before the fix -- both runs drew from 0.
+    Two runs that both draw from 0 fail this assertion.
     """
     seed_a, draw_a = _seeded_run(tmp_path)
     seed_b, draw_b = _seeded_run(tmp_path)
@@ -138,7 +138,7 @@ def test_a_rebuild_does_not_redraw(tmp_path: Path):
     sim.shutdown()
 
 
-# -- the ordering the fix depends on ----------------------------------------------------------
+# -- the ordering seed resolution depends on --------------------------------------------------
 
 
 class _ReadsSeedAtConfigure(Plugin):

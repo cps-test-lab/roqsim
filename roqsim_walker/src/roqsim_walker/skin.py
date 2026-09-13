@@ -1,7 +1,5 @@
 """Skin a CARLA (or other) character mesh onto the humanoid skeleton as MuJoCo ``<skin>``s.
 
-Ported from our earlier in-house nav prototype's ``mujoco_nav.skin``.
-
 The walker's body pose is FK over a flat set of mocap bodies (one per skeleton joint, see
 :mod:`roqsim_walker.humanoid`). Instead of capsule geoms, this binds a real character mesh to
 those bodies with deformable skins that follow the bones every step (render-only -- the per-limb

@@ -22,10 +22,10 @@ plugins intrinsic to it, while the plugins know nothing about any particular mod
 
 **Three plugins, and that is deliberate.** The line is reuse: what is here is arm-agnostic
 *mechanism* — mount an arm, hold a joint vector, close a Cartesian loop — and none of it knows what
-the arm is doing or what counts as doing it well. Anything that answered those questions has moved
-to the experiment that was asking: `peg_in_hole` (a bored block with a swept clearance) and
-`insertion_task` (one paper's trial protocol, right down to its default `approach_height`) to the
-a downstream insertion experiment, `pick_place_metrics` to a downstream pick experiment.
+the arm is doing or what counts as doing it well. Anything that answers those questions lives with
+the experiment asking them: `peg_in_hole` (a bored block with a swept clearance) and
+`insertion_task` (one paper's trial protocol, right down to its default `approach_height`) with a
+downstream insertion experiment, `pick_place_metrics` with a downstream pick experiment.
 
 The test for a new plugin here is whether a *second* arm experiment would use it unchanged.
 

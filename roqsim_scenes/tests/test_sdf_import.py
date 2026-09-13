@@ -1,6 +1,6 @@
 """Regression tests for the SDF import path: the two ways a scene silently sinks its robot.
 
-Both bugs below were found in the warehouse port, both produced the *same* user-visible symptom ("the
+Both failures below produce the *same* user-visible symptom ("the
 robot sinks into the floor"), and neither is visible in the MJCF -- the model loads, compiles and
 steps. They only show up when something stands on the floor. Hence tests.
 

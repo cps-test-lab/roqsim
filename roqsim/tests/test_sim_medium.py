@@ -77,6 +77,6 @@ def test_medium_lands_in_the_run_record():
 
 
 def test_unknown_integrator_is_rejected():
-    # `integrator` predates this change and is an enum, so a bad value still fails loudly.
+    # `integrator` is an enum, so a bad value fails loudly.
     with pytest.raises(KeyError):
         _opt({"integrator": "verlet"})

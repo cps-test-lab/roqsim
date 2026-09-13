@@ -5,11 +5,10 @@ A 0.24 m four-wheel **mecanum** research platform, 2.68 kg. The second holonomic
 `roqsim_mobile` after the Ridgeback, so it uses ``omni_drive`` and carries **no** ``slip_factor`` --
 it does not turn by scrubbing.
 
-The platform ledger recorded "skid-steer or mecanum" as this port's biggest unknown, on the strength
-of four *distinct* per-wheel meshes (mirrored roller directions need separate geometry where a
-skid-steer reuses two files). That hint was right, and it did not have to be relied on: the vendor's
-own ``lgdxrobot2_sim.urdf`` declares ``gz::sim::systems::MecanumDrive`` outright, and the drive
-geometry below is that plugin's own configuration.
+Four *distinct* per-wheel meshes point to mecanum rather than skid-steer (mirrored roller directions
+need separate geometry where a skid-steer reuses two files), and the vendor's own
+``lgdxrobot2_sim.urdf`` settles it: it declares ``gz::sim::systems::MecanumDrive`` outright, and the
+drive geometry below is that plugin's own configuration.
 
 **Two descriptions, and only one of them is usable.** ``lgdxrobot2.urdf`` is the visualisation
 description: nine links, twelve meshes, and **no inertial or collision elements whatsoever** -- it

@@ -123,8 +123,8 @@ _FLOOR_DEFAULTS = {
 }
 
 # Default floorplan-mesh (wall) appearance. rgb1 == rgb2 => a solid colour (the mesh carries no UVs, so
-# a 'texture' is auto-projected planar-XY by MuJoCo). Matches the previous solid wall colour, so worlds
-# that don't set 'wall' look unchanged. Same keys as 'floor' minus friction (the mesh has no contacts).
+# a 'texture' is auto-projected planar-XY by MuJoCo), so a world that doesn't set 'wall' gets solid
+# light grey walls. Same keys as 'floor' minus friction (the mesh has no contacts).
 _WALL_DEFAULTS = {
     "rgb1": [0.8, 0.8, 0.82],
     "rgb2": [0.8, 0.8, 0.82],

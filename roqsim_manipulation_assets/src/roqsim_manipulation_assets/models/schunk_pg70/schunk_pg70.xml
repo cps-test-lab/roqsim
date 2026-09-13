@@ -54,8 +54,8 @@
       <!-- Slide joints in metres. `range` is the URDF's exactly. damping/armature are ours (the URDF
            has neither) and they are load-bearing, not decoration: a 50 g jaw on a stiff position
            servo is what sets the stability limit, roughly kp < armature/dt^2. At the armature the
-           URDF implies (~0) and dt=0.002 the servo went into a two-step limit cycle -- 3.6 mm of
-           ripple, and the jaw parked 12 mm off its commanded stop, on BOTH Euler and implicitfast.
+           URDF implies (~0) and dt=0.002 the servo goes into a two-step limit cycle -- 3.6 mm of
+           ripple, and the jaw parks 12 mm off its commanded stop, on BOTH Euler and implicitfast.
            armature 0.02 with kp 5000 leaves ~5x margin and tracks both stops to 0.000 mm. Re-measure
            these together if either changes; see the port log. -->
       <default class="pg70_finger">
@@ -128,7 +128,7 @@
 
   <actuator>
     <!-- The gripper's single DOF: ctrl is a target tendon length in metres, -0.0301 (open) .. 0.001
-         (closed). kp/kv are MEASURED against the jaw armature above, not guessed (kp 30000 was
+         (closed). kp/kv are MEASURED against the jaw armature above, not guessed (kp 30000 is
          unstable; see the port log for the sweep). forcerange is the datasheet grip force -- note it
          is the TENDON force, and the tendon's 0.5 coefficients halve it at each jaw, so 200 N here is
          ~100 N per jaw. Commanding closed against a held 45 mm parcel leaves ~23 mm of servo error,

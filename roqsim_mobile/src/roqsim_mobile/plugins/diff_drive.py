@@ -1,6 +1,6 @@
 """Controller plugin: differential-drive kinematics + wheel-encoder odometry.
 
-Ported from our earlier in-house nav prototype's ``TurtleBot4``. Consumes a body-frame twist target (set via the published
+Consumes a body-frame twist target (set via the published
 :class:`RobotHandle` — e.g. by the ROS bridge — or a scripted ``test_cmd`` for standalone demos),
 writes wheel velocity-servo targets in ``pre_step``, and integrates encoder odometry in ``post_step``.
 

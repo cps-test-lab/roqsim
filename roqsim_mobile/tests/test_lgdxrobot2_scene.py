@@ -3,13 +3,12 @@
 The finding this file pins is ``test_the_physics_came_from_the_sim_description``. This vendor ships
 two URDFs. ``lgdxrobot2.urdf`` has nine links, twelve meshes and **no inertial or collision elements
 whatsoever** -- it sums to 0.0 kg. Everything physical is in ``lgdxrobot2_sim.urdf``. Porting from
-the obvious file would have produced a robot that loads, renders correctly, and is massless; the mass
-audit is the only check that would have noticed, and only because it compares against a number read
-from the *other* file.
+the obvious file produces a robot that loads, renders correctly, and is massless; the mass audit is
+the only check that notices, and only because it compares against a number read from the *other*
+file.
 
-The platform ledger recorded "skid-steer or mecanum" as this port's biggest unknown and priced most
-of the cost against it, because the answer decides whether a ``slip_factor`` calibration is needed.
-It did not need guessing: the sim description declares ``gz::sim::systems::MecanumDrive``, so this is
+Whether the base is skid-steer or mecanum decides whether a ``slip_factor`` calibration is needed.
+The sim description answers it: it declares ``gz::sim::systems::MecanumDrive``, so this is
 ``omni_drive`` and carries no calibration at all.
 """
 
@@ -81,8 +80,8 @@ def _achieved(engine, vx, vy, wz):
 
     Measured in the body frame, not from world displacement. A commanded twist is body-frame, so
     when wz is non-zero the robot curves and averaging world displacement over a window returns a
-    rotated average rather than the velocity that was asked for -- it read 1.27x on a diagonal-plus-
-    yaw command from a model that was tracking correctly. MuJoCo's free joint gives linear velocity
+    rotated average rather than the velocity that was asked for -- it reads 1.27x on a diagonal-plus-
+    yaw command from a model that is tracking correctly. MuJoCo's free joint gives linear velocity
     in the global frame and angular velocity in the body frame, so only the linear part is rotated.
     """
     model, data = engine.ctx.model, engine.ctx.data

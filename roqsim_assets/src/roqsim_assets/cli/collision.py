@@ -172,7 +172,7 @@ def drop_base_faces(trimesh, meshes: list, points, owners, normals, z_floor: flo
     Artwork is an open shell far more often than not: of the props here, most have NO downward area
     at the base at all, the underside simply not being modelled. A collision primitive resting on the
     floor does have a bottom face, so measured naively every such box reports its own footprint as
-    obstacle standing where the prop is not -- on one table that alone was a third of the overreach.
+    obstacle standing where the prop is not -- on one table that alone is a third of the overreach.
     The absence is a modelling convention, not a claim about the shape, so neither surface is scored
     on it.
     """

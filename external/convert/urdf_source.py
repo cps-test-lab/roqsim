@@ -1,9 +1,8 @@
 """Shared plumbing for the generators that build a model from a ROS 2 xacro tree.
 
-Five ports now start the same way -- ROSbot, Doosan, Panther, Raspberry Pi Mouse, Ridgeback -- and
-each had grown its own copy of this. The copies were identical apart from which packages they
-symlink and which arguments they pass, which is the signal to extract: the fifth port paid again for
-plumbing the first four had already debugged.
+Five ports start the same way -- ROSbot, Doosan, Panther, Raspberry Pi Mouse, Ridgeback -- and
+differ only in which packages they symlink and which arguments they pass, so the shared part lives
+here.
 
 What lives here is everything that is *not* about a particular robot:
 
@@ -19,9 +18,9 @@ What lives here is everything that is *not* about a particular robot:
 * **Reading a URDF back out.** Inertials, poses and a link's visuals, in the forms MJCF wants.
 
 ``link_visuals`` emits **every** ``<visual>`` of a link, meshes and primitives alike, and that is
-deliberate rather than tidy: hand-picking a link's mesh is what left the Raspberry Pi Mouse's LDS-01
+deliberate rather than tidy: hand-picking a link's mesh leaves the Raspberry Pi Mouse's LDS-01
 floating three centimetres above its mount, because the scanner link also carries four leg cylinders.
-No test noticed; a person opening the viewer did.
+No test notices that; only the viewer shows it.
 """
 
 from __future__ import annotations
@@ -158,7 +157,7 @@ def link_visuals(
 ) -> str:
     """Every ``<visual>`` of *link* as MJCF geoms -- meshes AND primitives.
 
-    Emitting only the meshes is what left the Raspberry Pi Mouse's scanner floating above its mount;
+    Emitting only the meshes leaves the Raspberry Pi Mouse's scanner floating above its mount;
     a link's cylinders and boxes are as much a part of it as its mesh.
 
     ``materials`` maps a mesh stem to an MJCF material name; a link's own ``<material name=...>`` is
@@ -168,7 +167,7 @@ def link_visuals(
     vendor tree can carry one: the Warthog's ``diff_link`` lists ``susp-link.stl`` twice at an
     identical origin, and that mesh already spans both sides (y -0.400..0.400), so the second is a
     no-op that only makes the two coincident geoms z-fight. The test is byte equality of the emitted
-    geom, which is why this cannot repeat the Raspberry Pi Mouse's dropped leg cylinders: a geom that
+    geom, which is why this cannot drop the Raspberry Pi Mouse's leg cylinders: a geom that
     differs in any attribute is a different geom and is still emitted. If upstream ever gives the
     duplicate the mirrored origin it was presumably meant to have, it stops matching and comes back.
     """
@@ -239,9 +238,9 @@ def link_primitives(
         material = (materials or {}).get(named.get("name")) if named is not None else None
         attr = f' material="{material}"' if material and tag == "visual" else ""
         # Named from the TAG, not the class: a geom's name must not change because it was given a
-        # different contact class. Naming it from `cls` renamed the caster the moment it earned a
-        # caster_collision class, and a test looking up the old name got mj_name2id's -1 back and
-        # silently asserted against whichever geom sits last in the model.
+        # different contact class. Naming it from `cls` renames a caster the moment it gets a
+        # caster_collision class, and a test looking up the old name gets mj_name2id's -1 back and
+        # silently asserts against whichever geom sits last in the model.
         name = f' name="{name_prefix or link.get("name")}_{tag}{index}"' if tag == "collision" else ""
         if geometry.tag == "mesh":
             stem = (mesh_stems or {}).get(Path(geometry.get("filename")).stem)
@@ -268,10 +267,10 @@ def mesh_scales(urdf: ET.Element) -> dict[str, str]:
     URDF puts the scale on the *reference*, MJCF puts it on the *asset*, so it has to be collected
     before the assets are written. Ignoring it is the classic meters-versus-millimetres trap, and it
     is worse than it sounds because it can be **non-uniform** and it can hide completely: one
-    description in this corpus scaled a head mesh by ~2e-4 per axis, so emitted at 1:1 the mesh came
-    out 1000 units across on a 0.2 m robot -- and no physics check noticed, because that link's
-    *collision* was a primitive and only its visual was the mesh. It took a render. Any generator
-    that emits mesh assets should route them through here.
+    description in this corpus scales a head mesh by ~2e-4 per axis, so emitted at 1:1 the mesh
+    comes out 1000 units across on a 0.2 m robot -- and no physics check notices, because that
+    link's *collision* is a primitive and only its visual is the mesh. Only a render shows it. Any
+    generator that emits mesh assets should route them through here.
 
     Raises when one mesh is referenced at two different scales, rather than silently picking one.
     """

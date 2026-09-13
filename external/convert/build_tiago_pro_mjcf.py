@@ -392,7 +392,7 @@ def postprocess(base: Path, out: Path) -> None:
         # joint whose <limit effort> is 6 N.m, so the wheel cannot reach the speed the same file
         # permits -- the observational wheel servos under-run and joint_states misreports wheel speed.
         #
-        # But they were also what kept the wheel servos stable, because the bare wheel inertia is tiny
+        # But they also keep the wheel servos stable, because the bare wheel inertia is tiny
         # (~4e-4 kg.m^2): an explicit velocity servo needs kv < I/dt to be stable, i.e. kv < 0.2 here,
         # and the wheels spin chaotically without either. `armature` is the principled fix -- it is
         # the motor's rotor inertia reflected through the gearbox, which a real geared wheel drive
@@ -404,9 +404,9 @@ def postprocess(base: Path, out: Path) -> None:
             j.set("armature", "0.05")
 
     # ---- gripper pads: explicit rubber friction ------------------------------------------
-    # The finger links that touch a grasped object were inheriting the generic collision class, i.e.
+    # Left to the generic collision class, the finger links that touch a grasped object get
     # MuJoCo's default friction (1.0 sliding, 0.005 torsional, 0 rolling) with no `priority` -- so the
-    # effective coefficients depended on whatever object was being gripped rather than on the gripper.
+    # effective coefficients depend on whatever object is being gripped rather than on the gripper.
     # Real PRO pads are rubber, and `priority=3` makes the pad's values win outright so the pair is a
     # property of the gripper. Torsional friction matters here: the 0.005 default lets a held object
     # spin about the contact normal under its own weight.
@@ -417,9 +417,9 @@ def postprocess(base: Path, out: Path) -> None:
     #
     # STILL OPEN: these links collide via their vendor mesh CONVEX HULLS, which is what makes the pinch
     # 2-point (see the port log). The fix is a pad collision primitive, and it belongs on the
-    # `fingertip_*` links -- they are the geometry that straddles the TCP. An attempt to put pads on
-    # `inner_finger_*` instead (chosen because it carries the largest jaw-facing facet, 11 x 43 mm) was
-    # WRONG and is recorded here so it is not repeated: that link is proximal, its pad sits ~60 mm
+    # `fingertip_*` links -- they are the geometry that straddles the TCP. Pads on `inner_finger_*`
+    # instead (tempting, because it carries the largest jaw-facing facet, 11 x 43 mm) are WRONG:
+    # that link is proximal, its pad sits ~60 mm
     # behind the TCP along the approach axis, and it can never reach an object at the grasp point.
     # Choose the pad link by what straddles the TCP, not by facet area.
     for side in ("left", "right"):
@@ -430,7 +430,7 @@ def postprocess(base: Path, out: Path) -> None:
                     if g.get("class") != f"{MODEL}_collision":
                         continue
                     # 0.7, matching roqsim_manipulation_assets' robotiq_2f85 pads (Menagerie's values,
-                    # and the reference for a WORKING grasp in this substrate). 1.6 was tried and is
+                    # and the reference for a WORKING grasp in this substrate). 1.6 is
                     # too high once the world sets `impratio: 10` and an elliptic cone: the tangential
                     # capacity then exceeds what the angled pads can hold in shear and the object is
                     # extruded out sideways instead of gripped.
@@ -441,9 +441,9 @@ def postprocess(base: Path, out: Path) -> None:
                     # resolves a contact pair from the HIGHER-priority geom alone -- friction,
                     # condim AND the solver parameters. So `priority=3` silently replaces whatever
                     # grasp tuning the OBJECT carries with this geom's defaults: measured, a
-                    # graspable prop's solref of 0.005 became the collision class's 0.02, a 4x
-                    # stiffer contact, and grasps that had been working stopped. Softened values
-                    # belong on the pad because the pad is what now owns the pair.
+                    # graspable prop's solref of 0.005 becomes the collision class's 0.02, a 4x
+                    # stiffer contact, and grasps that work on the softer contact fail. Softened
+                    # values belong on the pad because the pad is what now owns the pair.
                     g.set("solref", "0.004 1")
                     # solimp stiffer than the graspable props' own 0.9 0.95: a held object CREEPS
                     # downward through this gripper's contact under sustained load, because the pads
@@ -456,7 +456,7 @@ def postprocess(base: Path, out: Path) -> None:
     # ---- gripper linkage joints: armature + damping ---------------------------------------
     # The source URDF gives the finger linkage joints no armature and almost no damping, and their
     # effort limit is 0.1 N.m. A revolute joint on a small link therefore has near-zero effective
-    # inertia -- the same condition that made the wheel servos chatter (A5) -- and under the stiff
+    # inertia -- the same condition that makes bare wheel servos chatter (A5) -- and under the stiff
     # contact solve a grasp needs (elliptic cone, impratio 10) the linkage rings and the two jaws grab
     # unevenly, so one pad loses contact and the object is pushed out sideways.
     #
@@ -678,9 +678,9 @@ def add_pad_boxes(model_path: Path) -> None:
     `inner_finger_*` -- which carries a much nicer 11 x 43 mm face -- sits ~60 mm behind it and can
     never touch an object at the grasp point.
 
-    The inward direction is asserted below rather than assumed. This pass was once disabled on the
-    belief that the `lr == "left"` sign put that pad on the finger's BACK; measuring the generated
-    geoms disproved it -- both jaws come out symmetric, centres at +-13.4 mm in TCP y with the normals
+    The inward direction is asserted below rather than assumed. The `lr == "left"` sign reads as if
+    it put that pad on the finger's BACK; it does not -- measured on the generated geoms, both jaws
+    come out symmetric, centres at +-13.4 mm in TCP y with the normals
     facing each other and a 18.8 mm face gap at PAD_REF_TRAVEL. The assertion is what keeps that
     question answered: if a future upstream link rename or frame change does flip a side, this raises
     instead of silently shipping a jaw that cannot touch anything.

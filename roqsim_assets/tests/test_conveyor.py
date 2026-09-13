@@ -126,9 +126,9 @@ def test_placed_belt_keeps_its_package(tmp_path):
 
 
 def test_belt_ships_no_table(tmp_path):
-    # The belt is a benchtop unit: the industrial table it used to bundle is a separate prop now,
-    # so a bare conveyor must contribute no table geometry (and the feet must still expect a
-    # ~0.76 m top under them, which is what makes the split poses in the worlds line up).
+    # The belt is a benchtop unit and the industrial table a separate prop, so a bare conveyor
+    # must contribute no table geometry (and the feet must still expect a ~0.76 m top under them,
+    # which is what makes the separate poses in the worlds line up).
     engine = Engine(_belt_only(tmp_path))
     engine.setup()
     m = engine.ctx.model
@@ -139,8 +139,8 @@ def test_belt_ships_no_table(tmp_path):
 
 
 def test_industrial_table_top_carries_the_belt(tmp_path):
-    # The split-out table must present its top exactly where the belt's feet land, so
-    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the old bundled cell.
+    # The separate table must present its top exactly where the belt's feet land, so
+    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the source cell.
     plugins = [
         {
             "spawn_model": {

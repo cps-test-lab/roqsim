@@ -3,14 +3,12 @@
 The finding this file pins is ``test_the_limits_are_not_isotropic``. It is tempting to give a
 holonomic base one top speed and use it for every axis; this vendor does not, and neither does its
 sibling. ``configs/mpo_500/navigation.yaml`` allows 0.6 m/s forward and **0.5 sideways**, and the
-MPO-700's allows 0.8 and 0.5. Assuming isotropy would have overstated the MPO-700 by 60% in the
-lateral direction, and it did in this port's first draft, where "Neobotix publishes 1.0 m/s" was a
-recollection rather than a file.
+MPO-700's allows 0.8 and 0.5. Assuming isotropy -- one recalled "Neobotix publishes 1.0 m/s" rather
+than the file -- overstates the MPO-700 by 60% in the lateral direction.
 
 ``test_it_is_not_a_swerve_base`` guards the drive-type verdict the other direction: the MPO-700 in the
 same repository steers, this one does not, and their models must not converge by copy-paste. The
-ledger's unknown here was "mecanum or Swedish-roller … the macro was listed rather than opened";
-opened, the only wheel macro is ``mpo_500_omni_wheel`` and there is no caster macro at all.
+description's only wheel macro is ``mpo_500_omni_wheel`` and there is no caster macro at all.
 
 The two scanners are ``sick_microscan3`` device models at the vendor's ``lidar_1_joint`` and
 ``lidar_2_joint``, the rear one facing backwards, and each publishes on its own vendor topic (``scan``,
@@ -199,8 +197,8 @@ def test_the_wheels_turn_and_turn_differently_when_strafing():
     Compared as the **physical** spin about the base's y axis, not as raw joint velocity. This
     vendor mirrors its right-hand wheel joints (their axes are -y in the base frame), so the two
     sides carry opposite ``qvel`` signs for the *same* rotation -- which is exactly what
-    ``omni_drive``'s derived roll sign exists to absorb, and its docstring warns about. A first
-    draft of this test compared raw signs and failed against a correct model.
+    ``omni_drive``'s derived roll sign exists to absorb, and its docstring warns about. Comparing
+    raw signs fails against a correct model.
 
     A forward command must spin all four the same way; a strafe must split them, because that is
     what an omni/mecanum roller layout does. If a strafe did not split them the wheel IK would have

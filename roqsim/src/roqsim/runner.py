@@ -84,7 +84,7 @@ log = logging.getLogger(__name__)
 #: Finalizing a mesh into a model (roqsim_assets/tools/finalize_mujoco.py) is a separate step.
 _MESH_EXT = (".obj", ".stl", ".glb", ".gltf", ".fbx", ".dae", ".ply")
 
-# Backward-compatible alias: the message text now lives in roqsim.viewer.
+# Backward-compatible alias: the message text lives in roqsim.viewer.
 _GL_HELP = GL_HELP
 
 #: Interactive-viewer render rate (Hz), decoupled from the physics step rate. High-rate worlds step
@@ -718,8 +718,8 @@ def run(
         rate.report(engine.logger or log)
 
     # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
-    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point is what
-    # silently killed F9: the window went on setting the flag on an object the loop no longer held.
+    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
+    # kills F9: the window goes on setting the flag on an object the loop no longer holds.
     recorder = None
     if headless:
         if record:

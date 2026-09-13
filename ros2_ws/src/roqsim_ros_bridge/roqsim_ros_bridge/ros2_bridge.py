@@ -607,8 +607,8 @@ class Ros2Bridge(BridgeBase):
         A shutting-down context is not an error. On SIGINT/SIGTERM rclpy invalidates the context from
         its signal handler, but the physics loop owns the thread and finishes the step it is in, so
         the next publish lands on a dead context and raises. Left to propagate, that aborts the
-        process with an RCLError traceback which reads exactly like a mid-run crash -- it was
-        repeatedly misdiagnosed as one, while the run had in fact completed and was being torn down.
+        process with an RCLError traceback which reads exactly like a mid-run crash, while the run has
+        in fact completed and is being torn down.
         Publishes are skipped from here on; anything else still raises.
         """
         return not (self._context.ok() if self._context is not None else rclpy.ok())

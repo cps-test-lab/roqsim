@@ -7,8 +7,7 @@ angle is ``atan2`` of its corner's contact velocity ``v + w x r`` -- rather than
 angles. The decisive case is a pure spin, where every wheel sits tangential to its own corner radius
 and the two diagonal pairs therefore end up at *different* angles (126.87 and 53.13 degrees for
 offsets of ±0.24, ±0.18). Forward, strafe and diagonal all put every wheel at one shared angle and
-are easy to pass by accident; a first draft of this file hardcoded four identical values and failed
-against a model that was correct.
+are easy to pass by accident; four identical hardcoded values fail against a correct model.
 
 ``test_the_wheels_do_not_fight_the_body`` pins an exclusion. The vendor's base collision *is* the full
 body mesh, and MuJoCo convex-hulls a collision mesh, so the hull closes over the wheel arches and
@@ -91,9 +90,7 @@ def _drive(engine, vx, vy, wz, steps=2600):
     """Command a body-frame twist and return the achieved body-frame twist.
 
     2600 steps = 5.2 s, because the vendor's acceleration limit is 0.25 m/s^2: reaching their 0.8 m/s
-    top speed alone takes 3.2 s. A shorter window measures the ramp, not the steady state -- which is
-    what this test did until the limits were corrected from a remembered datasheet figure to the
-    vendor's own Nav2 profile.
+    top speed alone takes 3.2 s. A shorter window measures the ramp, not the steady state.
     """
     model, data = engine.ctx.model, engine.ctx.data
     bid = named(model, mujoco.mjtObj.mjOBJ_BODY, "n_base_link")
@@ -109,8 +106,8 @@ def _drive(engine, vx, vy, wz, steps=2600):
 def test_the_limits_are_not_isotropic():
     """The vendor's Nav2 profile allows 0.8 m/s forward and only 0.5 sideways.
 
-    Pinned because the first version of this port used 1.0 for both, from a remembered datasheet
-    figure rather than the file -- overstating the lateral direction by 60%.
+    Pinned because 1.0 for both, a remembered datasheet figure rather than the file, overstates the
+    lateral direction by 60%.
     """
     engine = _engine()
     try:
@@ -300,8 +297,8 @@ def test_a_pure_spin_aims_each_wheel_tangentially():
 
 
 #: Commands stay inside the vendor's own per-axis limits (0.8 forward, 0.5 sideways). The lateral
-#: cases are 0.5, not 0.6: this base is deliberately NOT isotropic, and a first draft of this test
-#: commanded 0.6 sideways and failed against a model that was correctly clamping.
+#: cases are 0.5, not 0.6: this base is deliberately NOT isotropic, and a 0.6 sideways command fails
+#: against a model that is correctly clamping.
 @pytest.mark.parametrize("command", [(0.8, 0.0, 0.0), (0.0, 0.5, 0.0), (0.0, 0.0, 0.6),
                                      (0.4, 0.4, 0.0)])
 def test_it_tracks_a_holonomic_twist(command):

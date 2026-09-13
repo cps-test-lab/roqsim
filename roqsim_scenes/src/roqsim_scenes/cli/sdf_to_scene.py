@@ -497,7 +497,7 @@ class Importer:
         Only CLOSED parts are judged. An open patch has no meaningful enclosed volume, so there is
         nothing to compare a hull against and the check abstains rather than guessing.
 
-        **That abstention is why this is not the whole story**, and why it is no longer the only check.
+        **That abstention is why this is not the whole story**, and why it is not the only check.
         A building's walls arrive from an STL as open skins, so this one never looks at them -- and it
         would clear them anyway, because a doorway is negligible next to a wall's volume. Whether a way
         through survived is asked separately and scene-wide, by

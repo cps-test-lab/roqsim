@@ -1,8 +1,8 @@
 """A sensor's ``fault:`` block: what may be written at run time, and what must not be.
 
-The physics channel has been switchable mid-run since ``set_model_override``; the report channel had
-no trigger at all, so ``dropout_percent`` was fixed for a whole run and a lidar that fails *halfway
-down a corridor* could not be expressed. These tests pin the three properties that make the new
+The physics channel is switchable mid-run through ``set_model_override``; this block is the report
+channel's switch, so ``dropout_percent`` need not hold for a whole run and a lidar that fails
+*halfway down a corridor* can be expressed. These tests pin the three properties that make the
 switch trustworthy rather than merely present:
 
 * a key that is not read per frame is **refused by name**, because writing one takes effect nowhere

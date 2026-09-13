@@ -365,8 +365,8 @@ def test_due_gates_on_rate_and_has_subscribers():
 def test_due_gates_on_every_endpoint_the_render_feeds_not_just_colour():
     """A depth-only or cloud-only consumer must keep the renderer running.
 
-    This is a regression: gating on ``image`` alone starved exactly the consumer that never subscribes
-    to colour -- MoveIt's octomap updater takes the point cloud -- and the symptom was not an error
+    Gating on ``image`` alone starves exactly the consumer that never subscribes to colour --
+    MoveIt's octomap updater takes the point cloud -- and the symptom is not an error
     but an empty world, published forever at the configured rate.
     """
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})

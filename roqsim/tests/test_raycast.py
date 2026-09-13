@@ -2,7 +2,7 @@
 
 The load-bearing assertion here is :func:`test_the_visible_mask_is_the_default`. Every raycaster in
 the tree relies on it, and the bug class it closes -- an *absent* entity still being a lidar return --
-was live in three plugins and documented as a standing warning in :mod:`roqsim.presence`.
+is one each raycaster would otherwise have to close on its own.
 """
 
 from __future__ import annotations

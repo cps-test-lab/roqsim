@@ -1,7 +1,7 @@
 """The state a navigating agent carries, and the contract the behaviour tree reads it through.
 
-:class:`NavCore` and its py-trees leaves have always worked against a duck-typed object rather than a
-type -- historically the walker controller's own ``_Walker``, which carries a great deal besides
+:class:`NavCore` and its py-trees leaves work against a duck-typed object rather than a type --
+the walker controller's own ``_Walker`` is one, and carries a great deal besides
 (motion clips, mocap ids, a skeleton, an avoidance agent id). :class:`NavStateLike` writes that
 implicit contract down: these eleven attributes are all the navigation layer touches, so any
 embodiment can satisfy it, and a change to the walker's animation fields cannot silently alter what

@@ -2,8 +2,8 @@
 
 Three failures this catches, none of which the per-model drive tests would:
 
-* a model whose MJCF moved into ``models/<name>/`` but whose ``<compiler meshdir=...>`` still points at
-  the old shared ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it compiles
+* a model whose ``<compiler meshdir=...>`` points anywhere but its own ``models/<name>/meshes/``
+  -- MuJoCo does not error on an unresolvable mesh path, it compiles
   the model with the reference as given, so the robot silently loses its geometry;
 * a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
   from an editable checkout and fails at RUN time inside a campaign container, where the checkout is

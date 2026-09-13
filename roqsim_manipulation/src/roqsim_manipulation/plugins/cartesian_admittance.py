@@ -71,7 +71,7 @@ Endpoints, named as FZI's ``cartesian_controllers`` name them, so a node written
 unchanged against that stack: ``<controller>/target_wrench`` (in, ``geometry_msgs/WrenchStamped``),
 ``<controller>/target_frame`` (in, ``geometry_msgs/PoseStamped``) and ``<controller>/current_pose``
 (out). A commanded value overrides its configured default; until one arrives the config stands, so a
-world that publishes nothing behaves exactly as it always did.
+world that publishes nothing behaves exactly as configured.
 
 Also publishes a ``CartesianHandle`` on the blackboard under ``cartesian:<arm>`` for an in-process
 task plugin, with the same reach as the endpoints.
@@ -292,8 +292,8 @@ class CartesianAdmittancePlugin(Plugin):
             )
         )
 
-        # The arm pulls this each step. An older arm_controller has no such slot, so this stays
-        # optional -- the plugin then runs from its own `pre_step` as it always did.
+        # The arm pulls this each step. An arm_controller without such a slot is still served:
+        # the plugin then runs from its own `pre_step`.
         if getattr(self._arm_handle, "set_command_source", None) is not None:
             self._arm_handle.set_command_source(self.update, self.label or "cartesian_admittance")
 
@@ -445,7 +445,7 @@ class CartesianAdmittancePlugin(Plugin):
     def pre_step(self, ctx: SimContext) -> None:
         # Ask rather than act: the arm runs this through `ensure_updated` too, and whichever plugin
         # reaches it first in this step does the work. Declaring this one before or after the arm
-        # therefore changes nothing -- which it used to, by a whole step.
+        # therefore changes nothing.
         if self._arm_handle is not None and self._arm_handle.ensure_updated is not None:
             self._arm_handle.ensure_updated(ctx)
         else:
@@ -462,7 +462,7 @@ class CartesianAdmittancePlugin(Plugin):
         # Due within half a physics step of the scheduled time, and the next tick scheduled on the
         # fixed grid rather than one period after this one. The sim clock is a floating-point sum of
         # timesteps, so a tick due at exactly k periods can read a hair early; compared strictly and
-        # re-anchored on the current time, each such hair became a whole missed physics step.
+        # re-anchored on the current time, each such hair becomes a whole missed physics step.
         half_step = 0.5 * ctx.model.opt.timestep
         if ctx.sim_time < self._next_t - half_step:
             return
@@ -495,10 +495,10 @@ class CartesianAdmittancePlugin(Plugin):
         """``x - x_0``: how far the tool has been pushed off its equilibrium, translation and rotation.
 
         The equilibrium is the commanded ``target_frame`` where one has been commanded, and otherwise
-        the pose captured when this controller took the arm. Both halves are present: with the
-        rotational half missing, a configured rotational stiffness did nothing and "orientation is
-        held" quietly meant "orientation is unregulated", with the DLS solve free to accumulate drift
-        across a long run.
+        the pose captured when this controller took the arm. Both halves are present: without the
+        rotational half, a configured rotational stiffness does nothing and "orientation is
+        held" quietly means "orientation is unregulated", with the DLS solve free to accumulate
+        drift across a long run.
         """
         pos, mat = self.read_pose()
         anchor_pos = self._goal_pos if self._goal_pos is not None else self._rest_pos

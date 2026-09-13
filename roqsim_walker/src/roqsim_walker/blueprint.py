@@ -1,9 +1,6 @@
 """Resolve a walker *blueprint* -- a ``people/<Walker>/`` folder -- into everything the humanoid
 builder and the controller need.
 
-Ported from our earlier in-house nav prototype's ``world.py::_resolve_walkers`` / ``_anim_dirs`` / ``_apply_outfit``, minus
-the YAML world plumbing (roqsim passes plugin config instead).
-
 A blueprint folder holds a textured OBJ plus a ``*.walker.json`` sidecar describing its materials
 (with outfit variants), the per-rig bone table, per-limb collision radii and measured shoe-sole
 offsets. Locomotion clips live in ``anims/<set>/<kind>.npz`` and are picked per body type + gender.

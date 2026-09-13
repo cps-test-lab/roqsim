@@ -226,7 +226,7 @@ def tilt_preview_light(model, data) -> int:
     walls are vertical and therefore parallel to the light. MuJoCo's shadow bias is fixed, and a thin
     closed visual shell (a bumper, a body cover) is thinner than one shadow texel once the shadow map
     is stretched over a room, so the shell's far face shadows its own near face: the surface comes out
-    combed with dark streaks that read as a defect in the mesh. It cost one investigation already.
+    combed with dark streaks that read as a defect in the mesh.
 
     Measured, so the cheaper-looking knobs are not tried again: ``shadowclip`` changes nothing (it
     clips depth, not the footprint) and resolution barely helps -- at ``shadowsize`` 16384, a 1 GB
@@ -236,7 +236,7 @@ def tilt_preview_light(model, data) -> int:
     It is HALF the fix, not all of it: the tilt removes the streaks that run down a shell's flank, but
     the shadow map still combs the terminator itself, where the surface turns away from the light and
     no fixed bias can cover a texel's depth spread. :func:`fill_preview_self_shadows` handles that
-    half, and is why this one no longer claims to remove the artefact outright.
+    half, so this one does not claim to remove the artefact outright.
 
     PREVIEWS ONLY. In a world, that light is the world's own lighting and a campaign's images depend
     on it; this is why the fix lives here and not in the world definition.
@@ -432,8 +432,8 @@ def _preflight(out: Path, size: tuple[int, int], *, check: bool = False) -> None
             "(apt install ffmpeg), or render a still to a .png."
         )
     # Asked of the backend mujoco actually bound, not of DISPLAY. The two are unrelated -- a
-    # container image can export DISPLAY=:0 with no X server behind it, which is exactly how the
-    # old `not has_display()` spelling let a doomed render through -- and MUJOCO_GL cannot be
+    # container image can export DISPLAY=:0 with no X server behind it, which is exactly how a
+    # `not has_display()` check lets a doomed render through -- and MUJOCO_GL cannot be
     # trusted either, since it is read once during `import mujoco` and may have been set after.
     try:
         check_gl_backend()

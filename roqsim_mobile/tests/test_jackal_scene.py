@@ -106,8 +106,8 @@ def _run(v, w, seconds, gravity=None):
     """Drive (v, w) for `seconds`; return ground truth + odometry.
 
     Yaw is ACCUMULATED (unwrapped) rather than sampled as an instantaneous rate: a scrubbing
-    skid-steer's instantaneous yaw rate is noisy enough that a tail average of it hid a genuine
-    servo instability during this port.
+    skid-steer's instantaneous yaw rate is noisy enough that a tail average of it hides a genuine
+    servo instability.
     """
     model, data = _build(gravity)
     ctx, plugin = _plugin(model, data)
@@ -181,7 +181,7 @@ def test_a3_rest_stability():
 def test_a4_wheel_servo_is_stable_at_dt():
     """A4: the velocity servo's time constant must not fall below the timestep.
 
-    This is the check that would have caught the first version of this model. With the bare wheel
+    With the bare wheel
     inertia (0.0024 kg m^2) and no armature, a kv stiff enough to overcome scrub gives
     kv*dt/I >> 1, and the wheels ring at an order of magnitude past their command while the robot
     hops. The armature (reflected drivetrain inertia) is what makes the servo integrable here.
@@ -288,9 +288,9 @@ def test_b2_in_place_rotation():
 def test_b3_rotation_is_smooth_not_stick_slip():
     """B3: rotation must be a steady turn, not a lurch.
 
-    The failed first attempt at this model passed a mean-yaw check while oscillating with a
-    yaw-rate std of ~1.0 rad/s against a 0.5 rad/s command, hopping off the floor for two thirds
-    of the run. Both symptoms are asserted away here.
+    A model can pass a mean-yaw check while oscillating with a yaw-rate std of ~1.0 rad/s against
+    a 0.5 rad/s command, hopping off the floor for two thirds of the run. Both symptoms are
+    asserted away here.
     """
     r = _run(0.0, 0.5, 6.0)
     assert r["yaw_rate_std"] < 0.25, f"yaw rate std {r['yaw_rate_std']:.2f} rad/s -- stick-slip"

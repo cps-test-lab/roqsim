@@ -470,8 +470,8 @@ def generate(
     with tempfile.TemporaryDirectory() as tmp:
         if ceiling:
             config_path = light_under_ceiling(config_path, ceiling_h, Path(tmp))
-        # Stage 2 is a module now, so call it directly: a subprocess here only bought a path to a
-        # script file, and that path is exactly what stopped working when the tools were installed.
+        # Stage 2 is a module, so call it directly: a subprocess would need a path to a script file,
+        # and an installed package has no such path.
         if scene_to_mjcf.main(
             ["--scene", str(out_dir), "--config", str(config_path), "--out", str(baked_xml)]
         ):

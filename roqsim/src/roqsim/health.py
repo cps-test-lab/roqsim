@@ -574,7 +574,7 @@ class RobotMoves:
 
         Held only until a second sample has been seen, not until a full motion window: every sample
         writes every root body, so two of them establish the whole roster. Waiting the window would
-        mean a mistyped name went unreported on every run shorter than a simulated minute -- which
+        leave a mistyped name unreported on every run shorter than a simulated minute -- which
         is the run most likely to be a quick check with a mistyped name in it.
         """
         if self._samples < 2:
@@ -952,7 +952,7 @@ def main(argv: list | None = None) -> int:
     source = FileSource(clock_path, poses_path)
     # The roster answers "which of these bodies is a robot" so nobody has to pass the names per
     # world -- which is what makes check 1 safe to run unattended, from a command that is the same
-    # for every campaign. ``--robot`` stays, as an override for a run with no roster and for
+    # for every campaign. ``--robot`` is an override, for a run with no roster and for
     # watching something the registry does not call a robot.
     roster, roster_error = read_roster(poses_path.parent if poses_path else Path(args.run_dir))
     robots, no_robots = args.robot, ""

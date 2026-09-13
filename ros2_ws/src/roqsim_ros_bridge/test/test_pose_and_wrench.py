@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Poses and wrenches across the wire: quaternion order, and the full orientation.
 
-Two failures sit behind these. A plugin declared ``WrenchStamped`` and no converter existed, so the
-reflective fallback raised at publish time -- the wrench a contact task is built on never reached
-ROS at all. And the pose decoder projected every orientation down to a yaw, which suits an airframe
-and discards exactly what a Cartesian controller commanded to hold its tool upright needs.
+Two failures sit behind these. A plugin that declares ``WrenchStamped`` with no converter makes the
+reflective fallback raise at publish time -- the wrench a contact task is built on never reaches ROS
+at all. And a pose decoder that projects every orientation down to a yaw suits an airframe and
+discards exactly what a Cartesian controller commanded to hold its tool upright needs.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class _PoseMsg:
 
 
 def test_a_wrench_has_a_converter_at_all():
-    """The bug itself: a declared type with no converter falls back to ``msg.data``, which a wrench
+    """The first failure: a declared type with no converter falls back to ``msg.data``, which a wrench
     does not have, and raises at the first publish rather than at configure."""
     fill = get_converter("geometry_msgs.msg.WrenchStamped")
     msg = _WrenchMsg()
@@ -128,7 +128,7 @@ def test_a_pose_survives_a_round_trip():
     assert list(quat) == pytest.approx(original[1])
 
 
-# -- the guard that would have caught the wrench --------------------------------------------------
+# -- the guard over every declared out type -------------------------------------------------------
 
 
 def test_every_out_topic_type_a_shipped_plugin_declares_has_a_converter():

@@ -57,7 +57,7 @@ def test_a_position_servo_holds_the_pose_it_was_given(gain):
     """Both a stiff and a soft gain, because the point is that the gain does not decide this.
 
     Uncompensated the two differ by an order of magnitude in how far the arm falls, which is what
-    made a gain read as a load rating.
+    makes a gain read as a load rating.
     """
     assert abs(_droop_mm("ur10e", "ur10e_",
                          actuators={"control": "position", "p": gain})) < 1.0
@@ -66,8 +66,7 @@ def test_a_position_servo_holds_the_pose_it_was_given(gain):
 def test_the_shipped_arm_holds_too():
     """The default path: a world that names a model and no ``actuators:`` at all.
 
-    This is what an experiment writes, and what a reconstruction ran against for a task whose
-    tolerance was a millimetre.
+    This is what an experiment writes, including one whose task tolerance is a millimetre.
     """
     assert abs(_droop_mm("ur5e", "ur5e_")) < 1.0
 

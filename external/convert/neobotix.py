@@ -6,8 +6,8 @@ genuinely per-robot. What is *not* per-robot is everything below: one pinned sou
 pipeline, one palette convention, and one set of MuJoCo quirks this vendor's exports trip over.
 
 Deliberately not a single generator for all four. The bodies differ in tree shape (a steering layer
-or not, four casters or one), and folding those into one template produced more branching than the
-duplication it removed. The pipeline is the part that was actually the same three times.
+or not, four casters or one), and folding those into one template yields more branching than the
+duplication it removes. The pipeline is the part that is actually the same for each.
 
 Two MuJoCo facts this vendor's meshes force, worth stating once here rather than in each generator:
 

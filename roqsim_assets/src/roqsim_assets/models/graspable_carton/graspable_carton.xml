@@ -27,8 +27,7 @@
 
        Measure the aperture over the FINGERTIP pads only, and restricted to the depth the object
        occupies. Taking min/max over the whole finger assembly gives 10.9 mm, because the four-bar
-       linkage bars converge near the palm -- nowhere the object ever reaches. That number is what made
-       an earlier version of this comment claim a 41 mm gripper.
+       linkage bars converge near the palm -- nowhere the object ever reaches.
 
        Contact parameters are inherited verbatim from `graspable_box`, for the reasons its own
        comment gives: a box primitive rather than a mesh (a convex hull's edge normals are what make

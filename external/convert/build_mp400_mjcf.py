@@ -176,10 +176,9 @@ TEMPLATE = """<mujoco model="mp_400">
              frame, which is the opposite of every other wheeled model here and perfectly valid: a
              revolute axis is arbitrary up to sign.
 
-             This was briefly flipped to `1 0 0` because `diff_drive` wrote the commanded rate
-             straight to the actuator and so silently required +y -- a convention the other models
-             satisfied only because our own generators wrote them. The plugin now derives the sign
-             off the model, as omni_drive does, so the vendor's axis is kept. -->
+             `diff_drive` derives the roll sign off the model, as omni_drive does, rather than
+             requiring +y -- a convention the other models satisfy only because our own generators
+             write them -- so the vendor's axis is kept. -->
         <joint axis="-1 0 0" damping="0.5" armature="0.02" limited="false"/>
       </default>
     </default>

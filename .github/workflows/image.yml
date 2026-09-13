@@ -181,8 +181,8 @@ jobs:
           docker run --rm --entrypoint python3 "$img" -c \
             'import platform, mujoco, numpy, cv2, roqsim; print("mujoco", mujoco.__version__, "on", platform.machine())'
 
-          # Uniform across both images, and the check that caught `click` missing from the lean
-          # image's third-party list -- which broke `roqsim`, i.e. that image's own ENTRYPOINT.
+          # Uniform across both images: a package missing from the lean image's third-party list
+          # breaks `roqsim`, i.e. that image's own ENTRYPOINT.
           echo "--- the roqsim console script"
           docker run --rm --entrypoint roqsim "$img" --help | grep -q sim
 

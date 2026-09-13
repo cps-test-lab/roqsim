@@ -12,12 +12,12 @@ requires-python = ">=3.10"
 # Wheeled BASES only. A robot that is also an arm (frankie, tiago_pro) lives in the sibling package
 # `roqsim_mobile_manipulation`, which is the one that may depend on both this and `roqsim_manipulation`.
 #
-# `roqsim_manipulation` was briefly declared here, because those two composite models' manifests declare
-# `arm_controller`. It was honest about a real runtime need but wrong about layering: it inverted this
-# package's own contract (bases do not require arms), made anyone who wanted a TurtleBot install every
-# arm and gripper, turned the sibling family packages into a dependency mesh, and reordered the wheel
-# install graph for deployments -- which broke a campaign image build with
-# `No matching distribution found for roqsim_manipulation`. Moving the two robots fixed the cause.
+# `roqsim_manipulation` is deliberately NOT declared, although a composite model's manifest declares
+# `arm_controller` -- which is why those models live in the sibling package. Declaring it here would
+# invert this package's own contract (bases do not require arms), make anyone who wants a TurtleBot
+# install every arm and gripper, turn the sibling family packages into a dependency mesh, and reorder
+# the wheel install graph for deployments, where an image build then fails with
+# `No matching distribution found for roqsim_manipulation`.
 #
 # `roqsim_assets` is deliberately NOT declared either, for the same reason one layer up: nothing here
 # imports it and no shipped model, world or MJCF names an `roqsim_assets:` asset. `floorplan` resolves a
@@ -64,9 +64,8 @@ roqsim_mobile = [
     # One folder per model (models/<name>/<name>.xml + its own meshes/), so a model's files are one
     # glob prefix rather than four. Globs rather than an enumeration on purpose: with a list, a new
     # port installs cleanly and then fails at RUN time with "Error opening file '<part>.obj'" only
-    # inside a container, where the editable checkout is not there to paper over it. That is exactly
-    # how this was found — clearpath_jackal's meshes were unpackaged. tests/test_model_layout.py asserts
-    # every shipped file matches one of these.
+    # inside a container, where the editable checkout is not there to paper over it.
+    # tests/test_model_layout.py asserts every shipped file matches one of these.
     "models/*/*.xml",
     "models/*/*.manifest.yaml",
     "models/*/meshes/*.obj",

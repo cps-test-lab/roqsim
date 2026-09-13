@@ -142,7 +142,7 @@ def test_prose_opening_with_the_word_is_not_a_header():
 
 
 def test_nested_keys_are_reported_at_the_path_a_world_yaml_writes_them_at():
-    """A key opening a mapping used to END the block, hiding every key after it."""
+    """A key opening a mapping must not END the block and hide every key after it."""
     doc = (
         "Scene plugin: report coverage.\n\n"
         "Config::\n\n"
@@ -179,7 +179,7 @@ def test_a_block_written_as_a_components_list_entry_parses_too():
 
 
 def test_a_class_docstring_pointing_at_the_module_does_not_hide_the_block():
-    """``\"\"\"See the module docstring.\"\"\"`` used to win and publish the pointer."""
+    """``\"\"\"See the module docstring.\"\"\"`` must not win and publish the pointer."""
     import sys
     import types
 

@@ -162,9 +162,9 @@ def test_a2_drive_wheels_carry_the_load(rig):
     """The drive wheels must carry most of the weight — never the chassis box on the floor.
 
     Measured as a TIME-AVERAGED normal force, not a contact snapshot. With four near-coplanar support
-    geoms a single frame reports whichever happens to be penetrating that tick: an early version of
-    this model was found "resting on caster_front alone with both drive wheels off the ground" by a
-    snapshot, while the averaged forces showed all four sharing load. Snapshots lie here.
+    geoms a single frame reports whichever happens to be penetrating that tick: a snapshot can show
+    the model "resting on caster_front alone with both drive wheels off the ground" while the
+    averaged forces show all four sharing load. Snapshots lie here.
     """
     model, data, ctx, arm, _ = rig
     floor = model.geom("floor").id
@@ -196,8 +196,8 @@ def test_a3_mount_transform_matches_source_urdf(rig):
     """panda_link0 sits exactly at the URDF's fixed-joint mount frame. Cross-checks the whole port.
 
     Compared in the BASE frame, not the world frame. The settled base can carry a small pitch, and a
-    world-frame delta then mixes the mount offset with that rotation: an earlier version of this test
-    failed by 4.3 mm in x, which is exactly 0.38 m * sin(0.65 deg) — the pitch, not a mount error.
+    world-frame delta then mixes the mount offset with that rotation: compared in the world frame it
+    is off by 4.3 mm in x, which is exactly 0.38 m * sin(0.65 deg) — the pitch, not a mount error.
     """
     model, data, *_ = rig
     base = data.xpos[model.body("base_link").id]
@@ -330,8 +330,8 @@ def test_e1_arm_holds_rest_stance_under_gravity(rig):
 def test_e2_velocity_command_moves_the_joint_at_the_commanded_rate(rig):
     """Joint-velocity input, integrated into the held target.
 
-    The capability this port added to `arm_controller`: a controller that resolves to joint rates
-    (a QP redundancy resolver, a teleop jog) had no path into the substrate before it.
+    `arm_controller`'s path into the substrate for a controller that resolves to joint rates (a QP
+    redundancy resolver, a teleop jog).
     """
     model, data, ctx, arm, _ = rig
     assert arm.velocity_commands, "frankie manifest must enable velocity_commands"

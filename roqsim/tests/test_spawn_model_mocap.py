@@ -124,7 +124,7 @@ def test_the_default_is_physics(tmp_path):
 )
 def test_the_keys_motion_replaced_are_refused_not_ignored(tmp_path, gone, says):
     """`free` and `mocap` asked one question -- who owns this pose -- as two booleans, whose
-    fourth combination was meaningless and had to be refused wherever they were offered.
+    fourth combination is meaningless and would have to be refused wherever they were offered.
 
     They are refused rather than translated because this plugin declares no schema, so a key it
     stopped reading would be silently ignored: the world would load, say what it always said, and

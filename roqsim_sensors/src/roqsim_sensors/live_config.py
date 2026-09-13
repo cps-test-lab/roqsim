@@ -5,16 +5,15 @@
 
 roqsim keeps faults on two channels, and :mod:`roqsim.plugins.model_override` states the split --
 that plugin changes the *physics*, while "a perturbation of a reported value is sensor noise and
-belongs in a sensor's own config". The physics channel has had a runtime trigger since
-``set_model_override``. This is the missing half, so a sensor can be degraded **during** a run
-instead of only for the whole of it: a lidar that fails halfway down a corridor rather than one that
-was always noisy.
+belongs in a sensor's own config". The physics channel's runtime trigger is ``set_model_override``.
+This is the report channel's, so a sensor can be degraded **during** a run instead of only for the
+whole of it: a lidar that fails halfway down a corridor rather than one that was always noisy.
 
 It is deliberately **not** a plugin. A component belongs to the entry it is nested under, and a
 sensor registers no entity, so a separate ``sensor_override`` entry could not be nested under the
 sensor it faults -- it would have to name its target in a config key, which is the
-ownership-as-a-value pattern the component model removed. The fault therefore lives in the sensor's
-own config, where the value being perturbed already lives::
+ownership-as-a-value pattern the component model does not have. The fault therefore lives in the
+sensor's own config, where the value being perturbed already lives::
 
     components:
       - spawn_robot: {model: turtlebot4}
@@ -44,8 +43,8 @@ deterministic per cell, and in the run's provenance. Nothing about severity is o
 **Only keys read per frame may be written.** A sensor declares ``LIVE_WRITABLE`` (config key ->
 attribute) and, for the keys someone will reach for first, ``REFUSED_WRITES`` (key -> why). Anything
 in neither is refused as undeclared, so a sensor that has not thought about this is safe by default
-rather than silently writable. This is not politeness: ``model_override`` learned it from
-``geom_size``, which writes fine, takes effect nowhere, and reads back as though it had. The sensor
+rather than silently writable. This is not politeness: ``model_override`` refuses ``geom_size`` for
+this reason -- it writes fine, takes effect nowhere, and reads back as though it had. The sensor
 analogue is ``rays`` -- writing it mid-run changes a ``LaserScan``'s length, which every consumer of
 a fixed-length array reads as corruption.
 

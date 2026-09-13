@@ -21,8 +21,8 @@ on-screen window. The window management lives here so neither driver duplicates 
   itself stays MuJoCo's -- it is C++ with no hook -- but is made to *feel* first-person by holding
   its pivot a metre or so in front of the eye (:func:`roqsim.rendering.set_orbit_radius`). Note the
   shape of that fix: a re-parameterisation the renderer cannot tell apart, not a correction.
-  Post-correcting each drag from the driver loop was tried and makes the window flicker between the
-  orbited and the corrected pose, because Simulate renders on its own clock; do not reintroduce it.
+  Post-correcting each drag from the driver loop makes the window flicker between the orbited and
+  the corrected pose, because Simulate renders on its own clock; do not do that.
   The same property is what makes the mode switch itself free: entering and leaving flight only
   re-spells the eye, so neither transition moves the picture.
 * :func:`launch_viewer` / :func:`close_viewer` are the open/close pair every driver must use, because
@@ -213,7 +213,7 @@ def ui_kwargs(left_ui: bool = False, right_ui: bool = False) -> dict:
 _VIEWER_THREADS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 #: How long :func:`close_viewer` waits for MuJoCo's render thread to finish. Teardown takes ~10 ms;
-#: the cap only exists so a wedged GL driver degrades to the old racy exit instead of hanging here.
+#: the cap only exists so a wedged GL driver degrades to a racy exit instead of hanging here.
 _CLOSE_TIMEOUT_S = 5.0
 
 
@@ -620,7 +620,7 @@ def close_viewer(handle, *, timeout: float = _CLOSE_TIMEOUT_S) -> None:
     for thread in threads:
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
         if thread.is_alive():
-            # Nothing left to do but let the process exit the old way; say so rather than hang.
+            # Nothing left to do but let the process exit unordered; say so rather than hang.
             print(
                 f"roqsim: the viewer's {thread.name} did not shut down within {timeout:g}s; "
                 "exiting anyway (the process may crash on the way out)",

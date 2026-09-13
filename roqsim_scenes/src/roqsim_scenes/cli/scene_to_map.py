@@ -377,10 +377,10 @@ def main(argv: list | None = None) -> int:
         # 0.196, not 0.25. nav2_map_server classifies a pixel by occ = (255 - value)/255 and calls it
         # free when occ < free_thresh. The unknown shade written above is 205, whose occ is exactly
         # 0.19607 -- so free_thresh 0.196 leaves it UNKNOWN (0.19607 is not < 0.196) while 0.25 makes
-        # every unknown cell load as free space. This file writes a trinary map; declaring 0.25 threw
-        # the third state away at load time, letting the planner route through the region outside the
-        # walls and feeding AMCL a likelihood field that claims knowledge it does not have. 0.196 is
-        # the canonical ROS value and it exists for exactly this reason.
+        # every unknown cell load as free space. This file writes a trinary map; declaring 0.25
+        # throws the third state away at load time, letting the planner route through the region
+        # outside the walls and feeding AMCL a likelihood field that claims knowledge it does not
+        # have. 0.196 is the canonical ROS value and it exists for exactly this reason.
         f"free_thresh: 0.196\n"
     )
     free = int((grid == _FREE).sum())

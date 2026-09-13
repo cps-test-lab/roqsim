@@ -25,7 +25,7 @@ package (``roqsim sim roqsim_mobile:turtlebot4_demo``).
 
 Pacing is ``realtime`` (default), a numeric factor, or ``asap``. Headless works anywhere, offscreen
 sensors included: ``import roqsim`` picks a backend that exists on this machine (``egl`` where there
-is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer has to be set by hand
+is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be set by hand
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 

@@ -159,7 +159,7 @@
          forcerange +-5 N.m: sized from the platform, not from headroom. The Jackal's 20 kg payload
          on its rated 30% grade needs ~2.6 N.m per wheel, and in-place scrub costs ~2 N.m. An
          oversized cap is not free here -- at the bare wheel inertia it lets one step change wheel
-         speed by 25 rad/s, which is how the first attempt at this model tore itself apart.
+         speed by 25 rad/s, which is enough for the model to tear itself apart.
          frictionloss 0.15 N.m (gearbox stiction): a velocity servo makes no torque at zero error,
          so some is needed against creep, but every extra N.m is subtracted from yaw authority. -->
     <velocity name="front_left_wheel_motor"  joint="front_left_wheel_joint"  kv="15" ctrlrange="-25 25" forcerange="-5 5"/>

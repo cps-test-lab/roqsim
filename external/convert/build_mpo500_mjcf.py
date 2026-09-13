@@ -4,8 +4,8 @@
 A 72.8 kg four-wheel **omnidirectional** base: all four wheels drive, none steers. Holonomic, so it
 uses ``omni_drive``'s existing mecanum path -- no swerve inverse kinematics and no ``slip_factor``.
 
-The ledger's recorded unknown was "whether its omni wheels are mecanum or Swedish-roller … the macro
-was listed rather than opened". Opened: the only wheel macro is ``mpo_500_omni_wheel``, axis
+The ledger's open question is whether its omni wheels are mecanum or Swedish-roller. The macros
+answer it: the only wheel macro is ``mpo_500_omni_wheel``, axis
 ``0 1 0``, and there is **no caster macro at all**, so nothing steers. Either roller type reduces to
 the same planar model here, and the wheel spin that keeps ``joint_states`` honest is the mecanum
 convention ``omni_drive`` already applies to the TIAGo Pro and the Ridgeback.

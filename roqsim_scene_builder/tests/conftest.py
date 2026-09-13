@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Shared fixtures for the scene-builder tests: a throwaway X display for the GUI ones.
 
-Ported from ``mcp-media-review``'s image-review suite, which is where this pattern already lives --
+The same fixture as ``mcp-media-review``'s image-review suite --
 the two packages share the annotation-window design and, per the note atop ``annotate_ui``, share it
 by copying rather than by depending on each other.
 """
@@ -25,8 +25,8 @@ def virtual_display():
     on the developer's display flashes windows across their screen mid-run. Module-scoped because the
     fixture boots a real X server -- one per test class would start (and leak) several.
     """
-    # Tk is the other half of the same prerequisite, and it was the unguarded half: a machine with
-    # Xvfb but without python3-tk got past this fixture and died on `import tkinter` inside each test.
+    # Tk is the other half of the same prerequisite: without this guard a machine with Xvfb but
+    # without python3-tk gets past this fixture and dies on `import tkinter` inside each test.
     pytest.importorskip("tkinter", reason="python3-tk is not installed; the GUI tests need real Tk")
     if shutil.which("Xvfb") is None:
         pytest.skip("Xvfb not installed; skipping rather than opening windows on a real display")
