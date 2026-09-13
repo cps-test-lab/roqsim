@@ -27,6 +27,8 @@ after it -- names the fixed links the vendor description chains and the MJCF fla
 (:mod:`roqsim.frames`). Each becomes a site ``<prefix><name>`` on its parent's body at build, so a
 mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and is published at configure
 as a static transform ``parent -> name`` read from the compiled model, in the robot's namespace.
+Where a chain starts at a body other than the robot's root, ``root -> body`` is published with it,
+so the chain joins the robot's tree; that body must be welded to the root.
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -307,7 +309,8 @@ class SpawnRobotPlugin(Plugin):
         if self.frames:
             transforms = static_transforms(
                 ctx.model,
-                [
+                self._root_links(ctx, base_body)
+                + [
                     (f.parent, self.prefix + f.parent, f.name, self.prefix + f.name)
                     for f in self.frames
                 ],
@@ -319,6 +322,44 @@ class SpawnRobotPlugin(Plugin):
                 )
             )
         self._apply_initial_pose(ctx)
+
+    def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
+        """``root -> body`` for each body other than the root that a frame chain hangs from.
+
+        A frame is measured from its parent body, and nothing else publishes where that body sits:
+        without this link the chain is a TF tree of its own, and a consumer asking for the scan in
+        ``base_link`` finds two unconnected trees. The body must be welded to the root, since the
+        transform is static; one that a joint moves is refused rather than published at its
+        reference pose.
+        """
+        m = ctx.model
+        root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
+        root_name = base_body.removeprefix(self.prefix)
+        declared = {f.name for f in self.frames}
+        links: list[tuple[str, str, str, str]] = []
+        for frame in self.frames:
+            if frame.parent in declared or any(link[2] == frame.parent for link in links):
+                continue
+            body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + frame.parent)
+            walk = body
+            while walk != root:
+                if walk <= 0:
+                    raise RuntimeError(
+                        f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
+                        f"{frame.parent!r}, which is not a body under the root {root_name!r}"
+                    )
+                if m.body_jntnum[walk]:
+                    moving = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, walk)
+                    raise RuntimeError(
+                        f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
+                        f"{frame.parent!r}, which a joint on {moving!r} moves relative to "
+                        f"{root_name!r}. Its transform from the root is not static; hang the frame "
+                        f"from a body welded to the root."
+                    )
+                walk = int(m.body_parentid[walk])
+            if body != root:
+                links.append((root_name, base_body, frame.parent, self.prefix + frame.parent))
+        return links
 
     def on_reset(self, ctx: SimContext) -> None:
         self._apply_initial_pose(ctx)

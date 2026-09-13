@@ -144,16 +144,19 @@ def test_the_static_tf_chain_is_published_in_the_robots_namespace():
         device = endpoints[("rb.rplidar", "frames")]
         assert robot.namespace == device.namespace == NAMESPACE
         links = robot.backend["ros2"]["static_tf"] + device.backend["ros2"]["static_tf"]
+        # One tree from base_link to laser: a consumer asks for the scan in base_link.
         assert [(t["parent"], t["child"]) for t in links] == [
+            ("base_link", "body_link"),
             ("body_link", "cover_link"),
             ("cover_link", "rplidar_link"),
             ("rplidar_link", "laser"),
         ]
-        for tf, xyz in zip(links, [(0.0, 0.0, COVER_Z), MOUNT_XYZ, LASER_XYZ], strict=True):
+        xyzs = [(0.0, 0.0, BODY_Z), (0.0, 0.0, COVER_Z), MOUNT_XYZ, LASER_XYZ]
+        for tf, xyz in zip(links, xyzs, strict=True):
             np.testing.assert_allclose(tf["translation"], xyz, atol=1e-9)
-        np.testing.assert_allclose(np.abs(links[0]["rotation"]), [1, 0, 0, 0], atol=1e-9)
-        np.testing.assert_allclose(np.abs(links[1]["rotation"]), [1, 0, 0, 0], atol=1e-9)
-        np.testing.assert_allclose(np.abs(links[2]["rotation"]), [0, 0, 0, 1], atol=1e-9)  # yaw pi
+        for tf in links[:3]:
+            np.testing.assert_allclose(np.abs(tf["rotation"]), [1, 0, 0, 0], atol=1e-9)
+        np.testing.assert_allclose(np.abs(links[3]["rotation"]), [0, 0, 0, 1], atol=1e-9)  # yaw pi
     finally:
         engine.shutdown()
 
