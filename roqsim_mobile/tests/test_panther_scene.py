@@ -279,7 +279,7 @@ def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan):
 
 
 def test_c4_no_ray_starts_inside_robot_geometry(scan):
-    """The former embedded site excluded base_link; the device mount starts no ray inside the robot."""
+    """C4: from the device mount no ray starts inside robot geometry, and none reads too close."""
     scanner = lidar(scan, f"{OWNER}.{LABEL}")
     inside, _ = robot_hits(scan, scanner, PREFIX)
     assert not inside, {body: len(d) for body, d in inside.items()}

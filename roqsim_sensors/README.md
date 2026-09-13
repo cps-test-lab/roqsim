@@ -124,7 +124,7 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `sick_lms1xx` | SICK LMS111 2D lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` as Clearpath's `LMS1xx` driver publishes it (541 rays over 270° with the last on +135°, header 0.01–20 m, returns measured 0.5–20 m, 50 Hz), excluding only its own `mount`, stamped in `lidar2d_0_laser`. Clearpath's `sick_lms1xx` accessory. Mesh and link frames from Clearpath `clearpath_sensors_description` — see `models/sick_lms1xx/sick_lms1xx_LICENSE`. |
 | `velodyne_vlp16` | Velodyne VLP-16 (Puck) lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` casting one plane of its 16 as the driver's `velodyne_laserscan` publishes it (898 rays of 0.007 rad from −π, header 0–200 m, returns measured 0.9–100 m, too close and no return `+inf`, 10 Hz), excluding only its own `mount`, stamped in `velodyne` 37.7 mm above the housing base. Mounted by `roqsim_mobile`'s `clearpath_jackal`. Meshes and link frames from Dataspeed `velodyne_description` — see `models/velodyne_vlp16/velodyne_vlp16_LICENSE`. |
 
-The ten scanners are device models a robot mounts from its manifest: a `spawn_sensor` at the
+The eleven scanners are device models a robot mounts from its manifest: a `spawn_sensor` at the
 vendor's parent frame and joint origin, overriding a value only where its vendor configuration differs.
 
 ## Demo world

@@ -254,7 +254,7 @@ def test_the_tf_chain_and_topic_are_clearpaths(scan):
 
 
 def test_the_scanner_is_the_ust_10lx():
-    """The UST-10LX as urg_node publishes it, not the 720-ray 360 degree scan the model used to carry."""
+    """The scan is the Hokuyo UST-10LX's, as urg_node publishes it."""
     engine = spawn("ridgeback", {LABEL: None}, owner="rb", prefix="rb_", namespace=NAMESPACE)
     try:
         scanner = lidar(engine, f"rb.{LABEL}")

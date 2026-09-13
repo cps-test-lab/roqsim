@@ -327,7 +327,7 @@ def test_the_tf_chain_and_topic(scan):
 
 
 def test_the_scanner_is_the_c1():
-    """The C1 as sllidar_ros2 publishes it, not the 360-ray LDS-class scan the model used to carry."""
+    """The scan is the RPLIDAR C1's, as sllidar_ros2 publishes it."""
     engine = spawn("lgdxrobot2", {LABEL: None}, owner="g", prefix="g_", namespace=NAMESPACE)
     try:
         scanner = lidar(engine, f"g.{LABEL}")

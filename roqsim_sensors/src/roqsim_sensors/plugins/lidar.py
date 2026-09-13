@@ -1,8 +1,8 @@
 """Sensor plugin: 2D lidar via batched ray-casting (:func:`roqsim.raycast.cast`, no GL).
 
-Ported from our earlier in-house nav prototype's ``Lidar``. Casts a horizontal fan from the robot's
-``lidar`` site at ``rate_hz``, optionally applies sensor noise, and exposes the latest
-:class:`~.payloads.LaserScan` via a ``scan`` output endpoint for a transport plugin.
+Casts a horizontal fan from its ``site`` at ``rate_hz``, optionally applies sensor noise, and
+exposes the latest :class:`~.payloads.LaserScan` via a ``scan`` output endpoint for a transport
+plugin.
 
 The shared machinery -- the rate gate, the detection limits, the noise model, the static mount TF and
 the endpoint -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file is the fan pattern,
