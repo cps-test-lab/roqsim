@@ -157,11 +157,12 @@ components:
   # cast from min + 1 deg (:34, "a laserscan detecting ghost obstacle") to +135 deg. roqsim spaces
   # them (max - min) / rays apart, so the last ray is one step short of +135 deg.
   #
-  # PAL's base collision box contains both scan origins. base.urdf.xacro gives base_link a
-  # 0.58 x 0.39 x 0.03 m box at z 0.132, and each scanner sits inside it, 0.3 mm above its centre
-  # plane; PAL's visual meshes leave the scan plane clear. A scanner skips only its own housing, so
-  # every ray starts inside that box and returns its inner face, no further than 0.57 m: as
-  # described, neither scan sees past the chassis -- see the port log.
+  # Both scanners look out through the band between the lower and upper chassis. PAL's
+  # base.urdf.xacro:64-69 gives base_link a 0.58 x 0.39 x 0.03 m collision box at z 0.132 that
+  # encloses both scan origins, while PAL's visual body (base_link.stl) is a 0.500 x 0.318 m waist
+  # across that band. The model's box takes the waist's extent, so each fan leaves the base where the
+  # real one does. A scanner skips only its own housing; nothing of the base is in either fan. That
+  # box is a deviation from PAL's collision geometry -- see the port log.
   #
   # Topics are PAL's `ros_topic`s, relative, so the spawn's namespace scopes them.
   # ---------------------------------------------------------------------------------------------

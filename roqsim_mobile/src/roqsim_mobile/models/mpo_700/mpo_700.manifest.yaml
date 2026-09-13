@@ -49,10 +49,18 @@ components:
   # mpo_700_gazebo.urdf.xacro:25-50) describe its simulation rather than the scanners and are not
   # copied; their topics are the robot's ROS interface and are: one topic per scanner, `scan` and
   # `scan2`.
+  #
+  # HEIGHT: Neobotix's hardware documentation, not the description. The MPO-700 "Mechanical
+  # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html) puts the
+  # optional diagonal scanners at Z 201.5 mm in the platform frame, whose origin is on the floor (the
+  # centre scanners' Z 181 is the same page's "height of scan plane"). Its wheels are 180 mm across, and
+  # the description's wheel centres sit 0.10 above base_link, so base_link is 10 mm below the floor and
+  # the scans are at z 0.2115, where the description writes 0.223. x and y stay the description's (the
+  # page says +-327, +-277).
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [0.338, 0.288, 0.223]     # mpo_700_body.urdf.xacro:38, lidar_1_joint origin xyz
+      pos: [0.338, 0.288, 0.2115]    # x, y: mpo_700_body.urdf.xacro:38 lidar_1_joint; z: see HEIGHT
       rpy: [3.14, 0.0, 0.79]         # mpo_700_body.urdf.xacro:38, lidar_1_joint origin rpy
       frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
@@ -62,7 +70,7 @@ components:
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link
-      pos: [-0.338, -0.288, 0.223]   # mpo_700_body.urdf.xacro:65, lidar_2_joint origin xyz
+      pos: [-0.338, -0.288, 0.2115]  # x, y: mpo_700_body.urdf.xacro:65 lidar_2_joint; z: see HEIGHT
       rpy: [3.14, 0.0, 3.93]         # mpo_700_body.urdf.xacro:65, lidar_2_joint origin rpy
       frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear

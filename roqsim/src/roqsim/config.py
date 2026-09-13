@@ -1230,6 +1230,11 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         raise PluginError(
             f"override '{'.'.join(a.path)}' matches no component in this document." + hint
         )
+    # After every assignment has landed, on the tree that will run: both refusals name an address
+    # only that tree has, and both would otherwise pass load and fail -- or do nothing -- later.
+    tree = _as_tree(effective)
+    _refuse_config_keys_naming_components(tree, base_dir)
+    _refuse_declared_beside_mounted_device(tree, plugins, base_dir)
     return SimConfig(
         sim=dict(raw.get("sim", {}) or {}),
         plugins=effective,
@@ -1327,6 +1332,131 @@ def _drop_keys_that_named_injected_components(tree: list[PluginSpec], keys_befor
 
 def _subtrees(roots: list[PluginSpec]) -> list[PluginSpec]:
     return [s for root in roots for s in (root, *_subtree(root))]
+
+
+def _refuse_config_keys_naming_components(tree: list[PluginSpec], base_dir: Path) -> None:
+    """Refuse a key a strict plugin does not read when it is the label of a component it owns.
+
+    An override is split where the tree ends (:func:`_resolve_targets`), so ``robot.lidar.rays``
+    against a robot whose scanner hangs off a mounted device (``robot.rplidar.lidar``) stops at
+    ``robot`` and writes a config key ``lidar`` there: nothing reads it, the real component keeps its
+    value, and the run looks configured. A plugin declaring ``STRICT_KEYS`` refuses any unknown key
+    when it is instantiated; this runs earlier, at load, because only the effective tree can say
+    which address was meant -- any depth below the entry, since a mounted device nests one level.
+    """
+    from .schema import INJECTED_KEYS
+
+    for spec in _subtrees(tree):
+        try:
+            cls = resolve_plugin(spec.ref, base_dir=base_dir)
+        except PluginError:
+            continue  # refused by instantiate_plugins, with the rest of the unresolved refs
+        schema = cls.CONFIG_SCHEMA
+        if not (schema and cls.STRICT_KEYS):
+            continue
+        descendants = _subtree(spec)
+        for key in spec.config:
+            if key in schema or key in INJECTED_KEYS:
+                continue
+            hits = sorted(f"{_ENTRIES_KEY}.{d.address}" for d in descendants if d.label == key)
+            if hits:
+                raise PluginError(
+                    f"'{key}' is not a {spec.ref} key; {spec.address}'s {key} is "
+                    f"{' and '.join(hits)}. A config key or override naming it has to spell that "
+                    f"whole address (e.g. {hits[0]}.<key>), or it reaches nothing."
+                )
+
+
+def _refuse_declared_beside_mounted_device(
+    tree: list[PluginSpec], declared: list[PluginSpec], base_dir: Path
+) -> None:
+    """Refuse an entry declared on a carrier when its model mounts that component on a device.
+
+    A world written before its robot's scanner became a mounted device still nests the override
+    where the manifest's component used to be (``robot: [- lidar: {...}]``). The label no longer
+    merges into anything, so it loads as a second component beside the device's (``robot.lidar``
+    next to ``robot.rplidar.lidar``) and fails only once the model is compiled, naming a site rather
+    than the mount it belongs under.
+
+    Refused when all of these hold, keyed on refs and the tree, never on a plugin's name:
+
+    * the owner's model manifest supplies a component that registers an entity (a mounted device),
+      and somewhere below it a component with the entry's plugin ref;
+    * the world declares that ref directly under the owner, enabled, with a label the owner's
+      manifest does not supply -- a label it supplies merges into the default and is not stale;
+    * no top-level string of the entry's config names a site, camera or declared frame of the
+      owner's model (``manifest frames:`` and the owner's ``frames:`` become sites at build).
+
+    The last condition is what keeps a real second sensor legal: one that states where it hangs on
+    the carrier itself has a placement of its own. One that relies on the plugin's default site is
+    refused here, and stating that site explicitly is the way through; the message says so.
+    """
+    from .manifest import load_manifest
+    from .models import ModelError, resolve_model
+
+    written = {id(s) for s in declared}
+    for owner in _subtrees(tree):
+        entries = [c for c in owner.children if id(c) in written and c.enabled]
+        model = owner.config.get("model")
+        if not entries or not model or not owner.config.get("default_plugins", True):
+            continue
+        try:
+            model_file = resolve_model(str(model), base_dir=base_dir).path
+            supplied = {parse_plugin_entry(e).label for e in load_manifest(model_file, base_dir)}
+        except (ModelError, PluginError):
+            continue  # the owner's own validation reports an unresolvable model or manifest
+        devices = []
+        for child in owner.children:
+            if child.label not in supplied:
+                continue
+            try:
+                if resolve_plugin(child.ref, base_dir=base_dir).provides_entity:
+                    devices.append(child)
+            except PluginError:
+                continue
+        own_names: set[str] | None = None
+        for entry in entries:
+            if entry.label in supplied:
+                continue
+            mounts = [(d, c) for d in devices for c in _subtree(d) if c.ref == entry.ref]
+            if not mounts:
+                continue
+            if own_names is None:
+                own_names = _model_attach_names(model_file, owner.config.get("frames"))
+                if own_names is None:
+                    break  # the model does not parse; its spawn's build reports that
+            if any(isinstance(v, str) and v in own_names for v in entry.config.values()):
+                continue
+            where = "; ".join(
+                f"{c.address} -- nest it under '{d.address}' ({d.ref}, name: {d.label})"
+                for d, c in mounts
+            )
+            raise PluginError(
+                f"'{entry.address}' ({entry.ref}) is declared directly under '{owner.address}', "
+                f"but that model mounts its {entry.ref} on a device: {where}. The model supplies no "
+                f"'{entry.label}' on '{owner.address}' itself and the entry names no site, camera or "
+                f"frame of it, so it would build as a second {entry.ref} with nothing to attach to. "
+                f"To configure the mounted one, move the entry into that device's "
+                f"'{_CHILDREN_KEY}:' block with name: {mounts[0][1].label}. To add a second "
+                f"{entry.ref} of its own, state the site of '{owner.address}' it hangs from."
+            )
+
+
+def _model_attach_names(model_file: Path, frames) -> set[str] | None:
+    """Sites, cameras and declared frames of a model, unprefixed; ``None`` if the MJCF won't parse."""
+    import mujoco
+
+    from .manifest import manifest_frames
+
+    try:
+        spec = mujoco.MjSpec.from_file(str(model_file))
+    except Exception:  # noqa: BLE001 - the spawn's build reports a broken model with its own message
+        return None
+    names = {s.name for s in spec.sites} | {c.name for c in spec.cameras}
+    for frame in list(manifest_frames(model_file)) + list(frames or []):
+        if isinstance(frame, dict) and frame.get("name"):
+            names.add(str(frame["name"]))
+    return names
 
 
 #: Plugin refs :func:`with_transport` appends, in order. Names rather than classes: they

@@ -58,7 +58,7 @@
         <inertial pos="0.0026742 0.00027459 0.086363" quat="0.00180371 0.707337 -0.00172275 0.706872" mass="34.047" diaginertia="0.46036 0.299912 0.227768"/>
         <geom type="mesh" rgba="0.75294 0.75294 0.75294 1" mesh="meshes_base_base_link" class="tiago_pro_visual"/>
         <geom size="0.3585 0.2485 0.04225" pos="0 0 0.18925" type="box" class="tiago_pro_collision"/>
-        <geom size="0.29 0.195 0.015" pos="0 0 0.132" type="box" class="tiago_pro_collision"/>
+        <geom size="0.25 0.159 0.015" pos="0 0 0.132" type="box" class="tiago_pro_collision"/>
         <geom size="0.3525 0.24 0.0835" pos="0 0 0.0335" type="box" class="tiago_pro_collision"/>
         <body name="virtual_base_laser_link" pos="0 0 0.13244"/>
         <body name="base_imu_link" pos="-0.287 0 0.092163" quat="0.707107 0 0 0.707107">

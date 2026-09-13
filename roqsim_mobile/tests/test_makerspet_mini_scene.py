@@ -15,11 +15,11 @@ collision is a cylinder and only its visual is the mesh. That is exactly what ha
 vendor's 200 mm sibling before ``urdf_source.mesh_scales`` existed; the guard is why it did not happen
 again here.
 
-``test_the_vendor_head_occludes_every_ray`` pins a property of the description, not a wish. The lidar
-skips only its own housing (``base_scan``) and never other robot geometry, and its site is the vendor's
-``base_scan`` frame. The description puts that scan plane inside the head, so every ray returns from
-inside the head and reads ``range_min``. As written, this robot's scan sees nothing; the port log
-records it.
+``test_the_scan_sees_the_wall_through_the_head_gap`` pins the one deviation from the description. The
+lidar skips only its own housing (``base_scan``), and the description's head encloses the scan plane.
+The real Mini carries its LiDAR in an open gap, so the model's head ends at the bottom face of the
+vendor's scanner puck, collision and visual alike, with the head's mass and inertia unchanged: every
+ray leaves the robot, and no robot geometry is left in the scan plane.
 """
 
 from __future__ import annotations
@@ -45,6 +45,13 @@ MAX_ANGULAR_VEL = 0.5          # config/navigation.yaml max_vel_theta
 LIDAR_HEIGHT = 0.0704          # the description's scan_joint, in the base_link frame
 BODY_RADIUS = 0.062            # params.xacro base_diameter 0.124
 HEAD_HEIGHT = 0.0388           # params.xacro head_height
+HEAD_JOINT_Z = 0.032           # params.xacro lower_cylinder_height, head_joint's origin
+#: The bottom face of the scanner puck, where the model's head ends: scan_joint's 0.0704 less half of
+#: params.xacro laser_puck_height 0.016.
+SCAN_GAP_BOTTOM = 0.0624
+HEAD_MASS = 0.200              # params.xacro head_mass
+#: head_link's solid_semi_ellipsoid_inertia over base_diameter/2 and head_height, as expanded.
+HEAD_DIAGINERTIA = (0.0001069888, 0.0001069888, 0.00015376)
 
 
 def _engine(**diff_drive):
@@ -99,9 +106,10 @@ def test_no_value_here_is_an_assumption():
 def test_the_head_mesh_is_scaled_correctly():
     """The trap this vendor's descriptions set -- see the module docstring.
 
-    Checked against the vendor's own params rather than a remembered number: the head must be
-    ``head_height`` tall and as wide as the body, so a mesh emitted at 1:1 fails by three orders of
-    magnitude and a mesh emitted at a *uniform* scale fails on one axis.
+    Checked against the vendor's own params rather than a remembered number: the head must be as wide
+    as the body, and as tall as it stands below the scan gap (``head_height`` less the part the gap
+    cuts off). A mesh emitted at 1:1 fails by three orders of magnitude and a mesh emitted at a
+    *uniform* scale fails on one axis.
     """
     engine = _engine()
     try:
@@ -109,14 +117,16 @@ def test_the_head_mesh_is_scaled_correctly():
         head = [g for g in range(model.ngeom)
                 if model.geom_dataid[g] >= 0
                 and mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH,
-                                      model.geom_dataid[g]) == "k_hemisphere"]
+                                      model.geom_dataid[g]) == "k_hemisphere_scan_gap"]
         assert head, "the head mesh is missing -- it is this model's only mesh"
         half = model.geom_aabb[head[0]][3:]
         extents = sorted(2 * float(v) for v in half)
-        assert extents[0] == pytest.approx(HEAD_HEIGHT, abs=2e-3), (
-            f"head is {extents[0]:.4f} m on its short axis, expected the vendor's head_height "
-            f"{HEAD_HEIGHT}. A 1:1 emit would be ~1000x this; a uniform scale would be wrong on one "
-            f"axis only."
+        expected = SCAN_GAP_BOTTOM - HEAD_JOINT_Z
+        assert expected < HEAD_HEIGHT
+        assert extents[0] == pytest.approx(expected, abs=2e-3), (
+            f"head is {extents[0]:.4f} m on its short axis, expected {expected:.4f}: the vendor's "
+            f"head_height {HEAD_HEIGHT} cut at the scan gap. A 1:1 emit would be ~1000x this; a "
+            f"uniform scale would be wrong on one axis only."
         )
         assert extents[-1] == pytest.approx(2 * BODY_RADIUS, abs=2e-3), (
             f"head is {extents[-1]:.4f} m across, expected the body's {2 * BODY_RADIUS}")
@@ -331,12 +341,28 @@ def test_the_scan_is_stamped_in_the_vendors_base_scan_frame():
         engine.shutdown()
 
 
-def test_the_vendor_head_occludes_every_ray():
-    """Pinned as the description is, not as we would like it -- see the manifest and the port log.
+def test_the_head_ends_at_the_scan_gap_and_keeps_its_mass():
+    """The head's collision cylinder tops out at the puck's bottom face; its inertial is the vendor's."""
+    engine = _engine()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "k_base_link")
+        head = named(model, mujoco.mjtObj.mjOBJ_BODY, "k_head_link")
+        gid = named(model, mujoco.mjtObj.mjOBJ_GEOM, "k_head_link_collision0")
+        top = float(data.geom_xpos[gid][2] + model.geom_size[gid][1] - data.xpos[base][2])
+        assert top == pytest.approx(SCAN_GAP_BOTTOM, abs=1e-6)
+        assert top < LIDAR_HEIGHT
+        assert model.body_mass[head] == pytest.approx(HEAD_MASS)
+        assert np.allclose(model.body_inertia[head], HEAD_DIAGINERTIA, rtol=1e-6)
+    finally:
+        engine.shutdown()
 
-    The head is vendor geometry, so the lidar does not exclude it. The scan plane lies inside it, so
-    each ray returns 8.4 mm out from inside the head's hemisphere and is clamped to range_min: the
-    wall 1 m ahead is invisible. If this fails, the description or the mount has changed.
+
+def test_the_scan_sees_the_wall_through_the_head_gap():
+    """No robot geometry is left in the scan plane, and the wall 1 m ahead reads at its true range.
+
+    Cast against every visible group, the head's visual included. Rays that miss the probe wall end
+    on the world's own geometry.
     """
     engine = _scan_engine()
     try:
@@ -344,13 +370,17 @@ def test_the_vendor_head_occludes_every_ray():
         lidar = _lidar(engine)
         ranges = np.asarray(lidar.latest.ranges)
         assert ranges.shape == (360,)
-        assert np.allclose(ranges, lidar.range_min), "a ray sees past the head"
         dirs, hits = _recast(engine)
-        head = named(model, mujoco.mjtObj.mjOBJ_BODY, "k_head_link")
-        assert np.all(hits.geomid >= 0)
-        assert set(model.geom_bodyid[hits.geomid].tolist()) == {head}
-        assert np.allclose(hits.dist, 0.0084, atol=1e-4)
-        assert np.all(np.einsum("ij,ij->i", hits.normal, dirs) > 0), "every return is from inside"
+        np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
+        struck = hits.geomid >= 0
+        robot = struck & (model.geom_bodyid[np.maximum(hits.geomid, 0)] != 0)
+        assert not robot.any(), "a ray meets robot geometry"
+        wall = named(model, mujoco.mjtObj.mjOBJ_GEOM, "scan_probe_wall")
+        on_wall = hits.geomid == wall
+        assert on_wall.sum() > 90, "the wall ahead spans well over a quarter of the turn"
+        # The wall's face is the plane x = WALL_FACE in the world; the site stands at x = 0.
+        np.testing.assert_allclose(ranges[on_wall], WALL_FACE / dirs[on_wall, 0], atol=1e-6)
+        assert ranges[180] == pytest.approx(WALL_FACE, abs=1e-6), "the forward ray (bearing pi)"
     finally:
         engine.shutdown()
 
@@ -358,8 +388,8 @@ def test_the_vendor_head_occludes_every_ray():
 def test_the_inverted_mount_mirrors_bearings_as_the_vendor_frame_does():
     """base_scan's x points backwards, so bearing 0 looks behind the robot and a wall ahead is at pi.
 
-    Read against world geometry only (group 0): a diagnostic through the robot, since the head
-    occludes the scan itself.
+    Read against world geometry only (group 0), so the bearing check stands on its own of the robot's
+    geometry.
     """
     engine = _scan_engine()
     try:

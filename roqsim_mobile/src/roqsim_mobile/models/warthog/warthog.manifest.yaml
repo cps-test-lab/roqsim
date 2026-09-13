@@ -43,4 +43,8 @@ components:
       range_min: 0.3
       max_range: 50.0
       rate_hz: 10.0
-      exclude_body: base_link
+      # Nothing is excluded: at 0.6 m the fan clears the fenders and every other part of the robot, so
+      # no ray starts inside robot geometry, and a robot part in the scan plane would be a real return.
+      exclude_body: ''
+      # The TF parent is named, because unset it follows exclude_body, which is now empty.
+      tf_parent: base_link

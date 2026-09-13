@@ -90,6 +90,7 @@ from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import PoseError, parse_pose, yaw_of
+from roqsim.schema import Field
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -139,6 +140,24 @@ class SpawnRobotPlugin(Plugin):
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
     expansion_keys = frozenset({"model", "default_plugins", "prefix"})
+
+    #: Every key this plugin, its ``expand`` and the entity it registers read -- and nothing else,
+    #: which is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried:
+    #: ``robot.lidar.rays`` against a robot whose scanner is a mounted device stops at the robot and
+    #: would write a ``lidar`` key here that nothing reads, while the real lidar keeps its value.
+    #: The load names that component's address (:mod:`roqsim.config`); the schema refuses the rest.
+    CONFIG_SCHEMA = {
+        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "namespace": Field(str, default="", doc="transport scope the robot's endpoints inherit"),
+        "prefix": Field(str, default="", doc="MJCF name prefix; distinct per robot"),
+        "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
+        "base_joint": Field(str, default="base_free", doc="free joint used to place the base"),
+        "actuators": Field(dict, doc="control law and gains override (roqsim.actuators)"),
+        "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
+        "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
+        "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
+    }
+    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
@@ -193,16 +212,6 @@ class SpawnRobotPlugin(Plugin):
         except PluginError as exc:
             errors.append(str(exc))
         errors += validate_actuators(config.get("actuators"))
-        for gone in ("pos", "yaw"):
-            if gone in config:
-                # Not a second spelling -- INERT. This plugin reads only `pose`, so a world
-                # stating `pos:` spawned its robot at the origin: stated, ignored, and nothing
-                # raised, with the entity registered and its pose published from there.
-                errors.append(
-                    f"'{gone}' is not read by spawn_robot and never was -- state the whole pose "
-                    "under 'pose': pose: {position: {x, y, z}, orientation: {yaw}}. A world that "
-                    "set it was silently spawning the robot at the origin."
-                )
         if "pose" in config:
             try:
                 parse_pose(config["pose"])

@@ -21,12 +21,26 @@ import mujoco
 import numpy as np
 import pytest
 from mobile_scene_utils import named
+from scan_mount_utils import (
+    chain,
+    endpoint,
+    forward_range,
+    lidar,
+    pose_in_base,
+    recast,
+    robot_hits,
+    spawn,
+    static_tf,
+)
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
 #: From the expanded lgdxrobot2_SIM.urdf @ b8210400. The plain lgdxrobot2.urdf sums to 0.0 kg.
-TOTAL_MASS = 2.6840
+DESCRIPTION_MASS = 2.6840
+#: The rplidar_c1 device the manifest mounts: 0.11 kg, Husarion's inertial for the C1.
+C1_MASS = 0.11
+TOTAL_MASS = DESCRIPTION_MASS + C1_MASS
 BASE_MASS = 2.2768
 WHEEL_MASS = 0.1018
 #: From the gz::sim::systems::MecanumDrive plugin's own configuration.
@@ -49,6 +63,9 @@ def _engine(**omni):
         }],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: the C1's range noise
+    # refuses to draw without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     return engine
@@ -229,5 +246,95 @@ def test_the_parts_kept_their_colours():
         assert wanted <= {n for n in have if n}, f"missing materials: {wanted - have}"
         used = {model.geom_matid[g] for g in range(model.ngeom) if model.geom_group[g] == 2}
         assert len(used) >= 5, "the visual geoms collapsed onto fewer materials than were declared"
+    finally:
+        engine.shutdown()
+
+
+# -- the scanner: the RPLIDAR C1 the vendor's bringup runs, at the description's lidar_link ------
+
+#: lgdxrobot2_description description/lgdxrobot2.urdf:18-22 @ b8210400: lidar_link_joint on base_link.
+LIDAR_LINK_XYZ, LIDAR_LINK_RPY = (0.06, 0.0, 0.15641), (0.0, 0.0, -3.14159)
+#: The manifest's mount, and the rplidar_c1 device's chain from its housing base to its scan frame
+#: (husarion_components_description slamtec_rplidar.urdf.xacro, model c1).
+MOUNT_XYZ, MOUNT_RPY = (0.06, 0.0, 0.12441), (0.0, 0.0, 0.0)
+C1_LASER_XYZ, C1_LASER_RPY = (0.0, 0.0, 0.032), (0.0, 0.0, np.pi)
+#: lgdxrobot2_bringup launch/bringup_launch.py:81, the driver's frame_id.
+SCAN_FRAME = "lidar_link"
+LABEL = "rplidar"
+NAMESPACE = "lgdx"
+
+
+@pytest.fixture(scope="module")
+def scan():
+    engine = spawn("lgdxrobot2", {LABEL: None}, owner="g", prefix="g_", namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
+
+
+def test_the_scan_frame_is_the_vendor_lidar_link(scan):
+    """The device's scan frame lands on lidar_link_joint. The vendor writes the yaw as -3.14159, so
+    the half turn agrees to that rounding."""
+    want_pos, want_rot = chain((LIDAR_LINK_XYZ, LIDAR_LINK_RPY))
+    got_pos, got_rot = chain((MOUNT_XYZ, MOUNT_RPY), (C1_LASER_XYZ, C1_LASER_RPY))
+    assert np.allclose(got_pos, want_pos, atol=1e-9)
+    assert np.allclose(got_rot, want_rot, atol=1e-5)
+    for site in (f"g_{LABEL}_scan", f"g_{LABEL}_{SCAN_FRAME}"):
+        pos, rot = pose_in_base(scan, site, "g_")
+        assert np.allclose(pos, want_pos, atol=1e-6), f"{site} at {pos}"
+        assert np.allclose(rot, want_rot, atol=1e-5), f"{site} rotation {rot}"
+
+
+def test_the_forward_ray_reads_the_wall(scan):
+    published, true = forward_range(scan, lidar(scan, f"g.{LABEL}"))
+    assert published == pytest.approx(true, abs=1e-3), f"reads {published:.4f} m, wall at {true:.4f} m"
+
+
+def test_the_scan_skips_its_own_mount_and_nothing_else(scan):
+    model = scan.ctx.model
+    scanner = lidar(scan, f"g.{LABEL}")
+    mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"g_{LABEL}_mount")
+    assert scanner._bodyexclude == mount, "the scanner excludes something other than its housing"
+    _, hits = recast(scan, scanner)
+    assert mount not in set(model.geom_bodyid[hits.geomid[hits.geomid >= 0]].tolist())
+
+
+def test_no_ray_starts_inside_robot_geometry(scan):
+    """The embedded site started every ray inside the description's C1 housing mesh."""
+    scanner = lidar(scan, f"g.{LABEL}")
+    inside, _ = robot_hits(scan, scanner, "g_")
+    assert not inside, {body: len(d) for body, d in inside.items()}
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+
+
+def test_the_scan_sees_no_part_of_the_robot(scan):
+    """The C1 stands on top of the platform, so its full turn clears the robot."""
+    _, outside = robot_hits(scan, lidar(scan, f"g.{LABEL}"), "g_")
+    assert outside == {}, sorted(outside)
+
+
+def test_the_tf_chain_and_topic(scan):
+    address = f"g.{LABEL}"
+    tf = static_tf(scan, address, NAMESPACE)
+    assert [(t["parent"], t["child"]) for t in tf] == [
+        ("base_link", "rplidar_link"),
+        ("rplidar_link", SCAN_FRAME),
+    ], tf
+    assert np.allclose(tf[0]["translation"], MOUNT_XYZ, atol=1e-6)
+    assert np.allclose(tf[1]["translation"], C1_LASER_XYZ, atol=1e-6)
+    hints = endpoint(scan, "scan", address).backend["ros2"]
+    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, "scan")
+    assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
+
+
+def test_the_scanner_is_the_c1():
+    """The C1 data sheet's values, not the 360-ray LDS-class scan the model used to carry."""
+    engine = spawn("lgdxrobot2", {LABEL: None}, owner="g", prefix="g_", namespace=NAMESPACE)
+    try:
+        scanner = lidar(engine, f"g.{LABEL}")
+        assert scanner.num_rays == 500
+        assert (scanner.angle_min, scanner.angle_max) == pytest.approx((-np.pi, np.pi))
+        assert (scanner.range_min, scanner.range_max) == pytest.approx((0.05, 12.0))
+        assert scanner.rate_hz == pytest.approx(10.0)
+        assert scanner.config["range_stddev"] == pytest.approx(0.03)
     finally:
         engine.shutdown()

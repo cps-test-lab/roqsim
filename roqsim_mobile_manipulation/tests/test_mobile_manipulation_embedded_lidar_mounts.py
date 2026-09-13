@@ -1,15 +1,18 @@
 """Every mobile manipulator whose manifest declares its ``lidar`` directly: what its scan hits of itself.
 
 A robot that mounts a scanner device model (``spawn_sensor``, as ``tiago_pro`` does) is covered by its
-own mount test. This module covers the rest: robots whose lidar is a site in the robot's MJCF, cast with
-the ``exclude_body`` the manifest names. Two properties are pinned per robot, from the plugin's own ray
-pattern and its resolved exclusion:
+own mount test. This module covers the rest: robots whose lidar is a site in the robot's MJCF. The
+rule a lidar follows is that it never excludes robot geometry, so the scan is cast here with **no
+exclusion at all**, from the plugin's own ray pattern and site, and two properties are pinned per
+robot:
 
 * **No ray starts inside robot geometry.** A first surface met from inside (normal . ray > 0) means
-  the scan origin lies within a geom that is not excluded, and the published scan reads that geom's
-  inner face on every such ray.
+  the scan origin lies within a geom, and a published scan would read that geom's inner face on every
+  such ray -- unless something robot-sized is excluded, which is what this test refuses to do.
 * **The robot bodies hit from outside, with their ray counts.** These are real returns of a sensor
-  that sees part of its own robot; a change to the model, the mount or the exclusion shows up here.
+  that sees part of its own robot; a change to the model or the mount shows up here.
+
+A manifest that still excludes robot geometry is pinned in ``STILL_EXCLUDES``.
 
 The robot is spawned through ``spawn_robot`` with a prefix into the default world (``empty_room``: a
 floor and perimeter walls), so every non-world body is the robot's.
@@ -30,10 +33,18 @@ from roqsim.engine import Engine
 
 PREFIX = "r_"
 
-#: model -> (excluded body, {robot body hit from outside: ray count}).
+#: model -> {robot body hit from outside: ray count}, cast with no exclusion.
 CASES = {
-    # The site sits inside the chassis collision box, which is base_link's; the arm is above the plane.
-    "frankie": ("base_link", {}),
+    "frankie": {},
+}
+
+#: model -> the robot body its manifest still excludes from the published scan.
+STILL_EXCLUDES = {"frankie": "base_link"}
+
+#: Pinned failures, each a property of the model as it stands rather than of the test.
+XFAIL = {
+    "frankie": "the site sits inside the Omron CAD's scanner housing (omron__m8) and the chassis "
+    "collision box; the LD-60's scanner has no device model yet -- see the frankie port log",
 }
 
 
@@ -54,9 +65,17 @@ def _body(model, bid: int) -> str:
     return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(bid))
 
 
-@pytest.mark.parametrize("model", list(CASES))
+@pytest.mark.parametrize(
+    "model",
+    [
+        pytest.param(name, marks=pytest.mark.xfail(strict=True, reason=XFAIL[name]))
+        if name in XFAIL
+        else name
+        for name in CASES
+    ],
+)
 def test_the_scan_meets_no_robot_geometry_from_inside(model):
-    excluded, expected_outside = CASES[model]
+    expected_outside = CASES[model]
     engine = _spawn(model)
     try:
         m, d = engine.ctx.model, engine.ctx.data
@@ -65,7 +84,9 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
         (lidar,) = lidars
         foreign = [_body(m, b) for b in range(1, m.nbody) if not _body(m, b).startswith(PREFIX)]
         assert not foreign, f"bodies not of the spawned robot: {foreign}"
-        assert lidar._bodyexclude >= 0 and _body(m, lidar._bodyexclude) == PREFIX + excluded
+        bid = lidar._bodyexclude
+        excluded = _body(m, bid).removeprefix(PREFIX) if bid >= 0 else None
+        assert excluded == STILL_EXCLUDES.get(model), f"the manifest excludes {excluded!r}"
 
         # The plugin's own rays from its own site: `_local_dirs @ rot.T`, as post_step casts them.
         origin = d.site_xpos[lidar._site_id].copy()
@@ -76,10 +97,11 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
             origin,
             dirs,
             cutoff=lidar.range_max,
-            bodyexclude=lidar._bodyexclude,
+            bodyexclude=-1,
             out=raycast.buffers(len(dirs), normals=True),
         )
-        np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
+        if excluded is None:
+            np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
 
         on_robot = (hits.geomid >= 0) & (m.geom_bodyid[np.maximum(hits.geomid, 0)] != 0)
         from_inside = on_robot & (np.einsum("ij,ij->i", hits.normal, dirs) > 0)

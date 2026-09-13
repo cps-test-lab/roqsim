@@ -1,4 +1,4 @@
-"""The six 2D scanner device models: each scans from its vendor frame, past its own housing, as declared.
+"""The nine scanner device models: each scans from its vendor frame, past its own housing, as declared.
 
 Every device is mounted the way a world mounts it -- `spawn_sensor` with the manifest's own lidar --
 inside a closed room whose walls are at known planes, so each ray's true range is known analytically.
@@ -35,16 +35,29 @@ from roqsim.manifest import manifest_frame_id
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import rpy_to_quat
 
-DEVICES = ["lds01", "rplidar_a1", "rplidar_c1", "sick_microscan3", "sick_s300", "sick_tim571"]
+DEVICES = [
+    "hokuyo_ust",
+    "lds01",
+    "rplidar_a1",
+    "rplidar_c1",
+    "sick_lms1xx",
+    "sick_microscan3",
+    "sick_s300",
+    "sick_tim571",
+    "velodyne_vlp16",
+]
 
 #: Each vendor's default scan-frame name; the TiM571's macro takes its link name from the robot.
 VENDOR_FRAME = {
+    "hokuyo_ust": "lidar2d_0_laser",
+    "sick_lms1xx": "lidar2d_0_laser",
     "lds01": "base_scan",
     "rplidar_a1": "rplidar_link",
     "rplidar_c1": "laser",
     "sick_microscan3": "lidar_1_link",
     "sick_s300": "lidar_1_link",
     "sick_tim571": None,
+    "velodyne_vlp16": "velodyne",
 }
 
 FRAME_ID = "scanner_frame"

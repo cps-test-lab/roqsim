@@ -7,8 +7,10 @@
     `lidar_1_link` (mpo_700_body.urdf.xacro), the mesh keeps that link's visual origin
     xyz (0, 0, -0.12), rpy (-1.57, 0, 3.14), and the scan is stamped in the link itself.
 
-    Body-local axes: x = the scan's zero bearing, z = up with the device upright. The datasheet puts
-    the scan plane 116 mm above the housing bottom, which is z = -0.004 here; the site stays on the
+    Body-local axes: x = the scan's zero bearing, z = up with the device upright. The optics cover is
+    the dark round head at z -0.025 .. +0.032; the black wedge at the bottom (z -0.12 .. -0.047) is
+    the system plug, at the rear. The datasheet puts the scan plane 116 mm above the housing bottom and
+    36.4 mm below its top, which is z = -0.004 here, inside the cover's window; the site stays on the
     vendor frame.
 
     Built by external/convert/build_scanner_devices.py from neo_simulation2 @ 832041452c1a0199afea1e9b65adf37381e96214.

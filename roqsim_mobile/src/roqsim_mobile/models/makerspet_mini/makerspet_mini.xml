@@ -12,6 +12,12 @@
     The scanner sits INVERTED between the two decks (the description's scan_joint carries
     rpy="0 -pi 0"), which is how this design fits a 360 degree puck under a head. Its mount is the
     vendor's; the scan parameters are not - see the manifest and the port log.
+
+    DEVIATION: the head ends at z 0.0624 in base_link, the bottom face of the scanner puck. The
+    description's head encloses the scan plane; the real robot carries its LiDAR in an open gap. The
+    collision cylinder is shortened to that height and the hemisphere visual ships cut there as
+    hemisphere_scan_gap.stl; the head's mass and inertia are the description's. See
+    build_makerspet_mjcf.open_scan_gap and the port log.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
@@ -53,7 +59,7 @@
     <material name="makerspet_mini_grey" rgba="0.5 0.5 0.5 1"/>
     <material name="makerspet_mini_red" rgba="0.8 0.0 0.0 1"/>
     <material name="makerspet_mini_white" rgba="1.0 1.0 1.0 1"/>
-    <mesh file="hemisphere.stl" scale="0.000124 0.000124 7.76e-05"/>
+    <mesh file="hemisphere_scan_gap.stl" scale="0.000124 0.000124 7.76e-05"/>
   </asset>
 
   <worldbody>
@@ -94,8 +100,8 @@
           </body>
           <body name="head_link" pos="0 0 0.032">
             <inertial pos="0 0 0" mass="0.2" diaginertia="0.0001069888 0.0001069888 0.00015376000000000002"/>
-            <geom class="visual" type="mesh" mesh="hemisphere" material="makerspet_mini_red" pos="0 0 0"/>
-            <geom class="collision" type="cylinder" size="0.062 0.0194" name="head_link_collision0" pos="0 0 0.0194"/>
+            <geom class="visual" type="mesh" mesh="hemisphere_scan_gap" material="makerspet_mini_red" pos="0 0 0"/>
+            <geom class="collision" type="cylinder" size="0.062 0.0152" name="head_link_collision0" pos="0 0 0.0152"/>
           </body>
     </body>
   </worldbody>

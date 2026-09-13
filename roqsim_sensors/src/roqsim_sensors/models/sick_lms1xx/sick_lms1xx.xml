@@ -1,0 +1,51 @@
+<mujoco model="sick_lms1xx">
+  <!--
+    SICK LMS111 2D lidar: a standalone mount (housing mesh + a `scan` site) for the `spawn_sensor`
+    plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Clearpath's `clearpath_sensors_description` (urdf/sick_lms1xx.urdf.xacro), the
+    `sick_lms1xx` accessory of Clearpath's ROS 2 robots: the body is `<name>_link`, whose origin is
+    the rear bottom of the mounting face, and the scan is stamped in its child `<name>_laser` at
+    xyz (0.0549, 0, 0.0367).
+
+    Body-local axes: x = the scan's zero bearing, z = up. The operating instructions put the mirror
+    axis 55 mm from the rear (the vendor frame's 54.9 mm). The data sheet drawing puts the scan plane
+    116 mm above the bottom of the 152 mm housing, which stands on 11 mm of connectors, so 36 mm below
+    its top: z = 0.0368 on the collision mesh, the vendor frame within 0.1 mm.
+
+    Built by external/convert/build_scanner_devices.py from clearpath_common @ b0f6d920422ad302372a1c65e31d61648da884ed.
+    Scan parameters and the `frames:` entry for this site are in sick_lms1xx.manifest.yaml; see
+    sick_lms1xx_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="sick_lms1xx_small__m0_mat" rgba="0.0003 0.2793 0.7238 1"/>
+    <material name="sick_lms1xx_small__m1_mat" rgba="0.0639 0.0581 0.0679 1"/>
+    <material name="sick_lms1xx_small__m2_mat" rgba="0.0291 0.0291 0.0291 1"/>
+    <material name="sick_lms1xx_small__m3_mat" rgba="0.5647 0.5647 0.5101 1"/>
+    <mesh name="sick_lms1xx_small__m0" file="sick_lms1xx_small__m0.obj"/>
+    <mesh name="sick_lms1xx_small__m1" file="sick_lms1xx_small__m1.obj"/>
+    <mesh name="sick_lms1xx_small__m2" file="sick_lms1xx_small__m2.obj"/>
+    <mesh name="sick_lms1xx_small__m3" file="sick_lms1xx_small__m3.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0.05275 0 -0.0082" mass="1.1" diaginertia="0.0033572 0.0034239 0.0019816"/>
+      <geom name="sick_lms1xx_visual_0" type="mesh" mesh="sick_lms1xx_small__m0" material="sick_lms1xx_small__m0_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_lms1xx_visual_1" type="mesh" mesh="sick_lms1xx_small__m1" material="sick_lms1xx_small__m1_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_lms1xx_visual_2" type="mesh" mesh="sick_lms1xx_small__m2" material="sick_lms1xx_small__m2_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_lms1xx_visual_3" type="mesh" mesh="sick_lms1xx_small__m3" material="sick_lms1xx_small__m3_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor collides with a mesh; this box bounds that collision mesh. -->
+      <geom name="sick_lms1xx_collision" type="box" pos="0.05275 0 -0.0082" size="0.05285 0.0511 0.0809" group="3"/>
+      <!-- The vendor scan frame `<name>_laser` at xyz (0.0549, 0, 0.0367).
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0.0549 0 0.0367" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

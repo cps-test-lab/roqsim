@@ -213,6 +213,7 @@ from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import rpy_to_quat
 from roqsim.registry import resolve_plugin
+from roqsim.schema import Field
 
 #: Name suffix marking a sensor model's FOV-visualisation geoms (non-colliding, hidden until
 #: revealed). A name convention, not a geom group -- see the module docstring for why.
@@ -546,6 +547,35 @@ class SpawnSensorPlugin(Plugin):
             "attach_to",
         }
     )
+
+    #: Every key this plugin and its ``expand`` read -- including ``attach_prefix``/``prefix``/
+    #: ``frame_id``, which a carrier's manifest or the expansion fills in -- and nothing else, which
+    #: is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried: an
+    #: override that stops at this mount instead of reaching its device component would otherwise
+    #: leave a key nothing reads. Ranges and combinations stay in :meth:`validate_config`.
+    CONFIG_SCHEMA = {
+        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "namespace": Field(
+            str, default="", doc="transport scope; a nested mount's is its carrier's"
+        ),
+        "prefix": Field(str, default="", doc="MJCF name prefix; nested: <attach_prefix><name>_"),
+        "pos": Field(list, unit="m", doc="[x, y] or [x, y, z] mount position"),
+        "rpy": Field(list, unit="rad", doc="[roll, pitch, yaw] mount orientation"),
+        "motion": Field(str, default="static", doc="static | driven | physics"),
+        "attach_to": Field(str, doc="body of an already-spawned carrier to weld the mount to"),
+        "attach_prefix": Field(str, doc="carrier's MJCF prefix for attach_to/parent_frame"),
+        "parent_frame": Field(str, doc="carrier body or declared frame to hang from"),
+        "frame_id": Field(str, doc="the device's scan frame; default: its manifest's frame_id"),
+        "show_fov": Field(bool, default=False, doc="draw the sensor's field of view"),
+        "fov_alpha": Field(float, default=0.25, doc="FOV translucency, 0..1"),
+        "fov_near": Field(float, unit="m", doc="FOV near plane; default: model manifest"),
+        "fov_range": Field(float, unit="m", doc="FOV far plane; default: model manifest"),
+        "fov_rays": Field(list, default=[32, 24], doc="occlusion-clip ray grid [nu, nv]"),
+        "intrinsics": Field(dict, doc="this unit's measured lens: fx, fy, cx, cy, width, height"),
+        "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
+        "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
+    }
+    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):

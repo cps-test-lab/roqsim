@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the six standalone 2D scanner device models in ``roqsim_sensors/models/<device>/``.
+"""Build the nine standalone scanner device models in ``roqsim_sensors/models/<device>/``.
 
-    python external/convert/build_scanner_devices.py            # all six
+    python external/convert/build_scanner_devices.py            # all nine
     python external/convert/build_scanner_devices.py sick_s300  # one
 
 Writes, per device: ``meshes/*.obj`` (converted and, where the source is heavy, decimated), the MJCF
@@ -19,11 +19,21 @@ port can hang the device at the vendor joint origin and get the vendor frame:
     rplidar_a1       turtlebot4 turtlebot4_description/meshes/rplidar.dae    rplidar_link
     rplidar_c1       husarion_components_description meshes/rplidar/c1.glb  laser (child of rplidar_link)
     lds01            turtlebot3 turtlebot3_description/meshes/sensors/lds.stl base_scan
+    hokuyo_ust       clearpath_common clearpath_sensors_description/        <name>_laser (child of
+                     meshes/hokuyo_ust.stl (BSD-3-Clause)                    <name>_link)
+    sick_lms1xx      clearpath_common clearpath_sensors_description/        <name>_laser (child of
+                     meshes/sick_lms1xx_small.dae (BSD-3-Clause)             <name>_link)
+    velodyne_vlp16   velodyne_simulator velodyne_description/meshes/        ${name} (child of
+                     VLP16_{base_1,base_2,scan}.stl (BSD-3-Clause)           ${name}_base_link)
+
+The VLP-16 is a 16-plane lidar; its device casts the one horizontal plane a 2D consumer reads, the
+planar projection the robot that mounts it documents.
 
 The MJCF ``mount`` body is the link the vendor macro attaches to its parent. Visual geoms carry the
 vendor visual origin; the collision geom is the vendor's primitive, except for the two Neobotix
 devices whose vendor collision is the full mesh -- there it is the axis-aligned box around the
-converted housing. The ``scan`` site is the vendor scan frame, never a datasheet optical offset.
+converted housing -- and the LMS1xx, whose vendor collision mesh it bounds. The ``scan`` site is the
+vendor scan frame, never a datasheet optical offset.
 
 Units and axes: every OBJ is written in metres (``--scale`` bakes the vendor mesh scale in), so the
 MJCF carries no mesh scale. The Neobotix Collada files declare metres but hold millimetre
@@ -67,6 +77,12 @@ HUSARION_COMPONENTS_COMMIT = "5f783f89961bb16098184f5381b1a76058cec19e"
 TURTLEBOT3_URL = "https://github.com/ROBOTIS-GIT/turtlebot3.git"
 #: `jazzy`.
 TURTLEBOT3_COMMIT = "0c0be84e3f5c3194fb2adea8426a58a96060eab5"
+CLEARPATH_COMMON_URL = "https://github.com/clearpathrobotics/clearpath_common.git"
+#: `jazzy` -- the pin build_ridgeback_mjcf.py and build_warthog_mjcf.py already use.
+CLEARPATH_COMMON_COMMIT = "b0f6d920422ad302372a1c65e31d61648da884ed"
+VELODYNE_SIMULATOR_URL = "https://bitbucket.org/DataspeedInc/velodyne_simulator.git"
+#: `humble-devel`, the ROS 2 branch.
+VELODYNE_SIMULATOR_COMMIT = "03e3ce2e1a92991c31463f8935a98aa344f17da2"
 
 
 @dataclass(frozen=True)
@@ -112,6 +128,22 @@ TB3 = Source(
     "2019 ROBOTIS CO., LTD.",
     "Apache-2.0",
 )
+CLEARPATH = Source(
+    "clearpath_common",
+    CLEARPATH_COMMON_URL,
+    CLEARPATH_COMMON_COMMIT,
+    "LICENSE",
+    "2023, clearpathrobotics",
+    "BSD-3-Clause",
+)
+VELODYNE = Source(
+    "velodyne_simulator",
+    VELODYNE_SIMULATOR_URL,
+    VELODYNE_SIMULATOR_COMMIT,
+    "LICENSE",
+    "2015-2021, Dataspeed Inc.",
+    "BSD-3-Clause",
+)
 
 
 @dataclass(frozen=True)
@@ -133,6 +165,14 @@ class Device:
     header: str  # MJCF header comment body
     collision_note: str
     site_note: str
+    #: Further visual meshes of the same vendor link, placed like ``mesh``; same file type.
+    extra_meshes: tuple[str, ...] = ()
+    #: For several STL meshes, which carry no colour: one rgba per entry of ``meshes``.
+    mesh_rgba: tuple[tuple[float, float, float, float], ...] = ()
+
+    @property
+    def meshes(self) -> tuple[str, ...]:
+        return (self.mesh, *self.extra_meshes)
 
 
 DEVICES = {
@@ -160,8 +200,10 @@ DEVICES = {
     `lidar_1_link` (mpo_700_body.urdf.xacro), the mesh keeps that link's visual origin
     xyz (0, 0, -0.12), rpy (-1.57, 0, 3.14), and the scan is stamped in the link itself.
 
-    Body-local axes: x = the scan's zero bearing, z = up with the device upright. The datasheet puts
-    the scan plane 116 mm above the housing bottom, which is z = -0.004 here; the site stays on the
+    Body-local axes: x = the scan's zero bearing, z = up with the device upright. The optics cover is
+    the dark round head at z -0.025 .. +0.032; the black wedge at the bottom (z -0.12 .. -0.047) is
+    the system plug, at the rear. The datasheet puts the scan plane 116 mm above the housing bottom and
+    36.4 mm below its top, which is z = -0.004 here, inside the cover's window; the site stays on the
     vendor frame.""",
             collision_note="The vendor collides with the full mesh; this box bounds the converted "
             "housing instead.",
@@ -308,6 +350,111 @@ DEVICES = {
             "15 mm forward.",
             site_note="The vendor scan frame (base_scan) is the mount itself.",
         ),
+        Device(
+            name="hokuyo_ust",
+            source=CLEARPATH,
+            mesh="clearpath_sensors_description/meshes/hokuyo_ust.stl",
+            scale=1.0,
+            budget=2200,  # 2116 in the source
+            visual_pos=(0.0, 0.0, 0.0),
+            visual_rpy=(0.0, 0.0, 0.0),
+            rgba=(0.2, 0.2, 0.2, 1.0),  # clearpath_platform_description common.urdf.xacro `clearpath_dark_grey`
+            collision='type="box" pos="0 0 0.04" size="0.03 0.03 0.04"',
+            # Hokuyo UST-10LX specification C-42-04077: weight 130 g, 50 x 50 x 70 mm; a solid box over
+            # that body. Clearpath's macro puts 1.1 kg on `<name>_laser`, an LMS1xx figure.
+            inertial='<inertial pos="0 0 0.035" mass="0.13" '
+            'diaginertia="0.000080167 0.000080167 0.000054167"/>',
+            site_pos=(0.0, 0.0, 0.0474),
+            site_rpy=(0.0, 0.0, 0.0),
+            header="""\
+    Hokuyo UST-10LX 2D lidar: a standalone mount (housing mesh + a `scan` site) for the `spawn_sensor`
+    plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Clearpath's `clearpath_sensors_description` (urdf/hokuyo_ust.urdf.xacro), the
+    `hokuyo_ust` accessory of Clearpath's ROS 2 robots: the body is `<name>_link`, whose origin is the
+    base of the bracket, and the scan is stamped in its child `<name>_laser`, 47.4 mm up "to the
+    LIDAR's focal point".
+
+    Body-local axes: x = the scan's zero bearing, z = up; the mesh spans z 0 .. 70 mm, the
+    specification's 70 mm sensor height.""",
+            collision_note="The vendor's own collision box (6 x 6 x 8 cm) over the bracket and sensor.",
+            site_note="The vendor scan frame `<name>_laser`: 47.4 mm above the bracket base.",
+        ),
+        Device(
+            name="sick_lms1xx",
+            source=CLEARPATH,
+            mesh="clearpath_sensors_description/meshes/sick_lms1xx_small.dae",
+            scale=1.0,
+            budget=2000,
+            visual_pos=(0.0, 0.0, 0.0),
+            visual_rpy=(0.0, 0.0, 0.0),
+            rgba=None,
+            # The vendor collides with sick_lms1xx_collision.stl; this box bounds that mesh (x -0.0001
+            # .. 0.1056, y +-0.0511, z -0.0891 .. 0.0727), 105.6 x 102.2 x 161.8 mm against the data
+            # sheet's 105 x 102 x 162 mm.
+            collision='type="box" pos="0.05275 0 -0.0082" size="0.05285 0.0511 0.0809"',
+            # SICK data sheet LMS111-10100: weight 1.1 kg, a solid box over the collision bounds. The
+            # vendor link carries no inertial.
+            inertial='<inertial pos="0.05275 0 -0.0082" mass="1.1" '
+            'diaginertia="0.0033572 0.0034239 0.0019816"/>',
+            site_pos=(0.0549, 0.0, 0.0367),
+            site_rpy=(0.0, 0.0, 0.0),
+            header="""\
+    SICK LMS111 2D lidar: a standalone mount (housing mesh + a `scan` site) for the `spawn_sensor`
+    plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Clearpath's `clearpath_sensors_description` (urdf/sick_lms1xx.urdf.xacro), the
+    `sick_lms1xx` accessory of Clearpath's ROS 2 robots: the body is `<name>_link`, whose origin is
+    the rear bottom of the mounting face, and the scan is stamped in its child `<name>_laser` at
+    xyz (0.0549, 0, 0.0367).
+
+    Body-local axes: x = the scan's zero bearing, z = up. The operating instructions put the mirror
+    axis 55 mm from the rear (the vendor frame's 54.9 mm). The data sheet drawing puts the scan plane
+    116 mm above the bottom of the 152 mm housing, which stands on 11 mm of connectors, so 36 mm below
+    its top: z = 0.0368 on the collision mesh, the vendor frame within 0.1 mm.""",
+            collision_note="The vendor collides with a mesh; this box bounds that collision mesh.",
+            site_note="The vendor scan frame `<name>_laser` at xyz (0.0549, 0, 0.0367).",
+        ),
+        Device(
+            name="velodyne_vlp16",
+            source=VELODYNE,
+            # The macro's three visuals: two on `${name}_base_link`, and `VLP16_scan` on the scan link
+            # at xyz (0, 0, -0.0377), which puts it at the base link's origin too. The macro names the
+            # .dae files, but those are exports of these STLs that no Collada parser reads (Blender
+            # wrote the node id `<STL_BINARY>` unescaped into an attribute), so the vendor STLs are
+            # converted and the DAEs' one diffuse colour each is carried here.
+            mesh="velodyne_description/meshes/VLP16_base_1.stl",
+            extra_meshes=(
+                "velodyne_description/meshes/VLP16_base_2.stl",
+                "velodyne_description/meshes/VLP16_scan.stl",
+            ),
+            mesh_rgba=((0.55, 0.55, 0.55, 1.0), (0.55, 0.55, 0.55, 1.0), (0.1, 0.1, 0.1, 1.0)),
+            scale=1.0,
+            budget=2000,  # 1912, 1328 and 104 in the source
+            visual_pos=(0.0, 0.0, 0.0),
+            visual_rpy=(0.0, 0.0, 0.0),
+            rgba=None,
+            collision='type="cylinder" pos="0 0 0.03585" size="0.0516 0.03585"',
+            # VLP-16.urdf.xacro `${name}_base_link`: 0.83 kg (the data sheet's ~830 g), a solid
+            # cylinder r 0.0516, 0.0717 long, centred 0.03585 up.
+            inertial='<inertial pos="0 0 0.03585" mass="0.83" '
+            'diaginertia="0.000908059 0.000908059 0.001104962"/>',
+            site_pos=(0.0, 0.0, 0.0377),
+            site_rpy=(0.0, 0.0, 0.0),
+            header="""\
+    Velodyne VLP-16 (Puck) lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Dataspeed's `velodyne_description` (urdf/VLP-16.urdf.xacro), the macro that
+    jackal_description's `vlp16_mount` calls: the body is `${name}_base_link`, whose origin is the
+    housing base, and the scan is stamped in its child `${name}` (default `velodyne`), 37.7 mm up.
+
+    Body-local axes: x = the scan's zero bearing, z = up. The data sheet's dimension drawing puts
+    the optical centre 37.8 mm above the base, 0.1 mm above the vendor frame; the site stays on the
+    vendor frame. The device's manifest casts one horizontal plane of the 16.""",
+            collision_note="The vendor's own collision cylinder (r 51.6 mm, 71.7 mm long).",
+            site_note="The vendor scan frame `${name}`: 37.7 mm above the housing base.",
+        ),
     )
 }
 
@@ -341,15 +488,21 @@ def _reduce(src: Path, dst: Path, faces: int, scale: float, *extra: str) -> None
 
 def convert(device: Device, source: Path, meshes: Path) -> dict[str, tuple[float, ...]]:
     """Write the device's OBJs into *meshes*; return ``{mesh stem: rgba}``."""
-    src = source / device.mesh
+    sources = [source / mesh for mesh in device.meshes]
+    src = sources[0]
     kind = src.suffix.lower()
+    if any(each.suffix.lower() != kind for each in sources):
+        raise RuntimeError(f"{device.name}: every mesh must be a {kind} like {src.name}")
+    if kind == ".glb" and len(sources) > 1:
+        raise RuntimeError(f"{device.name}: several meshes are converted only from Collada or STL")
     parts: dict[str, tuple[float, ...]] = {}
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         if kind == ".dae":
             staged = tmp / "dae"
             staged.mkdir()
-            shutil.copy2(src, staged / src.name)
+            for each in sources:
+                shutil.copy2(each, staged / each.name)
             subprocess.run(
                 [
                     sys.executable,
@@ -360,16 +513,17 @@ def convert(device: Device, source: Path, meshes: Path) -> dict[str, tuple[float
                 check=True,
                 capture_output=True,
             )
-            palette = json.loads((tmp / "obj/materials.json").read_text())[src.stem]
-            for sub, rgb in palette:
-                _reduce(
-                    tmp / "obj" / f"{sub}.obj",
-                    meshes / f"{sub}.obj",
-                    device.budget,
-                    device.scale,
-                    "--no-materials",
-                )
-                parts[sub] = device.rgba or (*rgb[:3], 1.0)
+            materials = json.loads((tmp / "obj/materials.json").read_text())
+            for each in sources:
+                for sub, rgb in materials[each.stem]:
+                    _reduce(
+                        tmp / "obj" / f"{sub}.obj",
+                        meshes / f"{sub}.obj",
+                        device.budget,
+                        device.scale,
+                        "--no-materials",
+                    )
+                    parts[sub] = device.rgba or (*rgb[:3], 1.0)
         elif kind == ".glb":
             _reduce(
                 src, meshes / f"{src.stem}.obj", device.budget, device.scale, "--split-materials"
@@ -381,10 +535,19 @@ def convert(device: Device, source: Path, meshes: Path) -> dict[str, tuple[float
             for mtl in meshes.glob("*.mtl"):
                 mtl.unlink()
         elif kind == ".stl":
-            _reduce(src, meshes / f"{src.stem}.obj", device.budget, device.scale, "--no-materials")
-            if device.rgba is None:
+            if device.mesh_rgba:
+                if len(device.mesh_rgba) != len(sources):
+                    raise RuntimeError(f"{device.name}: `mesh_rgba` needs one rgba per mesh")
+                colours = device.mesh_rgba
+            elif device.rgba is None:
                 raise RuntimeError(f"{device.name}: an STL carries no colour; set `rgba`")
-            parts[src.stem] = device.rgba
+            else:
+                colours = (device.rgba,) * len(sources)
+            for each, rgba in zip(sources, colours, strict=True):
+                _reduce(
+                    each, meshes / f"{each.stem}.obj", device.budget, device.scale, "--no-materials"
+                )
+                parts[each.stem] = rgba
         else:
             raise RuntimeError(f"{device.name}: no converter for {kind} ({src})")
     for stem in parts:
@@ -458,11 +621,12 @@ def mjcf(device: Device, parts: dict, collision: str) -> str:
 
 
 def licence(device: Device, source: Path) -> str:
+    files = "\n".join(f"    file   {mesh}" for mesh in device.meshes)
     return f"""The visual meshes in meshes/ are converted from
 
     {device.source.url.removesuffix(".git")}
     commit {device.source.commit}
-    file   {device.mesh}
+{files}
 
 Copyright (c) {device.source.copyright}
 Licence: {device.source.spdx}, full text below.

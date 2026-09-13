@@ -57,6 +57,13 @@ SOURCES = {
     "pal_pro_gripper": ("pal_pro_gripper", "3588daa87cf4dd7f2310b098c03dd8d2bb27faa6", "1.12.5"),
     "pal_urdf_utils": ("pal_urdf_utils", "775cdd6886296e6c00f17dbdfd9bcdd20e0e6622", "2.9.2"),
 }
+#: base_link's scanner-band collision box as MuJoCo writes it from base.urdf.xacro:64-69 (half
+#: extents), and the half extents of the visual body's waist that replaces it: omni_base_description
+#: meshes/base/base_link.stl sliced at z 0.1174-0.1466 spans x +-0.2500..0.2509, y +-0.1589..0.1598,
+#: the larger values in the fillets at the band's edges. See postprocess().
+BASE_BAND_BOX_SIZE = "0.29 0.195 0.015"
+BASE_WAIST_HALF_EXTENTS = "0.25 0.159 0.015"
+
 # ROS package name -> (source key, path within that checkout). `xacro`'s $(find …) is resolved
 # against these and nothing else.
 PACKAGES = {
@@ -345,6 +352,25 @@ def postprocess(base: Path, out: Path) -> None:
         g.set("class", f"{MODEL}_{'visual' if visual else 'collision'}")
 
     bodies = {b.get("name"): b for b in root.iter("body")}
+
+    # ---- base_link: the scanner band is the visual body's waist ---------------------------
+    # PAL gives base_link a 0.58 x 0.39 x 0.03 m collision box at z 0.132 (base.urdf.xacro:64-69),
+    # and both TIM571 scan origins, at (+-0.27512, -+0.18297, 0.13244), lie inside it. PAL's visual
+    # body is recessed across that box's whole z-range: base_link.stl sliced anywhere in 0.117-0.147
+    # is a 0.500 x 0.318 m waist, and both scanners stand outside it in the open band between the
+    # lower and upper chassis. The box takes that waist's extent, which is the opening the real base
+    # has; its z-range stays PAL's. It sets no part of the footprint (the boxes above and below it are
+    # wider), and base_link's mass and inertia are its explicit <inertial>, so neither changes.
+    band = [
+        g for g in bodies["base_link"].findall("geom")
+        if g.get("type") == "box" and g.get("size") == BASE_BAND_BOX_SIZE
+    ]
+    if len(band) != 1:
+        raise RuntimeError(
+            f"base_link has {len(band)} collision boxes of size {BASE_BAND_BOX_SIZE!r}, expected "
+            f"PAL's one scanner-band box -- the description changed under the pin"
+        )
+    band[0].set("size", BASE_WAIST_HALF_EXTENTS)
 
     # ---- wheels: near-frictionless load carriers -----------------------------------------
     # The real base runs 4 mecanum wheels. Their rollers are NOT modelled (see the port log's

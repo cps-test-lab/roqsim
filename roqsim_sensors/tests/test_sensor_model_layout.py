@@ -54,15 +54,18 @@ def test_every_model_is_a_folder():
         "d415",
         "d435",
         "d455",
+        "hokuyo_ust",
         "lds01",
         "mid360",
         "oakd",
         "robin_w1g",
         "rplidar_a1",
         "rplidar_c1",
+        "sick_lms1xx",
         "sick_microscan3",
         "sick_s300",
         "sick_tim571",
+        "velodyne_vlp16",
         "zivid",
     ]
 

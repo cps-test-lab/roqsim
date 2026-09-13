@@ -17,10 +17,11 @@ command). The plugin now derives the sign off the model, so the vendor's axis is
 pin that the plugin copes rather than that the model was bent to suit it.
 
 The scanner is the ``sick_s300`` device model at the vendor's ``lidar_1_joint``, upside down as the
-vendor mounts it, and the scan tests at the end check it in a closed room. They also pin a third
-finding, as strict expected failures: the vendor's own body cover encloses that scan plane, so from
-the vendor origin almost every ray meets the cover's inside within 0.29 m. The mount is the vendor's;
-the port log records the occlusion and the open decision.
+vendor mounts it, at the height Neobotix's hardware documentation gives (110 mm above the floor)
+rather than the joint's 0.141, and the scan tests at the end check it in a closed room. At that height
+it sits in the body cover's own scanner pocket, open to the front, so the body meshes are the
+vendor's unmodified; the pocket's side and rear walls and the two drive wheels stand in the scan, as
+they do on the real robot.
 """
 
 from __future__ import annotations
@@ -317,23 +318,24 @@ def test_b2_rotates_at_the_commanded_rate(commanded):
 
 #: neo_simulation2 @ 832041452c1a: robots/mp_400/urdf/mp_400_body.urdf.xacro:38 (the lidar_1_joint
 #: origin, written as the vendor writes it) and mp_400_gazebo.urdf.xacro:41,50 (the scan's link and
-#: topic). ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
-MOUNTS = {"scan_front": ("sick_s300", "lidar_1_link", (0.244, 0.0, 0.141), (3.14, 0.0, 0.0), "scan")}
+#: topic). The height is Neobotix's hardware documentation instead of the joint's 0.141: LS1 at Z 110 mm
+#: above the floor, and base_link 1 mm above it (150 mm drive wheels, wheel joints at z 0.074).
+#: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
+MOUNTS = {"scan_front": ("sick_s300", "lidar_1_link", (0.244, 0.0, 0.109), (3.14, 0.0, 0.0), "scan")}
 NAMESPACE = "neo"
-#: The robot bodies the scan meets from outside: the two driven wheels, whose tyres rise above the
-#: upside-down scan plane about 0.32 m to either side.
-OUTSIDE_HITS = {"mp_400_fixed_wheel_left_link", "mp_400_fixed_wheel_right_link"}
-WHEEL_HIT_DISTANCE = 0.32
-
-#: Why the two geometry checks below are expected to fail, measured rather than assumed. The vendor's
-#: MP-400-BODY.dae -- its visual and its collision mesh -- places the yellow cover's front face at
-#: x = 0.295, 51 mm ahead of the scanner, and the cover's inside meets 539 of 541 rays of a 270 degree
-#: fan within 0.35 m at every height from 0.13 to 0.33 m, including the vendor frame's 0.141 and the
-#: datasheet scan plane's 0.137. The undecimated vendor mesh and the shipped one agree ray for ray.
-BODY_ENCLOSES_SCAN = (
-    "neo_simulation2's MP-400 body cover encloses lidar_1_link's scan plane: from the vendor origin "
-    "the rays meet the cover's inside. See the port log."
-)
+#: The robot bodies the scan meets from outside, with their ray counts and distance windows (m): the
+#: side walls of the body cover's scanner pocket, at bearings 95-121 deg either side, and the two
+#: driven wheels, whose tyres stand in the scan plane beyond 122 deg.
+OUTSIDE_HITS = {
+    "base_link": 104,
+    "mp_400_fixed_wheel_left_link": 26,
+    "mp_400_fixed_wheel_right_link": 25,
+}
+HIT_DISTANCE = {
+    "base_link": (0.128, 0.186),
+    "mp_400_fixed_wheel_left_link": (0.288, 0.336),
+    "mp_400_fixed_wheel_right_link": (0.288, 0.336),
+}
 
 
 @pytest.fixture(scope="module")
@@ -357,14 +359,12 @@ def test_the_scan_skips_its_own_mount_and_nothing_else(scan):
     assert mount not in set(model.geom_bodyid[hits.geomid[hits.geomid >= 0]].tolist())
 
 
-@pytest.mark.xfail(strict=True, reason=BODY_ENCLOSES_SCAN)
 def test_the_forward_ray_reads_the_wall(scan):
     published, true = forward_range(scan, lidar(scan, "q.scan_front"))
     assert published == pytest.approx(true, abs=1e-3), (
         f"reads {published:.4f} m against a wall at {true:.4f} m")
 
 
-@pytest.mark.xfail(strict=True, reason=BODY_ENCLOSES_SCAN)
 def test_no_ray_starts_inside_robot_geometry(scan):
     scanner = lidar(scan, "q.scan_front")
     inside, _ = robot_hits(scan, scanner, "q_")
@@ -372,11 +372,12 @@ def test_no_ray_starts_inside_robot_geometry(scan):
     assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
 
 
-def test_the_robot_parts_the_scan_sees_from_outside_are_the_drive_wheels(scan):
+def test_the_robot_parts_the_scan_sees_are_the_pocket_walls_and_drive_wheels(scan):
     _, outside = robot_hits(scan, lidar(scan, "q.scan_front"), "q_")
-    assert set(outside) == OUTSIDE_HITS, sorted(outside)
+    assert {body: len(d) for body, d in outside.items()} == OUTSIDE_HITS, sorted(outside)
     for body, distances in outside.items():
-        assert np.allclose(distances, WHEEL_HIT_DISTANCE, atol=0.01), (body, distances)
+        low, high = HIT_DISTANCE[body]
+        assert low < min(distances) and max(distances) < high, (body, min(distances), max(distances))
 
 
 def test_the_tf_chain_and_topic_are_the_vendors(scan):

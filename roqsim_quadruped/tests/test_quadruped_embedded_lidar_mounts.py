@@ -1,13 +1,17 @@
 """Every quadruped whose manifest declares its ``lidar`` directly: what its own scan hits of itself.
 
-Two properties are pinned per robot, from the plugin's own ray pattern and its resolved exclusion:
+The rule a lidar follows is that it never excludes robot geometry, so the scan is cast here with **no
+exclusion at all**, from the plugin's own ray pattern and site, and two properties are pinned per
+robot:
 
 * **No ray starts inside robot geometry.** A first surface met from inside (normal . ray > 0) means
-  the scan origin lies within a geom that is not excluded, and the published scan reads that geom's
-  inner face on every such ray.
+  the scan origin lies within a geom, and a published scan would read that geom's inner face on every
+  such ray -- unless something robot-sized is excluded, which is what this test refuses to do.
 * **The robot bodies hit from outside, with their ray counts.** These are real returns of a sensor
-  that sees part of its own robot; a change to the model, the stance, the mount or the exclusion
-  shows up here.
+  that sees part of its own robot; a change to the model, the stance or the mount shows up here.
+
+A manifest that still excludes robot geometry would be pinned in ``STILL_EXCLUDES``; where it excludes
+nothing, the cast here must also equal the plugin's own.
 
 The robot is spawned as a world spawns it -- ``spawn_robot`` by its registered plugin name, with a
 prefix, its manifest's locomotion controller setting the standing stance at reset -- into the default
@@ -41,11 +45,13 @@ pytestmark = pytest.mark.skipif(
     reason=f"no Spot policy at {_POLICY}: python -m roqsim_quadruped.policy.fetch_policy",
 )
 
-#: model -> (sim timestep, excluded body, {robot body hit from outside: ray count}). The manifest
-#: sets no exclude_body, so the lidar's default (base_link) is what is excluded.
+#: model -> (sim timestep, {robot body hit from outside: ray count}), cast with no exclusion.
 CASES = {
-    "spot": (0.002, "base_link", {}),
+    "spot": (0.002, {}),
 }
+
+#: model -> the robot body its manifest still excludes from the published scan.
+STILL_EXCLUDES: dict[str, str] = {}
 
 
 def _spawn(model: str, timestep: float) -> Engine:
@@ -67,7 +73,7 @@ def _body(model, bid: int) -> str:
 
 @pytest.mark.parametrize("model", list(CASES))
 def test_the_scan_meets_no_robot_geometry_from_inside(model):
-    timestep, excluded, expected_outside = CASES[model]
+    timestep, expected_outside = CASES[model]
     engine = _spawn(model, timestep)
     try:
         m, d = engine.ctx.model, engine.ctx.data
@@ -76,7 +82,9 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
         (lidar,) = lidars
         foreign = [_body(m, b) for b in range(1, m.nbody) if not _body(m, b).startswith(PREFIX)]
         assert not foreign, f"bodies not of the spawned robot: {foreign}"
-        assert lidar._bodyexclude >= 0 and _body(m, lidar._bodyexclude) == PREFIX + excluded
+        bid = lidar._bodyexclude
+        excluded = _body(m, bid).removeprefix(PREFIX) if bid >= 0 else None
+        assert excluded == STILL_EXCLUDES.get(model), f"the manifest excludes {excluded!r}"
 
         # The plugin's own rays from its own site: `_local_dirs @ rot.T`, as post_step casts them.
         origin = d.site_xpos[lidar._site_id].copy()
@@ -87,10 +95,11 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
             origin,
             dirs,
             cutoff=lidar.range_max,
-            bodyexclude=lidar._bodyexclude,
+            bodyexclude=-1,
             out=raycast.buffers(len(dirs), normals=True),
         )
-        np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
+        if excluded is None:
+            np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
 
         on_robot = (hits.geomid >= 0) & (m.geom_bodyid[np.maximum(hits.geomid, 0)] != 0)
         from_inside = on_robot & (np.einsum("ij,ij->i", hits.normal, dirs) > 0)
@@ -99,5 +108,9 @@ def test_the_scan_meets_no_robot_geometry_from_inside(model):
 
         outside = Counter(_body(m, m.geom_bodyid[g]) for g in hits.geomid[on_robot])
         assert dict(outside) == {PREFIX + b: n for b, n in expected_outside.items()}
+
+        # The TF parent is named now that nothing is excluded, so the frame still hangs off the base.
+        tf = next(e for e in engine.ctx.interface.all() if e.name == "scan").backend["ros2"]
+        assert tf["static_tf"]["parent"] == "base_link"
     finally:
         engine.shutdown()

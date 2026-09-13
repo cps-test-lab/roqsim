@@ -232,9 +232,6 @@ TEMPLATE = """<mujoco model="ridgeback">
       <body name="chassis_link" pos="0 0 0">
         <inertial pos="{chassis_pos}" mass="{chassis_mass}" diaginertia="{chassis_inertia}"/>
 {chassis_geoms}        <geom class="collision" mesh="body-collision"/>
-        <!-- Ridgebacks are usually fitted with a scanner at each front corner; this is a single
-             planar scan on the deck. Height is an assumption - see the port log. -->
-        <site name="lidar" pos="0.3 0 0.29" size="0.008" rgba="1 0 0 0.6"/>
 {rockers}      </body>
     </body>
   </worldbody>

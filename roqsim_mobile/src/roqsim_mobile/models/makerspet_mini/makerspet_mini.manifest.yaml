@@ -26,11 +26,12 @@ components:
   # under its head. The `lidar` site carries that rotation, so bearings are measured in base_scan as
   # the vendor's sensor measures them; the static TF hangs off base_link as scan_joint does.
   #
-  # VENDOR GEOMETRY OCCLUDES THE SCAN. The rays skip only the scanner's own housing (base_scan), never
-  # other robot geometry. The description puts the scan plane inside the head: 0.4 mm into its
-  # collision cylinder and inside its hemisphere visual. Every ray therefore returns from inside
-  # head_link and reads range_min, so this scan sees nothing. The head is the vendor's, and it stays in
-  # -- see the port log.
+  # THE SCAN LOOKS OUT THROUGH A GAP UNDER THE HEAD. The rays skip only the scanner's own housing
+  # (base_scan), never other robot geometry. The description's head encloses the scan plane (0.4 mm
+  # into its collision cylinder); the real Mini carries its LiDAR in an open gap on four posts
+  # (makerspet/store MINI-BDC30P-BODY print files). The model's head therefore ends at the puck's
+  # bottom face, z 0.0624, collision and visual alike, with the head's mass and inertia unchanged, and
+  # nothing of the robot is in the scan plane. A deviation from the description -- see the port log.
   - lidar:
       site: lidar
       frame_id: base_scan

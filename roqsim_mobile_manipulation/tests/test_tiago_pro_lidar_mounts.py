@@ -12,18 +12,17 @@ Fixtures are PAL's numbers, not the model's:
   laser at (-0.27512, 0.18297), rpy (-180, 0, 135) deg, topic ``scan_rear_raw`` (:65-67); front laser
   at (0.27512, -0.18297), rpy (-180, 0, -45) deg, topic ``scan_front_raw`` (:70-72); both on
   ``base_link``, ``update_rate`` 10 (:28). ``urdf/base/base.urdf.xacro:64-69``: base_link's
-  0.58 x 0.39 x 0.03 m collision box at z 0.132.
+  0.58 x 0.39 x 0.03 m collision box at z 0.132. ``meshes/base/base_link.stl``: across that box's
+  z-range the visual body is a 0.500 x 0.318 m waist.
 * ``pal_urdf_utils`` @ 775cdd6886296e6c00f17dbdfd9bcdd20e0e6622,
   ``urdf/laser/sick_tim571_laser.gazebo.xacro``: scan stamped in ``${name}_link`` (:25); 818 samples
   over 270 deg (:32) from min + 1 deg (:34) to max; 0.05-25 m (:39-40); stddev 0.01 (:46).
 
-**What the vendor description does to this scan, pinned as it is.** Both scan origins lie inside
-base_link's vendor collision box, 0.3 mm above its centre plane. A scanner skips only its own housing,
-so every ray starts inside that box and the published scan reads the box's own inner faces, no
-further than 0.57 m, on every ray. The vendor's visual meshes leave the scan plane clear: cast against
-everything but the collision group, no robot geometry returns at all, and every wall lands where PAL's
-frames predict. The port log records the conflict; this module fails if the description, the mount
-or the exclusion changes.
+**The scanners look out through the base's waist.** PAL's collision box at the scan height encloses
+both scan origins; PAL's visual body is recessed there, and both scanners stand outside that recess.
+The model's box takes the visual waist's extent (a deviation from PAL's collision, recorded in the
+port log), so every ray of both scans leaves the base and reads the room's wall at its true range, with
+no robot geometry anywhere in either fan.
 """
 
 from __future__ import annotations
@@ -63,9 +62,14 @@ LASERS = {
         "scan_rear_raw",
     ),
 }
-#: base.urdf.xacro:64-69: the collision box that contains both scan origins (half extents, centre z).
-BASE_BOX_HALF = (0.29, 0.195, 0.015)
+#: base.urdf.xacro:64-69: PAL's scanner-band collision box, which encloses both scan origins (half
+#: extents), and the half extents of base_link.stl's waist across that band, which the model's box
+#: takes instead. Centre z is PAL's for both.
+PAL_BAND_BOX_HALF = (0.29, 0.195, 0.015)
+WAIST_HALF = (0.25, 0.159, 0.015)
 BASE_BOX_Z = 0.132
+#: base.urdf.xacro: base_link's explicit inertial mass, which the box change must leave alone.
+BASE_LINK_MASS = 34.047
 
 #: Inner wall faces at +-HALF around the spawn position.
 HALF = 2.0
@@ -258,27 +262,36 @@ def lidar_step(bearings) -> float:
     return float(bearings[1] - bearings[0])
 
 
-@pytest.mark.parametrize("label", list(LASERS))
-def test_the_vendor_base_collision_box_contains_the_scan_origin(engine, label):
-    """Pinned as the description is: every ray starts inside base_link's vendor collision box.
+def test_the_scanner_band_box_is_the_visual_waist(engine):
+    """base_link's scanner-band collision box has the visual waist's extent, and the mass is PAL's.
 
-    If this fails, the description, the mount or what a scanner excludes has changed -- update the
-    manifest note and the port log with it.
+    Its z-range is PAL's; both scan origins lie outside it, in the open band around the waist.
     """
     m, d = engine.ctx.model, engine.ctx.data
-    lidar, origin, dirs, _ = _rays(engine, label)
     base = _id(m, mujoco.mjtObj.mjOBJ_BODY, PREFIX + "base_link")
-    box = [
-        g
+    boxes = {
+        tuple(np.round(m.geom_size[g], 6))
         for g in range(m.ngeom)
-        if m.geom_bodyid[g] == base
-        and m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
-        and np.allclose(m.geom_size[g], BASE_BOX_HALF)
-    ]
-    assert len(box) == 1
-    local = d.xmat[base].reshape(3, 3).T @ (origin - d.xpos[base])
-    assert np.all(np.abs(local - [0, 0, BASE_BOX_Z]) < BASE_BOX_HALF), "origin inside the box"
+        if m.geom_bodyid[g] == base and m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+    }
+    assert WAIST_HALF in boxes and PAL_BAND_BOX_HALF not in boxes, boxes
+    assert m.body_mass[base] == pytest.approx(BASE_LINK_MASS)
+    for label in LASERS:
+        _, origin, _, _ = _rays(engine, label)
+        local = d.xmat[base].reshape(3, 3).T @ (origin - d.xpos[base])
+        assert abs(local[2] - BASE_BOX_Z) < WAIST_HALF[2], "the scan plane runs through the band"
+        assert np.any(np.abs(local[:2]) > WAIST_HALF[:2]), f"{label} origin inside the waist box"
 
+
+@pytest.mark.parametrize("label", list(LASERS))
+def test_every_ray_leaves_the_base_and_reads_the_wall(engine, label):
+    """Cast against every group, collision included: no robot geometry in the fan, from either side.
+
+    The published scan (noise zeroed by the fixture) reads each ray's true wall range, the forward
+    ray included.
+    """
+    m, d = engine.ctx.model, engine.ctx.data
+    lidar, origin, dirs, bearings = _rays(engine, label)
     mount = _id(m, mujoco.mjtObj.mjOBJ_BODY, f"{PREFIX}{label}_mount")
     hits = raycast.cast(
         m,
@@ -289,13 +302,15 @@ def test_the_vendor_base_collision_box_contains_the_scan_origin(engine, label):
         bodyexclude=mount,
         out=raycast.buffers(len(dirs), normals=True),
     )
-    assert np.all(hits.geomid == box[0]), "every ray's first surface is that box"
-    assert np.all(np.einsum("ij,ij->i", hits.normal, dirs) > 0), "met from inside"
-    own = lidar._hits.geomid
-    assert not np.any(m.geom_bodyid[own[own >= 0]] == mount), "a return from the scanner's mount"
-    bodies = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.geom_bodyid[g])) for g in own}
-    assert bodies == {PREFIX + "base_link"}
-    # The published scan reads the box's inner faces on every ray -- nothing beyond 0.57 m, and a
-    # face inside the 0.05 m blind zone pushed out to range_min -- so no wall is ever seen.
-    np.testing.assert_allclose(lidar.latest.ranges, np.maximum(hits.dist, lidar.range_min))
-    assert lidar.latest.ranges.max() < 0.57
+    np.testing.assert_array_equal(hits.geomid, lidar._hits.geomid)
+    robot = {
+        mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.geom_bodyid[g]))
+        for g in hits.geomid[hits.geomid >= 0]
+        if m.geom_bodyid[g] != 0
+    }
+    assert robot == set(), f"robot bodies in the fan: {robot}"
+    assert np.all(hits.geomid >= 0), "a ray missed the room"
+    walls = _room_range(origin, dirs)
+    np.testing.assert_allclose(lidar.latest.ranges, walls, atol=1e-4)
+    fwd = int(np.argmin(np.abs(bearings)))
+    assert lidar.latest.ranges[fwd] == pytest.approx(walls[fwd], abs=1e-4)

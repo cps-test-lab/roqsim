@@ -23,6 +23,18 @@ import mujoco
 import numpy as np
 import pytest
 import yaml
+from mobile_scene_utils import named
+from scan_mount_utils import (
+    chain,
+    endpoint,
+    forward_range,
+    lidar,
+    pose_in_base,
+    recast,
+    robot_hits,
+    spawn,
+    static_tf,
+)
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
@@ -317,62 +329,99 @@ def test_b6_arc():
 # --------------------------------------------------------------------------- C. sensors
 
 
-def test_c1_lidar_mount_height():
-    """C1: the scan plane sits where the vendor mount chain puts it (0.3852 m above ground)."""
-    model, data = _build()
-    for _ in range(int(2.0 / model.opt.timestep)):
-        mujoco.mj_step(model, data)
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert float(data.site_xpos[sid][2]) == pytest.approx(LIDAR_Z_GROUND, abs=0.005)
-    assert abs(float(data.site_xpos[sid][0])) < 0.01
-    assert abs(float(data.site_xpos[sid][1])) < 0.01
+# The VLP-16 is a `velodyne_vlp16` device on the vendor's tower, checked in a closed room.
+
+#: jackal_description @ 4ddf9b5: `mid_mount` on base_link at the chassis top (urdf/jackal.urdf.xacro),
+#: vlp16_mount's plate joint at the tower height 0.1 with the VLP-16 at its origin
+#: (accessories/vlp16_mount.urdf.xacro); velodyne_description VLP-16.urdf.xacro: the scan frame
+#: `velodyne` 0.0377 above the housing base.
+MID_MOUNT = ((0.0, 0.0, 0.184), (0.0, 0.0, 0.0))
+TOWER = ((0.0, 0.0, 0.1), (0.0, 0.0, 0.0))
+LASER = ((0.0, 0.0, 0.0377), (0.0, 0.0, 0.0))
+SCAN_FRAME = "velodyne"
+LABEL = "velodyne"
+NAMESPACE = "j100_0000"
+#: The VLP-16 device's housing: 0.83 kg, velodyne_description's inertial and the data sheet's weight.
+VLP16_MASS = 0.83
 
 
-def test_c2_lidar_manifest_matches_datasheet():
-    """C2: the shipped lidar config is the VLP-16 datasheet, not a leftover from another robot."""
-    cfg = _manifest_plugin("lidar")
-    assert cfg["rays"] == 1800  # 360 deg / 0.2 deg at 10 Hz
-    assert cfg["rate_hz"] == pytest.approx(10.0)
-    assert cfg["angle_max"] == pytest.approx(2 * math.pi, abs=1e-3)
-    assert cfg["max_range"] >= 100.0
-    assert cfg["site"] == "lidar"
+@pytest.fixture(scope="module")
+def scan():
+    engine = spawn("clearpath_jackal", {LABEL: None}, owner="jk", prefix="jk_", namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
 
 
-def test_c3_lidar_sees_a_wall_at_the_right_range():
-    """C3: a ray cast from the lidar site measures a known wall distance."""
-    from roqsim_sensors.plugins.lidar import LidarPlugin
+def test_c1_the_scan_frame_is_the_vendor_chain(scan):
+    """C1: the scan origin is the vendor chain, 0.3217 m in base_link and 0.3852 m above the ground."""
+    want_pos, want_rot = chain(MID_MOUNT, TOWER, LASER)
+    assert np.allclose(want_pos, (0.0, 0.0, LIDAR_Z_BASE), atol=1e-9)
+    assert LIDAR_Z_BASE + REST_Z == pytest.approx(LIDAR_Z_GROUND)
+    for site in (f"jk_{LABEL}_scan", f"jk_{LABEL}_{SCAN_FRAME}"):
+        pos, rot = pose_in_base(scan, site, "jk_")
+        assert np.allclose(pos, want_pos, atol=1e-6), f"{site} at {pos}"
+        assert np.allclose(rot, want_rot, atol=1e-6), f"{site} rotation {rot}"
 
-    asset = resolve_model("roqsim_mobile:clearpath_jackal")
-    spec = mujoco.MjSpec.from_file(str(asset.path))
-    apply_assets(spec, asset)
-    floor = spec.worldbody.add_geom()
-    floor.name = "floor"
-    floor.type = mujoco.mjtGeom.mjGEOM_PLANE
-    floor.size = [15, 15, 0.05]
-    wall = spec.worldbody.add_geom()
-    wall.name = "wall"
-    wall.type = mujoco.mjtGeom.mjGEOM_BOX
-    wall.size = [0.1, 4.0, 1.0]
-    wall.pos = [3.0, 0.0, 1.0]
-    model = spec.compile()
-    data = mujoco.MjData(model)
-    mujoco.mj_resetDataKeyframe(model, data, 0)
-    mujoco.mj_forward(model, data)
 
-    ctx = SimContext(config={})
-    ctx.model, ctx.data = model, data
-    ctx.entities.add(
-        Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
-    )
-    lidar = LidarPlugin(_manifest_plugin("lidar"), entity="robot")
-    lidar.configure(ctx)
-    mujoco.mj_step(model, data)
-    lidar.post_step(ctx)
-    # Read through the declared endpoint, so the transport-facing path is what gets verified.
-    endpoint = next(e for e in ctx.interface.all() if e.name == "scan" and e.owner == "robot")
-    scan = endpoint.read()
-    assert scan is not None
-    ranges = np.asarray(scan.ranges)
-    assert len(ranges) == 1800
-    # Ray index 0 points along +x; the wall's near face is at x = 2.9.
-    assert ranges[0] == pytest.approx(2.9, abs=0.05)
+def test_c2_the_forward_ray_reads_the_wall(scan):
+    published, true = forward_range(scan, lidar(scan, f"jk.{LABEL}"))
+    assert published == pytest.approx(true, abs=1e-3), f"reads {published:.4f} m, wall at {true:.4f} m"
+
+
+def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan):
+    model = scan.ctx.model
+    scanner = lidar(scan, f"jk.{LABEL}")
+    mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"jk_{LABEL}_mount")
+    assert scanner._bodyexclude == mount, "the scanner excludes something other than its housing"
+    _, hits = recast(scan, scanner)
+    assert mount not in set(model.geom_bodyid[hits.geomid[hits.geomid >= 0]].tolist())
+
+
+def test_c4_no_ray_starts_inside_robot_geometry(scan):
+    """The embedded site started every ray inside the housing cylinder modelled on base_link."""
+    scanner = lidar(scan, f"jk.{LABEL}")
+    inside, _ = robot_hits(scan, scanner, "jk_")
+    assert not inside, {body: len(d) for body, d in inside.items()}
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray is clamped"
+
+
+def test_c5_the_scan_sees_no_part_of_the_robot(scan):
+    """At 0.3217 m the full turn clears the tower below it: no robot returns."""
+    _, outside = robot_hits(scan, lidar(scan, f"jk.{LABEL}"), "jk_")
+    assert outside == {}, sorted(outside)
+
+
+def test_c6_the_tf_chain_and_topic(scan):
+    address = f"jk.{LABEL}"
+    tf = static_tf(scan, address, NAMESPACE)
+    assert [(t["parent"], t["child"]) for t in tf] == [("mid_mount", SCAN_FRAME)], tf
+    want_pos, _ = chain(TOWER, LASER)
+    assert np.allclose(tf[0]["translation"], want_pos, atol=1e-6)
+    assert np.allclose(tf[0]["rotation"], (1.0, 0.0, 0.0, 0.0), atol=1e-9)
+    robot = static_tf(scan, "jk", NAMESPACE)
+    (mid,) = [t for t in robot if t["child"] == "mid_mount"]
+    assert mid["parent"] == "base_link" and np.allclose(mid["translation"], MID_MOUNT[0])
+    hints = endpoint(scan, "scan", address).backend["ros2"]
+    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, "scan")
+    assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
+
+
+def test_c7_the_scan_keeps_the_values_the_experiments_were_run_with():
+    """C7: VLP-16 data sheet ray pattern, with the two values the manifest overrides kept as they were.
+
+    The device carries the hardware's range_min 0.9 m and 0.03 m range noise; the manifest keeps
+    0.4 m and no noise, the values this model's scan had when experiments were built on it.
+    """
+    engine = spawn("clearpath_jackal", {LABEL: None}, owner="jk", prefix="jk_", namespace=NAMESPACE)
+    try:
+        scanner = lidar(engine, f"jk.{LABEL}")
+        assert scanner.num_rays == 1800  # 360 deg / 0.2 deg at 10 Hz
+        assert (scanner.angle_min, scanner.angle_max) == pytest.approx((0.0, 2 * math.pi))
+        assert (scanner.range_min, scanner.range_max) == pytest.approx((0.4, 100.0))
+        assert scanner.rate_hz == pytest.approx(10.0)
+        assert scanner.config["range_stddev"] == pytest.approx(0.0)
+        model = engine.ctx.model
+        mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"jk_{LABEL}_mount")
+        assert float(model.body_mass[mount]) == pytest.approx(VLP16_MASS)
+    finally:
+        engine.shutdown()

@@ -94,21 +94,16 @@
       <geom class="jackal_visual" mesh="jackal_fender" material="jackal_yellow"/>
       <geom class="jackal_visual" mesh="jackal_fender" material="jackal_yellow" quat="0 0 0 1"/>
 
-      <!-- Velodyne VLP-16 on the vendor's default mount: mid_mount (chassis top, z=0.184) + the
-           0.1 m four-leg tower + a 2 mm plate, then the VLP-16 whose laser frame sits 0.0377 m above
-           its own base. Scan plane = 0.184 + 0.1 + 0.0377 = 0.3217 m above base_link, i.e. 0.3852 m
-           above ground. That chain is the vendor's, not an assumption: jackal_description
-           accessories/vlp16_mount.urdf.xacro (tower default 1, height 0.1) + velodyne_description
-           VLP-16.urdf.xacro (laser origin z=0.0377). See spec gap g_lidar_mounting_pose.
-           The `lidar` plugin reads the `lidar` site as a PLANAR scanner at that height -- which is
-           what the paper's 2D costmap would have seen (spec gap g_scan_projection). -->
+      <!-- The vendor's VLP-16 tower (jackal_description accessories/vlp16_mount.urdf.xacro, tower
+           default 1, height 0.1): four legs and a 2 mm plate on mid_mount (chassis top, z=0.184). The
+           plate's top at z=0.284 is where the VLP-16 stands. The sensor itself is the
+           `velodyne_vlp16` device the manifest mounts there; its housing and scan frame are not part
+           of this body. -->
       <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos=" 0.05  0.05 0.234" material="jackal_white"/>
       <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos=" 0.05 -0.05 0.234" material="jackal_white"/>
       <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos="-0.05  0.05 0.234" material="jackal_white"/>
       <geom class="jackal_visual" type="cylinder" size="0.003 0.05" pos="-0.05 -0.05 0.234" material="jackal_white"/>
       <geom class="jackal_visual" type="box"      size="0.05 0.05 0.001" pos="0 0 0.283" material="jackal_black"/>
-      <geom class="jackal_visual" type="cylinder" size="0.0516 0.03585" pos="0 0 0.31985" material="jackal_dark"/>
-      <site name="lidar" pos="0 0 0.3217" size="0.006" rgba="1 0 0 0.6"/>
 
       <!-- Front-left wheel. Wheel bodies sit at (+-wheelbase/2, +-track/2, wheel_vertical_offset).
            `armature` is the drivetrain's reflected rotor inertia (rotor inertia x gear ratio^2), a
