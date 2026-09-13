@@ -70,27 +70,6 @@ The Depot world (``roqsim_scenes:depot``) ships **open** (roofless) via the gene
 which is nav-neutral (the roof is above the 2D scan plane) but clears overhead sensor line-of-sight
 and top-down views. Set ``ceiling.keep: true`` for the roofed warehouse.
 
-The Unitree G1
---------------
-
-``nav2_g1.launch.py`` runs the same minimal stack for the ``unitree_g1`` humanoid, walking on its RL
-locomotion policy. Its sensor is the Livox Mid-360 in its head, mounted where Unitree's description
-puts it, which publishes a ``PointCloud2`` on ``livox/lidar`` in ``mid360_link`` rather than a planar
-scan. The launch adds ``pointcloud_to_laserscan`` to project that cloud into the ``/scan`` the costmaps
-read, in ``base_link``; it needs the package (``ros-jazzy-pointcloud-to-laserscan``).
-
-.. code-block:: bash
-
-   ros2 launch roqsim_nav2_example nav2_g1.launch.py
-   ros2 launch roqsim_nav2_example nav2_g1.launch.py gui:=true   # MuJoCo viewer + rviz2
-
-No Unitree source states such a projection, so its height band and range limits are the example's own,
-derived from the model and ``nav2_params_g1.yaml`` and commented beside the node in the launch file.
-Two of them carry a trade-off. The robot's own arms return up to 0.41 m from ``base_link``, so
-``range_min`` is 0.45 m and nothing nearer is in the scan. The body tilts while walking, so the band
-starts 0.22 m above the floor and ends at the costmaps' ``obstacle_max_range``, and lower obstacles are
-not seen.
-
 The goal-reaching test
 ----------------------
 
