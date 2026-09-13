@@ -19,8 +19,11 @@ components:
       right_actuators: [wheel_right_motor]
       left_joints:  [wheel_left_joint]
       right_joints: [wheel_right_joint]
-  # The vendor's own scan, from plugins.xacro's laser_scan_sensor: 360 samples over a full turn,
-  # 0.1-10 m, 5 Hz. The mount height is the description's scan_joint, not a guess -- 0.088 m above
+  # UNVERIFIED scan values: no source names this robot's scanner, and the real robot's bridge config
+  # (config/vacuum_bridge.yaml) sets only a scan mask and a time offset, so the only values available
+  # are the vendor's Gazebo sensor's (plugins.xacro laser_scan_sensor: 360 samples over a full turn,
+  # 0.1-10 m, 5 Hz) -- a simulation, kept until a datasheet or driver config replaces them.
+  # The mount height is the description's scan_joint, not a guess -- 0.088 m above
   # the floor, which is low, as a vacuum's must be to fit under furniture. The scan is stamped in
   # base_scan, the vendor's frame (upright, rpy 0), and its static TF hangs off base_link as the
   # description's scan_joint does. The rays skip only the scanner's own housing -- the base_scan puck,
