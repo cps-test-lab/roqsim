@@ -321,23 +321,23 @@ def test_b2_rotates_at_the_commanded_rate(commanded):
 #: topic). The position is Neobotix's hardware documentation (MP-400 Mechanical Properties, Positions of
 #: Sensors) instead of the joint's (0.244, 0, 0.141): LS1 at X 230 from the origin under the drive axle
 #: and Z 110 mm above the floor, with base_link 1 mm above it (150 mm drive wheels, wheel joints at
-#: x 0, z 0.074).
+#: x 0, z 0.074). That is the scan plane, 4.1 mm above lidar_1_link on this upside-down mount.
 #: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
-MOUNTS = {"scan_front": ("sick_s300", "lidar_1_link", (0.230, 0.0, 0.109), (3.14, 0.0, 0.0), "scan")}
+MOUNTS = {"scan_front": ("sick_s300", "lidar_1_link", (0.230, 0.0, 0.1049), (3.14, 0.0, 0.0), "scan")}
 NAMESPACE = "neo"
 #: The robot bodies the scan meets from outside, with their ray counts and distance windows (m): the
 #: side walls of the body cover's scanner pocket either side, and the two driven wheels, whose tyres
 #: stand in the scan plane at the edges of the field. The rays start at the S300's
-#: physical scan plane, 4.1 mm above lidar_1_link on this upside-down mount (z 0.1131).
+#: physical scan plane, 4.1 mm above lidar_1_link on this upside-down mount (z 0.109).
 OUTSIDE_HITS = {
     "base_link": 100,
-    "mp_400_fixed_wheel_left_link": 29,
-    "mp_400_fixed_wheel_right_link": 29,
+    "mp_400_fixed_wheel_left_link": 30,
+    "mp_400_fixed_wheel_right_link": 30,
 }
 HIT_DISTANCE = {
     "base_link": (0.127, 0.143),
-    "mp_400_fixed_wheel_left_link": (0.280, 0.325),
-    "mp_400_fixed_wheel_right_link": (0.280, 0.325),
+    "mp_400_fixed_wheel_left_link": (0.275, 0.330),
+    "mp_400_fixed_wheel_right_link": (0.275, 0.330),
 }
 
 
