@@ -187,8 +187,13 @@ def test_the_wheels_do_not_fight_the_body():
 def _tyres_and_housings(model):
     tyres = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"n_mpo_700_wheel_{c}_link_tyre")
              for c in CORNER_NAMES]
-    housings = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"n_{label}_sick_s300_collision")
-                for label in MOUNTS]
+    housings = [named(model, mujoco.mjtObj.mjOBJ_GEOM, f"n_{label}_sick_s300_collision_{part}")
+                for label in MOUNTS for part in HOUSING_PARTS]
+    for label in MOUNTS:
+        mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"n_{label}_mount")
+        colliding = {g for g in range(model.ngeom)
+                     if model.geom_bodyid[g] == mount and (model.geom_contype[g] or model.geom_conaffinity[g])}
+        assert colliding <= set(housings), f"{label}: a housing collision geom this test does not check"
     return tyres, housings
 
 
@@ -208,9 +213,9 @@ def _assert_no_housing_touches_a_tyre(engine, tyres, housings, when):
 
 
 def test_no_scanner_housing_touches_a_tyre_at_rest():
-    """The documented scanner height beside the documented 30 mm wheel.
+    """The documented scanner pose beside the documented 30 mm wheel.
 
-    The vendor's tyre is a sphere 180 mm across in every direction, and at this height it reaches the
+    The vendor's tyre is a sphere 180 mm across in every direction, and at this pose it reaches the
     S300 housings and pins the steering. The documented wheel clears them.
     """
     engine = _engine()
@@ -366,16 +371,18 @@ def test_joint_states_carries_the_steer_joints_it_actuates():
 
 #: Rotations: neo_simulation2 @ 832041452c1a, robots/mpo_700/urdf/mpo_700_body.urdf.xacro:38 and :65
 #: (lidar_1_joint / lidar_2_joint, written as the vendor writes them); scan links and topics:
-#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50; x and y: the same joints. Height: Neobotix's hardware
-#: documentation (MPO-700 Mechanical Properties, Positions of Sensors), the scan plane at Z 201.5 mm
-#: above the floor. base_link is 10 mm below the floor (180 mm wheels, wheel centres 0.10 above
-#: base_link), so the plane is at z 0.2115 and the frame, 4.1 mm below it on these upside-down devices,
-#: at z 0.2074. The same table's X +-327, Y +-277 are not applied: there the sick_s300 collision box
-#: reaches the corner wheel while it steers. ``{label: (device, scan frame, xyz, rpy, topic)}``.
+#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50. Position: Neobotix's hardware documentation (MPO-700
+#: Mechanical Properties, Positions of Sensors), X +-327 and Y +-277 from the platform centre, which the
+#: steering axes share, and the scan plane at Z 201.5 mm above the floor. base_link is 10 mm below the
+#: floor (180 mm wheels, wheel centres 0.10 above base_link), so the plane is at z 0.2115 and the frame,
+#: 4.1 mm below it on these upside-down devices, at z 0.2074.
+#: ``{label: (device, scan frame, xyz, rpy, topic)}``.
 MOUNTS = {
-    "scan_front": ("sick_s300", "lidar_1_link", (0.338, 0.288, 0.2074), (3.14, 0.0, 0.79), "scan"),
-    "scan_rear": ("sick_s300", "lidar_2_link", (-0.338, -0.288, 0.2074), (3.14, 0.0, 3.93), "scan2"),
+    "scan_front": ("sick_s300", "lidar_1_link", (0.327, 0.277, 0.2074), (3.14, 0.0, 0.79), "scan"),
+    "scan_rear": ("sick_s300", "lidar_2_link", (-0.327, -0.277, 0.2074), (3.14, 0.0, 3.93), "scan2"),
 }
+#: The sick_s300 device collides as two convex hulls, its housing block and its optics head.
+HOUSING_PARTS = ("body", "head")
 NAMESPACE = "neo"
 
 

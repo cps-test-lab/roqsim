@@ -9,6 +9,8 @@ Licence: MIT, full text below.
 Converted (and, where the source is heavy, decimated) to OBJ in metres by
 external/convert/build_scanner_devices.py; the MJCF's link frame, visual origin, collision
 primitive and inertial are read from the same repository.
+The collision hulls, meshes/*_collision_*.obj, are the convex hulls of those OBJs, computed by
+the same script.
 
 --------------------------------------------------------------------------------
 

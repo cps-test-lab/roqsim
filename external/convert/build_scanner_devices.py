@@ -37,8 +37,10 @@ planar projection the robot that mounts it documents.
 
 The MJCF ``mount`` body is the link the vendor macro attaches to its parent. Visual geoms carry the
 vendor visual origin; the collision geom is the vendor's primitive, except for the two Neobotix
-devices whose vendor collision is the full mesh -- there it is the axis-aligned box around the
-converted housing -- and the LMS1xx, whose vendor collision mesh it bounds. The ``scan`` site is where
+devices whose vendor collision is the full mesh -- there it is the S300's two convex hulls, of its
+housing block and of its optics head (``collision_hulls``, written as ``meshes/*_collision_*.obj``),
+and the axis-aligned box around the converted microScan3 housing -- and the LMS1xx, whose vendor
+collision mesh a box bounds. The ``scan`` site is where
 the rays start: the vendor scan frame, except where a device's data sheet places the physical scan
 plane off it and that offset is measured on the converted housing (the S300). The scan is always
 stamped in the vendor frame, which the manifest's ``frames:`` entry declares.
@@ -165,7 +167,8 @@ class Device:
     visual_rpy: tuple[float, float, float]
     #: rgba for a source that carries no colour of its own (an STL); None reads the source's.
     rgba: tuple[float, float, float, float] | None
-    #: ``<geom .../>`` attributes of the collision primitive; None boxes the converted housing.
+    #: ``<geom .../>`` attributes of the collision primitive; None boxes the converted housing, unless
+    #: ``collision_hulls`` is set.
     collision: str | None
     inertial: str
     site_pos: tuple[float, float, float]
@@ -177,6 +180,10 @@ class Device:
     extra_meshes: tuple[str, ...] = ()
     #: For several STL meshes, which carry no colour: one rgba per entry of ``meshes``.
     mesh_rgba: tuple[tuple[float, float, float, float], ...] = ()
+    #: Collide as convex hulls of the converted housing rather than one geom: ``(part, sub-mesh
+    #: stems)`` per hull, written to ``meshes/<device>_collision_<part>.obj`` in the mount frame. Every
+    #: sub-mesh belongs to exactly one hull.
+    collision_hulls: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def meshes(self) -> tuple[str, ...]:
@@ -196,6 +203,19 @@ DEVICES = {
             visual_rpy=(-1.57, 0.0, 3.14),  # as the vendor writes it, not pi/2 and pi
             rgba=None,
             collision=None,
+            # Two convex hulls: the housing block (sub-meshes 1-6) and the round optics head (sub-mesh
+            # 0), which stands on the block's top. Primitives cannot follow the block: its top edges are
+            # chamfered up to the head, so a box over-fills those corners by 22.7 mm, and a union of
+            # primitives cannot cut a corner. A box around the whole housing also fills the corners
+            # around the head, which is where a wheel steering beside a mount meets it. The hulls add
+            # to the housing's outline only the head's recessed scan window (15 mm deep), which any
+            # convex shape fills. The head alone fits as cylinders to 1.4 mm, but MuJoCo 3.11's distance
+            # query between two cylinders reads spurious zeros at isolated poses, and a robot's
+            # self-clearance tests measure housings against cylinder tyres.
+            collision_hulls=(
+                ("body", tuple(f"SICK-S300__m{i}" for i in range(1, 7))),
+                ("head", ("SICK-S300__m0",)),
+            ),
             # mpo_700_body.urdf.xacro lidar_1_link; 1.2 kg is also the datasheet weight.
             inertial='<inertial pos="0 0 0" mass="1.2" diaginertia="0.11042056 0.11042056 0.11042056"/>',
             # The data sheet's scan plane, 36.4 mm below the housing top (z +0.0323 on the mesh).
@@ -216,8 +236,8 @@ DEVICES = {
     the plane is at z -0.0041 (-0.0040 from the bottom), inside the cover's window. The rays are cast
     from there; the scan is stamped in the vendor frame, 4.1 mm above it, as a real S300's driver
     stamps it.""",
-            collision_note="The vendor collides with the full mesh; this box bounds the converted "
-            "housing instead.",
+            collision_note="The vendor collides with the full mesh; these are the convex hulls of the "
+            "converted housing's block and of its optics head.",
             site_note="The data sheet's scan plane, 4.1 mm below the vendor scan frame (lidar_1_link), "
             "which is the mount itself.",
         ),
@@ -617,11 +637,58 @@ def housing_box(device: Device, meshes: Path, parts) -> str:
     return f'type="box" pos="{_fmt((lo + hi) / 2)}" size="{_fmt((hi - lo) / 2)}"'
 
 
-def mjcf(device: Device, parts: dict, collision: str) -> str:
+def housing_hulls(device: Device, meshes: Path, parts) -> dict[str, str]:
+    """Write one convex hull OBJ per ``collision_hulls`` entry, in the mount frame.
+
+    Returns ``{part: mesh stem}``. Faces are wound outward, so MuJoCo compiles each as a closed solid.
+    """
+    from scipy.spatial import ConvexHull
+
+    named = [stem for _, stems in device.collision_hulls for stem in stems]
+    if sorted(named) != sorted(parts):
+        raise RuntimeError(
+            f"{device.name}: collision_hulls must name every converted sub-mesh exactly once; "
+            f"they name {sorted(named)}, the conversion wrote {sorted(parts)}"
+        )
+    rot = np.zeros(9)
+    mujoco.mju_quat2Mat(rot, np.array(rpy_to_quat(*device.visual_rpy)))
+    hulls = {}
+    for part, stems in device.collision_hulls:
+        verts = np.vstack([_vertices(meshes / f"{stem}.obj") for stem in stems])
+        placed = verts @ rot.reshape(3, 3).T + np.array(device.visual_pos)
+        hull = ConvexHull(placed)
+        index = {int(v): i for i, v in enumerate(hull.vertices)}
+        lines = [f"v {p[0]:.6f} {p[1]:.6f} {p[2]:.6f}" for p in placed[hull.vertices]]
+        for simplex, plane in zip(hull.simplices, hull.equations, strict=True):
+            a, b, c = placed[simplex]
+            if np.dot(np.cross(b - a, c - a), plane[:3]) < 0:
+                simplex = simplex[[0, 2, 1]]
+            lines.append("f " + " ".join(str(index[int(v)] + 1) for v in simplex))
+        stem = f"{device.name}_collision_{part}"
+        (meshes / f"{stem}.obj").write_text("\n".join(lines) + "\n")
+        hulls[part] = stem
+    return hulls
+
+
+def mjcf(device: Device, parts: dict, collision: str | None, hulls: dict[str, str]) -> str:
+    """The device MJCF: one collision geom from *collision*, or one mesh geom per entry of *hulls*."""
+    if (collision is None) == (not hulls):
+        raise RuntimeError(
+            f"{device.name}: give exactly one of a collision geom and collision hulls"
+        )
     materials = "".join(
         f'    <material name="{stem}_mat" rgba="{_fmt(rgba)}"/>\n' for stem, rgba in parts.items()
     )
-    meshes = "".join(f'    <mesh name="{stem}" file="{stem}.obj"/>\n' for stem in parts)
+    meshes = "".join(
+        f'    <mesh name="{stem}" file="{stem}.obj"/>\n' for stem in [*parts, *hulls.values()]
+    )
+    if hulls:
+        collisions = "".join(
+            f'      <geom name="{stem}" type="mesh" mesh="{stem}" group="3"/>\n'
+            for stem in hulls.values()
+        )
+    else:
+        collisions = f'      <geom name="{device.name}_collision" {collision} group="3"/>\n'
     placement = ""
     if any(device.visual_pos):
         placement += f' pos="{_fmt(device.visual_pos)}"'
@@ -654,8 +721,7 @@ def mjcf(device: Device, parts: dict, collision: str) -> str:
     <body name="mount">
       {device.inertial}
 {visuals}      <!-- {device.collision_note} -->
-      <geom name="{device.name}_collision" {collision} group="3"/>
-      <!-- {device.site_note}
+{collisions}      <!-- {device.site_note}
            Keep in step with the manifest's `frames:` entry. -->
       <site name="scan" {site} size="0.005"/>
     </body>
@@ -666,6 +732,12 @@ def mjcf(device: Device, parts: dict, collision: str) -> str:
 
 def licence(device: Device, source: Path) -> str:
     files = "\n".join(f"    file   {mesh}" for mesh in device.meshes)
+    derived = (
+        "\nThe collision hulls, meshes/*_collision_*.obj, are the convex hulls of those OBJs, computed by\n"
+        "the same script."
+        if device.collision_hulls
+        else ""
+    )
     return f"""The visual meshes in meshes/ are converted from
 
     {device.source.url.removesuffix(".git")}
@@ -676,7 +748,7 @@ Copyright (c) {device.source.copyright}
 Licence: {device.source.spdx}, full text below.
 Converted (and, where the source is heavy, decimated) to OBJ in metres by
 external/convert/build_scanner_devices.py; the MJCF's link frame, visual origin, collision
-primitive and inertial are read from the same repository.
+primitive and inertial are read from the same repository.{derived}
 
 --------------------------------------------------------------------------------
 
@@ -817,8 +889,13 @@ def build(device: Device) -> None:
         shutil.rmtree(meshes)
     meshes.mkdir(parents=True)
     parts = convert(device, source, meshes)
-    collision = device.collision or housing_box(device, meshes, parts)
-    (folder / f"{device.name}.xml").write_text(mjcf(device, parts, collision))
+    if device.collision_hulls:
+        if device.collision is not None:
+            raise RuntimeError(f"{device.name}: set `collision` or `collision_hulls`, not both")
+        hulls, collision = housing_hulls(device, meshes, parts), None
+    else:
+        hulls, collision = {}, device.collision or housing_box(device, meshes, parts)
+    (folder / f"{device.name}.xml").write_text(mjcf(device, parts, collision, hulls))
     (folder / f"{device.name}_LICENSE").write_text(licence(device, source))
     faces = sum(
         sum(1 for line in (meshes / f"{s}.obj").open() if line.startswith("f ")) for s in parts
