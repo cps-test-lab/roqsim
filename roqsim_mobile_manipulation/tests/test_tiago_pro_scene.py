@@ -559,6 +559,17 @@ def test_e0_controllers_own_disjoint_actuators(rig):
     )
 
 
+def test_e0b_one_joint_state_broadcaster_reads_every_controllers_joints(rig):
+    """E0b: however many arm controllers the robot has, it has ONE joint_state_broadcaster, as a
+    real ros2_control robot does, and it reads the joints of all of them."""
+    from roqsim.controllers import registry_for
+
+    broadcasters = [c for c in registry_for(rig.ctx).all() if c.name == "joint_state_broadcaster"]
+    assert len(broadcasters) == 1
+    expected = {f"{j}/position" for ctrl in rig.arms.values() for j in ctrl._ctrl_names}
+    assert set(broadcasters[0].reads) == expected
+
+
 def test_e1_arms_hold_the_home_stance_against_gravity(rig):
     """E1: both arms and the torso lift hold PAL's home stance under gravity."""
     rig.settle(3.0)

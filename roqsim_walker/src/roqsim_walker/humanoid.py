@@ -179,8 +179,12 @@ def build_humanoid(
 
 
 def _collision_flags(g, physical: bool) -> None:
-    g.rgba = [0.0, 0.0, 0.0, 0.0]  # invisible
-    g.group = 3  # hidden by renderer, hit by mj_ray
+    # Group 3 is what keeps a hit box out of a picture: MuJoCo's default ``MjvOption.geomgroup`` is
+    # ``[1,1,1,0,0,0]``, and a caller that wants the collision half names the group. The alpha is
+    # left alone -- ``mj_ray``/``mj_multiRay`` skip a geom whose resolved alpha is zero, which is
+    # how :mod:`roqsim.presence` makes an entity absent, so zeroing it here would take the walker
+    # out of every scan while leaving it solid to contact.
+    g.group = 3
     # Physical limbs block the robot (its geoms are contype/conaffinity 1) but, via contype bit 2,
     # do NOT collide with each other (no self-contact on the kinematic skeleton). Arms are
     # sensing-only (0) -- lidar still rays them.
