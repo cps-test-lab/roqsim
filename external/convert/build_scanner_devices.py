@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Build the eleven standalone scanner device models in ``roqsim_sensors/models/<device>/``.
+"""Build the twelve standalone scanner device models in ``roqsim_sensors/models/<device>/``.
 
-    python external/convert/build_scanner_devices.py            # all eleven
+    python external/convert/build_scanner_devices.py            # all twelve
     python external/convert/build_scanner_devices.py sick_s300  # one
 
 Writes, per device: ``meshes/*.obj`` (converted and, where the source is heavy, decimated), the MJCF
@@ -19,6 +19,8 @@ port can hang the device at the vendor joint origin and get the vendor frame:
     device           mesh source (licence)                                 vendor scan frame
     sick_s300        neo_simulation2 components/meshes/SICK-S300.dae (MIT)  lidar_1_link
     sick_microscan3  neo_simulation2 components/meshes/SICK-MICROSCAN3.dae  lidar_1_link
+    sick_nanoscan3   rox rox_description/meshes/nanoscan_3.dae (BSD,      lidar_1_link, Z-DOWN on
+                     declared in package.xml; no licence text upstream)    the robot
     sick_tim571      pal_urdf_utils meshes/laser/sick_tim551.stl (Apache)   <name>_link
     rplidar_a1       turtlebot4 turtlebot4_description/meshes/rplidar.dae    rplidar_link
     rplidar_c1       husarion_components_description meshes/rplidar/c1.glb  laser (child of rplidar_link)
@@ -67,7 +69,7 @@ import mujoco
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from neobotix import NEO_COMMIT, NEO_URL  # noqa: E402
+from neobotix import NEO_COMMIT, NEO_URL, ROX_COMMIT, ROX_URL  # noqa: E402
 from sources import resolve_source  # noqa: E402
 
 from roqsim.pose import rpy_to_quat  # noqa: E402
@@ -100,9 +102,22 @@ class Source:
     name: str  # directory under external/sources/
     url: str
     commit: str
-    licence: str  # licence file in the source tree
+    #: Licence file in the source tree; None when the upstream ships none and `licence_note` stands in.
+    licence: str | None
     copyright: str
     spdx: str
+    #: Used in place of a licence file's text. A repository can declare a licence in its package
+    #: manifest and ship no text for it, which is not the same as being unlicensed -- but it does mean
+    #: there is nothing to copy, and inventing the text would put words in the licensor's mouth. The
+    #: note records the declaration and where it was read instead.
+    licence_note: str = ""
+
+    def __post_init__(self) -> None:
+        if bool(self.licence) == bool(self.licence_note):
+            raise ValueError(
+                f"{self.name}: set exactly one of `licence` (a file in the source tree) or "
+                "`licence_note` (what to say when the upstream ships no licence text)"
+            )
 
 
 NEO = Source("neo_simulation2", NEO_URL, NEO_COMMIT, "LICENSE", "2021 neobotix gmbh", "MIT")
@@ -156,6 +171,38 @@ VELODYNE = Source(
 )
 
 
+#: `neobotix/rox` ships NO licence file, and its meshes carry no per-file copyright header. What it
+#: does carry is a declaration in every package manifest, which is a licence grant -- just not one with
+#: a text attached. `licence_note` records that rather than pasting a BSD variant nobody chose.
+ROX = Source(
+    "rox",
+    ROX_URL,
+    ROX_COMMIT,
+    None,
+    "Neobotix GmbH",
+    "BSD",
+    licence_note="""\
+The repository ships no LICENSE file, and the mesh carries no per-file copyright header. The only
+licence statement the upstream makes is the one in the package manifest that ships the mesh:
+
+    rox_description/package.xml, at the commit above
+
+      <maintainer email="ros@neobotix.de">Neobotix</maintainer>
+      <license>BSD</license>
+      <author email="padmanabhan@neobotix.de">Pradheep Padmanabhan</author>
+
+"BSD" names a family, not a document: the 2-clause, 3-clause and original 4-clause texts differ in
+what they require. No variant's text is reproduced here, because choosing one would put terms in the
+licensor's mouth that the licensor did not write. What every variant does require -- that the
+copyright notice and the licence statement travel with the copy -- is what this file is: it names the
+copyright holder, the author, the exact upstream revision, and the exact file the geometry derives
+from.
+
+If a downstream use needs the variant pinned (an SPDX-clean SBOM, say), ask Neobotix GmbH to state
+it, and replace this paragraph with their answer.""",
+)
+
+
 @dataclass(frozen=True)
 class Device:
     name: str
@@ -180,6 +227,11 @@ class Device:
     extra_meshes: tuple[str, ...] = ()
     #: For several STL meshes, which carry no colour: one rgba per entry of ``meshes``.
     mesh_rgba: tuple[tuple[float, float, float, float], ...] = ()
+    #: Give every mesh ``inertia="shell"``. Needed when a CAD export splits out a sub-mesh that is a
+    #: thin surface with no enclosed volume, which MuJoCo refuses to integrate an inertia over
+    #: ("mesh volume is too small"). It never costs accuracy here: these geoms are visual-only and the
+    #: body carries an explicit ``<inertial>``, so a mesh-derived inertia is discarded either way.
+    shell_inertia: bool = False
     #: Collide as convex hulls of the converted housing rather than one geom: ``(part, sub-mesh
     #: stems)`` per hull, written to ``meshes/<device>_collision_<part>.obj`` in the mount frame. Every
     #: sub-mesh belongs to exactly one hull.
@@ -267,6 +319,53 @@ DEVICES = {
     operating instructions' 135.1 mm housing, so the datasheet scan plane (40.1 mm below the top,
     95.0 mm above the bottom) maps to z = -0.0037 or z = -0.0204 depending on which end is taken
     as reference; the site stays on the vendor frame.""",
+            collision_note="The vendor collides with the full mesh; this box bounds the converted "
+            "housing instead.",
+            site_note="The vendor scan frame (lidar_1_link) is the mount itself.",
+        ),
+        Device(
+            name="sick_nanoscan3",
+            source=ROX,
+            # m3, the white label face, is a thin surface with no enclosed volume.
+            shell_inertia=True,
+            mesh="rox_description/meshes/nanoscan_3.dae",
+            scale=0.1,
+            budget=1500,  # 71150 in the source, the heaviest scanner Collada here
+            visual_pos=(0.0, 0.0, -0.02),
+            visual_rpy=(3.14159265, 0.0, 1.57079633),  # as the vendor writes it: pi, 0, pi/2
+            rgba=None,
+            collision=None,
+            # sick_nanoscan.xacro lidar_1_link. The vendor declares a 1 g placeholder; the data
+            # sheet weight is 0.67 kg. The placeholder is kept so a ROX's mass audit sums the
+            # description rather than a number we chose, and the rotation the vendor puts on this
+            # inertial's frame is immaterial at 1 g.
+            inertial='<inertial pos="0 0 0" mass="0.001" diaginertia="0.0001 0.000001 0.0001"/>',
+            site_pos=(0.0, 0.0, 0.0),
+            site_rpy=(0.0, 0.0, 0.0),
+            header="""\
+    SICK nanoScan3 safety laser scanner: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Neobotix `rox`, whose ROX platforms carry two of them: the body is `lidar_1_link`
+    (sick_nanoscan.xacro), the mesh keeps that link's visual origin xyz (0, 0, -0.02),
+    rpy (pi, 0, pi/2), and the scan is stamped in the link itself.
+
+    Body-local axes: x = the scan's zero bearing, z = up with the device upright.
+
+    The site sits on the vendor frame because the vendor frame IS the scan plane, which is measured
+    rather than assumed: the converted housing spans z -0.0489 .. +0.0311, so the link sits 31.1 mm
+    below the housing top and 48.9 mm above its bottom, against the data sheet's scan plane at
+    29.7 mm below the top and 50.5 mm above the bottom of an 80.2 mm housing. That agrees to 1.6 mm,
+    and the converted housing measures 106.6 mm wide and 80.0 mm tall against the data sheet's
+    106.6 mm and 80 mm. (Its 102.4 mm depth is short of the data sheet's 117.5 mm because that
+    figure includes the system plug, which this mesh does not carry.)
+
+    ON A ROBOT THIS LINK IS Z-DOWN, and that is the vendor's, not a conversion error: rox.urdf.xacro
+    hangs lidar_1 at rpy (pi, 0, pi/4), so the link's z points at the floor. Composed with this
+    mesh's own rpy (pi, 0, pi/2) the two rolls cancel to a pure yaw, which leaves the housing in the
+    world exactly as the source Collada authors it -- optics dome downward. Both origins are the
+    vendor's and both are reproduced rather than corrected; a z-up "fix" to either would move the
+    scan plane off the link and reverse the scan's angular sense.""",
             collision_note="The vendor collides with the full mesh; this box bounds the converted "
             "housing instead.",
             site_note="The vendor scan frame (lidar_1_link) is the mount itself.",
@@ -679,8 +778,10 @@ def mjcf(device: Device, parts: dict, collision: str | None, hulls: dict[str, st
     materials = "".join(
         f'    <material name="{stem}_mat" rgba="{_fmt(rgba)}"/>\n' for stem, rgba in parts.items()
     )
+    shell = ' inertia="shell"' if device.shell_inertia else ""
     meshes = "".join(
-        f'    <mesh name="{stem}" file="{stem}.obj"/>\n' for stem in [*parts, *hulls.values()]
+        f'    <mesh name="{stem}" file="{stem}.obj"{shell}/>\n'
+        for stem in [*parts, *hulls.values()]
     )
     if hulls:
         collisions = "".join(
@@ -732,6 +833,12 @@ def mjcf(device: Device, parts: dict, collision: str | None, hulls: dict[str, st
 
 def licence(device: Device, source: Path) -> str:
     files = "\n".join(f"    file   {mesh}" for mesh in device.meshes)
+    if device.source.licence:
+        declared = ", full text below."
+        body = (source / device.source.licence).read_text().strip()
+    else:
+        declared = ", as declared in the package manifest (no licence text ships upstream)."
+        body = device.source.licence_note.strip()
     derived = (
         "\nThe collision hulls, meshes/*_collision_*.obj, are the convex hulls of those OBJs, computed by\n"
         "the same script."
@@ -745,14 +852,14 @@ def licence(device: Device, source: Path) -> str:
 {files}
 
 Copyright (c) {device.source.copyright}
-Licence: {device.source.spdx}, full text below.
+Licence: {device.source.spdx}{declared}
 Converted (and, where the source is heavy, decimated) to OBJ in metres by
 external/convert/build_scanner_devices.py; the MJCF's link frame, visual origin, collision
 primitive and inertial are read from the same repository.{derived}
 
 --------------------------------------------------------------------------------
 
-{(source / device.source.licence).read_text().strip()}
+{body}
 """
 
 

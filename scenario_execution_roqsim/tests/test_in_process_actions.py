@@ -15,9 +15,10 @@ from __future__ import annotations
 import math
 
 import mujoco
-from roqsim.placement import PLACEABLE_MODES_HINT
 import numpy as np
 import pytest
+
+from roqsim.placement import PLACEABLE_MODES_HINT
 
 pytest.importorskip(
     "scenario_execution",
@@ -29,6 +30,7 @@ from scenario_execution.actions.base_action import ActionError  # noqa: E402
 
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
+from scenario_execution_roqsim.actions.delete_entity import DeleteEntity  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
@@ -1203,3 +1205,82 @@ def test_every_call_type_can_be_asked_why_it_is_waiting():
 
     for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):
         assert hasattr(cls, "pending_reason"), cls.__name__
+
+
+# -- delete_entity ----------------------------------------------------------------------------------
+#
+# Absence where the entity stands: the pose is kept, so a later spawn can bring it back, and nothing
+# that could perceive or touch it still can.
+
+
+def _robot_geoms(ctx):
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    return [g for g in range(ctx.model.ngeom) if ctx.model.geom_bodyid[g] == bid]
+
+
+def test_delete_makes_the_entity_absent_where_it_stands(teleport_world):
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    entity = ctx.entities.get("robot")
+    assert entity.present, "the fixture spawns it present"
+    where = ctx.data.xpos[bid].copy()
+
+    action = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert action.update() is RUNNING, "the flip is posted, not yet drained"
+    assert entity.present is True, "and nothing has changed before it drains"
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    assert entity.present is False
+    geoms = _robot_geoms(ctx)
+    assert geoms, "the robot body carries geoms to check"
+    assert all(
+        int(ctx.model.geom_contype[g]) == 0 and int(ctx.model.geom_conaffinity[g]) == 0
+        for g in geoms
+    ), "nothing can touch an absent entity"
+    assert np.allclose(ctx.data.xpos[bid], where, atol=0.01), "absence does not move it"
+
+
+def test_delete_refuses_an_entity_that_is_already_absent(teleport_world):
+    """The same answer both transports give: DeleteEntity over ROS answers RESULT_OPERATION_FAILED."""
+    ctx, clock, sim = teleport_world
+    ctx.entities.get("robot").present = False
+
+    action = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "already absent" in action.feedback_message
+
+
+def test_an_entity_deleted_then_spawned_is_present_again(teleport_world):
+    """The two verbs are one mechanism run both ways, so they compose."""
+    ctx, clock, sim = teleport_world
+    entity = ctx.entities.get("robot")
+
+    delete = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert delete.update() is RUNNING
+    _step(ctx, clock)
+    assert delete.update() is SUCCESS
+    assert entity.present is False
+
+    spawn = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 1.0, "y": 0.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert spawn.update() is RUNNING
+    _step(ctx, clock)
+    assert spawn.update() is SUCCESS
+    assert entity.present is True
+    assert any(int(ctx.model.geom_contype[g]) != 0 for g in _robot_geoms(ctx))
+
+
+def test_delete_refuses_an_empty_entity_name(teleport_world):
+    ctx, clock, sim = teleport_world
+    action = DeleteEntity()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="empty"):
+        action.execute(entity="")
