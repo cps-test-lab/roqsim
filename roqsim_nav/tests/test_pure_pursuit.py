@@ -19,6 +19,8 @@ from roqsim_nav.control import closest_point_on_polyline, lookahead_point, pure_
 # An L: east along y = 0 to the origin, then north along x = 0.
 CORNER = [(-2.0, 0.0), (0.0, 0.0), (0.0, 2.0)]
 STRAIGHT = [(0.0, 0.0), (10.0, 0.0)]
+# South to the origin and back north to where it began.
+OUT_AND_BACK = [(0.0, 5.0), (0.0, 0.0), (0.0, 5.0)]
 
 
 # -- projection --------------------------------------------------------------------------------
@@ -30,6 +32,18 @@ def test_the_projection_lands_on_the_nearest_segment():
 def test_the_projection_clamps_to_a_segment_end_rather_than_running_past_it():
     _, _, point = closest_point_on_polyline(STRAIGHT, (20.0, 3.0))
     assert point == pytest.approx([10.0, 0.0])
+
+
+def test_on_a_doubled_back_polyline_the_projection_keeps_the_outbound_leg():
+    """Out to the origin and back: both legs lie on one line, so the two distances tie up to
+    rounding, and the earlier leg has to win or the mover reads itself as on its way back."""
+    for y in (0.3, 2.5, 4.9):
+        index, _, _ = closest_point_on_polyline(OUT_AND_BACK, (1e-3, y))
+        assert index == 0, y
+
+
+def test_the_carrot_at_the_start_of_an_out_and_back_route_points_out():
+    assert lookahead_point(OUT_AND_BACK, (0.0, 5.0), 0.6) == pytest.approx([0.0, 4.4])
 
 
 # -- the carrot --------------------------------------------------------------------------------
