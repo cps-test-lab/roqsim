@@ -1,4 +1,4 @@
-"""Shared plumbing for the Neobotix ports, all four of which come from `neo_simulation2`.
+"""Shared plumbing for the Neobotix ports.
 
 Extracted at the third caller. The four platforms differ in drive — the MPO-700 steers, the MPO-500
 runs omni wheels, the MP-400 and MP-500 are differential — so their MJCF bodies and actuators are
@@ -35,12 +35,23 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
 from urdf_source import mesh_scales
 
 NEO_URL = "https://github.com/neobotix/neo_simulation2.git"
 #: The `humble` branch. `rolling` and `jazzy-sync` ship flattened URDFs whose joints are all `fixed`;
 #: `humble` keeps the xacro macros that describe the actual mechanisms.
 NEO_COMMIT = "832041452c1a0199afea1e9b65adf37381e96214"
+
+ROX_URL = "https://github.com/neobotix/rox.git"
+#: `jazzy`. The ROX is the one Neobotix platform NOT in `neo_simulation2`, at any branch -- it has its
+#: own repository, and `rox_description` is the package that ships its geometry. `humble` predates the
+#: Diff variant entirely (no diff_drive.xacro), and every file the Diff port reads is byte-identical
+#: between `jazzy` and `rolling`.
+ROX_COMMIT = "c865076d5412aca9c861e3b3326fb6a30cb393b1"
+#: The ROS package inside that repository whose `package://` refs the meshes are named by.
+ROX_PACKAGE = "rox_description"
+
 DEFAULT_FACES = 4000
 
 
@@ -92,6 +103,7 @@ def convert_meshes(
     model: str,
     root: Path,
     budgets: dict[str, int] | None = None,
+    pkg: str = "neo_simulation2",
 ) -> dict[str, str]:
     """Collada -> per-material OBJ -> decimated OBJ. Returns ``{mesh stem: MJCF scale}``.
 
@@ -99,6 +111,10 @@ def convert_meshes(
     never ships. ``budgets`` overrides the face budget per source stem, for the occasional mesh that
     is far heavier than the rest (the MPO-500's wheel Collada is 8.3 MB with every roller modelled,
     and its contact is a sphere, so the mesh is purely cosmetic).
+
+    ``pkg`` is the ROS package the URDF's ``package://`` refs name, and *source* is that package's
+    directory -- the two differ between the Neobotix repositories: in ``neo_simulation2`` one package
+    holds every robot, while the ROX's geometry is its own ``rox_description``.
 
     ``dae2obj``'s palette is written beside the meshes as ``<model>.materials.json`` so a
     generator's ``--check`` can rebuild the MJCF without Blender or pycollada.
@@ -109,7 +125,7 @@ def convert_meshes(
         stale.unlink()
     wanted = {}
     for mesh in urdf.iter("mesh"):
-        rel = mesh.get("filename").split("neo_simulation2/", 1)[1]
+        rel = mesh.get("filename").split(f"{pkg}/", 1)[1]
         wanted[Path(rel).stem] = source / rel
     with tempfile.TemporaryDirectory() as tmp:
         staged = Path(tmp) / "dae"
@@ -127,13 +143,72 @@ def convert_meshes(
         for stem, parts in palette.items():
             budget = (budgets or {}).get(stem, DEFAULT_FACES)
             for sub, _rgb in parts:
+                out = package / "meshes" / f"{sub}.obj"
                 subprocess.run(
                     [sys.executable, "-m", "roqsim.commands", "assets", "reduce-mesh",
                      "--target-faces", str(budget), "--no-materials",
-                     str(raw / f"{sub}.obj"), str(package / "meshes" / f"{sub}.obj")],
+                     str(raw / f"{sub}.obj"), str(out)],
                     check=True, cwd=root, capture_output=True,
                 )
+                # MuJoCo refuses a mesh of fewer than 4 vertices, and these exports carry the
+                # occasional stray triangle bound to its own material -- a degenerate scrap of the
+                # CAD, not a part. Dropping it here keeps it out of the palette and the asset block
+                # too, because both filter on what was actually shipped. Said out loud rather than
+                # silently, so a sub-mesh that is genuinely missing cannot hide behind it.
+                if _vertex_count(out) < 4:
+                    print(f"  dropped {sub}: {_vertex_count(out)} vertices, below MuJoCo's minimum")
+                    out.unlink()
     return scales
+
+
+def _vertex_count(obj: Path) -> int:
+    return sum(1 for line in obj.read_text().splitlines() if line.startswith("v "))
+
+
+def hull_obj(package: Path, stems: list[str], name: str, scale: str = "1 1 1",
+             clip: list[tuple[tuple[float, float, float], float]] | None = None) -> str:
+    """Write the convex hull of *stems* as ``meshes/<name>.obj``; returns *name*.
+
+    For a vendor link whose collision IS its full visual mesh. That mesh is split per material by
+    `dae2obj`, and a collision geom can name only one of the pieces -- which silently under-fills the
+    body, because the alphabetically first piece is not the largest. MuJoCo convex-hulls a collision
+    mesh anyway, so the hull of every piece together is what the vendor's own collision compiles to,
+    at a few dozen faces instead of several thousand.
+
+    *scale* is the MJCF scale its source meshes carry, and it is baked into the hull's vertices --
+    so the hull is written in metres and needs no scale of its own. Leaving it to be inferred is the
+    trap: `asset_block` derives a scale from the sub-mesh naming this asset deliberately does not
+    share, and would silently give a decimetre hull a scale of 1.
+
+    *clip* is a list of ``((nx, ny, nz), d)`` half-spaces, each keeping the vertices with
+    ``n . v <= d``. A hull is convex by construction, so a body whose real outline is NOT convex --
+    a chassis with a chamfered corner, say -- comes out with the chamfer filled in, and anything the
+    vendor put in that corner ends up inside the collision. Clipping to the planes the chamfer
+    already follows keeps the hull convex and the corner open.
+
+    Faces are wound outward, so MuJoCo compiles the result as a closed solid.
+    """
+    from scipy.spatial import ConvexHull
+
+    verts = np.vstack([
+        np.array([[float(x) for x in line.split()[1:4]]
+                  for line in (package / f"meshes/{stem}.obj").read_text().splitlines()
+                  if line.startswith("v ")])
+        for stem in stems
+    ])
+    verts = verts * np.array([float(v) for v in scale.split()])
+    for normal, offset in clip or []:
+        verts = verts[verts @ np.array(normal) <= offset]
+    hull = ConvexHull(verts)
+    index = {int(v): i for i, v in enumerate(hull.vertices)}
+    lines = [f"v {p[0]:.6f} {p[1]:.6f} {p[2]:.6f}" for p in verts[hull.vertices]]
+    for simplex, plane in zip(hull.simplices, hull.equations, strict=True):
+        a, b, c = verts[simplex]
+        if np.dot(np.cross(b - a, c - a), plane[:3]) < 0:
+            simplex = simplex[[0, 2, 1]]
+        lines.append("f " + " ".join(str(index[int(v)] + 1) for v in simplex))
+    (package / f"meshes/{name}.obj").write_text("\n".join(lines) + "\n")
+    return name
 
 
 def colours(package: Path, model: str) -> dict[str, str]:
