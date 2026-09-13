@@ -356,6 +356,12 @@ class SpawnModelPlugin(Plugin):
             for g in geoms:
                 g.mass = float(g.mass) * factor
         if self.friction is not None:
+            if not geoms:
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: friction override needs geoms on the prop's root "
+                    f"body to carry it, but {asset.path} gives that body none (its geoms sit on child "
+                    f"bodies). Put the colliding geoms on the root body, or drop the override."
+                )
             for g in geoms:
                 # MuJoCo's geom friction is [sliding, torsional, rolling]; keep the prop's own value
                 # for any component the world did not name.
