@@ -37,6 +37,11 @@ least-squares inverse of the site Jacobian, integrate to joint position targets,
 enormous joint velocities from a small Cartesian command, and in a contact task that reads as a
 sudden force spike -- a physics artefact indistinguishable, in the metrics, from a real jam.
 
+**Which state each law linearises at.** The motion law measures its pose error on the arm and
+resolves it through the Jacobian at the COMMANDED joint targets, the configuration its increment is
+added to, so a lagging servo does not bend a straight commanded motion. The wrench laws take the
+Jacobian at the measured joints. ``current_pose`` reports the measured pose.
+
 **Single-writer.** This plugin never touches ``data.ctrl``. It writes joint *targets* through the
 ``ArmHandle`` that ``arm_controller`` publishes, and ``arm_controller`` remains the only writer of
 that arm's actuators.
@@ -200,6 +205,9 @@ class CartesianAdmittancePlugin(Plugin):
         self._ft = None
         self._site_id = -1
         self._dofs: np.ndarray = np.zeros(0, dtype=int)
+        self._qposadr: np.ndarray = np.zeros(0, dtype=int)
+        # Scratch state for forward kinematics at the commanded joint targets; never stepped.
+        self._kin: mujoco.MjData | None = None
         self._joint_names: list[str] = []
         self._twist = np.zeros(6)
         self._goal_pos: np.ndarray | None = None
@@ -267,13 +275,16 @@ class CartesianAdmittancePlugin(Plugin):
         # commands them. Anything else in the model (a second arm, a conveyor) stays untouched --
         # a Jacobian solve over every DOF in the world would happily move all of them.
         self._joint_names = list(self._arm_handle.joint_names)
-        dofs = []
+        dofs, qposadr = [], []
         for jname in self._joint_names:
             jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{jname}")
             if jid < 0:
                 raise RuntimeError(f"cartesian_admittance: joint {prefix}{jname!r} not found")
             dofs.append(int(m.jnt_dofadr[jid]))
+            qposadr.append(int(m.jnt_qposadr[jid]))
         self._dofs = np.array(dofs, dtype=int)
+        self._qposadr = np.array(qposadr, dtype=int)
+        self._kin = mujoco.MjData(m)
 
         ns = entity.meta.get("namespace", "") if entity else ""
 
@@ -473,8 +484,16 @@ class CartesianAdmittancePlugin(Plugin):
             # here rather than catching up on the ticks that were missed.
             self._next_t = ctx.sim_time + dt
 
-        twist = self._wrench_twist(dt) if self._uses_wrench else self._position_twist()
-        self._apply(ctx, self._clamp(twist), dt)
+        if self._uses_wrench:
+            self._apply(ctx, self._clamp(self._wrench_twist(dt)), dt)
+            return
+        # The motion law's increment is added to the accumulated joint TARGET, so it is resolved
+        # through the Jacobian at that target. The servo lags its target by a whole configuration
+        # during a move, and a Jacobian taken at the measured joints maps the commanded twist to a
+        # step that is right for where the arm was, not for the target it is added to -- the target
+        # then walks off the commanded line, sideways and in tilt. The error stays measured, which
+        # is what lets the accumulated target carry the drive's steady-state error.
+        self._apply(ctx, self._clamp(self._position_twist()), dt, self._commanded_kinematics(ctx))
 
     # -- laws ------------------------------------------------------------------------------------
 
@@ -545,12 +564,36 @@ class CartesianAdmittancePlugin(Plugin):
         out[3:] = _limit(out[3:], self.v_ang)
         return out
 
-    def _apply(self, ctx: SimContext, twist: np.ndarray, dt: float) -> None:
-        """Resolve a world-frame twist to joint position targets via damped least squares."""
-        m, d = ctx.model, ctx.data
+    def _seed_target(self) -> None:
+        """Start the accumulated joint target from the arm's measured joints, once per hand-over."""
+        if self._q_target is None:
+            _, positions, _, _ = self._arm_handle.read_state()
+            by_name = dict(zip(self._arm_handle.joint_names, positions, strict=False))
+            self._q_target = np.array([by_name[n] for n in self._joint_names], dtype=float)
+
+    def _commanded_kinematics(self, ctx: SimContext) -> mujoco.MjData:
+        """Kinematics with this arm at its commanded joint targets and everything else as measured."""
+        self._seed_target()
+        kin = self._kin
+        kin.qpos[:] = ctx.data.qpos
+        kin.mocap_pos[:] = ctx.data.mocap_pos
+        kin.mocap_quat[:] = ctx.data.mocap_quat
+        kin.qpos[self._qposadr] = self._q_target
+        mujoco.mj_kinematics(ctx.model, kin)
+        mujoco.mj_comPos(ctx.model, kin)
+        return kin
+
+    def _apply(
+        self, ctx: SimContext, twist: np.ndarray, dt: float, data: mujoco.MjData | None = None
+    ) -> None:
+        """Resolve a world-frame twist to joint position targets via damped least squares.
+
+        The Jacobian is taken at *data*'s configuration, the measured state when none is given.
+        """
+        m = ctx.model
         jacp = np.zeros((3, m.nv))
         jacr = np.zeros((3, m.nv))
-        mujoco.mj_jacSite(m, d, jacp, jacr, self._site_id)
+        mujoco.mj_jacSite(m, ctx.data if data is None else data, jacp, jacr, self._site_id)
         jac = np.vstack([jacp, jacr])[:, self._dofs]
 
         # dq = J^T (J J^T + lambda^2 I)^-1 v. Damping trades exactness for boundedness near a
@@ -560,9 +603,6 @@ class CartesianAdmittancePlugin(Plugin):
         jjt = jac @ jac.T + lam2 * np.eye(6)
         dq = jac.T @ np.linalg.solve(jjt, twist)
 
-        if self._q_target is None:
-            _, positions, _, _ = self._arm_handle.read_state()
-            by_name = dict(zip(self._arm_handle.joint_names, positions, strict=False))
-            self._q_target = np.array([by_name[n] for n in self._joint_names], dtype=float)
+        self._seed_target()
         self._q_target = self._q_target + dq * dt
         self._arm_handle.set_targets(self._joint_names, self._q_target.tolist())
