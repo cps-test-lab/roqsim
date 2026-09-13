@@ -21,7 +21,11 @@ Config::
                                #   or arm instead of to the world, so it rides what carries it.
                                #   `pos`/`rpy` are then relative to that body. Same spelling as
                                #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
-        attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`
+        attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
+        parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
+                               #   the carrier to hang from; `pos`/`rpy` are the vendor joint origin
+        frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
+                               #   vendor name its manifest's `frame_id:` declares (see below)
         show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
         fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
                                #   darkness step between single- and multi-sensor overlap
@@ -47,6 +51,47 @@ mount declared here is part of the world that states it.
 ``attach_to`` and ``motion:`` are mutually exclusive, and the refusal says why: a mount that rides
 a body has its pose from that body, so there is nothing for a ``motion:`` answer to own. Placing
 such a sensor means moving what carries it.
+
+**A device mounted by its carrier.** Nested under a robot or arm -- in the world's ``components:``,
+or in the robot's own manifest -- a ``spawn_sensor`` is that carrier's device and inherits its
+identity, so a robot manifest states a vendor mount and nothing else::
+
+    components:
+      - spawn_sensor: {model: rplidar_a1, parent_frame: shell_link,
+                       pos: [-0.04, 0, 0.098715], rpy: [0, 0, 1.5708], frame_id: rplidar_link}
+        name: rplidar
+
+* ``attach_prefix`` defaults to the carrier's prefix, and ``prefix`` to ``<attach_prefix><name>_``,
+  so two identical scanners on one base never collide and the device's own components resolve
+  its own bodies (``exclude_body: mount`` is this device's housing and nothing else).
+* ``parent_frame`` is where it hangs: a body of the carrier, or a frame the carrier declares
+  (``spawn_robot``'s ``frames:``), resolved under ``attach_prefix``. It is required when nested
+  (``attach_to`` still works and names a body), and the two are mutually exclusive.
+* ``namespace`` defaults to the carrier entity's, at configure; an explicit one wins, and a capture
+  plugin's ``topics:`` still overrides a topic outright.
+* A nested mount is welded: ``motion`` other than ``static`` is refused.
+
+**Frames and placeholders.** A device manifest may declare a ``frames:`` chain relative to its own
+bodies (:mod:`roqsim.frames`), first entry hanging from the mount and the scan frame named
+``{frame_id}``, plus the vendor's default name for that frame as ``frame_id:``::
+
+    frame_id: laser
+    components:
+      - lidar: {site: scan, frame_id: "{frame_id}", exclude_body: mount, emit_static_tf: false}
+    frames:
+      - {name: "{frame_id}", parent: mount, pos: [0, 0, 0.03], rpy: [3.14159, 0, 0]}
+
+Two placeholders are filled into every string of the manifest's component configs and ``frames:``:
+``{frame_id}`` (this mount's ``frame_id``) and ``{parent_frame}`` (its ``parent_frame``, else
+``attach_to``, else ``world``). Any other is refused. A mount that sets no ``frame_id`` takes the
+manifest's ``frame_id:`` (:func:`roqsim.manifest.manifest_frame_id`); an explicit one wins. A device
+whose vendor names no default declares none, and a mount of it that uses ``{frame_id}`` without
+setting one is refused, as is a second mount on one carrier with the same ``frame_id``. Each frame
+becomes a site of the
+device; at configure the mount publishes, from the compiled model, ``parent_frame -> first frame``
+(only for a welded mount, whose pose that is) and each further frame from its declared parent,
+or from the first frame when its parent is a body of the device. Names are bare and scoped by the
+mount's namespace.
 
 **Moving a mount after the world is built.** ``motion:`` is the same three-answer key
 ``spawn_model`` uses for a prop, and it is what a trial needs to place a sensor at run time -- a
@@ -150,10 +195,25 @@ import numpy as np
 
 from roqsim import raycast
 from roqsim.context import Entity, SimContext
-from roqsim.manifest import expand_manifest, manifest_fov
+from roqsim.frames import (
+    add_frame_sites,
+    parse_frames,
+    static_tf_endpoint,
+    static_transforms,
+    substitute,
+)
+from roqsim.manifest import (
+    expand_manifest,
+    load_manifest,
+    manifest_fov,
+    manifest_frame_id,
+    manifest_frames,
+)
 from roqsim.models import ModelError, apply_assets, resolve_model
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import rpy_to_quat
+from roqsim.registry import resolve_plugin
+from roqsim.schema import Field
 
 #: Name suffix marking a sensor model's FOV-visualisation geoms (non-colliding, hidden until
 #: revealed). A name convention, not a geom group -- see the module docstring for why.
@@ -451,20 +511,139 @@ def _intrinsics_errors(intr) -> list[str]:
     return errors
 
 
+def _placeholders(config: dict) -> dict[str, str]:
+    """The values a device manifest's ``{frame_id}``/``{parent_frame}`` placeholders take.
+
+    ``frame_id`` is absent until a mount has one, so a manifest that uses it on a mount that cannot
+    supply it is refused by name rather than publishing a frame called ``{frame_id}``.
+    """
+    values = {"parent_frame": config.get("parent_frame") or config.get("attach_to") or "world"}
+    if config.get("frame_id"):
+        values["frame_id"] = str(config["frame_id"])
+    return values
+
+
+def _mentions_frame_id(value) -> bool:
+    """Whether a ``{frame_id}`` placeholder appears in any string of *value*, however nested."""
+    if isinstance(value, dict):
+        return any(_mentions_frame_id(v) for v in value.values())
+    if isinstance(value, list):
+        return any(_mentions_frame_id(v) for v in value)
+    return isinstance(value, str) and "{frame_id}" in value
+
+
 class SpawnSensorPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
+    expansion_keys = frozenset(
+        {
+            "model",
+            "default_plugins",
+            "prefix",
+            "attach_prefix",
+            "frame_id",
+            "parent_frame",
+            "attach_to",
+        }
+    )
+
+    #: Every key this plugin and its ``expand`` read -- including ``attach_prefix``/``prefix``/
+    #: ``frame_id``, which a carrier's manifest or the expansion fills in -- and nothing else, which
+    #: is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried: an
+    #: override that stops at this mount instead of reaching its device component would otherwise
+    #: leave a key nothing reads. Ranges and combinations stay in :meth:`validate_config`.
+    CONFIG_SCHEMA = {
+        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "namespace": Field(
+            str, default="", doc="transport scope; a nested mount's is its carrier's"
+        ),
+        "prefix": Field(str, default="", doc="MJCF name prefix; nested: <attach_prefix><name>_"),
+        "pos": Field(list, unit="m", doc="[x, y] or [x, y, z] mount position"),
+        "rpy": Field(list, unit="rad", doc="[roll, pitch, yaw] mount orientation"),
+        "motion": Field(str, default="static", doc="static | driven | physics"),
+        "attach_to": Field(str, doc="body of an already-spawned carrier to weld the mount to"),
+        "attach_prefix": Field(str, doc="carrier's MJCF prefix for attach_to/parent_frame"),
+        "parent_frame": Field(str, doc="carrier body or declared frame to hang from"),
+        "frame_id": Field(str, doc="the device's scan frame; default: its manifest's frame_id"),
+        "show_fov": Field(bool, default=False, doc="draw the sensor's field of view"),
+        "fov_alpha": Field(float, default=0.25, doc="FOV translucency, 0..1"),
+        "fov_near": Field(float, unit="m", doc="FOV near plane; default: model manifest"),
+        "fov_range": Field(float, unit="m", doc="FOV far plane; default: model manifest"),
+        "fov_rays": Field(list, default=[32, 24], doc="occlusion-clip ray grid [nu, nv]"),
+        "intrinsics": Field(dict, doc="this unit's measured lens: fx, fy, cx, cy, width, height"),
+        "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
+        "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
+    }
+    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
         """Inject the sensor model's default capture plugin (its ``<model>.manifest.yaml``).
 
         Keeps the capture plugin out of the world YAML: it ships with the model and is wired to
-        this mount via ``robot: <name>`` -- the same config key ``lidar``/``oakd_camera`` already
-        use for a robot's own prefix/namespace, so a capture plugin needs no mount-specific config.
+        this mount by position, so a capture plugin needs no mount-specific config.
+
+        A nested mount's identity is settled here, BEFORE the manifest is read, because the device's
+        components are prefixed and templated from it: ``attach_prefix`` from the carrier's
+        ``prefix``, ``prefix`` from that plus this entry's label, and ``frame_id`` from the device
+        manifest's vendor default (see the module docstring). Written into the config, so the record
+        shows them.
         """
-        return expand_manifest(spec, world, base_dir=base_dir)
+        cfg = spec.config
+        if spec.entity is not None:
+            carrier = next((s for s in world if s.address == spec.entity), None)
+            if carrier is None:
+                raise PluginError(
+                    f"spawn_sensor '{spec.address}': its carrier '{spec.entity}' is not in this "
+                    f"document, so there is no prefix to mount under."
+                )
+            cfg.setdefault("attach_prefix", carrier.config.get("prefix", ""))
+            cfg.setdefault("prefix", f"{cfg['attach_prefix']}{spec.label}_")
+        if cfg.get("model") and "frame_id" not in cfg:
+            model_file = resolve_model(cfg["model"], base_dir=base_dir).path
+            default = manifest_frame_id(model_file)
+            if default is not None:
+                cfg["frame_id"] = default
+            elif _mentions_frame_id(manifest_frames(model_file)) or _mentions_frame_id(
+                load_manifest(model_file, base_dir=base_dir)
+            ):
+                raise PluginError(
+                    f"spawn_sensor '{spec.address}': model {cfg['model']!r} names its scan frame "
+                    f"'{{frame_id}}', and its manifest declares no default 'frame_id' because the "
+                    f"vendor names none. Set 'frame_id' on this mount to the frame its scan is "
+                    f"stamped in."
+                )
+        if cfg.get("frame_id") and spec.entity is not None:
+            cls._refuse_shared_frame_id(spec, world, base_dir)
+        return expand_manifest(spec, world, base_dir=base_dir, substitutions=_placeholders(cfg))
+
+    @classmethod
+    def _refuse_shared_frame_id(cls, spec, world, base_dir) -> None:
+        """Refuse a second mount on one carrier with the same ``frame_id``.
+
+        Mounts on one carrier share its namespace, so two identical devices left on their vendor
+        default would publish one frame name from two poses, and a TF consumer would take whichever
+        transform arrived last.
+        """
+        for other in world:
+            if (
+                other is spec
+                or other.address == spec.address
+                or other.entity != spec.entity
+                or other.config.get("frame_id") != spec.config["frame_id"]
+            ):
+                continue
+            try:
+                same_kind = issubclass(resolve_plugin(other.ref, base_dir=base_dir), cls)
+            except PluginError:
+                continue
+            if same_kind:
+                raise PluginError(
+                    f"spawn_sensor '{spec.address}' and '{other.address}' both use frame_id "
+                    f"{spec.config['frame_id']!r} on '{spec.entity}', so their scans and transforms "
+                    f"would share one frame. Give each mount its own 'frame_id'."
+                )
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -482,6 +661,10 @@ class SpawnSensorPlugin(Plugin):
         # body" one way whatever it is welding.
         self.attach_to = self.config.get("attach_to", "")
         self.attach_prefix = self.config.get("attach_prefix", "")
+        #: A carrier body or declared frame to hang from; see "A device mounted by its carrier".
+        self.parent_frame = self.config.get("parent_frame", "")
+        #: The device's own fixed frames, templated and parsed in :meth:`build`.
+        self.frames: list = []
         self.motion = self.config.get("motion", "static")
         self.driven = self.motion == "driven"
         self.free = self.motion == "physics"
@@ -523,8 +706,30 @@ class SpawnSensorPlugin(Plugin):
                 "its pose FROM that body, so there is nothing for a 'motion' answer to own. To "
                 "move such a sensor, move what carries it."
             )
-        if config.get("attach_prefix") and not config.get("attach_to"):
-            errors.append("'attach_prefix' prefixes 'attach_to', which is not set")
+        if config.get("attach_to") and config.get("parent_frame"):
+            errors.append(
+                "'attach_to' and 'parent_frame' both say where the mount hangs; give one. "
+                "'parent_frame' also accepts a frame the carrier declares."
+            )
+        nested = self.entity is not None
+        if nested and not (config.get("attach_to") or config.get("parent_frame")):
+            errors.append(
+                f"spawn_sensor '{self.address}' is mounted on '{self.entity}' but says nowhere to "
+                "hang from: set 'parent_frame' to a body or declared frame of the carrier."
+            )
+        if (nested or config.get("parent_frame")) and config.get("motion", "static") != "static":
+            errors.append(
+                f"'motion: {config['motion']}' on a mount that rides its carrier: the mount is welded "
+                "to what carries it, so its pose is that carrier's to move."
+            )
+        if (
+            config.get("attach_prefix")
+            and not nested
+            and not (config.get("attach_to") or config.get("parent_frame"))
+        ):
+            errors.append(
+                "'attach_prefix' prefixes 'attach_to'/'parent_frame', neither of which is set"
+            )
         if "motion" in config and config["motion"] not in {"static", "driven", "physics"}:
             errors.append(
                 f"'motion' must be one of static, driven, physics -- got {config['motion']!r}. "
@@ -587,10 +792,22 @@ class SpawnSensorPlugin(Plugin):
             # the world spec every time; camera-less paths (bundled envelope, lidar sector) ignore it.
             self._show_fov(child, asset, near, far, world_spec=spec)
         self._apply_motion(child, asset)
-        frame = self._parent_body(spec).add_frame()
+        # After the FOV synthesis, which reads the model's sole scan site: frame sites are extra.
+        where = f"spawn_sensor {self.sensor_name} ({self.config['model']})"
+        raw_frames = substitute(manifest_frames(asset.path), _placeholders(self.config), where)
+        self.frames = parse_frames(raw_frames, where)
+        add_frame_sites(child, self.frames, where)
+        site = spec.site(self.attach_prefix + self.parent_frame) if self.parent_frame else None
+        if site is not None:
+            # Attaching AT a site makes the site's orientation the parent frame, so `pos`/`rpy` are
+            # the joint origin within it -- the `spawn_arm` end-effector pattern.
+            frame = spec.attach(child, prefix=self.prefix, site=site)
+        else:
+            frame = self._parent_body(spec).add_frame()
         frame.pos = self.pos
         frame.quat = self.quat
-        spec.attach(child, prefix=self.prefix, frame=frame)
+        if site is None:
+            spec.attach(child, prefix=self.prefix, frame=frame)
 
     def _parent_body(self, spec: mujoco.MjSpec):
         """What the mount hangs from: a carrier's body, or the world.
@@ -599,17 +816,46 @@ class SpawnSensorPlugin(Plugin):
         here -- letting it through surfaces as a ``TypeError`` inside ``add_frame`` that names
         neither the body nor the ordering that caused it.
         """
-        if not self.attach_to:
+        if not (self.attach_to or self.parent_frame):
             return spec.worldbody
-        body_name = self.attach_prefix + self.attach_to
+        body_name = self.attach_prefix + (self.attach_to or self.parent_frame)
         parent = spec.body(body_name)
         if parent is None:
+            key = "attach_to" if self.attach_to else "parent_frame"
+            what = "body" if self.attach_to else "body or declared frame"
             raise ModelError(
-                f"spawn_sensor {self.sensor_name!r}: attach_to body {body_name!r} is not in the "
+                f"spawn_sensor {self.sensor_name!r}: {key} {what} {body_name!r} is not in the "
                 f"scene yet. Declare the robot or arm that carries it BEFORE this entry, and set "
                 f"`attach_prefix` to that carrier's prefix."
             )
         return parent
+
+    def _frame_links(self, ctx: SimContext) -> list[dict]:
+        """The device chain as static transforms: ``parent_frame -> first frame``, then the rest.
+
+        The root link is published only for a welded mount -- a driven or free one moves, and a
+        latched transform would freeze it at its spawn pose -- while the device's own links are
+        rigid whatever carries it.
+        """
+        if not self.frames:
+            return []
+        first = self.frames[0].name
+        names = {f.name for f in self.frames}
+        links = []
+        if not (self.driven or self.free):
+            anchor = self.parent_frame or self.attach_to
+            links.append(
+                (
+                    anchor or "world",
+                    (self.attach_prefix + anchor) if anchor else "world",
+                    first,
+                    self.prefix + first,
+                )
+            )
+        for f in self.frames[1:]:
+            parent = f.parent if f.parent in names else first
+            links.append((parent, self.prefix + parent, f.name, self.prefix + f.name))
+        return static_transforms(ctx.model, links, f"spawn_sensor {self.sensor_name}")
 
     def _apply_motion(self, child: mujoco.MjSpec, asset) -> None:
         """Give the mount's root body whatever ``motion:`` asked for. ``static`` adds nothing.
@@ -934,6 +1180,15 @@ class SpawnSensorPlugin(Plugin):
         return sites[0]
 
     def configure(self, ctx: SimContext) -> None:
+        namespace = self.config.get("namespace", "")
+        if "namespace" not in self.config and self.entity is not None:
+            carrier = ctx.entities.get(self.entity)
+            if carrier is None:
+                raise RuntimeError(
+                    f"spawn_sensor {self.sensor_name!r}: its carrier {self.entity!r} registered no "
+                    f"entity, so there is no namespace to inherit."
+                )
+            namespace = carrier.meta.get("namespace", "")
         ctx.entities.add(
             Entity(
                 name=self.sensor_name,
@@ -943,11 +1198,14 @@ class SpawnSensorPlugin(Plugin):
                     "prefix": self.prefix,
                     "model": self.config["model"],
                     # Inherited by the mount's capture plugin (manifest-injected or explicit), so
-                    # it needs no namespace plumbing of its own.
-                    "namespace": self.config.get("namespace", ""),
+                    # it needs no namespace plumbing of its own. A nested mount's is its carrier's.
+                    "namespace": namespace,
                     # How a placement reaches this mount: `roqsim.placement.place_body` finds a
                     # driven one by its body, and a free one by the joint named here.
                     **({"base_joint": self._base_joint} if self._base_joint else {}),
                 },
             )
         )
+        links = self._frame_links(ctx)
+        if links:
+            ctx.interface.add(static_tf_endpoint("frames", self.sensor_name, namespace, links))

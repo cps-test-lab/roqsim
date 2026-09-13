@@ -380,9 +380,9 @@ def test_it_describes_components_the_document_never_declared(capsys, robot_world
     """
     described = _describe(capsys, str(robot_world))
     by_address = {p["address"]: p for p in described["components"]}
-    assert by_address["robot.lidar"]["origin"] == "manifest"
+    assert by_address["robot.rplidar.lidar"]["origin"] == "manifest"
     assert by_address["robot"]["origin"] == "document"
-    assert "components.robot.lidar.rays" in by_address["robot.lidar"]["paths"]
+    assert "components.robot.rplidar.lidar.rays" in by_address["robot.rplidar.lidar"]["paths"]
 
 
 def test_every_published_address_is_one_an_override_accepts(capsys, robot_world):

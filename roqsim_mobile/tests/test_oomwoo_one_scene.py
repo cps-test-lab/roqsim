@@ -1,6 +1,6 @@
 """The OOMWOO One robot vacuum: a description that states everything, and a robot that barely balances.
 
-Two things this file pins.
+Three things this file pins.
 
 ``test_no_value_here_is_an_assumption`` guards what makes this port unusual: every drive and sensor
 number is the vendor's own, from ``params.xacro``, ``plugins.xacro`` and ``config/navigation.yaml``.
@@ -12,6 +12,10 @@ whole-robot COM sits ~1.6 mm behind the wheel axle, in a support polygon 144 mm 
 taps rather than rolls -- in contact for a few percent of steps. The robot drives fine, but it is
 marginally pitch-stable, and for a vacuum that is a real constraint: a filling dustbin, or any payload
 mounted forward of the axle, tips it onto its bumper ring.
+
+``test_the_wall_reads_its_true_range`` pins the lidar mount. The site lies inside the vendor's lidar
+puck (``base_scan``), so the rays skip that one housing body and no other robot geometry. Excluding
+any other body leaves the puck in the way, and every ray then reads ``range_min`` from inside it.
 """
 
 from __future__ import annotations
@@ -21,11 +25,12 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
-
 from mobile_scene_utils import named
 
+from roqsim import raycast
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import Plugin
 
 #: From the expanded makerspet/oomwoo-one description @ 5305e6c5, not measured from our model.
 TOTAL_MASS = 2.930
@@ -220,5 +225,84 @@ def test_the_bumper_ring_is_present_and_proud_of_the_body():
             reach = float(np.linalg.norm(offset)) + float(model.geom_size[gid][1])
             assert reach > body_radius, "a bumper plate does not stand proud of the body"
             assert reach < body_radius + 0.01, "a bumper plate stands too far proud"
+    finally:
+        engine.shutdown()
+
+
+# -- the scanner mount: the vendor's frame, and only its own housing excluded --------------------
+
+WALL_FACE = 1.0  # near face of the probe wall, along world +x from the robot's origin
+
+
+class _WallAhead(Plugin):
+    """A wall across world +x, ``WALL_FACE`` ahead of the spawned robot, spanning the scan plane."""
+
+    def build(self, spec: mujoco.MjSpec, ctx) -> None:
+        spec.worldbody.add_geom(name="scan_probe_wall", type=mujoco.mjtGeom.mjGEOM_BOX,
+                                pos=[WALL_FACE + 0.05, 0.0, 0.5], size=[0.05, 3.0, 0.5])
+
+
+def _scan_engine():
+    world = {
+        "sim": {"timestep": 0.002},
+        "components": [
+            {f"{__name__}:_WallAhead": {}},
+            {"spawn_robot": {"model": "oomwoo_one", "prefix": "o_"}, "name": "o"},
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.setup()
+    engine.reset()
+    engine.step()  # the rate gate starts open, so the first step casts
+    return engine
+
+
+def _lidar(engine):
+    return next(p for p in engine.plugins if type(p).__name__ == "LidarPlugin")
+
+
+def test_the_scan_is_stamped_in_the_vendors_base_scan_frame():
+    """plugins.xacro stamps the scan in base_scan; scan_joint hangs it off base_link, rpy 0."""
+    engine = _scan_engine()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        assert _lidar(engine).exclude_body == "base_scan", (
+            "a lidar excludes its own housing and nothing else")
+        hints = next(e for e in engine.ctx.interface.all() if e.name == "scan").backend["ros2"]
+        assert hints["frame_id"] == "base_scan"
+        tf = hints["static_tf"]
+        assert tf["parent"] == "base_link"
+        assert np.allclose(tf["translation"], [0.0, 0.0, LIDAR_HEIGHT], atol=1e-9)
+        assert np.allclose(np.abs(tf["rotation"]), [1.0, 0.0, 0.0, 0.0], atol=1e-9)
+        sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "o_lidar")
+        puck = named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_scan")
+        assert np.allclose(data.site_xpos[sid], data.xpos[puck], atol=1e-9)
+        assert np.allclose(data.site_xmat[sid], data.xmat[puck], atol=1e-9)
+    finally:
+        engine.shutdown()
+
+
+def test_the_wall_reads_its_true_range():
+    """See the module docstring. No ray may return from inside robot geometry."""
+    engine = _scan_engine()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        lidar = _lidar(engine)
+        scan = lidar.latest
+        ranges = np.asarray(scan.ranges)
+        assert ranges[0] == pytest.approx(WALL_FACE, abs=1e-3), "bearing 0 looks along +x"
+        assert ranges.min() > lidar.range_min, "a ray is clamped to range_min"
+        sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "o_lidar")
+        angles = scan.angle_min + scan.angle_increment * np.arange(len(ranges))
+        local = np.stack([np.cos(angles), np.sin(angles), np.zeros_like(angles)], axis=1)
+        dirs = local @ data.site_xmat[sid].reshape(3, 3).T
+        hits = raycast.buffers(len(dirs), normals=True)
+        raycast.cast(model, data, data.site_xpos[sid], dirs, cutoff=lidar.range_max,
+                     bodyexclude=named(model, mujoco.mjtObj.mjOBJ_BODY, "o_base_scan"), out=hits)
+        hit = hits.geomid >= 0
+        assert hit.all()
+        assert not np.any(np.einsum("ij,ij->i", hits.normal[hit], dirs[hit]) > 0), (
+            "a ray returns from inside geometry")
+        assert np.all(model.geom_bodyid[hits.geomid] == 0), "a ray returns from the robot itself"
     finally:
         engine.shutdown()

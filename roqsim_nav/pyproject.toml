@@ -21,7 +21,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+# The navigator is embodiment-agnostic; its tests are not. They drive the embodiments it serves -- a
+# `spawn_robot` TurtleBot 4 (roqsim_mobile), a `walker` (roqsim_walker) and `box` props (roqsim_assets),
+# all in `nav_opponents.yaml` -- because a navigator tested only against stand-ins is not tested
+# against the bodies worlds give it. `roqsim_walker` depends back on this package, so that entry is a
+# cycle confined to the extra; the runtime graph above stays a tree.
+test = ["pytest>=7.0", "roqsim_mobile", "roqsim_walker", "roqsim_assets"]
 # ORCA local collision avoidance: the `orca` model of the world-level `avoidance:` plugin. Built from
 # source (Cython), so it is opt-in -- without it a navigator follows its planned path without
 # yielding, and logs why.

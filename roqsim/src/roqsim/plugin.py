@@ -84,6 +84,12 @@ class Plugin:
     #: silently running alongside the default it meant to replace.
     requires_owner: bool = False
 
+    #: Config keys :meth:`expand` reads. An override of one on a component a manifest injected
+    #: arrives after that component expanded, so what it brought in would keep the old value while
+    #: the component itself took the new one; :func:`roqsim.config.load_config` refuses it instead
+    #: and says to declare the component in the world, where the value lands before expansion.
+    expansion_keys: frozenset[str] = frozenset()
+
     def __init__(
         self,
         config: dict | None = None,
@@ -133,22 +139,26 @@ class Plugin:
 
         Called once at config load, before any plugin is instantiated, so a plugin can pull in
         others it implies -- e.g. a spawn plugin injecting a model's default controller/sensor
-        plugins from its manifest (see :func:`roqsim.manifest.expand_manifest`). ``world`` is the
-        list of explicitly-declared specs, so a plugin can skip a default the world already
-        declares. Default: none.
+        plugins from its manifest (see :func:`roqsim.manifest.expand_manifest`). ``world`` is every
+        spec declared or injected so far, so a plugin can skip a default the world -- or an outer
+        manifest -- already declares. What this returns is expanded in turn, depth-first (see
+        :func:`roqsim.config.expand_document`); list the config keys read here in
+        :attr:`expansion_keys`. Default: none.
         """
         return []
 
     # -- endpoint topic hardwiring ------------------------------------------------------------
     def topic_override(self, endpoint_name: str) -> str | None:
-        """Absolute topic hardwired for the endpoint ``endpoint_name``, or ``None`` if unset.
+        """Topic set for the endpoint ``endpoint_name``, or ``None`` if unset.
 
-        Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: /abs/topic}``), keyed by
+        Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: <topic>}``), keyed by
         the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). An
         endpoint-producing plugin uses it as ``self.topic_override("image") or <namespaced default>``
         when filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
         the bridge, overriding the endpoint's ``namespace`` -- so a producer can match external /
-        hardware topic names regardless of its scope.
+        hardware topic names regardless of its scope. A relative value renames the endpoint inside
+        its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
+        the robot's namespace.
         """
         return (self.config.get("topics") or {}).get(endpoint_name)
 
@@ -242,19 +252,29 @@ class Plugin:
 
     @staticmethod
     def validate_topics(config: dict) -> list[str]:
-        """Validate the optional ``topics:`` hardwire map; call from ``validate_config``.
+        """Validate the optional ``topics:`` map; call from ``validate_config``.
 
-        ``topics`` must be a mapping of endpoint-name -> absolute topic string (leading ``/``).
+        ``topics`` must be a mapping of endpoint-name -> topic: absolute (leading ``/``, used
+        verbatim) or relative (scoped under the endpoint's namespace).
         """
         topics = config.get("topics")
         if topics is None:
             return []
         if not isinstance(topics, dict):
-            return ["'topics' must be a mapping of endpoint-name -> absolute topic"]
+            return ["'topics' must be a mapping of endpoint-name -> topic"]
         errors = []
         for key, value in topics.items():
-            if not isinstance(value, str) or not value.startswith("/"):
-                errors.append(f"topics[{key!r}] must be an absolute topic (start with '/')")
+            if (
+                not isinstance(value, str)
+                or value.strip("/") == ""
+                or value.endswith("/")
+                or "//" in value
+                or any(c.isspace() for c in value)
+            ):
+                errors.append(
+                    f"topics[{key!r}] must be a topic name: '/abs/name' (verbatim) or 'name' "
+                    f"(under the endpoint's namespace), with no empty segment or whitespace"
+                )
         return errors
 
     # -- validation ---------------------------------------------------------------------------

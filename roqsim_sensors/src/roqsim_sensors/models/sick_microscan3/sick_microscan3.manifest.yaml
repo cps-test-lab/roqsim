@@ -1,0 +1,51 @@
+# SICK microScan3 Core safety laser scanner, as a device `spawn_sensor` mounts -- on its own, or
+# nested in a robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: Neobotix neo_simulation2 (see sick_microscan3.xml). Scan values: SICK
+# data sheet MICS3-ACAZ40PZ1 (microScan3 Core, 4.0 m protective field),
+# https://www.sick.com/media/pdf/6/46/646/dataSheet_MICS3-ACAZ40PZ1_1083011_en.pdf ("data sheet"), and
+# the microScan3 Core I/O operating instructions 8016346/1WGY,
+# https://www.sick.com/media/docs/7/57/757/operating_instructions_microscan3_core_i_o_en_im0063757.pdf
+# ("OI"), Table 46 "Measurement data", column for 4.0 m / 5.5 m devices.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
+# second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
+# `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
+frame_id: lidar_1_link      # the Neobotix link name of a robot's first scanner
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # OI Table 46: 0.39 deg (715 safeHDDM measured values) at a 40 ms scan cycle, over the
+      # 275 deg scanning angle (data sheet; OI 14: -47.5 .. 227.5 deg in SICK's bearing convention,
+      # i.e. symmetric about straight ahead).
+      rays: 715
+      angle_min: -2.399827721   # -137.5 deg
+      angle_max: 2.399827721    # +137.5 deg
+      # ASSUMPTION: the OI states no minimum distance; this is the Neobotix simulation's value
+      # (mpo_500_gazebo.urdf.xacro).
+      range_min: 0.1
+      # OI Table 46: distance measurement range <= 40 m at 100% remission (<= 12 m at 10%). The
+      # ray cast has no remission model, so the upper figure bounds it.
+      max_range: 40.0
+      rate_hz: 25.0             # OI Table 46: scan rate 25 Hz at the 40 ms scan cycle the 715 values need
+      range_stddev: 0.013       # OI Table 46: total measurement error (statistical and systematic) at 1 sigma +-13 mm
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and range window above.
+fov:
+  near: 0.1
+  far: 40.0
+  h_min: -2.399827721
+  h_max: 2.399827721
+  v_min: 0.0
+  v_max: 0.0

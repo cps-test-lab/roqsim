@@ -529,17 +529,25 @@ class Ros2Bridge(BridgeBase):
         # robot's URDF: that publishes the same base -> sensor links from the model, and two
         # publishers for one static transform is a TF conflict rather than redundancy. The default
         # stays true, because a world without an RSP has no other source for these frames.
+        #
+        # The hint is one transform whose child is this endpoint's ``frame_id``, or a list of them
+        # each naming its own ``child``: a mount's chain of fixed links is several frames, and an
+        # endpoint that exists only to carry them has no payload frame to borrow.
         st = hints.get("static_tf") if self._publish_static_tf else None
         if st:
             if self._static_tf is None:
                 self._static_tf = self._make_tf_broadcaster(static=True)
-            parent = reg.namespaced(frame_prefix, st["parent"])
-            child = reg.namespaced(frame_prefix, hints["frame_id"])
-            self._static_tf.sendTransform(
-                reg.make_static_tf(
-                    reg.to_time_msg(0.0), parent, child, st["translation"], st["rotation"]
+            links = st if isinstance(st, list) else [{**st, "child": hints["frame_id"]}]
+            for link in links:
+                self._static_tf.sendTransform(
+                    reg.make_static_tf(
+                        reg.to_time_msg(0.0),
+                        reg.namespaced(frame_prefix, link["parent"]),
+                        reg.namespaced(frame_prefix, link["child"]),
+                        link["translation"],
+                        link["rotation"],
+                    )
                 )
-            )
         return _Pub(
             publisher=publisher,
             msg_type=msg_type,

@@ -99,6 +99,9 @@ def test_the_wheels_roll_rather_than_spin_backwards(model):
         "components": [{"spawn_robot": {"model": model, "prefix": "z_"}, "name": "z"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: a model whose sensors
+    # carry noise refuses to step without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     try:

@@ -50,7 +50,24 @@ def test_every_model_is_a_folder():
     # layout in two -- with its meshes in whichever dir the author happened to pick.
     assert not list(MODELS_DIR.glob("*.xml"))
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
-    assert MODEL_NAMES == ["d415", "d435", "d455", "mid360", "oakd", "robin_w1g", "zivid"]
+    assert MODEL_NAMES == [
+        "d415",
+        "d435",
+        "d455",
+        "hokuyo_ust",
+        "lds01",
+        "mid360",
+        "oakd",
+        "robin_w1g",
+        "rplidar_a1",
+        "rplidar_c1",
+        "sick_lms1xx",
+        "sick_microscan3",
+        "sick_s300",
+        "sick_tim571",
+        "velodyne_vlp16",
+        "zivid",
+    ]
 
 
 @pytest.mark.parametrize("name", MODEL_NAMES)

@@ -87,6 +87,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         "it mid-run would relabel frames a consumer has already built a TF tree from.",
         "exclude_body": "it is resolved to a body id at configure.",
         "emit_static_tf": "the static TF is published once, at configure.",
+        "tf_parent": "the static TF is published once, at configure.",
     }
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
@@ -111,6 +112,10 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # Publish base body -> sensor frame as a static TF (derived from the same site the rays are
         # cast from). On by default; disable when an external robot_state_publisher owns it.
         self.emit_static_tf = bool(self.config.get("emit_static_tf", True))
+        # The body that static TF hangs from. Unset, it is the resolved `exclude_body` (else the
+        # world): the two coincide for a scanner whose housing IS the robot's base, and part ways
+        # for one in a housing of its own, which is excluded without being the frame's parent.
+        self.tf_parent = self.config.get("tf_parent", "")
         self._site_id = -1
         self._bodyexclude = -1
         self._local_dirs: np.ndarray | None = None  # (nray, 3) unit directions, site frame
@@ -268,6 +273,17 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # an empty ``frame_id``, which tf2 drops outright, so the frame never appeared at all.
         world_mounted = self._bodyexclude < 0
         ref = 0 if world_mounted else self._bodyexclude
+        parent = WORLD_FRAME if world_mounted else self.exclude_body
+        if self.tf_parent:
+            # Named, so it must exist: a transform measured from a body that is not there would
+            # have to be measured from something else and published under this name anyway.
+            ref = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.tf_parent)
+            if ref < 0:
+                raise RuntimeError(
+                    f"{self.PLUGIN_LABEL}: tf_parent {prefix + self.tf_parent!r} not found. Set it "
+                    f"to a body of this robot, or leave it unset to hang the frame off exclude_body."
+                )
+            parent = self.tf_parent
         base_pos = d0.xpos[ref]
         base_mat = d0.xmat[ref].reshape(3, 3)
         site_pos = d0.site_xpos[self._site_id]
@@ -277,7 +293,7 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         mujoco.mju_mat2Quat(rel_quat, np.ascontiguousarray(base_mat.T @ site_mat).reshape(-1))
         return {
             # Bare name; the bridge applies any namespace prefix.
-            "parent": WORLD_FRAME if world_mounted else self.exclude_body,
+            "parent": parent,
             "translation": [float(v) for v in rel_pos],
             "rotation": [float(v) for v in rel_quat],  # (w, x, y, z)
         }

@@ -1,0 +1,59 @@
+# Velodyne VLP-16 (Puck) lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin. The sensor has 16 planes; this device casts the horizontal one,
+# the plane a 2D consumer (a costmap fed through pointcloud_to_laserscan) reads at the sensor's height.
+#
+# Mesh, link frames and inertial: Dataspeed velodyne_description (see velodyne_vlp16.xml). Scan values:
+# Velodyne "Puck" data sheet 63-9229 Rev-K ("data sheet"),
+# https://velodynelidar.com/wp-content/uploads/2019/12/63-9229_Rev-K_Puck-_Datasheet_Web.pdf, and the
+# "VLP-16 User Manual" 63-9243 Rev. F ("manual"),
+# https://data.ouster.io/downloads/velodyne/user-manual/vlp-16-user-manual-revf.pdf.
+#
+# Frames, as the vendor macro chains them (velodyne_description urdf/VLP-16.urdf.xacro @ 03e3ce2): the
+# vendor joint origin places `${name}_base_link`, the housing base, which is the mount body; the scan is
+# stamped in its child `${name}`, 0.0377 m above it. The intermediate link is not published: its name
+# follows `${name}`, which only `{frame_id}` carries. spawn_sensor publishes `parent_frame -> {frame_id}`
+# at the joint origin composed with the 0.0377 m.
+#
+# What the real driver publishes (ros-drivers/velodyne `ros2` @ 56fc178): velodyne_driver_node stamps
+# `frame_id: velodyne` at `rpm: 600.0` (velodyne_driver/config/VLP16-velodyne_driver_node-params.yaml),
+# and velodyne_transform_node keeps points in `min_range: 0.9` .. `max_range: 130.0` m
+# (velodyne_pointcloud/config/VLP16-velodyne_transform_node-params.yaml). A LaserScan exists only after
+# a projection such as pointcloud_to_laserscan, whose window and ray layout are that node's parameters,
+# not the sensor's.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: velodyne          # velodyne_description VLP-16.urdf.xacro `name:=velodyne`; the driver's frame_id
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame (VLP-16.urdf.xacro `${name}_base_scan_joint`)
+    parent: mount
+    pos: [0.0, 0.0, 0.0377]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # Manual 8.3, Table "Azimuth Resolution": 0.2 deg at 600 RPM, the driver's rpm; 360 / 0.2 = 1800.
+      rays: 1800
+      angle_min: 0.0
+      angle_max: 6.283185307    # data sheet: field of view (horizontal) 360 deg
+      range_min: 0.9            # the driver's min_range (see above); the data sheet states no minimum
+      max_range: 100.0          # data sheet: measurement range 100 m
+      rate_hz: 10.0             # manual 8.3: 600 RPM / 60 = 10 frames per second, the driver's rpm
+      # Data sheet: range accuracy up to +-3 cm (typical). It does not say which sigma; taken as 1 sigma.
+      range_stddev: 0.03
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the cast plane's field
+# and range window above.
+fov:
+  near: 0.9
+  far: 100.0
+  h_min: 0.0
+  h_max: 6.283185307
+  v_min: 0.0
+  v_max: 0.0

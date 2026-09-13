@@ -201,6 +201,9 @@ def test_each_base_geometry_navigates_with_its_own_law(model, kinematics, goal):
     steering angle from ``w / v``, so it would sit still with its wheels straight and never arrive.
     """
     engine = Engine(_world(model=model, nav={"speed": 0.3, "goals": [list(goal)]}))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: a base whose scanners
+    # carry range noise refuses to step without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     try:

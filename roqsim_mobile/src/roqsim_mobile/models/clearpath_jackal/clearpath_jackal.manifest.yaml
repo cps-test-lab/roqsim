@@ -27,18 +27,35 @@ components:
       right_actuators: [front_right_wheel_motor, rear_right_wheel_motor]
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
-  # Velodyne VLP-16, cast as a PLANAR scan at the sensor's own scan height. The paper names the
-  # sensor (page-3 Sec.III-A) but no intrinsics; these are the VLP-16 datasheet values, and the
-  # 0.3852 m scan height above ground comes from the vendor mount chain in the MJCF, not a guess.
-  # A planar cast is what the paper's 2D costmap would have received after pointcloud_to_laserscan
-  # -- see spec gaps g_lidar_params and g_scan_projection, and port log A5 for when a true 16-plane
-  # model would be needed instead.
-  - lidar:
-      site: lidar
-      rays: 1800                     # 360 deg / 0.2 deg azimuth resolution at 10 Hz (datasheet)
-      angle_min: 0.0
-      angle_max: 6.283185307         # 2*pi (full 360 deg)
-      range_min: 0.4                 # datasheet minimum return distance; see port log A3
-      max_range: 100.0               # datasheet; the costmap clips far below this
-      rate_hz: 10.0                  # datasheet default rotation rate
-      exclude_body: base_link
+  # Velodyne VLP-16 on the vendor's tower, cast as a PLANAR scan at the sensor's own scan height: what
+  # a 2D costmap receives after pointcloud_to_laserscan (spec gaps g_lidar_params and
+  # g_scan_projection; port log A5 says when a true 16-plane model would be needed instead).
+  # The mount is jackal_description's vlp16_mount (accessories/vlp16_mount.urdf.xacro @ 4ddf9b5): the
+  # tower's plate joint at height 0.1 on mid_mount, the VLP-16 at the plate origin. Clearpath's ROS 2
+  # sample puts `velodyne_lidar` at the same place, xyz (0, 0, 0.1) on default_mount (clearpath_config
+  # sample/j100/j100_sample.yaml:64-70 @ b2a64ba). The device stamps the scan 0.0377 m above its base:
+  # 0.184 + 0.1 + 0.0377 = 0.3217 in base_link, 0.3852 m above the ground.
+  # The scan frame is `velodyne`: vlp16_mount calls the VLP-16 macro without a name, and the macro's
+  # default is `velodyne` (velodyne_description urdf/VLP-16.urdf.xacro); Clearpath's ROS 2
+  # configuration calls the same frame `lidar3d_0_laser`.
+  - spawn_sensor:
+      model: velodyne_vlp16
+      parent_frame: mid_mount
+      pos: [0.0, 0.0, 0.1]          # vlp16_mount.urdf.xacro tower height 0.1 @ 4ddf9b5
+      rpy: [0.0, 0.0, 0.0]
+      frame_id: velodyne            # VLP-16.urdf.xacro default name, called without one by vlp16_mount
+    name: velodyne
+    components:
+      - lidar:
+          # NOT the hardware's values: the two this model's scan carried before the VLP-16 became a
+          # device, kept so the experiments built on it measure what they measured. The device
+          # carries the real ones (driver min_range 0.9 m; data sheet +-3 cm range accuracy). Which
+          # one those experiments should read is open (spec gap g_lidar_params); see the port log.
+          range_min: 0.4
+          range_stddev: 0.0
+
+# Fixed links the vendor chains and this MJCF flattens into base_link, which a device hangs from.
+frames:
+  # jackal_description urdf/jackal.urdf.xacro `mid_mount` @ 4ddf9b5, the chassis top; Clearpath's ROS 2
+  # `default_mount` is the same link (j100.urdf.xacro:125-129 @ b0f6d92).
+  - {name: mid_mount, parent: base_link, pos: [0.0, 0.0, 0.184], rpy: [0.0, 0.0, 0.0]}

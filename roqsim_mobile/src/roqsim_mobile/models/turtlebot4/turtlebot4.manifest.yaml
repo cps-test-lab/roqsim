@@ -5,17 +5,28 @@
 # LABEL under that spawn_robot's `components:` (it merges into this one, per key); to opt out
 # entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
 # spawned entity because it is nested under it -- there is no ownership key to fill in.
+
+# Fixed links of turtlebot4_description @ 7fd29fb that this MJCF flattens into base_link; spawn_robot
+# makes each a site and publishes it as static TF.
+frames:
+  # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
+  # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
+  - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
+
 components:
   - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
-  - lidar:
-      site: lidar
-      frame_id: rplidar_link                       # the name the TurtleBot 4's own URDF gives this
-                                                   # frame; the site's 90 deg yaw is aligned to it
-                                                   # (see turtlebot4.xml). Without this the scan
-                                                   # would be stamped `lidar` (the site name), the
-                                                   # plugin's default.
-      rays: 360
-      max_range: 12.0
-  - oakd_camera:                                 # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
+  # The RPLIDAR A1 device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:31-33,
+  # 114-117 @ 7fd29fb. Scan values are the device's datasheet defaults: no TurtleBot 4 hardware
+  # configuration differs from them, and the vendor's Gazebo sensor block (62 Hz, 640 samples) is a
+  # simulation setting, not the scanner's. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
+  # in the robot's namespace, stamped `rplidar_link`.
+  - spawn_sensor:
+      model: rplidar_a1
+      parent_frame: shell_link
+      pos: [-0.04, 0.0, 0.098715]
+      rpy: [0.0, 0.0, 1.5707963267948966]
+      frame_id: rplidar_link
+    name: rplidar
+  - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
       camera: oakd_rgb                           # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).

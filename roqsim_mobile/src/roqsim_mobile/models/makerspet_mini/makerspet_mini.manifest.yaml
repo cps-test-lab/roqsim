@@ -21,15 +21,25 @@ components:
       left_joints:  [wheel_left_joint]
       right_joints: [wheel_right_joint]
   # The vendor's own scan, from plugins.xacro's laser_scan_sensor: 360 samples over a full turn,
-  # 0.1-10 m, 5 Hz. The mount is the description's scan_joint -- 0.0704 m above base_link with the
-  # puck INVERTED (rpy -pi), which is how this design fits a 360-degree scanner under its head.
+  # 0.1-10 m, 5 Hz, stamped in base_scan. The mount is the description's scan_joint -- 0.0704 m above
+  # base_link with the puck INVERTED (rpy 0 -pi 0), which is how this design fits a 360-degree scanner
+  # under its head. The `lidar` site carries that rotation, so bearings are measured in base_scan as
+  # the vendor's sensor measures them; the static TF hangs off base_link as scan_joint does.
+  #
+  # THE SCAN LOOKS OUT THROUGH A GAP UNDER THE HEAD. The rays skip only the scanner's own housing
+  # (base_scan), never other robot geometry. The description's head encloses the scan plane (0.4 mm
+  # into its collision cylinder); the real Mini carries its LiDAR in an open gap on four posts
+  # (makerspet/store MINI-BDC30P-BODY print files). The model's head therefore ends at the puck's
+  # bottom face, z 0.0624, collision and visual alike, with the head's mass and inertia unchanged, and
+  # nothing of the robot is in the scan plane. A deviation from the description -- see the port log.
   - lidar:
       site: lidar
-      frame_id: laser
+      frame_id: base_scan
       rays: 360
       angle_min: 0.0
       angle_max: 6.283185307
       range_min: 0.1
       max_range: 10.0
       rate_hz: 5.0
-      exclude_body: base_link
+      exclude_body: base_scan
+      tf_parent: base_link

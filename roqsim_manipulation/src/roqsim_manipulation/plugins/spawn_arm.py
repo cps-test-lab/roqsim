@@ -186,6 +186,7 @@ class SpawnArmPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
+    expansion_keys = frozenset({"model", "default_plugins", "prefix", "end_effector"})
 
     @classmethod
     def expand(cls, spec, world, base_dir):

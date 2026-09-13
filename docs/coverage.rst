@@ -164,7 +164,7 @@ the datasheet gives — millimetres **behind** the geom that models that face. A
 therefore leaves the origin already inside the sensor's own body, and without care the sensor's own
 housing is the first thing it hits. So every FOV carries the body it is mounted on
 (``SensorFov.body_exclude``, from ``cam_bodyid``/``site_bodyid``) and the ray cast excludes it — the
-same ``bodyexclude`` mechanism the ``lidar`` plugin's ``exclude_body`` uses for a robot's chassis.
+same ``bodyexclude`` mechanism the ``lidar`` plugin's ``exclude_body`` uses for a scanner's own housing.
 
 Worth stating because the symptom did not look like occlusion. The D435 mount's ``d435_front`` sits
 4.3 mm ahead of its camera, which blocked the whole central cone while wide-angle fringe rays still

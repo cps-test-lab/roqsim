@@ -29,16 +29,28 @@ components:
       right_actuators: [fr_wheel_motor, rr_wheel_motor]
       left_joints:  [fl_wheel_joint, rl_wheel_joint]
       right_joints: [fr_wheel_joint, rr_wheel_joint]
-  # The base description ships NO lidar: Husarion keeps sensors in husarion_components_description,
-  # so which scanner a unit carries is a deployment choice. These are the stock ROSbot 2R's RPLIDAR
-  # A2 published values, and the mount height is an assumption -- see the port log.
-  - lidar:
-      site: lidar
-      frame_id: laser
-      rays: 360
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.15
-      max_range: 12.0
-      rate_hz: 10.0
-      exclude_body: base_link
+  # The scanner Husarion's default configuration mounts: an RPLIDAR C1 on cover_link at xyz
+  # (0.02, 0, 0), rpy 0 (rosbot_description config/rosbot/basic.yaml:4-7 @ 41fad02, the default
+  # `components_config` of urdf/rosbot.urdf.xacro). The device model carries the datasheet values and
+  # the vendor chain rplidar_link -> laser; Husarion builds it with use_tf_prefix False, so the scan
+  # frame is the bare `laser`. The C1 skips only its own housing, so the camera-mount post of the
+  # body mesh beside it is a real return -- see the port log.
+  - spawn_sensor:
+      model: rplidar_c1
+      parent_frame: cover_link
+      pos: [0.02, 0.0, 0.0]         # basic.yaml:6 @ 41fad02
+      rpy: [0.0, 0.0, 0.0]          # basic.yaml:7 @ 41fad02
+      frame_id: laser               # slamtec_rplidar.urdf.xacro:278 @ 5f783f8, empty component name
+    name: rplidar
+    components:
+      - lidar:
+          # Husarion's C1 simulation: gaussian std_dev 0.02 m (slamtec_rplidar.urdf.xacro:126
+          # @ 5f783f8), where the device takes the datasheet's +-30 mm accuracy as 1 sigma.
+          range_stddev: 0.02
+          # Relative, so the robot's namespace scopes it: `<ns>/scan` (slamtec_rplidar.urdf.xacro:286).
+          topics: {scan: scan}
+
+# Fixed links the vendor chains and this MJCF flattens into body_link, which a device hangs from.
+frames:
+  # rosbot_description urdf/rosbot/body.urdf.xacro:39-43 @ 41fad02 (body_to_cover_joint).
+  - {name: cover_link, parent: body_link, pos: [0.0, 0.0, 0.0603], rpy: [0.0, 0.0, 0.0]}

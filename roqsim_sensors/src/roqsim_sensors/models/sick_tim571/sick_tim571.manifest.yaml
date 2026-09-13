@@ -1,0 +1,45 @@
+# SICK TiM571 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: PAL Robotics pal_urdf_utils (see sick_tim571.xml). Scan values: SICK
+# data sheet TiM571-2050101, https://www.sick.com/media/pdf/4/44/444/dataSheet_TiM571-2050101_1075091_en.pdf
+# ("data sheet").
+#
+# No `frame_id` default: PAL's macro stamps the scan in `${name}_link`, where `name` is whatever the
+# robot description calls that laser, so every mount sets `frame_id` and spawn_sensor refuses one
+# that does not.
+# spawn_sensor fills `{frame_id}` from it. `exclude_body: mount` skips this device's housing and
+# nothing else; `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # Data sheet: aperture angle 270 deg, angular resolution 0.33 deg; 270 / 0.33 = 818 rays, the
+      # count PAL's simulation uses too.
+      rays: 818
+      angle_min: -2.356194490   # -135 deg
+      angle_max: 2.356194490    # +135 deg
+      range_min: 0.05           # data sheet: working range 0.05 m ... 25 m
+      max_range: 25.0           # data sheet: working range 0.05 m ... 25 m (8 m typical at 10% remission)
+      rate_hz: 15.0             # data sheet: scanning frequency 15 Hz
+      # Data sheet: statistical error < 20 mm (typical, 90% remission up to maximum range). The data
+      # sheet does not say which sigma; taken as 1 sigma.
+      range_stddev: 0.02
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and range window above.
+fov:
+  near: 0.05
+  far: 25.0
+  h_min: -2.356194490
+  h_max: 2.356194490
+  v_min: 0.0
+  v_max: 0.0

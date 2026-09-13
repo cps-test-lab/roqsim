@@ -34,8 +34,9 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
 
-# Mobile-robot plugins, registered into the shared roqsim.plugins group. lidar/oakd_camera come
-# from roqsim_sensors (a dependency above) -- turtlebot4's manifest pulls them in by name.
+# Mobile-robot plugins, registered into the shared roqsim.plugins group. What the models carry comes
+# from roqsim_sensors (a dependency above), by name: the scanner device models (`sick_s300`,
+# `rplidar_a1`, ...) a manifest mounts with `spawn_sensor`, and the `lidar`/`oakd_camera` plugins.
 [project.entry-points."roqsim.plugins"]
 floorplan = "roqsim_mobile.plugins.floorplan:FloorplanPlugin"
 spawn_robot = "roqsim_mobile.plugins.spawn_robot:SpawnRobotPlugin"

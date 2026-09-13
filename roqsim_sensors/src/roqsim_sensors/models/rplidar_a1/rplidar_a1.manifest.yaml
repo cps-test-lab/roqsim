@@ -1,0 +1,48 @@
+# Slamtec RPLIDAR A1 (A1M8) 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: Clearpath turtlebot4_description (see rplidar_a1.xml). Scan values:
+# Slamtec "RPLIDAR A1 Introduction and Datasheet, Model A1M8" rev 3.0, Figure 2-1 "RPLIDAR A1
+# Performance" ("data sheet"), read from the copy at
+# https://files.seeedstudio.com/products/114992561/LD108_SLAMTEC_rplidar_datasheet_A1M8_v3.0_en.pdf
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: rplidar_link      # the TurtleBot 4 link name
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # Data sheet: angular resolution <= 1 deg at the 5.5 Hz scan rate, whose typical value is
+      # measured at 360 samples per scan; angular range 0-360 deg.
+      rays: 360
+      # The full turn as -pi .. pi, the window the turtlebot4 simulation (rplidar.urdf.xacro) uses.
+      angle_min: -3.141592654
+      angle_max: 3.141592654
+      range_min: 0.15           # data sheet: distance range 0.15-12 m, white objects
+      max_range: 12.0           # data sheet: distance range 0.15-12 m, white objects
+      rate_hz: 5.5              # data sheet: scan rate 5.5 Hz typical (1 .. 10 Hz)
+      # The data sheet gives no accuracy or statistical error, only distance resolution (< 0.5 mm
+      # below 1.5 m, < 1% of the distance over the range), so no noise is applied -- as in the
+      # turtlebot4 simulation. A world that has a measured figure sets it.
+      range_stddev: 0.0
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and range window above.
+fov:
+  near: 0.15
+  far: 12.0
+  h_min: -3.141592654
+  h_max: 3.141592654
+  v_min: 0.0
+  v_max: 0.0

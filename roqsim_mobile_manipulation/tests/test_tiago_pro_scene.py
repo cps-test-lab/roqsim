@@ -30,7 +30,6 @@ import numpy as np
 import pytest
 import yaml
 from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin
-from roqsim_sensors.plugins.lidar import LidarPlugin
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
@@ -42,13 +41,16 @@ MANIFEST = MODEL_DIR / "tiago_pro.manifest.yaml"
 
 # --- authoritative source values (PAL) ---------------------------------------------------------
 URDF_MASS = 62.45  # sum of the expanded URDF's <mass> values
+# The two TIM571 laser links (pal_urdf_utils sick_tim571_laser.urdf.xacro, 0.28922 kg each) are not
+# in the MJCF: the manifest mounts them as sick_tim571 devices, which carry that inertial.
+LASER_LINK_MASS = 0.28922
+MODEL_MASS = URDF_MASS - 2 * LASER_LINK_MASS
 WHEEL_R = 0.0762  # base.urdf.xacro / mobile_base_controller.yaml
 TRACK = 0.44715  # wheel_separation (lateral)
 WHEELBASE = 0.488  # axis_separation (longitudinal)
 MAX_VX = MAX_VY = 1.0  # mobile_base_controller linear.{x,y} max_velocity
 MAX_COMBINED_V = 0.7  # mobile_base_controller space.xy max_velocity (resultant cap)
 MAX_WZ = 2.09  # mobile_base_controller angular.z max_velocity
-LASER_Z = 0.13244 + WHEEL_R  # laser_height above base_link + base_link above the floor
 TORSO_RANGE = (0.0, 0.35)
 ARM_L = [f"arm_left_{i}_joint" for i in range(1, 8)]
 ARM_R = [f"arm_right_{i}_joint" for i in range(1, 8)]
@@ -177,11 +179,13 @@ def test_a1_loads_and_steps_without_warnings(rig):
 def test_a2_mass_audit(rig):
     """A2: total mass matches the source URDF, and no link has an implausible near-zero mass.
 
-    The two 1e-9 kg links are the grippers' `grasping_link` TCP frames, which the source deliberately
-    gives no mass; everything else must be a real link mass.
+    The model alone is the URDF less its two laser links, which the manifest's mounted devices
+    restore (test_tiago_pro_lidar_mounts.py). The two 1e-9 kg links are the grippers'
+    `grasping_link` TCP frames, which the source deliberately gives no mass; everything else must be
+    a real link mass.
     """
     m = rig.model
-    assert m.body_mass.sum() == pytest.approx(URDF_MASS, abs=0.01)
+    assert m.body_mass.sum() == pytest.approx(MODEL_MASS, abs=0.01)
     tcp = {"gripper_left_grasping_link", "gripper_right_grasping_link"}
     for b in range(1, m.nbody):
         name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b)
@@ -447,74 +451,8 @@ def test_b8_odometry_tracks_a_curved_path(rig):
 
 
 # --- C: sensors --------------------------------------------------------------------------------
-def test_c1_lidar_mount_poses(rig):
-    """C1: both scan planes sit at the source's laser height, on the diagonal base corners."""
-    m, d = rig.model, rig.data
-    for name, sign in (("lidar_front", +1), ("lidar_rear", -1)):
-        sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, name)
-        assert sid >= 0, f"site {name} missing"
-        pos = d.site_xpos[sid]
-        assert pos[2] == pytest.approx(LASER_Z, abs=1e-3), f"{name} scan height {pos[2]:.4f}"
-        assert math.copysign(1, pos[0]) == sign, f"{name} on the wrong end of the base"
-        assert abs(pos[0]) == pytest.approx(0.2751, abs=1e-3)
-        assert abs(pos[1]) == pytest.approx(0.183, abs=1e-3)
-        # the fan must be horizontal: the site's local z is world z
-        assert d.site_xmat[sid].reshape(3, 3)[2, 2] == pytest.approx(1.0, abs=1e-6)
-
-
-def test_c2_lidar_reads_a_known_wall(built):
-    """C2: each lidar returns the true distance to a wall, with the source's ray count and range."""
-    spec = mujoco.MjSpec.from_file(str(resolve_model("tiago_pro").path))
-    apply_assets(spec, resolve_model("tiago_pro"))
-    floor = spec.worldbody.add_geom()
-    floor.name, floor.type, floor.size = "floor", mujoco.mjtGeom.mjGEOM_PLANE, [40, 40, 0.05]
-    wall = spec.worldbody.add_geom()
-    wall.name, wall.type = "wall", mujoco.mjtGeom.mjGEOM_BOX
-    wall.size, wall.pos = [0.05, 6.0, 1.5], [4.0, 0.0, 1.5]
-    model = spec.compile()
-    data = mujoco.MjData(model)
-    mujoco.mj_forward(model, data)
-    ctx = SimContext(config={})
-    ctx.model, ctx.data = model, data
-    ctx.entities.add(
-        Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
-    )
-    # `ctx.sim_time` is read-only (it reads data.time); advance the clock past the 10 Hz scan gate.
-    data.time = 1.0
-    for cfg in _manifest_entries("lidar"):
-        # range_stddev is PAL's own 0.01 m; zero it so this asserts geometry, not noise.
-        p = LidarPlugin({**cfg, "range_stddev": 0.0}, entity="robot")
-        p.configure(ctx)
-        p.on_reset(ctx)
-        p.post_step(ctx)
-        scan = p.latest
-        assert scan is not None, f"{cfg['site']} produced no scan"
-        assert len(scan.ranges) == 815, "ray count does not match the TIM571's 818/270 deg"
-        assert scan.range_max == 25.0 and scan.range_min == 0.05
-        finite = scan.ranges[np.isfinite(scan.ranges)]
-        assert len(finite) > 0, f"{cfg['site']} saw nothing at all"
-        # The wall's inner face is at x=3.95; the front laser sits at x=0.2751.
-        expected = 3.95 - 0.2751 if cfg["site"] == "lidar_front" else 3.95 + 0.2751
-        assert finite.min() == pytest.approx(expected, abs=0.05), (
-            f"{cfg['site']} nearest return {finite.min():.3f} m, expected ~{expected:.3f} m"
-        )
-
-
-def test_c3_lidar_is_not_blocked_by_the_chassis(rig):
-    """C3: `exclude_body: base_link` is doing its job — base_link's top box spans the scan plane."""
-    m = rig.model
-    sid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "lidar_front")
-    z = rig.data.site_xpos[sid][2]
-    spanning = [
-        g
-        for g in range(m.ngeom)
-        if mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) == "base_link"
-        and m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
-        and abs(rig.data.geom_xpos[g][2] - z) < m.geom_size[g, 2]
-    ]
-    assert spanning, "no base_link box spans the scan plane — is exclude_body still needed?"
-    for cfg in _manifest_entries("lidar"):
-        assert cfg["exclude_body"] == "base_link"
+# C1-C3, the two base lidars, are in test_tiago_pro_lidar_mounts.py: they are sick_tim571 devices the
+# manifest mounts, so they are tested through spawn_robot rather than on the bare model.
 
 
 def test_c4_head_camera_and_imu_exist(rig):

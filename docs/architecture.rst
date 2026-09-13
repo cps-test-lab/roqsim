@@ -80,7 +80,7 @@ Reference implementation: ``roqsim/src/roqsim/engine.py``.
 
 -  ``__init__(self, config: dict | None, *, name: str | None)`` — receives its YAML ``config:`` section.
 -  ``validate_config(self, config) -> list[str]`` — return error strings (empty = valid).
--  ``expand(cls, spec, world, base_dir) -> list[PluginSpec]`` *(classmethod, optional)* — extra specs to splice in right after this one at config load; used by spawn plugins to pull in a model's manifest (see §4). Default: none.
+-  ``expand(cls, spec, world, base_dir) -> list[PluginSpec]`` *(classmethod, optional)* — extra specs to splice in right after this one at config load; used by spawn plugins to pull in a model's manifest (see §4). What it returns is expanded in turn. A plugin lists the config keys ``expand`` reads in ``expansion_keys``, so a too-late override of one is refused. Default: none.
 -  Hooks as in §2. ``parallel_safe: bool`` marks a read-only ``post_step`` for the future parallel executor. ``transport_only: bool`` marks a plugin that builds no geometry and holds no state (``BridgeBase`` and its subclasses), so the scene-only consumers — ``roqsim render``, the review window, the exporters — drop it and can therefore build a ``*_ros`` world without its middleware installed; ``roqsim sim`` keeps it unless asked for ``--no-communication``, which warns that the run then publishes and receives nothing (see :doc:`plugins` › Transport plugins).
 
 .. _simcontext-contextpy-impl:
@@ -353,7 +353,13 @@ Model plugin manifests (``expand``)
 
 A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + ``lidar``; an arm → ``arm_controller``) in a ``<model>.manifest.yaml`` manifest next to its MJCF, so a world only spawns the model instead of re-declaring them. Mechanism:
 
-- Before instantiation, ``_expand_plugins`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is the list of explicitly-declared specs; core does no dedupe of its own.
+- Before instantiation, ``expand_document`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is every spec declared or injected so far; core does no dedupe of its own.
+- **Expansion is recursive and depth-first.** Each returned spec is expanded in turn, so a robot manifest can mount a device model (``spawn_sensor``) whose own manifest brings its capture plugin. Build order stays the document's shape: robot, its first component, the mounted device, the device's components, the robot's next component.
+
+  - An injected spec whose owner has not been placed yet waits for that owner and follows it. This happens when a robot manifest nests an override under a device the world declares itself. A carrier therefore always builds before what it carries.
+  - A chain that reaches the same model file twice is refused, naming the chain. So is one that nests deeper than eight expansions.
+  - **Ownership is the full address.** An injected spec's ``entity`` is its producer's address (``robot.scan_front``), so ``_as_tree``, overrides (``components.robot.scan_front.lidar.rays``), ``enabled`` cascades and the run record all work at any depth. Two robots each mounting a ``scan_front`` never collide.
+  - **A late override of an expansion input is refused.** A component a manifest injected is first addressable after it has expanded. An override of a key its ``expand`` reads (the plugin's ``expansion_keys``: ``model``, ``prefix``, ``frame_id``, ...) would leave what it brought in built from the old value, so it is refused. Declaring that component in the world, nested under its carrier, lands the value before expansion.
 - **Expansion runs while the document loads**, not inside the engine, so ``SimConfig.plugins`` is the
   *effective* component list -- what the document declares plus what its models' manifests contribute
   -- in build order. ``SimConfig.declared`` keeps the entries a reader actually wrote. That is what
@@ -378,6 +384,12 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
   import and be refused for it anyway.
 
 - Spawn plugins implement ``expand`` in one line via the shared ``roqsim.manifest.expand_manifest(spec, world, *, base_dir=None)``. It resolves the model (see *Model discovery* below), reads the ``<model>.manifest.yaml`` beside the resolved file, and injects each entry as a **component of the spawn**. There is no per-family wiring key any more: an entry belongs to the entity whose entry it sits under, so a mobile spawn and an arm spawn wire their components identically. Distinct entities (two arms) never collide.
+- **A manifest entry that itself provides an entity** (a ``spawn_sensor`` in a robot manifest) gets the spawn's prefix as ``attach_prefix`` rather than ``prefix``, and derives its own from that. Its nested ``components:`` are kept, owned by its address and merged by label like everything else. Precedence is nearer-wins all the way down: the world's value, then the robot manifest's, then the device manifest's.
+
+  - A mounted device's ``prefix`` defaults to ``<carrier prefix><label>_``, and its ``namespace`` to the carrier's.
+  - A device manifest may use ``{frame_id}`` and ``{parent_frame}`` placeholders, and no others.
+  - ``{frame_id}`` is the mount's ``frame_id``, else the manifest's top-level ``frame_id:`` (the vendor's default scan-frame name, ``roqsim.manifest.manifest_frame_id``). A device whose vendor names none declares none, and a mount of it without a ``frame_id`` is refused rather than given a made-up name. Two mounts on one carrier with the same ``frame_id`` are refused too, since they share its namespace.
+  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``). It is built as sites and published as static transforms. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
@@ -598,20 +610,24 @@ The test for which of the two a perturbation is, is **where the failure lives**.
 brings the lidar with it -- so a world that only spawns a robot never names it. Two
 consequences, and they differ:
 
--  **A world may set one key of a default** without restating the rest. Declare it as a component of
-   the spawn; ``expand_manifest`` merges the manifest's config *underneath* that entry, per key, so::
+-  **A world may set one key of a default** without restating the rest. Declare it where the manifest
+   puts it -- for a TurtleBot 4, under the robot's ``rplidar`` mount; ``expand_manifest`` merges the
+   manifest's config *underneath* that entry, per key, so::
 
       components:
         - spawn_robot: {model: turtlebot4}
           name: robot
           components:
-            - lidar: {range_stddev: 0.05}   # keeps the model's rays, max_range, frame_id
+            - spawn_sensor: {}                # the manifest's RPLIDAR mount, by its label
+              name: rplidar
+              components:
+                - lidar: {range_stddev: 0.05}   # keeps the device's rays, max_range, frame_id
 
    Restating the rest would be a duplicate that silently diverges the day the manifest changes. The
-   entry carries no ``robot:`` key: it belongs to the robot because it sits inside it.
+   entry carries no ``robot:`` key: it belongs to the mount because it sits inside it.
 
 -  **An override reaches a default the document never declared.** Expansion runs while the document
-   loads, so ``--set components.robot.lidar.range_stddev=0.05`` resolves against what will actually
+   loads, so ``--set components.robot.rplidar.lidar.range_stddev=0.05`` resolves against what will actually
    run -- no entry, no stub. It is still applied before compile, so the value is in the compiled
    model and therefore in the run's provenance.
 
@@ -620,8 +636,8 @@ consequences, and they differ:
    same assignment, which they have to be -- a sweep flattens a path onto a command line, a saved
    override set writes a document, and they must not diverge::
 
-      --set components.robot.lidar.rays=720
-      components: {robot.lidar: {rays: 720}}
+      --set components.robot.rplidar.lidar.rays=720
+      components: {robot.rplidar.lidar: {rays: 720}}
 
    Assignments are applied twice: once against what the document declares, then again once its
    models' manifests have contributed. The first pass is what lets a *structural* override work --
@@ -773,8 +789,9 @@ plugin accepts a ``topics:`` map keyed by endpoint role name — ``topics: {imag
 /camera/color/image_raw, joint_states: /joint_states}`` — read via ``Plugin.topic_override(name)``
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
-``ep.namespace`` (and the node namespace); a relative topic is scoped as usual. Only the topic is
-overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
+``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
+namespace — how a robot manifest gives a second scanner the vendor's ``scan2`` under the robot's
+namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
 

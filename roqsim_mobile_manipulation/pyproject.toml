@@ -23,7 +23,7 @@ requires-python = ">=3.10"
 # itself; a robot model does not drag the prop library into the wheel graph on its behalf.
 dependencies = [
     "roqsim",
-    "roqsim_sensors",       # lidar
+    "roqsim_sensors",       # spawn_sensor + sick_tim571 (TIAGo Pro's scanners) / lidar (Frankie)
     "roqsim_mobile",        # spawn_robot + diff_drive (Frankie) / omni_drive (TIAGo Pro)
     "roqsim_manipulation",  # arm_controller -- the shared limb controller both platforms' arms use
     "roqsim_manipulation_assets",  # Frankie borrows roqsim's own Panda meshes rather than shipping a copy
@@ -35,7 +35,7 @@ dependencies = [
 test = ["pytest>=7.0"]
 
 # No plugins of its own, deliberately: both platforms are assembled from plugins that already exist
-# (spawn_robot, diff_drive, omni_drive, arm_controller, lidar). A composite robot needing a NEW plugin
+# (spawn_robot, diff_drive, omni_drive, arm_controller, spawn_sensor, lidar). A composite robot needing a NEW plugin
 # would be a sign the composition mechanism is missing something -- see each port log's "substrate
 # extensions" table, which is what that claim is measured by.
 

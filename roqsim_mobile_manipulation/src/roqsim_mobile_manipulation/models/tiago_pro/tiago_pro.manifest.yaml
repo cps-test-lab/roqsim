@@ -143,48 +143,53 @@ components:
     name: arm_right_controller
 
   # ---------------------------------------------------------------------------------------------
-  # Two SICK TIM571 planar lidars, front-right and rear-left corners. Every parameter is PAL's own
-  # (pal_urdf_utils/urdf/laser/sick_tim571_laser.gazebo.xacro + omni_base_description's
-  # base_sensors.urdf.xacro): 818 samples per 270 deg, min_angle offset +1 deg upstream "to avoid a
-  # ghost obstacle" -> 815 rays over [-134, +135] deg; range 0.05..25 m; Gaussian range noise
-  # sigma = 0.01 m; 10 Hz. Each 270 deg fan covers its own diagonal, and the two together give the
-  # full 360 deg the base needs to navigate.
+  # Two SICK TIM571 planar lidars, front-right and rear-left corners: roqsim_sensors `sick_tim571`
+  # devices at PAL's joint origins in base_link (omni_base_description urdf/base/base_sensors.urdf.xacro
+  # @ 251ecc4: rear :65-67, front :70-72, laser_height 0.13244 from :62). Both are mounted UPSIDE DOWN
+  # (roll -180 deg) and yawed onto their diagonal (-45 / +135 deg), and the scan is stamped in
+  # PAL's `<name>_link` (sick_tim571_laser.gazebo.xacro:25 @ 775cdd6), so frames and bearings are
+  # PAL's: a return to the robot's left of a scanner's forward axis has a negative bearing.
   #
-  # `frame_id` is left at the plugin default (the site the rays are cast from) rather than set to the
-  # source's `base_*_laser_link`: those links are mounted z-down, while the sites are upright, so
-  # naming the scan after them would publish a TF that disagrees with the scan's own handedness.
-  # `exclude_body: base_link` is required -- base_link's top collision box spans the 0.209 m scan
-  # plane, so without it every scan would be blocked by the robot's own chassis.
+  # The device carries the datasheet values; below are PAL's simulation values where they differ,
+  # each cited to pal_urdf_utils urdf/laser/sick_tim571_laser.gazebo.xacro @ 775cdd6 or
+  # base_sensors.urdf.xacro @ 251ecc4. Ray count and window follow the xacro's expression:
+  # samples = 818 * (max - min) / 270 deg with min/max -+135 deg (:32) is 818, the device's own,
+  # cast from min + 1 deg (:34, "a laserscan detecting ghost obstacle") to +135 deg. roqsim spaces
+  # them (max - min) / rays apart, so the last ray is one step short of +135 deg.
   #
-  # The two scans MUST get distinct topics: both instances declare an endpoint called `scan`, so on
-  # the default name they would publish over each other. `scan_front_raw` / `scan_rear_raw` are PAL's
-  # own topic names (base_sensors.urdf.xacro `ros_topic`), so matching them is exactly what the
-  # absolute `topics:` hardwire is for. Consequence to know: an absolute topic ignores the spawn's
-  # `namespace`, so a multi-robot world would have both robots' scans land on the same two topics --
-  # re-point them per robot there (the substrate has no relative-rename mechanism).
+  # Both scanners look out through the band between the lower and upper chassis. PAL's
+  # base.urdf.xacro:64-69 gives base_link a 0.58 x 0.39 x 0.03 m collision box at z 0.132 that
+  # encloses both scan origins, while PAL's visual body (base_link.stl) is a 0.500 x 0.318 m waist
+  # across that band. The model's box takes the waist's extent, so each fan leaves the base where the
+  # real one does. A scanner skips only its own housing; nothing of the base is in either fan. That
+  # box is a deviation from PAL's collision geometry -- see the port log.
+  #
+  # Topics are PAL's `ros_topic`s, relative, so the spawn's namespace scopes them.
   # ---------------------------------------------------------------------------------------------
-  - lidar:
-      site: lidar_front
-      rays: 815
-      angle_min: -2.3387411977      # -134 deg
-      angle_max: 2.3561944902       # +135 deg
-      range_min: 0.05
-      max_range: 25.0
-      rate_hz: 10.0
-      range_stddev: 0.01
-      exclude_body: base_link
-      topics: {scan: /scan_front_raw}
-    name: lidar_front
+  - spawn_sensor:
+      model: sick_tim571
+      parent_frame: base_link
+      pos: [0.27512, -0.18297, 0.13244]        # base_sensors.urdf.xacro:71
+      rpy: [-3.141592654, 0.0, -0.785398163]   # base_sensors.urdf.xacro:71: -180, 0, -45 deg
+      frame_id: base_front_laser_link          # `${name}_link`, name base_front_laser (:70)
+    name: base_front_laser
+    components:
+      - lidar:
+          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
+          rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
+          range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
+          topics: {scan: scan_front_raw}   # base_sensors.urdf.xacro:70
 
-  - lidar:
-      site: lidar_rear
-      rays: 815
-      angle_min: -2.3387411977
-      angle_max: 2.3561944902
-      range_min: 0.05
-      max_range: 25.0
-      rate_hz: 10.0
-      range_stddev: 0.01
-      exclude_body: base_link
-      topics: {scan: /scan_rear_raw}
-    name: lidar_rear
+  - spawn_sensor:
+      model: sick_tim571
+      parent_frame: base_link
+      pos: [-0.27512, 0.18297, 0.13244]        # base_sensors.urdf.xacro:66
+      rpy: [-3.141592654, 0.0, 2.356194490]    # base_sensors.urdf.xacro:66: -180, 0, 135 deg
+      frame_id: base_rear_laser_link           # `${name}_link`, name base_rear_laser (:65)
+    name: base_rear_laser
+    components:
+      - lidar:
+          angle_min: -2.338741177   # -134 deg: min_angle + 1 deg (gazebo.xacro:34)
+          rate_hz: 10.0             # laser_sensor update_rate:=10 (base_sensors.urdf.xacro:28)
+          range_stddev: 0.01        # gaussian stddev 0.01 (gazebo.xacro:46)
+          topics: {scan: scan_rear_raw}    # base_sensors.urdf.xacro:65

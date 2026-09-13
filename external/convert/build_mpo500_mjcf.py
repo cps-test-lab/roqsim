@@ -21,6 +21,11 @@ the mesh pipeline but differ in body structure (steer layer or not), and the two
 platforms are *differential*, a third shape again. Consolidating two of four shapes now and reworking
 for the third is worse than consolidating once when all three are known -- see the port log.
 
+**The two SICK microScan3s are not in this model.** The manifest mounts the ``sick_microscan3`` device
+model at each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the
+housings, meshes and masses. This generator removes both links from the expanded tree before it reads it
+(:func:`neobotix.drop_scanner_links`).
+
 Usage::
 
     python external/convert/build_mpo500_mjcf.py           # fetch, convert, write
@@ -41,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from neobotix import (  # noqa: E402
-    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, drop_scanner_links, subs_for, wrapper,
 )
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
@@ -56,6 +61,7 @@ DEFAULT_FACES = 4000
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
+#: Scanner links removed from the expanded tree: the manifest mounts a sick_microscan3 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
 
 
@@ -91,13 +97,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
         return out
 
     base = links["base_link"]
-    sensors = ""
-    for name in SENSOR_LINKS:
-        pos, quat = pose(joints[name])
-        sensors += SENSOR_BODY.format(
-            name=name, body_pos=pos, body_quat=quat,
-            geoms=geoms(links[name], "          "), **inertial(links[name]),
-        )
     wheels = ""
     for corner in CORNERS:
         name = f"mpo_500_omni_wheel_{corner}_link"
@@ -113,20 +112,13 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     wheel_z = float(pose(joints[f"mpo_500_omni_wheel_{CORNERS[0]}_link"])[0].split()[2])
     radius = float(links[f"mpo_500_omni_wheel_{CORNERS[0]}_link"]
                    .find("collision/geometry/sphere").get("radius"))
-    lidar_1, _ = pose(joints["lidar_1_link"])
-    lidar_2, _ = pose(joints["lidar_2_link"])
     return TEMPLATE.format(
         commit=NEO_COMMIT, assets=assets, excludes=excludes,
-        base_geoms=geoms(base, "        "), sensors=sensors, wheels=wheels,
-        lidar_1=lidar_1, lidar_2=lidar_2, rest_height=f"{radius - wheel_z:g}",
+        base_geoms=geoms(base, "        "), wheels=wheels,
+        rest_height=f"{radius - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
 
-
-SENSOR_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
-          <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
-{geoms}        </body>
-"""
 
 WHEEL_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
           <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
@@ -154,6 +146,10 @@ TEMPLATE = """<mujoco model="mpo_500">
     One consequence to know: omni_drive integrates odometry from the ACHIEVED twist and models no
     wheel slip, so encoder odometry and ground truth coincide by construction. This platform cannot
     be used to study odometry drift.
+
+    The two SICK microScan3s are not in this file: the manifest mounts a `sick_microscan3` device
+    model at each of the vendor's lidar_1_joint and lidar_2_joint, and those devices carry the
+    scanners' housings and mass.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
   <!--
@@ -205,10 +201,7 @@ TEMPLATE = """<mujoco model="mpo_500">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
-      <!-- The vendor's own two scanner mounts, front and rear on the centreline. -->
-      <site name="lidar_1" pos="{lidar_1}" size="0.01" rgba="1 0 0 0.6"/>
-      <site name="lidar_2" pos="{lidar_2}" size="0.01" rgba="1 0 0 0.6"/>
-{base_geoms}{sensors}{wheels}    </body>
+{base_geoms}{wheels}    </body>
   </worldbody>
 
   <actuator>
@@ -245,6 +238,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_500.urdf.xacro"),
                             Path(tmp), wrapper=wrapper("mpo_500", "revolute"))
+    drop_scanner_links(urdf, SENSOR_LINKS)
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}

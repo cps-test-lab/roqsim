@@ -10,6 +10,9 @@ Reference dimensions come from `nav2_minimal_tb4_description` (see `turtlebot4_L
 m=0.2 kg, ``wheel_separation`` 0.233 m, caster r=0.01 m, OAK-D stereo baseline 0.075 m and
 ``horizontal_fov`` 1.25 rad.
 
+The RPLIDAR A1 is not in the MJCF: the manifest mounts the ``rplidar_a1`` device model at the vendor
+joint, and section D pins that mount against ``turtlebot4_description`` @ 7fd29fb.
+
 **This battery was written after the model shipped, and it found two defects on its first run** --
 which is the argument for writing one per port rather than trusting a model that looks fine in a
 viewer:
@@ -35,6 +38,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
+import scan_mount_utils as scan_mount
 import yaml
 
 from roqsim.context import Entity, SimContext
@@ -54,10 +58,18 @@ TOTAL_MASS = 2.3 + 2 * 0.2  # 2.7 kg: create3 body + two wheels (the caster is m
 # radius -- so at rest the frame itself sits 4.45 mm BELOW the ground plane, plus ~0.8 mm of soft
 # contact sink. Measured -0.0053. Negative is correct here and is not a sign convention slip.
 REST_Z = -0.0053
-LIDAR_Z = 0.192915 + REST_Z  # RPLIDAR scan plane above ground
 # diff_drive's own defaults, which ARE the Create 3's rated limits (see the plugin docstring).
 MAX_V = 0.31
 MAX_W = 1.90
+
+#: base_link -> shell_link, turtlebot4_description @ 7fd29fb urdf/standard/turtlebot4.urdf.xacro:43-47:
+#: z = shell_z_offset 3 cm (:13) + base_link_z_offset 6.42 cm (irobot_create_description
+#: urdf/create3.urdf.xacro:53 @ 1fccb76).
+SHELL_LINK = ((0.0, 0.0, 0.0942), (0.0, 0.0, 0.0))
+#: shell_link -> rplidar_link, the same file :31-33 (offsets) and :114-117 (rpy 0 0 pi/2).
+RPLIDAR_JOINT = ((-0.04, 0.0, 0.098715), (0.0, 0.0, math.pi / 2))
+#: The RPLIDAR A1's inertial, which the device model carries (rplidar.urdf.xacro:7,34 @ 7fd29fb).
+RPLIDAR_MASS = 0.17
 
 
 def _manifest_plugin(kind: str) -> dict:
@@ -236,7 +248,7 @@ def test_a6_visual_meshes_are_visual_only():
             n_mesh += 1
             assert model.geom_contype[gid] == 0 and model.geom_conaffinity[gid] == 0
     assert n_mesh >= 9, f"only {n_mesh} mesh geoms — meshes failed to resolve?"
-    for name in ("shell", "body_visual", "bumper_visual", "rplidar"):
+    for name in ("shell", "body_visual", "bumper_visual", "tower_standoff"):
         mid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, name)
         assert mid >= 0, f"mesh {name} missing"
         assert int(model.mesh_vertnum[mid]) > 100, f"{name}: decimated to nothing?"
@@ -374,26 +386,39 @@ def test_b8_drives_in_a_world_whose_floor_is_not_called_floor():
 # --------------------------------------------------------------------------- C. sensors
 
 
-def test_c1_lidar_mount_height():
-    """C1: the RPLIDAR scan plane sits at the URDF's rplidar_link height, centred, 40 mm back."""
-    model, data = _build()
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert float(data.site_xpos[sid][2]) == pytest.approx(LIDAR_Z, abs=0.003)
-    assert float(data.site_xpos[sid][0]) == pytest.approx(-0.04, abs=0.003)
-    assert abs(float(data.site_xpos[sid][1])) < 0.003
+def test_c1_the_mjcf_carries_no_scanner():
+    """C1: the RPLIDAR is the device model the manifest mounts, so the MJCF has no scan site of its own.
+
+    A second scan origin here would be a second, unmounted scanner the moment anything named it.
+    """
+    model, _ = _build(settle=0.0)
+    sites = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, i) for i in range(model.nsite)}
+    assert sites == {"base_imu", "oakd", "oakd_left", "oakd_right", "bump_front_center"}
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "rplidar") < 0
 
 
 def test_c2_manifest_ships_the_platforms_own_sensors():
-    """C2: the manifest brings the TurtleBot 4's stock scanner and camera, with the URDF's frame ids.
+    """C2: the manifest mounts the TurtleBot 4's stock scanner and camera, with the URDF's frame ids.
 
-    `frame_id: rplidar_link` is load-bearing: without it the scan is stamped with the site name
-    (`lidar`) and the LaserScan is not locatable in the robot's own TF tree.
+    `frame_id: rplidar_link` is load-bearing: it is the name the TurtleBot 4's URDF gives the scan
+    frame, so the LaserScan is locatable in the robot's own TF tree. No lidar override: every scan
+    value is the RPLIDAR A1 device's datasheet default.
     """
-    lidar = _manifest_plugin("lidar")
-    assert lidar["site"] == "lidar"
-    assert lidar["frame_id"] == "rplidar_link"
-    assert lidar["rays"] == 360
-    assert lidar["max_range"] == pytest.approx(12.0)  # RPLIDAR A1
+    manifest = yaml.safe_load(MANIFEST.read_text())
+    assert manifest["frames"] == [
+        {"name": "shell_link", "parent": "base_link", "pos": [*SHELL_LINK[0]], "rpy": [*SHELL_LINK[1]]}
+    ]
+    (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
+    assert mount["name"] == "rplidar"
+    assert mount["spawn_sensor"] == {
+        "model": "rplidar_a1",
+        "parent_frame": "shell_link",
+        "pos": [*RPLIDAR_JOINT[0]],
+        "rpy": [*RPLIDAR_JOINT[1]],
+        "frame_id": "rplidar_link",
+    }
+    assert "components" not in mount
+    assert not any("lidar" in c for c in manifest["components"])
     assert _manifest_plugin("oakd_camera")["camera"] == "oakd_rgb"
 
 
@@ -457,3 +482,102 @@ def test_c4_wheel_encoders_imu_and_bumper_exist():
         "bumper",
     ):
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name) >= 0, f"missing {name}"
+
+
+# --------------------------------------------------------------------------- D. the mounted scanner
+
+
+@pytest.fixture(scope="module")
+def mounted():
+    """The robot spawned as a world spawns it, prefixed and namespaced, its RPLIDAR cast once.
+
+    The OAK-D is switched off: it renders, and nothing in this section reads it.
+    """
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    lidar = scan_mount.lidar(engine, "robot.rplidar")
+    yield engine, lidar
+    engine.shutdown()
+
+
+def test_d1_scan_frame_is_the_vendor_chain(mounted):
+    """D1: rays are cast from base_link -> shell_link -> rplidar_link exactly as the URDF chains it,
+    and the frame the mount publishes is that same pose."""
+    engine, _ = mounted
+    want_pos, want_rot = scan_mount.chain(SHELL_LINK, RPLIDAR_JOINT)
+    np.testing.assert_allclose(want_pos, [-0.04, 0.0, 0.192915], atol=1e-12)
+    for site in ("r_rplidar_scan", "r_rplidar_rplidar_link"):
+        pos, rot = scan_mount.pose_in_base(engine, site)
+        np.testing.assert_allclose(pos, want_pos, atol=1e-9, err_msg=site)
+        np.testing.assert_allclose(rot, want_rot, atol=1e-9, err_msg=site)
+
+
+def test_d2_the_forward_ray_reads_the_true_wall_distance(mounted):
+    """D2: bearing 0 is rplidar_link +x, which the pi/2 yaw turns onto base_link +y (the robot's left)."""
+    engine, lidar = mounted
+    origin, dirs, bearings = scan_mount.world_rays(engine, lidar)
+    fwd = scan_mount.forward_index(bearings)
+    np.testing.assert_allclose(dirs[fwd], [0.0, 1.0, 0.0], atol=1e-3)
+    assert lidar.latest.ranges[fwd] == pytest.approx(
+        scan_mount.wall_distance(origin, dirs[fwd]), abs=1e-6
+    )
+
+
+def test_d3_no_ray_starts_inside_the_robot_or_returns_from_its_own_mount(mounted):
+    """D3: every ray meets its first surface from outside, and the housing is the only exclusion."""
+    engine, lidar = mounted
+    mount_body = scan_mount.mount_body(engine, "rplidar")
+    dirs, hits = scan_mount.recast(engine, lidar, bodyexclude=mount_body)
+    assert lidar._bodyexclude == mount_body
+    hit = hits.geomid >= 0
+    assert hit.all(), "a closed room leaves no ray without a return"
+    facing = np.einsum("ij,ij->i", hits.normal[hit], dirs[hit])
+    assert not np.any(facing > 0), f"{int((facing > 0).sum())} ray(s) start inside robot geometry"
+    own = lidar._hits.geomid
+    assert not np.any(engine.ctx.model.geom_bodyid[own[own >= 0]] == mount_body)
+
+
+def test_d4_what_the_scan_sees_of_the_robot_is_pinned(mounted):
+    """D4: 29 of 360 rays return the four tower standoffs and the camera bracket, from outside.
+
+    Real returns: the scan plane passes through the tower, as on the robot. All of them lie nearer
+    than the A1's 0.15 m minimum range, so the published scan carries them clamped to ``range_min``.
+    """
+    engine, lidar = mounted
+    _, hits = scan_mount.recast(engine, lidar)
+    bodies, meshes = scan_mount.robot_returns(engine, hits)
+    assert bodies == {"r_base_link"}
+    assert meshes == {"r_tower_standoff", "r_camera_bracket"}
+    robot = scan_mount.robot_rays(engine, hits)
+    assert int(robot.sum()) == 29
+    assert float(hits.dist[robot].max()) < lidar.range_min
+
+
+def test_d5_the_static_tf_chain_is_published(mounted):
+    """D5: base_link -> shell_link from the robot, shell_link -> rplidar_link from the mount."""
+    engine, _ = mounted
+    (shell,) = scan_mount.static_tf(engine, "robot")
+    (scan,) = scan_mount.static_tf(engine, "robot.rplidar")
+    assert (shell["parent"], shell["child"]) == ("base_link", "shell_link")
+    assert (scan["parent"], scan["child"]) == ("shell_link", "rplidar_link")
+    for tf, joint in ((shell, SHELL_LINK), (scan, RPLIDAR_JOINT)):
+        np.testing.assert_allclose(tf["translation"], joint[0], atol=1e-9)
+        assert scan_mount.same_rotation(tf["rotation"], scan_mount.chain(joint)[1])
+
+
+def test_d6_the_scan_topic_is_the_robots(mounted):
+    """D6: `scan`, relative, in the robot's namespace, stamped rplidar_link; the mount owns the TF."""
+    engine, _ = mounted
+    scan = scan_mount.scan_endpoint(engine)
+    assert scan.owner == "robot.rplidar" and scan.namespace == scan_mount.NAMESPACE
+    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan.backend["ros2"]["frame_id"] == "rplidar_link"
+    assert "static_tf" not in scan.backend["ros2"]
+
+
+def test_d7_the_scanner_mass_is_the_devices(mounted):
+    """D7: the spawned robot is the Create 3 body and wheels plus the A1's own 0.17 kg, which the
+    MJCF never carried (its 2.3 kg body mass is the Create 3's alone)."""
+    engine, _ = mounted
+    m = engine.ctx.model
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")
+    assert float(m.body_subtreemass[base]) == pytest.approx(TOTAL_MASS + RPLIDAR_MASS, abs=1e-6)
