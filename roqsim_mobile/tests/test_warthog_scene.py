@@ -350,7 +350,12 @@ def test_c5_the_scanner_stands_on_its_brackets_upright_plate(scan, label):
 
 def test_c6_the_tf_chain_and_topics(scan):
     robot = static_tf(scan, OWNER, NAMESPACE)
-    want = []
+    # Each chain starts at a diff unit, a body welded under base_link, so the root's links to the
+    # units come first: base_link -> chassis_link -> <side>_diff_unit_link, composed.
+    want = [
+        ("base_link", unit, (tuple(np.add(CHASSIS[0], unit_joint[0])), (0.0, 0.0, 0.0)))
+        for unit, unit_joint, *_ignored in SCANNERS.values()
+    ]
     for unit, _, frame, frame_joint, bracket, *_ignored in SCANNERS.values():
         want += [
             (unit, frame, frame_joint),

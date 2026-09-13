@@ -300,6 +300,8 @@ def test_c6_the_tf_chain_and_topic(scan):
     assert same_rotation(tf[0]["rotation"], urdf_rotation(LASER[1]))
     robot = static_tf(scan, OWNER, NAMESPACE)
     want = [
+        # The chain starts at body_link, so its link to the root comes first; the two coincide.
+        ("base_link", "body_link", (0.0, 0.0, 0.0)),
         ("body_link", "cover_link", COVER[0]),
         ("cover_link", "mount_link", MOUNT[0]),
         ("mount_link", f"{LABEL}_link", COMPONENT[0]),

@@ -74,8 +74,11 @@ def test_frames_become_prefixed_sites_at_their_composed_pose(tmp_path):
 def test_frames_are_published_as_one_static_chain_in_the_robots_namespace(tmp_path):
     ep = _frames(_engine(_robot(tmp_path), namespace="rb"))
     assert ep.namespace == "rb" and ep.owner == "robot" and ep.read() is None
-    cover, laser = ep.backend["ros2"]["static_tf"]
-    # Bare names: the bridge applies the namespace.
+    body, cover, laser = ep.backend["ros2"]["static_tf"]
+    # Bare names: the bridge applies the namespace. The chain starts at a body that is not the root,
+    # so the root's link to it comes first, or the chain would be a tree of its own.
+    assert (body["parent"], body["child"]) == ("base_link", "body_link")
+    assert np.allclose(body["translation"], [0, 0, 0.1])
     assert (cover["parent"], cover["child"]) == ("body_link", "cover_link")
     assert np.allclose(cover["translation"], [0.02, 0, 0.05])
     assert (laser["parent"], laser["child"]) == ("cover_link", "laser")
@@ -90,6 +93,24 @@ def test_config_frames_extend_the_manifests(tmp_path):
     assert [(link["parent"], link["child"]) for link in links][-1] == ("laser", "mast_link")
     # Hung under the upside-down laser, +0.3 in its frame is 0.3 down in the robot's.
     assert np.allclose(links[-1]["translation"], [0, 0, 0.3])
+
+
+def test_a_chain_from_the_root_publishes_no_extra_link(tmp_path):
+    manifest = "frames:\n  - {name: mast_link, parent: base_link, pos: [0, 0, 0.3]}\n"
+    links = _frames(_engine(_robot(tmp_path, manifest=manifest))).backend["ros2"]["static_tf"]
+    assert [(link["parent"], link["child"]) for link in links] == [("base_link", "mast_link")]
+
+
+def test_a_frame_on_a_jointed_body_is_refused(tmp_path):
+    (tmp_path / "bot.xml").write_text(
+        ROBOT.replace(
+            '<body name="body_link" pos="0 0 0.1">',
+            '<body name="body_link" pos="0 0 0.1"><joint name="pan" type="hinge"/>',
+        )
+    )
+    (tmp_path / "bot.manifest.yaml").write_text(textwrap.dedent(MANIFEST))
+    with pytest.raises(Exception, match="not static"):
+        _engine(str(tmp_path / "bot.xml"))
 
 
 def test_a_robot_without_frames_publishes_no_frames_endpoint(tmp_path):
