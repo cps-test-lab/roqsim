@@ -299,7 +299,7 @@ def test_the_scan_skips_its_own_mount_and_nothing_else(scan):
 
 
 def test_no_ray_starts_inside_robot_geometry(scan):
-    """The embedded site started every ray inside the description's C1 housing mesh."""
+    """The site lies in no robot geometry but the C1's own housing, which the scan skips."""
     scanner = lidar(scan, f"g.{LABEL}")
     inside, _ = robot_hits(scan, scanner, "g_")
     assert not inside, {body: len(d) for body, d in inside.items()}

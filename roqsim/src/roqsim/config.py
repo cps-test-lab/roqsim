@@ -1372,11 +1372,10 @@ def _refuse_declared_beside_mounted_device(
 ) -> None:
     """Refuse an entry declared on a carrier when its model mounts that component on a device.
 
-    A world written before its robot's scanner became a mounted device still nests the override
-    where the manifest's component used to be (``robot: [- lidar: {...}]``). The label no longer
-    merges into anything, so it loads as a second component beside the device's (``robot.lidar``
-    next to ``robot.rplidar.lidar``) and fails only once the model is compiled, naming a site rather
-    than the mount it belongs under.
+    An entry nested directly under the carrier (``robot: [- lidar: {...}]``) when the model mounts
+    that component on a device merges into nothing, so it loads as a second component beside the
+    device's (``robot.lidar`` next to ``robot.rplidar.lidar``) and fails only once the model is
+    compiled, naming a site rather than the mount it belongs under.
 
     Refused when all of these hold, keyed on refs and the tree, never on a plugin's name:
 

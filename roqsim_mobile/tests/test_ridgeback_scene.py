@@ -228,7 +228,7 @@ def test_the_scan_skips_its_own_mount_and_nothing_else(scan):
 
 
 def test_no_ray_starts_inside_robot_geometry(scan):
-    """The previous deck-mounted site at z 0.29 started every ray inside chassis_link's geometry."""
+    """The scan origin, on Clearpath's forward mount, lies outside chassis_link's geometry."""
     scanner = lidar(scan, f"rb.{LABEL}")
     inside, _ = robot_hits(scan, scanner, "rb_")
     assert not inside, {body: len(d) for body, d in inside.items()}

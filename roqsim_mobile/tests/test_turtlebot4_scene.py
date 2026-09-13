@@ -581,7 +581,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
 
 def test_d7_the_scanner_mass_is_the_devices(mounted):
     """D7: the spawned robot is the Create 3 body and wheels plus the A1's own 0.17 kg, which the
-    MJCF never carried (its 2.3 kg body mass is the Create 3's alone)."""
+    MJCF does not carry (its 2.3 kg body mass is the Create 3's alone)."""
     engine, _ = mounted
     m = engine.ctx.model
     base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")

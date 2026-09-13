@@ -71,7 +71,7 @@ LASERS = {
 PAL_BAND_BOX_HALF = (0.29, 0.195, 0.015)
 WAIST_HALF = (0.25, 0.159, 0.015)
 BASE_BOX_Z = 0.132
-#: base.urdf.xacro: base_link's explicit inertial mass, which the box change must leave alone.
+#: base.urdf.xacro: base_link's explicit inertial mass, independent of the collision box.
 BASE_LINK_MASS = 34.047
 
 #: Inner wall faces at +-HALF around the spawn position.

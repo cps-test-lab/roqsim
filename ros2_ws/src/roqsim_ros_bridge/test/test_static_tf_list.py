@@ -2,8 +2,8 @@
 
 A mount's fixed-link chain (``base_link -> shell_link -> rplidar_link``) is several transforms on one
 endpoint that carries no payload of its own, so the hint names each child; the single-transform form
-takes its child from the endpoint's ``frame_id`` as before. ``publish_static_tf: false`` still turns
-both off, for a world whose robot_state_publisher owns these frames.
+takes its child from the endpoint's ``frame_id``. ``publish_static_tf: false`` turns both off, for a
+world whose robot_state_publisher owns these frames.
 """
 
 from __future__ import annotations
