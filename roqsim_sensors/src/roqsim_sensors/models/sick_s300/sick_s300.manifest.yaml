@@ -21,6 +21,8 @@ frames:
 
 components:
   - lidar:
+      # The data sheet's physical scan plane, 4.1 mm below the vendor frame (sick_s300.xml): the rays
+      # start there, and the scan is stamped in `{frame_id}`, whose pose spawn_sensor publishes.
       site: scan
       frame_id: "{frame_id}"
       exclude_body: mount

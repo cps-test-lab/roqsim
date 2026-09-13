@@ -406,12 +406,13 @@ def test_c6_the_tf_chain_and_topic(scan):
     assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
 
 
-def test_c7_the_scan_keeps_the_values_the_experiments_were_run_with():
-    """C7: the VLP-16 driver's LaserScan layout, with the values the manifest overrides kept as they were.
+def test_c7_the_scan_is_the_vlp16_devices():
+    """C7: the robot publishes what the VLP-16 driver publishes, with no robot-level override.
 
-    The device carries the hardware's 0.9 m detection limit and 0.03 m range noise; the manifest keeps
-    0.4 m and no noise, the values this model's scan had when experiments were built on it, pending a
-    user decision.
+    velodyne_laserscan's layout and header, the transform node's 0.9 m near limit, the data sheet's
+    100 m and +-3 cm range accuracy. Clearpath's driver configuration for the Jackal
+    (clearpath_sensors/config/velodyne_lidar.yaml) sets the same values. An experiment whose paper
+    states others overrides them in its own world.
     """
     engine = spawn("clearpath_jackal", {LABEL: None}, owner="jk", prefix="jk_", namespace=NAMESPACE)
     try:
@@ -419,10 +420,11 @@ def test_c7_the_scan_keeps_the_values_the_experiments_were_run_with():
         assert scanner.num_rays == 898  # velodyne_laserscan: round(2 pi / 0.007) bins
         assert scanner.angle_min == pytest.approx(-math.pi)
         assert scanner.angle_increment == pytest.approx(0.007)
-        assert (scanner.range_min, scanner.detection_min) == pytest.approx((0.4, 0.4))
+        assert (scanner.range_min, scanner.detection_min) == pytest.approx((0.0, 0.9))
         assert (scanner.range_max, scanner.detection_max) == pytest.approx((200.0, 100.0))
+        assert (scanner.too_close, scanner.no_return) == (math.inf, math.inf)
         assert scanner.rate_hz == pytest.approx(10.0)
-        assert scanner.config["range_stddev"] == pytest.approx(0.0)
+        assert scanner.config["range_stddev"] == pytest.approx(0.03)
         model = engine.ctx.model
         mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"jk_{LABEL}_mount")
         assert float(model.body_mass[mount]) == pytest.approx(VLP16_MASS)

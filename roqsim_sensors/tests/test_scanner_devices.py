@@ -1,4 +1,4 @@
-"""The nine scanner device models: each scans from its vendor frame, past its own housing, as declared.
+"""The nine scanner device models: each scans from its declared site, past its own housing, as declared.
 
 Every device is mounted the way a world mounts it -- `spawn_sensor` with the manifest's own lidar --
 inside a closed room whose walls are at known planes, so each ray's true range is known analytically.
@@ -13,8 +13,10 @@ What this pins, per device:
   manifest's `fov:` sector is its field and physical detection limits;
 * a too-close surface and an empty bearing publish the values the manifest declares for them, which
   are what the device's driver publishes (pinned in ``DECLARED_OUTPUTS``);
-* the `scan` site in the MJCF sits where the manifest's `frames:` entry says, so the frame published
-  for the scan and the point it is cast from cannot drift apart.
+* the `scan` site in the MJCF sits where the manifest's `frames:` entry says, moved by the scan-plane
+  offset the device's data sheet gives (``SCAN_PLANE_OFFSET``, zero unless listed), and the static
+  transform published for the scan frame is the frame's pose, not the site's -- so the frame and the
+  point the rays start from differ by exactly that offset and cannot drift apart silently.
 
 Needs nothing from roqsim_mobile: the room is a plugin defined here.
 """
@@ -332,8 +334,32 @@ def test_show_fov_draws_the_sector(device):
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "scan_fov") >= 0
 
 
+#: Where a device's data sheet puts the physical scan plane relative to its vendor scan frame, in that
+#: frame (m). The rays start there and the scan is stamped in the frame; a device not listed casts
+#: from the frame itself.
+SCAN_PLANE_OFFSET = {
+    # SICK data sheet S30B-2011BA, dimensional drawing: 116 mm above the housing bottom, 36.4 mm below
+    # its top. The converted housing's top is at z +0.0323 in the vendor frame.
+    "sick_s300": (0.0, 0.0, -0.0041),
+}
+
+
+def _compose_tf(chain: list[dict], child: str) -> tuple[np.ndarray, np.ndarray]:
+    """World pose of *child* composed along a device's published static transforms from ``world``."""
+    poses = {"world": (np.zeros(3), np.eye(3))}
+    for link in chain:
+        ppos, prot = poses[link["parent"]]
+        rot = np.zeros(9)
+        mujoco.mju_quat2Mat(rot, np.asarray(link["rotation"], dtype=float))
+        poses[link["child"]] = (
+            ppos + prot @ np.asarray(link["translation"], dtype=float),
+            prot @ rot.reshape(3, 3),
+        )
+    return poses[child]
+
+
 @pytest.mark.parametrize("device", DEVICES)
-def test_scan_site_is_the_manifest_frame(device):
+def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(device):
     frames = parse_frames(
         substitute(
             _manifest(device)["frames"], {"frame_id": FRAME_ID, "parent_frame": "world"}, device
@@ -359,27 +385,48 @@ def test_scan_site_is_the_manifest_frame(device):
         mujoco.mju_mulQuat(composed, quat, np.asarray(rpy_to_quat(*link.rpy), dtype=float))
         quat = composed
 
-    # In the MJCF as written: the site hangs directly off the mount at the composed chain's pose.
+    offset = np.asarray(SCAN_PLANE_OFFSET.get(device, (0.0, 0.0, 0.0)), dtype=float)
+    shift = np.zeros(3)
+    mujoco.mju_rotVecQuat(shift, offset, quat)
+
+    # In the MJCF as written: the site hangs directly off the mount, at the composed chain's pose moved
+    # by the declared offset in the frame, and turned as the frame is.
     spec = mujoco.MjSpec.from_file(str(MODELS_DIR / device / f"{device}.xml"))
     site = spec.site("scan")
     assert site is not None and site.parent.name == "mount"
-    np.testing.assert_allclose(site.pos, pos, atol=1e-9)
+    np.testing.assert_allclose(site.pos, pos + shift, atol=1e-9)
     assert abs(abs(float(np.asarray(site.quat) @ quat)) - 1.0) < 1e-9
 
-    # In the compiled world: the frame site spawn_sensor adds coincides with the scan site.
+    # In the compiled world: the scan site is the frame site spawn_sensor adds, moved by the offset.
     engine = _engine(device)
     m, d = engine.ctx.model, engine.ctx.data
     mujoco.mj_forward(m, d)
     scan = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "scan")
     framed = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, FRAME_ID)
     assert scan >= 0 and framed >= 0
-    np.testing.assert_allclose(d.site_xpos[framed], d.site_xpos[scan], atol=1e-9)
+    frame_rot = d.site_xmat[framed].reshape(3, 3)
+    np.testing.assert_allclose(d.site_xpos[scan], d.site_xpos[framed] + frame_rot @ offset, atol=1e-9)
     np.testing.assert_allclose(d.site_xmat[framed], d.site_xmat[scan], atol=1e-9)
+
+    # What is published is the frame's pose, not the site's: the static chain composes to the frame
+    # site, and the scan carries no transform of its own that could place the frame at the site.
+    tf_pos, tf_rot = _compose_tf(_frames_tf(engine, device), FRAME_ID)
+    np.testing.assert_allclose(tf_pos, d.site_xpos[framed], atol=1e-6)
+    np.testing.assert_allclose(tf_rot, frame_rot, atol=1e-6)
+    (scan_endpoint,) = [
+        e for e in engine.ctx.interface.all() if e.name == "scan" and e.owner == device
+    ]
+    assert scan_endpoint.backend["ros2"]["frame_id"] == FRAME_ID
+    assert "static_tf" not in scan_endpoint.backend["ros2"]
+
+
+def _frames_tf(engine: Engine, device: str) -> list[dict]:
+    (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == device]
+    return frames.backend["ros2"]["static_tf"]
 
 
 def _chain(engine: Engine, device: str) -> list[tuple[str, str]]:
-    (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == device]
-    return [(t["parent"], t["child"]) for t in frames.backend["ros2"]["static_tf"]]
+    return [(t["parent"], t["child"]) for t in _frames_tf(engine, device)]
 
 
 @pytest.mark.parametrize("device", DEVICES)

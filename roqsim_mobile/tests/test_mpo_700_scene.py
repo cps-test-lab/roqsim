@@ -308,10 +308,12 @@ def test_joint_states_carries_the_steer_joints_it_actuates():
 # -- the scanners: sick_s300 devices at the vendor's lidar joints ----------------------------------
 
 #: neo_simulation2 @ 832041452c1a: robots/mpo_700/urdf/mpo_700_body.urdf.xacro:38 and :65 (the
-#: lidar_1_joint / lidar_2_joint origins, written as the vendor writes them) and
-#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic). The height is Neobotix's
-#: hardware documentation instead of the joint's 0.223: diagonal scanners at Z 201.5 mm above the
-#: floor, and base_link 10 mm below it (180 mm wheels, wheel centres 0.10 above base_link).
+#: lidar_1_joint / lidar_2_joint rotations, written as the vendor writes them) and
+#: mpo_700_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic), with the joints' x and y.
+#: The height is Neobotix's hardware documentation (MPO-700 Mechanical Properties, Positions of
+#: Sensors) instead of the joints' 0.223: Z 201.5 mm above the floor, with base_link 10 mm below it
+#: (180 mm wheels, wheel centres 0.10 above base_link). The same table's X +-327, Y +-277 are not
+#: applied: there each housing touches its corner wheel's tyre sphere and pins the steering.
 #: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
 MOUNTS = {
     "scan_front": ("sick_s300", "lidar_1_link", (0.338, 0.288, 0.2115), (3.14, 0.0, 0.79), "scan"),

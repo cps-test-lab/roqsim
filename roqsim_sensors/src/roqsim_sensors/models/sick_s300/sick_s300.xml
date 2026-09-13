@@ -9,9 +9,11 @@
 
     Body-local axes: x = the scan's zero bearing, z = up with the device upright. The optics cover is
     the dark round head at z -0.025 .. +0.032; the black wedge at the bottom (z -0.12 .. -0.047) is
-    the system plug, at the rear. The datasheet puts the scan plane 116 mm above the housing bottom and
-    36.4 mm below its top, which is z = -0.004 here, inside the cover's window; the site stays on the
-    vendor frame.
+    the system plug, at the rear. The data sheet's dimensional drawing puts the scan plane 116 mm above
+    the housing bottom and 36.4 mm below its top; the converted housing spans z -0.1200 .. +0.0323, so
+    the plane is at z -0.0041 (-0.0040 from the bottom), inside the cover's window. The rays are cast
+    from there; the scan is stamped in the vendor frame, 4.1 mm above it, as a real S300's driver
+    stamps it.
 
     Built by external/convert/build_scanner_devices.py from neo_simulation2 @ 832041452c1a0199afea1e9b65adf37381e96214.
     Scan parameters and the `frames:` entry for this site are in sick_s300.manifest.yaml; see
@@ -55,9 +57,9 @@
             contype="0" conaffinity="0"/>
       <!-- The vendor collides with the full mesh; this box bounds the converted housing instead. -->
       <geom name="sick_s300_collision" type="box" pos="-0.0021 0.0001 -0.04385" size="0.053 0.0512 0.07625" group="3"/>
-      <!-- The vendor scan frame (lidar_1_link) is the mount itself.
+      <!-- The data sheet's scan plane, 4.1 mm below the vendor scan frame (lidar_1_link), which is the mount itself.
            Keep in step with the manifest's `frames:` entry. -->
-      <site name="scan" pos="0 0 0" size="0.005"/>
+      <site name="scan" pos="0 0 -0.0041" size="0.005"/>
     </body>
   </worldbody>
 </mujoco>

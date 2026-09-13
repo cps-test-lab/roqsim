@@ -63,6 +63,11 @@ DEFAULT_FACES = 4000
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
 #: Scanner links removed from the expanded tree: the manifest mounts a sick_microscan3 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
+#: The wheel contact sphere's radius (m): Neobotix's hardware documentation, not the description.
+#: The MPO-500 "Mechanical Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-500/
+#: mechanical.html) gives wheel diameter D 254 mm, and the vendor's own wheel mesh (MPO-500-WHEEL)
+#: spans 254 mm, where the description's collision sphere is r 0.117 (macro/mpo_500_wheel_macro.xacro).
+WHEEL_RADIUS = 0.127
 
 
 
@@ -87,8 +92,10 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
             shape = collision.find("geometry")[0]
             xyz, quat = pose(collision)
             if shape.tag == "sphere":
+                if not wheel:
+                    raise ValueError(f"{link.get('name')}: a sphere collision on a non-wheel link")
                 out += (f'{indent}<geom class="wheel_collision" name="{link.get("name")}_tyre"'
-                        f' size="{float(shape.get("radius")):g}" pos="{xyz}"/>\n')
+                        f' size="{WHEEL_RADIUS:g}" pos="{xyz}"/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
                 sub = subs_for(stem, shipped)[0]
@@ -110,12 +117,10 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     )
     assets = asset_block(shipped, palette, scales)
     wheel_z = float(pose(joints[f"mpo_500_omni_wheel_{CORNERS[0]}_link"])[0].split()[2])
-    radius = float(links[f"mpo_500_omni_wheel_{CORNERS[0]}_link"]
-                   .find("collision/geometry/sphere").get("radius"))
     return TEMPLATE.format(
         commit=NEO_COMMIT, assets=assets, excludes=excludes,
-        base_geoms=geoms(base, "        "), wheels=wheels,
-        rest_height=f"{radius - wheel_z:g}",
+        base_geoms=geoms(base, "        "), wheels=wheels, wheel_radius=f"{WHEEL_RADIUS:g}",
+        rest_height=f"{WHEEL_RADIUS - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
 
@@ -141,7 +146,8 @@ TEMPLATE = """<mujoco model="mpo_500">
 
     Wheel contact is the vendor's own SPHERE, not this 8.3 MB roller mesh: a sphere has no preferred
     rolling direction, which is what an omni wheel approximates. The mesh is cosmetic and decimated
-    accordingly.
+    accordingly. The sphere's radius, {wheel_radius}, is Neobotix's documented 254 mm wheel, which the
+    wheel mesh also spans; the description's sphere is 0.117. See build_mpo500_mjcf.WHEEL_RADIUS.
 
     One consequence to know: omni_drive integrates odometry from the ACHIEVED twist and models no
     wheel slip, so encoder odometry and ground truth coincide by construction. This platform cannot

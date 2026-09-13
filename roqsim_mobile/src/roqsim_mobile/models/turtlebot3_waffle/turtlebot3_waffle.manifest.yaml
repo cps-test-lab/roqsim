@@ -26,8 +26,10 @@ components:
       odom_child_frame: base_footprint
   # The LDS-01 device model, the stock Waffle scanner, at turtlebot3_description's base_scan joint:
   # urdf/turtlebot3_waffle.urdf:203-207 @ 0c0be84 (0.132 m above the floor). Scan values are the
-  # device's datasheet defaults (360 deg at 1 deg, 5 Hz, 0.12-3.5 m, 10 mm sigma); no Waffle
-  # hardware configuration differs from them. The paper names only "its Lidar sensor" (spec gap
+  # device's datasheet defaults (360 deg at 1 deg, 5 Hz, 0.12-3.5 m, 10 mm sigma growing to 3.5%).
+  # ROBOTIS's Gazebo sensor (turtlebot3_gazebo models/turtlebot3_waffle/model.sdf:135-159 @ 4563301)
+  # runs at 10 Hz, which the 300 rpm scanner cannot, and its constant stddev 0.01 is the specification's
+  # near-range precision in a noise model that cannot grow with range, so neither is an override. The paper names only "its Lidar sensor" (spec gap
   # g_lidar_params). Addressed as `<robot>.lds01.lidar`; the scan is `scan` in the robot's
   # namespace, stamped `base_scan`.
   - spawn_sensor:

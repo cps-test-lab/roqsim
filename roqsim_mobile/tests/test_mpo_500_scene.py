@@ -43,7 +43,10 @@ from roqsim.engine import Engine
 #: lidar links (0.0001 kg each, mpo_500_body.urdf.xacro:46,73) are not in the MJCF; the two
 #: sick_microscan3 devices mounted there carry the same 0.0001 kg each, so the sum is unchanged.
 TOTAL_MASS = 72.8002
-WHEEL_RADIUS = 0.117
+#: Neobotix MPO-500 Mechanical Properties: wheel diameter D 254 mm (the description's sphere is 0.117).
+WHEEL_RADIUS = 0.127
+#: base_link above the floor at rest: the documented wheel radius less the wheel joints' z 0.13.
+REST_HEIGHT = WHEEL_RADIUS - 0.13
 WHEEL_SEPARATION = 0.56
 AXIS_SEPARATION = 0.50
 #: configs/mpo_500/navigation.yaml. Deliberately different per axis -- see the module docstring.
@@ -147,6 +150,9 @@ def test_it_rests_on_four_wheels():
             assert geom in touching, touching
         named(model, mujoco.mjtObj.mjOBJ_GEOM, "p_base_link_collision")
         assert "p_base_link_collision" not in touching, "the body is on the floor"
+        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "p_base_link")
+        assert float(data.xpos[base][2]) == pytest.approx(REST_HEIGHT, abs=2e-3), (
+            "base_link rests at the documented wheel radius less the wheel joints' height")
     finally:
         engine.shutdown()
 
@@ -236,12 +242,14 @@ def test_the_wheels_turn_and_turn_differently_when_strafing():
 # -- the scanners: sick_microscan3 devices at the vendor's lidar joints ----------------------------
 
 #: neo_simulation2 @ 832041452c1a: robots/mpo_500/urdf/mpo_500_body.urdf.xacro:38 and :65 (the
-#: lidar_1_joint / lidar_2_joint origins, written as the vendor writes them) and
-#: mpo_500_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic).
+#: lidar_1_joint / lidar_2_joint rotations, written as the vendor writes them) and
+#: mpo_500_gazebo.urdf.xacro:27,36 and :41,50 (each scan's link and topic). The position is Neobotix's
+#: hardware documentation (MPO-500 Mechanical Properties, Positions of Sensors) instead of the joints'
+#: (+-0.442, 0, 0.372): LS1 / LS2 at X +-454 and Z 372 mm above the floor, with base_link 3 mm below it.
 #: ``{label: (device, scan frame, xyz, rpy, topic)}``, parent frame base_link.
 MOUNTS = {
-    "scan_front": ("sick_microscan3", "lidar_1_link", (0.442, 0.0, 0.372), (0.0, 0.0, 0.0), "scan"),
-    "scan_rear": ("sick_microscan3", "lidar_2_link", (-0.442, 0.0, 0.372), (0.0, 0.0, 3.14), "scan2"),
+    "scan_front": ("sick_microscan3", "lidar_1_link", (0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 0.0), "scan"),
+    "scan_rear": ("sick_microscan3", "lidar_2_link", (-0.454, 0.0, 0.372 - REST_HEIGHT), (0.0, 0.0, 3.14), "scan2"),
 }
 NAMESPACE = "neo"
 

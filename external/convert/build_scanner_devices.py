@@ -32,8 +32,10 @@ planar projection the robot that mounts it documents.
 The MJCF ``mount`` body is the link the vendor macro attaches to its parent. Visual geoms carry the
 vendor visual origin; the collision geom is the vendor's primitive, except for the two Neobotix
 devices whose vendor collision is the full mesh -- there it is the axis-aligned box around the
-converted housing -- and the LMS1xx, whose vendor collision mesh it bounds. The ``scan`` site is the
-vendor scan frame, never a datasheet optical offset.
+converted housing -- and the LMS1xx, whose vendor collision mesh it bounds. The ``scan`` site is where
+the rays start: the vendor scan frame, except where a device's data sheet places the physical scan
+plane off it and that offset is measured on the converted housing (the S300). The scan is always
+stamped in the vendor frame, which the manifest's ``frames:`` entry declares.
 
 Units and axes: every OBJ is written in metres (``--scale`` bakes the vendor mesh scale in), so the
 MJCF carries no mesh scale. The Neobotix Collada files declare metres but hold millimetre
@@ -190,7 +192,8 @@ DEVICES = {
             collision=None,
             # mpo_700_body.urdf.xacro lidar_1_link; 1.2 kg is also the datasheet weight.
             inertial='<inertial pos="0 0 0" mass="1.2" diaginertia="0.11042056 0.11042056 0.11042056"/>',
-            site_pos=(0.0, 0.0, 0.0),
+            # The data sheet's scan plane, 36.4 mm below the housing top (z +0.0323 on the mesh).
+            site_pos=(0.0, 0.0, -0.0041),
             site_rpy=(0.0, 0.0, 0.0),
             header="""\
     SICK S300 safety laser scanner: a standalone mount (housing mesh + a `scan` site) for the
@@ -202,12 +205,15 @@ DEVICES = {
 
     Body-local axes: x = the scan's zero bearing, z = up with the device upright. The optics cover is
     the dark round head at z -0.025 .. +0.032; the black wedge at the bottom (z -0.12 .. -0.047) is
-    the system plug, at the rear. The datasheet puts the scan plane 116 mm above the housing bottom and
-    36.4 mm below its top, which is z = -0.004 here, inside the cover's window; the site stays on the
-    vendor frame.""",
+    the system plug, at the rear. The data sheet's dimensional drawing puts the scan plane 116 mm above
+    the housing bottom and 36.4 mm below its top; the converted housing spans z -0.1200 .. +0.0323, so
+    the plane is at z -0.0041 (-0.0040 from the bottom), inside the cover's window. The rays are cast
+    from there; the scan is stamped in the vendor frame, 4.1 mm above it, as a real S300's driver
+    stamps it.""",
             collision_note="The vendor collides with the full mesh; this box bounds the converted "
             "housing instead.",
-            site_note="The vendor scan frame (lidar_1_link) is the mount itself.",
+            site_note="The data sheet's scan plane, 4.1 mm below the vendor scan frame (lidar_1_link), "
+            "which is the mount itself.",
         ),
         Device(
             name="sick_microscan3",

@@ -41,22 +41,28 @@ components:
   # alone; together they see around the robot. A single centre-mounted 360 scan would have been
   # simpler and would have given the robot a sensor it does not have, with no blind corners.
   #
-  # Each is the `sick_s300` device model at the vendor's joint origin (neo_simulation2 @ 8320414,
+  # Each is the `sick_s300` device model at the vendor's joint rotation (neo_simulation2 @ 8320414,
   # robots/mpo_700/urdf/mpo_700_body.urdf.xacro, lidar_1_joint :36-41 and lidar_2_joint :63-68).
   # Both hang upside down (roll 3.14) and face out of their corners (yaw 0.79 front-left, 3.93
   # rear-right); the values are kept as the vendor writes them. Field, rays, range, rate and noise are
   # the device's datasheet values. The vendor's Gazebo sensors (720 rays over +-1.48 rad at 40 Hz,
-  # mpo_700_gazebo.urdf.xacro:25-50) describe its simulation rather than the scanners and are not
-  # copied; their topics are the robot's ROS interface and are: one topic per scanner, `scan` and
-  # `scan2`.
+  # sigma 0.01, mpo_700_gazebo.urdf.xacro:25-50) come from a macro whose noise comment derives the
+  # value for a Hokuyo (components/common_macro/gazebo_lidar_macro.xacro:41-44) and which the
+  # MPO-500's microScan3s share, so none is a value for the S300 on this robot and none is copied;
+  # their topics are the robot's ROS interface and are: one topic per scanner, `scan` and `scan2`.
   #
   # HEIGHT: Neobotix's hardware documentation, not the description. The MPO-700 "Mechanical
   # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html) puts the
   # optional diagonal scanners at Z 201.5 mm in the platform frame, whose origin is on the floor (the
   # centre scanners' Z 181 is the same page's "height of scan plane"). Its wheels are 180 mm across, and
   # the description's wheel centres sit 0.10 above base_link, so base_link is 10 mm below the floor and
-  # the scans are at z 0.2115, where the description writes 0.223. x and y stay the description's (the
-  # page says +-327, +-277).
+  # the scans are at z 0.2115, where the description writes 0.223.
+  #
+  # X, Y stay the description's +-0.338 / +-0.288, 11 mm further out on each axis than the same page's
+  # X +-327 / Y +-277 from the platform centre (which the steering axes at +-0.24, +-0.18 share). At the
+  # documented position each S300's collision housing touches its corner wheel's vendor tyre sphere
+  # (r 0.09) at rest and pins that wheel's steering; at the description's it clears by 8.4 mm. The
+  # conflict is between that sphere and the documented pose -- see the port log.
   - spawn_sensor:
       model: sick_s300
       parent_frame: base_link

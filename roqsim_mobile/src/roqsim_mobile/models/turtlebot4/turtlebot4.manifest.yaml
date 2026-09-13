@@ -16,9 +16,11 @@ frames:
 components:
   - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
   # The RPLIDAR A1 device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:31-33,
-  # 114-117 @ 7fd29fb. Scan values are the device's datasheet defaults: no TurtleBot 4 hardware
-  # configuration differs from them, and the vendor's Gazebo sensor block (62 Hz, 640 samples) is a
-  # simulation setting, not the scanner's. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
+  # 114-117 @ 7fd29fb. Scan values are the device's: the TurtleBot 4's driver launch sets the layout
+  # the device already carries, and its Gazebo block (sensors/rplidar.urdf.xacro:38-41) states no value
+  # the A1 could have -- 62 Hz and 640 samples per turn exceed its 10 Hz and 8 kHz -- with its noise
+  # disabled (irobot_create_description common_properties.urdf.xacro:82-87 @ 1fccb76), which the
+  # device's 0 already equals. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
   # in the robot's namespace, stamped `rplidar_link`.
   - spawn_sensor:
       model: rplidar_a1
