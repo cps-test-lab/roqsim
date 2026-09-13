@@ -131,10 +131,6 @@ MAX_VELOCITY = 1.0
 MAX_ACCELERATION = 2.0
 SCALING = 0.15
 
-#: Gripper effort reported to a ``GripperCommand`` goal. Not read by the substrate -- the commanded
-#: position is mapped onto the actuator's ctrlrange -- but MoveIt requires the field.
-GRIPPER_EFFORT = 50.0
-
 #: The pipeline ``move_group`` uses for a request that names none, and the only one this export
 #: writes a file for. OMPL, because a sampling planner succeeds on a wider range of goals than an
 #: optimizer that starts from one seed trajectory -- and because its ``projection_evaluator`` names
@@ -173,6 +169,10 @@ class ArmFacts:
     gripper_joint: str = ""
     gripper_open: float = 0.0
     gripper_close: float = 0.0
+    #: The gripper joint's effort limit in its own unit, as the controller's ``GripperEffort`` publishes
+    #: it: what a GripperCommand goal from MoveIt asks for unless the export is told otherwise. 0.0
+    #: where the gripper cannot take an effort clamp.
+    gripper_effort_limit: float = 0.0
     #: The SRDF group this arm's chain is in. ``ARM_GROUP`` for a description holding one arm; the
     #: entity's own name where several share a description.
     group: str = ARM_GROUP
@@ -392,6 +392,11 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     if grip is not None:
         gros = grip.backend.get("ros2", {})
         facts.gripper_action = str(gros.get("name", ""))
+        # The limit the controller published beside the endpoint, so MoveIt's gripper goals ask for
+        # exactly what the gripper can apply.
+        effort_key = gros.get("effort_key")
+        effort = ctx.blackboard.get(str(effort_key)) if effort_key else None
+        facts.gripper_effort_limit = float(getattr(effort, "limit", 0.0) or 0.0)
         facts.gripper_controller = (
             facts.gripper_action.rsplit("/", 1)[0]
             if "/" in facts.gripper_action
@@ -565,7 +570,7 @@ def joint_limits_yaml(facts, max_velocity: float, max_acceleration: float) -> st
     )
 
 
-def moveit_controllers_yaml(facts, gripper_effort: float) -> str:
+def moveit_controllers_yaml(facts, gripper_effort: float | None = None) -> str:
     arms = _facts_list(facts)
     names: list[str] = []
     manager: dict = {"controller_names": names}
@@ -594,7 +599,9 @@ def moveit_controllers_yaml(facts, gripper_effort: float) -> str:
                 "action_ns": "gripper_cmd",
                 "default": True,
                 "joints": [one.urdf_gripper_joint],
-                "max_effort": gripper_effort,
+                "max_effort": (
+                    one.gripper_effort_limit if gripper_effort is None else gripper_effort
+                ),
             }
             served_lines += f"#   /{served}{one.gripper_action}\n"
     body: dict = {
@@ -959,7 +966,12 @@ def main(argv: list | None = None) -> int:
     parser.add_argument("--parent-frame", default="odom", help="passed to the SRDF export")
     parser.add_argument("--max-velocity", type=float, default=MAX_VELOCITY)
     parser.add_argument("--max-acceleration", type=float, default=MAX_ACCELERATION)
-    parser.add_argument("--gripper-effort", type=float, default=GRIPPER_EFFORT)
+    parser.add_argument(
+        "--gripper-effort",
+        type=float,
+        default=None,
+        help="max_effort MoveIt sends the gripper (default: the gripper joint's own effort limit)",
+    )
     parser.add_argument(
         "--samples", type=int, default=10000, help="configurations sampled for the collision matrix"
     )

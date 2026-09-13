@@ -120,6 +120,25 @@ def test_gripper_units_come_from_the_gripper_manifest(ur5e):
     assert facts.gripper_close == pytest.approx(0.8)
 
 
+def test_gripper_max_effort_is_the_grippers_own_limit(ur5e, tmp_path):
+    """MoveIt sends this with every gripper goal, and the controller clamps the joint effort at it.
+
+    A fixed number either asks for more than the drive can give or weakens every grasp; the limit the
+    controller publishes is neither. It is in the gripper joint's own unit: N*m for the 2F-85's
+    knuckle, N for the PG+70's jaw.
+    """
+    facts = arm_facts(ur5e)
+    assert facts.gripper_effort_limit == pytest.approx(2.5)
+    body = yaml.safe_load(moveit_controllers_yaml(facts))["moveit_simple_controller_manager"]
+    assert body[facts.gripper_controller]["max_effort"] == pytest.approx(2.5)
+    told = yaml.safe_load(moveit_controllers_yaml(facts, 1.0))["moveit_simple_controller_manager"]
+    assert told[facts.gripper_controller]["max_effort"] == pytest.approx(1.0)
+
+    engine = Engine(_cell(tmp_path, gripper="schunk_pg70"))
+    engine.setup()
+    assert arm_facts(engine).gripper_effort_limit == pytest.approx(100.0)
+
+
 def test_the_arms_namespace_reaches_the_reported_actions(tmp_path):
     """Two arms under one bridge are told apart by namespace, so a config that drops it points at
     an action nothing serves."""

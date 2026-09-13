@@ -290,26 +290,6 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     return result
 
 
-def _max_effort_refusal(max_effort: float, effort) -> str:
-    """Why a GripperCommand goal's ``max_effort`` cannot be honoured, or ``""`` when it can.
-
-    ``effort`` is the producer's force entry (anything with a ``rated`` newton figure), or None for a
-    producer that takes a position only. Pure, so the policy is tested without an action server.
-    """
-    if max_effort <= 0.0:
-        return ""
-    if effort is None:
-        return f"this producer takes a position only, so max_effort must be 0, got {max_effort:g}"
-    if effort.rated <= 0.0:
-        return (
-            f"this gripper has no force rating in newtons, so max_effort must be 0, got "
-            f"{max_effort:g}"
-        )
-    if max_effort > effort.rated:
-        return f"max_effort {max_effort:g} N exceeds the {effort.rated:g} N each jaw is rated for"
-    return ""
-
-
 @action_handler("control_msgs.action.GripperCommand")
 def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     """Drive a 1-DOF thing to a commanded position and report when it settles or stalls.
@@ -325,12 +305,12 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so
     existing arms are unchanged. Without a reader we wait a fixed settle time and report the command.
 
-    ``max_effort`` reaches a producer that publishes a force entry under its ``effort_key`` hint (an
-    arm_controller's ``GripperEffort``). It is posted before the position, so both land in the same
-    step, and ``<= 0`` restores the producer's own force range. A goal the producer cannot honour -- a
-    positive ``max_effort`` to a producer without that entry or without a rating in newtons, or above
-    its rating -- is aborted before anything moves, rather than executed with a grip other than the
-    one it asked for.
+    ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
+    every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
+    arm_controller's ``GripperEffort``) clamps its joint effort at it; the clamp is posted before the
+    position, so both land in the same step. A producer without one, such as a door, executes the
+    position alone, as a position-interface controller does. Feedback and result report the effort
+    that entry reads.
     """
     cmd = goal_handle.request.command
     target = float(cmd.position)
@@ -339,13 +319,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     hints = endpoint.backend.get("ros2", {}) if endpoint is not None else {}
     effort_key = hints.get("effort_key")
     effort = ctx.blackboard.get(effort_key) if effort_key else None
-    refusal = _max_effort_refusal(max_effort, effort)
-    if refusal:
-        logger.warning("GripperCommand goal aborted: %s", refusal)
-        goal_handle.abort()
-        return result
     if effort is not None:
-        ctx.post(lambda _ctx, newtons=max_effort: effort.set_max_effort(newtons))
+        ctx.post(lambda _ctx, value=max_effort: effort.set_max_effort(value))
     on_payload(target)
 
     reader = None
