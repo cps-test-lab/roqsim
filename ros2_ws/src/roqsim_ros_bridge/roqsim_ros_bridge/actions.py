@@ -290,6 +290,26 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     return result
 
 
+def _max_effort_refusal(max_effort: float, effort) -> str:
+    """Why a GripperCommand goal's ``max_effort`` cannot be honoured, or ``""`` when it can.
+
+    ``effort`` is the producer's force entry (anything with a ``rated`` newton figure), or None for a
+    producer that takes a position only. Pure, so the policy is tested without an action server.
+    """
+    if max_effort <= 0.0:
+        return ""
+    if effort is None:
+        return f"this producer takes a position only, so max_effort must be 0, got {max_effort:g}"
+    if effort.rated <= 0.0:
+        return (
+            f"this gripper has no force rating in newtons, so max_effort must be 0, got "
+            f"{max_effort:g}"
+        )
+    if max_effort > effort.rated:
+        return f"max_effort {max_effort:g} N exceeds the {effort.rated:g} N each jaw is rated for"
+    return ""
+
+
 @action_handler("control_msgs.action.GripperCommand")
 def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     """Drive a 1-DOF thing to a commanded position and report when it settles or stalls.
@@ -304,15 +324,33 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     it (``stalled``, i.e. a gripper closed on an object / a door met an obstruction). The reader's
     blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so
     existing arms are unchanged. Without a reader we wait a fixed settle time and report the command.
+
+    ``max_effort`` reaches a producer that publishes a force entry under its ``effort_key`` hint (an
+    arm_controller's ``GripperEffort``). It is posted before the position, so both land in the same
+    step, and ``<= 0`` restores the producer's own force range. A goal the producer cannot honour -- a
+    positive ``max_effort`` to a producer without that entry or without a rating in newtons, or above
+    its rating -- is aborted before anything moves, rather than executed with a grip other than the
+    one it asked for.
     """
     cmd = goal_handle.request.command
     target = float(cmd.position)
+    max_effort = float(cmd.max_effort)
+    result = GripperCommand.Result()
+    hints = endpoint.backend.get("ros2", {}) if endpoint is not None else {}
+    effort_key = hints.get("effort_key")
+    effort = ctx.blackboard.get(effort_key) if effort_key else None
+    refusal = _max_effort_refusal(max_effort, effort)
+    if refusal:
+        logger.warning("GripperCommand goal aborted: %s", refusal)
+        goal_handle.abort()
+        return result
+    if effort is not None:
+        ctx.post(lambda _ctx, newtons=max_effort: effort.set_max_effort(newtons))
     on_payload(target)
 
-    result = GripperCommand.Result()
     reader = None
     if endpoint is not None:
-        state_key = endpoint.backend.get("ros2", {}).get("state_key", f"gripper:{endpoint.owner}")
+        state_key = hints.get("state_key", f"gripper:{endpoint.owner}")
         reader = ctx.blackboard.get(state_key)
 
     pos_tol = 0.005  # rad: close enough to call the goal reached
@@ -335,6 +373,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             reached = abs(position - target) <= pos_tol
             stalled = (ctx.sim_time - start) > settle and abs(velocity) <= vel_tol and not reached
             feedback.position = position
+            if effort is not None:
+                feedback.effort = effort.read_effort()
             feedback.stalled = stalled
             feedback.reached_goal = reached
             goal_handle.publish_feedback(feedback)
@@ -347,6 +387,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
 
     goal_handle.succeed()
     result.position = position
+    if effort is not None:
+        result.effort = effort.read_effort()
     result.stalled = stalled
     result.reached_goal = reached or stalled  # a stall on the object is a successful grasp
     return result
