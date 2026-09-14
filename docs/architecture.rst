@@ -257,6 +257,21 @@ A short vector is padded from MuJoCo's current value rather than zero-filled, so
 what sweeping one element means. Unknown keys and over-long vectors are rejected at config load, not
 at compile: a typo here is otherwise invisible.
 
+**The contact time constant has a floor at** ``2 * sim.timestep``, and it is the step that moves it.
+MuJoCo clamps a smaller one there and reports nothing, so at the default 2 ms step a world asking for
+0.5 ms, 1 ms or 2 ms gets 4 ms and a contact bit-identical in all three -- while its own configuration
+still reads 0.5 ms. A time constant below the floor is therefore refused, naming the floor that
+applies, because tightening a fit is exactly the reason to reach for this key and a silent clamp
+turns the attempt into a wrong conclusion about the solver. To go tighter, lower ``sim.timestep``:
+halving it halves the floor and roughly doubles the wall time. Only the positive form is a time
+constant -- a negative ``solref`` is MuJoCo's direct ``(-stiffness, -damping)`` parameterisation, to
+which no floor applies.
+
+Worth knowing before tuning for penetration: the floor is not usually what limits a fit. A 5 kg mass
+resting on a plate at the shipped defaults penetrates on the order of nanometres, four orders below
+the 0.1 mm a tight assembly cares about. Where a peg sits proud of its bore, measure before reaching
+for the solver -- an arm's own contact stiffness, and the servo behind it, are the more likely cause.
+
 ``sim.cone`` selects the friction cone. Pyramidal is MuJoCo's default and cheaper; elliptic is the
 physically correct one and matters when the *tangential* force is the measurement -- an insertion
 benchmark reads F_x/F_y directly, and a pyramidal cone quantises their direction to the pyramid's
