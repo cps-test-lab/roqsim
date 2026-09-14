@@ -305,6 +305,13 @@ class Engine:
         A partial vector is padded from MuJoCo's current value rather than zero-filled, so
         ``{solref: [0.05]}`` varies the contact time constant and leaves the damping ratio alone —
         which is what a sweep over one element means.
+
+        A contact time constant below ``2 * timestep`` is refused, because MuJoCo clamps it there
+        and says nothing: asked for 0.5 ms at a 2 ms step, a world gets 4 ms and a penetration
+        bit-identical to the one it was trying to tighten away from. That is the same invisibility
+        this key's unknown-name check exists for, one level down — a value rather than a spelling.
+        The floor moves with the step, so the fix is a smaller ``sim.timestep``, and the error says
+        so. It is checked here rather than at load because the step may come from the model.
         """
         override = self.config.sim.get("contact_override")
         if not override:
@@ -314,10 +321,31 @@ class Engine:
             if value is None:
                 continue
             values = [float(v) for v in (value if isinstance(value, (list, tuple)) else [value])]
+            if key == "solref":
+                self._check_solref_floor(values, float(spec.option.timestep))
             current = list(getattr(spec.option, attr))
             setattr(spec.option, attr, values + current[len(values) :])
         spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_OVERRIDE
         self.logger.info("contact_override active: %s", dict(override))
+
+    @staticmethod
+    def _check_solref_floor(values: list[float], timestep: float) -> None:
+        """Refuse a contact time constant MuJoCo would silently clamp to ``2 * timestep``.
+
+        Only the POSITIVE form is a time constant. A negative ``solref[0]`` is MuJoCo's direct
+        parameterisation, where the pair is ``(-stiffness, -damping)`` and no floor applies; refusing
+        it would reject a world that is not asking for a time constant at all.
+        """
+        if not values or values[0] <= 0.0:
+            return
+        floor = 2.0 * timestep
+        if values[0] < floor:
+            raise PluginError(
+                f"sim.contact_override.solref: a contact time constant of {values[0]} s is below "
+                f"MuJoCo's floor of 2 * timestep = {floor} s, which it would silently use instead — "
+                f"the run would report the tighter value and behave as though {floor} s had been "
+                f"asked for. Lower sim.timestep to reach it, or state {floor} s or more."
+            )
 
     def reset(self, **params) -> None:
         """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
