@@ -575,21 +575,85 @@ def apply_gravity_compensation(spec, rows: list[ResolvedActuator] | None = None)
     purpose: ``body_gravcomp`` is per body and does not cascade to children, so an arm compensated
     before its gripper was attached would sag by exactly the tool's weight. Compensating the tool
     is also the right physics -- a real controller is told its payload and holds that too.
+
+    **Where compensation stops, in either form: a free-swinging joint.** A hinge, slide or ball
+    joint that nothing acts on -- no actuator, directly or through a tendon, no joint or tendon
+    equality, and no ``connect`` or ``weld`` closing a loop through it -- hands nothing below it a
+    torque, so no drive holds that part's pose and it hangs under its own weight: a pendulum on the
+    flange, a cable, a swinging tool. Those bodies keep their weight, and the arm's drives carry it
+    as a load the way they carry any other. A gripper's linkage is not one of them: its joints are
+    coupled to its actuator or close a loop with the ones that are.
     """
     held = None
     if rows is not None:
         held = {row.joint for row in rows if row.joint and row.control in _HELD_BY_A_DRIVE}
+    acted_on, looped_bodies = _joints_acted_on(spec)
 
     compensated = 0
 
-    def _walk(body, carried: bool) -> None:
+    def _subtree_names(body) -> set[str]:
+        names = {body.name}
+        for child in body.bodies:
+            names |= _subtree_names(child)
+        return names
+
+    def _swings_freely(body) -> bool:
+        passive = [
+            j
+            for j in body.joints
+            if j.type != mujoco.mjtJoint.mjJNT_FREE and j.name not in acted_on
+        ]
+        return bool(passive) and not (_subtree_names(body) & looped_bodies)
+
+    def _walk(body, carried: bool, swinging: bool) -> None:
         nonlocal compensated
         for child in body.bodies:
-            below = carried or held is None or any(j.name in held for j in child.joints)
+            # Everything below a free-swinging joint swings with it, a drive further down included:
+            # that drive holds its links against the swinging part, not against gravity.
+            child_swinging = swinging or _swings_freely(child)
+            below = not child_swinging and (
+                carried or held is None or any(j.name in held for j in child.joints)
+            )
             if below:
                 child.gravcomp = 1.0
                 compensated += 1
-            _walk(child, below)
+            _walk(child, below, child_swinging)
 
-    _walk(spec.worldbody, False)
+    _walk(spec.worldbody, False, False)
     return compensated
+
+
+def _joints_acted_on(spec) -> tuple[set[str], set[str]]:
+    """The joints something applies a force through, and the bodies a loop constraint names.
+
+    A joint is acted on when an actuator drives it or a tendon that includes it, or an equality
+    couples it or such a tendon. The bodies of ``connect`` and ``weld`` equalities are returned
+    separately: every joint on the chain above one of them is part of a closed loop.
+    """
+    tendon_joints: dict[str, set[str]] = {}
+    for tendon in spec.tendons:
+        tendon_joints[tendon.name] = {
+            wrap.target.name
+            for wrap in tendon.path
+            if wrap.type == mujoco.mjtWrap.mjWRAP_JOINT and wrap.target is not None
+        }
+
+    acted_on: set[str] = set()
+    for actuator in spec.actuators:
+        if actuator.trntype in (mujoco.mjtTrn.mjTRN_JOINT, mujoco.mjtTrn.mjTRN_JOINTINPARENT):
+            acted_on.add(actuator.target)
+        elif actuator.trntype == mujoco.mjtTrn.mjTRN_TENDON:
+            acted_on |= tendon_joints.get(actuator.target, set())
+
+    looped_bodies: set[str] = set()
+    for equality in spec.equalities:
+        if equality.type == mujoco.mjtEq.mjEQ_JOINT:
+            acted_on |= {equality.name1, equality.name2}
+        elif equality.type == mujoco.mjtEq.mjEQ_TENDON:
+            for name in (equality.name1, equality.name2):
+                acted_on |= tendon_joints.get(name, set())
+        elif equality.type in (mujoco.mjtEq.mjEQ_CONNECT, mujoco.mjtEq.mjEQ_WELD):
+            looped_bodies |= {equality.name1, equality.name2}
+    acted_on.discard("")
+    looped_bodies.discard("")
+    return acted_on, looped_bodies
