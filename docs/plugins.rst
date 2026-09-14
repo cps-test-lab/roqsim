@@ -849,9 +849,33 @@ The split between measurement and assumption is explicit, and the defaults assum
 ``force * velocity`` per actuator is measured, every step, at the physics rate -- reconstructed from
 a recording afterwards it would be sampled at the recording's rate and need a drivetrain model to
 turn poses back into effort, which is a fitted constant between the simulator and the result.
-``efficiency``, ``idle_w`` and ``regenerative`` are the platform's own numbers; unset, the plugin
-reports mechanical work and nothing else. A state of charge exists only where a ``capacity_wh`` was
-given -- without one the fraction is reported as *unknown* rather than as a full battery.
+``efficiency``, ``idle_w``, ``resistive_w_per_nm2`` and ``regenerative`` are the platform's own
+numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
+where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
+a full battery.
+
+The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
+velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity
+cannot pay for another one lifting -- netted first, an arm changing pose reports as free. Negative
+mechanical power is dropped rather than billed, because a non-regenerative drive dissipates the
+load's energy instead of drawing it from the pack::
+
+   components:
+     - spawn_arm: {model: ur5e}
+       name: arm
+       components:
+         - energy_monitor: {efficiency: 0.85, idle_w: 35.0, resistive_w_per_nm2: 0.012}
+
+``resistive_w_per_nm2`` is the term a manipulator needs and a mobile base can usually ignore: the
+``k`` in ``k * tau^2``, the winding loss. A motor torque is a motor current, so it is the one term
+that survives a standstill -- an arm holding a payload against gravity has exactly zero mechanical
+power and still dissipates ``I^2 R``, which on a slow trial is often the larger part of the bill. One
+number covers a machine whose motors are one class; a mapping of actuator name to coefficient gives a
+shoulder and a wrist their own, and an actuator the mapping omits contributes nothing. Beside the
+joules the report carries ``torque_integral_nms``, the integral of the summed absolute actuator
+forces -- the effort metric a paper falls back on where its platform's electrical constants are not
+published, accumulated here at the physics rate rather than at whatever rate ``/joint_states`` was
+published at.
 
 Which actuators count is derived, not configured: every actuator driving a body of the robot's
 kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
