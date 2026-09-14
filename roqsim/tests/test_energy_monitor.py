@@ -124,6 +124,20 @@ class _HoldingScene(_RobotScene):
         actuator.biasprm[2] = -200.0
 
 
+class _CompensatedHoldingScene(_HoldingScene):
+    """The same loaded joint, with MuJoCo carrying its weight.
+
+    This is what every position- or impedance-driven arm in roqsim is: `apply_gravity_compensation`
+    sets `gravcomp` on the arm's bodies, so the weight-carrying force arrives OUTSIDE the actuator
+    and `actuator_force` reads zero on a joint holding a payload. A meter reading only that reports
+    an arm that is free to hold a load up, and free to lift one.
+    """
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.body("base_link").gravcomp = 1.0
+
+
 def _engine(
     *, scene: str = f"{__name__}:_RobotScene", steps: int = 500, drive: float = CTRL, **config
 ):
@@ -266,6 +280,25 @@ def test_a_held_load_is_free_until_a_winding_loss_says_it_is_not():
     assert lossy.resistive_w == pytest.approx(expected, rel=0.02)
     assert lossy.mechanical_w == pytest.approx(0.0, abs=1e-2), "still not moving"
     assert lossy.energy_j > 0.0, "and the holding is integrated, not only reported"
+
+
+def test_a_compensated_arm_is_billed_for_the_load_it_holds():
+    """The torque metered is the one a real drive supplies, not the residue MuJoCo leaves.
+
+    `actuator_force` is zero here by construction, so this is the case a meter reading it alone
+    cannot see -- and it is the ordinary case, because every position- and impedance-driven arm is
+    gravity-compensated.
+    """
+    scene = f"{__name__}:_CompensatedHoldingScene"
+    engine = _engine(scene=scene, steps=1500, drive=0.0, resistive_w_per_nm2=0.01)
+    plugin = _plugin(engine)
+    d = engine.ctx.data
+    assert d.actuator_force[plugin._actuators[0]] == pytest.approx(0.0, abs=1e-6), (
+        "MuJoCo carries the weight outside the actuator -- the premise of this test"
+    )
+    expected = 0.01 * _HoldingScene.HOLD_NM**2
+    assert plugin.read().resistive_w == pytest.approx(expected, rel=0.02)
+    assert plugin.read().energy_j > 0.0
 
 
 def test_a_coefficient_per_actuator_bills_each_motor_its_own_loss():
