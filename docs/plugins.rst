@@ -866,6 +866,14 @@ load's energy instead of drawing it from the pack::
        components:
          - energy_monitor: {efficiency: 0.85, idle_w: 35.0, resistive_w_per_nm2: 0.012}
 
+The torque metered is the one a real drive supplies: the actuator's own force **plus its share of
+the gravity-compensation force**. MuJoCo carries a compensated arm's weight outside the actuator, so
+``actuator_force`` reads exactly zero on a joint holding a payload against gravity -- and since every
+position- and impedance-driven arm is compensated, metering it alone would report an arm that is free
+to hold a load up and free to lift one. It is the same quantity ``arm_controller`` reports as a
+joint's effort, and for the same reason. Under ``control: effort``, where nothing is compensated
+because supplying the gravity term is the controller's job, the share is zero and nothing changes.
+
 ``resistive_w_per_nm2`` is the term a manipulator needs and a mobile base can usually ignore: the
 ``k`` in ``k * tau^2``, the winding loss. A motor torque is a motor current, so it is the one term
 that survives a standstill -- an arm holding a payload against gravity has exactly zero mechanical

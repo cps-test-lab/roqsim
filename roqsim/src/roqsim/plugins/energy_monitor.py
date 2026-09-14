@@ -25,7 +25,15 @@ puts a fitted constant between the simulator and the result. MuJoCo already comp
 force and the velocity it acts through; their product is mechanical power, exactly, every step.
 
 **What is measured, and what is assumed.** The measured part is mechanical and is evaluated **per
-actuator**: ``force * velocity`` for each of the actuators that move this robot. The sum is taken
+actuator**: ``force * velocity`` for each of the actuators that move this robot, where the force is
+the one a real drive would supply -- the actuator's own force **plus its share of the
+gravity-compensation force**. MuJoCo's ``body_gravcomp`` carries a compensated arm's weight outside
+the actuator, so ``actuator_force`` reads exactly zero on a joint holding a payload against gravity;
+metering it alone reports an arm that costs nothing to hold a load up, and nothing to lift one. A
+real drive supplies that torque, which is why ``arm_controller`` already reports
+``qfrc_actuator + qfrc_gravcomp`` as a joint's effort. Where nothing is compensated -- ``control:
+effort``, whose controller supplies the gravity term itself -- the share is zero and nothing
+changes. The sum is taken
 after the per-actuator split, never before -- on an arm, one joint descending while another lifts is
 the ordinary case rather than an edge case, and a net taken first lets the descent pay for the lift
 and reports a pose change as free. Everything between that measurement and a battery current is an
@@ -345,6 +353,29 @@ class EnergyMonitorPlugin(Plugin):
                 return int(m.site_bodyid[wrap_objid])
         return -1
 
+    def _gravcomp_share(self, d) -> np.ndarray:
+        """Each metered actuator's share of the gravity-compensation force, in actuator space.
+
+        ``qfrc_gravcomp`` is a DOF-space force, so it is projected onto each actuator's transmission
+        row: for the ordinary joint drive that is a division by the gear, and in general it is the
+        least-squares share, so ``moment^T @ share`` reproduces the DOF-space force it came from.
+        The row is read from ``mjData`` every step rather than cached, because a transmission's
+        moment is a function of the configuration.
+        """
+        moment = d.actuator_moment
+        share = np.zeros(self._actuators.shape, dtype=float)
+        for i, aid in enumerate(self._actuators):
+            nnz = int(d.moment_rownnz[aid])
+            if nnz == 0:
+                continue
+            adr = int(d.moment_rowadr[aid])
+            cols = d.moment_colind[adr : adr + nnz]
+            vals = moment[adr : adr + nnz]
+            denominator = float(vals @ vals)
+            if denominator > 0.0:
+                share[i] = float(vals @ d.qfrc_gravcomp[cols]) / denominator
+        return share
+
     def on_reset(self, ctx: SimContext) -> None:
         # A trial starts on a full battery: without this, trial 2 of one process inherits trial 1's
         # consumption and the second cell of a campaign reports a robot that started half-empty.
@@ -367,7 +398,10 @@ class EnergyMonitorPlugin(Plugin):
         # Mechanical power, exactly: force through the velocity it acts at, per actuator. The split
         # into driving and driven happens BEFORE the sum -- netting first would let one joint's
         # descent pay for another's lift, which on an arm is the ordinary case.
-        torque = d.actuator_force[self._actuators]
+        # The torque a real drive supplies: the actuator's own force plus the share of the
+        # weight-carrying force MuJoCo applies outside it. Without the second term a compensated
+        # arm reads as costing nothing to hold a payload, or to lift one.
+        torque = d.actuator_force[self._actuators] + self._gravcomp_share(d)
         per_actuator = torque * d.actuator_velocity[self._actuators]
         driving = float(np.sum(np.maximum(per_actuator, 0.0)))
         driven = float(np.sum(np.minimum(per_actuator, 0.0)))  # <= 0
