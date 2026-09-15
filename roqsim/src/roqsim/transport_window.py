@@ -39,6 +39,15 @@ TICK_HZ = 60.0
 #: Playback speeds the menu offers, as multiples of the recording's own rate.
 SPEEDS = (0.25, 0.5, 1.0, 2.0, 4.0)
 
+#: What the window opens at, and how far it may be shrunk. Wide, because the slider is the
+#: instrument here: it takes whatever the transport row's fixed widgets leave, so a window sized to
+#: its contents would leave a scrub bar too short to land on a moment with.
+OPEN_SIZE = (1000, 380)
+MIN_SIZE = (760, 260)
+
+#: The slider's own requested width, so it keeps a usable run even at :data:`MIN_SIZE`.
+SLIDER_WIDTH = 420
+
 BG = "#1b1b1b"
 PANEL = "#262626"
 FG = "#e8e8e8"
@@ -67,6 +76,8 @@ class _Transport:
         self.root = tk.Tk()
         self.root.title(f"roqsim replay -- {Path(replay.state).name}")
         self.root.configure(bg=BG)
+        self.root.geometry("{}x{}".format(*OPEN_SIZE))
+        self.root.minsize(*MIN_SIZE)
         self.root.protocol("WM_DELETE_WINDOW", self._close)
         self._build()
         self._refresh()
@@ -96,6 +107,7 @@ class _Transport:
             from_=0,
             to=max(len(self.replay.timeline) - 1, 1),
             orient="horizontal",
+            length=SLIDER_WIDTH,
             showvalue=False,
             command=self._on_slider,
             bg=BG,
