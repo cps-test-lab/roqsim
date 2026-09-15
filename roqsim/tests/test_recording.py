@@ -700,3 +700,90 @@ def test_the_pose_record_carries_every_named_body_not_only_roots(tmp_path, caplo
     # The unnamed body is reported, with its parent, rather than silently absent.
     assert "1 unnamed bodies have no row (under link)" in caplog.text
     rec.close()
+
+
+# -- decimation: fewer samples, the same states ----------------------------------------------------
+
+
+def test_decimating_keeps_original_rows_and_divides_the_rate_exactly(tmp_path, moving):
+    """The invariant ``roqsim render`` rests on: every frame is a state the simulation actually had.
+
+    So decimation must *drop* rows, never resample or interpolate them -- and the declared rate has to
+    follow exactly, which works because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
+    by 8 is ``[250, 8]``, i.e. 31.25 fps rather than a rounded 31.
+    """
+    from fractions import Fraction
+
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=250, samples=80)
+    out = decimated(rec, 8, tmp_path / "thin.npz")
+    thin = open_recording(out)
+
+    assert thin.fps == Fraction(250, 8)
+    assert len(thin) == len(range(0, len(rec), 8))
+    assert thin.samples.dtype == rec.samples.dtype
+    for i in range(len(thin)):
+        assert np.array_equal(thin.samples["s"][i], rec.samples["s"][i * 8])
+        assert thin.samples["t"][i] == rec.samples["t"][i * 8]
+
+
+def test_decimating_by_one_is_a_copy(tmp_path, moving):
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=50, samples=20)
+    same = open_recording(decimated(rec, 1, tmp_path / "same.npz"))
+
+    assert same.fps == rec.fps
+    assert len(same) == len(rec)
+    assert np.array_equal(same.samples["s"], rec.samples["s"])
+
+
+def test_decimating_away_the_span_is_refused(tmp_path, moving):
+    """Two samples is the minimum that still has a span; one is a still, not a recording."""
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=25, samples=6)
+
+    with pytest.raises(RecordingError, match="at least two"):
+        decimated(rec, 100, tmp_path / "gone.npz")
+
+
+def test_a_decimate_factor_below_one_is_refused(tmp_path, moving):
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=25, samples=10)
+
+    with pytest.raises(RecordingError, match="1 or more"):
+        decimated(rec, 0, tmp_path / "no.npz")
+
+
+def _recorded(tmp_path, model, data, *, fps: int, samples: int):
+    """A recording of ``model`` stepped ``samples`` times, at a declared ``fps``."""
+    import json
+
+    from roqsim.capture import STATE_SPEC, record_dtype
+
+    size = mujoco.mj_stateSize(model, STATE_SPEC)
+    rows = np.zeros(samples, dtype=record_dtype(size, False))
+    buf = np.zeros(size)
+    for i in range(samples):
+        mujoco.mj_step(model, data)
+        mujoco.mj_getState(model, data, buf, STATE_SPEC)
+        rows["t"][i] = data.time
+        rows["w"][i] = i / fps
+        rows["s"][i] = buf
+    meta = {
+        "format_version": 2,
+        "state_size": size,
+        "capture_fps": [fps, 1],
+        "world": "synthetic.yaml",
+        "model": {"nq": int(model.nq), "nv": int(model.nv), "nu": int(model.nu)},
+    }
+    path = tmp_path / f"src-{fps}-{samples}.npz"
+    np.savez(path, meta=np.array(json.dumps(meta)), samples=rows)
+    return open_recording(path)
