@@ -335,11 +335,16 @@ simulated: every frame is a state restored out of the file, so what the window s
    roqsim sim run.npz                      # from the start
    roqsim sim run.npz --at 12.5            # open at one moment
    roqsim sim run.npz --no-transport-window
+   roqsim sim run.npz --world cell/world.yaml   # a world that loaded files from beside itself
 
 The extension is what selects it, as it does for a mesh target and for ``roqsim render``'s output.
 Options that drive a live simulation — ``--record``, ``--steps``, ``--pacing``, ``--ros`` and their
 kind — are refused by name rather than ignored, and a time outside the recording is refused the way
-``roqsim render --at`` refuses one.
+``roqsim render --at`` refuses one. A recording rebuilds its world from its own provenance; where
+that world loaded a plugin or a model by path from beside itself and those files are not beside the
+recording, ``--world`` names the world to rebuild from, as ``roqsim render``'s target does. The
+provenance check still refuses one that does not match, and a shot taken in such a replay names the
+world too, so its render rebuilds the same way.
 
 A replay opens **two** windows. MuJoCo's own takes a key callback and nothing else — no mouse
 callback, no way to add a widget — so the slider, the timestamp box and the buttons are a small

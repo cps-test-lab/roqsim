@@ -159,8 +159,12 @@ class Replay:
         no_ceiling: bool = False,
         source: dict | None = None,
         keys: ReplayKeys | None = None,
+        world: str | Path | None = None,
     ) -> None:
         self.rec = rec
+        #: The world the recording was rebuilt from where its own provenance could not do it; a
+        #: shot names it too, so its render rebuilds the same way.
+        self.world = str(world) if world else None
         self.handle = handle
         self.timeline = Timeline(rec.times, float(rec.fps))
         self.keys = keys
@@ -277,6 +281,7 @@ class Replay:
             no_ceiling=self.no_ceiling,
             source=self.source,
             taken=tuple(self._taken),
+            world=self.world,
         )
         # The id is what names the file, and only shot_document can hand it out, so the directory is
         # joined on afterwards rather than guessed at beforehand.
@@ -337,11 +342,15 @@ def run_replay(
     left_ui: bool = False,
     right_ui: bool = False,
     source: dict | None = None,
+    world: str | Path | None = None,
 ) -> int:
     """Open ``state`` in the viewer and block until the window closes. Returns an exit code.
 
     ``view`` is a ``sim.view`` block (what ``--set sim.view.azimuth=90`` produces), merged over the
-    recording world's own. Returns ``0`` once the window has been open, ``2`` with no display for it.
+    recording world's own. ``world`` names the world to rebuild from instead of the recording's own
+    provenance -- for a run whose world loaded files from beside itself that are not beside the
+    recording; the provenance check still refuses one that does not match. Returns ``0`` once the
+    window has been open, ``2`` with no display for it.
     """
     from .viewer import (
         GL_HELP,
@@ -360,7 +369,7 @@ def run_replay(
 
     path = Path(state)
     rec = open_recording(path)
-    model, ctx = rec.build(no_ceiling=no_ceiling)
+    model, ctx = rec.build(str(world) if world else None, no_ceiling=no_ceiling)
     # A stated camera merges over the recording world's own sim.view, exactly as it does for a render
     # of one moment, so opening a replay and rendering a shot of it frame the scene the same way.
     stated = dict(view or {})
@@ -393,6 +402,7 @@ def run_replay(
             no_ceiling=no_ceiling,
             source=source,
             keys=handler,
+            world=world,
         )
         # An explicit --view is a framing the caller chose, so it wins over following the recording's
         # own camera; without one, a recording that carries a camera opens through it.

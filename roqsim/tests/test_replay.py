@@ -222,3 +222,28 @@ def test_live_only_options_are_refused_by_name(tmp_path, rec, capsys):
     with pytest.raises(SystemExit):
         runner.main([str(tmp_path / "run.npz"), "--record", str(tmp_path / "out.npz")])
     assert "--record" in capsys.readouterr().err
+
+
+# -- a world named for the rebuild ---------------------------------------------------------------------
+
+
+def test_a_recording_whose_world_moved_rebuilds_from_the_world_named(rec, tmp_path):
+    """The case: a world that loaded files from beside itself, replayed where they are not."""
+    moved = tmp_path / "elsewhere" / "w.yaml"
+    moved.parent.mkdir()
+    moved.write_text(_WORLD, encoding="utf-8")
+    reopened = open_recording(tmp_path / "run.npz")
+    model, _ctx = reopened.build(str(moved))
+    assert model.nbody == rec._model.nbody
+
+
+def test_a_shot_taken_in_such_a_replay_names_the_world_for_its_render(rec, tmp_path):
+    from roqsim.shots import render_args
+
+    replay = Replay(rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots.yaml",
+                    world=tmp_path / "elsewhere" / "w.yaml")
+    doc = replay.add_shot("moved")
+    assert doc["world_target"] == str(tmp_path / "elsewhere" / "w.yaml")
+    assert render_args(doc)[0] == doc["world_target"] and render_args(doc)[1] == "--state"
+    plain = Replay(rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots2.yaml").add_shot("own")
+    assert "world_target" not in plain and render_args(plain)[0] == "--state"

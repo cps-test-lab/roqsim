@@ -954,6 +954,7 @@ def _replay(args, parser) -> int:
             transport_window=not args.no_transport_window,
             left_ui=args.left_ui,
             right_ui=args.right_ui,
+            world=args.world,
         )
     except (DisplayError, ViewError, PluginError, ModelError, CaptureError, RecordingError) as err:
         print(f"roqsim sim: {err}", file=sys.stderr)
@@ -1028,6 +1029,13 @@ def main(argv: list | None = None) -> int:
         "--no-transport-window",
         action="store_true",
         help="no slider window: scrub with the keys the F1 list names",
+    )
+    replaying.add_argument(
+        "--world",
+        default=None,
+        metavar="PATH",
+        help="rebuild from this world instead of the recording's own provenance: for a run whose "
+        "world loaded files from beside itself that are not beside the recording",
     )
     parser.add_argument(
         "--ros",

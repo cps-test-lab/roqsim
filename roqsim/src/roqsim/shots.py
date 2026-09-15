@@ -68,13 +68,16 @@ def shot_document(
     event: dict | None = None,
     source: dict | None = None,
     taken: tuple[str, ...] = (),
+    world: str | Path | None = None,
 ) -> dict:
     """Describe ``sample`` of ``rec`` framed through ``camera``, as a document to append.
 
     ``camera`` is the free camera the moment was framed with; ``None`` means the shot follows the
     recording's own camera and therefore states no view. ``state`` is the recording's path as the
     render will be given it -- relative to ``project``, which is the directory the render runs in.
-    ``taken`` is the ids already in the file, so this one does not collide with them.
+    ``taken`` is the ids already in the file, so this one does not collide with them. ``world`` is
+    the world the replay was told to rebuild from, where the recording's own could not be: the
+    render is then told the same, as ``world_target``.
     """
     view = None if camera is None else _view_for(camera, rec.view)
     doc = {
@@ -93,6 +96,8 @@ def shot_document(
     }
     if view is not None:
         doc["view"] = view
+    if world:
+        doc["world_target"] = str(world)
     doc["png"] = png or f"{doc['id']}.png"
     if event:
         doc["event"] = dict(event)
@@ -132,7 +137,10 @@ def render_args(doc: dict, *, size: str | None = None, out: str | Path | None = 
     second resolution without being rewritten.
     """
     _check_schema(doc)
-    args = ["--state", str(doc["state"])]
+    # The world comes first, as `roqsim render`'s target: named only where the recording's own
+    # provenance cannot rebuild it, which is the one case a shot states one.
+    args = [str(doc["world_target"])] if doc.get("world_target") else []
+    args += ["--state", str(doc["state"])]
     args += _moment_args(doc)
     if focus := doc.get("focus"):
         # Before --view, which wins per key: the occlusion search picks a base camera and the stated
