@@ -28,6 +28,53 @@ class Twist(NamedTuple):
     angular: tuple[float, float, float]
 
 
+#: ``qpos`` entries a joint of each type occupies. A free joint carries a position and a quaternion,
+#: a ball joint a quaternion alone.
+JOINT_WIDTH = {
+    int(mujoco.mjtJoint.mjJNT_FREE): 7,
+    int(mujoco.mjtJoint.mjJNT_BALL): 4,
+    int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+    int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+}
+
+#: ``qvel`` entries a joint of each type occupies. Narrower than :data:`JOINT_WIDTH` for the two
+#: rotating types: a quaternion needs four numbers to state an orientation and three to state how
+#: fast it is changing.
+JOINT_DOFS = {
+    int(mujoco.mjtJoint.mjJNT_FREE): 6,
+    int(mujoco.mjtJoint.mjJNT_BALL): 3,
+    int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
+    int(mujoco.mjtJoint.mjJNT_HINGE): 1,
+}
+
+
+def joint_width(model, jid: int) -> int:
+    """How many ``qpos`` entries joint ``jid`` occupies."""
+    return JOINT_WIDTH[int(model.jnt_type[jid])]
+
+
+def joint_dofs(model, jid: int) -> int:
+    """How many ``qvel`` entries joint ``jid`` occupies."""
+    return JOINT_DOFS[int(model.jnt_type[jid])]
+
+
+def joint_dof_indices(model, names) -> list[int]:
+    """Every ``qvel`` index belonging to the named joints, in order, skipping names the model lacks.
+
+    Sliced from each joint's own ``jnt_dofadr`` rather than indexed by joint id, for the reason
+    :func:`roqsim.state.joint_columns` gives about ``qpos``: a free or ball joint occupies several
+    entries, so ``qvel[jid]`` would silently read a neighbour's value.
+    """
+    out: list[int] = []
+    for name in names:
+        jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, str(name))
+        if jid < 0:
+            continue
+        adr = int(model.jnt_dofadr[jid])
+        out.extend(range(adr, adr + joint_dofs(model, jid)))
+    return sorted(set(out))
+
+
 def body_twist(model, data, body_id: int) -> Twist:
     """The world-frame twist of body ``body_id``.
 

@@ -98,6 +98,53 @@ class Recording:
         return self._samples["w"]
 
     @property
+    def samples(self) -> np.ndarray:
+        """The recording's rows as they sit on disk -- ``t``, ``w``, ``s``, and ``cam`` when tracked.
+
+        Read-only, and the counterpart to :meth:`range`: no world is built and no state restored, so
+        scanning a whole recording costs one array read rather than an ``mj_forward`` per sample. That
+        also makes it the *only* way to ask anything of a recording whose world can no longer be
+        rebuilt -- a model provider that is no longer installed leaves the file perfectly readable and
+        :meth:`build` refusing.
+
+        Use :meth:`range` wherever a posed ``MjData`` is what is wanted: contacts, sensors, site
+        positions and body twists exist only after a restore.
+        """
+        view = self._samples.view()
+        view.flags.writeable = False
+        return view
+
+    @property
+    def qpos(self) -> np.ndarray:
+        """``(samples, nq)`` joint positions, sliced out of the state without restoring it."""
+        return self._state_block(1, int(self.meta["model"]["nq"]))
+
+    @property
+    def qvel(self) -> np.ndarray:
+        """``(samples, nv)`` joint velocities, sliced out of the state without restoring it."""
+        nq = int(self.meta["model"]["nq"])
+        return self._state_block(1 + nq, int(self.meta["model"]["nv"]))
+
+    def _state_block(self, start: int, width: int) -> np.ndarray:
+        """One block of the MuJoCo state vector, for every sample.
+
+        The state is written by ``mj_setState`` under :data:`roqsim.capture.STATE_SPEC`, so its blocks
+        sit in ``mjtState`` order -- ``time, qpos, qvel, act, ctrl, ...`` -- sized by the model the run
+        recorded against, which the provenance carries. Only ``time``, ``qpos`` and ``qvel`` are
+        derivable from the provenance alone: everything after ``qvel`` starts at an offset that depends
+        on ``na``, which ``meta["model"]`` does not record, so those blocks need the rebuilt model and
+        are deliberately not offered here.
+        """
+        block = self._samples["s"][:, start : start + width]
+        if block.shape[1] != width:
+            raise RecordingError(
+                f"{self.path}: its state holds {self._samples['s'].shape[1]} values, too few for "
+                f"{width} starting at {start}. Recorded against nq={self.meta['model'].get('nq')} "
+                f"nv={self.meta['model'].get('nv')}."
+            )
+        return block
+
+    @property
     def span(self) -> tuple[float, float]:
         return float(self.times[0]), float(self.times[-1])
 

@@ -258,6 +258,64 @@ Without ``--at`` you get the **last** sample, and the command says so on stderr 
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
 same way: one line rewritten in place at a terminal, and a handful of lines when the output is a log.
 
+.. _first-movement:
+
+Starting where the run starts moving
+------------------------------------
+
+A run recorded from a live stack opens with the robot standing still while its nodes come up, a map
+arrives and a plan is computed. ``--from onset`` skips that, and ``roqsim state --onset`` reports it
+as JSON without drawing anything:
+
+.. code-block:: bash
+
+   roqsim render --state run.npz --from onset --out clip.mp4
+   roqsim state --state run.npz --onset
+
+The hard part is not the threshold, it is *which velocity to read*. A robot is spawned a little above
+the floor and drops onto it, so something is moving at t=0 in almost every recording — and the drop is
+sometimes faster than the drive that follows, so ranking motion by speed picks the fall. What separates
+them is direction: a robot that falls moves along ``z`` and rocks about ``x``/``y``, while a robot that
+drives moves along ``x``/``y`` and turns about ``z``.
+
+So the signal is chosen by what the robot is, and the fall is not in it at all:
+
+A **mobile base**
+    is read by the planar motion of its base — ``vx``, ``vy`` and yaw rate. The fall is ``vz`` and the
+    settle is roll and pitch, so none of it is in the signal.
+
+A **fixed base**
+    is read by the velocity of its actuated joints. A bolted-down arm does not fall.
+
+Which one a recording gets is read off the model rather than off any name: *a robot is mobile iff the
+kinematic root of its* **actuated** *joints carries a free joint*. Reaching the base through the
+actuators is what makes a world with props work — a parcel on a conveyor is a free body too, but it is
+the root of no actuated joint, so it is never mistaken for a base.
+
+``--onset-select`` overrides the choice with ``planar``, ``actuated``, a comma-separated list of joint
+names, or ``any``. ``any`` reads every velocity and needs no world rebuild, which is what lets it
+answer for a recording whose world can no longer be built — at the cost of seeing the spawn drop, so
+it reports ``kind: any`` to say the answer is the weaker one.
+
+**A run that never moved says so** rather than reporting a time. ``moved`` means a sustained crossing
+was found, not that the peak was high: a single sample of motion — a contact tick, a teleport — is not
+a run in which anything drove, and reading the peak alone would clip a stationary robot.
+
+Rendering fewer frames than the recording holds
+-----------------------------------------------
+
+``roqsim render`` draws one frame per sample and never decimates, so every frame in a video is a state
+the simulation actually had. A recording captured at 250 Hz therefore draws eight frames for every one
+that survives to a 30 fps video. ``--decimate`` drops them first instead:
+
+.. code-block:: bash
+
+   roqsim state --state run.npz --decimate 8 --out thin.npz
+
+The rows that remain are untouched, so the invariant holds; what changes is how many there are and the
+declared rate that says so. That rate stays exact because it is a numerator and a denominator — 250 Hz
+by 8 is 31.25 fps, not a rounded 31.
+
 **F9 records a take**, in any windowed run — with or without ``--record``. Press it once to start
 and again to stop; the window title carries ``[REC]`` while one is running, and takes are numbered
 (``run.npz``, ``run-2.npz``, …) beside the ``--record`` path, or beside the default when the run was
