@@ -40,6 +40,7 @@ from . import logging_setup
 from .capture import (
     DEFAULT_FPS,
     CaptureError,
+    RecordingError,
     RecordToggle,
     StateRecorder,
     TakeRecorder,
@@ -61,6 +62,7 @@ from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
 from .plugin import PluginError
+from .replay import is_recording
 from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
 from .view_save import SaveViewKey, save_current_view
@@ -903,6 +905,61 @@ def _refuse_swallowed_target(argv: list[str]) -> None:
                 )
 
 
+def _replay(args, parser) -> int:
+    """Play a recording back, refusing the flags that only a live run can honour.
+
+    Refused by name rather than ignored: a flag that silently does nothing is how a wrong command
+    line survives in a checked-in script.
+    """
+    from .replay import run_replay
+
+    # Compared against the parser's own defaults rather than truthiness: an option whose default is
+    # a number (--capture-fps) would otherwise report itself as stated on every replay.
+    live_only = {
+        "--headless": "headless",
+        "--record": "record",
+        "--video": "video",
+        "--capture-fps": "capture_fps",
+        "--steps": "steps",
+        "--seconds": "seconds",
+        "--pacing": "pacing",
+        "--seed": "seed",
+        "--manual-control": "manual_control",
+        "--ros": "ros",
+        "--sim-control": "sim_control",
+        "--tf-namespace": "tf_namespace",
+        "--no-communication": "no_communication",
+    }
+    stated = sorted(
+        flag for flag, dest in live_only.items() if getattr(args, dest) != parser.get_default(dest)
+    )
+    if stated:
+        parser.error(
+            f"{', '.join(stated)}: {args.target} is a recording, which is replayed rather than run. "
+            "Those options drive a live simulation and have nothing to act on here."
+        )
+    overrides = deep_merge(
+        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
+    )
+    try:
+        return run_replay(
+            args.target,
+            at=args.at,
+            view=(overrides.get("sim") or {}).get("view"),
+            shots=args.shots,
+            project=args.project,
+            png_dir=args.png_dir,
+            render_size=args.render_size,
+            no_ceiling=False,
+            transport_window=not args.no_transport_window,
+            left_ui=args.left_ui,
+            right_ui=args.right_ui,
+        )
+    except (DisplayError, ViewError, PluginError, ModelError, CaptureError, RecordingError) as err:
+        print(f"roqsim sim: {err}", file=sys.stderr)
+        return 1
+
+
 def main(argv: list | None = None) -> int:
     # Opening a window: default the offscreen backend to egl and preload libGLEW (re-exec'ing once
     # if needed), before anything loads GL, to dodge MuJoCo's "gladLoadGL error" on camera worlds.
@@ -939,6 +996,38 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument(
         "--headless", action="store_true", help="no viewer window (for CI and containers)"
+    )
+    replaying = parser.add_argument_group(
+        "replaying a recording",
+        "for a run.npz target: the run is played back rather than simulated, and moments of it are "
+        "written to a shots file that `roqsim render` draws later",
+    )
+    replaying.add_argument(
+        "--at", type=float, default=None, metavar="T", help="open at this sim time"
+    )
+    replaying.add_argument(
+        "--shots",
+        default=None,
+        metavar="PATH",
+        help="shots file to append to (default: beside the recording)",
+    )
+    replaying.add_argument(
+        "--project",
+        default=None,
+        metavar="DIR",
+        help="directory a render of these shots runs in (default: here)",
+    )
+    replaying.add_argument("--png-dir", default=None, metavar="DIR", help="where a shot's PNG goes")
+    replaying.add_argument(
+        "--render-size",
+        default="1920x1080",
+        metavar="WxH",
+        help="size a shot states for its render",
+    )
+    replaying.add_argument(
+        "--no-transport-window",
+        action="store_true",
+        help="no slider window: scrub with the keys the F1 list names",
     )
     parser.add_argument(
         "--ros",
@@ -1055,6 +1144,12 @@ def main(argv: list | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging_setup.configure(verbose=args.verbose)
+
+    # A recording is replayed, not simulated. The target's extension selects that, the way it already
+    # selects a mesh here and a still or a video for `roqsim render`: nothing else hands `roqsim sim`
+    # an .npz, and one that is not a roqsim recording is refused by name when it is opened.
+    if is_recording(args.target):
+        return _replay(args, parser)
 
     pacing = args.pacing
     if pacing is not None and pacing not in ("realtime", "asap"):

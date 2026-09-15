@@ -265,6 +265,50 @@ started without one. It is the way to capture the interesting minute of a long r
 of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
 same way.
 
+Replaying a run
+---------------
+
+Hand ``roqsim sim`` a recording instead of a world and it plays the run back, in the window a live run
+uses — the same free camera, the same flight keys, the same visualization toggles. Nothing is
+simulated: every frame is a state restored out of the file, so what the window shows is what happened.
+
+.. code-block:: bash
+
+   roqsim sim run.npz                      # from the start
+   roqsim sim run.npz --at 12.5            # open at one moment
+   roqsim sim run.npz --no-transport-window
+
+The extension is what selects it, as it does for a mesh target and for ``roqsim render``'s output.
+Options that drive a live simulation — ``--record``, ``--steps``, ``--pacing``, ``--ros`` and their
+kind — are refused by name rather than ignored, and a time outside the recording is refused the way
+``roqsim render --at`` refuses one.
+
+A replay opens **two** windows. MuJoCo's own takes a key callback and nothing else — no mouse
+callback, no way to add a widget — so the slider, the timestamp box and the buttons are a small
+window beside it, which is also what drives the replay. Without a display for that window, or with
+``--no-transport-window``, the overlay bar and the keys carry it on their own: **F11/F12** scrub (hold
+Shift to jump), **F8** plays and pauses, **F9** writes a shot. F1 lists what the run actually has.
+
+**A shot** is why a replay exists. A figure needs one moment of one run seen from one place, and
+neither half can be guessed at a command line: ``--at`` is a number nobody knows until they have
+watched the run, and a camera is a pose nobody writes by hand. Pressing *Add shot* appends a document
+to a shots file naming the sample, the camera, and the recording it came from — which
+``roqsim render`` draws later, at whatever size the figure wants:
+
+.. code-block:: bash
+
+   roqsim sim run.npz --shots shots.yaml --render-size 1920x1080
+
+   python3 -c "import yaml,subprocess as s;from roqsim.shots import read_shots,render_args
+   [s.run(['roqsim','render',*render_args(d)]) for d in read_shots('shots.yaml')]"
+
+:func:`roqsim.shots.render_args` is the one place those flags are built, so the picture the window's
+*Add + PNG* button draws and the picture a figure script draws are the same command. Two of its rules
+matter to anyone reading a shot: the render names **no world** (a recording rebuilds from its own
+resolved tree only while no target is passed), and a shot framed by hand in a world whose ``sim.view``
+tracks the robot carries ``track: null`` and ``follow_heading: false``, because ``--view`` merges over
+that view and tracking would otherwise quietly ignore the ``lookat`` that was chosen.
+
 ``--capture-fps`` is **samples per simulated second**, so a recording plays back at 1× sim time
 whatever pacing the run used. Samples can only be taken on a physics step, so the rate is snapped onto
 the world's step grid and the command says so if that moved it noticeably; a fraction like ``500/17``
