@@ -542,6 +542,44 @@ def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
                 npy_format.write_array(member, array, allow_pickle=False)
 
 
+def decimated(rec, factor: int, out: str | Path) -> Path:
+    """Write a copy of ``rec`` keeping every ``factor``-th sample, at 1/``factor`` of its rate.
+
+    For a recording captured far above the rate anything will play it back at. ``roqsim render``
+    renders one frame per sample and never decimates -- deliberately, so every frame in a video is a
+    state the simulation actually had -- which means a 250 Hz recording rendered for a 30 fps video
+    draws eight frames for every one that survives. Dropping them first costs the same pictures and a
+    fraction of the rendering.
+
+    That invariant is preserved here rather than traded away: the samples that remain are untouched
+    rows, so every frame drawn from the result is still a state the simulation had. What changes is
+    only how many of them there are, and the declared rate that says so.
+
+    The rate stays exact because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
+    decimated by 8 is ``[250, 8]``, i.e. 31.25 fps, not a rounded 31.
+    """
+    factor = int(factor)
+    if factor < 1:
+        raise RecordingError(f"decimate factor must be 1 or more, got {factor}")
+    samples = rec.samples[::factor]
+    if len(samples) < 2:
+        raise RecordingError(
+            f"decimating {rec.path} by {factor} would leave {len(samples)} sample(s) of its "
+            f"{len(rec)}; a recording needs at least two to have a span."
+        )
+    num, den = rec.meta["capture_fps"]
+    meta = {**rec.meta, "capture_fps": [int(num), int(den) * factor]}
+    expected = record_dtype(int(rec.meta["state_size"]), "cam" in (samples.dtype.names or ()))
+    if samples.dtype != expected:
+        raise RecordingError(
+            f"{rec.path}: samples are {samples.dtype}, but its provenance describes {expected}."
+        )
+    out = _npz_path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    _write_archive(out, meta, np.ascontiguousarray(samples))
+    return out
+
+
 class StateRecorder:
     """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
 

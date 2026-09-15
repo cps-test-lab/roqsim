@@ -55,6 +55,11 @@ log = logging.getLogger(__name__)
 _IMAGE_EXT = (".png", ".jpg", ".jpeg")
 _VIDEO_EXT = (".webm", ".mp4", ".mkv")
 
+#: What ``--from`` accepts instead of a number: start where the run first moves. Resolved against
+#: the recording by :func:`roqsim.motion.motion_onset`, because a run recorded from a live stack
+#: opens with the robot standing still while its nodes come up.
+ONSET = "onset"
+
 _DEFAULT_OUT = "render.png"
 _DEFAULT_SIZE = "960x540"
 
@@ -683,15 +688,38 @@ def _render_recording(
     if stated_view:
         world_view = {**(world_view or {}), **stated_view}
 
+    onset = None
+    if start == ONSET:
+        from .motion import motion_onset
+
+        onset = motion_onset(rec, model=model)
+        if not onset.moved:
+            raise RenderError(
+                f"--from onset: nothing in {rec.path} ever moves. Its fastest {onset.kind} motion "
+                f"peaks at {max(onset.peaks.values(), default=0.0):.4g}, under the "
+                f"{min(onset.thresholds.values(), default=0.0):.4g} it would have to sustain. "
+                "Render from a time instead, or pick a run that moved."
+            )
+        start = onset.time
+        log.info(
+            "onset: first %s motion at t=%.3f s (%s); clip starts at %.3f s",
+            onset.kind,
+            onset.detected,
+            onset.channel,
+            start,
+        )
+
     if check:
         record = rec.describe()
         record.update(
             {"out": str(out.resolve()), "width": width, "height": height, "rendered": False}
         )
+        if onset is not None:
+            record["onset"] = onset.as_record()
         return record
 
     if video:
-        return _render_video(
+        record = _render_video(
             rec,
             model,
             ctx,
@@ -707,6 +735,9 @@ def _render_recording(
             world_view,
             geomgroup,
         )
+        if onset is not None:
+            record["onset"] = onset.as_record()
+        return record
 
     sample = rec.at(at)
     if at is None:
@@ -724,6 +755,8 @@ def _render_recording(
     record.update(rec.at_record(at, sample))
     _render_one(model, sample.data, cam, width, height, out, geomgroup)
     record["rendered"] = True
+    if onset is not None:
+        record["onset"] = onset.as_record()
     return record
 
 
@@ -987,6 +1020,18 @@ def _parse_geomgroup(parser, value: str | None) -> list[int] | None:
     return groups
 
 
+def _start_time(text: str):
+    """``--from``: a number of seconds, or the literal ``onset``."""
+    if text.strip().lower() == ONSET:
+        return ONSET
+    try:
+        return float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"{text!r} is neither a time in seconds nor {ONSET!r}"
+        ) from None
+
+
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(prog="roqsim render", description=__doc__.split("\n")[0])
     parser.add_argument(
@@ -1064,7 +1109,13 @@ def main(argv: list | None = None) -> int:
         help="one moment, in simulated seconds; snaps to the nearest sample and reports which "
         "(default with --state: the last sample)",
     )
-    recording.add_argument("--from", dest="start", type=float, metavar="T", help="range start (s)")
+    recording.add_argument(
+        "--from",
+        dest="start",
+        type=_start_time,
+        metavar="T",
+        help=f"range start (s), or '{ONSET}' to start where the run first moves",
+    )
     recording.add_argument("--to", dest="stop", type=float, metavar="T", help="range end (s)")
     recording.add_argument(
         "--fps",
