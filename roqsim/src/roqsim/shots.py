@@ -132,14 +132,69 @@ def render_args(doc: dict, *, size: str | None = None, out: str | Path | None = 
     second resolution without being rewritten.
     """
     _check_schema(doc)
-    args = ["--state", str(doc["state"]), "--at", f"{float(doc['at']):.{_TIME_DP}f}"]
+    args = ["--state", str(doc["state"])]
+    args += _moment_args(doc)
+    if focus := doc.get("focus"):
+        # Before --view, which wins per key: the occlusion search picks a base camera and the stated
+        # keys are applied on top, so a document can frame on a body and still fix its distance.
+        args += ["--focus", *(str(name) for name in focus)]
     if view := doc.get("view"):
         args += ["--view", *_view_tokens(view)]
     if doc.get("no_ceiling"):
         args.append("--no-ceiling")
     args += ["--size", str(size or doc["size"])]
-    args += ["--out", str(out or doc["png"])]
+    target = out or doc.get("video") or doc.get("png")
+    if not target:
+        raise ValueError(
+            f"shot {doc.get('id', '?')!r} says nothing about where to write: give it a 'png' (a "
+            "moment) or a 'video' (a clip), or pass out=."
+        )
+    args += ["--out", str(target)]
     return args
+
+
+def _moment_args(doc: dict) -> list[str]:
+    """``--at`` for a shot, ``--from``/``--to`` for a clip.
+
+    A **clip** is a shot with a range where a shot has a moment, which is the whole of the difference:
+    it carries the same ``state``, ``view``, ``size`` and ``source``, so a framing picked in the replay
+    window is usable as either without being rewritten.
+
+    ``from: onset`` is passed through to ``roqsim render``, which resolves it against the recording --
+    the caller does not need the recording open to build these arguments.
+
+    Note what is **not** emitted: ``--fps``. A shot document's ``fps`` is provenance, the rate the
+    recording was captured at, and turning it into a flag would silently restate every existing shot's
+    capture rate as a playback rate. A clip states playback as ``speed`` instead.
+    """
+    at, start, stop = doc.get("at"), doc.get("from"), doc.get("to")
+    if at is not None and (start is not None or stop is not None):
+        raise ValueError(
+            f"shot {doc.get('id', '?')!r} has both a moment ('at') and a range ('from'/'to'); it is "
+            "one or the other."
+        )
+    if at is not None:
+        return ["--at", _time(at)]
+    if start is None and stop is None:
+        raise ValueError(
+            f"shot {doc.get('id', '?')!r} selects no moment: give it 'at' for a still, or "
+            "'from'/'to' for a clip."
+        )
+    args = []
+    if start is not None:
+        args += ["--from", _time(start)]
+    if stop is not None:
+        args += ["--to", _time(stop)]
+    if (speed := doc.get("speed")) is not None:
+        args += ["--speed", str(float(speed))]
+    return args
+
+
+def _time(value) -> str:
+    """A sim time as ``roqsim render`` takes it, or a keyword such as ``onset`` passed through."""
+    if isinstance(value, str) and not value.replace(".", "", 1).replace("-", "", 1).isdigit():
+        return value
+    return f"{float(value):.{_TIME_DP}f}"
 
 
 def _view_tokens(view: dict) -> list[str]:
@@ -213,7 +268,14 @@ def _round(value, dp: int) -> float:
 
 
 def _text(value) -> str:
-    """A number as a command line carries it: no exponent, no trailing zeros, never a bare ``4.``."""
+    """A view value as a command line carries it.
+
+    A number loses its exponent and its trailing zeros and is never a bare ``4.``; a name is passed
+    through unchanged. ``track`` is the key that takes a name -- the body a camera follows -- so a
+    value is not always a number even though most of them are.
+    """
+    if isinstance(value, str):
+        return value
     text = f"{float(value):.{_LENGTH_DP}f}".rstrip("0")
     return text + "0" if text.endswith(".") else text
 

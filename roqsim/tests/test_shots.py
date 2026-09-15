@@ -194,3 +194,21 @@ def test_an_id_avoids_the_ones_already_in_the_file():
     assert shot_id("x", 3, taken=()) == "x-0003"
     assert shot_id("x", 3, taken=("x-0003",)) == "x-0003-2"
     assert shot_id("", 3, "run", taken=()) == "run-0003"
+
+
+def test_a_view_can_name_the_body_a_camera_follows():
+    """``track`` takes a body name, not a number -- the one view key whose value is not numeric."""
+    from roqsim.shots import render_args
+
+    doc = {
+        "schema": 1,
+        "id": "tracked",
+        "state": "run.npz",
+        "at": 3.0,
+        "size": "960x540",
+        "png": "out.png",
+        "view": {"track": "base_link", "follow_heading": False, "distance": 9.0},
+    }
+    args = render_args(doc)
+    view = args[args.index("--view") + 1 : args.index("--size")]
+    assert view == ["track=base_link", "follow_heading=false", "distance=9.0"]
