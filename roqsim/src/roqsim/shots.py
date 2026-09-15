@@ -1,0 +1,222 @@
+"""A **shot**: one moment of one recording, framed, written down so it can be drawn again.
+
+A **public API**. The replay window appends shots to a file as a person picks them, and whatever
+draws the figures reads that file back and renders each one::
+
+    from roqsim.shots import read_shots, render_args
+
+    for doc in read_shots("shots.yaml"):
+        subprocess.run(["roqsim", "render", *render_args(doc, size="1920x1080")], cwd=doc["project"])
+
+The file is a multi-document YAML -- one ``---`` per shot, appended, never rewritten -- so a picking
+session that is interrupted keeps every shot it had already taken.
+
+:func:`render_args` is the only place ``roqsim render`` flags are built. The window's own render
+button and every consumer go through it, so what a shot promises and what a render does cannot
+disagree. Three of its rules are load-bearing:
+
+* **No world target.** :meth:`roqsim.recording.Recording.build` rebuilds from the recording's own
+  resolved component tree only while no target is passed; naming the world instead re-resolves the
+  overrides against today's copy of it. ``world`` in a document identifies the recording, and is not
+  an argument.
+* **Overrides are not re-passed.** For a recording, ``roqsim render`` takes only ``sim.view`` from the
+  command line; everything else is already in the provenance.
+* **A tracked world is un-tracked explicitly.** ``--view`` merges *over* the recording world's own
+  ``sim.view``, and :class:`roqsim.viewer.TrackingCamera` is active for any ``track`` target -- so a
+  hand-framed shot in a world that tracks the robot would render tracked, with ``lookat`` ignored.
+  Such a shot carries ``track: null`` *and* ``follow_heading: false``: tracking off needs both, since
+  ``follow_heading`` without a target is refused.
+
+A shot framed by the camera the run was watched through carries no ``view`` at all, which is what
+leaves ``roqsim render`` following the recorded camera.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import yaml
+
+#: The document shape. A reader that does not know a version refuses the file rather than reading
+#: the keys that happen to overlap.
+SHOT_SCHEMA = 1
+
+#: Decimals a camera keeps, matching :mod:`roqsim.view_save` so a shot and a saved world view round
+#: a pose the same way.
+_LENGTH_DP = 3
+_ANGLE_DP = 1
+
+#: Decimals a sim time keeps. A recording's times are multiples of its timestep, so this reproduces
+#: the sample exactly while staying readable.
+_TIME_DP = 6
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def shot_document(
+    rec,
+    sample,
+    camera=None,
+    *,
+    state: str | Path,
+    project: str | Path = ".",
+    label: str = "",
+    size: str = "1920x1080",
+    no_ceiling: bool = False,
+    png: str | None = None,
+    event: dict | None = None,
+    source: dict | None = None,
+    taken: tuple[str, ...] = (),
+) -> dict:
+    """Describe ``sample`` of ``rec`` framed through ``camera``, as a document to append.
+
+    ``camera`` is the free camera the moment was framed with; ``None`` means the shot follows the
+    recording's own camera and therefore states no view. ``state`` is the recording's path as the
+    render will be given it -- relative to ``project``, which is the directory the render runs in.
+    ``taken`` is the ids already in the file, so this one does not collide with them.
+    """
+    view = None if camera is None else _view_for(camera, rec.view)
+    doc = {
+        "schema": SHOT_SCHEMA,
+        "id": shot_id(label, sample.index, Path(state).parent.name, taken=taken),
+        "label": label,
+        "project": str(project),
+        "state": str(state),
+        "world": rec.meta.get("world") or "",
+        "at": round(float(sample.sim_time), _TIME_DP),
+        "sample_index": int(sample.index),
+        "fps": float(rec.fps),
+        "camera_source": "recorded" if camera is None else "free",
+        "size": size,
+        "no_ceiling": bool(no_ceiling),
+    }
+    if view is not None:
+        doc["view"] = view
+    doc["png"] = png or f"{doc['id']}.png"
+    if event:
+        doc["event"] = dict(event)
+    if source:
+        doc["source"] = dict(source)
+    doc["provenance"] = {
+        "packages": dict(rec.meta.get("packages") or {}),
+        "samples": len(rec),
+        "span": [round(v, _TIME_DP) for v in rec.span],
+    }
+    return doc
+
+
+def _view_for(camera, world_view: dict | None) -> dict:
+    """The ``sim.view`` that reproduces ``camera``, un-tracking a world that tracks.
+
+    Built from the camera alone rather than through :func:`roqsim.view_save.view_from_camera`, which
+    carries a world's tracking setup over: that is right for a world saving its own framing and wrong
+    for a shot, where the pose the person flew to is the whole point.
+    """
+    view = {
+        "lookat": [_round(v, _LENGTH_DP) for v in camera.lookat],
+        "distance": _round(camera.distance, _LENGTH_DP),
+        "azimuth": _round(camera.azimuth, _ANGLE_DP),
+        "elevation": _round(camera.elevation, _ANGLE_DP),
+    }
+    if (world_view or {}).get("track") is not None:
+        view["track"] = None
+        view["follow_heading"] = False
+    return view
+
+
+def render_args(doc: dict, *, size: str | None = None, out: str | Path | None = None) -> list[str]:
+    """The argv that draws ``doc``, everything after ``roqsim render``.
+
+    ``size`` and ``out`` override what the document states, which is how one shot list renders at a
+    second resolution without being rewritten.
+    """
+    _check_schema(doc)
+    args = ["--state", str(doc["state"]), "--at", f"{float(doc['at']):.{_TIME_DP}f}"]
+    if view := doc.get("view"):
+        args += ["--view", *_view_tokens(view)]
+    if doc.get("no_ceiling"):
+        args.append("--no-ceiling")
+    args += ["--size", str(size or doc["size"])]
+    args += ["--out", str(out or doc["png"])]
+    return args
+
+
+def _view_tokens(view: dict) -> list[str]:
+    """``{"azimuth": -37.5}`` -> ``["azimuth=-37.5"]``, in ``--view``'s own grammar."""
+    tokens = []
+    for key, value in view.items():
+        if value is None:
+            tokens.append(f"{key}=null")
+        elif isinstance(value, bool):
+            tokens.append(f"{key}={'true' if value else 'false'}")
+        elif isinstance(value, (list, tuple)):
+            tokens.append(f"{key}=" + ",".join(_text(v) for v in value))
+        else:
+            tokens.append(f"{key}={_text(value)}")
+    return tokens
+
+
+def shot_id(label: str, index: int, fallback: str = "shot", *, taken=()) -> str:
+    """A filename-safe id for one shot, distinct from the ids already ``taken``."""
+    base = f"{_slug(label) or _slug(fallback) or 'shot'}-{int(index):04d}"
+    if base not in set(taken):
+        return base
+    for suffix in range(2, 1000):
+        if (candidate := f"{base}-{suffix}") not in set(taken):
+            return candidate
+    raise ValueError(f"cannot make an id unlike the {len(taken)} already in this file")
+
+
+def format_shot(doc: dict) -> str:
+    """One document, as it is written to the file: a ``---`` marker and the keys in their order."""
+    return "---\n" + yaml.safe_dump(doc, sort_keys=False, default_flow_style=False, width=100)
+
+
+def append_shot(path: str | Path, doc: dict) -> int:
+    """Append ``doc`` to the shots file and return how many documents it then holds.
+
+    The count comes from reading the file back rather than from counting appends: a document that
+    did not land whole is one every later reader trips over, and the caller shows this number.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(format_shot(doc))
+    return len(read_shots(path))
+
+
+def read_shots(path: str | Path) -> list[dict]:
+    """Every shot in the file, in order. A file that does not exist yet holds none."""
+    path = Path(path)
+    if not path.exists():
+        return []
+    docs = [d for d in yaml.safe_load_all(path.read_text(encoding="utf-8")) if d]
+    for doc in docs:
+        _check_schema(doc, path)
+    return docs
+
+
+def _check_schema(doc: dict, path: str | Path | None = None) -> None:
+    schema = (doc or {}).get("schema")
+    if schema != SHOT_SCHEMA:
+        where = f" in {path}" if path else ""
+        raise ValueError(
+            f"shot {(doc or {}).get('id', '?')!r}{where} states schema {schema!r}; this roqsim "
+            f"reads schema {SHOT_SCHEMA}. Read it with the version that wrote it, or re-pick it."
+        )
+
+
+def _round(value, dp: int) -> float:
+    # ``or 0.0`` folds -0.0, which a camera reaches routinely, onto 0.0.
+    return round(float(value), dp) or 0.0
+
+
+def _text(value) -> str:
+    """A number as a command line carries it: no exponent, no trailing zeros, never a bare ``4.``."""
+    text = f"{float(value):.{_LENGTH_DP}f}".rstrip("0")
+    return text + "0" if text.endswith(".") else text
+
+
+def _slug(text: str) -> str:
+    return _SLUG_RE.sub("_", str(text).strip().lower()).strip("_")
