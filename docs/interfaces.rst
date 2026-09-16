@@ -497,6 +497,13 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
        - the input is a **goal that takes time**, with feedback and cancellation
          (``FollowJointTrajectory`` for MoveIt 2).
 
+  An action handler whose only output is a stream of setpoints must command a STOP when its goal is
+  cancelled, because the producer holds the last target it was given every tick: ending the stream
+  leaves that setpoint standing and the robot converging on a path nobody wants any more. The
+  trajectory and gripper handlers post the *measured* position as that hold before they return, and
+  grade the cancelled goal on the pose it stopped in -- so a caller that cancels and reads the
+  joints reads an arm that has stopped, and a result it can tell from a goal that ran to its end.
+
   ``write`` returns ``None`` in all three cases. A reply is assembled by the backend's handler from
   the producer's published state — named by a ``state_key`` hint — rather than returned from the
   plugin, which is what keeps ``Endpoint`` free of any backend's reply types. Both the service and
