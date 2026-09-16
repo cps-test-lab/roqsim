@@ -250,8 +250,9 @@ image pull.
 
 ``entities`` is ``null`` unless ``--entities`` is passed, because naming them means compiling the
 model. There is no cheaper way to ask: which entities exist is settled at compile time, since roqsim
-never recompiles mid-run and ``simulation_interfaces`` serves no ``SpawnEntity``. A caller checking
-that a scenario only drives entities the world has pays for it; one resolving paths does not.
+never recompiles mid-run and ``SpawnEntity`` activates an entity the model already carries, refusing
+a name it does not. A caller checking that a scenario only drives entities the world has pays for
+it; one resolving paths does not.
 
 ``overridable`` answers the same question one layer down, for the model values a run can change while
 it is in progress (the ``model_override`` plugin, :ref:`architecture <92-physical-faults-impl>` §9.2)::
