@@ -520,6 +520,21 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   ``model_override`` is the second user and publishes *two* members of one report this way (a
   ``Bool`` of ``active`` and a ``String`` of ``verified``), which is the shape to copy when a producer
   has several primitives each worth a topic.
+
+  Its counterpart for a report that does not reduce to one number is ``fields``, a *list* of members
+  published together as the named readings of a ``diagnostic_msgs/DiagnosticStatus``:
+
+  .. code-block:: python
+
+     backend={"ros2": {"type": "diagnostic_msgs.msg.DiagnosticStatus",
+                       "fields": ["current", "minimum", "at_time", "geom", "saturated"],
+                       "topic": "clearance_report"}}
+
+  One message, so the readings are read back together and cannot be joined wrongly, and a string or a
+  flag among them reaches a recording — which is what ``clearance_monitor`` needs, since the geometry
+  a distance was measured to is in no series of that distance. ``name``, ``hardware_id`` and
+  ``message`` hints fill the status's own fields; the level is always ``OK``, because a level above it
+  would be a verdict on a reading and the substrate states no thresholds.
 * ``has_subscribers`` — optional performance hint a bridge sets after wiring the endpoint (e.g. from
   a ROS 2 publisher's subscription count). A producer whose ``read`` is expensive to *produce* (a
   rendered camera frame) may check it in ``post_step`` and skip the work when it's ``False``; ``None``
