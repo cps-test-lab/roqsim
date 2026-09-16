@@ -1239,6 +1239,25 @@ Four more answers come off the model rather than from flags, each because gettin
   back into the request; a joint genuinely outside its limits is still refused, by a separate bounds
   check this flag does not relax. A range-limited arm has no such problem and gets no such setting.
 
+**The IK answer is not one of them.** ``kinematics.yaml`` configures MoveIt's KDL plugin, and that is
+the one generated file whose content is not a reading of the model: the plugin solves from the seed
+state on its first attempt and from a configuration drawn uniformly inside the joint limits on every
+attempt after that, until ``kinematics_solver_timeout`` is spent, and takes the first attempt that
+converges. The draw is seeded per process from the clock and the number of attempts that fit in the
+budget follows the machine, so **one pose is answered by a different arm branch from run to run** --
+the elbow the other way, or a joint turned a full revolution where the limits hold that posture twice
+-- while everything else the export writes is the same file every time. Each branch is a correct
+answer: the tool frame lands where it was asked for, the plan succeeds, and the arm took another
+route and stands in another posture. No parameter of the solver constrains it to one branch (its own
+are joint weights, ``max_solver_iterations``, ``epsilon``, ``orientation_vs_position`` and
+``position_only_ik``), so the export states the fact in the file's header, names there the joints
+whose exported limits hold one posture at more than one value, and warns when it writes it. A trial
+whose repeatability rests on a pose therefore solves that pose's joint vector **once**, against this
+description, commands it in joint space, and reaches further poses by a Cartesian path from the one
+the arm is in -- which follows the branch it is already in instead of choosing one. Where a query at
+run time cannot be avoided, check the joint vector that comes back against the posture expected
+before executing it: a plan that succeeds is not evidence that the answer was the intended one.
+
 **Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
 fingertips has to be written as an offset from there — which multiplies every orientation tolerance by
 that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. One cell measured 61 mm of

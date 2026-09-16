@@ -14,7 +14,10 @@ and most of what they wrote was not theirs to choose:
 * ``joint_limits.yaml`` states the kinematic limits that turn a geometric path into a timed one. The
   positions and efforts are already in the URDF; what is added here is an *execution* property of the
   bridge and the position servo behind it.
-* ``kinematics.yaml`` is a solver over the chain the SRDF already names.
+* ``kinematics.yaml`` is a solver over the chain the SRDF already names, and the one file here whose
+  content is not an answer: the solver it configures answers one pose with a different arm branch
+  from one run to the next, and no parameter of it says otherwise. That is what its header is for --
+  see ``kinematics_yaml``.
 * ``<pipeline>_planning.yaml`` is the one that genuinely belongs to the experiment -- a planner
   comparison's whole factor can live in it -- so it is emitted as a starting point and meant to be
   overridden.
@@ -97,6 +100,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -164,6 +168,10 @@ class ArmFacts:
     trajectory_action: str
     collapse: tuple[str, ...]
     continuous_joints: list[str] = field(default_factory=list)
+    #: Each LIMITED joint's range, in the MJCF's own units, which is what the URDF carries and what
+    #: the solver samples its restarts inside. An unlimited joint is in ``continuous_joints`` instead
+    #: and has no entry here.
+    ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
     gripper_controller: str = ""
     gripper_action: str = ""
     gripper_joint: str = ""
@@ -362,6 +370,7 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     model, data = ctx.model, ctx.data
     home: dict[str, float] = {}
     continuous: list[str] = []
+    ranges: dict[str, tuple[float, float]] = {}
     for name in joints:
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + name)
         if jid < 0:
@@ -375,6 +384,8 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
         lo, hi = (float(v) for v in model.jnt_range[jid])
         if not bool(model.jnt_limited[jid]) or hi <= lo:
             continuous.append(name)
+        else:
+            ranges[name] = (lo, hi)
 
     facts = ArmFacts(
         arm=arm,
@@ -386,6 +397,7 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
         trajectory_action=trajectory_action,
         collapse=(),
         continuous_joints=continuous,
+        ranges=ranges,
     )
 
     grip = _endpoint(endpoints, arm, "gripper_cmd")
@@ -511,6 +523,32 @@ def _facts_list(facts) -> list[ArmFacts]:
 # -- the four YAMLs ------------------------------------------------------------------------------
 
 
+#: One full turn of a hinge. A joint whose exported range is at least this wide holds one posture at
+#: two values, so a solution and the same posture with that joint turned once round are both inside
+#: the limits and both answer the pose.
+TURN = 2.0 * math.pi
+
+
+def wrapped_joints(one: ArmFacts) -> list[str]:
+    """This arm's joints whose exported limits hold one posture at more than one value.
+
+    A joint with no limits at all is one; so is a limited joint whose range spans a full turn or
+    more. The distinction matters because the solver draws its restarts uniformly INSIDE these
+    limits, so a wrapped value is as likely an answer as the unwrapped one and satisfies the pose
+    exactly -- the tool is where it was asked for and the arm is turned round.
+
+    The limits are the model's, exported as they stand, so this names what a description admits
+    rather than proposing a narrower one: which range a joint is allowed is the robot's business and
+    the world's, not this exporter's.
+    """
+    return [
+        j
+        for j in one.joints
+        if j in one.continuous_joints
+        or (j in one.ranges and (one.ranges[j][1] - one.ranges[j][0]) >= TURN - 1e-9)
+    ]
+
+
 def kinematics_yaml(facts, combined_group: str = "") -> str:
     arms = _facts_list(facts)
     body = {
@@ -518,10 +556,17 @@ def kinematics_yaml(facts, combined_group: str = "") -> str:
             "kinematics_solver": "kdl_kinematics_plugin/KDLKinematicsPlugin",
             "kinematics_solver_search_resolution": 0.005,
             "kinematics_solver_timeout": 0.05,
-            "kinematics_solver_attempts": 3,
         }
         for one in arms
     }
+    wraps = ""
+    for one in arms:
+        turning = wrapped_joints(one)
+        wraps += (
+            f"#   {one.group}: {', '.join(turning)}\n"
+            if turning
+            else f"#   {one.group}: none -- every posture is inside these limits once\n"
+        )
     combined = (
         "#\n"
         f"# {combined_group} gets NO solver, deliberately. KDL solves a single serial chain, and that\n"
@@ -539,6 +584,38 @@ def kinematics_yaml(facts, combined_group: str = "") -> str:
         + "# The gripper group gets no solver: it is one joint driven by a GripperCommand controller,\n"
         + "# never by IK.\n"
         + combined
+        + "#\n"
+        + "# WHAT THIS SOLVER ANSWERS FOR ONE POSE IS NOT REPRODUCIBLE BETWEEN TWO RUNS OF ONE\n"
+        + "# CONFIGURATION, and of everything `roqsim export moveit` writes that is true of this file\n"
+        + "# alone: the rest is read off the model and comes out the same every time.\n"
+        + "#\n"
+        + "# KDLKinematicsPlugin solves from the seed state it was given on its first attempt, and\n"
+        + "# from a configuration drawn UNIFORMLY inside the joint limits on every attempt after that,\n"
+        + "# until kinematics_solver_timeout is spent; the first attempt that converges is the answer\n"
+        + "# (searchPositionIK, kdl_kinematics_plugin.cpp). Two things about that are outside this\n"
+        + "# file: the draw comes from a generator seeded per process from the clock, and how many\n"
+        + "# attempts fit in the budget follows the machine and its load. So one pose is answered by\n"
+        + "# one arm posture in one run and by another in the next -- the elbow the other way, or a\n"
+        + "# joint turned a full revolution -- and each is a correct answer. The tool frame lands\n"
+        + "# where it was asked for, the plan succeeds and the execution returns; the arm reached it\n"
+        + "# by another route and stands in another posture, and nothing reports anything.\n"
+        + "#\n"
+        + "# No setting here narrows that to one branch. The solver's own parameters are joint\n"
+        + "# weights, max_solver_iterations, epsilon, orientation_vs_position and position_only_ik;\n"
+        + "# the consistency limits that would hold a solution near its seed are an argument of the\n"
+        + "# CALLER's IK query rather than a parameter of the solver, and the branches are admissible\n"
+        + "# because the description's joint limits -- the model's own -- admit them.\n"
+        + "#\n"
+        + "# So where a pose has to be reached the same way twice: solve its joint vector once against\n"
+        + "# this description, check the posture it names, and command the arm in JOINT space; reach\n"
+        + "# further poses by a Cartesian path from the one the arm is in, which follows the branch it\n"
+        + "# is already in rather than choosing one. Where a query at run time cannot be avoided,\n"
+        + "# check the joint vector that comes back against the posture expected and refuse it if it\n"
+        + "# differs -- that a plan succeeded is not evidence that the answer was the intended one.\n"
+        + "#\n"
+        + "# Joints whose exported limits hold one posture at more than one value, so a solution and\n"
+        + "# the same posture with that joint turned a full revolution are both admissible:\n"
+        + wraps
         + yaml.safe_dump(body, sort_keys=False)
     )
 
@@ -1231,6 +1308,18 @@ def _run(args, log) -> int:
     for fname, text in files:
         (out / fname).write_text(text, encoding="utf-8")
     log.info("wrote %s", ", ".join(fname for fname, _ in files))
+    # Said here as well as in the file: the file is read by whoever debugs the cell, and this by
+    # whoever builds it. A build that takes the whole configuration for reproducible plans its trial
+    # around a run-time IK query, and has put a coin flip inside every contrast it then measures.
+    log.warning(
+        "kinematics.yaml configures KDL, which answers one pose from the seed on its first attempt "
+        "and from a random configuration on every attempt after that until its timeout: the branch "
+        "it returns is NOT reproducible between two runs of one configuration, though everything "
+        "else written here is. Joints these limits hold one posture at more than one value: %s. "
+        "Solve a pose that must be reached the same way twice offline, command it in joint space, "
+        "and reach further poses by a Cartesian path from it.",
+        "; ".join(f"{one.group}: {', '.join(wrapped_joints(one)) or 'none'}" for one in facts_list),
+    )
     if len(pipelines) > 1:
         log.warning(
             "%d planning pipelines (%s); %r is used by a request that names none. A pipeline is "
