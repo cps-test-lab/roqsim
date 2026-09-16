@@ -69,6 +69,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from ..contact_scope import ContactScope, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 
@@ -105,8 +106,7 @@ class ContactMonitorPlugin(Plugin):
         self.reset_on_spawn = bool(self.config.get("reset_on_spawn", True))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
         self._ctx: SimContext | None = None
-        self._watched: set[int] = set()  # geom ids belonging to the watched subtree
-        self._ignored: set[int] = set()  # geom ids that never count
+        self._scope: ContactScope | None = None  # which contacts count; see configure()
         self._report = ContactReport(False, -1.0, 0, "", "")
         self._entity = None
         self._was_present = True
@@ -130,44 +130,18 @@ class ContactMonitorPlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
-        body_name = (
-            (prefix + self.body)
-            if self.body
-            else (entity.body if entity and entity.body else prefix + "base_link")
+        # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
+        # severity of the very contacts this reports, and a rule restated in each would be two.
+        self._scope = resolve_contact_scope(
+            model,
+            entity,
+            plugin="contact_monitor",
+            body=self.body,
+            ignore=self.ignore,
+            ignore_prefixes=self.ignore_prefixes,
         )
-        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if root < 0:
-            # Fail loudly: a monitor watching nothing would report "no collisions" forever, which
-            # is indistinguishable from a clean run and would silently pass every trial.
-            raise RuntimeError(f"contact_monitor: base body {body_name!r} not found")
-
-        self._watched = {
-            gid
-            for gid in range(model.ngeom)
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), root)
-        }
-        if not self._watched:
-            raise RuntimeError(
-                f"contact_monitor: body {body_name!r} and its subtree carry no geoms to watch"
-            )
-
-        self._ignored = set()
-        for gid in range(model.ngeom):
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
-            if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
-                self._ignored.add(gid)
-        missing = [
-            n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
-        ]
-        if missing:
-            # Not fatal (a world may legitimately have no `floor` geom), but never silent: an
-            # unmatched ignore entry is how a ground plane starts counting as a collision.
-            _log.warning(
-                "contact_monitor: ignore entry has no matching geom: %s", ", ".join(missing)
-            )
 
         # The same report, for a driver in this process: an `.osc` action, a test, another plugin.
         # A consumer would otherwise have to find this instance in `engine.plugins` and match it by
@@ -198,12 +172,6 @@ class ContactMonitorPlugin(Plugin):
                 },
             )
         )
-        _log.info(
-            "contact_monitor: watching %d geoms of %r, ignoring %d",
-            len(self._watched),
-            body_name,
-            len(self._ignored),
-        )
 
     def read_state(self) -> ContactReport:
         """The latest report. What the blackboard handle hands an in-process consumer.
@@ -212,14 +180,6 @@ class ContactMonitorPlugin(Plugin):
         step -- a consumer holding the dataclass would read one frozen step forever.
         """
         return self._report
-
-    @staticmethod
-    def _in_subtree(model, body: int, root: int) -> bool:
-        while body > 0:
-            if body == root:
-                return True
-            body = int(model.body_parentid[body])
-        return body == root
 
     def on_reset(self, ctx: SimContext) -> None:
         self._report = ContactReport(False, -1.0, 0, "", "")
@@ -245,13 +205,13 @@ class ContactMonitorPlugin(Plugin):
         hits = 0
         first: tuple[str, str] | None = None
         force = np.zeros(6)
-        for i in range(data.ncon):
+        # The scope has already dropped every contact this entity is not in, and every ignored
+        # pair. What is left to decide here is min_force, which is this plugin's alone: a verdict
+        # must reject numerical grazing, an integral must not.
+        for index in self._scope.indices(data):
+            i = int(index)
             c = data.contact[i]
             g1, g2 = int(c.geom1), int(c.geom2)
-            if (g1 in self._watched) == (g2 in self._watched):
-                continue  # neither side watched, or a self-contact: not an external collision
-            if g1 in self._ignored or g2 in self._ignored:
-                continue
             if self.min_force > 0:
                 mujoco.mj_contactForce(model, data, i, force)
                 if abs(float(force[0])) < self.min_force:
