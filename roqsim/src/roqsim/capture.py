@@ -44,6 +44,15 @@ from numpy.lib import format as npy_format
 
 from . import keys
 from .kinematics import body_twist
+from .rates import (
+    SNAP_NOTABLE,
+    SNAP_QUIET,
+    GridRate,
+    RateError,
+    parse_rate,
+    physics_rate,
+    snap_rate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,84 +61,45 @@ log = logging.getLogger(__name__)
 #: announce a snap.
 DEFAULT_FPS = 25
 
-#: Denominator bound for recovering a timestep's intended exact value from its float. A world writes
-#: ``timestep: 0.002``, which is not exactly representable; ``Fraction(0.002)`` is a 60-digit monster
-#: whereas ``limit_denominator(1e9)`` is exactly ``1/500``. Verified to recover the intent for every
-#: timestep in use here, including ``1/240``.
-_DT_DENOM_LIMIT = 10**9
-
-#: How far a snap may move the rate before it is worth saying so, and before it is worth a warning.
-_QUIET = 0.001  # 0.1%: the caller got what they asked for
-_NOTABLE = 0.01  # 1%: above this, name the neighbours
-
-
-class CaptureError(ValueError):
-    """A capture rate that cannot exist in this world (see the message)."""
+#: A capture rate that cannot exist in this world (see the message). The name this module's callers
+#: catch it by, and the one :mod:`roqsim.rates` raises for every caller on the grid: the arithmetic is
+#: shared, so the error has to be the same class or half of it would escape an ``except`` here.
+CaptureError = RateError
 
 
 def parse_fps(text: str | int | float | Fraction) -> Fraction:
-    """Parse a rate as an exact :class:`~fractions.Fraction`: ``25``, ``29.412``, ``500/17``, ``1/3``.
+    """Parse a capture rate, naming the flag it was typed on when it cannot be read.
 
-    Accepting a fraction literally is what makes every rate this module *prints* re-enterable -- the
-    snap messages below suggest rates like ``500/17``, and a suggestion you cannot type back is not a
-    suggestion. It also removes the only reason to write a repeating decimal by hand.
+    :func:`roqsim.rates.parse_rate` with the flag in front of its message: a rate that came in through
+    ``--capture-fps`` is one a person can retype, and a message that does not say where it came from
+    does not help them.
     """
-    if isinstance(text, Fraction):
-        return text
-    if isinstance(text, int):
-        return Fraction(text)
-    if isinstance(text, float):
-        return Fraction(text).limit_denominator(_DT_DENOM_LIMIT)
     try:
-        return Fraction(str(text).strip())
-    except (ValueError, ZeroDivisionError) as err:
-        raise CaptureError(
-            f"--capture-fps {text!r}: expected a number or a fraction, e.g. 25, 29.412, 500/17, 1/3"
-        ) from err
-
-
-def physics_rate(dt: float) -> Fraction:
-    """A world's step rate as an exact rational, recovered from its float timestep."""
-    if dt <= 0:
-        raise CaptureError(f"timestep must be positive, got {dt!r}")
-    return 1 / Fraction(dt).limit_denominator(_DT_DENOM_LIMIT)
+        return parse_rate(text)
+    except RateError as err:
+        raise CaptureError(f"--capture-fps {err}") from err
 
 
 @dataclass(frozen=True)
-class CaptureRate:
-    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second."""
+class CaptureRate(GridRate):
+    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second.
 
-    fps: Fraction  # the effective rate -- what gets declared to ffmpeg and written to a recording
-    every: int  # k: sample once per this many physics steps
-    requested: Fraction  # what the caller asked for, kept so the report can compare
-    physics: Fraction  # the world's step rate, kept for the message
-
-    @property
-    def deviation(self) -> float:
-        """How far the snap moved the rate, as a fraction of the request."""
-        return abs(float(self.fps - self.requested) / float(self.requested))
+    A :class:`~roqsim.rates.GridRate` in a capture's own vocabulary -- ``fps`` for the rate, ffmpeg's
+    rational for the timebase, and a report worded for the flag the rate was typed on.
+    """
 
     @property
-    def period(self) -> float:
-        """Seconds of *simulated* time between samples."""
-        return float(1 / self.fps)
+    def fps(self) -> Fraction:
+        """The effective rate as a capture spells it: what ffmpeg is told and a recording carries."""
+        return self.hz
 
     def ffmpeg_rate(self) -> str:
         """The rate as an exact rational for ffmpeg's ``-r``, e.g. ``500/17``.
 
         Never a rounded decimal: ``-r 29.41`` on a stream whose real spacing is ``500/17`` drifts, which
-        is the whole defect this module exists to avoid.
+        is the whole defect this exists to avoid.
         """
-        return f"{self.fps.numerator}/{self.fps.denominator}"
-
-    def neighbours(self, count: int = 3) -> list[CaptureRate]:
-        """Achievable rates either side of this one, nearest first -- the suggestions in the report."""
-        out: list[CaptureRate] = []
-        for offset in _spiral(count):
-            k = self.every + offset
-            if k >= 1 and k != self.every:
-                out.append(CaptureRate(self.physics / k, k, self.requested, self.physics))
-        return out[:count]
+        return self.rational()
 
     def report(self, logger: logging.Logger | None = None) -> None:
         """Announce the snap in proportion to how far it moved: silent, a note, or a warning.
@@ -144,16 +114,17 @@ class CaptureRate:
         detail = (
             f"{float(self.fps):.3f} fps (every {self.every} steps; exactly {self.ffmpeg_rate()})"
         )
-        if self.deviation < _QUIET:
+        if self.deviation < SNAP_QUIET:
             logger.debug("capture: %s -> %s", float(self.requested), detail)
-        elif self.deviation < _NOTABLE:
+        elif self.deviation < SNAP_NOTABLE:
             logger.info("capture: --capture-fps %s snapped to %s", float(self.requested), detail)
         else:
             nearby = ", ".join(f"{float(n.fps):g} (k={n.every})" for n in self.neighbours())
             logger.warning(
                 "capture: --capture-fps %s snapped to %s -- samples land on physics steps and this "
                 "world steps at %s Hz, so %s/%s = %.2f is not reachable. The timebase is exact, so "
-                "there is no drift. Nearby: %s.",
+                "there is no drift. Nearby: %s; a world stepping at a multiple of %s Hz would hold "
+                "the requested rate exactly.",
                 float(self.requested),
                 detail,
                 float(self.physics),
@@ -161,22 +132,18 @@ class CaptureRate:
                 float(self.requested),
                 float(self.physics / self.requested),
                 nearby,
+                float(self.requested),
             )
 
 
-def _spiral(count: int):
-    """Step offsets nearest-first: 1, -1, 2, -2, ... so suggestions stay close to what was asked."""
-    for i in range(1, count + 2):
-        yield i
-        yield -i
-
-
 def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
-    """Snap a requested rate onto this world's physics grid. Refuses only the impossible.
+    """Snap a requested capture rate onto this world's physics grid. Refuses only the impossible.
 
     Hard errors are limited to rates that cannot exist at all -- non-positive, or faster than the
     simulation steps -- because everything else has a nearest achievable answer, and an exact rational
-    timebase makes taking it harmless.
+    timebase makes taking it harmless. A capture rate is typed as a flag, so refusing it names the
+    flag and the caller can type another; see :func:`roqsim.rates.snap_rate` for the same grid without
+    that door, which is what a bridge binding an endpoint needs.
     """
     requested = parse_fps(fps)
     rate = physics_rate(dt)
@@ -188,8 +155,8 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
             f"({float(rate):g} Hz, timestep {dt:g}): a sample can only be taken on a physics step. "
             f"Use at most {float(rate):g}, or lower the world's sim.timestep."
         )
-    every = max(1, round(float(rate / requested)))
-    return CaptureRate(rate / every, every, requested, rate)
+    snapped = snap_rate(requested, dt)
+    return CaptureRate(snapped.hz, snapped.every, snapped.requested, snapped.physics)
 
 
 # ==================================================================================================
@@ -515,6 +482,20 @@ def _actuator_record(ctx) -> dict:
     return {entity: [row.as_record() for row in rows] for entity, rows in tables.items() if rows}
 
 
+def _endpoint_rate_record(ctx) -> list:
+    """What each published endpoint actually goes out at, as plain data, or ``[]`` when nothing bound.
+
+    Reads what the bridges wrote at ``configure``; a run with no transport records nothing rather
+    than failing. The rate is in there twice on purpose: ``requested_hz`` is the number the world
+    asked for and quotes everywhere, ``realised_hz`` is the one the run published at, and they differ
+    whenever the request is not a whole number of physics steps. Nobody reading a rate afterwards can
+    tell those apart from the world document alone, and the exact rational is recoverable from
+    ``every_steps`` and the ``timestep`` recorded beside this.
+    """
+    rows = getattr(ctx, "endpoint_rates", None) or []
+    return [dict(row) for row in rows]
+
+
 def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
     """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
 
@@ -694,6 +675,10 @@ class StateRecorder:
             # opening the MJCF and re-deriving them. Additive: `Recording` reads `world_model` by
             # name and ignores keys it does not know, so no FORMAT_VERSION bump.
             "actuators": _actuator_record(ctx),
+            # What each published endpoint went out at, requested and realised. A publish lands on a
+            # physics step, so a rate that is not a whole number of steps is served at a neighbouring
+            # one; this is where that shows without reading a log. Additive, like `actuators`.
+            "endpoint_rates": _endpoint_rate_record(ctx),
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
             "state_fields": list(STATE_FIELDS),
