@@ -23,7 +23,11 @@ Standalone
 The target is a world YAML, an MJCF scene, or a ``<pkg>:<name>`` reference resolved from an installed
 package (``roqsim sim roqsim_mobile:turtlebot4_demo``).
 
-Pacing is ``realtime`` (default), a numeric factor, or ``asap``. Headless works anywhere, offscreen
+Pacing is ``realtime`` (default), a numeric factor, or ``asap``. It is what the run *asks* for and
+not what it gets: the achieved factor is a property of the host's load, a step that is already late
+is never made up, and the runner warns at the end of a run it could not pace. So a duration a trial
+must actually get is counted on simulated time — the recording's ``t``, or ``/clock`` for a node —
+and never on a wall clock, which buys a varying amount of it. Headless works anywhere, offscreen
 sensors included: ``import roqsim`` picks a backend that exists on this machine (``egl`` where there
 is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be set by hand
 — set it only to override that choice. To record a run, add ``--record`` — see
