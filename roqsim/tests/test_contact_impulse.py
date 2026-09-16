@@ -309,7 +309,7 @@ def test_the_whole_subtree_is_watched():
     _, plugin = _plugin(model, data)
     watched = {
         mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g))
-        for g in np.flatnonzero(plugin._watched)
+        for g in np.flatnonzero(plugin._scope.watched)
     }
     assert watched == {"chassis", "wheel_geom"}
 

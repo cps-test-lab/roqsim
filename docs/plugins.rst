@@ -684,9 +684,10 @@ Four things about it:
   recorded series recovers an area whose samples were never taken. ``rate_hz`` therefore decides
   only how often the running total leaves the plugin, and there is no ``compute_rate_hz``: the
   samples it would decimate are the integral.
-* **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two -- every
-  contact with exactly one side in the watched subtree and neither side in ``ignore`` /
-  ``ignore_prefixes``. The two can then never disagree about which contacts they describe. Their
+* **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
+  implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
+  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
+  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
   ``ignore`` lists should agree for the same reason clearance's should.
 * **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
   ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral

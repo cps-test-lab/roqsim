@@ -32,11 +32,11 @@ accumulation is therefore on the physics thread, every step, for the same reason
 :mod:`roqsim.plugins.energy_monitor` accumulates power there: a rate-limited sample integrates a
 different signal depending on who was listening.
 
-**It counts exactly what ``contact_monitor`` counts.** The geometry rule is that plugin's own, not a
-second one: every contact with exactly one side in the watched entity's kinematic subtree and
-neither side in ``ignore`` / ``ignore_prefixes``. Two observables over one geometry can then never
-disagree about which contacts they are describing -- one says whether it happened, the other how
-hard. The one rule they do not share is ``contact_monitor``'s ``min_force``, and this plugin has no
+**It counts exactly what ``contact_monitor`` counts.** Not a second rule that agrees by inspection:
+both plugins resolve the same :class:`roqsim.contact_scope.ContactScope` and ask it which of a
+step's contacts qualify -- exactly one side in the watched entity's kinematic subtree, neither side
+in ``ignore`` / ``ignore_prefixes``. Two observables over one geometry then cannot disagree about
+which contacts they are describing -- one says whether it happened, the other how hard. The one rule they do not share is ``contact_monitor``'s ``min_force``, and this plugin has no
 equivalent **on purpose**: a force threshold chosen to reject numerical grazing is exactly the
 calibration constant an impulse metric exists to avoid, and grazing contributes to an integral in
 proportion to how weak and how brief it is -- which is to say almost nothing. Configuring one here
@@ -103,16 +103,14 @@ and ``peak_time = -1.0`` -- a measured zero, which is what "nothing was hit" is.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import dataclass
 
 import mujoco
 import numpy as np
 
+from ..contact_scope import ContactScope, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
-
-_log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -149,8 +147,7 @@ class ContactImpulsePlugin(Plugin):
         self.reset_on_spawn = bool(self.config.get("reset_on_spawn", True))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
         self._ctx: SimContext | None = None
-        self._watched: np.ndarray | None = None  # per-geom mask; see configure()
-        self._ignored: np.ndarray | None = None
+        self._scope: ContactScope | None = None  # the shared contact rule; see configure()
         # Reused across steps: mj_contactForce writes into it, and a 6-vector allocated per contact
         # per step is a cost this plugin adds to every step of every run that carries it.
         self._force_scratch = np.zeros(6)
@@ -186,48 +183,21 @@ class ContactImpulsePlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
-        body_name = (
-            (prefix + self.body)
-            if self.body
-            else (entity.body if entity and entity.body else prefix + "base_link")
+        # The rule is contact_monitor's, held in one place rather than restated here: resolving it
+        # through the shared scope is what stops the two plugins counting different contacts.
+        self._scope = resolve_contact_scope(
+            model,
+            entity,
+            plugin="contact_impulse",
+            body=self.body,
+            ignore=self.ignore,
+            ignore_prefixes=self.ignore_prefixes,
         )
-        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if root < 0:
-            # Fail loudly: a meter watching nothing reports a zero impulse forever, which reads as
-            # a trial that touched nothing gently and would be averaged in as one.
-            raise RuntimeError(f"contact_impulse: base body {body_name!r} not found")
-
-        # Boolean masks indexed by geom id, so the per-step filter is one vectorised lookup over
-        # the contact array. A world's contacts are dominated by pairs the watched entity is not in
-        # -- props on the floor, a crowd's feet -- and touching each of them from Python costs more
-        # than the physics step that produced them.
-        self._watched = np.zeros(model.ngeom, dtype=bool)
-        for gid in range(model.ngeom):
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), root):
-                self._watched[gid] = True
-        if not self._watched.any():
-            raise RuntimeError(
-                f"contact_impulse: body {body_name!r} and its subtree carry no geoms to watch"
-            )
-
-        self._ignored = np.zeros(model.ngeom, dtype=bool)
-        for gid in range(model.ngeom):
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
-            if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
-                self._ignored[gid] = True
-        missing = [
-            n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
-        ]
-        if missing:
-            # Not fatal (a world may legitimately have no `floor` geom), but never silent: an
-            # unmatched ignore entry is how the weight a robot rests on the ground with becomes
-            # the largest impulse of the trial.
-            _log.warning(
-                "contact_impulse: ignore entry has no matching geom: %s", ", ".join(missing)
-            )
+        # The integral runs from here, so that a first step taken before any reset -- a replay
+        # resumed at a sim time of its own -- integrates one step's force over one step.
+        self._last_time = ctx.sim_time
 
         # `read` rather than the report, because post_step REPLACES it each step -- a consumer
         # holding the dataclass would read one frozen step forever. Keyed on the ADDRESS, since
@@ -254,24 +224,10 @@ class ContactImpulsePlugin(Plugin):
                 },
             )
         )
-        _log.info(
-            "contact_impulse: watching %d geoms of %r, ignoring %d",
-            int(self._watched.sum()),
-            body_name,
-            int(self._ignored.sum()),
-        )
 
     def read(self) -> ContactImpulseReport:
         """The report as it stands. What the blackboard handle hands an in-process consumer."""
         return self._report
-
-    @staticmethod
-    def _in_subtree(model, body: int, root: int) -> bool:
-        while body > 0:
-            if body == root:
-                return True
-            body = int(model.body_parentid[body])
-        return body == root
 
     def on_reset(self, ctx: SimContext) -> None:
         self._report = ContactImpulseReport()
@@ -299,34 +255,24 @@ class ContactImpulsePlugin(Plugin):
         self._last_time = ctx.sim_time
         data, model = ctx.data, ctx.model
 
-        n = data.ncon
         total = 0.0
         strongest = 0.0
         geoms = ("", "")
         hits = 0
-        if n:
-            con = data.contact
-            g1, g2 = con.geom1[:n], con.geom2[:n]
-            # Exactly one side watched: neither is nothing to do with this entity, both is a
-            # self-contact. The same predicate contact_monitor applies, so the two plugins cannot
-            # count different things.
-            keep = (self._watched[g1] ^ self._watched[g2]) & ~(
-                self._ignored[g1] | self._ignored[g2]
-            )
-            for i in np.flatnonzero(keep):
-                # Only for the handful that survived the filter: this is a C call per contact.
-                mujoco.mj_contactForce(model, data, int(i), self._force_scratch)
-                normal = abs(float(self._force_scratch[0]))
-                total += normal
-                hits += 1
-                if normal > strongest:
-                    strongest = normal
-                    geoms = (
-                        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g1[i]))
-                        or f"geom{int(g1[i])}",
-                        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g2[i]))
-                        or f"geom{int(g2[i])}",
-                    )
+        for i in self._scope.indices(data):
+            # Only for the handful the scope kept: this is a C call per contact.
+            contact = data.contact[int(i)]
+            mujoco.mj_contactForce(model, data, int(i), self._force_scratch)
+            normal = abs(float(self._force_scratch[0]))
+            total += normal
+            hits += 1
+            if normal > strongest:
+                strongest = normal
+                g1, g2 = int(contact.geom1), int(contact.geom2)
+                geoms = (
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g1) or f"geom{g1}",
+                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g2) or f"geom{g2}",
+                )
 
         report = self._report
         impulse = report.impulse_ns
