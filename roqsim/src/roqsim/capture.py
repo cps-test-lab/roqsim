@@ -44,6 +44,15 @@ from numpy.lib import format as npy_format
 
 from . import keys
 from .kinematics import body_twist
+from .rates import (
+    SNAP_NOTABLE,
+    SNAP_QUIET,
+    GridRate,
+    RateError,
+    parse_rate,
+    physics_rate,
+    snap_rate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,87 +61,45 @@ log = logging.getLogger(__name__)
 #: announce a snap.
 DEFAULT_FPS = 25
 
-#: Denominator bound for recovering a timestep's intended exact value from its float. A world writes
-#: ``timestep: 0.002``, which is not exactly representable; ``Fraction(0.002)`` is a 60-digit monster
-#: whereas ``limit_denominator(1e9)`` is exactly ``1/500``. Verified to recover the intent for every
-#: timestep in use here, including ``1/240``.
-_DT_DENOM_LIMIT = 10**9
-
-#: How far a snap may move the rate before it is worth saying so, and before it is worth a warning.
-#: Public because a capture rate is not the only rate that lands on this grid -- a bridge snaps every
-#: output endpoint's publish rate the same way (:meth:`roqsim.bridge.BridgeBase._rate_gate`) -- and two
-#: sets of bands would make one move loud in one place and silent in the other.
-SNAP_QUIET = 0.001  # 0.1%: the caller got what they asked for
-SNAP_NOTABLE = 0.01  # 1%: above this, name the neighbours
-
-
-class CaptureError(ValueError):
-    """A capture rate that cannot exist in this world (see the message)."""
+#: A capture rate that cannot exist in this world (see the message). The name this module's callers
+#: catch it by, and the one :mod:`roqsim.rates` raises for every caller on the grid: the arithmetic is
+#: shared, so the error has to be the same class or half of it would escape an ``except`` here.
+CaptureError = RateError
 
 
 def parse_fps(text: str | int | float | Fraction) -> Fraction:
-    """Parse a rate as an exact :class:`~fractions.Fraction`: ``25``, ``29.412``, ``500/17``, ``1/3``.
+    """Parse a capture rate, naming the flag it was typed on when it cannot be read.
 
-    Accepting a fraction literally is what makes every rate this module *prints* re-enterable -- the
-    snap messages below suggest rates like ``500/17``, and a suggestion you cannot type back is not a
-    suggestion. It also removes the only reason to write a repeating decimal by hand.
+    :func:`roqsim.rates.parse_rate` with the flag in front of its message: a rate that came in through
+    ``--capture-fps`` is one a person can retype, and a message that does not say where it came from
+    does not help them.
     """
-    if isinstance(text, Fraction):
-        return text
-    if isinstance(text, int):
-        return Fraction(text)
-    if isinstance(text, float):
-        return Fraction(text).limit_denominator(_DT_DENOM_LIMIT)
     try:
-        return Fraction(str(text).strip())
-    except (ValueError, ZeroDivisionError) as err:
-        raise CaptureError(
-            f"--capture-fps {text!r}: expected a number or a fraction, e.g. 25, 29.412, 500/17, 1/3"
-        ) from err
-
-
-def physics_rate(dt: float) -> Fraction:
-    """A world's step rate as an exact rational, recovered from its float timestep."""
-    if dt <= 0:
-        raise CaptureError(f"timestep must be positive, got {dt!r}")
-    return 1 / Fraction(dt).limit_denominator(_DT_DENOM_LIMIT)
+        return parse_rate(text)
+    except RateError as err:
+        raise CaptureError(f"--capture-fps {err}") from err
 
 
 @dataclass(frozen=True)
-class CaptureRate:
-    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second."""
+class CaptureRate(GridRate):
+    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second.
 
-    fps: Fraction  # the effective rate -- what gets declared to ffmpeg and written to a recording
-    every: int  # k: sample once per this many physics steps
-    requested: Fraction  # what the caller asked for, kept so the report can compare
-    physics: Fraction  # the world's step rate, kept for the message
-
-    @property
-    def deviation(self) -> float:
-        """How far the snap moved the rate, as a fraction of the request."""
-        return abs(float(self.fps - self.requested) / float(self.requested))
+    A :class:`~roqsim.rates.GridRate` in a capture's own vocabulary -- ``fps`` for the rate, ffmpeg's
+    rational for the timebase, and a report worded for the flag the rate was typed on.
+    """
 
     @property
-    def period(self) -> float:
-        """Seconds of *simulated* time between samples."""
-        return float(1 / self.fps)
+    def fps(self) -> Fraction:
+        """The effective rate as a capture spells it: what ffmpeg is told and a recording carries."""
+        return self.hz
 
     def ffmpeg_rate(self) -> str:
         """The rate as an exact rational for ffmpeg's ``-r``, e.g. ``500/17``.
 
         Never a rounded decimal: ``-r 29.41`` on a stream whose real spacing is ``500/17`` drifts, which
-        is the whole defect this module exists to avoid.
+        is the whole defect this exists to avoid.
         """
-        return f"{self.fps.numerator}/{self.fps.denominator}"
-
-    def neighbours(self, count: int = 3) -> list[CaptureRate]:
-        """Achievable rates either side of this one, nearest first -- the suggestions in the report."""
-        out: list[CaptureRate] = []
-        for offset in _spiral(count):
-            k = self.every + offset
-            if k >= 1 and k != self.every:
-                out.append(CaptureRate(self.physics / k, k, self.requested, self.physics))
-        return out[:count]
+        return self.rational()
 
     def report(self, logger: logging.Logger | None = None) -> None:
         """Announce the snap in proportion to how far it moved: silent, a note, or a warning.
@@ -156,7 +123,8 @@ class CaptureRate:
             logger.warning(
                 "capture: --capture-fps %s snapped to %s -- samples land on physics steps and this "
                 "world steps at %s Hz, so %s/%s = %.2f is not reachable. The timebase is exact, so "
-                "there is no drift. Nearby: %s.",
+                "there is no drift. Nearby: %s; a world stepping at a multiple of %s Hz would hold "
+                "the requested rate exactly.",
                 float(self.requested),
                 detail,
                 float(self.physics),
@@ -164,31 +132,8 @@ class CaptureRate:
                 float(self.requested),
                 float(self.physics / self.requested),
                 nearby,
+                float(self.requested),
             )
-
-
-def _spiral(count: int):
-    """Step offsets nearest-first: 1, -1, 2, -2, ... so suggestions stay close to what was asked."""
-    for i in range(1, count + 2):
-        yield i
-        yield -i
-
-
-def snap_rate(rate: str | int | float | Fraction, dt: float) -> CaptureRate:
-    """The nearest rate on this world's grid, refusing nothing that is positive.
-
-    The arithmetic :func:`snap_fps` is built on, without its refusals, for a caller that has to go on
-    with *some* rate: a bridge binding an output endpoint has no flag to hand back to a person, and
-    one that asks for more than the world steps at gets the step rate -- the fastest rate that exists
-    here -- rather than ending the run over it. How far the move is worth announcing is the caller's
-    to say, in :data:`SNAP_QUIET` and :data:`SNAP_NOTABLE` bands.
-    """
-    requested = parse_fps(rate)
-    if requested <= 0:
-        raise CaptureError(f"a rate must be positive, got {float(requested):g}")
-    physics = physics_rate(dt)
-    every = max(1, round(float(physics / requested)))
-    return CaptureRate(physics / every, every, requested, physics)
 
 
 def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
@@ -197,7 +142,8 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
     Hard errors are limited to rates that cannot exist at all -- non-positive, or faster than the
     simulation steps -- because everything else has a nearest achievable answer, and an exact rational
     timebase makes taking it harmless. A capture rate is typed as a flag, so refusing it names the
-    flag and the caller can type another; see :func:`snap_rate` for the same grid without that door.
+    flag and the caller can type another; see :func:`roqsim.rates.snap_rate` for the same grid without
+    that door, which is what a bridge binding an endpoint needs.
     """
     requested = parse_fps(fps)
     rate = physics_rate(dt)
@@ -209,7 +155,8 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
             f"({float(rate):g} Hz, timestep {dt:g}): a sample can only be taken on a physics step. "
             f"Use at most {float(rate):g}, or lower the world's sim.timestep."
         )
-    return snap_rate(requested, dt)
+    snapped = snap_rate(requested, dt)
+    return CaptureRate(snapped.hz, snapped.every, snapped.requested, snapped.physics)
 
 
 # ==================================================================================================

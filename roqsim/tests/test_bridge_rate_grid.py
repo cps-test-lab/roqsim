@@ -15,8 +15,9 @@ import mujoco
 import pytest
 from test_bridge import FakeBridge
 
-from roqsim.capture import SNAP_NOTABLE, SNAP_QUIET, StateRecorder, snap_fps
+from roqsim.capture import StateRecorder, snap_fps
 from roqsim.context import Endpoint, SimContext
+from roqsim.rates import SNAP_NOTABLE, SNAP_QUIET, snap_rate
 from roqsim.recording import open_recording
 
 #: MuJoCo's own default timestep, which stands unless a world sets one: 500 steps per simulated
@@ -98,6 +99,36 @@ def test_a_snapped_gate_fires_exactly_every_k_steps():
     assert len(fired) == pytest.approx(gate.rate_hz, abs=1)  # a simulated second of publications
 
 
+def test_a_snapped_gate_counts_steps_rather_than_reading_the_clock():
+    """Same spacing from a clock that accumulates its own error and from one that is quantised.
+
+    The gate is asked once per physics step and knows how many steps apart its firings are, so the
+    spacing is that count. Nothing about the float the driver hands it -- an accumulated ``t += dt``,
+    a stamp rounded to the millisecond -- can move a firing by a step or leave the period guarded by
+    an epsilon.
+    """
+    accumulated, t = [], 0.0
+    _, bridge = _bound(30)
+    gate = _gate(bridge)
+    for i in range(10_000):
+        if gate.due(t):
+            accumulated.append(i)
+        t += _DT
+    _, other = _bound(30)
+    quantised = [i for i in range(10_000) if _gate(other).due(round(i * _DT, 3))]
+    assert accumulated == quantised
+    assert {b - a for a, b in zip(accumulated, accumulated[1:], strict=False)} == {17}
+
+
+def test_a_reset_gate_publishes_on_the_step_it_resumes():
+    """Repetitions: ``on_reset`` restarts sim time, and the count restarts with it."""
+    _, bridge = _bound(30)
+    gate = _gate(bridge)
+    assert gate.due(0.0) and not gate.due(_DT)
+    gate.reset()
+    assert gate.due(0.0)
+
+
 def test_a_rate_faster_than_the_world_steps_is_served_every_step(caplog):
     """Clamped, not refused: a bound endpoint has no flag to hand back, and the step rate exists."""
     with caplog.at_level(logging.DEBUG):
@@ -123,8 +154,12 @@ def test_a_rates_override_is_snapped_like_any_other_rate():
     assert _gate(bridge).every == 17
 
 
-def test_an_unbound_world_keeps_the_requested_rate():
-    """No model, no grid: an embedding driver that binds before compile gets the gate it asked for."""
+def test_an_unbound_world_keeps_the_requested_rate_and_says_so(caplog):
+    """No model, no grid: an embedding driver that binds before compile gets the gate it asked for.
+
+    The one path where a realised rate is neither snapped nor recorded, so it is the one path that
+    has to say why rather than look like every other bind.
+    """
     ctx = SimContext(config={})
     ctx.interface.add(
         Endpoint(
@@ -137,10 +172,12 @@ def test_an_unbound_world_keeps_the_requested_rate():
         )
     )
     bridge = FakeBridge({})
-    bridge.configure(ctx)
+    with caplog.at_level(logging.DEBUG):
+        bridge.configure(ctx)
     assert _gate(bridge).rate_hz == 30.0
     assert _gate(bridge).every is None
     assert ctx.endpoint_rates == []
+    assert "no model is compiled yet" in caplog.records[0].getMessage()
 
 
 # -- the report bands ------------------------------------------------------------------------------
@@ -191,6 +228,19 @@ def test_a_big_snap_names_the_endpoint_and_the_exact_rational(caplog):
     assert "'scan'" in message
     assert "500/17" in message and "every 17 steps" in message
     assert "30 Hz" in message  # what was asked for, so the two can be compared in one line
+    # The other remedy, for when the requested rate is a paper's and moving it is what may not be
+    # done: a timestep whose grid holds 30 Hz. The message has to be usable as printed -- the world
+    # reads sim.timestep as a float and recovers the step rate from it, so a rounded suggestion
+    # would be a different grid.
+    assert "510 Hz" in message
+    suggested = float(message.split("sim.timestep ")[1].rstrip(").").strip())
+    assert snap_rate(30, suggested).hz == 30
+
+
+def test_a_bridge_and_a_capture_snap_on_one_grid():
+    """Both callers ask :mod:`roqsim.rates` the same question, so neither can drift from the other."""
+    assert snap_rate(30, _DT).hz == snap_fps(30, _DT).fps
+    assert snap_rate(30, _DT).every == snap_fps(30, _DT).every
 
 
 # -- the run's record ------------------------------------------------------------------------------

@@ -766,13 +766,26 @@ physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend impl
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
 ``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
 different constant for the whole run rather than as jitter that averages out. The requested rate is
-therefore **snapped to the nearest achievable one when the endpoint is bound** and the move is
-announced in proportion to its size, on the same bands a capture rate uses
-(:data:`roqsim.capture.SNAP_QUIET` / :data:`~roqsim.capture.SNAP_NOTABLE`), with the nearby achievable
-rates named where it is large. Both numbers reach the run's record: a recording's provenance carries
-``endpoint_rates``, one row per published endpoint with its ``requested_hz``, its ``realised_hz`` and
-the ``every_steps`` behind it — so a rate quoted from the world document can be checked against the
-one the run actually published at without measuring arrival times.
+therefore **snapped to the nearest achievable one when the endpoint is bound** (``roqsim.rates``, the
+same grid arithmetic a capture rate uses, and the same
+:data:`~roqsim.rates.SNAP_QUIET` / :data:`~roqsim.rates.SNAP_NOTABLE` bands for announcing the move in
+proportion to its size, naming the nearby achievable rates where it is large). Nearest, not rounded
+down: a snapped rate may be the faster neighbour, so a rate that is meant as a ceiling has to be one
+this world can hold. A gate built that way then **counts steps rather than comparing sim-time** — the
+spacing is the step count it was snapped to, which no accumulated float time can move.
+
+The alternative — keeping the requested rate and advancing the deadline BY the period, so the spacing
+alternates (17, 17, 16, …) and the mean comes out right — is deliberately not taken: the spacing is
+what a consumer differentiates and what a filter's ``dt`` is set from, so a rate that is right on
+average and wrong at every step buys a mean nobody observes with an alias somebody reads as the
+robot's behaviour. It is the same alias the ROS bridge warns about when a coarse ``/clock`` quantises
+an output's stamps.
+
+Both numbers reach the run's record: a recording's provenance carries ``endpoint_rates``, one row per
+gated publication — every bound output, plus the streams a backend publishes itself (a merged
+``joint_states``, ``/clock``), which appear in no world document at all — with its ``requested_hz``,
+its ``realised_hz`` and the ``every_steps`` behind it. So a rate quoted from the world document can be
+checked against the one the run actually published at without measuring arrival times.
 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
 ``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
