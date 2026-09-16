@@ -62,9 +62,11 @@ claim is refused rather than resolved.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -875,6 +877,66 @@ def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
         fh.write(rec.tobytes())
 
 
+def _temp_roots() -> set[Path]:
+    """Directory roots whose contents belong to the process that made them.
+
+    A path under one of these is readable by this export and by nothing that comes after it, which is
+    what makes a mesh URI naming it unshippable.
+    """
+    roots: set[Path] = set()
+    for root in (Path(tempfile.gettempdir()), Path("/tmp"), Path("/var/tmp")):
+        roots.add(root)
+        with contextlib.suppress(OSError):
+            roots.add(root.resolve())
+    return roots
+
+
+def unshippable_mesh_uris(tree: ET.ElementTree | ET.Element) -> list[str]:
+    """The emitted mesh URIs that resolve nowhere but where this export wrote them.
+
+    A ``file://`` URI under a temporary directory names a path that exists for as long as the export
+    does, and only in the process tree that ran it: a campaign generates the description in one
+    container and reads it in another. Anything but ``file://`` (``package://``, a ``--mesh-prefix``
+    naming the consumer's own path) is somebody else's to resolve and is left alone.
+    """
+    root = tree.getroot() if isinstance(tree, ET.ElementTree) else tree
+    temp_roots = _temp_roots()
+    unshippable = []
+    for mesh in root.iter("mesh"):
+        uri = mesh.get("filename") or ""
+        if not uri.startswith("file://"):
+            continue
+        path = Path(uri[len("file://") :])
+        if path.is_absolute() and any(path.is_relative_to(r) for r in temp_roots):
+            unshippable.append(uri)
+    return unshippable
+
+
+def warn_on_unshippable_meshes(tree: ET.ElementTree | ET.Element, log: logging.Logger) -> list[str]:
+    """Say so when the description carries mesh URIs only this export can resolve. Returns them.
+
+    The consequence is not a crash and so has to be said out loud: ``move_group`` logs one ``Error
+    retrieving file`` per mesh, builds the robot with links that have NO collision geometry, and then
+    plans a straight line through the bench and reports success.
+    """
+    unshippable = unshippable_mesh_uris(tree)
+    if unshippable:
+        root = tree.getroot() if isinstance(tree, ET.ElementTree) else tree
+        total = sum(1 for mesh in root.iter("mesh") if mesh.get("filename"))
+        log.warning(
+            "%d of %d mesh URIs are file:// paths under a temporary directory (%s), which no "
+            "consumer of this description can be expected to have. move_group resolves none of "
+            "them, comes up with links that have no collision geometry, and plans through what it "
+            "cannot see. Pass --mesh-prefix <where the meshes will be READ> -- for a campaign, the "
+            "path it stages them to in the planning container -- or --mesh-package <pkg> where an "
+            "ament package carries them.",
+            len(unshippable),
+            total,
+            Path(unshippable[0][len("file://") :]).parent,
+        )
+    return unshippable
+
+
 def round_trip_error(
     urdf: Path,
     model: mujoco.MjModel,
@@ -897,7 +959,6 @@ def round_trip_error(
     # (<urdf>/../), which is the source-tree layout `--mesh-package` is emitted for -- without this,
     # --mesh-package would silently disable the only check that proves the export is correct.
     import re
-    import tempfile
 
     text = Path(urdf).read_text(encoding="utf-8")
     # Every mesh URI is resolved against the directory the meshes were WRITTEN to, not by guessing
@@ -1048,12 +1109,20 @@ def main(argv: list | None = None) -> int:
         default="tcp",
         help="name of the link --tip-site emits (ignored without it)",
     )
-    parser.add_argument(
+    # One reference scheme per export: two would mean the URDF says where its meshes are twice.
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
         "--mesh-package",
         default="",
         help="emit meshes as package://<PKG>/<mesh-dir>/<file> instead of file://<abs path>. Use "
         "when the URDF ships inside an ament package, where a baked absolute path resolves to "
         "nothing after install",
+    )
+    where.add_argument(
+        "--mesh-prefix",
+        default="",
+        help="emit meshes as <PREFIX>/<file>: where they will be READ, when that is neither this "
+        "tree nor an ament package -- a campaign stages them into the container that plans",
     )
     parser.add_argument(
         "--mesh-dir",
@@ -1108,6 +1177,7 @@ def main(argv: list | None = None) -> int:
             gripper_joint=args.gripper_joint,
             strip=args.strip,
             mesh_package=args.mesh_package,
+            mesh_prefix=args.mesh_prefix,
             tip_site=args.tip_site,
             tip_link=args.tip_link,
         )
@@ -1136,6 +1206,7 @@ def main(argv: list | None = None) -> int:
                 strip="",
                 link_strip="",
                 mesh_package=args.mesh_package,
+                mesh_prefix=args.mesh_prefix,
                 tip_site=args.tip_site,
                 tip_link=f"{prefix}{args.tip_link}",
             )
@@ -1155,12 +1226,23 @@ def main(argv: list | None = None) -> int:
         if exporter.dropped_dofs
         else "",
     )
+    unshippable = warn_on_unshippable_meshes(tree, log)
 
     if args.check:
         err, where = round_trip_error(
             out, model, exporter.strip_prefix if len(prefixes) == 1 else "", mesh_dir=mesh_dir
         )
         log.info("round-trip FK error: %.3e m (worst link: %s)", err, where)
+        if unshippable:
+            # The check reads the meshes out of --mesh-dir whatever the URIs say, which is what lets
+            # it measure an export whose URIs name the consumer's path. Saying so is the difference
+            # between "this export is correct" and "this export is deliverable".
+            log.warning(
+                "--check measured the geometry and the kinematics against the meshes where they "
+                "were WRITTEN. It does not resolve the URIs the URDF carries, so it says nothing "
+                "about the %d unshippable ones above.",
+                len(unshippable),
+            )
         if err > args.tolerance:
             log.error(
                 "URDF disagrees with the MJCF by %.3e m at %r (tolerance %.1e). MoveIt would plan "

@@ -1194,6 +1194,17 @@ The invariant is the same one the URDF export exists for, extended to the rest: 
 MoveIt plans against is derived from the model the simulator loads**, and ``--check`` fails the export
 when the two disagree by more than a micrometre.
 
+**Where the meshes are referenced from is a separate question, and ``--check`` does not answer it.**
+The default URI is ``file://`` plus the path the export wrote to, which is right where the URDF is read
+out of the tree it was generated in and wrong everywhere else: an ament package installs to another
+prefix, and a campaign generates the description in one container and plans in another.
+``--mesh-package`` and ``--mesh-prefix`` name the consumer's path instead — where the meshes will be
+READ — and both exports take them, as alternatives to each other. ``move_group`` does not fail on a
+mesh it cannot fetch; it logs the failure, keeps the links without their collision geometry and plans
+through them. So an export whose URIs land under a temporary directory warns about it, and ``--check``,
+which resolves the meshes in the export's own mesh directory whatever the URIs say, reports that it
+measured the geometry rather than the reference.
+
 That matters most for the file that looks least interesting. ``moveit_controllers.yaml`` maps MoveIt's
 controller names onto the actions this substrate's *bridge* serves and onto the joint list
 ``arm_controller`` publishes — so it is read from the ``Endpoint`` objects the controller declared,
