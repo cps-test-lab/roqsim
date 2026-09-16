@@ -148,6 +148,13 @@ Single world YAML, two sections; ``plugins`` order = execution order:
 Each entry is a mapping with exactly one plugin-ref key (its value is the ``config`` map) plus an
 optional reserved ``name:`` sibling, defaulting to the ref. ``name:`` or ``components:`` found inside
 the config map is refused (``parse_plugin_entry``), because no plugin reads either from its config.
+
+Those two sections plus ``extends``/``disable`` (§ inheritance) are the whole top level, and any
+other key there is refused. A world declares no parameters and substitutes nothing into itself: a
+value that varies per run is written as its ordinary literal and changed by an **override**, which
+addresses the key in place. An override rooted outside the document is refused for the same reason
+-- accepted, it would merge into the document where nothing reads it, and the run would report
+success against the unchanged world.
 Three plugin-ref resolution forms (``resolve_plugin``):
 
 1. **Short name** → ``roqsim.plugins`` entry-point group.
