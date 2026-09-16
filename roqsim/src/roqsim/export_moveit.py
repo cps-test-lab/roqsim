@@ -126,7 +126,13 @@ import yaml
 
 from . import logging_setup, planning_scene
 from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
-from .export_urdf import UrdfExporter, _first_body, combine_urdfs, round_trip_error
+from .export_urdf import (
+    UrdfExporter,
+    _first_body,
+    combine_urdfs,
+    round_trip_error,
+    warn_on_unshippable_meshes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1366,6 +1372,7 @@ def _run(args, log) -> int:
         len(exporter.mesh_files),
         f"; dropped {len(exporter.dropped_dofs)} collapsed DOF(s)" if exporter.dropped_dofs else "",
     )
+    unshippable = warn_on_unshippable_meshes(tree, log)
 
     if multi:
         arm_tip = tips
@@ -1497,6 +1504,16 @@ def _run(args, log) -> int:
 
     if args.check:
         err, where = round_trip_error(urdf, model, strip, mesh_dir=exporter.mesh_dir)
+        if unshippable:
+            # The check reads the meshes out of the export's own mesh dir whatever the URIs say,
+            # which is what lets it measure an export whose URIs name the consumer's path. Saying so
+            # is the difference between "this export is correct" and "this export is deliverable".
+            log.warning(
+                "--check measured the geometry and the kinematics against the meshes where they "
+                "were WRITTEN. It does not resolve the URIs the URDF carries, so it says nothing "
+                "about the %d unshippable ones above.",
+                len(unshippable),
+            )
         if err > args.tolerance:
             log.error(
                 "the exported URDF diverges from the MJCF by %.3e m at %r (tolerance %.1e). MoveIt "

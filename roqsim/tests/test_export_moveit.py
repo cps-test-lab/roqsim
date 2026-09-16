@@ -9,7 +9,10 @@ three copies would have failed.
 
 from __future__ import annotations
 
+import logging
+import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import mujoco
 import pytest
@@ -260,6 +263,30 @@ _WORLD = {
         }
     ],
 }
+
+
+def test_the_cli_says_when_the_mesh_uris_cannot_be_read_anywhere_else(caplog):
+    """This CLI writes the description move_group is launched with, through the same URDF export.
+
+    A path that only the exporting process has is the ordinary case for a campaign: the generation
+    step runs in one container and the planner reads the files in another. move_group fetches
+    nothing at such a URI, keeps the links without their collision geometry, and plans through them.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_moveit"):
+            code, _out = _run_cli(Path(tmp), _WORLD, "--tip-site", "pinch")
+        assert code == 0
+        assert "--mesh-prefix" in caplog.text
+
+
+def test_the_cli_is_silent_when_told_where_the_meshes_will_be_read(caplog):
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_moveit"):
+            code, _out = _run_cli(
+                Path(tmp), _WORLD, "--tip-site", "pinch", "--mesh-prefix", "file:///config/meshes"
+            )
+        assert code == 0
+        assert "mesh" not in caplog.text
 
 
 def test_the_cli_writes_the_six_files_and_they_parse(tmp_path):
