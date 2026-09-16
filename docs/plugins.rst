@@ -1267,6 +1267,72 @@ warns about it, and ``planning_pipelines.yaml`` says so in a comment.
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.
 
+Manipulation: the world the arm stands in
+-----------------------------------------
+
+Those six files describe the **robot** and nothing else, so the world the simulator loads and the
+world the planner reasons about are disjoint: the bench the arm is bolted to, the cabinet it opens
+and the wall beside it are invisible to ``move_group``, which plans straight through them, and the
+simulator resolves the contact afterwards. There is no error and no warning — the symptom is a plan
+that looks fine and an arm that drives into furniture.
+
+``--scene`` writes the other half from the same compiled world, as a seventh file::
+
+   roqsim export moveit --world cell.yaml --out cfg/ --tip-site pinch --scene
+   # cfg/planning_scene.yaml
+
+It is a ``moveit_msgs/PlanningScene``, in YAML a bring-up node fills the message from directly, and
+it is a **diff**: applying it (``/apply_planning_scene``, or a ``PlanningScene`` publisher) adds the
+world's objects and states nothing about the robot. A non-diff scene replaces everything in it, the
+robot state included, so applying one would hand the planner a robot at all-zero joints.
+
+**One object per static body, at that body's pose, carrying the primitives it is built from.** An
+``industrial_table`` is one object called ``industrial_table`` holding its top and four legs, so a
+trial allows, pads or removes *the bench* rather than five unrelated shapes. Geoms hanging directly
+off the world body — the room's walls — are each their own object, because one object holding every
+wall could not be padded a wall at a time. Poses are written in the frame ``move_group`` plans in:
+the URDF's root link, which is the arm's own base and not the world origin.
+
+**What it leaves out is reported by name, in the log and in the file itself**, because a missing
+obstacle is exactly the silent failure the flag exists to end:
+
+* **Anything with a degree of freedom** — a ``motion: physics`` prop, a ``motion: driven`` obstacle,
+  a pedestrian, another robot's links. Its pose at export time is not where it will be. Note the
+  default: ``spawn_model`` gives a prop a free joint unless told ``motion: static``, so scenery meant
+  for the planner has to say so.
+* **Visual-only geometry** (``contype``/``conaffinity`` both zero). The simulator does not collide
+  it, so a planner that did would refuse motions the robot can make.
+* **Mesh geoms.** MoveIt takes a mesh as explicit triangles and MuJoCo collides one as its *convex
+  hull*, so neither is a shape the two engines agree on — and they disagree most exactly where a hull
+  fills the span a trestle or a shelf exists to leave open. A prop for a planning scene carries
+  primitive collision geoms behind its visual mesh, which is what ``roqsim assets collision``
+  measures.
+* **Plane geoms.** A MuJoCo plane is infinite and the robot stands on it, so a half-space in the
+  scene puts the start state in collision and every request is refused before it is planned.
+* **Ellipsoid, height-field and SDF geoms** — ``shape_msgs/SolidPrimitive`` has a box, a sphere, a
+  cylinder and a cone, and none of those is any of these. A capsule is *not* in this list: it is
+  exactly a cylinder and two spheres, and one object holds all three.
+
+A robot that is **not welded down** is refused rather than written: its base rides a free joint, so
+MoveIt plans in a frame TF provides, a prop's pose is fixed in the world, and the offset between the
+two is a run-time quantity. Publish that scene from the stack, against the frame TF gives it.
+
+The export also says which objects **touch the robot** at the posture the simulator starts in.
+``CheckStartStateCollision`` refuses a request whose start state is in collision, so an arm bolted to
+a bench that is also a collision object plans nothing at all — which reads like a planner that will
+not work rather than like a scene saying the arm is inside its own furniture. Allow the pair, pad the
+object back by more than the approach clearance, or leave it out; the export names the pair and
+leaves the choice where it belongs. MuJoCo reports no *contact* for it, since both are welded to the
+world, so only a distance query finds it.
+
+**This is the named-object route, not the only one.** A depth sensor feeding MoveIt's octomap updater
+already carries what is *in view* to the planner as occupied voxels — ``realsense_d435`` with
+``points: true`` is that path, and it sees whatever shape a thing has and follows it as it moves.
+What voxels cannot be is *named*: attached to the gripper, allowed against a link, padded, or removed
+when the trial picks the part up. The two compose. MoveIt's sensor filter removes the robot's own
+links and what is attached to them from the incoming cloud, not the world's collision objects, so a
+prop that is both declared and in view is carried twice — conservative, and not wrong.
+
 Manipulation: what a contact task needs
 ---------------------------------------
 
