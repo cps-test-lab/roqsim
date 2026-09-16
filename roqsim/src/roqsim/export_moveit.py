@@ -66,6 +66,20 @@ What "derived" means, file by file
   phase that succeeded, at a different phase each run. A range-limited arm has no such problem and
   gets no such setting.
 
+The world the robot stands in
+=============================
+The six files describe the ROBOT and nothing else, so ``move_group`` plans through the bench the arm
+is bolted to and the wall beside it, and the simulator resolves the contact. ``--scene`` writes the
+other half from the same compiled model: the world's static, collidable geometry as a
+``moveit_msgs/PlanningScene`` of named collision objects, one per static body. What it deliberately
+leaves out -- anything with a degree of freedom, visual-only geometry, and the geom kinds a
+``SolidPrimitive`` cannot hold -- is reported by name rather than dropped quietly, and
+:mod:`roqsim.planning_scene` is where that boundary is argued.
+
+It is the named-object route into the scene, not the only one: a depth sensor feeding MoveIt's
+octomap updater already carries what is IN VIEW to the planner as voxels. Voxels cannot be attached
+to a gripper, allowed against a link or padded; that is what a name is for, and what this writes.
+
 Several arms in one configuration
 =================================
 ``--arm left,right`` describes both arms as ONE robot: one URDF with both chains under a common root,
@@ -90,6 +104,7 @@ Usage::
     roqsim export moveit --world w.yaml --prefix ur5e_ --out cfg/ --tip-site pinch --check
     roqsim export moveit --world cell.yaml --arm left,right --out cfg/ --tip-site pinch
     roqsim export moveit --world w.yaml --out cfg/ --tip-site pinch --pipelines ompl,chomp
+    roqsim export moveit --world cell.yaml --out cfg/ --tip-site pinch --scene
 """
 
 from __future__ import annotations
@@ -105,7 +120,7 @@ from pathlib import Path
 import mujoco
 import yaml
 
-from . import logging_setup
+from . import logging_setup, planning_scene
 from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
 from .export_urdf import UrdfExporter, _first_body, combine_urdfs, round_trip_error
 
@@ -136,6 +151,10 @@ SCALING = 0.15
 #: optimizer that starts from one seed trajectory -- and because its ``projection_evaluator`` names
 #: joints this model has, which is the only pipeline parameter anywhere that is a fact about the robot.
 DEFAULT_PIPELINE = "ompl"
+
+#: Where ``--scene`` writes the world's static geometry. One file beside the six, because it is read
+#: off the same compiled model and goes stale with them.
+SCENE_FILE = "planning_scene.yaml"
 
 #: Pipelines that plan in joint space ONLY, and what a pose goal does there. Not a list of what may be
 #: exported -- any name MoveIt can load is allowed -- but a warning worth making at export time, since
@@ -893,6 +912,86 @@ def assert_agrees(
     return planning_frame
 
 
+# -- the world the robot stands in ---------------------------------------------------------------
+
+
+def write_scene(
+    engine,
+    out: Path,
+    *,
+    prefixes: list[str],
+    frame_body: int,
+    frame: str,
+    name: str,
+    world: str,
+    log,
+) -> Path:
+    """Write the world's static geometry beside the robot's description, and say what it leaves out.
+
+    ``prefixes`` selects the same bodies the URDF export selected, which is what keeps a link out of
+    the scene: a robot link that is also a world object collides with itself, and move_group then
+    refuses every request from a start state it calls invalid.
+    """
+    model, data = engine.ctx.model, engine.ctx.data
+    robot_bodies = {
+        b
+        for b in range(1, model.nbody)
+        if any(
+            (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith(p)
+            for p in prefixes
+        )
+    }
+    scene = planning_scene.scene_objects(model, robot_bodies=robot_bodies, frame_body=frame_body)
+    contacts = planning_scene.touching(
+        model, data, robot_bodies=robot_bodies, objects=scene.objects
+    )
+    path = out / SCENE_FILE
+    path.write_text(
+        planning_scene.planning_scene_yaml(
+            scene, frame=frame, name=world, robot_model_name=name, contacts=contacts
+        ),
+        encoding="utf-8",
+    )
+
+    shapes = sum(len(o.shapes) for o in scene.objects)
+    log.info(
+        "wrote %s: %d collision object(s), %d primitive(s), in %r",
+        path,
+        len(scene.objects),
+        shapes,
+        frame,
+    )
+    if not scene.objects:
+        log.warning(
+            "the planning scene is EMPTY: this world declares no static collidable geometry a "
+            "collision object can hold. move_group will plan as if the robot stood in free space."
+        )
+    if scene.skipped:
+        log.warning(
+            "%d collidable shape(s) are NOT in the planning scene, so move_group plans through "
+            "them: %s",
+            len(scene.skipped),
+            "; ".join(f"{s.geom} is {s.why}" for s in scene.skipped),
+        )
+    if scene.movable:
+        log.warning(
+            "%d thing(s) in this world MOVE and are not in the planning scene -- a pose written now "
+            "would be false by the time it is read: %s",
+            len(scene.movable),
+            ", ".join(scene.movable),
+        )
+    for oid, link, dist in contacts:
+        log.warning(
+            "the planning scene's %r touches %r at the posture the simulator starts in (%.1f mm). "
+            "CheckStartStateCollision refuses a request whose start state is in collision, so "
+            "move_group plans nothing until this pair is allowed, padded back, or left out.",
+            oid,
+            link,
+            dist * 1000.0,
+        )
+    return path
+
+
 # -- CLI -----------------------------------------------------------------------------------------
 
 
@@ -987,6 +1086,16 @@ def main(argv: list | None = None) -> int:
         default="",
         help="emit meshes as <PREFIX>/<file>: where they will be READ, when that is not where "
         "they are written -- a campaign stages them into the container that plans",
+    )
+    parser.add_argument(
+        "--scene",
+        action="store_true",
+        help=f"also write {SCENE_FILE}: the world's STATIC collision geometry as a "
+        "moveit_msgs/PlanningScene of named collision objects, one per static body, in the frame "
+        "move_group plans in. Without it the six files describe the robot and nothing else, so a "
+        "plan goes straight through the bench the arm stands on. Anything that moves, anything "
+        "visual-only and any geom a SolidPrimitive cannot hold is reported by name rather than "
+        "written",
     )
     parser.add_argument(
         "--manifest",
@@ -1258,6 +1367,37 @@ def _run(args, log) -> int:
             )
 
     planning_frame = assert_agrees(out, urdf, srdf, facts_list, arm_tip, combined_group)
+    if args.scene:
+        if srdf_tree.getroot().find("virtual_joint") is not None:
+            raise ValueError(
+                f"--scene cannot place this world's props: the robot's base is not welded, so "
+                f"move_group plans in {planning_frame!r}, a frame TF provides and nothing in the "
+                "compiled model locates. A prop's pose is fixed in the WORLD, and the offset "
+                "between the two is a run-time quantity. Publish the scene against that frame from "
+                "the stack instead, or export a welded robot."
+            )
+        prefixes = [one.prefix for one in facts_list] if multi else [prefix]
+        if any(not p for p in prefixes):
+            raise ValueError(
+                "--scene needs the arm to have an MJCF `prefix:`. The URDF export selects the "
+                "robot's bodies by name prefix, so with none it takes every body in the world -- "
+                "the props included -- and there is nothing left for the scene to hold."
+            )
+        write_scene(
+            engine,
+            out,
+            prefixes=prefixes,
+            # The frame is whatever the URDF's root link stands for. `--root-link` names the arm's
+            # own root body; any other root link is the synthetic one emitted above a JOINTED root
+            # (a rail carriage), and that one stands for the world body.
+            frame_body=0
+            if multi or planning_frame != args.root_link
+            else _first_body(model, prefix),
+            frame=planning_frame,
+            name=name,
+            world=Path(args.world).stem,
+            log=log,
+        )
     log.info(
         "planning frame: %s; chains %s",
         planning_frame,
