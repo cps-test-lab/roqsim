@@ -35,9 +35,9 @@ and the schedule.
 
 **Entities** are ``null`` unless ``--entities`` is passed, because naming them means compiling
 the model: which entities exist is settled at compile time (roqsim never recompiles mid-run, and
-``simulation_interfaces`` serves no ``SpawnEntity``), so there is no cheaper way to ask. A
-caller checking that a scenario only drives entities the world actually has pays for it; one
-resolving paths does not.
+``SpawnEntity`` activates an entity the model already carries, refusing a name it does not), so
+there is no cheaper way to ask. A caller checking that a scenario only drives entities the world
+actually has pays for it; one resolving paths does not.
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
 the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
