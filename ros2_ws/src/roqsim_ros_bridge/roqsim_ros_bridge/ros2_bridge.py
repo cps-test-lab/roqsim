@@ -143,12 +143,15 @@ def _common_ns(namespaces) -> str:
 
 
 def _gate_period(gate: _RateGate, dt: float) -> float:
-    """The period a gate ACTUALLY fires at, which is its requested period rounded UP to the physics
-    grid -- ``due()`` is only ever evaluated at step boundaries. A 60 Hz gate on a 2 ms step fires
-    every 9 steps (18 ms), not every 16.67 ms, and it is the 18 that has to divide the /clock grid.
+    """The period a gate ACTUALLY fires at, in whole physics steps -- ``due()`` is only ever evaluated
+    at step boundaries, so it is that period, not the requested one, that has to divide the /clock
+    grid. A gate bound by :meth:`~roqsim.bridge.BridgeBase._rate_gate` carries its own step count; one
+    built straight from a rate has its period rounded up to the grid instead.
     """
     if gate.rate_hz <= 0.0:
         return dt
+    if gate.every is not None:
+        return gate.every * dt
     return math.ceil((1.0 / gate.rate_hz - 1e-9) / dt) * dt
 
 
@@ -284,8 +287,25 @@ class Ros2Bridge(BridgeBase):
         # After super(), because the check reads the gates _bind() built, and the merge needs
         # ctx.interface fully populated -- true only once _bind() (called by super()) has run.
         super().configure(ctx)
+        self._snap_clock_gate(ctx)
         self._warn_on_clock_aliasing(ctx)
         self._setup_merged_joint_states(ctx)
+
+    def _snap_clock_gate(self, ctx) -> None:
+        """Put ``/clock``'s own rate on the physics grid, like every other publication's.
+
+        A ``clock_rate_hz`` is a request like any other -- and the one every other publisher's stamps
+        are quantised to, so a /clock left beside the grid while the outputs are on it would make the
+        aliasing check below compare a snapped period against a rounded-up one. ``step`` (a gate with
+        no rate) IS the grid and needs nothing; the rate is recorded either way, because it appears in
+        no world document as a realised number and nothing else states it.
+        """
+        if not self._clock_enabled:
+            return
+        requested = max(self._clock_gate.rate_hz, 0.0)  # "step" is a rate <= 0: one tick per step
+        if requested > 0.0:
+            self._clock_gate = self._rate_gate(ctx, requested, "/clock")
+        self._record_rate(ctx, "/clock", None, "", requested, self._clock_gate)
 
     def _joint_state_endpoints(self, ctx) -> list:
         """Every joint-state output endpoint this bridge instance serves, in registration order."""
@@ -404,8 +424,14 @@ class Ros2Bridge(BridgeBase):
                 msg=msg_type() if self._reuse else None,
                 emit_tf=False,
             )
-            gate = _RateGate(max(ep.rate_hz for ep in members))
+            requested = max(ep.rate_hz for ep in members)
+            gate = self._rate_gate(ctx, requested, f"{topic!r}")
             self._merged_joint_states.append((handle, gate, members))
+            # Recorded like a bound endpoint: this publisher belongs to no endpoint, so the run's
+            # record is the only place its rate can be read at all.
+            owners = {ep.owner for ep in members}
+            owner = owners.pop() if len(owners) == 1 else None
+            self._record_rate(ctx, topic, owner, "", requested, gate)
 
     def _publish_merged_joint_states(self, stamp, t: float) -> None:
         for handle, gate, members in self._merged_joint_states:

@@ -2,10 +2,12 @@
 
 The generic, family-free counterpart to ``spawn_robot``/``spawn_arm``/``spawn_sensor``: it resolves
 any ``roqsim.models`` entry -- notably the reusable props in ``roqsim_assets`` (an office table,
-a chair, a fire extinguisher) -- and attaches it at a mount pose. By default there is no free joint, so
-the model is welded in place (static scenery); it is the world-YAML alternative to ``<include>``-ing the
-prop's MJCF into a baked scene. The prop's own MJCF is used unchanged. Set ``motion: physics`` for a prop
-physics should move (a box to be picked up).
+a chair, a fire extinguisher) -- and attaches it at a mount pose. It is the world-YAML alternative to
+``<include>``-ing the prop's MJCF into a baked scene, and the prop's own MJCF is used unchanged. By
+default the prop gets a ``<freejoint/>`` and physics owns its pose (``motion: physics``), which is
+what a box to be picked up needs; ``motion: static`` welds it in place as scenery, which is what a
+bench or a shelf wants -- and what puts it in a MoveIt planning scene, since only a welded prop has a
+pose that stays true.
 
 Config::
 
@@ -48,8 +50,8 @@ is: it goes where the experiment says, and the robot under test cannot shove it 
 ``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
 rather than a joint), so a repetition never inherits where the last one left it.
 
-``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves,
-body physics moves -- a box a robot can pick up. It also registers the joint as the entity's
+``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves --
+a box a robot can pick up. It also registers the joint as the entity's
 ``base_joint``, which is what lets ``simulation_interfaces``' ``SetEntityState`` teleport or re-seat it
 (the service rejects any entity without one), and what ``on_reset`` uses to put it back at its spawn
 pose between episodes instead of leaving it wherever the last run dropped it.

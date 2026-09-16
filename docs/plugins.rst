@@ -71,12 +71,32 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``/tf``; **topics only** — frame ids are unchanged, use ``frame_prefix`` for those),
        ``clock_rate_hz`` (default ``step`` — one ``/clock`` per physics step; a **rate** must
        divide every gated publish period or that publisher's stamps alias, and ``configure()``
-       warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides), ``owner``
+       warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
+       physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
        (see the note below).
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
        required config; reuses the bridge's node when co-loaded.
+
+.. note::
+
+   **A publish rate lands on the physics grid.** A gate is tested once per physics step, so the rates
+   a world can hold are exactly ``physics_rate / k`` for integer ``k``. Every rate this bridge gates
+   on — an endpoint's own ``rate_hz``, a backend hint, a ``rates:`` override, ``clock_rate_hz``, a
+   merged ``joint_states`` — is snapped to the nearest of those when it is bound, and the move is
+   logged in proportion to its size (silent below 0.1 %, a note below 1 %, a warning naming the nearby
+   achievable rates above it). Nearest, so a snapped rate may come out slightly FASTER than asked: a
+   rate meant as a ceiling has to be one the world can hold.
+
+   At the common ``timestep: 0.002`` that makes 10 Hz and 25 Hz exact and 30 Hz a ``500/17`` —
+   29.41 Hz. Where a result turns on that difference there are two ways to keep the number: ask for a
+   rate on the grid, or step the world at a whole multiple of the rate you need (30 Hz is exact at
+   510 Hz, i.e. ``timestep: 0.0019607843137254902``), which is the one to reach for when the rate came
+   from a paper. Write such a timestep out in full: the step rate is recovered from the float, and a
+   rounded one is a different grid. Both numbers,
+   requested and realised, reach a recording's provenance as ``endpoint_rates``, so a run states what
+   it published at rather than what it was asked for.
 
 .. note::
 
@@ -642,6 +662,54 @@ Three things about it:
   disagreeing with itself, and a clearance threshold is precisely the tunable number the contact
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
+
+**How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
+A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
+integrates the normal force of the very same contacts at the physics step, and reports the impulse,
+the peak normal force and the time spent in contact::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - contact_monitor:  {ignore: [floor], min_force: 1.0}   # did it touch?
+       - clearance_monitor: {ignore: [floor], distmax: 3.0}    # how close did it come?
+       - contact_impulse:  {ignore: [floor]}                   # how hard was it?
+
+Four things about it:
+
+* **It is integrated in the simulator because it cannot be integrated anywhere else.** A free body
+  meeting a wall is in contact for tens of milliseconds -- under twenty steps at MuJoCo's default
+  2 ms timestep -- so at the default 30 Hz the whole collision falls inside one publish period, and
+  at 5 Hz it can fall between two samples and be published as nothing at all. No quadrature over a
+  recorded series recovers an area whose samples were never taken. ``rate_hz`` therefore decides
+  only how often the running total leaves the plugin, and there is no ``compute_rate_hz``: the
+  samples it would decimate are the integral.
+* **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
+  implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
+  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
+  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
+  ``ignore`` lists should agree for the same reason clearance's should.
+* **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
+  ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral
+  needs no such number, because a weak brief contact contributes to it in proportion to how weak
+  and how brief it is. That constant is what an impulse metric exists to avoid, so a block copied
+  from ``contact_monitor`` is rejected rather than quietly stripped. Where the two must agree
+  contact for contact, run ``contact_monitor`` at ``min_force: 0``.
+* **It never ends a trial.** What counts as too hard is a threshold on this number, and thresholds
+  belong in the experiment -- the same line ``clearance_monitor`` and ``energy_monitor`` draw. A
+  scenario reads the endpoint, or the blackboard handle ``contact_impulse:<address>``, and decides.
+
+``contact_time_s`` is the time a qualifying contact *existed* -- the monitor's notion of touching,
+so the two never disagree -- which runs a little longer than the force did, because MuJoCo goes on
+listing a pair while the geoms still overlap on the way apart. Those steps carry zero force and add
+nothing to the integral.
+
+The three totals run from the last reset: ``on_reset`` zeroes them, and so does spawning the
+watched entity (``reset_on_spawn``, default true, which is ``contact_monitor``'s rule so that
+neither plugin keeps a contact the other has forgotten). A trial that touched nothing reports
+``impulse_ns: 0.0`` with ``peak_time: -1.0`` -- a measured zero. Over ROS 2 the endpoint publishes
+``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
+against are read in-process.
 
 **Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
 guards an assumption the other two take for granted. A trial that drives something around a floor
@@ -1230,6 +1298,25 @@ Four more answers come off the model rather than from flags, each because gettin
   back into the request; a joint genuinely outside its limits is still refused, by a separate bounds
   check this flag does not relax. A range-limited arm has no such problem and gets no such setting.
 
+**The IK answer is not one of them.** ``kinematics.yaml`` configures MoveIt's KDL plugin, and that is
+the one generated file whose content is not a reading of the model: the plugin solves from the seed
+state on its first attempt and from a configuration drawn uniformly inside the joint limits on every
+attempt after that, until ``kinematics_solver_timeout`` is spent, and takes the first attempt that
+converges. The draw is seeded per process from the clock and the number of attempts that fit in the
+budget follows the machine, so **one pose is answered by a different arm branch from run to run** --
+the elbow the other way, or a joint turned a full revolution where the limits hold that posture twice
+-- while everything else the export writes is the same file every time. Each branch is a correct
+answer: the tool frame lands where it was asked for, the plan succeeds, and the arm took another
+route and stands in another posture. No parameter of the solver constrains it to one branch (its own
+are joint weights, ``max_solver_iterations``, ``epsilon``, ``orientation_vs_position`` and
+``position_only_ik``), so the export states the fact in the file's header, names there the joints
+whose exported limits hold one posture at more than one value, and warns when it writes it. A trial
+whose repeatability rests on a pose therefore solves that pose's joint vector **once**, against this
+description, commands it in joint space, and reaches further poses by a Cartesian path from the one
+the arm is in -- which follows the branch it is already in instead of choosing one. Where a query at
+run time cannot be avoided, check the joint vector that comes back against the posture expected
+before executing it: a plan that succeeds is not evidence that the answer was the intended one.
+
 **Pass ``--tip-site``.** Without it the arm chain ends at the tool flange, and a goal for the
 fingertips has to be written as an offset from there — which multiplies every orientation tolerance by
 that lever arm, so 0.15 rad of permitted tilt becomes ±33 mm at the fingers. One cell measured 61 mm of
@@ -1277,6 +1364,72 @@ warns about it, and ``planning_pipelines.yaml`` says so in a comment.
 
 What it does **not** write is a ``planning.yaml``. The planning frame, the group name and the gripper's
 units belong to whatever node drives the trial, and that is the experiment's file, not the substrate's.
+
+Manipulation: the world the arm stands in
+-----------------------------------------
+
+Those six files describe the **robot** and nothing else, so the world the simulator loads and the
+world the planner reasons about are disjoint: the bench the arm is bolted to, the cabinet it opens
+and the wall beside it are invisible to ``move_group``, which plans straight through them, and the
+simulator resolves the contact afterwards. There is no error and no warning — the symptom is a plan
+that looks fine and an arm that drives into furniture.
+
+``--scene`` writes the other half from the same compiled world, as a seventh file::
+
+   roqsim export moveit --world cell.yaml --out cfg/ --tip-site pinch --scene
+   # cfg/planning_scene.yaml
+
+It is a ``moveit_msgs/PlanningScene``, in YAML a bring-up node fills the message from directly, and
+it is a **diff**: applying it (``/apply_planning_scene``, or a ``PlanningScene`` publisher) adds the
+world's objects and states nothing about the robot. A non-diff scene replaces everything in it, the
+robot state included, so applying one would hand the planner a robot at all-zero joints.
+
+**One object per static body, at that body's pose, carrying the primitives it is built from.** An
+``industrial_table`` is one object called ``industrial_table`` holding its top and four legs, so a
+trial allows, pads or removes *the bench* rather than five unrelated shapes. Geoms hanging directly
+off the world body — the room's walls — are each their own object, because one object holding every
+wall could not be padded a wall at a time. Poses are written in the frame ``move_group`` plans in:
+the URDF's root link, which is the arm's own base and not the world origin.
+
+**What it leaves out is reported by name, in the log and in the file itself**, because a missing
+obstacle is exactly the silent failure the flag exists to end:
+
+* **Anything with a degree of freedom** — a ``motion: physics`` prop, a ``motion: driven`` obstacle,
+  a pedestrian, another robot's links. Its pose at export time is not where it will be. Note the
+  default: ``spawn_model`` gives a prop a free joint unless told ``motion: static``, so scenery meant
+  for the planner has to say so.
+* **Visual-only geometry** (``contype``/``conaffinity`` both zero). The simulator does not collide
+  it, so a planner that did would refuse motions the robot can make.
+* **Mesh geoms.** MoveIt takes a mesh as explicit triangles and MuJoCo collides one as its *convex
+  hull*, so neither is a shape the two engines agree on — and they disagree most exactly where a hull
+  fills the span a trestle or a shelf exists to leave open. A prop for a planning scene carries
+  primitive collision geoms behind its visual mesh, which is what ``roqsim assets collision``
+  measures.
+* **Plane geoms.** A MuJoCo plane is infinite and the robot stands on it, so a half-space in the
+  scene puts the start state in collision and every request is refused before it is planned.
+* **Ellipsoid, height-field and SDF geoms** — ``shape_msgs/SolidPrimitive`` has a box, a sphere, a
+  cylinder and a cone, and none of those is any of these. A capsule is *not* in this list: it is
+  exactly a cylinder and two spheres, and one object holds all three.
+
+A robot that is **not welded down** is refused rather than written: its base rides a free joint, so
+MoveIt plans in a frame TF provides, a prop's pose is fixed in the world, and the offset between the
+two is a run-time quantity. Publish that scene from the stack, against the frame TF gives it.
+
+The export also says which objects **touch the robot** at the posture the simulator starts in.
+``CheckStartStateCollision`` refuses a request whose start state is in collision, so an arm bolted to
+a bench that is also a collision object plans nothing at all — which reads like a planner that will
+not work rather than like a scene saying the arm is inside its own furniture. Allow the pair, pad the
+object back by more than the approach clearance, or leave it out; the export names the pair and
+leaves the choice where it belongs. MuJoCo reports no *contact* for it, since both are welded to the
+world, so only a distance query finds it.
+
+**This is the named-object route, not the only one.** A depth sensor feeding MoveIt's octomap updater
+already carries what is *in view* to the planner as occupied voxels — ``realsense_d435`` with
+``points: true`` is that path, and it sees whatever shape a thing has and follows it as it moves.
+What voxels cannot be is *named*: attached to the gripper, allowed against a link, padded, or removed
+when the trial picks the part up. The two compose. MoveIt's sensor filter removes the robot's own
+links and what is attached to them from the incoming cloud, not the world's collision objects, so a
+prop that is both declared and in view is carried twice — conservative, and not wrong.
 
 Manipulation: what a contact task needs
 ---------------------------------------

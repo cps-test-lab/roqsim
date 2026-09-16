@@ -14,7 +14,10 @@ and most of what they wrote was not theirs to choose:
 * ``joint_limits.yaml`` states the kinematic limits that turn a geometric path into a timed one. The
   positions and efforts are already in the URDF; what is added here is an *execution* property of the
   bridge and the position servo behind it.
-* ``kinematics.yaml`` is a solver over the chain the SRDF already names.
+* ``kinematics.yaml`` is a solver over the chain the SRDF already names, and the one file here whose
+  content is not an answer: the solver it configures answers one pose with a different arm branch
+  from one run to the next, and no parameter of it says otherwise. That is what its header is for --
+  see ``kinematics_yaml``.
 * ``<pipeline>_planning.yaml`` is the one that genuinely belongs to the experiment -- a planner
   comparison's whole factor can live in it -- so it is emitted as a starting point and meant to be
   overridden.
@@ -66,6 +69,20 @@ What "derived" means, file by file
   phase that succeeded, at a different phase each run. A range-limited arm has no such problem and
   gets no such setting.
 
+The world the robot stands in
+=============================
+The six files describe the ROBOT and nothing else, so ``move_group`` plans through the bench the arm
+is bolted to and the wall beside it, and the simulator resolves the contact. ``--scene`` writes the
+other half from the same compiled model: the world's static, collidable geometry as a
+``moveit_msgs/PlanningScene`` of named collision objects, one per static body. What it deliberately
+leaves out -- anything with a degree of freedom, visual-only geometry, and the geom kinds a
+``SolidPrimitive`` cannot hold -- is reported by name rather than dropped quietly, and
+:mod:`roqsim.planning_scene` is where that boundary is argued.
+
+It is the named-object route into the scene, not the only one: a depth sensor feeding MoveIt's
+octomap updater already carries what is IN VIEW to the planner as voxels. Voxels cannot be attached
+to a gripper, allowed against a link or padded; that is what a name is for, and what this writes.
+
 Several arms in one configuration
 =================================
 ``--arm left,right`` describes both arms as ONE robot: one URDF with both chains under a common root,
@@ -90,6 +107,7 @@ Usage::
     roqsim export moveit --world w.yaml --prefix ur5e_ --out cfg/ --tip-site pinch --check
     roqsim export moveit --world cell.yaml --arm left,right --out cfg/ --tip-site pinch
     roqsim export moveit --world w.yaml --out cfg/ --tip-site pinch --pipelines ompl,chomp
+    roqsim export moveit --world cell.yaml --out cfg/ --tip-site pinch --scene
 """
 
 from __future__ import annotations
@@ -97,6 +115,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import math
 import sys
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -105,7 +124,7 @@ from pathlib import Path
 import mujoco
 import yaml
 
-from . import logging_setup
+from . import logging_setup, planning_scene
 from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
 from .export_urdf import (
     UrdfExporter,
@@ -143,6 +162,10 @@ SCALING = 0.15
 #: joints this model has, which is the only pipeline parameter anywhere that is a fact about the robot.
 DEFAULT_PIPELINE = "ompl"
 
+#: Where ``--scene`` writes the world's static geometry. One file beside the six, because it is read
+#: off the same compiled model and goes stale with them.
+SCENE_FILE = "planning_scene.yaml"
+
 #: Pipelines that plan in joint space ONLY, and what a pose goal does there. Not a list of what may be
 #: exported -- any name MoveIt can load is allowed -- but a warning worth making at export time, since
 #: the failure is per request and looks like the planner performing badly rather than like a goal it
@@ -170,6 +193,10 @@ class ArmFacts:
     trajectory_action: str
     collapse: tuple[str, ...]
     continuous_joints: list[str] = field(default_factory=list)
+    #: Each LIMITED joint's range, in the MJCF's own units, which is what the URDF carries and what
+    #: the solver samples its restarts inside. An unlimited joint is in ``continuous_joints`` instead
+    #: and has no entry here.
+    ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
     gripper_controller: str = ""
     gripper_action: str = ""
     gripper_joint: str = ""
@@ -368,6 +395,7 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
     model, data = ctx.model, ctx.data
     home: dict[str, float] = {}
     continuous: list[str] = []
+    ranges: dict[str, tuple[float, float]] = {}
     for name in joints:
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, prefix + name)
         if jid < 0:
@@ -381,6 +409,8 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
         lo, hi = (float(v) for v in model.jnt_range[jid])
         if not bool(model.jnt_limited[jid]) or hi <= lo:
             continuous.append(name)
+        else:
+            ranges[name] = (lo, hi)
 
     facts = ArmFacts(
         arm=arm,
@@ -392,6 +422,7 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
         trajectory_action=trajectory_action,
         collapse=(),
         continuous_joints=continuous,
+        ranges=ranges,
     )
 
     grip = _endpoint(endpoints, arm, "gripper_cmd")
@@ -517,6 +548,32 @@ def _facts_list(facts) -> list[ArmFacts]:
 # -- the four YAMLs ------------------------------------------------------------------------------
 
 
+#: One full turn of a hinge. A joint whose exported range is at least this wide holds one posture at
+#: two values, so a solution and the same posture with that joint turned once round are both inside
+#: the limits and both answer the pose.
+TURN = 2.0 * math.pi
+
+
+def wrapped_joints(one: ArmFacts) -> list[str]:
+    """This arm's joints whose exported limits hold one posture at more than one value.
+
+    A joint with no limits at all is one; so is a limited joint whose range spans a full turn or
+    more. The distinction matters because the solver draws its restarts uniformly INSIDE these
+    limits, so a wrapped value is as likely an answer as the unwrapped one and satisfies the pose
+    exactly -- the tool is where it was asked for and the arm is turned round.
+
+    The limits are the model's, exported as they stand, so this names what a description admits
+    rather than proposing a narrower one: which range a joint is allowed is the robot's business and
+    the world's, not this exporter's.
+    """
+    return [
+        j
+        for j in one.joints
+        if j in one.continuous_joints
+        or (j in one.ranges and (one.ranges[j][1] - one.ranges[j][0]) >= TURN - 1e-9)
+    ]
+
+
 def kinematics_yaml(facts, combined_group: str = "") -> str:
     arms = _facts_list(facts)
     body = {
@@ -524,10 +581,17 @@ def kinematics_yaml(facts, combined_group: str = "") -> str:
             "kinematics_solver": "kdl_kinematics_plugin/KDLKinematicsPlugin",
             "kinematics_solver_search_resolution": 0.005,
             "kinematics_solver_timeout": 0.05,
-            "kinematics_solver_attempts": 3,
         }
         for one in arms
     }
+    wraps = ""
+    for one in arms:
+        turning = wrapped_joints(one)
+        wraps += (
+            f"#   {one.group}: {', '.join(turning)}\n"
+            if turning
+            else f"#   {one.group}: none -- every posture is inside these limits once\n"
+        )
     combined = (
         "#\n"
         f"# {combined_group} gets NO solver, deliberately. KDL solves a single serial chain, and that\n"
@@ -545,6 +609,38 @@ def kinematics_yaml(facts, combined_group: str = "") -> str:
         + "# The gripper group gets no solver: it is one joint driven by a GripperCommand controller,\n"
         + "# never by IK.\n"
         + combined
+        + "#\n"
+        + "# WHAT THIS SOLVER ANSWERS FOR ONE POSE IS NOT REPRODUCIBLE BETWEEN TWO RUNS OF ONE\n"
+        + "# CONFIGURATION, and of everything `roqsim export moveit` writes that is true of this file\n"
+        + "# alone: the rest is read off the model and comes out the same every time.\n"
+        + "#\n"
+        + "# KDLKinematicsPlugin solves from the seed state it was given on its first attempt, and\n"
+        + "# from a configuration drawn UNIFORMLY inside the joint limits on every attempt after that,\n"
+        + "# until kinematics_solver_timeout is spent; the first attempt that converges is the answer\n"
+        + "# (searchPositionIK, kdl_kinematics_plugin.cpp). Two things about that are outside this\n"
+        + "# file: the draw comes from a generator seeded per process from the clock, and how many\n"
+        + "# attempts fit in the budget follows the machine and its load. So one pose is answered by\n"
+        + "# one arm posture in one run and by another in the next -- the elbow the other way, or a\n"
+        + "# joint turned a full revolution -- and each is a correct answer. The tool frame lands\n"
+        + "# where it was asked for, the plan succeeds and the execution returns; the arm reached it\n"
+        + "# by another route and stands in another posture, and nothing reports anything.\n"
+        + "#\n"
+        + "# No setting here narrows that to one branch. The solver's own parameters are joint\n"
+        + "# weights, max_solver_iterations, epsilon, orientation_vs_position and position_only_ik;\n"
+        + "# the consistency limits that would hold a solution near its seed are an argument of the\n"
+        + "# CALLER's IK query rather than a parameter of the solver, and the branches are admissible\n"
+        + "# because the description's joint limits -- the model's own -- admit them.\n"
+        + "#\n"
+        + "# So where a pose has to be reached the same way twice: solve its joint vector once against\n"
+        + "# this description, check the posture it names, and command the arm in JOINT space; reach\n"
+        + "# further poses by a Cartesian path from the one the arm is in, which follows the branch it\n"
+        + "# is already in rather than choosing one. Where a query at run time cannot be avoided,\n"
+        + "# check the joint vector that comes back against the posture expected and refuse it if it\n"
+        + "# differs -- that a plan succeeded is not evidence that the answer was the intended one.\n"
+        + "#\n"
+        + "# Joints whose exported limits hold one posture at more than one value, so a solution and\n"
+        + "# the same posture with that joint turned a full revolution are both admissible:\n"
+        + wraps
         + yaml.safe_dump(body, sort_keys=False)
     )
 
@@ -899,6 +995,86 @@ def assert_agrees(
     return planning_frame
 
 
+# -- the world the robot stands in ---------------------------------------------------------------
+
+
+def write_scene(
+    engine,
+    out: Path,
+    *,
+    prefixes: list[str],
+    frame_body: int,
+    frame: str,
+    name: str,
+    world: str,
+    log,
+) -> Path:
+    """Write the world's static geometry beside the robot's description, and say what it leaves out.
+
+    ``prefixes`` selects the same bodies the URDF export selected, which is what keeps a link out of
+    the scene: a robot link that is also a world object collides with itself, and move_group then
+    refuses every request from a start state it calls invalid.
+    """
+    model, data = engine.ctx.model, engine.ctx.data
+    robot_bodies = {
+        b
+        for b in range(1, model.nbody)
+        if any(
+            (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith(p)
+            for p in prefixes
+        )
+    }
+    scene = planning_scene.scene_objects(model, robot_bodies=robot_bodies, frame_body=frame_body)
+    contacts = planning_scene.touching(
+        model, data, robot_bodies=robot_bodies, objects=scene.objects
+    )
+    path = out / SCENE_FILE
+    path.write_text(
+        planning_scene.planning_scene_yaml(
+            scene, frame=frame, name=world, robot_model_name=name, contacts=contacts
+        ),
+        encoding="utf-8",
+    )
+
+    shapes = sum(len(o.shapes) for o in scene.objects)
+    log.info(
+        "wrote %s: %d collision object(s), %d primitive(s), in %r",
+        path,
+        len(scene.objects),
+        shapes,
+        frame,
+    )
+    if not scene.objects:
+        log.warning(
+            "the planning scene is EMPTY: this world declares no static collidable geometry a "
+            "collision object can hold. move_group will plan as if the robot stood in free space."
+        )
+    if scene.skipped:
+        log.warning(
+            "%d collidable shape(s) are NOT in the planning scene, so move_group plans through "
+            "them: %s",
+            len(scene.skipped),
+            "; ".join(f"{s.geom} is {s.why}" for s in scene.skipped),
+        )
+    if scene.movable:
+        log.warning(
+            "%d thing(s) in this world MOVE and are not in the planning scene -- a pose written now "
+            "would be false by the time it is read: %s",
+            len(scene.movable),
+            ", ".join(scene.movable),
+        )
+    for oid, link, dist in contacts:
+        log.warning(
+            "the planning scene's %r touches %r at the posture the simulator starts in (%.1f mm). "
+            "CheckStartStateCollision refuses a request whose start state is in collision, so "
+            "move_group plans nothing until this pair is allowed, padded back, or left out.",
+            oid,
+            link,
+            dist * 1000.0,
+        )
+    return path
+
+
 # -- CLI -----------------------------------------------------------------------------------------
 
 
@@ -993,6 +1169,16 @@ def main(argv: list | None = None) -> int:
         default="",
         help="emit meshes as <PREFIX>/<file>: where they will be READ, when that is not where "
         "they are written -- a campaign stages them into the container that plans",
+    )
+    parser.add_argument(
+        "--scene",
+        action="store_true",
+        help=f"also write {SCENE_FILE}: the world's STATIC collision geometry as a "
+        "moveit_msgs/PlanningScene of named collision objects, one per static body, in the frame "
+        "move_group plans in. Without it the six files describe the robot and nothing else, so a "
+        "plan goes straight through the bench the arm stands on. Anything that moves, anything "
+        "visual-only and any geom a SolidPrimitive cannot hold is reported by name rather than "
+        "written",
     )
     parser.add_argument(
         "--manifest",
@@ -1238,6 +1424,18 @@ def _run(args, log) -> int:
     for fname, text in files:
         (out / fname).write_text(text, encoding="utf-8")
     log.info("wrote %s", ", ".join(fname for fname, _ in files))
+    # Said here as well as in the file: the file is read by whoever debugs the cell, and this by
+    # whoever builds it. A build that takes the whole configuration for reproducible plans its trial
+    # around a run-time IK query, and has put a coin flip inside every contrast it then measures.
+    log.warning(
+        "kinematics.yaml configures KDL, which answers one pose from the seed on its first attempt "
+        "and from a random configuration on every attempt after that until its timeout: the branch "
+        "it returns is NOT reproducible between two runs of one configuration, though everything "
+        "else written here is. Joints these limits hold one posture at more than one value: %s. "
+        "Solve a pose that must be reached the same way twice offline, command it in joint space, "
+        "and reach further poses by a Cartesian path from it.",
+        "; ".join(f"{one.group}: {', '.join(wrapped_joints(one)) or 'none'}" for one in facts_list),
+    )
     if len(pipelines) > 1:
         log.warning(
             "%d planning pipelines (%s); %r is used by a request that names none. A pipeline is "
@@ -1265,6 +1463,37 @@ def _run(args, log) -> int:
             )
 
     planning_frame = assert_agrees(out, urdf, srdf, facts_list, arm_tip, combined_group)
+    if args.scene:
+        if srdf_tree.getroot().find("virtual_joint") is not None:
+            raise ValueError(
+                f"--scene cannot place this world's props: the robot's base is not welded, so "
+                f"move_group plans in {planning_frame!r}, a frame TF provides and nothing in the "
+                "compiled model locates. A prop's pose is fixed in the WORLD, and the offset "
+                "between the two is a run-time quantity. Publish the scene against that frame from "
+                "the stack instead, or export a welded robot."
+            )
+        prefixes = [one.prefix for one in facts_list] if multi else [prefix]
+        if any(not p for p in prefixes):
+            raise ValueError(
+                "--scene needs the arm to have an MJCF `prefix:`. The URDF export selects the "
+                "robot's bodies by name prefix, so with none it takes every body in the world -- "
+                "the props included -- and there is nothing left for the scene to hold."
+            )
+        write_scene(
+            engine,
+            out,
+            prefixes=prefixes,
+            # The frame is whatever the URDF's root link stands for. `--root-link` names the arm's
+            # own root body; any other root link is the synthetic one emitted above a JOINTED root
+            # (a rail carriage), and that one stands for the world body.
+            frame_body=0
+            if multi or planning_frame != args.root_link
+            else _first_body(model, prefix),
+            frame=planning_frame,
+            name=name,
+            world=Path(args.world).stem,
+            log=log,
+        )
     log.info(
         "planning frame: %s; chains %s",
         planning_frame,

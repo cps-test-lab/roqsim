@@ -282,6 +282,13 @@ class SimContext:
         #: model opened to be understood. A world that overrides nothing still fills it.
         self.actuator_tables: dict[str, list] = {}
 
+        #: What each published endpoint ended up going out at: one row per output a bridge bound,
+        #: filled at ``configure`` and written into the run's provenance. A publish can only land on
+        #: a physics step, so a requested rate that is not a whole number of steps is served at a
+        #: neighbouring one -- the row carries both numbers, because a reader holding only the world
+        #: document has the requested one and no way to learn the other.
+        self.endpoint_rates: list[dict] = []
+
         # Manual control: when True the *human* owns ``data.ctrl`` this run, so every controller
         # plugin must leave it alone and let the viewer's control sliders drive the actuators. A
         # run-level switch (the runner's ``--manual-control``), not world config: which controller a

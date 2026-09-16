@@ -22,10 +22,14 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_moveit import (
     ARM_GROUP,
+    TURN,
+    ArmFacts,
     arm_facts,
     infer_collapse,
+    kinematics_yaml,
     moveit_controllers_yaml,
     ompl_planning_yaml,
+    wrapped_joints,
 )
 
 
@@ -597,3 +601,121 @@ def test_a_joint_space_only_pipeline_says_so_in_the_file(tmp_path):
 def test_a_repeated_pipeline_name_is_refused(tmp_path):
     with pytest.raises(SystemExit, match="repeats"):
         _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,ompl")
+
+
+# -- the one file whose content is not an answer --------------------------------------------------
+
+
+def test_the_kinematics_file_says_its_answer_is_not_reproducible(tmp_path):
+    """Every other file here is a reading of the model, so a build has no reason to suspect this one.
+
+    KDL solves from the seed on its first attempt and from a configuration drawn uniformly inside
+    the joint limits on every attempt after that, until its timeout, and takes the first that
+    converges (searchPositionIK, kdl_kinematics_plugin.cpp). Both answers satisfy the pose, so the
+    IK succeeds, the plan succeeds, and the arm is in another posture -- there is nothing to see in
+    a log. The header is where a build meets that before a trial is built on a run-time query.
+    """
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    text = (out / "kinematics.yaml").read_text(encoding="utf-8")
+    assert "NOT REPRODUCIBLE BETWEEN TWO RUNS" in text
+    assert "Cartesian path" in text, "the header must say what to do instead, not only what breaks"
+    assert yaml.safe_load(text)[ARM_GROUP]["kinematics_solver"].endswith("KDLKinematicsPlugin")
+
+
+def test_no_attempt_count_is_written_where_the_bound_is_a_timeout(tmp_path):
+    """A count here would read as a bound on the re-seeding, and there is no such bound.
+
+    The plugin re-seeds until ``kinematics_solver_timeout`` is spent and reads no attempt count: its
+    parameters are joint weights, max_solver_iterations, epsilon, orientation_vs_position and
+    position_only_ik (kdl_kinematics_parameters.yaml). How many attempts fit in the budget is the
+    machine's answer, not the configuration's.
+    """
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    text = (out / "kinematics.yaml").read_text(encoding="utf-8")
+    assert "kinematics_solver_attempts" not in text
+    assert yaml.safe_load(text)[ARM_GROUP]["kinematics_solver_timeout"] == 0.05
+
+
+def test_the_joints_that_hold_one_posture_twice_are_named(ur5e):
+    """The wrapped answer -- the same posture with a joint turned once round -- is inside the limits
+    this description carries, so the solver returns it as readily as the unwrapped one. Which joints
+    admit it is a fact about the model, so the file names them rather than warning in general."""
+    facts = arm_facts(ur5e)
+    assert wrapped_joints(facts) == [
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    ], "every UR5e joint but the elbow, whose range is under a full turn"
+    assert facts.ranges["elbow_joint"][1] - facts.ranges["elbow_joint"][0] < TURN
+    text = kinematics_yaml(facts)
+    assert f"#   {ARM_GROUP}: shoulder_pan_joint" in text
+    assert "elbow_joint" not in text
+    assert "turned a full revolution" in text
+
+
+def test_an_arm_inside_one_turn_is_said_to_have_no_wrap():
+    """The line is written either way: "none" is an answer a build can act on, and its absence would
+    leave a reader guessing whether the export had looked."""
+    facts = ArmFacts(
+        arm="a",
+        prefix="",
+        namespace="",
+        joints=["j1", "j2"],
+        home={"j1": 0.0, "j2": 0.0},
+        controller="arm_controller",
+        trajectory_action="follow_joint_trajectory",
+        collapse=(),
+        ranges={"j1": (-1.5, 1.5), "j2": (-3.0, 3.0)},
+    )
+    assert wrapped_joints(facts) == []
+    assert "none -- every posture is inside these limits once" in kinematics_yaml(facts)
+
+    facts.continuous_joints = ["j2"]
+    assert wrapped_joints(facts) == ["j2"], "a joint with no limits holds every posture repeatedly"
+
+
+def test_the_same_world_exported_twice_gives_the_same_files(tmp_path):
+    """What varies between two runs of one configuration is the solver's answer, not this export.
+
+    Two separate processes, each compiling the world from the same document and writing a full
+    configuration: every generated file has to come out byte for byte the same, which is what makes
+    the header's claim about the odd one out worth reading. ``--mesh-prefix`` pins the mesh URIs,
+    which otherwise carry the directory each run was told to write into -- an argument, not a
+    difference between the runs.
+    """
+    import subprocess
+    import sys
+
+    (tmp_path / "cell.yaml").write_text(yaml.safe_dump(_WORLD), encoding="utf-8")
+    outs = []
+    for run in ("a", "b"):
+        out = tmp_path / run
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "roqsim.export_moveit",
+                "--world",
+                str(tmp_path / "cell.yaml"),
+                "--out",
+                str(out),
+                "--tip-site",
+                "pinch",
+                "--samples",
+                "60",
+                "--mesh-prefix",
+                "file:///config/meshes",
+            ],
+            check=True,
+            capture_output=True,
+            cwd=tmp_path,
+        )
+        outs.append(out)
+    first, second = outs
+    written = sorted(p.relative_to(first) for p in first.rglob("*") if p.is_file())
+    assert [n.name for n in written].count("kinematics.yaml") == 1
+    assert written == sorted(p.relative_to(second) for p in second.rglob("*") if p.is_file())
+    for name in written:
+        assert (first / name).read_bytes() == (second / name).read_bytes(), f"{name} differs"
