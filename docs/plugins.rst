@@ -663,6 +663,54 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+**How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
+A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
+integrates the normal force of the very same contacts at the physics step, and reports the impulse,
+the peak normal force and the time spent in contact::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - contact_monitor:  {ignore: [floor], min_force: 1.0}   # did it touch?
+       - clearance_monitor: {ignore: [floor], distmax: 3.0}    # how close did it come?
+       - contact_impulse:  {ignore: [floor]}                   # how hard was it?
+
+Four things about it:
+
+* **It is integrated in the simulator because it cannot be integrated anywhere else.** A free body
+  meeting a wall is in contact for tens of milliseconds -- under twenty steps at MuJoCo's default
+  2 ms timestep -- so at the default 30 Hz the whole collision falls inside one publish period, and
+  at 5 Hz it can fall between two samples and be published as nothing at all. No quadrature over a
+  recorded series recovers an area whose samples were never taken. ``rate_hz`` therefore decides
+  only how often the running total leaves the plugin, and there is no ``compute_rate_hz``: the
+  samples it would decimate are the integral.
+* **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
+  implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
+  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
+  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
+  ``ignore`` lists should agree for the same reason clearance's should.
+* **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
+  ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral
+  needs no such number, because a weak brief contact contributes to it in proportion to how weak
+  and how brief it is. That constant is what an impulse metric exists to avoid, so a block copied
+  from ``contact_monitor`` is rejected rather than quietly stripped. Where the two must agree
+  contact for contact, run ``contact_monitor`` at ``min_force: 0``.
+* **It never ends a trial.** What counts as too hard is a threshold on this number, and thresholds
+  belong in the experiment -- the same line ``clearance_monitor`` and ``energy_monitor`` draw. A
+  scenario reads the endpoint, or the blackboard handle ``contact_impulse:<address>``, and decides.
+
+``contact_time_s`` is the time a qualifying contact *existed* -- the monitor's notion of touching,
+so the two never disagree -- which runs a little longer than the force did, because MuJoCo goes on
+listing a pair while the geoms still overlap on the way apart. Those steps carry zero force and add
+nothing to the integral.
+
+The three totals run from the last reset: ``on_reset`` zeroes them, and so does spawning the
+watched entity (``reset_on_spawn``, default true, which is ``contact_monitor``'s rule so that
+neither plugin keeps a contact the other has forgotten). A trial that touched nothing reports
+``impulse_ns: 0.0`` with ``peak_time: -1.0`` -- a measured zero. Over ROS 2 the endpoint publishes
+``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
+against are read in-process.
+
 **Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
 guards an assumption the other two take for granted. A trial that drives something around a floor
 assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
