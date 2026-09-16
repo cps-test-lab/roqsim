@@ -143,12 +143,15 @@ def _common_ns(namespaces) -> str:
 
 
 def _gate_period(gate: _RateGate, dt: float) -> float:
-    """The period a gate ACTUALLY fires at, which is its requested period rounded UP to the physics
-    grid -- ``due()`` is only ever evaluated at step boundaries. A 60 Hz gate on a 2 ms step fires
-    every 9 steps (18 ms), not every 16.67 ms, and it is the 18 that has to divide the /clock grid.
+    """The period a gate ACTUALLY fires at, in whole physics steps -- ``due()`` is only ever evaluated
+    at step boundaries, so it is that period, not the requested one, that has to divide the /clock
+    grid. A gate bound by :meth:`~roqsim.bridge.BridgeBase._rate_gate` carries its own step count; one
+    built straight from a rate has its period rounded up to the grid instead.
     """
     if gate.rate_hz <= 0.0:
         return dt
+    if gate.every is not None:
+        return gate.every * dt
     return math.ceil((1.0 / gate.rate_hz - 1e-9) / dt) * dt
 
 
@@ -404,7 +407,7 @@ class Ros2Bridge(BridgeBase):
                 msg=msg_type() if self._reuse else None,
                 emit_tf=False,
             )
-            gate = _RateGate(max(ep.rate_hz for ep in members))
+            gate = self._rate_gate(ctx, max(ep.rate_hz for ep in members), f"{topic!r}")
             self._merged_joint_states.append((handle, gate, members))
 
     def _publish_merged_joint_states(self, stamp, t: float) -> None:

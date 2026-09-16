@@ -763,6 +763,17 @@ endpoint, runs the per-tick publish loop on the physics thread, and marshals inb
 physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend implements a few hooks:
 ``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
 
+The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
+``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
+different constant for the whole run rather than as jitter that averages out. The requested rate is
+therefore **snapped to the nearest achievable one when the endpoint is bound** and the move is
+announced in proportion to its size, on the same bands a capture rate uses
+(:data:`roqsim.capture.SNAP_QUIET` / :data:`~roqsim.capture.SNAP_NOTABLE`), with the nearby achievable
+rates named where it is large. Both numbers reach the run's record: a recording's provenance carries
+``endpoint_rates``, one row per published endpoint with its ``requested_hz``, its ``realised_hz`` and
+the ``every_steps`` behind it — so a rate quoted from the world document can be checked against the
+one the run actually published at without measuring arrival times.
+
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
 ``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
 type string into a class via ``importlib`` (cached); converters keyed by that string fill an outbound

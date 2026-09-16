@@ -71,12 +71,25 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``/tf``; **topics only** — frame ids are unchanged, use ``frame_prefix`` for those),
        ``clock_rate_hz`` (default ``step`` — one ``/clock`` per physics step; a **rate** must
        divide every gated publish period or that publisher's stamps alias, and ``configure()``
-       warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides), ``owner``
+       warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
+       physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
        (see the note below).
    * - ``sim_interfaces``
      - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
        required config; reuses the bridge's node when co-loaded.
+
+.. note::
+
+   **A publish rate lands on the physics grid.** A gate is tested once per physics step, so the rates
+   a world can hold are exactly ``physics_rate / k`` for integer ``k``. Every output's rate — an
+   endpoint's own ``rate_hz``, a backend hint, or a ``rates:`` override — is snapped to the nearest of
+   those when the bridge binds it, and the move is logged in proportion to its size (silent below
+   0.1 %, a note below 1 %, a warning naming the nearby achievable rates above it). At the common
+   ``timestep: 0.002`` that makes 10 Hz and 25 Hz exact and 30 Hz a ``500/17`` — 29.41 Hz — so pick a
+   rate off the grid where a result turns on the difference. Both numbers, requested and realised,
+   reach a recording's provenance as ``endpoint_rates``, so a run states what it published at rather
+   than what it was asked for.
 
 .. note::
 

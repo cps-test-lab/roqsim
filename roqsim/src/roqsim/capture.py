@@ -59,8 +59,11 @@ DEFAULT_FPS = 25
 _DT_DENOM_LIMIT = 10**9
 
 #: How far a snap may move the rate before it is worth saying so, and before it is worth a warning.
-_QUIET = 0.001  # 0.1%: the caller got what they asked for
-_NOTABLE = 0.01  # 1%: above this, name the neighbours
+#: Public because a capture rate is not the only rate that lands on this grid -- a bridge snaps every
+#: output endpoint's publish rate the same way (:meth:`roqsim.bridge.BridgeBase._rate_gate`) -- and two
+#: sets of bands would make one move loud in one place and silent in the other.
+SNAP_QUIET = 0.001  # 0.1%: the caller got what they asked for
+SNAP_NOTABLE = 0.01  # 1%: above this, name the neighbours
 
 
 class CaptureError(ValueError):
@@ -144,9 +147,9 @@ class CaptureRate:
         detail = (
             f"{float(self.fps):.3f} fps (every {self.every} steps; exactly {self.ffmpeg_rate()})"
         )
-        if self.deviation < _QUIET:
+        if self.deviation < SNAP_QUIET:
             logger.debug("capture: %s -> %s", float(self.requested), detail)
-        elif self.deviation < _NOTABLE:
+        elif self.deviation < SNAP_NOTABLE:
             logger.info("capture: --capture-fps %s snapped to %s", float(self.requested), detail)
         else:
             nearby = ", ".join(f"{float(n.fps):g} (k={n.every})" for n in self.neighbours())
@@ -171,12 +174,30 @@ def _spiral(count: int):
         yield -i
 
 
+def snap_rate(rate: str | int | float | Fraction, dt: float) -> CaptureRate:
+    """The nearest rate on this world's grid, refusing nothing that is positive.
+
+    The arithmetic :func:`snap_fps` is built on, without its refusals, for a caller that has to go on
+    with *some* rate: a bridge binding an output endpoint has no flag to hand back to a person, and
+    one that asks for more than the world steps at gets the step rate -- the fastest rate that exists
+    here -- rather than ending the run over it. How far the move is worth announcing is the caller's
+    to say, in :data:`SNAP_QUIET` and :data:`SNAP_NOTABLE` bands.
+    """
+    requested = parse_fps(rate)
+    if requested <= 0:
+        raise CaptureError(f"a rate must be positive, got {float(requested):g}")
+    physics = physics_rate(dt)
+    every = max(1, round(float(physics / requested)))
+    return CaptureRate(physics / every, every, requested, physics)
+
+
 def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
-    """Snap a requested rate onto this world's physics grid. Refuses only the impossible.
+    """Snap a requested capture rate onto this world's physics grid. Refuses only the impossible.
 
     Hard errors are limited to rates that cannot exist at all -- non-positive, or faster than the
     simulation steps -- because everything else has a nearest achievable answer, and an exact rational
-    timebase makes taking it harmless.
+    timebase makes taking it harmless. A capture rate is typed as a flag, so refusing it names the
+    flag and the caller can type another; see :func:`snap_rate` for the same grid without that door.
     """
     requested = parse_fps(fps)
     rate = physics_rate(dt)
@@ -188,8 +209,7 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
             f"({float(rate):g} Hz, timestep {dt:g}): a sample can only be taken on a physics step. "
             f"Use at most {float(rate):g}, or lower the world's sim.timestep."
         )
-    every = max(1, round(float(rate / requested)))
-    return CaptureRate(rate / every, every, requested, rate)
+    return snap_rate(requested, dt)
 
 
 # ==================================================================================================
@@ -515,6 +535,20 @@ def _actuator_record(ctx) -> dict:
     return {entity: [row.as_record() for row in rows] for entity, rows in tables.items() if rows}
 
 
+def _endpoint_rate_record(ctx) -> list:
+    """What each published endpoint actually goes out at, as plain data, or ``[]`` when nothing bound.
+
+    Reads what the bridges wrote at ``configure``; a run with no transport records nothing rather
+    than failing. The rate is in there twice on purpose: ``requested_hz`` is the number the world
+    asked for and quotes everywhere, ``realised_hz`` is the one the run published at, and they differ
+    whenever the request is not a whole number of physics steps. Nobody reading a rate afterwards can
+    tell those apart from the world document alone, and the exact rational is recoverable from
+    ``every_steps`` and the ``timestep`` recorded beside this.
+    """
+    rows = getattr(ctx, "endpoint_rates", None) or []
+    return [dict(row) for row in rows]
+
+
 def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
     """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
 
@@ -694,6 +728,10 @@ class StateRecorder:
             # opening the MJCF and re-deriving them. Additive: `Recording` reads `world_model` by
             # name and ignores keys it does not know, so no FORMAT_VERSION bump.
             "actuators": _actuator_record(ctx),
+            # What each published endpoint went out at, requested and realised. A publish lands on a
+            # physics step, so a rate that is not a whole number of steps is served at a neighbouring
+            # one; this is where that shows without reading a log. Additive, like `actuators`.
+            "endpoint_rates": _endpoint_rate_record(ctx),
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
             "state_fields": list(STATE_FIELDS),

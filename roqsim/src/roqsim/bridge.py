@@ -2,9 +2,9 @@
 
 A concrete bridge (ROS 2, zenoh, zmq, ...) subclasses :class:`BridgeBase`, sets ``BACKEND`` to its
 key, and implements the small set of backend hooks below. Everything else -- discovering endpoints,
-rate-gating, skipping endpoints that opted out of publishing to nobody (``Endpoint.lazy``), the
-per-tick publish loop, and marshalling inbound data onto the physics thread -- lives here and is
-shared across backends.
+rate-gating (on the world's physics grid, see :meth:`BridgeBase._rate_gate`), skipping endpoints that
+opted out of publishing to nobody (``Endpoint.lazy``), the per-tick publish loop, and marshalling
+inbound data onto the physics thread -- lives here and is shared across backends.
 
 The bridge reads :class:`roqsim.context.Endpoint`s registered by the robot's plugins; it never
 imports the robot package or hardcodes topic/stream names. Backend particulars (message type, topic,
@@ -22,6 +22,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .capture import SNAP_NOTABLE, SNAP_QUIET, CaptureRate, snap_rate
 from .plugin import Plugin
 
 if TYPE_CHECKING:
@@ -29,10 +30,17 @@ if TYPE_CHECKING:
 
 
 class _RateGate:
-    """Emit at most once per ``1/rate`` of sim-time. ``rate <= 0`` => every step (ungated)."""
+    """Emit at most once per ``1/rate`` of sim-time. ``rate <= 0`` => every step (ungated).
 
-    def __init__(self, rate_hz: float) -> None:
+    ``due`` is only ever asked on a step boundary, so ``rate_hz`` is expected to be a rate this world
+    can actually hold -- ``physics_rate / every`` -- and :meth:`BridgeBase._rate_gate` is what puts it
+    there. Given one, ``every`` says how many steps apart the firings are; it is ``None`` for an
+    ungated gate and for one built straight from a rate nobody snapped.
+    """
+
+    def __init__(self, rate_hz: float, *, every: int | None = None) -> None:
         self.rate_hz = float(rate_hz)
+        self.every = every
         self._last: float | None = None
 
     def due(self, t: float) -> bool:
@@ -100,13 +108,15 @@ class BridgeBase(Plugin):
                 continue
             if self._owners is not None and ep.owner not in self._owners:
                 continue
-            rate = float(rate_overrides.get(ep.name, hints.get("rate_hz", ep.rate_hz)))
             if ep.direction == "out":
                 if ep.read is None:
                     ctx.logger.warning("bridge: out endpoint %r has no read(); skipped", ep.name)
                     continue
+                requested = float(rate_overrides.get(ep.name, hints.get("rate_hz", ep.rate_hz)))
                 handle = self._make_output(ep, hints)
-                self._outputs.append(_Output(ep, handle, _RateGate(rate)))
+                gate = self._rate_gate(ctx, requested, f"endpoint {ep.name!r}")
+                self._outputs.append(_Output(ep, handle, gate))
+                self._record_rate(ctx, ep, requested, gate)
             elif ep.direction == "in":
                 if ep.write is None:
                     ctx.logger.warning("bridge: in endpoint %r has no write(); skipped", ep.name)
@@ -116,6 +126,105 @@ class BridgeBase(Plugin):
                 ctx.logger.warning(
                     "bridge: endpoint %r has bad direction %r", ep.name, ep.direction
                 )
+
+    def _rate_gate(self, ctx: SimContext, rate_hz: float, subject: str) -> _RateGate:
+        """A gate at the nearest rate this world can hold, announced in proportion to the move.
+
+        A publication is tested once per physics step, so the rates a world can hold are exactly
+        ``physics_rate / k`` for integer ``k >= 1``. A request between two of them is served at one of
+        them for the whole run -- a constant that is not the requested one, rather than jitter that
+        averages out -- so the rate is put on the grid here, where the timestep is compiled and the
+        request is known. Left to the gate alone it would land on the same grid anyway and go on
+        calling itself the requested rate, which is the number the world document, the campaign's
+        factor level and the result all quote.
+
+        Same grid, same bands and same vocabulary as a capture rate (:func:`roqsim.capture.snap_rate`),
+        because it is the same constraint. It snaps to the NEAREST achievable rate, which may be the
+        faster neighbour; an ungated gate would only ever have reached the slower one.
+
+        ``rate_hz <= 0`` is left alone: it means every step / event-driven, which is on the grid by
+        construction. So is a gate built before a model is compiled (an embedding driver's bare
+        context), where there is no timestep to snap against.
+        """
+        model = getattr(ctx, "model", None)
+        if rate_hz <= 0.0 or model is None:
+            return _RateGate(rate_hz)
+        snapped = snap_rate(rate_hz, float(model.opt.timestep))
+        self._report_rate_snap(ctx, snapped, subject)
+        return _RateGate(float(snapped.fps), every=snapped.every)
+
+    @staticmethod
+    def _report_rate_snap(ctx: SimContext, rate: CaptureRate, subject: str) -> None:
+        """Say how far the snap moved the rate: nothing, a note, or a warning naming the neighbours.
+
+        The bands are :mod:`roqsim.capture`'s (:data:`~roqsim.capture.SNAP_QUIET`,
+        :data:`~roqsim.capture.SNAP_NOTABLE`), so one move is announced equally loudly whether it hits
+        a recording or a topic. The common case stays silent -- a sensor at 10 Hz on a 2 ms step is
+        exact -- because a line per endpoint would bury the one endpoint that is not.
+
+        Every rate in the message is one that can be given back to the producer or to ``rates:``: a
+        neighbour is stated as a decimal and as its ``k``, and typing either back reaches this same
+        gate.
+        """
+        if rate.deviation <= 0:
+            return
+        detail = (
+            f"{float(rate.fps):.4g} Hz (every {rate.every} steps, "
+            f"exactly {rate.fps.numerator}/{rate.fps.denominator})"
+        )
+        if rate.deviation < SNAP_QUIET:
+            ctx.logger.debug("bridge: %s %g Hz -> %s", subject, float(rate.requested), detail)
+        elif rate.deviation < SNAP_NOTABLE:
+            ctx.logger.info(
+                "bridge: %s asked for %g Hz, published at %s",
+                subject,
+                float(rate.requested),
+                detail,
+            )
+        else:
+            nearby = ", ".join(f"{float(n.fps):g} Hz (k={n.every})" for n in rate.neighbours())
+            ctx.logger.warning(
+                "bridge: %s asked for %g Hz and publishes at %s -- a publish lands on a physics "
+                "step and this world steps at %g Hz, so the request is %.2f steps apart and no "
+                "whole number of steps gives it. The spacing is exact, so there is no drift. "
+                "Nearby: %s.",
+                subject,
+                float(rate.requested),
+                detail,
+                float(rate.physics),
+                float(rate.physics / rate.requested),
+                nearby,
+            )
+
+    def _record_rate(
+        self, ctx: SimContext, ep: Endpoint, requested_hz: float, gate: _RateGate
+    ) -> None:
+        """Write one output's requested and realised rate into the run's record.
+
+        Beside the requested rate rather than in place of it: the world document, a campaign's factor
+        level and whatever a result quotes all carry what was asked for, and the only other way to
+        learn what the run published at is to measure the arrival times of a stream nobody kept. The
+        log line above says it once; this is the half that reaches a reader who never opens the log.
+
+        A requested ``0`` is "every step", so its realised rate is the world's step rate. Nothing is
+        recorded before a model exists, there being no grid to state the rate on.
+        """
+        rows = getattr(ctx, "endpoint_rates", None)
+        model = getattr(ctx, "model", None)
+        if rows is None or model is None:
+            return
+        dt = float(model.opt.timestep)
+        rows.append(
+            {
+                "name": ep.name,
+                "owner": ep.owner,
+                "namespace": ep.namespace,
+                "backend": self.BACKEND,
+                "requested_hz": float(requested_hz),
+                "realised_hz": float(gate.rate_hz) if gate.rate_hz > 0.0 else 1.0 / dt,
+                "every_steps": gate.every or 1,
+            }
+        )
 
     def _inbound(self, ep: Endpoint):
         """Return a thread-safe callback that marshals a neutral payload onto the physics thread."""
