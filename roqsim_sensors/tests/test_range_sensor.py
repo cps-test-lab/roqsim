@@ -30,7 +30,11 @@ PITCH = math.radians(80.0)
 
 
 class _Scene(Plugin):
-    """A floor with a hole, a wall in front of a level sensor, a pitched sensor over the floor."""
+    """A floor with a hole, a wall in front of a level sensor, a pitched sensor over the floor.
+
+    It provides the world, so the default room's ground plane does not fill the hole."""
+
+    provides_world = True
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         # Floor as two slabs with a gap at x in [1.0, 2.0]: the hole.
@@ -70,7 +74,7 @@ def _engine(*sensors: dict) -> Engine:
 
 
 def _scans(engine: Engine):
-    return [e.read() for e in engine.ctx.interface.all() if e.name == "scan"]
+    return [e.read() for e in engine.ctx.interface.all() if e.name == "range"]
 
 
 CLIFF = {"h_rays": 1, "v_rays": 1, "range_min": 0.0001, "max_range": 0.15, "rate_hz": 62.0}
@@ -134,15 +138,15 @@ def test_rows_are_top_first_and_columns_sweep_left_to_right():
 
 def test_the_grid_is_lazy_free_and_named_by_its_site():
     engine = _engine({"site": "front"})
-    ep = next(e for e in engine.ctx.interface.all() if e.name == "scan")
+    ep = next(e for e in engine.ctx.interface.all() if e.name == "range")
     assert ep.backend["ros2"]["type"] == "sensor_msgs.msg.LaserScan"
     assert ep.backend["ros2"]["frame_id"] == "front"
     assert ep.backend["ros2"]["topic"] == "range"
 
 
 def test_a_topic_override_names_the_scan():
-    engine = _engine({"site": "front", "topics": {"scan": "_internal/cliff_front_left/scan"}})
-    ep = next(e for e in engine.ctx.interface.all() if e.name == "scan")
+    engine = _engine({"site": "front", "topics": {"range": "_internal/cliff_front_left/scan"}})
+    ep = next(e for e in engine.ctx.interface.all() if e.name == "range")
     assert ep.backend["ros2"]["topic"] == "_internal/cliff_front_left/scan"
 
 
@@ -166,3 +170,25 @@ def test_validate_config_names_each_bad_key(config, message):
 def test_the_defaults_are_a_single_ray():
     assert RangeSensorPlugin({}).validate_config({}) == []
     assert RangeSensorPlugin({}).num_rays == 1
+
+
+def test_a_lazy_sensor_neither_casts_nor_publishes_to_nobody():
+    """The manifest idiom for a robot's small sensors: a world that never launches the stack that
+    reads them pays nothing. With no transport (`has_subscribers` None) it stays live, as cameras do."""
+    engine = _engine({"site": "front", "lazy": True})
+    ep = next(e for e in engine.ctx.interface.all() if e.name == "range")
+    assert ep.lazy is True
+    assert ep.read() is not None, "no transport wired: assume a listener, so it cast"
+    # A transport reports nobody: from now on the sensor skips its cast, and the payload stays.
+    before = ep.read()
+    ep.has_subscribers = lambda: False
+    for _ in range(50):
+        engine.step()
+    assert ep.read() is before
+    # Somebody subscribes: it casts again.
+    ep.has_subscribers = lambda: True
+    for _ in range(50):
+        engine.step()
+    assert ep.read() is not before
+    live = _engine({"site": "front"})
+    assert next(e for e in live.ctx.interface.all() if e.name == "range").lazy is False
