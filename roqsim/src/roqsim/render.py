@@ -8,6 +8,8 @@ camera maths). Same relationship ``roqsim.export_web`` has with ``roqsim export 
     roqsim render roqsim_scenes:depot --no-ceiling --out room.png
     roqsim render tiago_pick:tiago_pick --focus parcel --out parcel.png
     roqsim render prop.obj --out prop.png                        # a raw mesh, pre-finalization
+    roqsim render --state run.npz --from onset --out clip.mp4    # a run, the whole scene from above
+    roqsim render --state run.npz --camera-path orbit.yaml --overlay clock --out clip.mp4
 
 The positional argument takes the *same* shapes as ``roqsim sim`` (see :func:`roqsim.runner.config_for_input`)
 plus one more: a raw mesh. ``roqsim sim`` refuses meshes on purpose -- loose geometry is not something you
@@ -19,7 +21,10 @@ Output type follows ``--out``'s extension, so stills and video need no mutually 
 (``--state``), because a world on its own has exactly one frame.
 
 With ``--state`` the world target becomes **optional** -- the recording's provenance names it, so a
-caller need not repeat what the file already knows.
+caller need not repeat what the file already knows. Where the camera is comes from ``--camera``,
+``--focus``/``--view`` or the camera the run was watched through, else the whole scene from above
+(:class:`_VideoCamera`); ``--camera-path`` moves it along keyframes (:mod:`roqsim.camera_path`) and
+``--overlay`` paints insets on the frames (:mod:`roqsim.render_overlays`).
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
@@ -344,10 +349,29 @@ def resolve_camera(
 ):
     """The camera for one frame: ``--focus`` search, else whatever the viewer would have used.
 
+    A still's version of :func:`_resolve_camera`: the tracking state is brought current once and
+    then dropped, so a chase camera's still shows the same angle behind the robot its video would.
+    """
+    cam, tracking, shim = _resolve_camera(model, data, ctx, view, focus, aspect, preview=preview)
+    if tracking is not None:
+        tracking.update(shim)
+    return cam
+
+
+def _resolve_camera(
+    model, data, ctx, view: dict | None, focus: list[str] | None, aspect: float, *, preview: bool
+):
+    """``(camera, tracking, shim)``: the camera, and the per-frame state a tracked view needs.
+
     The no-focus branch hands a :class:`_CamShim` to :func:`roqsim.viewer.setup_camera`, so this inherits
     the *whole* ``sim.view`` surface -- a ``track`` target, ``follow_heading``, and the single-model
     preview framing -- rather than reimplementing any of it. A second implementation of ``sim.view`` is
     the drift the frozen key set exists to prevent.
+
+    ``tracking`` is the :class:`roqsim.viewer.TrackingCamera` behind a ``track`` view, or ``None``. A
+    caller drawing frames calls its ``update(shim)`` after each sample is posed, exactly as the live
+    loop does; that is what turns ``follow_heading`` from a flag into a camera that rides behind the
+    robot. Without it a tracked render would follow the robot's position but never its heading.
 
     With ``--focus``, the occlusion search picks the base camera and the world's stated keys are then
     applied on top, which is what makes ``--view`` win per key with no precedence logic of its own.
@@ -358,12 +382,12 @@ def resolve_camera(
     if focus:
         shim.cam = focus_camera(model, data, _entity_bodies(model, ctx, focus), aspect=aspect)
         apply_view(shim, view)
-        return shim.cam
+        return shim.cam, None, shim
     if ctx is None:  # a mesh preview has no engine context, so no sim.view to honour
         apply_view(shim, view)
-        return shim.cam
-    setup_camera(shim, view, ctx, preview=preview)
-    return shim.cam
+        return shim.cam, None, shim
+    tracking = setup_camera(shim, view, ctx, preview=preview)
+    return shim.cam, tracking, shim
 
 
 def _default_free(model: mujoco.MjModel) -> mujoco.MjvCamera:
@@ -534,12 +558,21 @@ def render_target(
     fps: str | None = None,
     speed: float | None = None,
     geomgroup: list[int] | None = None,
+    camera_path=None,
+    overlays: list | None = None,
 ) -> dict:
     """Render ``target`` (or a recording) to ``out`` and return the result record the CLI prints.
 
     The one entry point every caller shares -- the CLI, the MCP tool (via a subprocess) and
     ``render_thumbnails`` -- so a model looks the same however it was asked for.
+
+    ``at``/``start``/``stop`` take seconds or a named moment (``"onset"``, ``"onset+2.5"``);
+    ``camera_path`` a :class:`roqsim.camera_path.CameraPath` or what ``--camera-path`` takes;
+    ``overlays`` a list of overlay specs as ``--overlay`` takes them (see :mod:`roqsim.render_overlays`).
     """
+    from .camera_path import CameraPath, CameraPathError, parse_moment
+    from .render_overlays import OverlayError, build_overlays
+
     out = Path(out)
     width, height = parse_size(size) if isinstance(size, str) else size
     _preflight(out, (width, height), check=check)
@@ -564,6 +597,27 @@ def render_target(
             "--camera renders through a fixed MJCF camera, which owns its own pose, so it cannot be "
             "combined with --view or --focus."
         )
+    try:
+        at, start, stop = (parse_moment(m) if m is not None else None for m in (at, start, stop))
+        if camera_path is not None and not isinstance(camera_path, CameraPath):
+            camera_path = CameraPath.from_arg(str(camera_path))
+    except CameraPathError as err:
+        raise RenderError(str(err)) from None
+    if camera_path is not None:
+        if not state:
+            raise RenderError(
+                "--camera-path moves the camera through a recording, so it needs --state."
+            )
+        if camera:
+            raise RenderError(
+                "--camera renders through a fixed MJCF camera, which owns its own pose, so a "
+                "--camera-path cannot move it. Use --view or --focus for the base camera."
+            )
+    # Built before any world compiles: a misspelt overlay fails in milliseconds, not after the build.
+    try:
+        overlays = build_overlays(overlays, width, height, state=state)
+    except OverlayError as err:
+        raise RenderError(str(err)) from None
 
     merged = dict(overrides or {})
     for key, value in view_overrides(view).items():
@@ -588,6 +642,8 @@ def render_target(
             speed,
             video,
             geomgroup,
+            camera_path=camera_path,
+            overlays=overlays,
         )
 
     # --no-ceiling is applied to the parsed config, not merged in here; see _disable_ceiling.
@@ -599,10 +655,12 @@ def render_target(
     )
 
     record = _base_record(out, width, height, model, cam)
+    if overlays:
+        record["overlays"] = [o.name for o in overlays]
     if check:
         record["rendered"] = False
         return record
-    _render_one(model, data, cam, width, height, out, geomgroup)
+    _render_one(model, data, cam, width, height, out, geomgroup, overlays=overlays)
     record["rendered"] = True
     return record
 
@@ -636,7 +694,18 @@ def _base_record(out: Path, width: int, height: int, model, cam) -> dict:
     }
 
 
-def _render_one(model, data, cam, width: int, height: int, out: Path, geomgroup=None) -> None:
+def _render_one(
+    model,
+    data,
+    cam,
+    width: int,
+    height: int,
+    out: Path,
+    geomgroup=None,
+    *,
+    overlays=None,
+    sim_time: float = 0.0,
+) -> None:
     try:
         frame = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
     except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
@@ -644,7 +713,12 @@ def _render_one(model, data, cam, width: int, height: int, out: Path, geomgroup=
     try:
         from PIL import Image
 
-        Image.fromarray(frame.render(data)).save(out)
+        pixels = frame.render(data)
+        if overlays:
+            from .render_overlays import apply_all
+
+            pixels = apply_all(overlays, pixels, sim_time)
+        Image.fromarray(pixels).save(out)
     finally:
         frame.close()
 
@@ -667,47 +741,79 @@ def _render_recording(
     speed,
     video,
     geomgroup=None,
+    *,
+    camera_path=None,
+    overlays=None,
 ):
     """Render one moment, or a range, from a recording. The world comes from its provenance."""
-    from .recording import RecordingError, open_recording
+    from .camera_path import CameraPathError, Moment
+    from .recording import open_recording
 
     width, height = size
     rec = open_recording(state)
-    try:
-        model, ctx = rec.build(target, no_ceiling=no_ceiling)
-    except RecordingError:
-        raise
-    # The world's own sim.view is the baseline, so a replay of world X looks like a render of world X.
-    # A recorded camera track (below) wins over it, and --view/--focus/--camera win over both.
+    stated_view = (merged or {}).get("sim", {}).get("view")
+    # The default view of a run is the whole scene from above, which a roof would hide. So a
+    # recording rendered with no camera of its own -- none stated here, none recorded with it --
+    # loses its ceiling. A stated camera keeps the world as it is: whoever aimed it can add
+    # --no-ceiling, and a view from inside the room wants the roof there.
+    framed = bool(camera or focus or view or stated_view or rec.has_camera)
+    if not framed:
+        log.info(
+            "no camera stated and none recorded: the whole scene from above%s "
+            "(--view/--focus/--camera frame it otherwise)",
+            ", ceiling removed" if rec.has_ceiling and not no_ceiling else "",
+        )
+        no_ceiling = no_ceiling or rec.has_ceiling
+    model, ctx = rec.build(target, no_ceiling=no_ceiling)
+    # The world's own sim.view is the baseline a stated --view merges over, so `--view azimuth=10`
+    # on a world that tracks its robot still tracks. --camera/--focus win over it; with nothing
+    # stated at all the scene default above applies instead (see _VideoCamera).
     world_view = rec.view
     # A live render gets --view through the world config, which is loaded with `merged`. A recording
     # rebuilds its world from its own provenance instead and never sees those overrides, so they are
     # applied to the baseline here -- without this the flag is accepted and silently does nothing.
     # Only the camera keys are taken: a recording's model must stay the one its provenance names.
-    stated_view = (merged or {}).get("sim", {}).get("view")
     if stated_view:
         world_view = {**(world_view or {}), **stated_view}
 
+    # Every named moment -- `--from onset`, `--at onset+5`, a keyframe at `onset-1` -- resolves
+    # against the one table, so the onset is found once however many places ask for it.
+    wanted = {m.name for m in (at, start, stop) if isinstance(m, Moment)}
+    if camera_path is not None:
+        wanted |= camera_path.moments
+    moments = {}
     onset = None
-    if start == ONSET:
-        from .motion import motion_onset
+    if ONSET in wanted:
+        from .motion import MotionError, motion_onset
 
-        onset = motion_onset(rec, model=model)
+        try:
+            onset = motion_onset(rec, model=model)
+        except MotionError as err:
+            raise RenderError(f"onset: {err}") from None
         if not onset.moved:
             raise RenderError(
-                f"--from onset: nothing in {rec.path} ever moves. Its fastest {onset.kind} motion "
+                f"onset: nothing in {rec.path} ever moves. Its fastest {onset.kind} motion "
                 f"peaks at {max(onset.peaks.values(), default=0.0):.4g}, under the "
                 f"{min(onset.thresholds.values(), default=0.0):.4g} it would have to sustain. "
-                "Render from a time instead, or pick a run that moved."
+                "Use a time instead, or pick a run that moved."
             )
-        start = onset.time
+        moments[ONSET] = onset.time
         log.info(
-            "onset: first %s motion at t=%.3f s (%s); clip starts at %.3f s",
+            "onset: first %s motion at t=%.3f s (%s); '%s' is %.3f s",
             onset.kind,
             onset.detected,
             onset.channel,
-            start,
+            ONSET,
+            onset.time,
         )
+    try:
+        at, start, stop = (
+            m.resolve(moments) if isinstance(m, Moment) else m for m in (at, start, stop)
+        )
+        if camera_path is not None and not camera_path.anchored:
+            camera_path = camera_path.anchor(moments)
+    except CameraPathError as err:
+        raise RenderError(str(err)) from None
 
     if check:
         record = rec.describe()
@@ -716,6 +822,10 @@ def _render_recording(
         )
         if onset is not None:
             record["onset"] = onset.as_record()
+        if camera_path is not None:
+            record["camera_path"] = camera_path.describe()
+        if overlays:
+            record["overlays"] = [o.name for o in overlays]
         return record
 
     if video:
@@ -734,6 +844,9 @@ def _render_recording(
             speed,
             world_view,
             geomgroup,
+            camera_path=camera_path,
+            overlays=overlays,
+            scene=not framed,
         )
         if onset is not None:
             record["onset"] = onset.as_record()
@@ -750,32 +863,115 @@ def _render_recording(
             sample.sim_time,
             t1,
         )
-    cam = _recorded_camera(model, sample, ctx, world_view, view, focus, camera, width, height)
+    cam = _VideoCamera(
+        model,
+        ctx,
+        world_view,
+        view,
+        focus,
+        camera,
+        width,
+        height,
+        path=camera_path,
+        scene=not framed,
+    ).for_sample(sample)
     record = _base_record(out, width, height, model, cam)
     record.update(rec.at_record(at, sample))
-    _render_one(model, sample.data, cam, width, height, out, geomgroup)
+    _render_one(
+        model,
+        sample.data,
+        cam,
+        width,
+        height,
+        out,
+        geomgroup,
+        overlays=overlays,
+        sim_time=sample.sim_time,
+    )
     record["rendered"] = True
     if onset is not None:
         record["onset"] = onset.as_record()
+    if camera_path is not None:
+        record["camera_path"] = camera_path.describe()
+    if overlays:
+        record["overlays"] = [o.name for o in overlays]
     return record
 
 
-def _recorded_camera(model, sample, ctx, world_view, view, focus, camera, width, height):
-    """The recorded session camera by default; ``--camera``/``--focus``/``--view`` override it.
+class _VideoCamera:
+    """The camera for each sample of a recording: chosen once, kept current per frame.
 
-    Following the recorded camera is what makes a replay show *what the person was looking at*, mouse
-    drags and arrow-key flight included -- something no live encoder could offer, since it could only
-    ever have captured one camera.
+    The choice is the same for a still and a video: ``--camera`` (a fixed MJCF camera), else
+    ``--focus``/``--view``, else the camera the run was watched through. Following the recorded
+    camera is what makes a replay show *what the person was looking at*, mouse drags and arrow-key
+    flight included -- something no live encoder could offer, since it could only ever have captured
+    one camera.
+
+    With none of those (``scene``), a recording gets the **whole scene from above**
+    (:func:`roqsim.rendering.scene_camera`): everything in the world, as close as the field of view
+    allows, at MuJoCo's default orbit. Not the world's ``sim.view``,
+    which is the windowed runner's opening camera -- framed for a person about to fly it, and the
+    worlds that state one say so -- rather than for a clip of the run.
+
+    What is per frame: a ``track`` view's :class:`roqsim.viewer.TrackingCamera` is built once and its
+    ``update`` runs after every sample is posed, so ``follow_heading`` rides behind the robot as it
+    does in the window; and a :class:`roqsim.camera_path.CameraPath`, if given, writes its keys for
+    the sample's time on top of whichever base was chosen.
     """
-    if camera:
-        return _fixed_camera(model, camera)
-    if focus or view:
-        return resolve_camera(
-            model, sample.data, ctx, world_view, focus, width / height, preview=False
-        )
-    if sample.camera is not None:
-        return sample.camera
-    return resolve_camera(model, sample.data, ctx, world_view, None, width / height, preview=False)
+
+    def __init__(
+        self,
+        model,
+        ctx,
+        world_view,
+        view,
+        focus,
+        camera,
+        width,
+        height,
+        path=None,
+        *,
+        scene: bool = False,
+    ):
+        self.model, self.ctx, self.world_view = model, ctx, world_view
+        self.view, self.focus = view, focus
+        self.aspect = width / height
+        self.path = path
+        self.scene = scene
+        self.fixed = _fixed_camera(model, camera) if camera else None
+        self.cam = self.tracking = self.shim = None
+
+    @property
+    def explicit(self) -> bool:
+        return bool(self.focus or self.view)
+
+    def for_sample(self, sample):
+        if self.fixed is not None:
+            return self.fixed
+        if not self.explicit and sample.camera is not None:
+            cam = sample.camera  # a fresh struct per sample: the recorded flight
+            if self.path is not None:
+                self.path.apply(cam, sample.sim_time)
+            return cam
+        if self.cam is None and self.scene:
+            from .rendering import scene_camera
+
+            self.cam = scene_camera(self.model, sample.data, aspect=self.aspect)
+        elif self.cam is None:
+            self.cam, self.tracking, self.shim = _resolve_camera(
+                self.model,
+                sample.data,
+                self.ctx,
+                self.world_view,
+                self.focus,
+                self.aspect,
+                preview=False,
+            )
+        if self.path is not None:
+            self.path.apply(self.cam, sample.sim_time, tracking=self.tracking)
+        if self.tracking is not None:
+            self.tracking.update(self.shim)
+        return self.cam
 
 
 def _render_video(
@@ -793,6 +989,10 @@ def _render_video(
     speed,
     world_view=None,
     geomgroup=None,
+    *,
+    camera_path=None,
+    overlays=None,
+    scene=False,
 ):
     """Render every sample in range and pipe it to ffmpeg. One sample is always exactly one frame.
 
@@ -801,6 +1001,8 @@ def _render_video(
     actually had.
     """
     from fractions import Fraction
+
+    from .render_overlays import apply_all
 
     width, height = size
     rate = rec.fps
@@ -815,13 +1017,14 @@ def _render_video(
     renderer = None
     count = 0
     progress = _Progress(_frames_in_range(rec, start, stop), f"rendering {out.name}", log)
+    cameras = _VideoCamera(
+        model, ctx, world_view, view, focus, camera, width, height, path=camera_path, scene=scene
+    )
 
     def frames():
         nonlocal renderer, count
         for sample in rec.range(start, stop):
-            cam = _recorded_camera(
-                model, sample, ctx, world_view, view, focus, camera, width, height
-            )
+            cam = cameras.for_sample(sample)
             if renderer is None:
                 try:
                     renderer = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
@@ -831,7 +1034,10 @@ def _render_video(
                 renderer.camera = cam
             count += 1
             progress.tick()
-            yield renderer.render(sample.data)
+            frame = renderer.render(sample.data)
+            if overlays:
+                frame = apply_all(overlays, frame, sample.sim_time)
+            yield frame
 
     try:
         encode_frames(frames(), out, declared, size)
@@ -852,6 +1058,10 @@ def _render_video(
             "rendered": True,
         }
     )
+    if camera_path is not None:
+        record["camera_path"] = camera_path.describe()
+    if overlays:
+        record["overlays"] = [o.name for o in overlays]
     log.info(
         "video: %d frames at %s fps (%.2fx sim time) -> %s",
         count,
@@ -1020,16 +1230,14 @@ def _parse_geomgroup(parser, value: str | None) -> list[int] | None:
     return groups
 
 
-def _start_time(text: str):
-    """``--from``: a number of seconds, or the literal ``onset``."""
-    if text.strip().lower() == ONSET:
-        return ONSET
+def _moment(text: str):
+    """``--at``/``--from``/``--to``: seconds, or a named moment such as ``onset`` or ``onset+2.5``."""
+    from .camera_path import CameraPathError, parse_moment
+
     try:
-        return float(text)
-    except ValueError:
-        raise argparse.ArgumentTypeError(
-            f"{text!r} is neither a time in seconds nor {ONSET!r}"
-        ) from None
+        return parse_moment(text)
+    except CameraPathError as err:
+        raise argparse.ArgumentTypeError(str(err)) from None
 
 
 def main(argv: list | None = None) -> int:
@@ -1104,19 +1312,40 @@ def main(argv: list | None = None) -> int:
     )
     recording.add_argument(
         "--at",
-        type=float,
+        type=_moment,
         metavar="T",
         help="one moment, in simulated seconds; snaps to the nearest sample and reports which "
-        "(default with --state: the last sample)",
+        f"(default with --state: the last sample). Also '{ONSET}' or '{ONSET}+2.5', so a camera "
+        "path can be checked at the moments it names",
     )
     recording.add_argument(
         "--from",
         dest="start",
-        type=_start_time,
+        type=_moment,
         metavar="T",
-        help=f"range start (s), or '{ONSET}' to start where the run first moves",
+        help=f"range start (s), or '{ONSET}' to start where the run first moves ('{ONSET}-1' too)",
     )
-    recording.add_argument("--to", dest="stop", type=float, metavar="T", help="range end (s)")
+    recording.add_argument(
+        "--to", dest="stop", type=_moment, metavar="T", help=f"range end (s), or '{ONSET}+N'"
+    )
+    recording.add_argument(
+        "--camera-path",
+        metavar="FILE|JSON",
+        help="move the camera along keyframes over the clip: a YAML/JSON file, or the document "
+        "inline as JSON. {keyframes: [{t, lookat|eye+target, distance, azimuth, elevation}, ...], "
+        "ease: linear|smoothstep, wrap: true}. Each key interpolates between the keyframes that "
+        f"state it and holds outside them; t is seconds, '{ONSET}' or '{ONSET}+N'. Rides on top "
+        "of --view/--focus (an azimuth-only path orbits a tracked robot); not with --camera",
+    )
+    parser.add_argument(
+        "--overlay",
+        action="append",
+        metavar="NAME|JSON",
+        help="draw an inset on every frame: a name ('clock'), or {\"name\": {options}} as JSON. "
+        "Common options: anchor (top-right, bottom-left, ...), width (fraction of the frame), "
+        "margin. Repeatable; drawn in order. Installed packages add their own (see "
+        "`roqsim render --overlay list`)",
+    )
     recording.add_argument(
         "--fps",
         metavar="N",
@@ -1142,6 +1371,11 @@ def main(argv: list | None = None) -> int:
             f"{args.target!r} looks like an output file, not something to render; "
             "put the world/model first: roqsim render <target> --out <file>"
         )
+    if args.overlay and "list" in args.overlay:
+        from .render_overlays import available
+
+        print(json.dumps({"overlays": available()}))
+        return 0
 
     try:
         record = render_target(
@@ -1161,6 +1395,8 @@ def main(argv: list | None = None) -> int:
             fps=args.fps,
             speed=args.speed,
             geomgroup=_parse_geomgroup(parser, args.geomgroup),
+            camera_path=args.camera_path,
+            overlays=args.overlay,
         )
     except RenderError as err:
         print(f"roqsim render: {err}", file=sys.stderr)
