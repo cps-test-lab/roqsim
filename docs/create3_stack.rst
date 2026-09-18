@@ -34,7 +34,7 @@ Then, as on the robot::
 
 Nav2 runs beside it exactly as in :doc:`nav2_example`, publishing ``cmd_vel``: ``motion_control``
 owns that topic, applies the safety features, and hands the clamped command to the base on
-``diffdrive_controller/cmd_vel``, which is what the world's ``diff_drive`` listens to.
+``diffdrive_controller/cmd_vel``, which is where the world points the base's ``diff_drive``.
 
 How it is layered
 -----------------
@@ -52,8 +52,8 @@ and only the physics is roqsim's:
    * - ``diffdrive_controller/cmd_vel`` (``TwistStamped``) in; ``odom`` + ``odom -> base_link`` out
        at 62 Hz; 0.46 m/s, 1.9 rad/s, 0.9 m/s²; a 0.5 s command timeout
      - ``ros2_control`` ``diff_drive_controller``
-     - ``diff_drive`` with the world's ``stamped_cmd_vel``, ``topics``, limits, ``cmd_vel_timeout``
-       and ``odom_rate_hz``
+     - ``diff_drive`` with the limits, ``cmd_vel_timeout`` and ``odom_rate_hz`` the manifest states;
+       the world points it at ``diffdrive_controller/cmd_vel`` as a ``TwistStamped``
    * - ``joint_states`` carrying every joint in one message, wheels and wheel-drop suspension
      - ``joint_state_broadcaster``
      - ``joint_state_publisher``, the base's own switched off

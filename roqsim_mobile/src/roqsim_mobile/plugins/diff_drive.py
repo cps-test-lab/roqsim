@@ -48,8 +48,9 @@ averages each side's wheel velocities. ``slip_factor`` compensates the lateral s
 for the velocity command. Which of the two a stack publishes is a property of that stack, not of
 the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
 configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
-so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
-only symptom is a controller reporting that it cannot make progress.
+so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
+which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
+naming the topic, both types and both sides.
 
 ``cmd_vel_timeout`` is the watchdog every real base driver has: a command is good for this long
 and then the base stops, so a stack that dies mid-run leaves a stationary robot rather than one

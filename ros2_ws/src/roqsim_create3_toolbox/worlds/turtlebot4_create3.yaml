@@ -4,18 +4,14 @@
 #     roqsim sim roqsim_create3_toolbox:turtlebot4_create3.yaml     (or run_bridge --world ...)
 #     ros2 launch roqsim_create3_toolbox turtlebot4_nodes.launch.py
 #
-# The model's manifest already publishes the Create 3's sensor surface (bumper zones, cliff and
-# IR grids, IMU, ground-truth streams, every joint's state) on the names the stack's adapters read;
-# what a world states is the stack's contract with the BASE, which a world that drives the base
-# in-process would not want:
-#
-#   * motion_control owns `cmd_vel` and publishes the clamped command as a TwistStamped on
-#     diffdrive_controller/cmd_vel, which is what the base listens to here -- as the reference
-#     simulator's ros2_control controller does;
-#   * the limits are the ros2_control controller's (0.46 m/s, 1.9 rad/s, 0.9 m/s^2) -- the 0.306 m/s
-#     a safety_override of none/backup_only allows is motion_control's clamp, not the base's;
-#   * a command expires after 0.5 s (cmd_vel_timeout), odometry runs at the controller's 62 Hz;
-#   * the OAK-D publishes on the TurtleBot 4's topic names.
+# The model's manifest is the base: the Create 3's sensor surface (bumper zones, cliff and IR
+# grids, IMU, ground-truth streams, every joint's state) on the names the stack's adapters read,
+# its limits, its command timeout, its 62 Hz odometry, the OAK-D on the TurtleBot 4's topic names.
+# What a world states is where the command comes from once the Create 3 nodes run: motion_control
+# owns `cmd_vel` (and `cmd_vel_unstamped`), applies the safety features, and hands the clamped
+# command to the base as a TwistStamped on diffdrive_controller/cmd_vel -- as the reference
+# simulator's ros2_control controller takes it. The 0.306 m/s a safety_override of none/backup_only
+# allows is motion_control's clamp, not the base's.
 
 sim:
   pacing: realtime
@@ -28,21 +24,7 @@ components:
         orientation: {yaw: 0.0}
     name: robot
     components:
-      - diff_drive:
-          stamped_cmd_vel: true
-          topics: {cmd_vel: diffdrive_controller/cmd_vel}
-          max_linear_vel: 0.46
-          max_angular_vel: 1.9
-          wheel_accel_limit: 0.9
-          cmd_vel_timeout: 0.5
-          odom_rate_hz: 62.0
-      - oakd_camera:
-          topics:
-            image: oakd/rgb/preview/image_raw
-            image_compressed: oakd/rgb/preview/image_raw/compressed
-            camera_info: oakd/rgb/preview/camera_info
-            depth: oakd/rgb/preview/depth
-            depth_camera_info: oakd/rgb/preview/depth/camera_info
+      - diff_drive: {stamped_cmd_vel: true, topics: {cmd_vel: diffdrive_controller/cmd_vel}}
 
   # The dock, 0.157 m ahead of the robot's spawn and turned to face it, as the reference simulator
   # places it; its ground truth is what the stack's docking behaviour and dock_status range by.

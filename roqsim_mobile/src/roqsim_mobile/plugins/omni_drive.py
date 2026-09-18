@@ -39,8 +39,9 @@ sits rather than a config key::
 for the velocity command. Which of the two a stack publishes is a property of that stack, not of
 the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
 configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
-so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
-only symptom is a controller reporting that it cannot make progress.
+so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
+which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
+naming the topic, both types and both sides.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at

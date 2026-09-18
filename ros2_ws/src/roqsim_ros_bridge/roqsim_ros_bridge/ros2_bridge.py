@@ -160,6 +160,25 @@ def _join_ns(*parts: str) -> str:
     return "/".join(p for p in parts if p)
 
 
+def _ros_type_name(type_path: str) -> str:
+    """``pkg.msg.Type`` as the ROS graph spells it, ``pkg/msg/Type``."""
+    return type_path.replace(".", "/")
+
+
+def _foreign_types(peers, own_type: str, own_node: str) -> list[tuple[str, str]]:
+    """``(node, type)`` of every peer on a topic whose type is not ours, our own node aside.
+
+    A ROS 2 topic is one name and one type, and the middleware matches on both: a publisher of
+    another type on the same name is not a degraded connection but no connection at all, and
+    neither side logs it. ``peers`` are the graph's ``TopicEndpointInfo`` records.
+    """
+    return [
+        (f"{p.node_namespace.rstrip('/')}/{p.node_name}", p.topic_type)
+        for p in peers
+        if p.topic_type != own_type and p.node_name != own_node
+    ]
+
+
 def _resolve_topic(namespace: str, topic: str) -> str:
     """Resolve an endpoint's ROS topic, honouring an absolute hardwired topic.
 
@@ -278,6 +297,9 @@ class Ros2Bridge(BridgeBase):
         # world that runs a robot_state_publisher over the robot's URDF, which publishes the same
         # links itself (see the emit site in _make_publisher).
         self._publish_static_tf = bool(self.config.get("publish_static_tf", True))
+        # (topic, type, endpoint, role) of every topic endpoint, for the peer-type check in _tick.
+        self._peer_checks: list[tuple[str, str, Any, str]] = []
+        self._peer_gate = _RateGate(1.0)
 
     def _eff_ns(self, ep) -> str:
         """The endpoint's effective namespace for topic/frame scoping — ``""`` if it is stripped."""
@@ -538,6 +560,7 @@ class Ros2Bridge(BridgeBase):
         topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name)))
         qos = int(hints.get("qos", 10))
         publisher = self._node.create_publisher(msg_type, topic, qos)
+        self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
         # Let an expensive producer (e.g. a rendered camera) skip work when nobody's listening --
         # generic, not camera-specific; cheap endpoints (lidar, odom) just never check it.
         ep.has_subscribers = lambda p=publisher: p.get_subscription_count() > 0
@@ -626,6 +649,33 @@ class Ros2Bridge(BridgeBase):
         qos = int(hints.get("qos", 10))
         decode = reg.get_decoder(hints["type"])
         self._node.create_subscription(msg_type, topic, lambda m: on_payload(decode(m)), qos)
+        self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "in"))
+
+    def _check_peer_types(self) -> None:
+        """Refuse a peer of another type on one of our topics, instead of letting it go silent.
+
+        The classic case is a command: a stack publishing a plain ``Twist`` on ``cmd_vel`` to a base
+        that subscribes a ``TwistStamped``, or the reverse. Nothing arrives, nothing is logged, and
+        the only symptom is a robot that never moves. The graph knows both types, so the bridge
+        asks it once a second and fails the run naming the topic, both types and both sides.
+        """
+        node = self._node
+        own = node.get_name()
+        for topic, own_type, ep, role in self._peer_checks:
+            if role == "in":
+                peers = node.get_publishers_info_by_topic(topic)
+                verb, theirs = "subscribes", "publishes"
+            else:
+                peers = node.get_subscriptions_info_by_topic(topic)
+                verb, theirs = "publishes", "subscribes"
+            for peer, peer_type in _foreign_types(peers, own_type, own):
+                full = node.resolve_topic_name(topic)
+                raise RuntimeError(
+                    f"{ep.owner}.{ep.name} {verb} {full!r} as {own_type}, but {peer} {theirs} "
+                    f"{peer_type} on it: a topic is one type, so the two never meet and neither "
+                    f"side logs it. Give the endpoint the stack's type (a base's `stamped_cmd_vel`, "
+                    f"for a command) or the stack the endpoint's."
+                )
 
     def _shutting_down(self) -> bool:
         """True once rclpy has invalidated our context -- i.e. the process is on its way out.
@@ -666,10 +716,13 @@ class Ros2Bridge(BridgeBase):
             self._clock_pub.publish(self._clock_msg)
         if self._merged_joint_states:
             self._publish_merged_joint_states(stamp, t)
+        if self._peer_gate.due(t):
+            self._check_peer_types()
 
     def on_reset(self, ctx) -> None:
         super().on_reset(ctx)
         self._clock_gate.reset()
+        self._peer_gate.reset()
         for _, gate, _ in self._merged_joint_states:
             gate.reset()
 
