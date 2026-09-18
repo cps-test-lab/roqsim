@@ -201,6 +201,73 @@ def test_a_shot_of_a_flown_camera_states_where_it_was(replay):
     assert replay.add_shot()["view"]["distance"] == pytest.approx(7.25)
 
 
+# -- a camera take ------------------------------------------------------------------------------------
+
+
+def test_shift_f9_is_a_take_and_f9_a_shot(monkeypatch):
+    """One key, two edges: Shift decides which. Both are debounced against auto-repeat."""
+    handler = ReplayKeys()
+    monkeypatch.setattr(handler, "_shift_held", lambda: True)
+    handler.key_callback(SHOT.keys[0].code)
+    assert handler.take_take() is True and handler.take_shot() is False
+    monkeypatch.setattr(handler, "_shift_held", lambda: False)
+    handler._last_shot = 0.0
+    handler.key_callback(SHOT.keys[0].code)
+    assert handler.take_shot() is True and handler.take_take() is False
+
+
+def test_a_take_records_the_flown_camera_while_playing(replay, tmp_path):
+    """Play through a take while moving the camera; the clip that lands reproduces the flight."""
+    from roqsim.camera_path import CameraPath
+    from roqsim.shots import render_args
+
+    replay.follow_recorded = False
+    replay.seek_time(0.2)
+    assert replay.toggle_take() is None and replay.take == {}
+    replay.playing = True
+    for i in range(10):
+        replay.handle.cam.azimuth = 90.0 + 5.0 * i
+        replay.tick(0.08)  # 0.08 s of sim time per tick at 1x
+    assert len(replay.take) == 10
+    doc = replay.toggle_take("flight")
+    assert replay.take is None
+    assert doc["camera_source"] == "take" and doc["label"] == "flight"
+    assert doc["from"] == pytest.approx(0.28, abs=0.05)
+    assert doc["to"] > doc["from"]
+    written = tmp_path / doc["camera_path"]
+    assert written.exists() and written.name == f"{doc['id']}.camera.yaml"
+    path = CameraPath.from_arg(str(written))
+    assert path.keys == {"lookat", "distance", "azimuth", "elevation"}
+    assert path.at(doc["to"])["azimuth"] == pytest.approx(135.0)
+    assert path.at(doc["from"])["azimuth"] == pytest.approx(90.0)
+    assert [d["id"] for d in read_shots(tmp_path / "shots.yaml")] == [doc["id"]]
+    args = render_args(doc)
+    assert args[args.index("--camera-path") + 1] == doc["camera_path"]
+    assert "--from" in args and "--to" in args and "--view" not in args
+
+
+def test_a_take_that_never_played_writes_nothing(replay, tmp_path, caplog):
+    replay.toggle_take()
+    replay.tick(0.05)  # paused: nothing recorded
+    assert replay.toggle_take() is None
+    assert not (tmp_path / "shots.yaml").exists()
+    assert "never playing" in caplog.text
+
+
+def test_scrubbing_back_during_a_take_overwrites_rather_than_doubles(replay):
+    replay.follow_recorded = False
+    replay.seek_time(0.2)
+    replay.toggle_take()
+    replay.playing = True
+    for _ in range(5):
+        replay.tick(0.08)
+    replay.seek_time(0.2)
+    replay.playing = True
+    for _ in range(5):
+        replay.tick(0.08)
+    assert len(replay.take) == 5
+
+
 # -- what a live run must not notice ------------------------------------------------------------------
 
 
@@ -240,10 +307,17 @@ def test_a_recording_whose_world_moved_rebuilds_from_the_world_named(rec, tmp_pa
 def test_a_shot_taken_in_such_a_replay_names_the_world_for_its_render(rec, tmp_path):
     from roqsim.shots import render_args
 
-    replay = Replay(rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots.yaml",
-                    world=tmp_path / "elsewhere" / "w.yaml")
+    replay = Replay(
+        rec,
+        _Handle(),
+        state=tmp_path / "run.npz",
+        shots=tmp_path / "shots.yaml",
+        world=tmp_path / "elsewhere" / "w.yaml",
+    )
     doc = replay.add_shot("moved")
     assert doc["world_target"] == str(tmp_path / "elsewhere" / "w.yaml")
     assert render_args(doc)[0] == doc["world_target"] and render_args(doc)[1] == "--state"
-    plain = Replay(rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots2.yaml").add_shot("own")
+    plain = Replay(
+        rec, _Handle(), state=tmp_path / "run.npz", shots=tmp_path / "shots2.yaml"
+    ).add_shot("own")
     assert "world_target" not in plain and render_args(plain)[0] == "--state"

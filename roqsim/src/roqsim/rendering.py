@@ -115,6 +115,77 @@ def _frame_distance(model: mujoco.MjModel, radius: float, aspect: float, margin:
     return margin * radius / math.sin(half_fov)
 
 
+def scene_corners(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray | None:
+    """The eight corners of the world-space box around every geom with a bound, or ``None``.
+
+    Each geom's own ``geom_aabb`` (stated in its rotated frame) is carried into world space corner by
+    corner, so a wall stays a wall and not the sphere around it -- which is what makes this tight for
+    the rooms recordings are made in. Planes have no bound and are skipped; the geoms that stand on
+    them say where the scene is. ``data`` must be forward-kinematics-current.
+    """
+    lo = np.full(3, np.inf)
+    hi = np.full(3, -np.inf)
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+    for g in range(model.ngeom):
+        if float(model.geom_rbound[g]) <= 0.0:
+            continue
+        center, half = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
+        xmat = data.geom_xmat[g].reshape(3, 3)
+        corners = data.geom_xpos[g] + (center + signs * half) @ xmat.T
+        lo = np.minimum(lo, corners.min(axis=0))
+        hi = np.maximum(hi, corners.max(axis=0))
+    if not np.all(np.isfinite(lo)):
+        return None
+    return np.array(
+        [[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+    )
+
+
+def scene_camera(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    aspect: float = 1.0,
+    azimuth: float = 90.0,
+    elevation: float = -45.0,
+    margin: float = 1.05,
+) -> mujoco.MjvCamera:
+    """The whole scene from above: every geom in the frame, as close as the field of view allows.
+
+    Looks at the centre of the scene's box from ``azimuth``/``elevation`` (MuJoCo's default orbit:
+    angled, not top-down, so walls and heights read) and backs off exactly far enough that all eight
+    corners of that box fall inside the view, in both the vertical field and the one the frame's
+    ``aspect`` gives it horizontally. Falls back to :func:`default_free_camera` when nothing in the
+    model has a bound.
+    """
+    cam = default_free_camera(model)
+    corners = scene_corners(model, data)
+    if corners is None:
+        return cam
+    cam.azimuth, cam.elevation = float(azimuth), float(elevation)
+    cam.lookat[:] = (corners.min(axis=0) + corners.max(axis=0)) / 2.0
+    az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
+    forward = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
+    right = np.array([-math.sin(az), math.cos(az), 0.0])
+    up = np.cross(right, forward)
+    half_fovy = math.radians(float(model.vis.global_.fovy)) / 2.0
+    tan_v = math.tan(half_fovy)
+    tan_h = tan_v * max(float(aspect), 1e-6)
+    needed = 0.0
+    for corner in corners:
+        rel = corner - cam.lookat
+        depth = float(rel @ forward)  # positive: beyond the lookat, away from the eye
+        # The eye must be far enough behind the lookat that the corner's lateral offset fits the
+        # field of view at the corner's own depth: (distance + depth) * tan >= |offset|.
+        needed = max(
+            needed,
+            abs(float(rel @ right)) / tan_h - depth,
+            abs(float(rel @ up)) / tan_v - depth,
+        )
+    cam.distance = max(margin * needed, 1e-3)
+    return cam
+
+
 def autoframe(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -173,6 +244,22 @@ def eye_position(cam: mujoco.MjvCamera) -> np.ndarray:
     az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
     forward = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
     return np.asarray(cam.lookat) - cam.distance * forward
+
+
+def orbit_from_eye(eye, target) -> tuple[list[float], float, float, float]:
+    """The inverse of :func:`eye_position`: ``(lookat, distance, azimuth, elevation)`` in metres and
+    degrees for a camera standing at ``eye`` and looking at ``target``, so a pose stated in world
+    coordinates can be written onto a free camera.
+    """
+    eye, target = np.asarray(eye, dtype=float), np.asarray(target, dtype=float)
+    forward = target - eye
+    distance = float(np.linalg.norm(forward))
+    if distance < 1e-9:
+        raise ValueError("eye and target coincide; the camera has nowhere to look")
+    fx, fy, fz = forward / distance
+    elevation = math.degrees(math.asin(max(-1.0, min(1.0, fz))))
+    azimuth = math.degrees(math.atan2(fy, fx))
+    return [float(v) for v in target], distance, azimuth, elevation
 
 
 def look_in_place(cam: mujoco.MjvCamera, dx: float, dy: float, sensitivity: float = 180.0) -> None:
