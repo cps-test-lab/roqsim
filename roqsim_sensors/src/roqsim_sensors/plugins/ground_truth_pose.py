@@ -32,6 +32,8 @@ Config::
       child_frame: ""           # default: "<model>_base_link_gt" for a body (Gazebo-compatible),
                                 #   the site's own name for a site
       rate_hz: 30.0             # TF publish rate
+      lazy: false               # true: publish only while something subscribes (Endpoint.lazy) --
+                                #   for a frame only a robot's own stack reads, never for /tf
       topics: { pose: /tf }     # optional absolute-topic hardwire (default relative "tf" -> /tf)
 
 The transform is published on the relative ``tf`` topic, so it lands on the plain ``/tf`` (matching
@@ -78,6 +80,7 @@ class GroundTruthPosePlugin(Plugin):
         self.frame_id = self.config.get("frame_id", "")
         self.child_frame = self.config.get("child_frame", "")
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
+        self.lazy = bool(self.config.get("lazy", False))
         self._bid = -1  # the base body: what is published, or what a site pose is relative to
         self._sid = -1  # the site, when one is named
         self._ctx: SimContext | None = None
@@ -142,6 +145,7 @@ class GroundTruthPosePlugin(Plugin):
                 namespace=ns,
                 read=lambda child=child: self._read(child),
                 rate_hz=self.rate_hz,
+                lazy=self.lazy,
                 backend={
                     "ros2": {
                         "type": "tf2_msgs.msg.TFMessage",

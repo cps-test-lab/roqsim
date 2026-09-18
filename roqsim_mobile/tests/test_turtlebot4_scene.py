@@ -52,7 +52,14 @@ WHEEL_R = 0.03575
 WHEEL_W = 0.015
 TRACK = 0.233
 BODY_R = 0.164
-TOTAL_MASS = 2.3 + 2 * 0.2  # 2.7 kg: create3 body + two wheels (the caster is massless geometry)
+# The base carries everything rigidly on it: the create3 body (2.3) with its bumper (0.1) and caster
+# (0.01), plus the TurtleBot 4 standard's shell (0.39), four weight blocks (4 x 0.061), four tower
+# standoffs (4 x 0.26), sensor plate (0.332), camera bracket (0.033) and OAK-D (0.061) --
+# turtlebot4_description @ jazzy urdf/standard/*.urdf.xacro. The RPLIDAR the manifest mounts carries
+# its own 0.17 kg (RPLIDAR_MASS, section D), so it is not here.
+BASE_MASS = 2.3 + 0.1 + 0.01 + 0.39 + 4 * 0.061 + 4 * 0.26 + 0.332 + 0.033 + 0.061  # 4.51
+# ... two wheels and their two wheel-drop suspension bodies (wheel_drop.urdf.xacro: 0.05 each).
+TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # 5.01 kg
 # base_link is the URDF root frame, and the wheel bodies hang 0.0402 m above it against a 0.03575 m
 # radius -- so at rest the frame itself sits 4.45 mm BELOW the ground plane, plus ~0.8 mm of soft
 # contact sink. Measured -0.0053. Negative is correct here and is not a sign convention slip.
@@ -69,6 +76,23 @@ SHELL_LINK = ((0.0, 0.0, 0.0942), (0.0, 0.0, 0.0))
 RPLIDAR_JOINT = ((-0.04, 0.0, 0.098715), (0.0, 0.0, math.pi / 2))
 #: The RPLIDAR A1's inertial, which the device model carries (rplidar.urdf.xacro:7,34 @ 7fd29fb).
 RPLIDAR_MASS = 0.17
+#: The Create 3's own sensor sites (create3.urdf.xacro @ 1fccb76): four cliff sensors, seven IR
+#: proximity sensors, the optical-flow mouse and the omnidirectional IR receiver.
+CREATE3_SITES = {
+    "cliff_front_left",
+    "cliff_front_right",
+    "cliff_side_left",
+    "cliff_side_right",
+    "ir_intensity_front_center_left",
+    "ir_intensity_front_center_right",
+    "ir_intensity_front_left",
+    "ir_intensity_front_right",
+    "ir_intensity_left",
+    "ir_intensity_right",
+    "ir_intensity_side_left",
+    "mouse",
+    "ir_omni",
+}
 
 
 def _manifest_plugin(kind: str) -> dict:
@@ -176,11 +200,13 @@ def test_a2_mass_audit():
     model, _ = _build(settle=0.0)
     base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     assert float(model.body_subtreemass[base]) == pytest.approx(TOTAL_MASS, rel=0.01)
-    assert float(model.body_mass[base]) == pytest.approx(2.3, rel=0.01)  # create3 body_mass
+    assert float(model.body_mass[base]) == pytest.approx(BASE_MASS, rel=0.01)
     for side in ("left", "right"):
         wid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wheel")
         assert float(model.body_mass[wid]) == pytest.approx(0.2, rel=0.01)
         assert np.all(model.body_inertia[wid] > 1e-6), "near-zero wheel inertia"
+        did = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"wheel_drop_{side}")
+        assert float(model.body_mass[did]) == pytest.approx(0.05, rel=0.01)
 
 
 def test_a3_rest_stability():
@@ -391,7 +417,7 @@ def test_c1_the_mjcf_carries_no_scanner():
     """
     model, _ = _build(settle=0.0)
     sites = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, i) for i in range(model.nsite)}
-    assert sites == {"base_imu", "oakd", "oakd_left", "oakd_right", "bump_front_center"}
+    assert sites == {"base_imu", "oakd", "oakd_left", "oakd_right", *CREATE3_SITES}
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "rplidar") < 0
 
 
@@ -405,7 +431,12 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     """
     manifest = yaml.safe_load(MANIFEST.read_text())
     assert manifest["frames"] == [
-        {"name": "shell_link", "parent": "base_link", "pos": [*SHELL_LINK[0]], "rpy": [*SHELL_LINK[1]]}
+        {
+            "name": "shell_link",
+            "parent": "base_link",
+            "pos": [*SHELL_LINK[0]],
+            "rpy": [*SHELL_LINK[1]],
+        }
     ]
     (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
     assert mount["name"] == "rplidar"
@@ -466,8 +497,12 @@ def test_c3b_the_oakd_lens_matches_the_standalone_sensor_model():
     assert list(model.cam_resolution[cid]) == [int(v) for v in cam.resolution]
 
 
-def test_c4_wheel_encoders_imu_and_bumper_exist():
-    """C4: the sensors a ROS 2 bridge publishes are present and named as the siblings' are."""
+def test_c4_wheel_encoders_and_imu_exist():
+    """C4: the sensors a ROS 2 bridge publishes are present and named as the siblings' are.
+
+    No touch sensor: the bumper is the manifest's `bumper` plugin over the body collision geom,
+    zoned by bearing as the Create 3's simulator zones it (C5).
+    """
     model, _ = _build(settle=0.0)
     for name in (
         "left_wheel_pos",
@@ -478,9 +513,9 @@ def test_c4_wheel_encoders_imu_and_bumper_exist():
         "imu_acc",
         "base_pos",
         "base_quat",
-        "bumper",
     ):
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name) >= 0, f"missing {name}"
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, "bumper") < 0
 
 
 # --------------------------------------------------------------------------- D. the mounted scanner
@@ -578,9 +613,183 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
 
 
 def test_d7_the_scanner_mass_is_the_devices(mounted):
-    """D7: the spawned robot is the Create 3 body and wheels plus the A1's own 0.17 kg, which the
-    MJCF does not carry (its 2.3 kg body mass is the Create 3's alone)."""
+    """D7: the spawned robot is the base, wheels and suspension plus the A1's own 0.17 kg, which
+    the MJCF does not carry (the device model does)."""
     engine, _ = mounted
     m = engine.ctx.model
     base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")
     assert float(m.body_subtreemass[base]) == pytest.approx(TOTAL_MASS + RPLIDAR_MASS, abs=1e-6)
+
+
+# --------------------------------------------------------------------------- E. the Create 3's own surface
+
+
+def _manifest_entries(kind: str) -> list[dict]:
+    return [e for e in yaml.safe_load(MANIFEST.read_text())["components"] if kind in e]
+
+
+def test_e1_the_manifest_declares_the_create3_surface():
+    """E1: what the reference base carries, declared on the model so a world says nothing.
+
+    The topic names are the Create 3 simulator's raw-stream names, so its adapter nodes read them
+    with their shipped parameter files; the bumper zones are its sector table (bumpers.hpp); every
+    endpoint only that stack reads is lazy.
+    """
+    bumper = _manifest_plugin("bumper")
+    assert bumper["geoms"] == ["body_collision"]
+    assert list(bumper["zones"]) == [
+        "bump_right",
+        "bump_front_right",
+        "bump_front_center",
+        "bump_front_left",
+        "bump_left",
+    ]
+    assert bumper["zones"]["bump_front_center"] == pytest.approx([-math.pi / 10, math.pi / 10])
+    assert bumper["zones"]["bump_left"] == pytest.approx([3 * math.pi / 10, math.pi / 2])
+
+    sensors = {e["name"]: e["range_sensor"] for e in _manifest_entries("range_sensor")}
+    assert set(sensors) == CREATE3_SITES - {"mouse", "ir_omni"}
+    for name, cfg in sensors.items():
+        assert cfg["site"] == name
+        assert cfg["topics"] == {"range": f"_internal/{name}/scan"}
+        assert cfg["lazy"] is True and cfg["exclude_body"] == "base_link"
+        assert cfg["rate_hz"] == 62
+        if name.startswith("cliff"):
+            assert (cfg["range_min"], cfg["max_range"]) == (0.0001, 0.15)
+            assert "h_rays" not in cfg
+        else:
+            assert (cfg["h_rays"], cfg["v_rays"]) == (5, 5)
+            assert cfg["h_fov"] == pytest.approx(math.radians(10), abs=1e-6)
+            assert (cfg["range_min"], cfg["max_range"]) == (0.025, 0.2)
+
+    poses = {e["name"]: e["ground_truth_pose"] for e in _manifest_entries("ground_truth_pose")}
+    assert poses["gt_base"]["child_frame"] == "turtlebot4"
+    assert poses["gt_mouse"] == {
+        "site": "mouse",
+        "relative_to": "base",
+        "rate_hz": 62,
+        "lazy": True,
+        "topics": {"pose": "_internal/sim_ground_truth_pose"},
+    }
+    assert poses["gt_ir_omni"]["site"] == "ir_omni"
+
+    assert _manifest_plugin("imu")["topic"] == "imu"
+    assert _manifest_plugin("imu")["pos"] == pytest.approx([0.050613, 0.043673, 0.0844])
+    assert _manifest_plugin("diff_drive") == {"publish_joint_states": False}
+    assert _manifest_plugin("joint_state_publisher") == {"rate_hz": 62}
+
+
+@pytest.fixture(scope="module")
+def create3():
+    """The robot spawned as a world spawns it, in the room, camera off, settled on the floor."""
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    for _ in range(500):
+        engine.step()
+    yield engine
+    engine.shutdown()
+
+
+def _by_topic(engine, topic):
+    return next(
+        e for e in engine.ctx.interface.all() if e.backend.get("ros2", {}).get("topic") == topic
+    )
+
+
+def test_e2_the_cliff_sensors_read_the_floor_and_the_ir_sensors_read_nothing(create3):
+    """E2: on a floor the four cliff rays return under the 3 cm a cliff detector compares with,
+    and the seven IR grids see nothing within their 20 cm in an open room."""
+    for name in ("cliff_front_left", "cliff_front_right", "cliff_side_left", "cliff_side_right"):
+        (r,) = _by_topic(create3, f"_internal/{name}/scan").read().ranges
+        assert 0.005 < r < 0.03, f"{name}: {r}"
+    for name in (
+        "ir_intensity_front_center_left",
+        "ir_intensity_front_left",
+        "ir_intensity_right",
+        "ir_intensity_side_left",
+    ):
+        ranges = _by_topic(create3, f"_internal/{name}/scan").read().ranges
+        assert ranges.shape == (25,)
+        assert np.all(np.isposinf(ranges)), f"{name} sees something: {ranges}"
+
+
+def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
+    """E3: the message a consumer derives the wheel state from also carries the suspension."""
+    (js,) = [e for e in create3.ctx.interface.all() if e.name == "joint_states"]
+    names, pos, vel, eff = js.read()
+    assert set(names) == {
+        "left_wheel_joint",
+        "right_wheel_joint",
+        "wheel_drop_left_joint",
+        "wheel_drop_right_joint",
+    }
+    assert js.rate_hz == 62.0
+    # On the floor the suspension rides on its stop: under the detector's 2.25 cm release.
+    for side in ("left", "right"):
+        assert pos[names.index(f"wheel_drop_{side}_joint")] < 0.0225
+
+
+def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
+    """E4: the base under the robot's name in the world, the mouse and IR receiver relative to it."""
+    poses = [e for e in create3.ctx.interface.all() if e.name == "pose"]
+    by_child = {e.read()[0][0]: e for e in poses}
+    assert set(by_child) == {"turtlebot4", "mouse", "ir_omni"}
+    assert by_child["turtlebot4"].backend["ros2"]["frame_id"] == "map"
+    _, pos, _ = by_child["mouse"].read()[0]
+    assert np.allclose(pos, [0.1015, 0.087, 0.0092], atol=1e-6)
+    assert by_child["mouse"].backend["ros2"]["frame_id"] == "base_link"
+    _, pos, _ = by_child["ir_omni"].read()[0]
+    assert np.allclose(pos, [0.153, 0.0, 0.0992], atol=1e-6)
+    assert all(e.lazy for e in poses)
+
+
+def test_e5_lifting_the_robot_drops_the_wheels_and_opens_the_cliffs():
+    """E5: what a kidnap looks like to the stack: both suspensions past the detector's 2.85 cm
+    and every cliff sensor reading no return."""
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    try:
+        for _ in range(500):
+            engine.step()
+        d = engine.ctx.data
+        held = d.qpos[:7].copy()
+        held[2] += 0.3
+        for _ in range(500):
+            # Held in the air, as a hand holds it: the base's pose is pinned every step.
+            d.qpos[:7] = held
+            d.qvel[:6] = 0.0
+            engine.step()
+        (js,) = [e for e in engine.ctx.interface.all() if e.name == "joint_states"]
+        names, pos, *_ = js.read()
+        for side in ("left", "right"):
+            assert pos[names.index(f"wheel_drop_{side}_joint")] >= 0.0285
+        for name in ("cliff_front_left", "cliff_side_right"):
+            (r,) = _by_topic(engine, f"_internal/{name}/scan").read().ranges
+            assert np.isposinf(r), f"{name} lifted 30 cm still reads {r}"
+    finally:
+        engine.shutdown()
+
+
+def test_e6_driving_into_the_wall_presses_the_centre_bumper_zone():
+    """E6: the bumper over the body shell: a head-on wall presses bump_front_center and nothing else,
+    and it releases when the robot backs off."""
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    try:
+        handle = engine.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
+        read = engine.ctx.blackboard.get(f"bumper:{scan_mount.OWNER}.bumper")
+        handle.drive(0.3, 0.0, 0.0)
+        pressed = set()
+        for _ in range(int(20.0 / engine.ctx.model.opt.timestep)):
+            engine.step()
+            r = read()
+            if r.any_pressed:
+                pressed |= {z for z, p in r.pressed.items() if p}
+                break
+        else:
+            pytest.fail("never reached the wall")
+        assert pressed == {"bump_front_center"}
+        assert _by_topic(engine, "bumper/bump_front_center").read() is True
+        handle.drive(-0.3, 0.0, 0.0)
+        for _ in range(int(1.0 / engine.ctx.model.opt.timestep)):
+            engine.step()
+        assert read().any_pressed is False
+    finally:
+        engine.shutdown()

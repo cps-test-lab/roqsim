@@ -33,7 +33,8 @@ Config (in addition to ``lidar``'s ``site``/``frame_id``/``rate_hz``/``range_min
       rate_hz: 62.0
 
 A ``lidar``'s ``rays``/``angle_min``/``angle_max`` are refused here: the layout is the grid's, and
-a world that wants a fan declares a ``lidar``.
+a world that wants a fan declares a ``lidar``. The endpoint's role name is ``range`` (so the topic
+is renamed with ``topics: {range: ...}``), leaving ``scan`` to the robot's scanner.
 
 **Pointing it.** The site's ``+x`` is the boresight, as for every ray sensor here; a cliff sensor
 is a site pitched towards the floor, a proximity sensor a site facing out through the shell. With
@@ -52,7 +53,9 @@ from .payloads import LaserScan
 
 
 class RangeSensorPlugin(LidarPlugin):
-    ENDPOINT_NAME = "scan"
+    #: The endpoint role is ``range``, not the scanner's ``scan``: a robot carries one scanner and
+    #: a dozen of these, and a consumer picking "the scan endpoint" must not find twelve.
+    ENDPOINT_NAME = "range"
     ROS_TYPE = "sensor_msgs.msg.LaserScan"
     DEFAULT_TOPIC = "range"
     PLUGIN_LABEL = "range_sensor"

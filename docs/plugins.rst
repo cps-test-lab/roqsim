@@ -309,9 +309,10 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 
 .. code:: yaml
 
-   # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml
+   # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
    components:
-     - diff_drive: {}
+     - diff_drive: {publish_joint_states: false}
+     - joint_state_publisher: {rate_hz: 62}   # every joint, wheels and suspension, in one message
      - spawn_sensor:                  # the RPLIDAR A1 device model, at the vendor joint origin
          model: rplidar_a1
          parent_frame: shell_link
@@ -321,6 +322,18 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
        name: rplidar
      - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
          camera: oakd_rgb
+     - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
+     - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
+       name: cliff_front_left
+     - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+     - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
+       name: gt_mouse
+
+The second half is the Create 3 base's own sensor surface -- bumper zones, cliff and IR proximity
+sensors, IMU, and the ground-truth streams its vendor's simulator adapter reads -- declared on the
+model because the reference robot carries them, on the topic names that adapter's shipped parameter
+files expect, and ``lazy`` so a world that never launches that stack publishes none of it. See
+:doc:`create3_stack`.
 
 Selecting a policy
 ------------------
@@ -848,7 +861,8 @@ site, published as one ``LaserScan`` with the rows concatenated::
   cliff detector makes.
 * **The rest is** ``lidar``\ **'s.** Detection limits, ``too_close`` / ``no_return``, the noise
   model, the fault switch and the static mount TF are inherited rather than restated; a fan's
-  ``rays`` / ``angle_*`` keys are refused, because the layout is the grid's.
+  ``rays`` / ``angle_*`` keys are refused, because the layout is the grid's. The endpoint's role is
+  ``range`` (renamed with ``topics: {range: ...}``), leaving ``scan`` to the robot's scanner.
 
 Injecting a physical fault
 --------------------------
