@@ -32,7 +32,7 @@ leaves ``roqsim render`` following the recorded camera.
 
 A **clip** is a shot with a range (``from``/``to``, a ``video``) where a shot has a moment, and may
 carry two keys a still has no use for: ``camera_path`` (a file, or the keyframe document inline --
-:mod:`roqsim.camera_path`) and ``overlays`` (a list, in drawing order -- :mod:`roqsim.overlays`).
+:mod:`roqsim.camera_path`) and ``overlays`` (a list, in drawing order -- :mod:`roqsim.render_overlays`).
 :func:`clip_document` is what a camera take in the replay window writes.
 """
 
