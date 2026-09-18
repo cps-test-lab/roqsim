@@ -51,10 +51,28 @@ Config::
       compute_rate_hz: 200.0 # how often the distance is MEASURED
       rate_hz: 30.0          # how often the endpoint is PUBLISHED
 
-Endpoint ``clearance`` (out) reads a :class:`ClearanceReport`:
-``(current, minimum, at_time, geom, saturated)`` -- ``minimum`` is the closest approach
+Two endpoints, both reading a :class:`ClearanceReport`
+``(current, minimum, at_time, geom, saturated)``, where ``minimum`` is the closest approach
 since the last reset and ``geom`` names what it was to, so a near-miss is attributable
-rather than merely flagged.
+rather than merely flagged:
+
+* ``clearance`` (out) publishes ``current`` alone, as a ``std_msgs/Float32``: the series,
+  from which a reader reconstructs the shape of an approach and reduces the minimum of the
+  published samples.
+* ``clearance_report`` (out) publishes the whole report, as the named readings of a
+  ``diagnostic_msgs/DiagnosticStatus``. Two of the five fields are in no series at all:
+  nothing in a distance says what it was measured to, or whether it is a measurement rather
+  than the ``distmax`` cutoff. Both are what a recorded table needs in order to say which
+  near-miss it is looking at.
+
+The two flags are about different numbers, which is what makes them worth publishing side by
+side: ``saturated`` says ``current`` is the cutoff, while an empty ``geom`` says the same of
+``minimum`` -- the closest approach was set by a step that found nothing inside ``distmax``,
+so it reads ``minimum == distmax`` and names nothing. A trial that was never near anything
+reports exactly that, with ``at_time`` the first measurement of the run.
+
+Both endpoints read the same report and publish at ``rate_hz``, and the reduction in it runs
+from the last reset: ``on_reset`` starts a new trial's measurement.
 
 ``compute_rate_hz`` is separate from ``rate_hz`` because they answer different questions.
 Publishing is cheap; measuring is a distance query per (watched geom, candidate geom) pair,
@@ -215,6 +233,33 @@ class ClearanceMonitorPlugin(Plugin):
                         "type": "std_msgs.msg.Float32",
                         "field": "current",
                         "topic": self.topic_override("clearance") or "clearance",
+                    }
+                },
+            )
+        )
+        ctx.interface.add(
+            Endpoint(
+                name="clearance_report",
+                direction="out",
+                owner=self.robot,
+                namespace=ns,
+                read=self.read_state,
+                rate_hz=self.rate_hz,
+                backend={
+                    "ros2": {
+                        # The whole report, beside the series rather than instead of it. Two of
+                        # these fields are in no series: a distance does not say what it was
+                        # measured to, nor whether it is a measurement or the cutoff, so an
+                        # experiment grading a near miss cannot recover them by reducing
+                        # `clearance`. DiagnosticStatus carries them under their own names, in one
+                        # message, so a recorded table holds the reduction and what it was against
+                        # together; the bridge fills it from the `fields` list and knows nothing
+                        # about this plugin's payload.
+                        "type": "diagnostic_msgs.msg.DiagnosticStatus",
+                        "fields": ["current", "minimum", "at_time", "geom", "saturated"],
+                        "name": f"clearance_monitor: {self.address}",
+                        "hardware_id": body_name,
+                        "topic": self.topic_override("clearance_report") or "clearance_report",
                     }
                 },
             )
