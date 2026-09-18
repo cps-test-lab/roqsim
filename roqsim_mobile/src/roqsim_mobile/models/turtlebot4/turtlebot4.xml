@@ -68,18 +68,23 @@
            `bumper` plugin zones contacts on. -->
       <geom name="body_collision" type="cylinder" size="0.164 0.03" pos="0 0 0.0492"
             material="tb4_grey" group="3" friction="0.4 0.005 0.0001"/>
-      <!-- Inertia of everything rigidly on the base: the create3 body (2.3 kg, COM 2.28 cm forward)
-           with its bumper (0.1) and caster (0.01), plus the TurtleBot 4 standard's shell (0.39),
-           four weight blocks (4 x 0.061), four tower standoffs (4 x 0.26), sensor plate (0.332),
-           camera bracket (0.033) and OAK-D (0.061) -- turtlebot4_description @ jazzy
-           urdf/standard/turtlebot4.urdf.xacro and irobot_create_description urdf/create3.urdf.xacro,
-           summed at their link origins. 4.51 kg with the COM 14.2 cm up; the RPLIDAR the manifest
-           mounts carries its own 0.17 kg and the wheels and their suspension are separate bodies.
-           The mass is load-bearing for the wheel-drop suspension below: its springs hold 27 N, so
-           a base this heavy rides on their hard stop as the reference robot does, while the
-           create3 body alone would ride on the springs and see-saw onto its caster. -->
-      <inertial pos="0.0154 0 0.142" mass="4.51"
-                diaginertia="0.0597 0.058 0.0542"/>
+      <!-- Inertia of everything rigidly on the base, sized to the robot's datasheet: the
+           TurtleBot 4 standard weighs 3.945 kg (Clearpath's user manual), so with the two
+           0.2 kg wheels, their 0.05 kg suspension bodies and the 0.17 kg RPLIDAR the manifest
+           mounts, 3.275 kg is on this body. The create3 body (2.3 kg, COM 2.28 cm forward,
+           irobot_create_description urdf/create3.urdf.xacro) with its bumper (0.1) and caster
+           (0.01) are taken as stated; the standard's add-ons -- shell, four weight blocks, four
+           tower standoffs, sensor plate, camera bracket, OAK-D (turtlebot4_description @ jazzy
+           urdf/standard/turtlebot4.urdf.xacro) -- are placed at their link origins but scaled
+           to the 0.865 kg the datasheet leaves for them, because that description's part masses
+           sum to 1.2 kg more than the robot weighs (four 0.26 kg standoffs, most of it). COM
+           11.2 cm up.
+           The mass is load-bearing for the wheel-drop suspension below: its springs hold 27 N,
+           and the ~33 N a base this heavy puts on the wheels rides them onto their hard stop as
+           the reference robot does, while the create3 body alone rode on the springs and
+           see-sawed onto its caster. -->
+      <inertial pos="0.0198 0 0.1123" mass="3.275"
+                diaginertia="0.0412 0.0409 0.0403"/>
 
       <!-- Visual meshes (no contacts). pos/quat are the URDF link transforms
            relative to base_link, composed from nav2_minimal_tb4_description's

@@ -52,14 +52,13 @@ WHEEL_R = 0.03575
 WHEEL_W = 0.015
 TRACK = 0.233
 BODY_R = 0.164
-# The base carries everything rigidly on it: the create3 body (2.3) with its bumper (0.1) and caster
-# (0.01), plus the TurtleBot 4 standard's shell (0.39), four weight blocks (4 x 0.061), four tower
-# standoffs (4 x 0.26), sensor plate (0.332), camera bracket (0.033) and OAK-D (0.061) --
-# turtlebot4_description @ jazzy urdf/standard/*.urdf.xacro. The RPLIDAR the manifest mounts carries
-# its own 0.17 kg (RPLIDAR_MASS, section D), so it is not here.
-BASE_MASS = 2.3 + 0.1 + 0.01 + 0.39 + 4 * 0.061 + 4 * 0.26 + 0.332 + 0.033 + 0.061  # 4.51
-# ... two wheels and their two wheel-drop suspension bodies (wheel_drop.urdf.xacro: 0.05 each).
-TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # 5.01 kg
+# The robot weighs what its datasheet says: 3.945 kg for the standard (Clearpath's TurtleBot 4 user
+# manual), RPLIDAR included. The manifest mounts the RPLIDAR as a device with its own 0.17 kg
+# (RPLIDAR_MASS, section D) and the two wheels and their two wheel-drop suspension bodies
+# (wheel_drop.urdf.xacro: 0.05 each) are separate bodies, so the base body carries the rest.
+ROBOT_MASS = 3.945
+BASE_MASS = ROBOT_MASS - 0.17 - 2 * 0.2 - 2 * 0.05  # 3.275 kg
+TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # the model without its mounted scanner: 3.775 kg
 # base_link is the URDF root frame, and the wheel bodies hang 0.0402 m above it against a 0.03575 m
 # radius -- so at rest the frame itself sits 4.45 mm BELOW the ground plane, plus ~0.8 mm of soft
 # contact sink. Measured -0.0053. Negative is correct here and is not a sign convention slip.
