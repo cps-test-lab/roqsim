@@ -25,6 +25,11 @@ manifest does the rest, so a world is ~15 lines.
 | `clearpath_jackal` | Clearpath Jackal | skid-steer, 4 driven wheels (`slip_factor` 1.7) | VLP-16, planar cast @ 10 Hz | |
 | `piracer` | Waveshare PiRacer AI Kit | **Ackermann** — two steered front wheels, rear pair driven; cannot turn in place | none (a `camera` site, unpopulated) | |
 
+`create3_dock` is the one other non-robot folder beside `floor`: the TurtleBot 4's charging dock as
+a prop (`spawn_model: {model: create3_dock}`), with the reference description's collision box and its
+infrared emitters as sites, so a stack can dock to it over their ground-truth poses. Its provenance
+(`irobot_create_description`, BSD-3) is in `create3_dock_LICENSE`.
+
 `turtlebot4` has no port log yet. Its provenance
 (`nav2_minimal_tb4_description`, Apache-2.0) is in `turtlebot4_LICENSE` and its MJCF comments, and
 `tests/test_turtlebot4_scene.py` pins the numbers; `tests/test_model_layout.py` carries the gap as a strict

@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>roqsim_create3_toolbox</name>
+  <version>0.1.0</version>
+  <description>
+    The iRobot Create 3 / TurtleBot 4 software stack over roqsim: the simulator adapter that turns
+    what the TurtleBot 4 model publishes (bumper zones, cliff and IR ray grids, joint states,
+    ground-truth poses) into what the Create 3's own nodes consume, plus the launch files that run
+    those nodes unchanged from their released packages. Mirrors irobot_create_gz_bringup for the
+    MuJoCo substrate; the stack itself (irobot_create_nodes, turtlebot4_node) is never reimplemented.
+  </description>
+  <maintainer email="frederik.pasch@h-ka.de">Frederik Pasch</maintainer>
+  <license>Apache-2.0</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>irobot_create_msgs</exec_depend>
+  <!-- The stack, unchanged: the Create 3 API nodes, the simulator adapters that consume plain
+       ROS types (every one but the bumper's), and the TurtleBot 4's own node. -->
+  <exec_depend>irobot_create_nodes</exec_depend>
+  <exec_depend>irobot_create_gz_toolbox</exec_depend>
+  <exec_depend>turtlebot4_node</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>roqsim_ros_bridge</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
