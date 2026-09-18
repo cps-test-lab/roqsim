@@ -95,9 +95,14 @@ zone or a cliff fires on the same geometric condition, not at the same milliseco
 stub there (enabling one throws); ``slip_status``, ``interface_buttons``, ``stop_status`` and the
 battery are mocks or models; ``motion_control`` is iRobot's re-implementation of firmware
 behaviour, not the firmware; the real republisher forwards only what its configuration lists,
-whereas in simulation everything is always on; and the HMI display and LEDs have no physical
-counterpart without the Gazebo GUI plugin. The firmware's ``wheel_accel_limit`` is not a parameter
-of the simulated ``motion_control``: the ramp is the base's ``diff_drive: {wheel_accel_limit}``.
+whereas in simulation everything is always on; the HMI display and LEDs have no physical
+counterpart without the Gazebo GUI plugin; and ``kidnap_status`` never turns true, because the
+simulator adapters stamp a wheel-drop event with its joint's name and a cliff event with
+``base_link`` while the kidnap estimator counts events framed ``wheel_drop_left`` and
+``cliff_<sensor>`` -- the hazards themselves (four ``CLIFF``, two ``WHEEL_DROP``) are on
+``hazard_detection`` when the robot is lifted, in both simulators. The firmware's
+``wheel_accel_limit`` is not a parameter of the simulated ``motion_control``: the ramp is the base's
+``diff_drive: {wheel_accel_limit}``.
 
 On the real robot
 -----------------
