@@ -219,7 +219,7 @@ def test_a_camera_path_and_overlays_survive_the_command_line():
     import json
 
     from roqsim.camera_path import CameraPath
-    from roqsim.overlays import parse_spec
+    from roqsim.render_overlays import parse_spec
     from roqsim.shots import render_args
 
     doc = {

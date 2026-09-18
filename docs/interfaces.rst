@@ -342,16 +342,16 @@ location, and parent worlds may themselves ``extends`` (cycles are rejected).
 silent no-op. There is no separate "modify" key -- to change an inherited plugin, ``disable`` it and
 re-add a tweaked copy in the child's ``plugins``.
 
-Drawing on a render (``roqsim.overlays``)
-------------------------------------------
+Drawing on a render (``roqsim.render_overlays``)
+-------------------------------------------------
 
 ``roqsim render`` draws a recording one sample per frame, and an **overlay** paints on each frame
 after the scene is rasterised and before it is encoded -- in pixels, with the sample's simulated time
 in hand. ``clock`` ships with roqsim; any installed package adds its own under the
-``roqsim.overlays`` entry-point group, and it is then available by name on the command line and in a
+``roqsim.render_overlays`` entry-point group, and it is then available by name on the command line and in a
 shot document without roqsim knowing it::
 
-   [project.entry-points."roqsim.overlays"]
+   [project.entry-points."roqsim.render_overlays"]
    costmap = "some_package.video:CostmapOverlay"
 
 The contract is small and duck-typed. An overlay is constructed as ``cls(placement, **options)`` --
@@ -366,9 +366,9 @@ provides::
 comes back must be the same shape and type, and a frame that is not is refused *by the overlay's
 name* rather than handed to the encoder, which would silently produce a sheared video. ``state`` is
 the recording being drawn (a path, or ``None``), so an overlay that reads files beside it can find them
-without being told where. ``placement`` (:class:`roqsim.overlays.Placement`) carries the three
+without being told where. ``placement`` (:class:`roqsim.render_overlays.Placement`) carries the three
 options every overlay shares -- ``anchor``, ``width`` as a fraction of the frame, ``margin`` -- and
-:func:`roqsim.overlays.paste` composites a PIL image at it.
+:func:`roqsim.render_overlays.paste` composites a PIL image at it.
 
 ``roqsim render --overlay list`` prints what this environment registers, with where each comes from.
 

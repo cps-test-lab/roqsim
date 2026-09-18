@@ -216,7 +216,7 @@ Runtime dependencies are `mujoco`, `numpy`, `pyyaml`, `click` and `pillow`. Vide
 needs `ffmpeg` on `PATH` (checked, with a message, rather than failing mid-render); rendering a raw
 mesh needs `roqsim_assets`. A video of a recording shows the whole scene from above unless told
 otherwise; `--camera-path` moves the camera along keyframes (`camera_path.py`), `--overlay` paints
-insets on the frames (`overlays.py`, extensible through the `roqsim.overlays` entry-point group), and
+insets on the frames (`render_overlays.py`, extensible through the `roqsim.render_overlays` entry-point group), and
 the replay window records a person flying the camera as a clip (Shift+F9). From the repository root, `make venv` installs the whole family and
 `make test` runs every package's tests.
 

@@ -14,10 +14,10 @@ An overlay is any object with::
 overlay that reads files beside it can find them without being told where.
 
 Overlays are found by name. ``clock`` ships here; other packages register theirs under the
-``roqsim.overlays`` entry-point group (a nav package's costmap, say) and they become available by
+``roqsim.render_overlays`` entry-point group (a nav package's costmap, say) and they become available by
 name without roqsim knowing them::
 
-    [project.entry-points."roqsim.overlays"]
+    [project.entry-points."roqsim.render_overlays"]
     costmap = "some_package.video:CostmapOverlay"
 
 A spec is a bare name or ``{"name": {options}}``. The options every overlay takes are its
@@ -38,7 +38,7 @@ import numpy as np
 
 log = logging.getLogger(__name__)
 
-ENTRY_POINT_GROUP = "roqsim.overlays"
+ENTRY_POINT_GROUP = "roqsim.render_overlays"
 
 ANCHORS = (
     "top-left",
