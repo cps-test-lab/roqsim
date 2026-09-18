@@ -466,6 +466,29 @@ class SimConfig:
 # *modify*: disable the inherited entry and re-add a tweaked copy in the child's ``components``.
 
 
+def _is_package_ref(ext: Any) -> bool:
+    """Whether an ``extends`` value is a ``<package>:<world>`` ref rather than a path."""
+    return isinstance(ext, str) and ":" in ext and not Path(ext).exists()
+
+
+def _package_world(world: Any, ext: str) -> Any:
+    """A package parent's *relative file* ``sim.world`` as a ``<package>:<path>`` ref.
+
+    The parent was reached by reference, so what it names beside itself is named by reference too,
+    never by where this interpreter happens to have the package installed. That is what lets a
+    run's provenance rebuild on another machine: an absolute path into one ``dist-packages`` exists
+    nowhere else, while ``roqsim_scenes:depot/depot.xml`` resolves wherever the package is. Built-in
+    names, refs and absolute paths are left as they are.
+    """
+    if not isinstance(world, str) or ":" in world or Path(world).is_absolute():
+        return world
+    is_path = world.endswith((".xml", ".mjcf")) or "/" in world or os.sep in world
+    if not is_path:
+        return world
+    package = ext.partition(":")[0]
+    return f"{package}:{world}"
+
+
 def _absolutize_world(world: Any, parent_dir: Path) -> Any:
     """Rewrite a parent's *relative file* ``sim.world`` to an absolute path (so it still resolves
     when the inheriting child lives in another dir). Built-in names and ``<package>:<world>`` refs
@@ -578,7 +601,11 @@ def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = froz
 
     parent_sim = dict(parent_raw.get("sim") or {})
     if "world" in parent_sim:
-        parent_sim["world"] = _absolutize_world(parent_sim["world"], parent_path.parent)
+        parent_sim["world"] = (
+            _package_world(parent_sim["world"], ext)
+            if _is_package_ref(ext)
+            else _absolutize_world(parent_sim["world"], parent_path.parent)
+        )
     merged_sim = deep_merge(parent_sim, raw.get("sim") or {})
 
     kept = _apply_disable(document_entries(parent_raw, str(parent_path)), disable or [])

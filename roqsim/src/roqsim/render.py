@@ -24,7 +24,7 @@ With ``--state`` the world target becomes **optional** -- the recording's proven
 caller need not repeat what the file already knows. Where the camera is comes from ``--camera``,
 ``--focus``/``--view`` or the camera the run was watched through, else the whole scene from above
 (:class:`_VideoCamera`); ``--camera-path`` moves it along keyframes (:mod:`roqsim.camera_path`) and
-``--overlay`` paints insets on the frames (:mod:`roqsim.overlays`).
+``--overlay`` paints insets on the frames (:mod:`roqsim.render_overlays`).
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
@@ -568,10 +568,10 @@ def render_target(
 
     ``at``/``start``/``stop`` take seconds or a named moment (``"onset"``, ``"onset+2.5"``);
     ``camera_path`` a :class:`roqsim.camera_path.CameraPath` or what ``--camera-path`` takes;
-    ``overlays`` a list of overlay specs as ``--overlay`` takes them (see :mod:`roqsim.overlays`).
+    ``overlays`` a list of overlay specs as ``--overlay`` takes them (see :mod:`roqsim.render_overlays`).
     """
     from .camera_path import CameraPath, CameraPathError, parse_moment
-    from .overlays import OverlayError, build_overlays
+    from .render_overlays import OverlayError, build_overlays
 
     out = Path(out)
     width, height = parse_size(size) if isinstance(size, str) else size
@@ -715,7 +715,7 @@ def _render_one(
 
         pixels = frame.render(data)
         if overlays:
-            from .overlays import apply_all
+            from .render_overlays import apply_all
 
             pixels = apply_all(overlays, pixels, sim_time)
         Image.fromarray(pixels).save(out)
@@ -1002,7 +1002,7 @@ def _render_video(
     """
     from fractions import Fraction
 
-    from .overlays import apply_all
+    from .render_overlays import apply_all
 
     width, height = size
     rate = rec.fps
@@ -1372,7 +1372,7 @@ def main(argv: list | None = None) -> int:
             "put the world/model first: roqsim render <target> --out <file>"
         )
     if args.overlay and "list" in args.overlay:
-        from .overlays import available
+        from .render_overlays import available
 
         print(json.dumps({"overlays": available()}))
         return 0

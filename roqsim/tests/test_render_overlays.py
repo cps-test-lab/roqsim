@@ -7,8 +7,8 @@ import json
 import numpy as np
 import pytest
 
-from roqsim import overlays
-from roqsim.overlays import OverlayError, Placement
+from roqsim import render_overlays as overlays
+from roqsim.render_overlays import OverlayError, Placement
 
 
 def _frame(w=160, h=90):

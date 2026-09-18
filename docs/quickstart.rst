@@ -377,7 +377,7 @@ Drawing on the frames
 
 ``--overlay`` paints an inset on every frame after the scene is rendered: ``clock`` puts the simulated
 time in a corner, and installed packages add their own -- a navigation package's ``costmap``, say --
-under the ``roqsim.overlays`` entry-point group (see :doc:`interfaces`). A bare name takes the
+under the ``roqsim.render_overlays`` entry-point group (see :doc:`interfaces`). A bare name takes the
 defaults; options ride along as JSON, ``anchor``, ``width`` and ``margin`` being the ones every
 overlay shares::
 
