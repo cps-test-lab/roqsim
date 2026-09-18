@@ -685,6 +685,15 @@ class TrackingCamera:
         """
         return self._offset
 
+    @azimuth_offset.setter
+    def azimuth_offset(self, degrees: float) -> None:
+        """Re-aim the chase cam to a new angle behind the robot -- the way a camera path animates it.
+
+        Set here and not on ``cam.azimuth``: :meth:`update` reads any change to ``cam.azimuth`` as a
+        mouse drag and folds it into the offset, so writing the angle there would apply twice.
+        """
+        self._offset = float(degrees)
+
     def _resolve(self, target: str) -> int:
         """Entity name first (so worlds say ``track: robot``, not the MJCF prefix), then body name."""
         entity = self.ctx.entities.get(target)

@@ -29,6 +29,11 @@ disagree. Three of its rules are load-bearing:
 
 A shot framed by the camera the run was watched through carries no ``view`` at all, which is what
 leaves ``roqsim render`` following the recorded camera.
+
+A **clip** is a shot with a range (``from``/``to``, a ``video``) where a shot has a moment, and may
+carry two keys a still has no use for: ``camera_path`` (a file, or the keyframe document inline --
+:mod:`roqsim.camera_path`) and ``overlays`` (a list, in drawing order -- :mod:`roqsim.overlays`).
+:func:`clip_document` is what a camera take in the replay window writes.
 """
 
 from __future__ import annotations
@@ -111,6 +116,56 @@ def shot_document(
     return doc
 
 
+def clip_document(
+    rec,
+    start,
+    stop,
+    *,
+    state: str | Path,
+    camera_path: str | Path,
+    project: str | Path = ".",
+    label: str = "",
+    size: str = "1920x1080",
+    no_ceiling: bool = False,
+    source: dict | None = None,
+    taken: tuple[str, ...] = (),
+    world: str | Path | None = None,
+) -> dict:
+    """Describe a range of ``rec`` drawn through ``camera_path``, as a document to append.
+
+    A **clip** is a shot with a range where a shot has a moment. This is the document a camera take
+    in the replay window writes: ``start``/``stop`` are the samples the take spanned, and
+    ``camera_path`` the file the flown camera was written to -- relative to ``project`` like ``state``.
+    It renders through :func:`render_args` exactly as a hand-written clip does.
+    """
+    doc = {
+        "schema": SHOT_SCHEMA,
+        "id": shot_id(label, start.index, Path(state).parent.name, taken=taken),
+        "label": label,
+        "project": str(project),
+        "state": str(state),
+        "world": rec.meta.get("world") or "",
+        "from": round(float(start.sim_time), _TIME_DP),
+        "to": round(float(stop.sim_time), _TIME_DP),
+        "fps": float(rec.fps),
+        "camera_source": "take",
+        "size": size,
+        "no_ceiling": bool(no_ceiling),
+        "camera_path": str(camera_path),
+    }
+    if world:
+        doc["world_target"] = str(world)
+    doc["video"] = f"{doc['id']}.mp4"
+    if source:
+        doc["source"] = dict(source)
+    doc["provenance"] = {
+        "packages": dict(rec.meta.get("packages") or {}),
+        "samples": len(rec),
+        "span": [round(v, _TIME_DP) for v in rec.span],
+    }
+    return doc
+
+
 def _view_for(camera, world_view: dict | None) -> dict:
     """The ``sim.view`` that reproduces ``camera``, un-tracking a world that tracks.
 
@@ -151,6 +206,21 @@ def render_args(doc: dict, *, size: str | None = None, out: str | Path | None = 
     if doc.get("no_ceiling"):
         args.append("--no-ceiling")
     args += ["--size", str(size or doc["size"])]
+    if camera := doc.get("camera"):
+        # A fixed MJCF camera. Refused beside view/focus here for the same reason `roqsim render`
+        # refuses it: it owns its pose, so the other two would be silently ignored.
+        if doc.get("view") or doc.get("focus"):
+            raise ValueError(
+                f"shot {doc.get('id', '?')!r} names a fixed 'camera' and also a view/focus; "
+                "a fixed camera owns its pose, so it is one or the other."
+            )
+        args += ["--camera", str(camera)]
+    if (path := doc.get("camera_path")) is not None:
+        # A file name as given (relative to the project, like `state`), or the keyframe document
+        # inline as one JSON token -- what `roqsim render --camera-path` reads back.
+        args += ["--camera-path", path if isinstance(path, str) else _json(path)]
+    for spec in doc.get("overlays") or ():
+        args += ["--overlay", spec if isinstance(spec, str) else _json(spec)]
     target = out or doc.get("video") or doc.get("png")
     if not target:
         raise ValueError(
@@ -159,6 +229,12 @@ def render_args(doc: dict, *, size: str | None = None, out: str | Path | None = 
         )
     args += ["--out", str(target)]
     return args
+
+
+def _json(value) -> str:
+    import json
+
+    return json.dumps(value, separators=(",", ":"))
 
 
 def _moment_args(doc: dict) -> list[str]:

@@ -22,6 +22,10 @@ carry a replay on their own.
 **The keys a replay binds** are the ones a live run has no use for here: F8 saves a camera into the
 world a live run has, F9 toggles a recording take a replay has none of. A replay declares its own
 meanings for them, and the window's F1 list shows what this run actually has.
+
+**A camera take** (Shift+F9) makes the person the camera operator: while it runs and the replay
+plays, every frame notes where the window's camera is, and ending it writes a *clip* -- the span it
+covered and a camera path holding the flight -- that ``roqsim render`` reproduces.
 """
 
 from __future__ import annotations
@@ -64,7 +68,11 @@ PLAY = keybind.KeyBinding(
     "replay.play", GROUP_REPLAY, "F8", "play / pause", (keybind.Key(keybind.KEY_F8),)
 )
 SHOT = keybind.KeyBinding(
-    "replay.shot", GROUP_REPLAY, "F9", "write this moment as a shot", (keybind.Key(keybind.KEY_F9),)
+    "replay.shot",
+    GROUP_REPLAY,
+    "F9",
+    "write this moment as a shot; Shift+F9 starts / ends a camera take (a clip)",
+    (keybind.Key(keybind.KEY_F9),),
 )
 
 #: How often a replay with no transport window redraws while paused, so the camera stays draggable.
@@ -91,6 +99,7 @@ class ReplayKeys:
         self._scrub = 0
         self._play = 0
         self._shot = 0
+        self._take = 0
         self._last_play = 0.0
         self._last_shot = 0.0
         self._shift = KeyState.open({"Shift_L": "shift", "Shift_R": "shift"})
@@ -106,7 +115,12 @@ class ReplayKeys:
         elif code == keybind.KEY_F8:
             self._play += self._accept("_last_play")
         elif code == keybind.KEY_F9:
-            self._shot += self._accept("_last_shot")
+            # One key, two things: a moment (F9) or the start/end of a camera take (Shift+F9).
+            # Both write to the shots file, which is why they share the key.
+            if self._shift_held():
+                self._take += self._accept("_last_shot")
+            else:
+                self._shot += self._accept("_last_shot")
 
     def _accept(self, field: str) -> int:
         """1 for a press that is not an auto-repeat of the one before it, else 0."""
@@ -132,6 +146,11 @@ class ReplayKeys:
     def take_shot(self) -> bool:
         pending, self._shot = self._shot, 0
         return bool(pending)
+
+    def take_take(self) -> bool:
+        """Whether the camera take was toggled an odd number of times since the last call."""
+        pending, self._take = self._take, 0
+        return bool(pending % 2)
 
     def close(self) -> None:
         if self._shift is not None:
@@ -181,6 +200,9 @@ class Replay:
         #: following states no view, which is what leaves the render following it too.
         self.follow_recorded = bool(rec.has_camera)
         self._taken = [doc["id"] for doc in read_shots(self.shots)]
+        #: The camera take in progress: sim time -> the window's camera at that moment. Keyed by
+        #: time so scrubbing back and playing again overwrites rather than doubles.
+        self.take: dict[float, object] | None = None
 
     @property
     def shot_ids(self) -> tuple[str, ...]:
@@ -218,12 +240,15 @@ class Replay:
         """The playback bar, bottom right -- the corner the camera-mode notice does not use."""
         import mujoco
 
+        state = "playing" if self.playing else "paused"
+        if self.take is not None:
+            state += f"  ● take ({len(self.take)})"
         overlay.set_text(
             self.handle,
             SLOT_BAR,
             font=mujoco.mjtFontScale.mjFONTSCALE_150,
             gridpos=mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
-            text1="playing" if self.playing else "paused",
+            text1=state,
             text2=f"{self.timeline.bar()} {self.timeline.label()}",
         )
 
@@ -243,11 +268,15 @@ class Replay:
                 self.playing = not self.playing
             if self.keys.take_shot():
                 self.add_shot()
+            if self.keys.take_take():
+                self.toggle_take()
         if self.playing:
             _index, hit_end = self.timeline.advance(elapsed, self.speed)
             if hit_end:
                 self.playing = False
         self.show()
+        if self.take is not None and self.playing:
+            self.record_camera()
 
     def seek_time(self, when: float) -> int:
         index = self.timeline.seek_time(when)
@@ -293,6 +322,96 @@ class Replay:
             "shot %s at %.3f s -> %s (%d in the file)", doc["id"], doc["at"], self.shots, count
         )
         return doc
+
+    # -- a camera take: the person is the camera operator -------------------------------------
+
+    def toggle_take(self, label: str = "") -> dict | None:
+        """Start a camera take, or end the one running and write it as a clip.
+
+        While a take runs and the replay plays, every frame notes where the window's camera is.
+        Ending it writes those as a camera path beside the shots file and appends a **clip**
+        document spanning the take, so ``roqsim render`` reproduces the flight -- the person is the
+        camera operator, and the clip is what they shot. A take that saw no playing frame is dropped,
+        and says so: there is nothing to reproduce.
+        """
+        if self.take is None:
+            self.take = {}
+            log.info(
+                "camera take started at %.3f s; play, fly the camera, Shift+F9 to end it",
+                self.timeline.time,
+            )
+            return None
+        take, self.take = self.take, None
+        if not take:
+            log.warning("camera take ended with no frames: it was never playing. Nothing written.")
+            return None
+        return self.add_take(take, label)
+
+    def record_camera(self) -> None:
+        """Note the window's camera against the cursor's time -- one keyframe of the take."""
+        camera = live_camera(self.handle)
+        if camera is not None:
+            self.take[round(float(self.timeline.time), 6)] = camera
+
+    def add_take(self, take: dict, label: str = "") -> dict:
+        """Write ``take`` (sim time -> camera) as a camera path and the clip that plays it."""
+        from .camera_path import CameraPath, Keyframe
+        from .shots import clip_document
+
+        frames = [
+            Keyframe(
+                t,
+                {
+                    "lookat": [float(v) for v in cam.lookat],
+                    "distance": float(cam.distance),
+                    "azimuth": float(cam.azimuth),
+                    "elevation": float(cam.elevation),
+                },
+            )
+            for t, cam in sorted(take.items())
+        ]
+        path = CameraPath(frames, ease="linear", wrap=False)
+        start, stop = self.rec.at(frames[0].t), self.rec.at(frames[-1].t)
+        doc = clip_document(
+            self.rec,
+            start,
+            stop,
+            state=self.state,
+            camera_path="",  # named after the id below, which only clip_document hands out
+            project=self.project,
+            label=label,
+            size=self.render_size,
+            no_ceiling=self.no_ceiling,
+            source=self.source,
+            taken=tuple(self._taken),
+            world=self.world,
+        )
+        # Beside the shots file, where a shot's PNG lands; relative to the project like `state`.
+        where = self.shots.parent / f"{doc['id']}.camera.yaml"
+        path.write(where)
+        doc["camera_path"] = str(_relative(where, self.project))
+        if self.png_dir is not None:
+            doc["video"] = str(self.png_dir / f"{doc['id']}.mp4")
+        count = append_shot(self.shots, doc)
+        self._taken.append(doc["id"])
+        log.info(
+            "camera take %s: %d keyframes over %.3f-%.3f s -> %s (%d in the file)",
+            doc["id"],
+            len(frames),
+            doc["from"],
+            doc["to"],
+            self.shots,
+            count,
+        )
+        return doc
+
+
+def _relative(path: Path, project: Path) -> Path:
+    """``path`` relative to ``project`` where it lies under it, else as it is."""
+    try:
+        return path.resolve().relative_to(Path(project).resolve())
+    except ValueError:
+        return path
 
 
 def live_camera(handle):
