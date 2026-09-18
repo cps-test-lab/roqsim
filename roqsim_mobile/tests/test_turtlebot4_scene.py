@@ -793,3 +793,69 @@ def test_e6_driving_into_the_wall_presses_the_centre_bumper_zone():
         assert read().any_pressed is False
     finally:
         engine.shutdown()
+
+
+def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
+    """E7: the charging dock placed as the reference simulator places it -- 0.157 m ahead of the
+    robot's spawn, turned to face it -- with the halo emitter's ground truth published under the
+    dock's name, relative to the dock, as the receiver's is relative to the robot."""
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    world = {
+        "sim": {"timestep": 0.002},
+        "components": [
+            {"spawn_robot": {"model": "turtlebot4"}, "name": "robot"},
+            {
+                "spawn_model": {
+                    "model": "create3_dock",
+                    "pose": {
+                        "position": {"x": 0.157, "y": 0.0, "z": 0.0},
+                        "orientation": {"yaw": math.pi},
+                    },
+                },
+                "name": "standard_dock",
+                "components": [
+                    {
+                        "ground_truth_pose": {
+                            "child_frame": "standard_dock",
+                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
+                        },
+                        "name": "gt_dock",
+                    },
+                    {
+                        "ground_truth_pose": {
+                            "site": "halo_link",
+                            "relative_to": "base",
+                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
+                        },
+                        "name": "gt_halo",
+                    },
+                ],
+            },
+        ],
+    }
+    overrides = {"components": {"robot.oakd_camera": {"enabled": False}}}  # no GL needed
+    engine = Engine(load_config_from_dict(world, base_dir=Path("."), overrides=overrides))
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    try:
+        for _ in range(200):
+            engine.step()
+        poses = {
+            e.read()[0][0]: e
+            for e in engine.ctx.interface.all()
+            if e.backend.get("ros2", {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
+        }
+        assert set(poses) == {"standard_dock", "halo_link"}
+        _, dock_pos, dock_quat = poses["standard_dock"].read()[0]
+        assert np.allclose(dock_pos[:2], [0.157, 0.0], atol=1e-4)
+        assert abs(float(dock_quat[3])) == pytest.approx(1.0, abs=1e-3), "turned to face the robot"
+        _, halo, _ = poses["halo_link"].read()[0]
+        assert np.allclose(halo, [-0.06, 0.0, 0.0904], atol=1e-6)
+        # A static prop: the robot did not push it while settling next to it.
+        m = engine.ctx.model
+        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "std_dock_link") >= 0
+    finally:
+        engine.shutdown()
