@@ -822,6 +822,34 @@ Where thrust is bounded this is the flight envelope rather than a detail: see
 ``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight
 ratio of 1.
 
+A range sensor that is not a scanner
+------------------------------------
+
+The small range sensors a base carries -- IR proximity, ToF, ultrasonic, a downward cliff sensor --
+illuminate a narrow cone, and ``range_sensor`` models that cone as a small **grid** of rays from a
+site, published as one ``LaserScan`` with the rows concatenated::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - range_sensor: {site: cliff_front_left, range_min: 0.0001, max_range: 0.15, rate_hz: 62}
+         name: cliff_front_left                       # 1 ray: a cliff sensor
+       - range_sensor: {site: ir_front, h_rays: 5, v_rays: 5, h_fov: 0.1745, v_fov: 0.1745,
+                        range_min: 0.025, max_range: 0.2, rate_hz: 62}
+         name: ir_front                               # 5x5 rays: an IR proximity sensor
+
+* **It publishes returns, not verdicts.** A cliff detector asks whether the nearest return is
+  farther than the floor should be; a proximity sensor turns the nearest return into an intensity.
+  Both are the consumer's rule, applied to the grid this publishes, so a single sensor plugin serves
+  every such device and nothing in the simulator encodes what a cliff is.
+* **The site's** ``+x`` **is the boresight**, as for every ray sensor here. A cliff sensor is a site
+  pitched at the floor: with its boresight on the floor at a known standoff, a floor return reads
+  the standoff and a hole reads ``+inf`` (REP 117's no return), which is exactly the comparison a
+  cliff detector makes.
+* **The rest is** ``lidar``\ **'s.** Detection limits, ``too_close`` / ``no_return``, the noise
+  model, the fault switch and the static mount TF are inherited rather than restated; a fan's
+  ``rays`` / ``angle_*`` keys are refused, because the layout is the grid's.
+
 Injecting a physical fault
 --------------------------
 
