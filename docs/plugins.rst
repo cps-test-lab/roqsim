@@ -1195,6 +1195,29 @@ place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. 
 that command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
+**What a real stack expects of a base.** Three keys on ``diff_drive`` are a robot's own software
+stack's contract rather than the kinematics', and a world that runs such a stack sets them to that
+stack's values::
+
+   - diff_drive:
+       cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
+       odom_rate_hz: 62.0            # the rate odom (with its TF) and joint_states are published at
+       publish_joint_states: false   # when a joint_state_publisher covers the whole robot
+
+``cmd_vel_timeout`` is off by default because an in-process driver sets a twist once and steps; a
+stack republishes at a rate and expects a dead publisher to leave a stationary robot, and the stop
+goes through the same acceleration ramp as any command. ``publish_joint_states`` exists for the
+consumer that needs a passive joint -- a suspension travel, a caster swivel -- in the **same**
+message as the wheels: the core ``joint_state_publisher`` publishes every hinge and slide joint of
+the entity in one message, the way ``ros2_control``'s ``joint_state_broadcaster`` does, and the
+base's own two-joint message is then switched off rather than left to interleave with it::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - diff_drive: {publish_joint_states: false}
+       - joint_state_publisher: {rate_hz: 62}      # every joint, names without the spawn prefix
+
 ``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
 right -- plus the wheelbase and the widths its geometry comes from::
 

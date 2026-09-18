@@ -38,6 +38,11 @@ contact_location = "roqsim.plugins.contact_location:ContactLocationPlugin"
 # of the base frame, and a safety stack consumes a pressed/released bit per zone rather than a
 # point. Not latched -- a bumper releases -- so contact_monitor stays the trial's verdict.
 bumper = "roqsim.plugins.bumper:BumperPlugin"
+# Every hinge and slide joint of an entity in ONE joint_states message, driven or not -- what
+# ros2_control's joint_state_broadcaster publishes. A base controller reports only the joints it
+# drives; a consumer that needs a suspension travel or a caster swivel in the same message as the
+# wheels declares this and switches the base's own off.
+joint_state_publisher = "roqsim.plugins.joint_state_publisher:JointStatePublisherPlugin"
 # HOW HARD, over the same geometry: the normal force of those contacts integrated at the physics
 # step. A collision lasts tens of milliseconds, so the integral is not recoverable from any series
 # a publish rate can carry, and a bit cannot be graded by severity. No force threshold -- that is
