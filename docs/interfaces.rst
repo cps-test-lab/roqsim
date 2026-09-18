@@ -334,8 +334,11 @@ inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elem
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
 ``roqsim.worlds`` provider (to that provider's ``<world>.yaml``), or a path relative to the child
-YAML's dir. The parent's relative ``sim.world`` is absolutized so it keeps resolving from the child's
-location, and parent worlds may themselves ``extends`` (cycles are rejected).
+YAML's dir. The parent's relative ``sim.world`` keeps resolving from the child's location: a path
+parent's becomes an absolute path, and a package parent's becomes a ``<package>:<path>`` ref
+(``roqsim_scenes:depot/depot.xml``) -- by reference, never by where this interpreter has the package
+installed, so a run's provenance rebuilds on any machine that has the package. Parent worlds may
+themselves ``extends`` (cycles are rejected).
 
 ``disable`` selectors match a plugin's reserved ``name:`` **or** its config ``name`` field (e.g.
 ``spawn_model: {name: graspable_box, ...}``); a selector that matches nothing is an error, not a
