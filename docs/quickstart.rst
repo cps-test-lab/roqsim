@@ -639,6 +639,14 @@ what such a supervisor ends a run on. So the exit code and the document are a pu
 software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
 into a run's output by this: it is read on demand and answered.
 
+**What one check costs does not grow with the run.** Every check judges the newest minute, so each
+record is entered at the first row inside that window and the rows before it are never read; only
+what arrives afterwards is read incrementally, and the report notes how much of a long record was
+left unread. That is what makes it safe to run as a fresh process on every poll, inside the
+simulator's own container and memory budget: a reader that parsed a whole record each time would
+cost more on every poll for as long as the run lasted. A verdict is accordingly about the run *now*
+-- a robot that stood still earlier and has moved since is not reported.
+
 **Silence means different things live and after the fact**, which is why the two modes differ. Both
 records are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
 the only evidence of a stall is that nothing arrives. ``--watch`` is watching a run it expects to
