@@ -112,6 +112,11 @@ widen a family's dependencies to accommodate it.
   the names it uses (entities, plugin instances) are identical on both.
 - `ros2_ws/src/roqsim_ros_bridge/` — colcon package: ROS 2 bridge + `simulation_interfaces` (plugins).
 - `ros2_ws/src/roqsim_nav2_example/` — colcon package: minimal nav2 example + headless goal test.
+- `ros2_ws/src/roqsim_create3_toolbox/` — colcon package: the Create 3 / TurtleBot 4 stack over the
+  `turtlebot4` model -- the one simulator adapter the released `irobot_create_gz_toolbox` cannot
+  supply (bumper zones into hazard events), the launch files that run `irobot_create_nodes` and
+  `turtlebot4_node` unchanged, and the world with the base's contract to that stack. The stack is
+  never reimplemented here; the raw streams it reads are the model manifest's (`docs/create3_stack.rst`).
 - `docs/` — Sphinx user docs (roqsim) incl. `architecture.rst` (architecture + porting playbook).
 
 ## Golden rules

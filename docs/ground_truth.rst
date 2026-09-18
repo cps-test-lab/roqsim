@@ -49,6 +49,30 @@ Add it to a world (or a robot manifest)::
       - ros2_bridge: {}
 
 Config keys: ``body`` (base-body override; default the entity's registered base body -- the entity
-itself is the entry this one is nested under), ``frame_id`` (parent, default ``map``), ``child_frame`` (default
-``<model>_base_link_gt``), ``rate_hz`` (default ``30``), and the standard ``topics:`` hardwire map
+itself is the entry this one is nested under), ``site`` (a site of the entity instead of a body),
+``relative_to`` (``world``, the default, or ``base``), ``frame_id`` (parent, default ``map``, or the
+base body for a relative pose), ``child_frame`` (default ``<model>_base_link_gt`` for a body, the
+site's own name for a site), ``rate_hz`` (default ``30``), and the standard ``topics:`` hardwire map
 (``pose`` role; default relative ``tf`` → ``/tf``, or ``/gt/tf`` under the bridge ``gt`` prefix).
+
+**A site, and a pose relative to the base.** A robot's real description hangs sensors, emitters and
+receivers off its base as links, and a stack that reproduces a device from ground truth -- an
+optical-flow sensor from the true motion of its mount, a dock's infrared field from the true poses
+of emitter and receiver -- reads those links' poses off the simulator. Gazebo publishes a model's
+pose in the world and its links' poses *relative to the model*, and the consumer composes the two.
+The same plugin serves that, several instances on one entity, each its own frame::
+
+    components:
+      - spawn_robot: {model: turtlebot4}
+        name: robot
+        components:
+          - ground_truth_pose: {child_frame: turtlebot4, rate_hz: 62,
+                                topics: {pose: _internal/sim_ground_truth_pose}}
+            name: gt_base
+          - ground_truth_pose: {site: mouse, relative_to: base, rate_hz: 62,
+                                topics: {pose: _internal/sim_ground_truth_pose}}
+            name: gt_mouse
+
+A site is published under its own name, the parent of a relative pose defaults to the base body, and
+the numbers are ``base^-1 * pose`` -- constant for a rigid mount wherever the base stands. It works
+under a ``spawn_model`` prop as under a robot, which is how a dock's emitter gets a frame.
