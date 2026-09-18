@@ -50,7 +50,7 @@ SLOT_BAR = "replay"
 #: The overlay heading a replay's keys list under.
 GROUP_REPLAY = "replay"
 
-#: GLFW keycodes for the two function keys nothing in roqsim claims.
+#: GLFW keycodes for the two function keys a live run leaves unbound; a replay scrubs with them.
 KEY_F11, KEY_F12 = 300, 301
 
 #: How many samples a scrub key moves with Shift held. Coarse enough to cross a long recording,
