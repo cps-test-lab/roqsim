@@ -595,6 +595,34 @@ Three things about it:
   current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
   use, and the one a per-step control law needs.
 
+**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
+a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
+zone is its own ``bool`` endpoint under ``bumper/<zone>``::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - bumper:
+           zones: {bump_left: [0.94, 1.57], bump_front_center: [-0.31, 0.31], bump_right: [-1.57, -0.94]}
+           geoms: [shell]                 # the geoms that ARE the bumper; default: the whole subtree
+
+* **A zone is a bearing sector** -- ``[from, to]`` counter-clockwise from ``+x``, and a sector with
+  ``from > to`` wraps through ``+/-pi`` (a rear zone is ``[2.6, -2.6]``). That is the rule the
+  Create 3's own simulator uses to zone its bumper, and it holds for any shell that wraps a base; a
+  flat bumper bar declares one zone spanning its width. A contact outside every zone presses
+  nothing, which is what a bumper that is not there does, while ``contact_monitor`` still reports
+  the collision.
+* **Name the shell.** Gazebo's contact sensor sits on the bumper link alone, so a beam across the
+  robot's roof presses no switch there; ``geoms`` / ``geom_prefixes`` restrict this plugin the same
+  way. Left unset, the whole subtree is the shell, like ``contact_monitor``.
+* **A bool per zone, no vendor message.** A stack that wants its vendor's envelope around the bit
+  (a ``HazardDetection`` with the zone as its frame) assembles it in its own adapter node from
+  these topics; the simulator publishes the switch. The endpoints are ``lazy``, so a world whose
+  stack never subscribes pays nothing for them.
+* **Not latched, and read through the blackboard** (``bumper:<address>``) inside a control loop,
+  as ``contact_location`` is.
+
 **Whose friction is it?** ``contact_pair_override`` answers the question per-geom friction
 cannot. It is the pair-scoped member of a family: ``sim.contact_override`` sets the same three
 parameters for every contact in the world, and ``model_override`` changes named model fields mid-run. MuJoCo

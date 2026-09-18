@@ -34,6 +34,10 @@ contact_monitor = "roqsim.plugins.contact_monitor:ContactMonitorPlugin"
 # (a failed trial is not un-failed), while a tactile reading is only useful while it is current and
 # is replaced every step. This is what a bumper-driven or tactile controller reads in its loop.
 contact_location = "roqsim.plugins.contact_location:ContactLocationPlugin"
+# WHICH SWITCH, over the same contacts: a bumper shell is a few zones, each a range of bearings
+# of the base frame, and a safety stack consumes a pressed/released bit per zone rather than a
+# point. Not latched -- a bumper releases -- so contact_monitor stays the trial's verdict.
+bumper = "roqsim.plugins.bumper:BumperPlugin"
 # HOW HARD, over the same geometry: the normal force of those contacts integrated at the physics
 # step. A collision lasts tens of milliseconds, so the integral is not recoverable from any series
 # a publish rate can carry, and a bit cannot be graded by severity. No force threshold -- that is
