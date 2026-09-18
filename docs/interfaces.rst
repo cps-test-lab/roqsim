@@ -157,6 +157,12 @@ This replaces a rewrite that copied the world to a temporary file and appended t
 implemented twice in one experiment, in bash and in Python. Nothing is copied now, so the scene's
 relative path needs no fixing up either.
 
+Once up, the bridge holds the graph to its endpoints' types. A ROS 2 topic is one name and one
+type, and the middleware never connects a publisher of another type to it -- nor logs that it did
+not -- so a stack sending a plain ``Twist`` to a base subscribing ``TwistStamped`` shows up only as
+a robot that never moves. The bridge asks the graph once a second and fails the run when a peer of
+another type sits on one of its topics, naming the topic, both types and both sides.
+
 Choosing a GL backend
 ---------------------
 

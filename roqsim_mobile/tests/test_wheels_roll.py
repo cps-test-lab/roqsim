@@ -69,8 +69,11 @@ def _driven_wheel_joint(engine) -> str:
     raise AssertionError("no drive plugin attached")
 
 
-def _step(engine, n: int, model: str) -> None:
+def _step(engine, n: int, model: str, drive=None) -> None:
     """Step *n* times, skipping the test if this process has no offscreen GL backend.
+
+    *drive* re-issues the command every step: a base with a command watchdog (the TurtleBot 4's
+    expires one after 0.5 s, as its driver does) would otherwise stop before the check.
 
     MuJoCo binds its GL backend during ``import mujoco``, once per process, and a camera-carrying
     model renders in ``post_step`` -- so turtlebot4's OAK-D needs one. This file imports roqsim
@@ -80,6 +83,8 @@ def _step(engine, n: int, model: str) -> None:
     without a camera.
     """
     for _ in range(n):
+        if drive is not None:
+            drive()
         try:
             engine.step()
         except Exception as exc:  # noqa: BLE001 -- re-raised unless it is the backend error
@@ -117,8 +122,7 @@ def test_the_wheels_roll_rather_than_spin_backwards(model):
         gid = gids[0]
         handle = engine.ctx.blackboard.get("robot:z")
         _step(engine, 400, model)
-        handle.drive(SPEED, 0.0, 0.0)
-        _step(engine, 1600, model)
+        _step(engine, 1600, model, drive=lambda: handle.drive(SPEED, 0.0, 0.0))
 
         base_speed = abs(float(d.qvel[0]))
         assert base_speed > 0.5 * SPEED, (

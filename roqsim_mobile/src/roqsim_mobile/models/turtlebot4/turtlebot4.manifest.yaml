@@ -14,13 +14,26 @@ frames:
   - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
 
 components:
-  # Create 3 geometry lives in the plugin defaults. Its own joint_states are off because the
-  # joint_state_publisher below carries every joint -- the wheels AND the wheel-drop suspension --
-  # in one message, which is what a consumer deriving a controller-side state from each message
-  # (the Create 3 stack's dynamic_joint_states) needs. The stack's own contract keys
-  # (cmd_vel_timeout, odom_rate_hz, the TwistStamped command on diffdrive_controller/cmd_vel) are a
-  # world's to set, since a world that drives the base in-process wants none of them.
-  - diff_drive: {publish_joint_states: false}
+  # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
+  # the Create 3's own limits and driver behaviour (create3_docs api/safety, and
+  # irobot_create_control's control.yaml, which the reference simulator drives the same wheels with):
+  #   * 0.46 m/s, 1.9 rad/s and 0.9 m/s^2 per wheel -- the base's limits. The 0.306 m/s a robot
+  #     drives at with its safety features on is the Create 3 stack's clamp (motion_control,
+  #     `safety_override`), not the base's, and belongs to a world that runs that stack;
+  #   * a command expires after 0.5 s, and odometry publishes at 62 Hz.
+  # The command is a plain Twist on `cmd_vel`, as the Create 3 takes it; a TurtleBot 4's bringup
+  # renames the base's stamped input onto `cmd_vel`, and a world that runs such a stack says
+  # `stamped_cmd_vel: true`.
+  # Its own joint_states are off because the joint_state_publisher below carries every joint --
+  # the wheels AND the wheel-drop suspension -- in one message, which a consumer deriving a
+  # controller-side state from each message (the Create 3 stack's dynamic_joint_states) needs.
+  - diff_drive:
+      max_linear_vel: 0.46
+      max_angular_vel: 1.9
+      wheel_accel_limit: 0.9
+      cmd_vel_timeout: 0.5
+      odom_rate_hz: 62.0
+      publish_joint_states: false
   - joint_state_publisher: {rate_hz: 62}
   # The RPLIDAR A1 device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:31-33,
   # 114-117 @ 7fd29fb. Scan values are the device's except the angular resolution, which Clearpath's
@@ -42,6 +55,13 @@ components:
   - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
       camera: oakd_rgb                           # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).
+      # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish them.
+      topics:
+        image: oakd/rgb/preview/image_raw
+        image_compressed: oakd/rgb/preview/image_raw/compressed
+        camera_info: oakd/rgb/preview/camera_info
+        depth: oakd/rgb/preview/depth
+        depth_camera_info: oakd/rgb/preview/depth/camera_info
 
   # ---- The Create 3 base's own sensors, as the reference description carries them ------------
   #

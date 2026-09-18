@@ -63,8 +63,11 @@ TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # the model without its mounted sca
 # radius -- so at rest the frame itself sits 4.45 mm BELOW the ground plane, plus ~0.8 mm of soft
 # contact sink. Measured -0.0053. Negative is correct here and is not a sign convention slip.
 REST_Z = -0.0053
-# diff_drive's own defaults, which ARE the Create 3's rated limits (see the plugin docstring).
-MAX_V = 0.31
+# The Create 3's own limits, as the manifest states them: 0.46 m/s is the base's true maximum
+# (create3_docs api/safety: "true maximum speed of 0.460 m/s" once the safety clamp of 0.306 is
+# lifted), 1.9 rad/s the yaw rate irobot_create_control's control.yaml bounds it to. The 0.306 is
+# the Create 3 stack's clamp and no longer the plugin's or the model's.
+MAX_V = 0.46
 MAX_W = 1.90
 
 #: base_link -> shell_link, turtlebot4_description @ 7fd29fb urdf/standard/turtlebot4.urdf.xacro:43-47:
@@ -314,7 +317,7 @@ def test_b3_rotation_is_smooth_not_stick_slip():
 
 
 def test_b4_limit_enforcement():
-    """B4: the model saturates at the Create 3's rated limits, which are the plugin's defaults.
+    """B4: the model saturates at the Create 3's rated limits, which the manifest states.
 
     Over-shooting them would be the real failure (the controller would be given a ceiling the platform
     does not have), so the upper bound is tight and the lower one allows the measured slip deficit.
@@ -674,7 +677,21 @@ def test_e1_the_manifest_declares_the_create3_surface():
 
     assert _manifest_plugin("imu")["topic"] == "imu"
     assert _manifest_plugin("imu")["pos"] == pytest.approx([0.050613, 0.043673, 0.0844])
-    assert _manifest_plugin("diff_drive") == {"publish_joint_states": False}
+    assert _manifest_plugin("diff_drive") == {
+        "max_linear_vel": 0.46,
+        "max_angular_vel": 1.9,
+        "wheel_accel_limit": 0.9,
+        "cmd_vel_timeout": 0.5,
+        "odom_rate_hz": 62.0,
+        "publish_joint_states": False,
+    }
+    assert _manifest_plugin("oakd_camera")["topics"] == {
+        "image": "oakd/rgb/preview/image_raw",
+        "image_compressed": "oakd/rgb/preview/image_raw/compressed",
+        "camera_info": "oakd/rgb/preview/camera_info",
+        "depth": "oakd/rgb/preview/depth",
+        "depth_camera_info": "oakd/rgb/preview/depth/camera_info",
+    }
     assert _manifest_plugin("joint_state_publisher") == {"rate_hz": 62}
 
 
@@ -727,6 +744,22 @@ def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
         assert pos[names.index(f"wheel_drop_{side}_joint")] < 0.0225
 
 
+def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
+    """E3b: a Twist on cmd_vel as the Create 3 takes it, good for 0.5 s; odometry at 62 Hz."""
+    ins = {e.name: e for e in create3.ctx.interface.all() if e.direction == "in"}
+    assert ins["cmd_vel"].backend["ros2"] == {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
+    handle = create3.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
+    ins["cmd_vel"].write((0.2, 0.0, 0.0))
+    for _ in range(50):
+        create3.step()
+    assert handle.read_odom()[3] > 0.05
+    for _ in range(int(1.5 / create3.ctx.model.opt.timestep)):  # no further command: the watchdog
+        create3.step()
+    assert abs(handle.read_odom()[3]) < 0.02
+    (odom,) = [e for e in create3.ctx.interface.all() if e.name == "odom"]
+    assert odom.rate_hz == 62.0
+
+
 def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
     """E4: the base under the robot's name in the world, the mouse and IR receiver relative to it."""
     poses = [e for e in create3.ctx.interface.all() if e.name == "pose"]
@@ -774,9 +807,9 @@ def test_e6_driving_into_the_wall_presses_the_centre_bumper_zone():
     try:
         handle = engine.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
         read = engine.ctx.blackboard.get(f"bumper:{scan_mount.OWNER}.bumper")
-        handle.drive(0.3, 0.0, 0.0)
         pressed = set()
         for _ in range(int(20.0 / engine.ctx.model.opt.timestep)):
+            handle.drive(0.3, 0.0, 0.0)  # every step: the base's watchdog expires a command
             engine.step()
             r = read()
             if r.any_pressed:
@@ -786,8 +819,8 @@ def test_e6_driving_into_the_wall_presses_the_centre_bumper_zone():
             pytest.fail("never reached the wall")
         assert pressed == {"bump_front_center"}
         assert _by_topic(engine, "bumper/bump_front_center").read() is True
-        handle.drive(-0.3, 0.0, 0.0)
         for _ in range(int(1.0 / engine.ctx.model.opt.timestep)):
+            handle.drive(-0.3, 0.0, 0.0)
             engine.step()
         assert read().any_pressed is False
     finally:
