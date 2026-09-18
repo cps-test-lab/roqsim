@@ -252,6 +252,13 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.npz --at 12.5 --out t.png # one moment
    roqsim render --state run.npz --out run.webm        # the whole run as video
 
+With nothing said about the camera, a recording is shown as **the whole scene from above**: every
+geom in the world, angled rather than top-down, as close as the field of view allows -- and with the
+ceiling removed where the world had one, since a view from above would otherwise be a view of a
+roof. That is the video you get with no flags at all. A ``--view``, ``--focus`` or ``--camera``
+frames it otherwise and keeps the world as it is (``--no-ceiling`` is then yours to add), and a
+recording made in a window keeps the camera the person watched it through.
+
 Those three commands name no world, and that is not a shorthand: a recording carries the **resolved**
 component tree rather than a recipe, so it rebuilds from itself and needs only the model packages it
 referred to. What ran is recorded outright — including the actuator table, which says what control
@@ -305,6 +312,82 @@ it reports ``kind: any`` to say the answer is the weaker one.
 was found, not that the peak was high: a single sample of motion — a contact tick, a teleport — is not
 a run in which anything drove, and reading the peak alone would clip a stationary robot.
 
+``onset`` is a *moment*, and a moment goes anywhere a time does: ``--from onset-1``, ``--to onset+20``,
+``--at onset+5`` all resolve against the same table, found once.
+
+.. _camera-paths:
+
+Moving the camera: chase, path, and a person flying it
+------------------------------------------------------
+
+Three ways to say where the camera is during a clip, and they compose.
+
+A **chase camera** is the world's own ``track`` view, stated on the command line::
+
+   roqsim render --state run.npz --from onset --no-ceiling \
+       --view track=robot follow_heading=true distance=2.5 elevation=-20 azimuth=180 --out clip.mp4
+
+``track`` attaches ``lookat`` to the robot's body; ``follow_heading`` re-aims the camera each frame so
+``azimuth`` is an angle *behind the robot* (180 is directly behind) rather than a compass bearing.
+
+A **camera path** moves it along keyframes, from a file or inline as JSON:
+
+.. code-block:: yaml
+
+   # orbit.yaml -- one orbit around the driving robot, then settle behind it
+   ease: smoothstep          # linear | smoothstep
+   wrap: false               # let azimuth sweep past 180 (a full orbit)
+   keyframes:                # t: seconds, `onset`, or `onset+N`
+     - {t: onset,    azimuth: 180, distance: 2.5}
+     - {t: onset+8,  azimuth: 540, distance: 4.5, elevation: -35}
+     - {t: onset+11, azimuth: 540, distance: 2.5, elevation: -20}
+
+.. code-block:: bash
+
+   roqsim render --state run.npz --from onset --view track=robot follow_heading=true \
+       --camera-path orbit.yaml --out clip.mp4
+
+Each key -- ``lookat``, ``distance``, ``azimuth``, ``elevation`` -- is its own track: it interpolates
+between the keyframes that *state* it and holds beyond them, and a key no keyframe states is never
+written, so the base camera keeps it. That is what lets an ``azimuth``-only path orbit a chase camera
+while the robot's own turning still counts: under ``follow_heading`` the path animates the angle
+behind the robot, not a bearing. A keyframe may instead say where to stand and where to look, in
+metres -- ``{t: 0, eye: [9, -6, 5], target: [4, 2, 0.5]}`` -- which converts to the orbit keys at
+load. Azimuth takes the shortest arc between keyframes unless ``wrap: false``.
+
+**Checking a path costs a still, not a clip.** ``--at`` with ``--camera-path`` draws the frame the
+clip would have at that moment, ``--check`` prints the resolved keyframes without drawing, and
+``roqsim state --state run.npz --at T`` says where the robot is when choosing an ``eye``::
+
+   roqsim render --state run.npz --camera-path orbit.yaml --check
+   roqsim render --state run.npz --camera-path orbit.yaml --at onset+4 --out look.png
+
+That loop -- where is the robot, write keyframes, look, adjust -- is what makes a path something an
+agent can author as readily as a person.
+
+A **camera take** is a person as the camera operator. In the replay window (:ref:`below
+<replaying>`), **Shift+F9** starts a take; play, fly the camera with the mouse and the flight keys;
+Shift+F9 ends it. What lands is a *clip* in the shots file -- ``from``/``to`` spanning the take and a
+``camera_path`` file beside the shots file holding the flown camera, one keyframe per frame -- so
+``roqsim render`` reproduces the flight exactly as it was flown. Scrubbing back and playing again
+overwrites that stretch rather than doubling it, and a take that never played is dropped and says so.
+
+Drawing on the frames
+---------------------
+
+``--overlay`` paints an inset on every frame after the scene is rendered: ``clock`` puts the simulated
+time in a corner, and installed packages add their own -- a navigation package's ``costmap``, say --
+under the ``roqsim.overlays`` entry-point group (see :doc:`interfaces`). A bare name takes the
+defaults; options ride along as JSON, ``anchor``, ``width`` and ``margin`` being the ones every
+overlay shares::
+
+   roqsim render --state run.npz --overlay clock --out clip.mp4
+   roqsim render --state run.npz --overlay '{"clock": {"anchor": "bottom-left", "format": "{t:.1f} s"}}' --out clip.mp4
+   roqsim render --overlay list
+
+An overlay that nothing installed registers is refused before the world is built, naming what is
+available.
+
 Rendering fewer frames than the recording holds
 -----------------------------------------------
 
@@ -326,6 +409,8 @@ and again to stop; the window title carries ``[REC]`` while one is running, and 
 started without one. It is the way to capture the interesting minute of a long run rather than all
 of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
 same way.
+
+.. _replaying:
 
 Replaying a run
 ---------------
@@ -354,7 +439,8 @@ A replay opens **two** windows. MuJoCo's own takes a key callback and nothing el
 callback, no way to add a widget — so the slider, the timestamp box and the buttons are a small
 window beside it, which is also what drives the replay. Without a display for that window, or with
 ``--no-transport-window``, the overlay bar and the keys carry it on their own: **F11/F12** scrub (hold
-Shift to jump), **F8** plays and pauses, **F9** writes a shot. F1 lists what the run actually has.
+Shift to jump), **F8** plays and pauses, **F9** writes a shot, **Shift+F9** starts and ends a camera
+take (:ref:`camera-paths`). F1 lists what the run actually has.
 
 **A shot** is why a replay exists. A figure needs one moment of one run seen from one place, and
 neither half can be guessed at a command line: ``--at`` is a number nobody knows until they have
@@ -375,6 +461,12 @@ matter to anyone reading a shot: the render names **no world** (a recording rebu
 resolved tree only while no target is passed), and a shot framed by hand in a world whose ``sim.view``
 tracks the robot carries ``track: null`` and ``follow_heading: false``, because ``--view`` merges over
 that view and tracking would otherwise quietly ignore the ``lookat`` that was chosen.
+
+A **clip** is a shot with a range where a shot has a moment: ``from``/``to`` instead of ``at``, and
+``video`` instead of ``png``. It carries the same ``state``, ``view``, ``size`` and ``source``, plus
+two keys a still has no use for -- ``camera_path`` (a file, or the keyframe document inline) and
+``overlays`` (a list, in drawing order) -- and :func:`roqsim.shots.render_args` turns both into the
+flags above. A camera take writes one; so can a person or an agent.
 
 ``--capture-fps`` is **samples per simulated second**, so a recording plays back at 1× sim time
 whatever pacing the run used. Samples can only be taken on a physics step, so the rate is snapped onto

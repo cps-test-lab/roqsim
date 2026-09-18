@@ -173,6 +173,19 @@ class Recording:
         return bool(self.meta.get("camera_track")) and "cam" in (self._samples.dtype.names or ())
 
     @property
+    def has_ceiling(self) -> bool:
+        """Whether the recorded world put a roof on: a ``ceiling`` component it did not keep off.
+
+        Read from the provenance, so a render can decide before building whether a view from above
+        would be looking at that roof.
+        """
+        record = self.meta.get("world_model") or {}
+        for spec in record.get("components") or []:
+            if "ceiling" in (spec.get("ref"), spec.get("name")) and spec.get("enabled", True):
+                return bool((spec.get("config") or {}).get("keep", True))
+        return False
+
+    @property
     def world(self) -> str | None:
         return self.meta.get("world")
 
