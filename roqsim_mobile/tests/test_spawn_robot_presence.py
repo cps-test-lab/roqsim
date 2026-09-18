@@ -61,16 +61,21 @@ def test_the_default_is_present():
 
 
 def test_an_absent_robot_does_not_sink_through_the_floor():
-    """It is out of the contact set, so the floor is not holding it up -- something else must."""
+    """It is out of the contact set, so the floor is not holding it up -- something else must.
+
+    Measured on the subtree's centre of mass: an internal spring (a wheel-drop suspension extending
+    once nothing presses the wheels up) moves the base and the wheels against each other, which is
+    not a fall, and the centre of mass is what no internal force can move.
+    """
     engine = _engine(present=False)
     engine.setup()
     engine.reset()
     entity = _entity(engine)
     bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-    before = float(engine.ctx.data.xpos[bid][2])
+    before = float(engine.ctx.data.subtree_com[bid][2])
     for _ in range(2000):
         engine.step()
-    assert float(engine.ctx.data.xpos[bid][2]) == pytest.approx(before, abs=1e-3)
+    assert float(engine.ctx.data.subtree_com[bid][2]) == pytest.approx(before, abs=1e-3)
 
 
 def test_a_robot_spawned_in_one_episode_is_absent_again_in_the_next():

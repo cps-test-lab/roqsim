@@ -1,0 +1,10 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_common_bringup/config/mock_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation), so the node runs with the parameters its
+# maintainers ship; roqsim's TurtleBot 4 publishes on the topics named here.
+/**:
+  mock_publisher:
+    ros__parameters:
+      # Mock slip status publisher topic
+      slip_status_topic: slip_status
+      # Publishers rate
+      slip_status_publish_rate: 62.0

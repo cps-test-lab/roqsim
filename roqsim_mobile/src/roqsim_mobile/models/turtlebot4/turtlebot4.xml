@@ -31,8 +31,15 @@
 
   <default>
     <default class="tb4_wheel">
+      <!-- The contact impedance is explicit because the wheel rides on a suspension: MuJoCo's
+           default (0.02 s) time-constant impedance scales with the effective mass behind the
+           contact, which through the slide joint is the 0.25 kg wheel and not the base -- under
+           the base's weight that sinks the wheel millimetres into the floor and pitches the robot
+           nose-up. This is the caster's impedance, and holds the wheels' rest sink to the ~1 mm
+           the rigid axle had. -->
       <geom type="cylinder" size="0.03575 0.0075" quat="0.707107 0.707107 0 0"
-            mass="0.2" material="tb4_dark" friction="2.0 0.005 0.0001"/>
+            mass="0.2" material="tb4_dark" friction="2.0 0.005 0.0001"
+            solref="0.005 1" solimp="0.95 0.99 0.001"/>
     </default>
     <default class="tb4_visual">
       <!-- Visual-only: no contacts. NOTE: do NOT set density="0" here -- a
@@ -57,11 +64,27 @@
       <camera name="track" mode="track" pos="-1.2 -1.2 1.0"
               xyaxes="0.7 -0.7 0 0.3 0.3 0.9"/>
 
-      <!-- Chassis collision + inertia (create3 body cylinder) -->
+      <!-- Chassis collision (create3 body cylinder). It is also the bumper shell the manifest's
+           `bumper` plugin zones contacts on. -->
       <geom name="body_collision" type="cylinder" size="0.164 0.03" pos="0 0 0.0492"
             material="tb4_grey" group="3" friction="0.4 0.005 0.0001"/>
-      <inertial pos="0.0228 0 0.0742" mass="2.3"
-                diaginertia="0.02 0.02 0.03"/>
+      <!-- Inertia of everything rigidly on the base, sized to the robot's datasheet: the
+           TurtleBot 4 standard weighs 3.945 kg (Clearpath's user manual), so with the two
+           0.2 kg wheels, their 0.05 kg suspension bodies and the 0.17 kg RPLIDAR the manifest
+           mounts, 3.275 kg is on this body. The create3 body (2.3 kg, COM 2.28 cm forward,
+           irobot_create_description urdf/create3.urdf.xacro) with its bumper (0.1) and caster
+           (0.01) are taken as stated; the standard's add-ons -- shell, four weight blocks, four
+           tower standoffs, sensor plate, camera bracket, OAK-D (turtlebot4_description @ jazzy
+           urdf/standard/turtlebot4.urdf.xacro) -- are placed at their link origins but scaled
+           to the 0.865 kg the datasheet leaves for them, because that description's part masses
+           sum to 1.2 kg more than the robot weighs (four 0.26 kg standoffs, most of it). COM
+           11.2 cm up.
+           The mass is load-bearing for the wheel-drop suspension below: its springs hold 27 N,
+           and the ~33 N a base this heavy puts on the wheels rides them onto their hard stop as
+           the reference robot does, while the create3 body alone rode on the springs and
+           see-sawed onto its caster. -->
+      <inertial pos="0.0198 0 0.1123" mass="3.275"
+                diaginertia="0.0412 0.0409 0.0403"/>
 
       <!-- Visual meshes (no contacts). pos/quat are the URDF link transforms
            relative to base_link, composed from nav2_minimal_tb4_description's
@@ -110,12 +133,33 @@
       <site name="oakd_left"  pos="-0.0596 0.0375  0.24353" size="0.005" rgba="0 0 0 0"/>
       <site name="oakd_right" pos="-0.0596 -0.0375 0.24353" size="0.005" rgba="0 0 0 0"/>
 
-      <!-- Front bumper contact zone (create3 bumper). The reference bumper has
-           5 zones but only the front-centre is functional; this box wraps the
-           front arc of the body collision cylinder so a wall hit registers as a
-           touch force. Site must be a box/ellipsoid for a <touch> sensor. -->
-      <site name="bump_front_center" type="box" pos="0.175 0 0.05"
-            size="0.06 0.13 0.04" rgba="1 0.5 0 0"/>
+      <!-- The Create 3's own small sensors, as sites at the poses of
+           irobot_create_description/urdf/create3.urdf.xacro @ 1fccb76 (URDF z + the
+           6.42 cm base_link_z_offset that this MJCF's base_link already carries; a URDF rpy is
+           the quaternion qz(yaw) * qy(pitch), written out because MuJoCo's `euler` composes in
+           the other order). What each one publishes is the
+           manifest's business (range_sensor casts a ray grid from a site along its +x;
+           ground_truth_pose publishes a site's pose); the MJCF only says where they are.
+
+           Four cliff sensors, pitched 80 deg down from 1.92 cm over the floor: the boresight
+           meets the floor ~1.95 cm out, so a floor return is short and a hole is no return. -->
+      <site name="cliff_front_left"  pos="0.16  0.045 0.0192" quat="0.644996 -0.346788 0.541216 0.413285" size="0.003" rgba="0 0 0 0"/>
+      <site name="cliff_front_right" pos="0.16 -0.045 0.0192" quat="0.644996 0.346788 0.541216 -0.413285" size="0.003" rgba="0 0 0 0"/>
+      <site name="cliff_side_left"   pos="0.06  0.145 0.0192" quat="0.084061 -0.638906 0.070536 0.761418" size="0.003" rgba="0 0 0 0"/>
+      <site name="cliff_side_right"  pos="0.06 -0.145 0.0192" quat="0.084061 0.638906 0.070536 -0.761418" size="0.003" rgba="0 0 0 0"/>
+      <!-- Seven IR proximity sensors along the front arc, facing out through the bumper
+           (create3.urdf.xacro yaw 0, +/-0.436, +/-0.873, +/-1.309 rad). -->
+      <site name="ir_intensity_front_center_left"  pos="0.1540  0      0.0572" quat="1.000000 0.000000 0.000000 0.000000"      size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_front_center_right" pos="0.1396 -0.0651 0.0572" quat="0.976332 0.000000 0.000000 -0.216277" size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_front_left"         pos="0.1396  0.0651 0.0572" quat="0.976332 0.000000 0.000000 0.216277" size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_front_right"        pos="0.0990 -0.1180 0.0572" quat="0.906237 0.000000 0.000000 -0.422770" size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_left"               pos="0.0990  0.1180 0.0572" quat="0.906237 0.000000 0.000000 0.422770" size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_right"              pos="0.0399 -0.1488 0.0572" quat="0.793352 0.000000 0.000000 -0.608763"   size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_intensity_side_left"          pos="0.0399  0.1488 0.0572" quat="0.793352 0.000000 0.000000 0.608763"   size="0.003" rgba="0 0 0 0"/>
+      <!-- The optical-flow (mouse) sensor under the front left, and the omnidirectional IR
+           receiver on top at the front that sees the dock's emitter. -->
+      <site name="mouse"   pos="0.1015 0.087 0.0092" quat="0.923880 0.000000 0.000000 -0.382683" size="0.003" rgba="0 0 0 0"/>
+      <site name="ir_omni" pos="0.153  0     0.0992" size="0.003" rgba="0 0 0 0"/>
 
       <!-- Wheels. `armature` is reflected drivetrain inertia (a geared motor's rotor inertia x
            ratio^2) and it is load-bearing here, not a tuning knob: the bare wheel spin inertia is
@@ -124,13 +168,30 @@
            QACC at t = 0.036 s) and flings the robot across the floor at 4.5 m/s on a 0.2 m/s command.
            0.01 brings that to 0.39 and the drive tests to the datasheet, as on the Jackal;
            `test_a4_wheel_servo_is_stable_at_dt` asserts the ratio. -->
-      <body name="left_wheel" pos="0 0.1165 0.0402">
-        <joint name="left_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
-        <geom class="tb4_wheel"/>
+      <!-- Each wheel hangs from a wheel-drop suspension (create3.urdf.xacro's
+           wheel_with_wheeldrop): a vertical slide joint sprung to its dropped end, so the
+           robot's weight retracts it to the hard stop on the floor and lifting the robot lets
+           the wheel drop the 3 cm a wheel-drop detector reads. Numbers are the reference
+           description's (wheel_drop.urdf.xacro: 450 N/m at reference 0.03, damping 50,
+           0.05 kg); the axis points DOWN so that, as there, a positive travel is a drop. The
+           stop's impedance is explicit for the reason the wheel geoms' is. -->
+      <body name="wheel_drop_left" pos="0 0.1165 0.0402">
+        <joint name="wheel_drop_left_joint" type="slide" axis="0 0 -1" range="0 0.03"
+               stiffness="450" springref="0.03" damping="50" solreflimit="0.005 1"/>
+        <inertial pos="0 0 0" mass="0.05" diaginertia="2.1e-5 2.1e-5 2.1e-5"/>
+        <body name="left_wheel">
+          <joint name="left_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
+          <geom class="tb4_wheel"/>
+        </body>
       </body>
-      <body name="right_wheel" pos="0 -0.1165 0.0402">
-        <joint name="right_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
-        <geom class="tb4_wheel"/>
+      <body name="wheel_drop_right" pos="0 -0.1165 0.0402">
+        <joint name="wheel_drop_right_joint" type="slide" axis="0 0 -1" range="0 0.03"
+               stiffness="450" springref="0.03" damping="50" solreflimit="0.005 1"/>
+        <inertial pos="0 0 0" mass="0.05" diaginertia="2.1e-5 2.1e-5 2.1e-5"/>
+        <body name="right_wheel">
+          <joint name="right_wheel_joint" type="hinge" axis="0 1 0" armature="0.01"/>
+          <geom class="tb4_wheel"/>
+        </body>
       </body>
 
       <!-- Front ball caster. `priority="1"` is what makes it a REAL caster: MuJoCo
@@ -149,6 +210,14 @@
             friction="0.0001 0.0001 0.0001" solref="0.02 1" solimp="0.95 0.99 0.001"/>
     </body>
   </worldbody>
+
+  <contact>
+    <!-- A wheel is the base's GRANDchild now, through its suspension body, and MuJoCo excludes
+         contacts only between a body and its direct parent: without this the wheels inside the
+         body cylinder collide with it and the suspension is pushed to full drop. -->
+    <exclude body1="base_link" body2="left_wheel"/>
+    <exclude body1="base_link" body2="right_wheel"/>
+  </contact>
 
   <actuator>
     <!-- Velocity-servo wheel drives. ctrl = target wheel angular velocity. -->
@@ -171,8 +240,7 @@
     <jointpos name="right_wheel_pos" joint="right_wheel_joint"/>
     <jointvel name="left_wheel_vel"  joint="left_wheel_joint"/>
     <jointvel name="right_wheel_vel" joint="right_wheel_joint"/>
-    <!-- Front bumper: sum of base_link contact normal forces inside the
-         bump_front_center zone, so a wall hit on the body cylinder registers. -->
-    <touch name="bumper" site="bump_front_center"/>
+    <!-- The bumper is not a sensor element: the manifest's `bumper` plugin zones the contacts on
+         `body_collision` by bearing, as the Create 3's simulator does. -->
   </sensor>
 </mujoco>

@@ -31,6 +31,10 @@ roqsim-coverage = "roqsim_sensors.coverage.cli:main"
 # Sensor plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
 lidar = "roqsim_sensors.plugins.lidar:LidarPlugin"
+# The small range sensors a base carries -- IR proximity, ToF, ultrasonic, a downward cliff
+# sensor: a narrow cone cast as an h x v grid of rays and published as one LaserScan, rows
+# concatenated. What a cliff or an obstacle IS stays with the consumer.
+range_sensor = "roqsim_sensors.plugins.range_sensor:RangeSensorPlugin"
 livox_mid360 = "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin"
 seyond_robin_w1g = "roqsim_sensors.plugins.seyond_robin_w1g:SeyondRobinW1GPlugin"
 oakd_camera = "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"

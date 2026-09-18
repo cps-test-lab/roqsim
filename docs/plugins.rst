@@ -309,9 +309,10 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 
 .. code:: yaml
 
-   # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml
+   # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
    components:
-     - diff_drive: {}
+     - diff_drive: {publish_joint_states: false}
+     - joint_state_publisher: {rate_hz: 62}   # every joint, wheels and suspension, in one message
      - spawn_sensor:                  # the RPLIDAR A1 device model, at the vendor joint origin
          model: rplidar_a1
          parent_frame: shell_link
@@ -321,6 +322,18 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
        name: rplidar
      - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
          camera: oakd_rgb
+     - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
+     - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
+       name: cliff_front_left
+     - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+     - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
+       name: gt_mouse
+
+The second half is the Create 3 base's own sensor surface -- bumper zones, cliff and IR proximity
+sensors, IMU, and the ground-truth streams its vendor's simulator adapter reads -- declared on the
+model because the reference robot carries them, on the topic names that adapter's shipped parameter
+files expect, and ``lazy`` so a world that never launches that stack publishes none of it. See
+:doc:`create3_stack`.
 
 Selecting a policy
 ------------------
@@ -595,6 +608,34 @@ Three things about it:
   current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
   use, and the one a per-step control law needs.
 
+**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
+a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
+zone is its own ``bool`` endpoint under ``bumper/<zone>``::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - bumper:
+           zones: {bump_left: [0.94, 1.57], bump_front_center: [-0.31, 0.31], bump_right: [-1.57, -0.94]}
+           geoms: [shell]                 # the geoms that ARE the bumper; default: the whole subtree
+
+* **A zone is a bearing sector** -- ``[from, to]`` counter-clockwise from ``+x``, and a sector with
+  ``from > to`` wraps through ``+/-pi`` (a rear zone is ``[2.6, -2.6]``). That is the rule the
+  Create 3's own simulator uses to zone its bumper, and it holds for any shell that wraps a base; a
+  flat bumper bar declares one zone spanning its width. A contact outside every zone presses
+  nothing, which is what a bumper that is not there does, while ``contact_monitor`` still reports
+  the collision.
+* **Name the shell.** Gazebo's contact sensor sits on the bumper link alone, so a beam across the
+  robot's roof presses no switch there; ``geoms`` / ``geom_prefixes`` restrict this plugin the same
+  way. Left unset, the whole subtree is the shell, like ``contact_monitor``.
+* **A bool per zone, no vendor message.** A stack that wants its vendor's envelope around the bit
+  (a ``HazardDetection`` with the zone as its frame) assembles it in its own adapter node from
+  these topics; the simulator publishes the switch. The endpoints are ``lazy``, so a world whose
+  stack never subscribes pays nothing for them.
+* **Not latched, and read through the blackboard** (``bumper:<address>``) inside a control loop,
+  as ``contact_location`` is.
+
 **Whose friction is it?** ``contact_pair_override`` answers the question per-geom friction
 cannot. It is the pair-scoped member of a family: ``sim.contact_override`` sets the same three
 parameters for every contact in the world, and ``model_override`` changes named model fields mid-run. MuJoCo
@@ -793,6 +834,35 @@ to point with.
 Where thrust is bounded this is the flight envelope rather than a detail: see
 ``roqsim_aerial/README.md``, which measures a quadrotor's hover collapsing at a thrust-to-weight
 ratio of 1.
+
+A range sensor that is not a scanner
+------------------------------------
+
+The small range sensors a base carries -- IR proximity, ToF, ultrasonic, a downward cliff sensor --
+illuminate a narrow cone, and ``range_sensor`` models that cone as a small **grid** of rays from a
+site, published as one ``LaserScan`` with the rows concatenated::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - range_sensor: {site: cliff_front_left, range_min: 0.0001, max_range: 0.15, rate_hz: 62}
+         name: cliff_front_left                       # 1 ray: a cliff sensor
+       - range_sensor: {site: ir_front, h_rays: 5, v_rays: 5, h_fov: 0.1745, v_fov: 0.1745,
+                        range_min: 0.025, max_range: 0.2, rate_hz: 62}
+         name: ir_front                               # 5x5 rays: an IR proximity sensor
+
+* **It publishes returns, not verdicts.** A cliff detector asks whether the nearest return is
+  farther than the floor should be; a proximity sensor turns the nearest return into an intensity.
+  Both are the consumer's rule, applied to the grid this publishes, so a single sensor plugin serves
+  every such device and nothing in the simulator encodes what a cliff is.
+* **The site's** ``+x`` **is the boresight**, as for every ray sensor here. A cliff sensor is a site
+  pitched at the floor: with its boresight on the floor at a known standoff, a floor return reads
+  the standoff and a hole reads ``+inf`` (REP 117's no return), which is exactly the comparison a
+  cliff detector makes.
+* **The rest is** ``lidar``\ **'s.** Detection limits, ``too_close`` / ``no_return``, the noise
+  model, the fault switch and the static mount TF are inherited rather than restated; a fan's
+  ``rays`` / ``angle_*`` keys are refused, because the layout is the grid's. The endpoint's role is
+  ``range`` (renamed with ``topics: {range: ...}``), leaving ``scan`` to the robot's scanner.
 
 Injecting a physical fault
 --------------------------
@@ -1138,6 +1208,29 @@ something the geometry cannot do. That is the point of having the third one: a c
 place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. A planner that emits
 that command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
+
+**What a real stack expects of a base.** Three keys on ``diff_drive`` are a robot's own software
+stack's contract rather than the kinematics', and a world that runs such a stack sets them to that
+stack's values::
+
+   - diff_drive:
+       cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
+       odom_rate_hz: 62.0            # the rate odom (with its TF) and joint_states are published at
+       publish_joint_states: false   # when a joint_state_publisher covers the whole robot
+
+``cmd_vel_timeout`` is off by default because an in-process driver sets a twist once and steps; a
+stack republishes at a rate and expects a dead publisher to leave a stationary robot, and the stop
+goes through the same acceleration ramp as any command. ``publish_joint_states`` exists for the
+consumer that needs a passive joint -- a suspension travel, a caster swivel -- in the **same**
+message as the wheels: the core ``joint_state_publisher`` publishes every hinge and slide joint of
+the entity in one message, the way ``ros2_control``'s ``joint_state_broadcaster`` does, and the
+base's own two-joint message is then switched off rather than left to interleave with it::
+
+   - spawn_robot: {model: turtlebot4}
+     name: robot
+     components:
+       - diff_drive: {publish_joint_states: false}
+       - joint_state_publisher: {rate_hz: 62}      # every joint, names without the spawn prefix
 
 ``ackermann_drive`` needs the model's four names -- two steered joints and two driven ones, left then
 right -- plus the wheelbase and the widths its geometry comes from::
