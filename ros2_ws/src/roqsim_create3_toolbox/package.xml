@@ -25,7 +25,6 @@
   <exec_depend>turtlebot4_node</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
-  <exec_depend>roqsim_ros_bridge</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
 
