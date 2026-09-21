@@ -3,27 +3,15 @@
 This plugin only *places* the robot (build + initial pose). Its kinematics/odometry live in a controller plugin
 (e.g. :mod:`roqsim.plugins.diff_drive`), which finds this robot via the entity registry.
 
-Config::
-
-    spawn_robot:
-      model: turtlebot4     # bundled model name, filename, or absolute path
-      namespace: ""         # optional transport scope; the robot's endpoints inherit it
-      prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
-      pose:                 # the spawn pose, as SpawnEntity states one (see below)
-        position:    {x: 0.0, y: 0.0}
-        orientation: {yaw: 0.0}
-      base_joint: base_free # free joint used to place the base
-      actuators:            # OPTIONAL: what law this robot's actuators run under, and their gains.
-        control: velocity   #   position | velocity | effort | impedance; the model's own if unset
-        d: 40               #   N*m*s/rad -- see roqsim.actuators for the gain of each control
-        each:               #   per-actuator, on top of the shared keys above
-          front_left_wheel_motor: {d: 25}
-      present: true         # false: compiled in, but absent until it is spawned
-      frames:               # OPTIONAL: fixed links beyond the manifest's own (see below)
-        - {name: cover_link, parent: body_link, pos: [0, 0, 0.05], rpy: [0, 0, 0]}
+Every key is declared in :attr:`SpawnRobotPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins
+describe spawn_robot`` and the plugin catalog publish. ``model`` is required: a bundled model name, a
+filename, or an absolute path. ``actuators:`` overrides the law this robot's actuators run under and
+their gains (:mod:`roqsim.actuators`), e.g. ``{control: velocity, d: 40, each:
+{front_left_wheel_motor: {d: 25}}}``.
 
 **Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
-after it -- names the fixed links the vendor description chains and the MJCF flattens
+after it, as ``frames: [{name: cover_link, parent: body_link, pos: [0, 0, 0.05]}]`` -- names the
+fixed links the vendor description chains and the MJCF flattens
 (:mod:`roqsim.frames`). Each becomes a site ``<prefix><name>`` on its parent's body at build, so a
 mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and is published at configure
 as a static transform ``parent -> name`` read from the compiled model, in the robot's namespace.
@@ -148,7 +136,7 @@ class SpawnRobotPlugin(Plugin):
     #: would write a ``lidar`` key here that nothing reads, while the real lidar keeps its value.
     #: The load names that component's address (:mod:`roqsim.config`); the schema refuses the rest.
     CONFIG_SCHEMA = {
-        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "model": Field(str, required=True, doc="bundled model name, filename, or absolute path"),
         "namespace": Field(str, default="", doc="transport scope the robot's endpoints inherit"),
         "prefix": Field(str, default="", doc="MJCF name prefix; distinct per robot"),
         "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
@@ -173,14 +161,15 @@ class SpawnRobotPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
+        settings = self.settings
         self.robot_name = self.address
-        self.prefix = self.config.get("prefix", "")
+        self.prefix = settings.prefix
         #: The base orientation as a quaternion ``[w, x, y, z]``: whatever rotation the pose stated,
         #: which is what makes it the same value the spawn service accepts.
         self.quat = [1.0, 0.0, 0.0, 0.0]
         #: The origin at the model's own resting height, for a world that states no pose.
         x, y, z = 0.0, 0.0, None
-        if (pose := self.config.get("pose")) is not None:
+        if (pose := settings.pose) is not None:
             position, self.quat = parse_pose(pose)
             x, y, z = position
         #: ``(x, y, yaw)``: what the entity's ``meta`` advertises, and what a consumer that can only
@@ -192,7 +181,7 @@ class SpawnRobotPlugin(Plugin):
         self.spawn_z = z
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
-        self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
+        self.base_joint = self.prefix + settings.base_joint
         #: Every actuator's final law and gains, filled in :meth:`build` and published at
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
@@ -200,28 +189,29 @@ class SpawnRobotPlugin(Plugin):
         self.frames: list = []
 
     def validate_config(self, config: dict) -> list[str]:
+        # Presence and type are the schema's; what is left is what resolving the values says.
         errors = []
-        if not config.get("model"):
-            errors.append("'model' is required")
-        else:
+        settings = self.settings_for(config)
+        if isinstance(settings.model, str) and settings.model:
             try:
-                resolve_model(config["model"], base_dir=self.base_dir)
+                resolve_model(settings.model, base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
         try:
-            parse_frames(config.get("frames"), "spawn_robot")
+            parse_frames(settings.frames, "spawn_robot")
         except PluginError as exc:
             errors.append(str(exc))
-        errors += validate_actuators(config.get("actuators"))
-        if "pose" in config:
+        errors += validate_actuators(settings.actuators)
+        if settings.pose is not None:
             try:
-                parse_pose(config["pose"])
+                parse_pose(settings.pose)
             except PoseError as exc:
                 errors.append(str(exc))
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        asset = resolve_model(self.config["model"], base_dir=self.base_dir)
+        settings = self.settings
+        asset = resolve_model(settings.model, base_dir=self.base_dir)
         child = mujoco.MjSpec.from_file(str(asset.path))
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
@@ -230,7 +220,7 @@ class SpawnRobotPlugin(Plugin):
         # rewrite, and -- when a joint runs under `impedance` -- the body-level gravity term that
         # makes a soft stiffness hold a pose instead of folding under the robot's own weight.
         self.actuator_table = resolve_actuators(
-            child, self.config.get("actuators"), model_name=str(self.config["model"])
+            child, settings.actuators, model_name=str(settings.model)
         )
         # Per body, not per spec, because a robot that stands on the ground has both kinds of
         # body: a mobile manipulator's ARM links are held up by its own motors, while the base
@@ -243,14 +233,12 @@ class SpawnRobotPlugin(Plugin):
         # closed the same way rather than left as the one place a drive carries its own weight
         # and is not modelled doing it.
         apply_gravity_compensation(child, self.actuator_table)
-        self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
+        self.rest_z = _keyframe_base_z(child, settings.base_joint)
         _strip_keyframes(child)
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other
         # name in it, and a mount declared after this robot can hang from it.
-        where = f"spawn_robot {self.robot_name} ({self.config['model']})"
-        self.frames = parse_frames(
-            manifest_frames(asset.path) + list(self.config.get("frames") or []), where
-        )
+        where = f"spawn_robot {self.robot_name} ({settings.model})"
+        self.frames = parse_frames(manifest_frames(asset.path) + list(settings.frames or []), where)
         add_frame_sites(child, self.frames, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
@@ -288,12 +276,12 @@ class SpawnRobotPlugin(Plugin):
                 body=base_body,
                 meta={
                     "prefix": self.prefix,
-                    "model": self.config["model"],
+                    "model": self.settings.model,
                     "initial_pose": self.initial_pose,
                     "base_joint": self.base_joint,
                     # Inherited by the robot's endpoint-producing plugins (diff_drive, lidar), so
                     # the manifest-injected defaults need no namespace plumbing of their own.
-                    "namespace": self.config.get("namespace", ""),
+                    "namespace": self.settings.namespace,
                 },
             )
         )
@@ -317,9 +305,7 @@ class SpawnRobotPlugin(Plugin):
                 f"spawn_robot {self.robot_name}",
             )
             ctx.interface.add(
-                static_tf_endpoint(
-                    "frames", self.robot_name, self.config.get("namespace", ""), transforms
-                )
+                static_tf_endpoint("frames", self.robot_name, self.settings.namespace, transforms)
             )
         self._apply_initial_pose(ctx)
 

@@ -73,19 +73,10 @@ stop the robot: that is trial logic, and a substrate that decides when a run end
 experiment's decision (the same line ``contact_monitor`` draws about a collision). A scenario reads
 the endpoint and ends the trial itself.
 
-Config::
-
-    energy_monitor:
-      # The entity is the one this entry is NESTED UNDER (`requires_owner`): a battery belongs to a
-      # robot, and which actuators count is decided by which ones move it.
-      actuators: []            # names to meter (default: every actuator driving this entity's bodies)
-      efficiency: 1.0          # mechanical -> electrical; 0 < e <= 1
-      idle_w: 0.0              # W drawn regardless of motion (compute, sensors)
-      resistive_w_per_nm2: 0.0 # winding loss k in k*tau^2; a number, or {actuator_name: k}
-      regenerative: false      # credit negative mechanical power back
-      capacity_wh: 0.0         # 0 = no battery modelled: energy is still reported, charge is not
-      voltage: 0.0             # V, nominal; 0 = unknown, and the current is then not reported
-      rate_hz: 5.0             # endpoint publish rate
+Every key is declared in :attr:`EnergyMonitorPlugin.CONFIG_SCHEMA`, with its default, unit and
+bound, which is what ``roqsim plugins describe energy_monitor`` and the plugin catalog publish. The
+entity is the one this entry is nested under (``requires_owner``): a battery belongs to a robot, and
+which actuators count is decided by which ones move it.
 
 Endpoint ``battery`` (out) reads an :class:`EnergyReport` and carries a ``sensor_msgs/BatteryState``
 hint on ``battery_state`` -- the message a real platform publishes, so a stack that already watches a
@@ -155,8 +146,6 @@ class EnergyReader:
 
 
 class EnergyMonitorPlugin(Plugin):
-    """See the module docstring."""
-
     parallel_safe = False  # post_step accumulates state
 
     #: A battery belongs to the robot it powers.
@@ -197,14 +186,18 @@ class EnergyMonitorPlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.robot = self.entity
-        self.actuator_names = list(self.config.get("actuators") or [])
-        self.efficiency = float(self.config.get("efficiency", 1.0))
-        self.idle_w = float(self.config.get("idle_w", 0.0))
-        self.resistive = self.config.get("resistive_w_per_nm2", 0.0)
-        self.regenerative = bool(self.config.get("regenerative", False))
-        self.capacity_wh = float(self.config.get("capacity_wh", 0.0))
-        self.voltage = float(self.config.get("voltage", 0.0))
-        self.rate_hz = float(self.config.get("rate_hz", 5.0))
+        # Copied once, because post_step reads them every physics step. Taken from the settings as
+        # they are rather than converted here: a value of the wrong type is the schema check's to
+        # report, by name, and a float() here would raise first and report nothing.
+        settings = self.settings
+        self.actuator_names = settings.actuators
+        self.efficiency = settings.efficiency
+        self.idle_w = settings.idle_w
+        self.resistive = settings.resistive_w_per_nm2
+        self.regenerative = settings.regenerative
+        self.capacity_wh = settings.capacity_wh
+        self.voltage = settings.voltage
+        self.rate_hz = settings.rate_hz
         self._ctx: SimContext | None = None
         self._actuators: np.ndarray | None = None
         self._resistive_k: np.ndarray | None = None
@@ -222,13 +215,12 @@ class EnergyMonitorPlugin(Plugin):
         # Types, defaults and the closed bounds are the schema's; what is left is what it has no word
         # for: two open bounds, and the entries of a per-actuator mapping.
         errors = self.validate_topics(config)
-        efficiency = config.get("efficiency", 1.0)
-        if isinstance(efficiency, (int, float)) and efficiency <= 0.0:
+        settings = self.settings_for(config)
+        if isinstance(settings.efficiency, float) and settings.efficiency <= 0.0:
             errors.append("'efficiency' must be > 0 -- it divides the mechanical power")
-        rate_hz = config.get("rate_hz", 5.0)
-        if isinstance(rate_hz, (int, float)) and rate_hz <= 0:
+        if isinstance(settings.rate_hz, float) and settings.rate_hz <= 0:
             errors.append("'rate_hz' must be > 0")
-        errors.extend(self._resistive_errors(config.get("resistive_w_per_nm2", 0.0)))
+        errors.extend(self._resistive_errors(settings.resistive_w_per_nm2))
         return errors
 
     @staticmethod

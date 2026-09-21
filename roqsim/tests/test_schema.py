@@ -304,17 +304,103 @@ def test_a_validator_that_raises_is_reported_rather_than_escaping():
     assert "validate_config raised: boom" in errors[1]
 
 
-def test_the_whole_path_raises_for_a_world():
-    """Through instantiate_plugins, which is what a world actually meets.
-
-    A misspelt key rather than a mistyped one, because a plugin reads its config in ``__init__``
-    and instances are built before anything is validated -- so ``above_z: high`` raises out of
-    ``float()`` first, and never reaches the checker that would have named it.
-    """
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"above_Z": 2.0}, "did you mean 'above_z'"),
+        # Mistyped, too: the plugin reads its settings rather than converting them in `__init__`,
+        # so a wrong type reaches the checker that names it instead of raising out of a float().
+        ({"above_z": "high"}, "'above_z' must be float"),
+    ],
+)
+def test_the_whole_path_raises_for_a_world(config, expected):
+    """Through instantiate_plugins, which is what a world actually meets."""
     from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
 
-    cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{"ceiling": {"above_Z": 2.0}, "name": "roof"}]}
-    )
-    with pytest.raises(PluginError, match="did you mean 'above_z'"):
+    cfg = load_config_from_dict({"sim": {}, "plugins": [{"ceiling": config, "name": "roof"}]})
+    with pytest.raises(PluginError, match=expected):
         instantiate_plugins(cfg)
+
+
+# -- settings: the config read through the schema ------------------------------------------------
+
+
+def test_settings_fill_the_declared_default_for_a_key_left_out():
+    settings = _Declared({"mass": 2.0}).settings
+    assert settings.mass == 2.0
+    assert settings.mode == "soft" and settings.count == 1 and settings.loud is False
+    assert settings.pos is None, "no default declared: absent reads as None"
+
+
+def test_settings_read_a_yaml_integer_as_the_float_the_schema_accepted():
+    value = _Declared({"mass": 2}).settings.mass
+    assert value == 2.0 and isinstance(value, float)
+    assert isinstance(_Declared({"count": 3}).settings.count, int), "an int key stays an int"
+
+
+def test_settings_refuse_a_name_the_schema_does_not_declare():
+    with pytest.raises(AttributeError, match="declares no setting 'mas'. Declared: mass, mode"):
+        _ = _Declared({}).settings.mas
+
+
+def test_settings_are_read_only():
+    settings = _Declared({"mass": 1.0}).settings
+    with pytest.raises(AttributeError, match="read-only"):
+        settings.mass = 3.0
+    with pytest.raises(AttributeError, match="read-only"):
+        del settings.mass
+
+
+def test_a_mutable_default_is_a_fresh_copy_per_read():
+    """A list default mutated by one reader must not become every other instance's default."""
+    schema = {"rays": Field(list, default=[32, 24])}
+
+    class _Rays(Plugin):
+        CONFIG_SCHEMA = schema
+
+    _Rays({}).settings.rays.append(99)
+    assert _Rays({}).settings.rays == [32, 24]
+    assert schema["rays"].default == [32, 24]
+
+
+def test_a_value_of_the_wrong_type_reads_as_given_and_is_reported_by_the_check():
+    """A view that fell back to the default would run the plugin on a value nobody stated."""
+    plugin = _Declared({"mass": "heavy"})
+    assert plugin.settings.mass == "heavy"
+    assert plugin.config_errors(plugin.config) == ["'mass' must be float, got str ('heavy')"]
+
+
+def test_settings_for_reads_the_config_it_is_given():
+    """What a validator uses: the config it is asked about, not the instance's own."""
+    plugin = _Declared({"mass": 1.0})
+    assert plugin.settings_for({"mass": 5.0}).mass == 5.0
+    assert plugin.settings.mass == 1.0
+
+
+def test_a_plugin_without_a_schema_has_no_settings():
+    with pytest.raises(AttributeError, match="declares no CONFIG_SCHEMA"):
+        _ = _Undeclared({}).settings
+
+
+def test_a_schema_plugin_publishes_its_parameters_from_the_declaration():
+    """The list a caller reads and the list validation runs on are one list."""
+    from roqsim.introspection import get_plugin_details
+    from roqsim.plugins.energy_monitor import EnergyMonitorPlugin
+
+    details = get_plugin_details("energy_monitor")
+    assert [p["name"] for p in details["parameters"]] == list(EnergyMonitorPlugin.CONFIG_SCHEMA)
+    idle = next(p for p in details["parameters"] if p["name"] == "idle_w")
+    assert idle["example"] == "0.0" and idle["doc"].startswith("W; ")
+    mass = next(p for p in get_plugin_details("payload")["parameters"] if p["name"] == "mass")
+    assert mass["example"] is None and mass["doc"].startswith("required, kg; ")
+
+
+def test_the_docs_page_renders_a_schema_as_a_config_block():
+    from roqsim.introspection import _parse_config_block, schema_config_block
+    from roqsim.plugins.ceiling import CeilingPlugin
+
+    block = schema_config_block("ceiling", CeilingPlugin)
+    assert block[0] == "Config (declared in ``CONFIG_SCHEMA`` -- unknown keys are refused)::"
+    parsed = _parse_config_block("\n".join(block))
+    assert [f["name"] for f in parsed] == ["keep", "above_z"]
+    assert parsed[1]["example"] == "2.5"

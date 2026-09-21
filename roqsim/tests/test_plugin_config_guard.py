@@ -19,8 +19,9 @@ enforced where the drift happens, in the plugin's own source:
 Static, over the AST of each plugin class and the plugin bases it inherits from, for every entry of
 the ``roqsim.plugins`` group that is installed. It sees a key written as a literal -- ``config.get
 ("rate_hz")``, ``self.config["model"]``, ``"pose" in config``, or a loop over a literal tuple of
-names -- read from ``self.config``, ``spec.config``, or a ``config``/``cfg`` parameter or alias. A key
-computed at runtime, or read by a helper outside the class, is out of its reach.
+names -- read from ``self.config``, ``spec.config``, or a ``config``/``cfg`` parameter or alias, and
+an attribute of ``self.settings`` or ``self.settings_for(...)``. A key computed at runtime, or read by
+a helper outside the class, is out of its reach.
 """
 
 from __future__ import annotations
@@ -101,6 +102,15 @@ def _key_of(node: ast.AST, names: set[str]) -> ast.AST | None:
     return None
 
 
+def _is_settings(node: ast.AST, names: set[str]) -> bool:
+    """``self.settings``, ``self.settings_for(...)``, or a name bound to either."""
+    if isinstance(node, ast.Attribute) and node.attr == "settings":
+        return isinstance(node.value, ast.Name) and node.value.id == "self"
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr == "settings_for"
+    return isinstance(node, ast.Name) and node.id in names
+
+
 def _literal_names(node: ast.AST) -> list[str] | None:
     if not isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         return None
@@ -120,10 +130,17 @@ def _keys_read(cls: type) -> set[str]:
         for node in ast.walk(fn):
             if isinstance(node, ast.Assign) and _is_config(node.value, names):
                 names |= {t.id for t in node.targets if isinstance(t, ast.Name)}
+        views = set()
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Assign) and _is_settings(node.value, set()):
+                views |= {t.id for t in node.targets if isinstance(t, ast.Name)}
         for node in ast.walk(fn):
             key = _key_of(node, names)
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
                 keys.add(key.value)
+            # `self.settings.rate_hz`, `settings = self.settings_for(config); settings.model`
+            if isinstance(node, ast.Attribute) and _is_settings(node.value, views):
+                keys.add(node.attr)
         # `for key in ("a", "b"): config.get(key)` -- resolved per loop, so two loops reusing one
         # variable name each contribute their own names.
         for loop in ast.walk(fn):
@@ -193,6 +210,20 @@ def test_a_schema_is_strict_unless_it_says_why_not(name, cls):
     )
 
 
+@pytest.mark.parametrize(
+    ("name", "cls"), [p for p in PLUGINS if p[1].CONFIG_SCHEMA], ids=lambda v: str(v)
+)
+def test_a_plugin_with_a_schema_writes_no_config_block_of_its_own(name, cls):
+    """Its keys are published from the schema; a hand-written copy beside it is one that drifts."""
+    from roqsim.introspection import _config_header_span, _own_or_module_doc
+
+    doc = _own_or_module_doc(cls)
+    assert _config_header_span(doc.splitlines()) is None, (
+        f"{name} declares a CONFIG_SCHEMA and also writes a Config:: block; drop the block -- "
+        f"describe and the docs page render the schema"
+    )
+
+
 # -- the exemptions stay true -----------------------------------------------------------------------
 
 
@@ -241,7 +272,9 @@ class _Reads(Plugin):
     def configure(self, ctx):
         # Not this plugin's config: the world's, reached through the context.
         ctx.config.get("sim")
+        settings = self.settings_for(self.config)
+        return self.settings.h, settings.i
 
 
 def test_the_reader_sees_every_literal_spelling_and_no_other_config():
-    assert _keys_read(_Reads) == {"a", "b", "c", "d", "e", "f", "g"}
+    assert _keys_read(_Reads) == {"a", "b", "c", "d", "e", "f", "g", "h", "i"}

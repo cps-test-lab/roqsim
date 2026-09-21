@@ -195,7 +195,7 @@ def test_show_fov_on_a_camera_model_synthesises_a_frustum():
 def test_fov_alpha_out_of_range_is_rejected():
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
-    errors = SpawnSensorPlugin().validate_config({"model": "mid360", "fov_alpha": 1.5})
+    errors = SpawnSensorPlugin().config_errors({"model": "mid360", "fov_alpha": 1.5})
     assert any("fov_alpha" in e for e in errors)
 
 
@@ -441,9 +441,9 @@ def test_fov_rays_config_validation():
 
     plugin = SpawnSensorPlugin()
     assert any(
-        "fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [1, 4]})
+        "fov_rays" in e for e in plugin.config_errors({"model": "d435", "fov_rays": [1, 4]})
     )
-    assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
+    assert any("fov_rays" in e for e in plugin.config_errors({"model": "d435", "fov_rays": [8]}))
 
 
 def test_lidar_sector_is_clipped_by_the_walls():

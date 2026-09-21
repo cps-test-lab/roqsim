@@ -1132,6 +1132,9 @@ the published description come from one place::
            "body": Field(str, default="", static=True, doc="body to load (default: the root body)"),
        }
 
+       def configure(self, ctx):
+           mass = self.settings.mass                  # the configured value, or the default
+
        def validate_config(self, config):
            return [...]                               # whatever only this plugin knows
 
@@ -1140,10 +1143,22 @@ the published description come from one place::
 adds; there is no call to remember. A schema the catalog publishes and nothing checks would be
 prose with a type annotation.
 
-``roqsim plugins describe payload`` then carries a ``schema`` block beside the docstring-parsed
-``parameters``: the same keys with their **types, defaults, units and bounds**. That is what a caller
-generating a world needs and what prose cannot give it -- and unlike a comment it cannot drift from
-behaviour, because validation runs on it.
+``roqsim plugins describe payload`` then carries a ``schema`` block: the keys with their **types,
+defaults, units and bounds**. That is what a caller generating a world needs and what prose cannot
+give it -- and unlike a comment it cannot drift from behaviour, because validation runs on it. The
+``parameters`` list every plugin publishes, and this page's ``Config::`` block for the plugin, are
+derived from the same declaration, so a plugin with a schema writes **no** ``Config::`` block of its
+own: a second copy of its keys in prose is the one that drifts, and a test refuses it.
+
+**It is also how the plugin reads its config.** ``self.settings`` is the config seen through the
+schema: ``self.settings.mass`` is the configured value, or the declared default where the world left
+the key out, so a default is written once rather than again in ``__init__`` and ``validate_config``.
+A name the schema does not declare raises ``AttributeError`` (a ``config.get`` of a misspelt key
+returns ``None`` and runs on it), and nothing can be assigned to it. ``validate_config`` reads the
+config it is handed with ``self.settings_for(config)``. Nothing is converted beyond an ``int`` read as
+a ``float``, so a plugin takes values as they are rather than calling ``float()`` in ``__init__``,
+where a wrong type would raise before the check that names it. Keys another owner injects
+(``namespace``, ``topics``) stay on ``self.config``, as does a plugin without a schema.
 
 It is opt-in: a plugin without a declaration is unchecked by it, and one with a declaration still
 owns ``validate_config``. The schema covers what is the same everywhere; a rule only one plugin has
