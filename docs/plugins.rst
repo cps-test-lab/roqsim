@@ -1138,8 +1138,8 @@ the published description come from one place::
        def validate_config(self, config):
            return [...]                               # whatever only this plugin knows
 
-**Declaring it is what enforces it.** The types, ranges, required keys and -- with ``STRICT_KEYS``
--- unknown keys are checked when the world's plugins are built, beside whatever ``validate_config``
+**Declaring it is what enforces it.** The types, ranges, required keys and unknown keys are checked
+when the world's plugins are built, beside whatever ``validate_config``
 adds; there is no call to remember. A schema the catalog publishes and nothing checks would be
 prose with a type annotation.
 
@@ -1175,12 +1175,17 @@ A plugin with a schema reads only the keys it declares, plus the ones another ow
 block, and ``present``, which the base class checks for every plugin). The same guard test holds
 every shipped schema to it.
 
-``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
-``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
-opt-in because a component's config carries keys the world's author did not write (a manifest's
-``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
-complete. A schema that stays open says why in ``OPEN_KEYS = "<reason>"``, which ``describe``
-publishes beside ``strict_keys``; the guard test refuses an open schema without one.
+**An unknown key is refused.** That is the check nothing else can do -- an unknown key is a typo,
+and ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. The
+keys a component carries without the world's author writing them are known centrally, so a schema
+lists only its own. A plugin whose schema cannot be complete -- one that passes keys on to something
+it does not own -- opts out and says why::
+
+   STRICT_KEYS = False
+   OPEN_KEYS = "the rest is handed to the policy, which checks it"
+
+``describe`` publishes the reason beside ``strict_keys: false``, and the guard test refuses an open
+schema without one.
 
 Degrading a sensor mid-run
 --------------------------

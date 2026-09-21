@@ -357,7 +357,7 @@ def schema_config_block(name: str, cls) -> list[str]:
     hand-written block has, so the page reads the same everywhere while the keys come from the
     declaration. A key without a default reads ``<required>`` or ``<unset>``.
     """
-    strict = " -- unknown keys are refused" if getattr(cls, "STRICT_KEYS", False) else ""
+    strict = " -- unknown keys are refused" if getattr(cls, "STRICT_KEYS", True) else ""
     rows = []
     for field in _schema_parameters(cls.CONFIG_SCHEMA):
         example = field["example"]
@@ -468,7 +468,7 @@ def get_plugin_details(name: str) -> dict:
     declared = _declared_schema(cls)
     if declared is not None:
         details["schema"] = declared
-        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", True))
         if not details["strict_keys"] and getattr(cls, "OPEN_KEYS", ""):
             details["open_keys"] = cls.OPEN_KEYS
     return details

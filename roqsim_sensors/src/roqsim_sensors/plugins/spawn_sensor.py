@@ -534,7 +534,7 @@ class SpawnSensorPlugin(Plugin):
 
     #: Every key this plugin and its ``expand`` read -- including ``attach_prefix``/``prefix``/
     #: ``frame_id``, which a carrier's manifest or the expansion fills in -- and nothing else, which
-    #: is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried: an
+    #: is what makes refusing any other key safe. A key outside it is refused rather than carried: an
     #: override that stops at this mount instead of reaching its device component would otherwise
     #: leave a key nothing reads. Ranges and combinations stay in :meth:`validate_config`.
     CONFIG_SCHEMA = {
@@ -589,7 +589,6 @@ class SpawnSensorPlugin(Plugin):
         "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
     }
-    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
