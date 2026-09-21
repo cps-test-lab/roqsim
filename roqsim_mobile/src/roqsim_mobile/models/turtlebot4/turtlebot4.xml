@@ -70,21 +70,24 @@
             material="tb4_grey" group="3" friction="0.4 0.005 0.0001"/>
       <!-- Inertia of everything rigidly on the base, sized to the robot's datasheet: the
            TurtleBot 4 standard weighs 3.945 kg (Clearpath's user manual), so with the two
-           0.2 kg wheels, their 0.05 kg suspension bodies and the 0.17 kg RPLIDAR the manifest
-           mounts, 3.275 kg is on this body. The create3 body (2.3 kg, COM 2.28 cm forward,
+           0.2 kg wheels, their 0.05 kg suspension bodies, and the 0.17 kg RPLIDAR and 0.061 kg
+           OAK-D the manifest mounts as devices, 3.214 kg is on this body. The create3 body (2.3 kg, COM 2.28 cm forward,
            irobot_create_description urdf/create3.urdf.xacro) with its bumper (0.1) and caster
            (0.01) are taken as stated; the standard's add-ons -- shell, four weight blocks, four
            tower standoffs, sensor plate, camera bracket, OAK-D (turtlebot4_description @ jazzy
            urdf/standard/turtlebot4.urdf.xacro) -- are placed at their link origins but scaled
            to the 0.865 kg the datasheet leaves for them, because that description's part masses
            sum to 1.2 kg more than the robot weighs (four 0.26 kg standoffs, most of it). COM
-           11.2 cm up.
+           11.2 cm up for the whole of it. The OAK-D's 0.061 kg at oakd_link is taken out of that
+           whole rather than added to it, so the base's COM and inertia below are the whole's
+           less a point mass there (and the device's own tensor), and the robot with the device
+           mounted has the whole's mass, COM and inertia.
            The mass is load-bearing for the wheel-drop suspension below: its springs hold 27 N,
            and the ~33 N a base this heavy puts on the wheels rides them onto their hard stop as
            the reference robot does, while the create3 body alone rode on the springs and
            see-sawed onto its caster. -->
-      <inertial pos="0.0198 0 0.1123" mass="3.275"
-                diaginertia="0.0412 0.0409 0.0403"/>
+      <inertial pos="0.021307 0 0.109809" mass="3.214"
+                fullinertia="0.040128 0.039422 0.039892 0 -0.000648 0"/>
 
       <!-- Visual meshes (no contacts). pos/quat are the URDF link transforms
            relative to base_link, composed from nav2_minimal_tb4_description's
@@ -106,32 +109,15 @@
            `rplidar_a1` device model at the URDF's shell_link -> rplidar_link joint, and
            declares shell_link as a frame of this body. -->
 
-      <!-- The bracket that carries the camera (sensors/camera_bracket.urdf.xacro).
-           Without it the camera body hangs in mid-air.
-           pos = shell_link (0 0 0.0942) + the bracket origin (-0.118 0 0.05257).
-           The URDF joint has no rpy, so no reorientation applies. -->
+      <!-- The bracket that carries the camera (sensors/camera_bracket.urdf.xacro), the robot's own
+           part. pos = shell_link (0 0 0.0942) + the bracket origin (-0.118 0 0.05257), which the
+           manifest declares as the frame oakd_camera_bracket. The URDF joint has no rpy. -->
       <geom class="tb4_visual" mesh="camera_bracket" material="tb4_black"
             pos="-0.118 0 0.14677"/>
 
-      <!-- OAK-D Pro RGB-D camera (nav2_minimal_tb4_description/sensors/oakd.urdf.xacro):
-           mounted on the bracket above, facing forward (+x). The body cylinder is
-           the only collision geom, so the camera body is a visual-only box at the
-           URDF collision dimensions (a future build can swap in a converted
-           oakd_pro.dae mesh -- 12 MB, so it wants decimating). pos = the chained
-           URDF link transforms shell->bracket->oakd, relative to base_link. -->
-      <geom class="tb4_visual" type="box" size="0.01125 0.0485 0.015"
-            pos="-0.0706 0 0.23853" material="tb4_dark"/>
-      <!-- RGB-D optical frame, read by the roqsim_sensors `oakd_camera` plugin.
-           A MuJoCo camera looks down its -z with +y up, so xyaxes aims -z along
-           base +x (forward) and +y along base +z (up). fovy=56.84 deg is the
-           URDF horizontal_fov (1.25 rad) re-expressed vertically at 320x240. -->
-      <camera name="oakd_rgb" pos="-0.0596 0 0.24353" xyaxes="0 -1 0 0 0 1"
-              fovy="56.84" resolution="320 240"/>
-      <!-- OAK-D body + stereo-pair frames (baseline 0.075 m) for a future TF /
-           stereo bridge; not consumed by the physics. -->
-      <site name="oakd"       pos="-0.0596 0       0.24353" size="0.005" rgba="0 0 0 0"/>
-      <site name="oakd_left"  pos="-0.0596 0.0375  0.24353" size="0.005" rgba="0 0 0 0"/>
-      <site name="oakd_right" pos="-0.0596 -0.0375 0.24353" size="0.005" rgba="0 0 0 0"/>
+      <!-- The OAK-D Pro is not part of this model: turtlebot4.manifest.yaml mounts the `oakd_pro`
+           device model at the URDF's oakd_camera_bracket -> oakd_link joint, and declares
+           oakd_camera_bracket as a frame of this body. -->
 
       <!-- The Create 3's own small sensors, as sites at the poses of
            irobot_create_description/urdf/create3.urdf.xacro @ 1fccb76 (URDF z + the

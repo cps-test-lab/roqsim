@@ -159,7 +159,7 @@ components:
 Setting `enabled: false` removes a component without deleting it:
 
 ```console
-$ roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+$ roqsim sim world.yaml --set components.robot.oakd.oakd_camera.enabled=false
 ```
 
 That makes "is this sensor present" a value a campaign can sweep rather than an edit to the world

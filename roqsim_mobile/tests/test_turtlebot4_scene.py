@@ -10,8 +10,9 @@ Reference dimensions come from `nav2_minimal_tb4_description` (see `turtlebot4_L
 m=0.2 kg, ``wheel_separation`` 0.233 m, caster r=0.01 m, OAK-D stereo baseline 0.075 m and
 ``horizontal_fov`` 1.25 rad.
 
-The RPLIDAR A1 is not in the MJCF: the manifest mounts the ``rplidar_a1`` device model at the vendor
-joint, and section D pins that mount against ``turtlebot4_description`` @ 7fd29fb.
+Neither the RPLIDAR A1 nor the OAK-D Pro is in the MJCF: the manifest mounts the ``rplidar_a1`` and
+``oakd_pro`` device models at their vendor joints, and sections C and D pin those mounts against
+``turtlebot4_description`` @ 7fd29fb.
 
 **Two defects here look fine in a viewer and fail this battery** -- which is the argument for
 writing one per port rather than trusting a model by eye:
@@ -53,12 +54,15 @@ WHEEL_W = 0.015
 TRACK = 0.233
 BODY_R = 0.164
 # The robot weighs what its datasheet says: 3.945 kg for the standard (Clearpath's TurtleBot 4 user
-# manual), RPLIDAR included. The manifest mounts the RPLIDAR as a device with its own 0.17 kg
-# (RPLIDAR_MASS, section D) and the two wheels and their two wheel-drop suspension bodies
-# (wheel_drop.urdf.xacro: 0.05 each) are separate bodies, so the base body carries the rest.
+# manual), RPLIDAR and OAK-D included. The manifest mounts the RPLIDAR as a device with its own 0.17 kg
+# (RPLIDAR_MASS, section D) and the OAK-D with its own 0.061 kg (OAKD_MASS, section C), and the two
+# wheels and their two wheel-drop suspension bodies (wheel_drop.urdf.xacro: 0.05 each) are separate
+# bodies, so the base body carries the rest.
 ROBOT_MASS = 3.945
-BASE_MASS = ROBOT_MASS - 0.17 - 2 * 0.2 - 2 * 0.05  # 3.275 kg
-TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # the model without its mounted scanner: 3.775 kg
+#: The OAK-D Pro's inertial, which the device model carries (sensors/oakd.urdf.xacro:6 @ 7fd29fb).
+OAKD_MASS = 0.061
+BASE_MASS = ROBOT_MASS - 0.17 - OAKD_MASS - 2 * 0.2 - 2 * 0.05  # 3.214 kg
+TOTAL_MASS = BASE_MASS + 2 * 0.2 + 2 * 0.05  # the model without its mounted devices: 3.714 kg
 # base_link is the URDF root frame, and the wheel bodies hang 0.0402 m above it against a 0.03575 m
 # radius -- so at rest the frame itself sits 4.45 mm BELOW the ground plane, plus ~0.8 mm of soft
 # contact sink. Measured -0.0053. Negative is correct here and is not a sign convention slip.
@@ -78,6 +82,15 @@ SHELL_LINK = ((0.0, 0.0, 0.0942), (0.0, 0.0, 0.0))
 RPLIDAR_JOINT = ((-0.04, 0.0, 0.098715), (0.0, 0.0, math.pi / 2))
 #: The RPLIDAR A1's inertial, which the device model carries (rplidar.urdf.xacro:7,34 @ 7fd29fb).
 RPLIDAR_MASS = 0.17
+#: shell_link -> oakd_camera_bracket, urdf/standard/turtlebot4.urdf.xacro:35-37 and :119-121.
+CAMERA_BRACKET = ((-0.118, 0.0, 0.05257), (0.0, 0.0, 0.0))
+#: oakd_camera_bracket -> oakd_link, the same file :39-41 and :123-125.
+OAKD_JOINT = ((0.0584, 0.0, 0.09676), (0.0, 0.0, 0.0))
+#: oakd_link -> oakd_rgb_camera_frame -> oakd_rgb_camera_optical_frame, sensors/oakd.urdf.xacro.
+OAKD_RGB = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+OAKD_OPTICAL = ((0.0, 0.0, 0.0), (-math.pi / 2, 0.0, -math.pi / 2))
+#: The stereo pair at +-baseline/2 (0.075 m) in y, sensors/oakd.urdf.xacro.
+OAKD_BASELINE = 0.075
 #: The Create 3's own sensor sites (create3.urdf.xacro @ 1fccb76): four cliff sensors, seven IR
 #: proximity sensors, the optical-flow mouse and the omnidirectional IR receiver.
 CREATE3_SITES = {
@@ -415,12 +428,17 @@ def test_b8_drives_in_a_world_whose_floor_is_not_called_floor():
 def test_c1_the_mjcf_carries_no_scanner():
     """C1: the RPLIDAR is the device model the manifest mounts, so the MJCF has no scan site of its own.
 
-    A second scan origin here would be a second, unmounted scanner the moment anything named it.
+    A second scan origin here would be a second, unmounted scanner the moment anything named it. The
+    same holds for the camera: the OAK-D Pro is the `oakd_pro` device the manifest mounts, so the
+    MJCF carries no camera of its own (the spectator `track` camera renders nothing a stack reads),
+    no stereo sites and no box standing in for the device.
     """
     model, _ = _build(settle=0.0)
     sites = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_SITE, i) for i in range(model.nsite)}
-    assert sites == {"base_imu", "oakd", "oakd_left", "oakd_right", *CREATE3_SITES}
+    assert sites == {"base_imu", *CREATE3_SITES}
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "rplidar") < 0
+    cameras = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, i) for i in range(model.ncam)}
+    assert cameras == {"track"}
 
 
 def test_c2_manifest_ships_the_platforms_own_sensors():
@@ -438,10 +456,17 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
             "parent": "base_link",
             "pos": [*SHELL_LINK[0]],
             "rpy": [*SHELL_LINK[1]],
-        }
+        },
+        {
+            "name": "oakd_camera_bracket",
+            "parent": "shell_link",
+            "pos": [*CAMERA_BRACKET[0]],
+            "rpy": [*CAMERA_BRACKET[1]],
+        },
     ]
-    (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
-    assert mount["name"] == "rplidar"
+    mounts = {c["name"]: c for c in manifest["components"] if "spawn_sensor" in c}
+    assert set(mounts) == {"rplidar", "oakd"}
+    mount = mounts["rplidar"]
     assert mount["spawn_sensor"] == {
         "model": "rplidar_a1",
         "parent_frame": "shell_link",
@@ -451,52 +476,77 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     }
     assert mount["components"] == [{"lidar": {"rays": 360}}]
     assert not any("lidar" in c for c in manifest["components"])
-    assert _manifest_plugin("oakd_camera")["camera"] == "oakd_rgb"
+    # The OAK-D: the vendor joint and nothing else. Its device name is the macro's default, `oakd`,
+    # so the robot sets none; only the TurtleBot 4's topic names are overridden.
+    assert mounts["oakd"]["spawn_sensor"] == {
+        "model": "oakd_pro",
+        "parent_frame": "oakd_camera_bracket",
+        "pos": [*OAKD_JOINT[0]],
+        "rpy": [*OAKD_JOINT[1]],
+    }
+    ((camera,),) = [list(c.values()) for c in mounts["oakd"]["components"]]
+    assert set(camera) == {"topics"}
+    assert not any("oakd_camera" in c for c in manifest["components"])
 
 
-def test_c3_camera_and_stereo_frames_match_the_urdf():
-    """C3: the OAK-D's FOV and stereo baseline are the vendor's, not defaults."""
-    model, data = _build()
-    cid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "oakd_rgb")
-    assert cid >= 0, "oakd_rgb camera missing"
+def test_c3_camera_and_stereo_frames_match_the_urdf(mounted):
+    """C3: the spawned camera is where the vendor chain puts it, looking where it looks.
+
+    ``base_link -> shell_link -> oakd_camera_bracket -> oakd_link -> oakd_rgb_camera_frame ->
+    oakd_rgb_camera_optical_frame``, composed from the xacro constants, is the pose AND orientation of
+    the camera the image is rendered from -- the test that makes a mis-seated mount impossible -- and
+    of the frame the image is stamped in. The FOV and stereo baseline are the vendor's.
+    """
+    engine, _ = mounted
+    m, d = engine.ctx.model, engine.ctx.data
+    want_pos, want_rot = scan_mount.chain(
+        SHELL_LINK, CAMERA_BRACKET, OAKD_JOINT, OAKD_RGB, OAKD_OPTICAL
+    )
+    np.testing.assert_allclose(want_pos, [-0.0596, 0.0, 0.24353], atol=1e-12)
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "r_oakd_oakd_rgb")
+    assert cid >= 0, "the mounted OAK-D's camera is missing"
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")
+    rb = d.xmat[base].reshape(3, 3)
+    cam_pos = rb.T @ (d.cam_xpos[cid] - d.xpos[base])
+    cam_rot = rb.T @ d.cam_xmat[cid].reshape(3, 3)
+    np.testing.assert_allclose(cam_pos, want_pos, atol=1e-9)
+    # A MuJoCo camera looks down -z with +y up; the optical frame down +z with +y down.
+    np.testing.assert_allclose(cam_rot @ np.diag([1.0, -1.0, -1.0]), want_rot, atol=1e-9)
+    pos, rot = scan_mount.pose_in_base(engine, "r_oakd_oakd_rgb_camera_optical_frame")
+    np.testing.assert_allclose(pos, want_pos, atol=1e-9)
+    np.testing.assert_allclose(rot, want_rot, atol=1e-9)
+
     # The URDF gives a 1.25 rad HORIZONTAL fov; MuJoCo's fovy is vertical, so at the model's 320x240
     # the two are related by the 4:3 aspect. Check the round trip rather than the stored number.
-    fovy = math.radians(float(model.cam_fovy[cid]))
-    w, h = model.cam_resolution[cid]
+    fovy = math.radians(float(m.cam_fovy[cid]))
+    w, h = m.cam_resolution[cid]
     fovx = 2 * math.atan(math.tan(fovy / 2) * (w / h))
     assert fovx == pytest.approx(1.25, abs=0.02), f"horizontal fov {fovx:.3f} rad vs URDF 1.25"
-
-    left = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "oakd_left")
-    right = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "oakd_right")
-    baseline = abs(float(data.site_xpos[left][1] - data.site_xpos[right][1]))
-    assert baseline == pytest.approx(0.075, abs=1e-4)
+    left, _ = scan_mount.pose_in_base(engine, "r_oakd_oakd_left_camera_frame")
+    right, _ = scan_mount.pose_in_base(engine, "r_oakd_oakd_right_camera_frame")
+    np.testing.assert_allclose(left - right, [0.0, OAKD_BASELINE, 0.0], atol=1e-9)
 
 
-def test_c3b_the_oakd_lens_matches_the_standalone_sensor_model():
-    """C3b: this robot's OAK-D and `roqsim_sensors:oakd` are the same device, so one lens.
+def test_c3b_the_camera_chain_is_published(mounted):
+    """C3b: the images are stamped oakd_rgb_camera_optical_frame, and TF reaches it from base_link.
 
-    The camera element cannot literally be shared -- it sits inside this robot's body chain, while the
-    standalone mount is its own MJCF -- so the two files each hold the numbers and this asserts they
-    agree. Without it "one definition" is a comment in two files that nothing enforces, and a copy of
-    these optics that does not derive them drifts.
-
-    The dependency runs the way it already does: roqsim_mobile requires roqsim_sensors, never the
-    reverse, so the check lives here rather than beside the sensor model.
+    The name is the real robot's, which a localisation stack pairs on; the chain is what lets a
+    depth consumer place a point in the robot's frame.
     """
-    import mujoco as mj
-
-    from roqsim.models import resolve_model
-
-    model, _ = _build()
-    cid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "oakd_rgb")
-
-    standalone = mj.MjSpec.from_file(str(resolve_model("roqsim_sensors:oakd").path))
-    cam = next(c for c in standalone.cameras if c.name == "oakd_rgb")
-
-    assert float(model.cam_fovy[cid]) == pytest.approx(float(cam.fovy)), (
-        "turtlebot4.xml and roqsim_sensors:oakd disagree on the OAK-D's fovy; they are one device"
-    )
-    assert list(model.cam_resolution[cid]) == [int(v) for v in cam.resolution]
+    engine, _ = mounted
+    links = {(t["parent"], t["child"]) for t in scan_mount.static_tf(engine, "robot")}
+    links |= {(t["parent"], t["child"]) for t in scan_mount.static_tf(engine, "robot.oakd")}
+    for hop in (
+        ("base_link", "shell_link"),
+        ("shell_link", "oakd_camera_bracket"),
+        ("oakd_camera_bracket", "oakd_link"),
+        ("oakd_link", "oakd_rgb_camera_frame"),
+        ("oakd_rgb_camera_frame", "oakd_rgb_camera_optical_frame"),
+    ):
+        assert hop in links, hop
+    # Switched off in this fixture, so read from the loaded document rather than a running plugin.
+    camera = next(s for s in engine.config.plugins if s.address == "robot.oakd.oakd_camera")
+    assert camera.config["frame_id"] == "oakd_rgb_camera_optical_frame"
 
 
 def test_c4_wheel_encoders_and_imu_exist():
@@ -529,7 +579,7 @@ def mounted():
 
     The OAK-D is switched off: it renders, and nothing in this section reads it.
     """
-    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd.oakd_camera",))
     lidar = scan_mount.lidar(engine, "robot.rplidar")
     yield engine, lidar
     engine.shutdown()
@@ -595,7 +645,7 @@ def test_d4_what_the_scan_sees_of_the_robot_is_pinned(mounted):
 def test_d5_the_static_tf_chain_is_published(mounted):
     """D5: base_link -> shell_link from the robot, shell_link -> rplidar_link from the mount."""
     engine, _ = mounted
-    (shell,) = scan_mount.static_tf(engine, "robot")
+    (shell,) = [t for t in scan_mount.static_tf(engine, "robot") if t["child"] == "shell_link"]
     (scan,) = scan_mount.static_tf(engine, "robot.rplidar")
     assert (shell["parent"], shell["child"]) == ("base_link", "shell_link")
     assert (scan["parent"], scan["child"]) == ("shell_link", "rplidar_link")
@@ -615,12 +665,17 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
 
 
 def test_d7_the_scanner_mass_is_the_devices(mounted):
-    """D7: the spawned robot is the base, wheels and suspension plus the A1's own 0.17 kg, which
-    the MJCF does not carry (the device model does)."""
+    """D7: the spawned robot is the base, wheels and suspension plus the devices' own masses, which
+    the MJCF does not carry (the device models do): 3.714 kg + the A1's 0.17 kg + the OAK-D Pro's
+    0.061 kg (vendor, oakd.urdf.xacro) = 3.945 kg, the datasheet's."""
     engine, _ = mounted
     m = engine.ctx.model
     base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")
-    assert float(m.body_subtreemass[base]) == pytest.approx(TOTAL_MASS + RPLIDAR_MASS, abs=1e-6)
+    oakd = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_oakd_mount")
+    assert float(m.body_mass[oakd]) == pytest.approx(OAKD_MASS, abs=1e-9)
+    total = TOTAL_MASS + RPLIDAR_MASS + OAKD_MASS
+    assert float(m.body_subtreemass[base]) == pytest.approx(total, abs=1e-6)
+    assert total == pytest.approx(ROBOT_MASS, abs=1e-9)
 
 
 # --------------------------------------------------------------------------- E. the Create 3's own surface
@@ -685,7 +740,8 @@ def test_e1_the_manifest_declares_the_create3_surface():
         "odom_rate_hz": 62.0,
         "publish_joint_states": False,
     }
-    assert _manifest_plugin("oakd_camera")["topics"] == {
+    (oakd,) = [e for e in _manifest_entries("spawn_sensor") if e["name"] == "oakd"]
+    assert oakd["components"][0]["oakd_camera"]["topics"] == {
         "image": "oakd/rgb/preview/image_raw",
         "image_compressed": "oakd/rgb/preview/image_raw/compressed",
         "camera_info": "oakd/rgb/preview/camera_info",
@@ -698,7 +754,7 @@ def test_e1_the_manifest_declares_the_create3_surface():
 @pytest.fixture(scope="module")
 def create3():
     """The robot spawned as a world spawns it, in the room, camera off, settled on the floor."""
-    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd.oakd_camera",))
     for _ in range(500):
         engine.step()
     yield engine
@@ -777,7 +833,7 @@ def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
 def test_e5_lifting_the_robot_drops_the_wheels_and_opens_the_cliffs():
     """E5: what a kidnap looks like to the stack: both suspensions past the detector's 2.85 cm
     and every cliff sensor reading no return."""
-    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd.oakd_camera",))
     try:
         for _ in range(500):
             engine.step()
@@ -803,7 +859,7 @@ def test_e5_lifting_the_robot_drops_the_wheels_and_opens_the_cliffs():
 def test_e6_driving_into_the_wall_presses_the_centre_bumper_zone():
     """E6: the bumper over the body shell: a head-on wall presses bump_front_center and nothing else,
     and it releases when the robot backs off."""
-    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd_camera",))
+    engine = scan_mount.spawn("turtlebot4", ["rplidar"], disabled=("robot.oakd.oakd_camera",))
     try:
         handle = engine.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
         read = engine.ctx.blackboard.get(f"bumper:{scan_mount.OWNER}.bumper")
@@ -867,7 +923,7 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
             },
         ],
     }
-    overrides = {"components": {"robot.oakd_camera": {"enabled": False}}}  # no GL needed
+    overrides = {"components": {"robot.oakd.oakd_camera": {"enabled": False}}}  # no GL needed
     engine = Engine(load_config_from_dict(world, base_dir=Path("."), overrides=overrides))
     engine.ctx.seed = 0
     engine.setup()

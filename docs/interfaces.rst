@@ -237,7 +237,7 @@ The other half of the same question, for a caller holding an *override* rather t
                  "paths": ["components.robot.rplidar.lidar.rays",
                            "components.robot.rplidar.lidar.max_range"]}],
     "addresses": ["robot", "robot.diff_drive", "robot.rplidar", "robot.rplidar.lidar",
-                  "robot.oakd_camera"],
+                  "robot.oakd", "robot.oakd.oakd_camera"],
     "entities": null}
 
 ``plugins`` reports every component that will **run** -- the document's own entries and everything its
@@ -246,8 +246,8 @@ into its config that already exist. ``origin`` says which of the two a component
 
 ``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
 sweep key against it before spending an image pull. Note the world above declares one entry and gets
-three more from the turtlebot4's manifest -- those three are the ones a sweep is most likely to
-want, and they used not to appear here at all.
+the rest from the turtlebot4's manifest, including the two devices it mounts and the sensors on them
+-- the components a sweep is most likely to want.
 
 A path not listed is not necessarily wrong (a plugin may accept a key its world leaves at the
 default), so a caller reports an unlisted *path* as unverifiable. What the list does settle is the

@@ -27,8 +27,8 @@ def _cfg(overrides=None):
 
 def test_a_manifest_component_can_be_switched_off_from_outside():
     """No entry, no stub: a model default is a campaign factor rather than a file edit."""
-    cfg = _cfg({"components": {"robot.oakd_camera": {"enabled": False}}})
-    assert {s.address: s.enabled for s in cfg.plugins}["robot.oakd_camera"] is False
+    cfg = _cfg({"components": {"robot.oakd.oakd_camera": {"enabled": False}}})
+    assert {s.address: s.enabled for s in cfg.plugins}["robot.oakd.oakd_camera"] is False
     assert "OakdCameraPlugin" not in [type(p).__name__ for p in instantiate_plugins(cfg)]
 
 

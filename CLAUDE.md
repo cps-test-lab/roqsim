@@ -15,7 +15,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   health check that ran inside the simulator would share the simulator's failure modes, and one that
   went through a transport bridge could not diagnose a broken bridge.
 - `roqsim_sensors/` — generic (robot-family-agnostic) sensor plugins + assets: `lidar`,
-  `oakd_camera` (RGB-D), `realsense_d435`/`realsense_d455` (RGB + opt-in depth/`PointCloud2`; depth
+  `oakd_camera` (RGB-D; the `oakd_pro` device model, mounted by its vendor `oakd_link` and
+  publishing its frame chain, is what the TurtleBot 4 carries), `realsense_d435`/`realsense_d455` (RGB + opt-in depth/`PointCloud2`; depth
   in `32FC1` metres or `16UC1` millimetres), `realsense_d415` (RGB only), `force_torque` (six-axis
   wrench at a site — the one contact-force observable), `fiducial_marker` (ArUco/AprilTag,
   OpenCV-generated; optional `markers` extra). Models are one folder per device

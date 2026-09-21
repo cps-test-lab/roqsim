@@ -210,7 +210,7 @@ component (which is also how "does this device have an IMU" becomes a campaign f
    components:
      - spawn_robot:
          model: turtlebot4
-         pose: {position: {x: 0, y: 0}}   # diff_drive + lidar + oakd_camera come with it
+         pose: {position: {x: 0, y: 0}}   # diff_drive, the RPLIDAR and the OAK-D come with it
      - ros2_bridge: {}
 
 An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
@@ -272,7 +272,7 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   with ``default_plugins: false`` and declare the plugin fully.
 - **Switch one off** with ``enabled: false`` -- as a sibling in the document, or from an override::
 
-     roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+     roqsim sim world.yaml --set components.robot.oakd.oakd_camera.enabled=false
 
   The component is not deleted: it stays addressable, stays in the run's record saying it was turned
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
@@ -314,6 +314,9 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
+   frames:                            # vendor fixed links this MJCF flattens into base_link
+     - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942]}
+     - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257]}
    components:
      - diff_drive: {max_linear_vel: 0.46, max_angular_vel: 1.9, wheel_accel_limit: 0.9,
                     cmd_vel_timeout: 0.5, odom_rate_hz: 62.0, publish_joint_states: false}
@@ -325,9 +328,15 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
          rpy: [0.0, 0.0, 1.5707963267948966]
          frame_id: rplidar_link
        name: rplidar
-     - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
-         camera: oakd_rgb
-         topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
+     - spawn_sensor:                  # the OAK-D Pro device model, at the vendor joint origin
+         model: oakd_pro
+         parent_frame: oakd_camera_bracket
+         pos: [0.0584, 0.0, 0.09676]
+         rpy: [0.0, 0.0, 0.0]
+       name: oakd
+       components:
+         - oakd_camera:               # renders: needs a GL backend (roqsim selects one on import)
+             topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
      - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
@@ -944,7 +953,7 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
        name: robot
        components:
          - segmentation_camera:
-             camera: oakd_rgb
+             camera: oakd_oakd_rgb      # the OAK-D's camera, behind its mount's `oakd_` prefix
              classes:
                - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
                - {class_id: 2, name: person, entities: [walker_1]}
