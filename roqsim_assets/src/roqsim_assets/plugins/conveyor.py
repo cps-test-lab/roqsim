@@ -30,6 +30,7 @@ Config::
       belt_wrap: 0.025      # +/- position wrap (m); keep <= half the slab overhang
       package_pose: [1.0, 0.6, 0.996, 1, 0, 0, 0]  # free-body reset pose (x y z qw qx qy qz),
                                                    # in the BELT's frame -- pos/rpy are applied to it
+      object_name: package  # entity name the ridden package registers under
 """
 
 from __future__ import annotations

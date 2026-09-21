@@ -49,6 +49,37 @@ def test_a_wrong_type_is_reported_once_and_stops_the_other_checks_on_that_key():
     assert errors == ["'mass' must be float, got str ('heavy')"]
 
 
+# -- a key that takes more than one shape --------------------------------------------------------
+
+UNION = {"gain": Field((float, dict), default=0.0, minimum=0.0, unit="W")}
+
+
+def test_a_union_accepts_each_of_its_shapes():
+    for value in (0.5, 2, {"shoulder": 0.1}, {}):
+        assert validate(UNION, {"gain": value}) == [], value
+
+
+def test_a_union_refuses_what_is_none_of_them_and_names_every_shape():
+    assert validate(UNION, {"gain": "lots"}) == ["'gain' must be float or dict, got str ('lots')"]
+    assert validate(UNION, {"gain": [0.1]}) == ["'gain' must be float or dict, got list ([0.1])"]
+
+
+def test_a_bool_is_still_not_a_number_inside_a_union():
+    assert validate(UNION, {"gain": True}) == ["'gain' must be float or dict, got bool (True)"]
+
+
+def test_a_bound_applies_to_the_number_and_not_to_the_mapping():
+    """A mapping has no order against 0; its entries are the plugin's to check."""
+    assert validate(UNION, {"gain": -1.0}) == ["'gain' must be >= 0.0 W, got -1.0"]
+    assert validate(UNION, {"gain": {"shoulder": -1.0}}) == []
+
+
+def test_a_union_is_published_as_a_list_of_its_names():
+    (gain,) = describe(UNION)
+    assert gain["type"] == ["float", "dict"]
+    assert describe({"x": Field(float)})[0]["type"] == "float"
+
+
 # -- rules --------------------------------------------------------------------------------------
 
 
@@ -150,12 +181,35 @@ def test_the_catalog_publishes_a_declared_schema_and_says_when_it_is_strict():
     assert {f["name"] for f in payload["schema"]} == {"mass", "body", "robot"}
     mass = next(f for f in payload["schema"] if f["name"] == "mass")
     assert mass["required"] is True and mass["unit"] == "kg"
-    assert payload["strict_keys"] is False
+    assert payload["strict_keys"] is True
+    assert "open_keys" not in payload
 
     ceiling = get_plugin_details("ceiling")
     assert ceiling["strict_keys"] is True
     keep = next(f for f in ceiling["schema"] if f["name"] == "keep")
     assert keep["type"] == "bool" and keep["default"] is True
+
+
+def test_an_open_schema_publishes_why_it_is_open(monkeypatch):
+    """A caller told `strict_keys: false` should also be told what may pass, and why."""
+    from roqsim.introspection import get_plugin_details
+    from roqsim.plugins.payload import PayloadPlugin
+
+    monkeypatch.setattr(PayloadPlugin, "STRICT_KEYS", False)
+    monkeypatch.setattr(PayloadPlugin, "OPEN_KEYS", "a manifest adds keys this plugin passes on")
+    payload = get_plugin_details("payload")
+    assert payload["strict_keys"] is False
+    assert payload["open_keys"] == "a manifest adds keys this plugin passes on"
+
+
+def test_present_is_never_unknown_because_the_base_class_owns_it():
+    """Read and checked for every plugin by `validate_presence`, which refuses it with the reason
+    on a plugin that registers no entity -- so a schema must not refuse it a second time."""
+    assert "present" in INJECTED_KEYS
+    from roqsim.plugins.ceiling import CeilingPlugin
+
+    errors = CeilingPlugin({}).config_errors({"present": False})
+    assert len(errors) == 1 and "registers none" in errors[0], errors
 
 
 def test_a_plugin_without_one_publishes_no_schema_key_at_all():

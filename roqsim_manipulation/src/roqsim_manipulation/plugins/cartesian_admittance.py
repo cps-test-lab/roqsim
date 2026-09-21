@@ -56,7 +56,9 @@ ownership is where the entry sits rather than a config key::
       site: tool_site          # site whose pose is controlled (prefixed with the arm's prefix)
       ft: ft                   # blackboard key suffix of the force_torque sensor (`ft:<key>`);
                                #   required by the force and compliance types, unused by motion
+      law: admittance          # admittance | position: the older spelling of controller_type
       rate_hz: 100.0           # control rate; the loop runs at this, not at the physics rate
+      pose_rate_hz: 50.0       # publish rate of <controller>/current_pose
       target_wrench: [0, 0, -10, 0, 0, 0]    # w_d, what the TOOL applies, so -10 on z presses DOWN
       mass: [1, 1, 1, 0.6, 0.6, 0.6]         # M, diagonal
       damping: [80, 80, 80, 160, 160, 160]   # D, diagonal

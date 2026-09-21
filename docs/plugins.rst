@@ -992,7 +992,9 @@ turn poses back into effort, which is a fitted constant between the simulator an
 ``efficiency``, ``idle_w``, ``resistive_w_per_nm2`` and ``regenerative`` are the platform's own
 numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
 where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
-a full battery.
+a full battery. Every one of those defaults is what an absent key means, so a misspelt one would
+report an energy figure that looks measured and assumes nothing: the plugin's keys are declared with
+``STRICT_KEYS``, and ``resistive_w_per_nm`` is refused with the key it meant.
 
 The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
 velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity
@@ -1090,7 +1092,7 @@ not read is a plugin that publicly takes no configuration::
            resolution: 0.25         # nested keys are published as sample.resolution
    """
 
-Four things the readers rely on:
+The things the readers rely on:
 
 * **The block opens with a line beginning** ``Config`` **and ending** ``::``. Qualify it freely
   ("Config (in addition to ``lidar_common``'s ...)::") and let the qualifier wrap over up to three
@@ -1098,9 +1100,20 @@ Four things the readers rely on:
 * **One key per line, as** ``name: example``. The example is documentation, not a parsed value.
 * **Nest as the world YAML nests.** A key opening a mapping is published under the dotted path a
   world writes it at, so the block and the YAML have one shape rather than two.
+* **A list is an example, not a block's end.** Under a key holding a list, ``- [4.0, 3.0]`` is an
+  example value, and ``- field: geom_friction`` publishes the item's keys under the list's key
+  (``overrides.field``). A blank line between groups of keys stays in the block; the block ends at a
+  line written left of its keys, which is where the prose after it sits.
 * **Put it on the MODULE, not the class.** A class docstring that merely points at the module
   ("See the module docstring.") is ignored in favour of the module's, but a class that documents
   different keys than its module will publish its own.
+* **Inherited keys are documented once, on the base.** A device built on shared machinery -- a
+  scanner on ``lidar_common``, a depth camera on ``camera_common`` -- documents what distinguishes
+  it, and ``roqsim plugins describe`` publishes its block followed by each base plugin's.
+* **Every key the plugin reads is in it.** A guard test reads every shipped plugin's source and
+  fails on a literal key that neither the block nor the schema publishes, since a caller that checks
+  a world against the catalog would refuse that key in a valid world. A key read only to be refused
+  with a reason (``seed`` on a sensor that draws from the run's seed) is not a setting and stays out.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.
@@ -1137,11 +1150,22 @@ owns ``validate_config``. The schema covers what is the same everywhere; a rule 
 (two lists the same length, a file that must exist, a cut that must be finite) stays where it
 belongs rather than growing the shared vocabulary.
 
+A key that takes more than one shape declares a tuple of types, as ``isinstance`` does:
+``Field((float, dict), minimum=0.0)`` is one coefficient or one per actuator, and is published as
+``"type": ["float", "dict"]``. The bound applies to the number; a mapping's entries stay with
+``validate_config``, which is the rule a schema cannot state for a shape it does not look inside.
+
+A plugin with a schema reads only the keys it declares, plus the ones another owner puts there
+(``roqsim.schema.INJECTED_KEYS``: a manifest's ``prefix``, the transport keys, a sensor's ``fault``
+block, and ``present``, which the base class checks for every plugin). The same guard test holds
+every shipped schema to it.
+
 ``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
 ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
 opt-in because a component's config carries keys the world's author did not write (a manifest's
 ``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
-complete.
+complete. A schema that stays open says why in ``OPEN_KEYS = "<reason>"``, which ``describe``
+publishes beside ``strict_keys``; the guard test refuses an open schema without one.
 
 Degrading a sensor mid-run
 --------------------------
