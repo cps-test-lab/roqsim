@@ -26,6 +26,7 @@ from . import (
     Pose,
     SpawnCall,
     SpawnOutcome,
+    StopCall,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -313,6 +314,29 @@ class InProcessAccess(WorldAccess):
 
         ctx.post(_apply)
         return _PostedSpawn(outcome_box)
+
+
+    # -- the run's end --------------------------------------------------------------------------
+    def watch_stop(self) -> StopCall:
+        return _StopWatch(self._ctx)
+
+
+class _StopWatch(StopCall):
+    """Reads ``ctx.stop_requested`` each poll -- the flag a plugin's ``request_stop`` sets.
+
+    Resolved through the adapter every time rather than holding a context: a ``reset()`` with
+    different overrides replaces the world, and a flag read off the torn-down one would be a stale
+    pointer (see :mod:`scenario_execution_roqsim.base`).
+    """
+
+    def __init__(self, ctx_of):
+        self._ctx_of = ctx_of
+
+    def poll(self) -> str | None:
+        ctx = self._ctx_of()
+        if ctx is None or not ctx.stop_requested:
+            return None
+        return ctx.stop_reason or "(no reason given)"
 
 
 class _PostedSpawn(SpawnCall):

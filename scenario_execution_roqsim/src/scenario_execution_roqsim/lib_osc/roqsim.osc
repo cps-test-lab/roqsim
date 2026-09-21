@@ -173,3 +173,16 @@ action set_model_override:
     instance: string                                  # the world's instance, by its `name:`
     active: bool = true                               # true = apply the configured target, false = nominal
     require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'
+
+action run_ended
+    # Succeed once the SIMULATION has asked that the run end -- a trial plugin called
+    # `ctx.request_stop` because the trial reached an outcome of its own (`insertion_task`,
+    # `contact_monitor`). Without this a stepped scenario has to `wait elapsed(N)` past its slowest
+    # cell, idling every faster trial out to N and cutting any that overruns it; with it the
+    # scenario ends where the trial does. Keep the scenario's own `timeout()` as the backstop for a
+    # trial that never resolves.
+    #
+    # Never fails: WHICH outcome the trial reached is the plugin's to record, this only says it
+    # reached one. Over ROS it is `simulation_interfaces/GetSimulationState` reporting
+    # STATE_QUITTING, which `roqsim sim` sets when it honours the request, so a world must declare
+    # `sim_interfaces` for it to be observable there.

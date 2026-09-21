@@ -26,6 +26,8 @@ pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``get_entity_s
                                                                  entity NAME
 apply/restore fault ``F``    blackboard ``model_override:F``      ``F/override`` (``SetBool``)
 did it land                  ``read_state().verified``            the same service's reply
+has the run asked to end     ``ctx.stop_requested``               ``get_simulation_state`` reports
+                                                                 ``STATE_QUITTING``
 time                         the runner's ``clock``               the runner's ``clock``
 ===========================  ==================================  ====================================
 
@@ -197,6 +199,19 @@ class NavCall(PendingCall):
         """Stop the mover. Idempotent -- an action's ``request_cancel`` may fire more than once."""
 
 
+class StopCall(PendingCall):
+    """A watch on the run's own end. ``poll()`` returns ``None`` until the simulation has asked to stop.
+
+    What it returns then is the REASON, as a string: in-process the one the plugin gave
+    :meth:`~roqsim.context.SimContext.request_stop`, over ROS the state the simulator reports, which
+    carries no reason. A call object rather than a boolean read so the ROS side can say what it is
+    waiting on (:meth:`pending_reason`), like every other in-flight call here.
+    """
+
+    @abstractmethod
+    def poll(self) -> str | None: ...
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -295,6 +310,17 @@ class WorldAccess(ABC):
 
         Making an already-present entity present again is not an error: the caller asked for a
         state and got it.
+        """
+
+    @abstractmethod
+    def watch_stop(self) -> StopCall:
+        """Watch for the simulation asking that the run end. Never blocks.
+
+        A trial plugin that knows the trial is over -- the goal was reached, the episode failed --
+        says so with :meth:`~roqsim.context.SimContext.request_stop`. ``roqsim sim`` honours that by
+        leaving its loop; under scenario-execution the loop is the tree's, and this is how the tree
+        learns of it, so a scenario can end where the trial does instead of padding every run out to
+        the slowest cell's ``wait elapsed``.
         """
 
     def teardown(self) -> None:

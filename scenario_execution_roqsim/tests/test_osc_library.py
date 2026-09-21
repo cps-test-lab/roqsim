@@ -34,6 +34,7 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigateStart,
 )
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
+from scenario_execution_roqsim.actions.run_ended import RunEnded  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
 from scenario_execution_roqsim.get_osc_library import get_osc_library  # noqa: E402
@@ -67,6 +68,7 @@ def _entry_points(group):
             EntryPointStub(
                 "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
             ),
+            EntryPointStub("run_ended", RunEnded, "scenario_execution_roqsim"),
         ]
     return []
 
@@ -230,3 +232,15 @@ scenario test:
         entity_navigate_start(entity: 'cart')
 """
     )
+
+
+def test_run_ended_takes_no_arguments_and_binds():
+    """A parameterless declaration (`action run_ended`, no trailing colon -- the grammar's spelling
+    for one with no members, as `reset_simulation` in osc.sim) resolves to its action."""
+    tree = _build(
+        "import osc.roqsim\n"
+        "scenario test_run_ended:\n"
+        "    do serial:\n"
+        "        run_ended()\n"
+    )
+    assert len(_nodes(tree, RunEnded)) == 1

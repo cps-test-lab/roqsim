@@ -62,11 +62,16 @@ def _offered(*names):
             offered=_offered("/other/navigate_to_pose")),
         "robot/navigate_through_poses",
     ),
+    (
+        lambda: ros_access._RosStopWatch(
+            _NeverReady(), object(), 3, _offered("/other/get_entity_state")),
+        "get_simulation_state",
+    ),
 ])
 def test_every_call_says_which_name_is_missing(call, expected):
     """A reason that does not name the thing is a reason nobody can act on.
 
-    All four, because all four wait the same way, and a call that says nothing turns a nav goal
+    All five, because all five wait the same way, and a call that says nothing turns a nav goal
     or a fault injection that never landed into a timeout with an empty explanation.
     """
     reason = call().pending_reason()
@@ -135,3 +140,43 @@ def test_the_graph_listing_is_cached_rather_than_asked_every_tick():
 
     assert names == ("/a", "/b")
     assert access.calls == 1, "one listing, reused"
+
+
+class _Answers:
+    """A ready client whose future resolves at once, with the state it is given."""
+
+    def __init__(self, state: int):
+        self._state = state
+
+    def service_is_ready(self) -> bool:
+        return True
+
+    def call_async(self, _request):
+        class _Resp:
+            class state:  # noqa: N801 - mirrors GetSimulationState.Response.state.state
+                pass
+        _Resp.state.state = self._state
+
+        class _Future:
+            def done(self):
+                return True
+
+            def result(self):
+                return _Resp
+
+        return _Future()
+
+
+def test_the_stop_watch_reads_only_quitting_as_the_end():
+    """PLAYING is a run in progress and is asked again; QUITTING is the end, and says so.
+
+    The state is the only thing the service carries, so it is also the reason reported -- a
+    scenario over ROS learns that the run ended, not what the plugin said.
+    """
+    playing = ros_access._RosStopWatch(_Answers(1), object(), 3, _offered())
+    assert all(playing.poll() is None for _ in range(5))
+    assert playing.pending_reason() is None, "a service that answers is not a missing one"
+
+    quitting = ros_access._RosStopWatch(_Answers(3), object(), 3, _offered())
+    assert quitting.poll() is None, "the first poll only sends the request"
+    assert "QUITTING" in quitting.poll()

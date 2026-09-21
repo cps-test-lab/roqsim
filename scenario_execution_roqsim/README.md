@@ -1,12 +1,13 @@
 # scenario_execution_roqsim — what a scenario can ask an roqsim simulation
 
-The substrate's OpenSCENARIO 2 vocabulary. Three actions:
+The substrate's OpenSCENARIO 2 vocabulary. Four actions:
 
 | action | succeeds when |
 | --- | --- |
 | `entity_moved(entities, threshold, mode, dwell, require)` | the named entities have been **displaced** from where they were when the action started |
 | `entity_rotated(entities, angle, dwell, require)` | ...have **turned** by an angle (geodesic, so axis-free) |
 | `set_model_override(instance, active, require_landed)` | a world's `model_override` fault has been applied (or restored) **and the plugin confirms it landed** |
+| `run_ended()` | the **simulation has asked that the run end** — a trial plugin called `ctx.request_stop` — so a scenario ends where the trial does instead of padding every run out with `wait elapsed` to the slowest cell |
 
 ```
 import osc.roqsim
@@ -25,12 +26,15 @@ do parallel:
 An roqsim simulation is driven two ways and these actions work in both, unedited:
 
 - **stepped, in-process** — scenario-execution's own runner owns the loop (`--simulation`). The action is handed the adapter and reads `MujocoSim.context`: entity poses from
-  `data.xpos`, the fault through the blackboard handle `model_override:<name>`, writes queued with
-  `ctx.post` because only the physics thread may touch `model`/`data`.
+  `data.xpos`, the fault through the blackboard handle `model_override:<name>`, the run's end from
+  `ctx.stop_requested`, writes queued with `ctx.post` because only the physics thread may touch
+  `model`/`data`.
 - **over ROS** — the simulator is in another container. Poses come from
   `simulation_interfaces/GetEntityState`, the fault from `<instance>/override` (`std_srvs/SetBool`),
   whose reply already *is* the verdict: the bridge's handler barriers on physics twice and answers with
-  the plugin's own `verified`.
+  the plugin's own `verified`. The run's end is `GetSimulationState` reporting `STATE_QUITTING`, which
+  `roqsim sim` sets when it honours a stop request — so the world must declare `sim_interfaces` for
+  `run_ended` to see it there.
 
 The transport is chosen from what the runner offered (`simulation` vs `node`), never declared in the
 scenario — see [`access/__init__.py`](src/scenario_execution_roqsim/access/__init__.py). It works

@@ -37,6 +37,7 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigateStart,
 )
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
+from scenario_execution_roqsim.actions.run_ended import RunEnded  # noqa: E402
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
@@ -1284,3 +1285,41 @@ def test_delete_refuses_an_empty_entity_name(teleport_world):
     action.setup(simulation=sim, clock=clock)
     with pytest.raises(ActionError, match="empty"):
         action.execute(entity="")
+
+
+# -- run_ended ------------------------------------------------------------------------------------
+def test_run_ended_waits_until_a_plugin_asks_to_stop_and_then_reports_why(world):
+    """The tree reads `ctx.stop_requested`; before the request it is RUNNING, after it SUCCESS with
+    the plugin's own reason, so a run log says what ended the trial rather than only that it ended."""
+    ctx, clock, sim = world
+    action = _start(RunEnded(), sim, clock)
+
+    for _ in range(3):
+        _step(ctx, clock)
+        assert action.update() is RUNNING
+    assert "waiting for the run to end" in action.feedback_message
+
+    ctx.request_stop("insertion_task: success")
+    assert action.update() is SUCCESS
+    assert "insertion_task: success" in action.feedback_message
+
+
+def test_run_ended_never_fails_on_the_outcome(world):
+    """Which outcome the trial reached is the plugin's record and the analysis's verdict. A stop
+    for a failure is still the run's end, and still SUCCESS here."""
+    ctx, clock, sim = world
+    action = _start(RunEnded(), sim, clock)
+    ctx.request_stop("contact_monitor: collision")
+    assert action.update() is SUCCESS
+
+
+def test_run_ended_waits_rather_than_building_a_world(world):
+    """Set up before the first reset, like every action here: `context` is None and it waits."""
+    _ctx, clock, _sim = world
+
+    class NotBuilt:
+        context = None
+
+    action = _start(RunEnded(), NotBuilt(), clock)
+    assert action.update() is RUNNING
+    assert "simulation" in action.feedback_message

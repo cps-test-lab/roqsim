@@ -38,6 +38,7 @@ from . import (
     Pose,
     SpawnCall,
     SpawnOutcome,
+    StopCall,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -133,14 +134,20 @@ class RosAccess(WorldAccess):
     #: Presence, in both directions. Same relative-naming rule.
     SPAWN_ENTITY_SERVICE = "spawn_entity"
     DELETE_ENTITY_SERVICE = "delete_entity"
+    #: Where the run's own end is read: the simulator reports ``STATE_QUITTING`` once it has honoured
+    #: a plugin's stop request (``roqsim.runner`` sets it before leaving its loop). Same relative
+    #: naming rule.
+    SIM_STATE_SERVICE = "get_simulation_state"
 
     def __init__(self, node):
         try:
             from rclpy.callback_groups import ReentrantCallbackGroup
             from simulation_interfaces.msg import Result
+            from simulation_interfaces.msg import SimulationState
             from simulation_interfaces.srv import (
                 DeleteEntity,
                 GetEntityState,
+                GetSimulationState,
                 SetEntityState,
                 SpawnEntity,
             )
@@ -158,6 +165,8 @@ class RosAccess(WorldAccess):
         self._set_state_type = SetEntityState
         self._spawn_type = SpawnEntity
         self._delete_type = DeleteEntity
+        self._sim_state_type = GetSimulationState
+        self._quitting = SimulationState.STATE_QUITTING
         self._set_bool_type = SetBool
         # nav2_msgs and geometry_msgs are imported lazily in `navigate`, not here: a world with no
         # navigator never needs nav2 installed, and requiring it at construction would make every
@@ -176,6 +185,9 @@ class RosAccess(WorldAccess):
         )
         self._delete_client = node.create_client(
             DeleteEntity, self.DELETE_ENTITY_SERVICE, callback_group=self._group
+        )
+        self._sim_state_client = node.create_client(
+            GetSimulationState, self.SIM_STATE_SERVICE, callback_group=self._group
         )
         self._override_clients: dict[str, object] = {}
         #: entity -> (last known Pose | None, future in flight | None)
@@ -432,12 +444,22 @@ class RosAccess(WorldAccess):
             self._advertised_services,
         )
 
+    # -- the run's end --------------------------------------------------------------------------
+    def watch_stop(self) -> StopCall:
+        return _RosStopWatch(
+            self._sim_state_client,
+            self._sim_state_type.Request(),
+            self._quitting,
+            self._advertised_services,
+        )
+
     def teardown(self) -> None:
         for client in [
             self._state_client,
             self._set_state_client,
             self._spawn_client,
             self._delete_client,
+            self._sim_state_client,
             *self._override_clients.values(),
         ]:
             try:
@@ -483,6 +505,48 @@ class _RosCall(OverrideCall):
                 f"the simulator is not advertising {self._instance}/override. A world serves it "
                 "by declaring the plugin this names, under exactly this label; without that "
                 "this waits until the scenario's own timeout"
+                + _also_carries(self._offered and self._offered())
+            )
+        return None
+
+
+class _RosStopWatch(StopCall):
+    """``GetSimulationState`` round-trips, one in flight at a time, until the state is QUITTING.
+
+    Polled rather than subscribed because the standard offers no state topic, and re-asked each tick
+    the way ``entity_pose`` re-asks: a crossing is resolved at the tick period on this transport,
+    which is the resolution statement in the package docstring. No reason comes back -- the service
+    carries a state, not a message -- so the reason reported is the state itself.
+    """
+
+    def __init__(self, client, request, quitting: int, offered=None):
+        self._client = client
+        self._request = request
+        self._quitting = quitting
+        self._future = None
+        self._offered = offered
+
+    def poll(self) -> str | None:
+        if self._future is None:
+            if not self._client.service_is_ready():
+                return None
+            self._future = self._client.call_async(self._request)
+            return None
+        if not self._future.done():
+            return None
+        resp, self._future = self._future.result(), None
+        if resp is None:  # pragma: no cover - a dropped call; ask again next tick
+            return None
+        if int(resp.state.state) == int(self._quitting):
+            return "the simulator reports STATE_QUITTING"
+        return None
+
+    def pending_reason(self) -> str | None:
+        if self._future is None and not self._client.service_is_ready():
+            return (
+                "the simulator is not advertising get_simulation_state. A world serves it by "
+                "declaring `sim_interfaces`; without that the run's end cannot be observed over ROS "
+                "and this waits until the scenario's own timeout"
                 + _also_carries(self._offered and self._offered())
             )
         return None

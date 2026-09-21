@@ -246,6 +246,10 @@ def _run_headless(
     step = 0
     while max_steps is None or step < max_steps:
         if engine.ctx.stop_requested:
+            # Through run-control rather than a bare break, so the state a bridge serves as
+            # `GetSimulationState` reads QUITTING for the moment between the request and the
+            # shutdown: that is what lets a scenario over ROS observe the run's end.
+            engine.ctx.control.set_state(ctl.QUITTING)
             break
         took = _tick(engine, pacer)
         if took is False:
@@ -375,6 +379,7 @@ def _run_windowed(
         last_render = 0.0
         while viewer.is_running() and (max_steps is None or step < max_steps):
             if engine.ctx.stop_requested:
+                engine.ctx.control.set_state(ctl.QUITTING)  # observable, as in _run_headless
                 break
             took = _tick(engine, pacer)
             if took is False:
