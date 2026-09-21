@@ -50,19 +50,22 @@ Declaring it::
 
 What it checks: a required key is present, a value has the declared type (with ``int`` accepted for
 ``float``, since YAML writes ``1`` for a one-metre offset), a number is within ``minimum``/
-``maximum``, a string is one of ``choices``, a sequence has ``length``, and -- for a plugin that asks
-for it with ``strict_keys`` -- that no key is unknown, which is the typo check nothing else can do.
+``maximum``, a string is one of ``choices``, a sequence has ``length``, and -- with ``strict_keys``,
+which every plugin's schema is checked with unless it says why not -- that no key is unknown, which
+is the typo check nothing else can do.
 
 A key that takes one of several shapes declares a tuple of types, as ``isinstance`` does: ``gain``
 above is a number or a mapping. The value must be one of them, and each rule applies to the shapes it
 has a meaning for -- a bound to a number, a length to a sequence -- so a mapping's entries are the
 plugin's to check in ``validate_config``.
 
-**Unknown keys are opt-in for one reason.** A component's config does not only come from the world:
-a model's manifest injects ``prefix``, a spawn fills in the entity, and a fault block arrives from
-elsewhere. Rejecting what a schema does not mention would break those the moment a plugin adopted a
-schema, so the shared keys are known here (:data:`INJECTED_KEYS`) and a plugin opts in when it is
-sure its own list is complete.
+**An unknown key is refused by default.** A plugin that declares a schema says what its config is,
+and a key outside it is a typo that would otherwise leave a setting at its default and look
+configured. What a component carries without the world's author writing it -- a manifest's
+``prefix``, the transport keys, a sensor's fault block, ``present`` -- is known here
+(:data:`INJECTED_KEYS`), so a complete schema need not list it. A plugin whose schema cannot be
+complete (one that passes keys through to something else) sets ``STRICT_KEYS = False`` and says why
+in ``OPEN_KEYS``; the guard test over every shipped plugin refuses the first without the second.
 """
 
 from __future__ import annotations

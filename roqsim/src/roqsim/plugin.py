@@ -44,11 +44,12 @@ class Plugin:
     #: catalog publishes and nothing checks would be prose with a type annotation.
     CONFIG_SCHEMA: dict | None = None
 
-    #: With a schema, whether a key it does not mention is an error. Opt-in: a component's config
-    #: also carries keys the world's author did not write (a manifest's ``prefix``, a spawn's
-    #: entity), so a plugin says so only once its own list is complete. See
-    #: :data:`roqsim.schema.INJECTED_KEYS`.
-    STRICT_KEYS: bool = False
+    #: With a schema, whether a key it does not mention is an error. On by default: a key outside
+    #: the schema is a typo that leaves a setting at its default. The keys a component carries
+    #: without the world's author writing them (a manifest's ``prefix``, the transport keys) are
+    #: known centrally (:data:`roqsim.schema.INJECTED_KEYS`), so a complete schema needs no more.
+    #: Off only with an :data:`OPEN_KEYS` reason.
+    STRICT_KEYS: bool = True
 
     #: Why a plugin with a schema accepts keys it does not list -- the one way to leave
     #: :data:`STRICT_KEYS` off. A schema that stays open without saying why is refused by the guard

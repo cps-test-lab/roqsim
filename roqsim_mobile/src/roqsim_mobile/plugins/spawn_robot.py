@@ -131,7 +131,7 @@ class SpawnRobotPlugin(Plugin):
     expansion_keys = frozenset({"model", "default_plugins", "prefix"})
 
     #: Every key this plugin, its ``expand`` and the entity it registers read -- and nothing else,
-    #: which is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried:
+    #: which is what makes refusing any other key safe. A key outside it is refused rather than carried:
     #: ``robot.lidar.rays`` against a robot whose scanner is a mounted device stops at the robot and
     #: would write a ``lidar`` key here that nothing reads, while the real lidar keeps its value.
     #: The load names that component's address (:mod:`roqsim.config`); the schema refuses the rest.
@@ -146,7 +146,6 @@ class SpawnRobotPlugin(Plugin):
         "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
     }
-    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):

@@ -205,8 +205,8 @@ def test_a_plugin_without_one_reads_only_what_its_config_block_lists(name, cls):
 )
 def test_a_schema_is_strict_unless_it_says_why_not(name, cls):
     assert cls.STRICT_KEYS or cls.OPEN_KEYS.strip(), (
-        f"{name} declares a CONFIG_SCHEMA that accepts unknown keys without saying why: set "
-        f"STRICT_KEYS = True, or OPEN_KEYS = '<why a key outside the schema must pass>'"
+        f"{name} declares a CONFIG_SCHEMA that accepts unknown keys without saying why: drop "
+        f"STRICT_KEYS = False, or set OPEN_KEYS = '<why a key outside the schema must pass>'"
     )
 
 

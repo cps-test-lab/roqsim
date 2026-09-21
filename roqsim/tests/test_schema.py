@@ -110,7 +110,7 @@ def test_a_schema_that_is_both_required_and_defaulted_is_itself_an_error():
 # -- unknown keys -------------------------------------------------------------------------------
 
 
-def test_an_unknown_key_passes_unless_the_plugin_says_its_list_is_complete():
+def test_validate_refuses_an_unknown_key_only_when_asked():
     assert _errors({"mass": 1.0, "wobble": 3}) == []
     strict = _errors({"mass": 1.0, "wobble": 3}, strict_keys=True)
     assert any("'wobble' is not a setting" in e for e in strict)
@@ -157,7 +157,12 @@ def test_declaration_order_is_kept():
 
 class _Declared(Plugin):
     CONFIG_SCHEMA = SCHEMA
-    STRICT_KEYS = True
+
+
+class _Open(Plugin):
+    CONFIG_SCHEMA = SCHEMA
+    STRICT_KEYS = False
+    OPEN_KEYS = "the rest is passed on to something that checks it"
 
 
 class _Undeclared(Plugin):
@@ -169,9 +174,16 @@ def test_a_plugin_without_a_schema_is_unaffected_by_the_rule():
     assert _Undeclared({}).config_errors({"anything": 1}) == []
 
 
-def test_a_plugin_with_one_gets_the_checks_and_its_strictness():
+def test_a_plugin_with_one_gets_the_checks_and_is_strict_without_asking():
+    """Strict is the default: a schema says what the config is, so a key outside it is a typo."""
+    assert Plugin.STRICT_KEYS is True
     assert _Declared({}).validate_schema({"mass": 2.0}) == []
     assert any("not a setting" in e for e in _Declared({}).validate_schema({"mass": 2.0, "x": 1}))
+
+
+def test_a_plugin_that_opens_its_schema_passes_an_unknown_key():
+    assert _Open({}).validate_schema({"mass": 2.0, "x": 1}) == []
+    assert any("'mass' is required" in e for e in _Open({}).validate_schema({"x": 1}))
 
 
 def test_the_catalog_publishes_a_declared_schema_and_says_when_it_is_strict():

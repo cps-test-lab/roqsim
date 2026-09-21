@@ -152,7 +152,7 @@ class EnergyMonitorPlugin(Plugin):
     requires_owner = True
 
     #: Every key this plugin reads, besides the transport ones every component may carry
-    #: (:data:`roqsim.schema.INJECTED_KEYS`) -- which is what makes ``STRICT_KEYS`` safe. A misspelt
+    #: (:data:`roqsim.schema.INJECTED_KEYS`) -- which is what makes refusing any other key safe. A misspelt
     #: coefficient would otherwise meter the robot at the default that models nothing, and report an
     #: energy figure that looks measured.
     CONFIG_SCHEMA = {
@@ -181,7 +181,6 @@ class EnergyMonitorPlugin(Plugin):
         ),
         "rate_hz": Field(float, default=5.0, unit="Hz", doc="endpoint publish rate, > 0"),
     }
-    STRICT_KEYS = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)

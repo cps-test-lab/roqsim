@@ -46,9 +46,8 @@ _log = logging.getLogger(__name__)
 class CeilingPlugin(Plugin):
     parallel_safe = True  # build-only; no per-step work
 
-    #: Two keys, both with defaults, and nothing else -- which is why this plugin can afford
-    #: `STRICT_KEYS`: a misspelt `above_Z` would otherwise leave the ceiling standing and look like
-    #: the plugin not working.
+    #: Two keys, both with defaults, and nothing else -- so any other key is refused: a misspelt
+    #: `above_Z` would otherwise leave the ceiling standing and look like the plugin not working.
     CONFIG_SCHEMA = {
         # Default true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into a
         # world never deletes geometry unless the world explicitly asks (keep: false).
@@ -60,7 +59,6 @@ class CeilingPlugin(Plugin):
             doc="a geom is 'ceiling' iff its whole world-space AABB is above this height",
         ),
     }
-    STRICT_KEYS = True
 
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
