@@ -198,20 +198,175 @@ def test_manual_control_leaves_ctrl_to_the_sliders():
 # --------------------------------------------------------------------------- C. sensors
 
 
-def test_c1_sensor_mounts():
-    """C1: lidar/imu sites and the two depth cameras exist at plausible mount heights."""
-    model, data = _build()
-    for site in ("lidar", "imu"):
-        sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, site)
-        assert sid >= 0, f"missing site {site}"
-    # lidar rides the torso ~1.2 m up at the home stance (base 0.90 + 0.30 site offset)
-    lid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert 1.0 < float(data.site_xpos[lid][2]) < 1.4
-    for cam in ("head_camera", "chest_camera"):
-        cid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, cam)
-        assert cid >= 0, f"missing camera {cam}"
-    head = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
-    assert float(data.cam_xpos[head][2]) > 1.3, "head camera implausibly low"
+# The camera mounts, from HU_D04_01.urdf @ humanoid-description a90f734 (see oli.manifest.yaml):
+#: head_camera_joint on head_pitch_link.
+HEAD_CAMERA_JOINT = ((0.07453, 0.0175, 0.065), (0.0, 1.5708, 0.0))
+#: head_camera_link -> the D435's camera_link, read off the vendor's d435_link.STL on that link: its
+#: lens normal is the link's +z and its baseline the link's +y, so camera_link is the link pitched
+#: back by -90 deg, at the same origin.
+HEAD_CAMERA_LINK_TO_CAMERA_LINK = ((0.0, 0.0, 0.0), (0.0, -1.5708, 0.0))
+#: The chest camera: waist_camera_joint's origin on waist_pitch_link, forward axis (the joint's
+#: rpy (0, 2.1818, 0) is a recorded deviation).
+CHEST_CAMERA_LINK = ((0.092, 0.0175, 0.2751), (0.0, 0.0, 0.0))
+#: The D435's own chain: camera_link -> camera_color_frame -> camera_color_optical_frame
+#: (realsense2_description _d435.urdf.xacro).
+D435_COLOR = ((0.0, 0.015, 0.0), (0.0, 0.0, 0.0))
+D435_OPTICAL = ((0.0, 0.0, 0.0), (-math.pi / 2, 0.0, -math.pi / 2))
+
+
+def _urdf_rot(rpy):
+    r, p_, y = rpy
+    rx = np.array([[1, 0, 0], [0, math.cos(r), -math.sin(r)], [0, math.sin(r), math.cos(r)]])
+    ry = np.array([[math.cos(p_), 0, math.sin(p_)], [0, 1, 0], [-math.sin(p_), 0, math.cos(p_)]])
+    rz = np.array([[math.cos(y), -math.sin(y), 0], [math.sin(y), math.cos(y), 0], [0, 0, 1]])
+    return rz @ ry @ rx
+
+
+def _chain(*joints):
+    pos, rot = np.zeros(3), np.eye(3)
+    for xyz, rpy in joints:
+        pos = pos + rot @ np.asarray(xyz, dtype=np.float64)
+        rot = rot @ _urdf_rot(rpy)
+    return pos, rot
+
+
+@pytest.fixture(scope="module")
+def spawned():
+    """The Oli as a world spawns it, its two RealSense devices mounted, the renders switched off
+    (nothing here reads a pixel, and a D435's mass and housing are what it tests)."""
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    off = ("robot.head_camera.realsense_d435", "robot.chest_camera.realsense_d435")
+    cfg = load_config_from_dict(
+        {
+            "sim": {"timestep": TIMESTEP},
+            "components": [{"spawn_robot": {"model": "oli", "prefix": "o_"}, "name": "robot"}],
+        },
+        overrides={"components": {a: {"enabled": False} for a in off}},
+    )
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    yield engine
+    engine.shutdown()
+
+
+def _in_body(engine, body, pos, mat):
+    m, d = engine.ctx.model, engine.ctx.data
+    bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, body)
+    assert bid >= 0, body
+    rb = d.xmat[bid].reshape(3, 3)
+    return rb.T @ (np.asarray(pos) - d.xpos[bid]), rb.T @ np.asarray(mat).reshape(3, 3)
+
+
+def _camera(engine, name):
+    m, d = engine.ctx.model, engine.ctx.data
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, name)
+    assert cid >= 0, f"missing camera {name}"
+    return d.cam_xpos[cid].copy(), d.cam_xmat[cid].reshape(3, 3).copy()
+
+
+def test_c1_sensor_mounts(spawned):
+    """C1: the lidar/imu sites, and the two D435s the manifest mounts, at plausible mount heights.
+
+    The bare MJCF carries no camera of its own: the head and chest cameras are the `realsense_d435`
+    device, mounted on head_pitch_link and waist_pitch_link.
+    """
+    bare, _ = _build()
+    assert bare.ncam == 0, "oli.xml bakes a camera; the manifest's D435 devices are the cameras"
+    m, d = spawned.ctx.model, spawned.ctx.data
+    mujoco.mj_forward(m, d)
+    for site in ("o_lidar", "o_imu"):
+        assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, site) >= 0, f"missing site {site}"
+    lid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "o_lidar")
+    assert 1.0 < float(d.site_xpos[lid][2]) < 1.4
+    head_pos, _ = _camera(spawned, "o_head_camera_d435_color")
+    chest_pos, _ = _camera(spawned, "o_chest_camera_d435_color")
+    assert float(head_pos[2]) > 1.3, "head camera implausibly low"
+    assert float(head_pos[2]) > float(chest_pos[2]) > 1.0
+
+
+def test_c1b_the_head_camera_is_the_vendor_chain(spawned):
+    """C1b: camera_link, and the colour optical frame the image is taken from, are where the URDF's
+    head_camera_joint and the vendor's own D435 chain put them on head_pitch_link."""
+    want_link = _chain(HEAD_CAMERA_JOINT, HEAD_CAMERA_LINK_TO_CAMERA_LINK)
+    np.testing.assert_allclose(want_link[1], np.eye(3), atol=1e-4)  # the rpy undoes itself
+    d = spawned.ctx.data
+    mid = mujoco.mj_name2id(spawned.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "o_head_camera_mount")
+    pos, rot = _in_body(spawned, "o_head_pitch_link", d.xpos[mid], d.xmat[mid])
+    np.testing.assert_allclose(pos, want_link[0], atol=1e-9)
+    np.testing.assert_allclose(rot, want_link[1], atol=1e-4)
+    want_opt = _chain(HEAD_CAMERA_JOINT, HEAD_CAMERA_LINK_TO_CAMERA_LINK, D435_COLOR, D435_OPTICAL)
+    cam_pos, cam_rot = _in_body(
+        spawned, "o_head_pitch_link", *_camera(spawned, "o_head_camera_d435_color")
+    )
+    np.testing.assert_allclose(cam_pos, want_opt[0], atol=1e-6)
+    # MuJoCo's camera looks down -z with +y up; the optical frame down +z with +y down.
+    np.testing.assert_allclose(cam_rot @ np.diag([1.0, -1.0, -1.0]), want_opt[1], atol=1e-4)
+    chest_pos, _ = _in_body(
+        spawned, "o_waist_pitch_link", *_camera(spawned, "o_chest_camera_d435_color")
+    )
+    np.testing.assert_allclose(chest_pos, _chain(CHEST_CAMERA_LINK, D435_COLOR)[0], atol=1e-9)
+
+
+def test_c1c_the_head_camera_looks_forward_at_the_home_stance(spawned):
+    """C1c: optical +z along the robot's +x, image upright (optical +y down), at the default pose."""
+    m, d = spawned.ctx.model, spawned.ctx.data
+    mujoco.mj_forward(m, d)
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "o_base_link")
+    rb = d.xmat[base].reshape(3, 3)
+    for cam in ("o_head_camera_d435_color", "o_chest_camera_d435_color"):
+        _, rot = _camera(spawned, cam)
+        optical = rb.T @ rot @ np.diag([1.0, -1.0, -1.0])
+        assert float(optical[:, 2] @ [1.0, 0.0, 0.0]) > 0.95, f"{cam} does not look forward"
+        assert float(optical[:, 1] @ [0.0, 0.0, -1.0]) > 0.95, f"{cam} is not upright"
+
+
+def test_c1d_each_camera_publishes_its_own_frames_and_topics(spawned):
+    eps = {(e.owner, e.name): e for e in spawned.ctx.interface.all()}
+    for label in ("head_camera", "chest_camera"):
+        owner = f"robot.{label}"
+        tfs = {
+            (t["parent"], t["child"]) for t in eps[(owner, "frames")].backend["ros2"]["static_tf"]
+        }
+        assert (f"{label}_color_frame", f"{label}_color_optical_frame") in tfs
+        imu = eps[(owner, "imu")]
+        assert imu.namespace == label and imu.lazy
+        assert imu.backend["ros2"]["topic"] == "camera/imu"
+        assert imu.backend["ros2"]["frame_id"] == f"{label}_imu_optical_frame"
+
+
+def test_c1e_the_mounted_cameras_touch_nothing_while_it_walks(spawned):
+    """C1e: two D435s -- mesh, group-3 collision box, 72 g each -- on a balancing robot's head and
+    chest. Walking, no contact involves either housing, so the constraint forces carry no self-
+    contact the vendor chain never had, and the robot stays up."""
+    m, d = spawned.ctx.model, spawned.ctx.data
+    mounts = {
+        mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, f"o_{label}_mount")
+        for label in ("head_camera", "chest_camera")
+    }
+    assert all(b >= 0 for b in mounts)
+    loco = next(p for p in spawned.plugins if type(p).__name__ == "OliLocomotionPlugin")
+    bq = int(m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, "o_base_free")])
+    x0 = float(d.qpos[bq])
+    touched = set()
+    for _ in range(int(4.0 / TIMESTEP)):
+        loco.drive(0.3, 0.0, 0.0)
+        spawned.step()
+        for c in d.contact[: d.ncon]:
+            bodies = {int(m.geom_bodyid[c.geom1]), int(m.geom_bodyid[c.geom2])}
+            if bodies & mounts:
+                touched.add(
+                    tuple(
+                        mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g)
+                        for g in (c.geom1, c.geom2)
+                    )
+                )
+    assert not touched, f"a camera housing is in contact: {sorted(touched)}"
+    assert float(d.qpos[bq + 2]) > HOME_Z - 0.05, "fell while walking with the cameras mounted"
+    assert float(d.qpos[bq]) - x0 > 0.5, "did not walk"
 
 
 def test_c3_control_rates():

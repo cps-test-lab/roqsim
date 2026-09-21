@@ -4,7 +4,7 @@
 # Inspect by hand: roqsim sim .../oli_demo.yaml --manual-control   (the policy yields the joints;
 #                  a torque-actuated humanoid with the policy off simply folds — expected)
 #
-# oli_locomotion + lidar + the two depth cameras come from the oli model manifest
+# oli_locomotion + lidar + the two RealSense D435 devices come from the oli model manifest
 # (models/oli.manifest.yaml). A `test_cmd` drives the robot forward so the standalone scene shows
 # motion. For ROS 2 / nav2, add a ros2_bridge and drive /cmd_vel (see roqsim_ros_bridge).
 

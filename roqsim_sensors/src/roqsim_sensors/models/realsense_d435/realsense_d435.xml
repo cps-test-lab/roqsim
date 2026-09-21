@@ -21,6 +21,9 @@
 
   <worldbody>
     <body name="mount">
+      <!-- The data sheet's weight, as a uniform box of the collision geom's size. -->
+      <inertial pos="-0.00855 -0.0175 0" quat="0.5 0.5 0.5 0.5" mass="0.072"
+                diaginertia="8.1129408e-06 5.33498208e-05 5.35245408e-05"/>
       <geom name="d435_visual" type="mesh" mesh="d435_mesh" material="d435_body"
             pos="0.0043 -0.0175 0" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0"/>
       <!-- Front glass strip: the decimated mesh has no separate material for the front window, so

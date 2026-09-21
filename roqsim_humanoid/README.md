@@ -5,8 +5,8 @@ RL **locomotion controller**), and the **AgiBot Genie G2** wheeled dual-arm mobi
 
 The legged robots are the legged analogue of `roqsim_mobile`'s `diff_drive`: the world spawns the
 robot with the generic `spawn_robot` plugin, and the model's manifest injects the locomotion
-controller + a lidar (a `lidar` site for the Oli, with its depth cameras; the Livox Mid-360 device in
-the G1's head). Each controller declares the same backend-neutral
+controller + a lidar (a `lidar` site for the Oli, with its two `realsense_d435` depth-camera
+devices; the Livox Mid-360 device in the G1's head). Each controller declares the same backend-neutral
 endpoints (`cmd_vel` in, `odom` / `joint_states` out), so the ROS 2 bridge and nav2 drive either
 humanoid with no humanoid-specific wiring.
 
@@ -39,8 +39,15 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
 - `models/oli.xml` — 31-DoF whole-body LimX Oli (HU_D04_01), **built** from the vendor URDF by
   `external/convert/build_oli.py` (Apache-2.0; see `THIRD_PARTY.md`). The parallel
   ankle/waist linkages are approximated as serial joints so the pretrained PR-space policy drives
-  the 31 actuators 1:1 with no closed loops. `base_link`/`base_free` + `lidar`/`imu` sites and head +
-  chest RealSense-D435 depth cameras, per the framework conventions.
+  the 31 actuators 1:1 with no closed loops. `base_link`/`base_free` + `lidar`/`imu` sites, per the
+  framework conventions. The head and chest RealSense D435s are not in the MJCF: the manifest mounts
+  the `realsense_d435` device twice (`device_name` `head_camera`/`chest_camera`, each in its own
+  namespace) on `head_pitch_link` and `waist_pitch_link`, so each publishes the RealSense topics
+  (`camera/color/image_raw`, `camera/depth/image_rect_raw`, `camera/depth/color/points`), its
+  `<device_name>_color_optical_frame` chain, and the D435i's lazy IMU on `camera/imu`. The head mount
+  is the URDF's `head_camera_joint` read through the vendor D435 mesh on that link; the chest keeps
+  the forward axis at `waist_camera_joint`'s origin rather than that joint's 35° tilt (both joints
+  are commented out upstream) -- see `oli.manifest.yaml`.
 - `policy/oli/policy.onnx` + `policy/oli/walk_param.yaml` — pretrained **ONNX** whole-body walk
   policy + deploy config, vendored verbatim from LimX `humanoid-rl-deploy-python`.
 - `plugins/oli_locomotion.py` — the controller: builds the 102-dim observation, keeps a 5-deep

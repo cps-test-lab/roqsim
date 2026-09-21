@@ -277,30 +277,9 @@ def main() -> None:
     base.add_site(name="lidar", pos=[0.0, 0.0, 0.30], size=[0.01])
     base.add_site(name="imu", pos=[0.0, 0.0, 0.0], size=[0.01])
 
-    # -- depth cameras: head + chest RealSense D435 mount frames from the URDF -------------------
-    # Positions are the URDF camera-joint origins (head_camera_joint on head_pitch_link;
-    # waist_camera_joint, commented in the URDF but frame given, on waist_pitch_link). The MJCF
-    # camera looks down its -z with +y up; xyaxes="0 -1 0 0 0 1" (below, as a quat) points -z along
-    # body +x (forward) with +y up -- the standard forward optical axis (cf. the realsense_d435
-    # docstring). The exact vendor optical extrinsics (small pitch/roll of the real module) are a
-    # documented follow-up for the C1 mount-pose check.
-    R_fwd = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
-    q_fwd = np.zeros(4)
-    mujoco.mju_mat2Quat(q_fwd, R_fwd.flatten())
-    hc = spec.body("head_pitch_link").add_camera()
-    hc.name, hc.pos, hc.quat, hc.fovy = (
-        "head_camera",
-        np.array([0.07453, 0.0175, 0.065]),
-        q_fwd,
-        58.0,
-    )
-    cc = spec.body("waist_pitch_link").add_camera()
-    cc.name, cc.pos, cc.quat, cc.fovy = (
-        "chest_camera",
-        np.array([0.092, 0.0175, 0.2751]),
-        q_fwd,
-        58.0,
-    )
+    # -- depth cameras: none baked. The head and chest RealSense D435s are the `realsense_d435`
+    # device model, which oli.manifest.yaml mounts on head_pitch_link and waist_pitch_link at the
+    # URDF camera-joint origins; the device carries its own housing, camera and frame chain.
 
     # -- IMU sensors (noise-free) for realism; the policy reads base state from qpos/qvel like g1 -
     fq = spec.add_sensor()
