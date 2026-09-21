@@ -400,20 +400,71 @@ def test_it_belongs_to_a_robot():
 @pytest.mark.parametrize(
     ("config", "expected"),
     [
-        ({"efficiency": 0.0}, "'efficiency' must be in (0, 1]"),
-        ({"efficiency": 1.5}, "'efficiency' must be in (0, 1]"),
-        ({"idle_w": -1}, "'idle_w' must be >= 0"),
-        ({"capacity_wh": -1}, "'capacity_wh' must be >= 0"),
+        ({"efficiency": 0.0}, "'efficiency' must be > 0"),
+        ({"efficiency": 1.5}, "'efficiency' must be <= 1.0"),
+        ({"idle_w": -1}, "'idle_w' must be >= 0.0 W"),
+        ({"capacity_wh": -1}, "'capacity_wh' must be >= 0.0 Wh"),
         ({"rate_hz": 0}, "'rate_hz' must be > 0"),
-        ({"actuators": "wheel_motor"}, "must be a list"),
-        ({"resistive_w_per_nm2": -1}, "'resistive_w_per_nm2' must be >= 0"),
-        ({"resistive_w_per_nm2": {"wheel_motor": -1}}, "'resistive_w_per_nm2' must be >= 0"),
-        ({"resistive_w_per_nm2": "lots"}, "must be a number, or a mapping"),
+        ({"actuators": "wheel_motor"}, "'actuators' must be list"),
+        ({"regenerative": 1}, "'regenerative' must be bool"),
+        ({"resistive_w_per_nm2": -1}, "'resistive_w_per_nm2' must be >= 0.0"),
+        (
+            {"resistive_w_per_nm2": {"wheel_motor": -1}},
+            "'resistive_w_per_nm2'['wheel_motor'] must be >= 0",
+        ),
+        (
+            {"resistive_w_per_nm2": {"wheel_motor": "x"}},
+            "'resistive_w_per_nm2'['wheel_motor'] must be a number",
+        ),
+        ({"resistive_w_per_nm2": "lots"}, "'resistive_w_per_nm2' must be float or dict"),
+        ({"resistive_w_per_nm2": True}, "'resistive_w_per_nm2' must be float or dict"),
     ],
 )
 def test_config_errors_are_reported_by_name(config, expected):
-    errors = EnergyMonitorPlugin(config, entity="robot", label="energy").validate_config(config)
+    errors = EnergyMonitorPlugin({}, entity="robot", label="energy").config_errors(config)
     assert any(expected in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "resistive", [0.0, 2, 0.012, {"wheel_motor": 0.02}, {"wheel_motor": 1, "other": 0.0}, {}]
+)
+def test_a_coefficient_is_a_number_or_one_per_actuator(resistive):
+    config = {"resistive_w_per_nm2": resistive}
+    assert EnergyMonitorPlugin({}, entity="robot", label="energy").config_errors(config) == []
+
+
+def test_a_misspelt_key_is_refused_with_the_key_it_meant():
+    """A typo'd coefficient would meter at the default that models nothing, and look measured."""
+    config = {"resistive_w_per_nm": 0.012}
+    errors = EnergyMonitorPlugin({}, entity="robot", label="energy").config_errors(config)
+    assert len(errors) == 1, errors
+    assert "'resistive_w_per_nm' is not a setting" in errors[0]
+    assert "did you mean 'resistive_w_per_nm2'?" in errors[0]
+
+
+def test_the_transport_keys_every_component_carries_are_not_unknown():
+    config = {"namespace": "robot1", "topics": {"battery": "/battery"}}
+    assert EnergyMonitorPlugin({}, entity="robot", label="energy").config_errors(config) == []
+
+
+def test_a_world_with_a_misspelt_key_does_not_load():
+    """Through instantiate_plugins, which is what a world meets."""
+    from roqsim.config import instantiate_plugins
+
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "components": [
+                {
+                    f"{__name__}:_RobotScene": {},
+                    "name": "robot",
+                    "components": [{"energy_monitor": {"idle_W": 8.0}}],
+                }
+            ],
+        }
+    )
+    with pytest.raises(PluginError, match="did you mean 'idle_w'"):
+        instantiate_plugins(cfg)
 
 
 def test_watt_hours_and_joules_are_one_quantity():

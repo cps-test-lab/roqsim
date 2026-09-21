@@ -49,6 +49,37 @@ def test_a_wrong_type_is_reported_once_and_stops_the_other_checks_on_that_key():
     assert errors == ["'mass' must be float, got str ('heavy')"]
 
 
+# -- a key that takes more than one shape --------------------------------------------------------
+
+UNION = {"gain": Field((float, dict), default=0.0, minimum=0.0, unit="W")}
+
+
+def test_a_union_accepts_each_of_its_shapes():
+    for value in (0.5, 2, {"shoulder": 0.1}, {}):
+        assert validate(UNION, {"gain": value}) == [], value
+
+
+def test_a_union_refuses_what_is_none_of_them_and_names_every_shape():
+    assert validate(UNION, {"gain": "lots"}) == ["'gain' must be float or dict, got str ('lots')"]
+    assert validate(UNION, {"gain": [0.1]}) == ["'gain' must be float or dict, got list ([0.1])"]
+
+
+def test_a_bool_is_still_not_a_number_inside_a_union():
+    assert validate(UNION, {"gain": True}) == ["'gain' must be float or dict, got bool (True)"]
+
+
+def test_a_bound_applies_to_the_number_and_not_to_the_mapping():
+    """A mapping has no order against 0; its entries are the plugin's to check."""
+    assert validate(UNION, {"gain": -1.0}) == ["'gain' must be >= 0.0 W, got -1.0"]
+    assert validate(UNION, {"gain": {"shoulder": -1.0}}) == []
+
+
+def test_a_union_is_published_as_a_list_of_its_names():
+    (gain,) = describe(UNION)
+    assert gain["type"] == ["float", "dict"]
+    assert describe({"x": Field(float)})[0]["type"] == "float"
+
+
 # -- rules --------------------------------------------------------------------------------------
 
 
