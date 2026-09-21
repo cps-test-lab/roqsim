@@ -1,0 +1,36 @@
+<mujoco model="realsense_d435">
+  <!--
+    Intel RealSense D435: visual mesh + a colour camera, mounted by `spawn_sensor` at the
+    vendor joint origin of `<name>_link`. Written by external/convert/build_realsense_devices.py from
+    realsense2_description/urdf/_d435.urdf.xacro @ realsense-ros 53169f3 (tag 4.56.1);
+    see REALSENSE_D435_MESH_LICENSE.
+
+    The `mount` body IS `camera_link`: x forward (the lens normal), y left, z up. The mesh keeps
+    its own axes and carries the vendor mesh-in-link origin as its pose; the front plate and the
+    collision box were measured on the converted mesh and ride the same pose. `d435_color` is
+    the vendor `camera_color_optical_frame`, turned into MuJoCo's camera convention (looks down -z,
+    +y up). The manifest's `frames:` publishes the vendor chain from this body.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="d435_mesh" file="d435.obj"/>
+    <material name="d435_body" rgba="0.75 0.75 0.77 1" specular="0.4" shininess="0.3"/>
+    <material name="d435_glass" rgba="0.05 0.05 0.05 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <geom name="d435_visual" type="mesh" mesh="d435_mesh" material="d435_body"
+            pos="0.0043 -0.0175 0" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0"/>
+      <!-- Front glass strip: the decimated mesh has no separate material for the front window, so
+           a thin black plate stands in, just proud of the mesh's front face. -->
+      <geom name="d435_front" type="box" pos="0.0047 -0.0175 0" quat="0.5 0.5 0.5 0.5"
+            size="0.038 0.0085 0.0004" material="d435_glass" contype="0" conaffinity="0"/>
+      <geom name="d435_collision" type="box" pos="-0.00855 -0.0175 0" quat="0.5 0.5 0.5 0.5"
+            size="0.04536 0.01314 0.01286" group="3"/>
+      <camera name="d435_color" pos="0 0.015 0" xyaxes="0 -1 0 0 0 1"
+              fovy="42.5" resolution="640 480"/>
+    </body>
+  </worldbody>
+</mujoco>

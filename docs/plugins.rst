@@ -200,9 +200,9 @@ Model plugin manifests
 A robot's controller and sensors are intrinsic to the *model*, not the *world*, so they ship with
 the model in a ``<model>.manifest.yaml`` manifest next to its MJCF. A spawn plugin pulls them in
 automatically, so a world just spawns the robot -- and the same applies to a *device* with more than
-one sensor in it: the bundled ``d435`` is a D435i, so its manifest carries the ``imu`` component with
-the inertial module's own extrinsic, and ``spawn_sensor: {model: d435}`` yields both ``camera/imu``
-and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
+one sensor in it: the bundled ``realsense_d435`` is a D435i, so its manifest carries the ``imu``
+component at the inertial module's own frame, and ``spawn_sensor: {model: realsense_d435}`` yields
+both ``camera/imu`` and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
 component (which is also how "does this device have an IMU" becomes a campaign factor):
 
 .. code:: yaml
@@ -221,8 +221,8 @@ but deliberately leaves ``realsense_d435`` OUT of its manifest -- the arm provid
 decides whether anything renders from it, at what rate, and whether it reprojects to a point cloud.
 
 The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` pulls in that
-arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
-in its ``realsense_d435`` capture plugin.
+arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: realsense_d435}``
+pulls in its ``realsense_d435`` capture plugin.
 
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling

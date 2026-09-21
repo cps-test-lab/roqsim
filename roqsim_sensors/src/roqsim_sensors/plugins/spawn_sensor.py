@@ -10,7 +10,7 @@ via its own ``robot: <name>`` config -- no sensor-specific wiring needed here.
 Config::
 
     - spawn_sensor:
-        model: d435            # bundled model name, filename, or absolute path
+        model: realsense_d435  # bundled model name, filename, or absolute path
         namespace: ""          # optional transport scope; the capture plugin's endpoints inherit it
         prefix: ""             # MJCF name prefix (use distinct prefixes for >1 mount of the model)
         pos: [0.0, 0.0, 0.0]
@@ -124,7 +124,7 @@ a mast or a ceiling IS, and it is the mode a repositionable sensor wants.
 a mount that is meant to fall, be pushed or be carried wants it -- ask for it on an overhead
 camera and the camera drops to the floor, which is precisely what it means.
 
-``model``'s ``<model>.manifest.yaml`` (e.g. ``d435.manifest.yaml``) ships the matching capture
+``model``'s ``<model>.manifest.yaml`` (e.g. ``realsense_d435.manifest.yaml``) ships the matching capture
 plugin, injected automatically the same way a robot's manifest is (see
 :func:`roqsim.manifest.expand_manifest`); off with ``default_plugins: false``.
 
@@ -137,7 +137,7 @@ model (:func:`~roqsim_sensors.plugins.camera_common.intrinsics_from_model`, path
 
 It belongs to the placement and not to the model because **a calibration describes one physical unit**:
 three D435s of one rig measure ``fx`` 1330 / 1344 / 1413 with principal points scattered up to 14 px off
-centre, so a shared ``d435.xml`` has no single lens to carry, and a variant per unit would clone a mesh
+centre, so a shared ``realsense_d435.xml`` has no single lens to carry, and a variant per unit would clone a mesh
 in order to hold three numbers. Stating them here leaves one model and gives each mount its own optics.
 
 The resolution is part of the measurement, so ``width``/``height`` are required rather than inferred --

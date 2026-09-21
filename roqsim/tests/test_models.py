@@ -42,7 +42,7 @@ def test_package_qualified_ref():
 
 
 def test_filename_form_resolves():
-    assert resolve_model("d435.xml").path.name == "d435.xml"
+    assert resolve_model("realsense_d435.xml").path.name == "realsense_d435.xml"
 
 
 def test_filesystem_path(tmp_path):
