@@ -4,11 +4,12 @@ Carried mass is a first-class experiment factor: it changes what a mobile base c
 an arm can hold at reach, and -- where thrust is bounded -- whether a vehicle flies at all. This
 plugin states it in the world, so it is swept like any other factor and recorded with the run.
 
-Config::
+Its keys are declared in :attr:`PayloadPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins describe
+payload`` and the plugin catalog publish: ``mass`` in kg (required), and the ``body`` that carries it
+(default: the entity's root body)::
 
-    payload:
-      mass: 2.5           # kg, REQUIRED -- added to the body's own mass
-      body: tray          # body to load (default: the entity's root body)
+    components:
+      - payload: {mass: 2.5, body: tray}
 
 The payload is a **point mass at the body's centre of mass**: mass adds, and the inertia a point
 mass contributes about its own centre is zero. An *offset* payload is a different physical object --
@@ -48,7 +49,9 @@ class PayloadPlugin(Plugin):
         self._bid = -1
 
     #: Declared once, so `roqsim plugins describe payload` publishes the same keys the checks run
-    #: on -- with their types, units and bounds, which a docstring cannot give a caller.
+    #: on -- with their types, units and bounds, which a docstring cannot give a caller. Complete,
+    #: which is what makes `STRICT_KEYS` safe: a misspelt `mas` would otherwise be refused only as a
+    #: missing `mass`, and a misspelt `bdy` would load the root body without a word.
     CONFIG_SCHEMA = {
         "mass": Field(
             float,
@@ -64,6 +67,7 @@ class PayloadPlugin(Plugin):
             str, default="", static=True, doc="entity that carries it (default: the owning entity)"
         ),
     }
+    STRICT_KEYS = True
 
     def validate_config(self, config: dict) -> list[str]:
         # The mechanical half from the declaration; the rest is what only this plugin knows.
@@ -89,7 +93,7 @@ class PayloadPlugin(Plugin):
         model = ctx.model
         prefix = entity.meta.get("prefix", "")
 
-        named = self.config.get("body")
+        named = self.settings.body
         if named:
             bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, prefix + named)
             if bid < 0:
@@ -115,7 +119,7 @@ class PayloadPlugin(Plugin):
         )
 
     def configure(self, ctx: SimContext) -> None:
-        mass = float(self.config["mass"])
+        mass = self.settings.mass
         entity = ctx.entities.get(self.robot)
         if entity is None:
             raise RuntimeError(

@@ -26,6 +26,26 @@ is not a point. For a point cloud the detection limits are ``range_min`` and ``m
 **``max_range`` is enforced here, for everyone.** ``mj_multiRay``'s ``cutoff`` is a culling hint and
 not a clamp -- it can still report a hit beyond it. Without the
 window, a Mid-360 with a 40 m range would emit points from further away.
+
+Config (every ray-cast device; each device's module adds its ray pattern and datasheet defaults)::
+
+    <plugin short name>:
+      site: lidar                # site the rays are cast from (default: the device's DEFAULT_SITE)
+      frame_id: lidar            # frame the payload is stamped in, and the static TF's child
+                                 #   (default: site)
+      range_min: 0.164           # m; the nearest distance the device reports
+      max_range: 20.0            # m; the farthest, enforced here rather than left to the cast
+      rate_hz: 10.0              # cast and publish rate, not the physics rate
+      exclude_body: ""           # body the rays skip -- the device's own housing (default: none)
+      range_stddev: 0.0          # Gaussian range sigma (m)
+      range_stddev_relative: 0.0 # sigma as a fraction of the distance, at and beyond
+                                 #   range_stddev_relative_from (0 = constant sigma)
+      range_stddev_relative_from: 0.0   # m; nearer than this the sigma is range_stddev
+      range_resolution: 0.0      # quantisation step of a published distance (m); 0 = continuous
+      dropout_percent: 0.0       # percent of returns dropped, drawn per cast
+      emit_static_tf: true       # publish tf_parent -> frame_id; false where the mount publishes it
+      tf_parent: ""              # body the static TF hangs from (default: the carrier's root body)
+      lazy: false                # cast and publish only while something subscribes
 """
 
 from __future__ import annotations

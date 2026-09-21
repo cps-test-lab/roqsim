@@ -49,6 +49,37 @@ def test_a_wrong_type_is_reported_once_and_stops_the_other_checks_on_that_key():
     assert errors == ["'mass' must be float, got str ('heavy')"]
 
 
+# -- a key that takes more than one shape --------------------------------------------------------
+
+UNION = {"gain": Field((float, dict), default=0.0, minimum=0.0, unit="W")}
+
+
+def test_a_union_accepts_each_of_its_shapes():
+    for value in (0.5, 2, {"shoulder": 0.1}, {}):
+        assert validate(UNION, {"gain": value}) == [], value
+
+
+def test_a_union_refuses_what_is_none_of_them_and_names_every_shape():
+    assert validate(UNION, {"gain": "lots"}) == ["'gain' must be float or dict, got str ('lots')"]
+    assert validate(UNION, {"gain": [0.1]}) == ["'gain' must be float or dict, got list ([0.1])"]
+
+
+def test_a_bool_is_still_not_a_number_inside_a_union():
+    assert validate(UNION, {"gain": True}) == ["'gain' must be float or dict, got bool (True)"]
+
+
+def test_a_bound_applies_to_the_number_and_not_to_the_mapping():
+    """A mapping has no order against 0; its entries are the plugin's to check."""
+    assert validate(UNION, {"gain": -1.0}) == ["'gain' must be >= 0.0 W, got -1.0"]
+    assert validate(UNION, {"gain": {"shoulder": -1.0}}) == []
+
+
+def test_a_union_is_published_as_a_list_of_its_names():
+    (gain,) = describe(UNION)
+    assert gain["type"] == ["float", "dict"]
+    assert describe({"x": Field(float)})[0]["type"] == "float"
+
+
 # -- rules --------------------------------------------------------------------------------------
 
 
@@ -150,12 +181,35 @@ def test_the_catalog_publishes_a_declared_schema_and_says_when_it_is_strict():
     assert {f["name"] for f in payload["schema"]} == {"mass", "body", "robot"}
     mass = next(f for f in payload["schema"] if f["name"] == "mass")
     assert mass["required"] is True and mass["unit"] == "kg"
-    assert payload["strict_keys"] is False
+    assert payload["strict_keys"] is True
+    assert "open_keys" not in payload
 
     ceiling = get_plugin_details("ceiling")
     assert ceiling["strict_keys"] is True
     keep = next(f for f in ceiling["schema"] if f["name"] == "keep")
     assert keep["type"] == "bool" and keep["default"] is True
+
+
+def test_an_open_schema_publishes_why_it_is_open(monkeypatch):
+    """A caller told `strict_keys: false` should also be told what may pass, and why."""
+    from roqsim.introspection import get_plugin_details
+    from roqsim.plugins.payload import PayloadPlugin
+
+    monkeypatch.setattr(PayloadPlugin, "STRICT_KEYS", False)
+    monkeypatch.setattr(PayloadPlugin, "OPEN_KEYS", "a manifest adds keys this plugin passes on")
+    payload = get_plugin_details("payload")
+    assert payload["strict_keys"] is False
+    assert payload["open_keys"] == "a manifest adds keys this plugin passes on"
+
+
+def test_present_is_never_unknown_because_the_base_class_owns_it():
+    """Read and checked for every plugin by `validate_presence`, which refuses it with the reason
+    on a plugin that registers no entity -- so a schema must not refuse it a second time."""
+    assert "present" in INJECTED_KEYS
+    from roqsim.plugins.ceiling import CeilingPlugin
+
+    errors = CeilingPlugin({}).config_errors({"present": False})
+    assert len(errors) == 1 and "registers none" in errors[0], errors
 
 
 def test_a_plugin_without_one_publishes_no_schema_key_at_all():
@@ -250,17 +304,103 @@ def test_a_validator_that_raises_is_reported_rather_than_escaping():
     assert "validate_config raised: boom" in errors[1]
 
 
-def test_the_whole_path_raises_for_a_world():
-    """Through instantiate_plugins, which is what a world actually meets.
-
-    A misspelt key rather than a mistyped one, because a plugin reads its config in ``__init__``
-    and instances are built before anything is validated -- so ``above_z: high`` raises out of
-    ``float()`` first, and never reaches the checker that would have named it.
-    """
+@pytest.mark.parametrize(
+    ("config", "expected"),
+    [
+        ({"above_Z": 2.0}, "did you mean 'above_z'"),
+        # Mistyped, too: the plugin reads its settings rather than converting them in `__init__`,
+        # so a wrong type reaches the checker that names it instead of raising out of a float().
+        ({"above_z": "high"}, "'above_z' must be float"),
+    ],
+)
+def test_the_whole_path_raises_for_a_world(config, expected):
+    """Through instantiate_plugins, which is what a world actually meets."""
     from roqsim.config import PluginError, instantiate_plugins, load_config_from_dict
 
-    cfg = load_config_from_dict(
-        {"sim": {}, "plugins": [{"ceiling": {"above_Z": 2.0}, "name": "roof"}]}
-    )
-    with pytest.raises(PluginError, match="did you mean 'above_z'"):
+    cfg = load_config_from_dict({"sim": {}, "plugins": [{"ceiling": config, "name": "roof"}]})
+    with pytest.raises(PluginError, match=expected):
         instantiate_plugins(cfg)
+
+
+# -- settings: the config read through the schema ------------------------------------------------
+
+
+def test_settings_fill_the_declared_default_for_a_key_left_out():
+    settings = _Declared({"mass": 2.0}).settings
+    assert settings.mass == 2.0
+    assert settings.mode == "soft" and settings.count == 1 and settings.loud is False
+    assert settings.pos is None, "no default declared: absent reads as None"
+
+
+def test_settings_read_a_yaml_integer_as_the_float_the_schema_accepted():
+    value = _Declared({"mass": 2}).settings.mass
+    assert value == 2.0 and isinstance(value, float)
+    assert isinstance(_Declared({"count": 3}).settings.count, int), "an int key stays an int"
+
+
+def test_settings_refuse_a_name_the_schema_does_not_declare():
+    with pytest.raises(AttributeError, match="declares no setting 'mas'. Declared: mass, mode"):
+        _ = _Declared({}).settings.mas
+
+
+def test_settings_are_read_only():
+    settings = _Declared({"mass": 1.0}).settings
+    with pytest.raises(AttributeError, match="read-only"):
+        settings.mass = 3.0
+    with pytest.raises(AttributeError, match="read-only"):
+        del settings.mass
+
+
+def test_a_mutable_default_is_a_fresh_copy_per_read():
+    """A list default mutated by one reader must not become every other instance's default."""
+    schema = {"rays": Field(list, default=[32, 24])}
+
+    class _Rays(Plugin):
+        CONFIG_SCHEMA = schema
+
+    _Rays({}).settings.rays.append(99)
+    assert _Rays({}).settings.rays == [32, 24]
+    assert schema["rays"].default == [32, 24]
+
+
+def test_a_value_of_the_wrong_type_reads_as_given_and_is_reported_by_the_check():
+    """A view that fell back to the default would run the plugin on a value nobody stated."""
+    plugin = _Declared({"mass": "heavy"})
+    assert plugin.settings.mass == "heavy"
+    assert plugin.config_errors(plugin.config) == ["'mass' must be float, got str ('heavy')"]
+
+
+def test_settings_for_reads_the_config_it_is_given():
+    """What a validator uses: the config it is asked about, not the instance's own."""
+    plugin = _Declared({"mass": 1.0})
+    assert plugin.settings_for({"mass": 5.0}).mass == 5.0
+    assert plugin.settings.mass == 1.0
+
+
+def test_a_plugin_without_a_schema_has_no_settings():
+    with pytest.raises(AttributeError, match="declares no CONFIG_SCHEMA"):
+        _ = _Undeclared({}).settings
+
+
+def test_a_schema_plugin_publishes_its_parameters_from_the_declaration():
+    """The list a caller reads and the list validation runs on are one list."""
+    from roqsim.introspection import get_plugin_details
+    from roqsim.plugins.energy_monitor import EnergyMonitorPlugin
+
+    details = get_plugin_details("energy_monitor")
+    assert [p["name"] for p in details["parameters"]] == list(EnergyMonitorPlugin.CONFIG_SCHEMA)
+    idle = next(p for p in details["parameters"] if p["name"] == "idle_w")
+    assert idle["example"] == "0.0" and idle["doc"].startswith("W; ")
+    mass = next(p for p in get_plugin_details("payload")["parameters"] if p["name"] == "mass")
+    assert mass["example"] is None and mass["doc"].startswith("required, kg; ")
+
+
+def test_the_docs_page_renders_a_schema_as_a_config_block():
+    from roqsim.introspection import _parse_config_block, schema_config_block
+    from roqsim.plugins.ceiling import CeilingPlugin
+
+    block = schema_config_block("ceiling", CeilingPlugin)
+    assert block[0] == "Config (declared in ``CONFIG_SCHEMA`` -- unknown keys are refused)::"
+    parsed = _parse_config_block("\n".join(block))
+    assert [f["name"] for f in parsed] == ["keep", "above_z"]
+    assert parsed[1]["example"] == "2.5"

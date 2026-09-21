@@ -34,10 +34,10 @@ class Plugin:
     """
 
     #: This plugin's config, declared once: ``{key: roqsim.schema.Field(...)}``. Optional. A
-    #: plugin that declares one gets two things from it: the mechanical checks (types, ranges,
-    #: required keys, unknown keys) run against it, and ``roqsim plugins describe`` publishes the
-    #: fields with their types and defaults rather than a docstring's prose. See
-    #: :mod:`roqsim.schema`.
+    #: plugin that declares one gets three things from it: the mechanical checks (types, ranges,
+    #: required keys, unknown keys) run against it, ``roqsim plugins describe`` publishes the
+    #: fields with their types and defaults rather than a docstring's prose, and :attr:`settings`
+    #: reads the config through it. See :mod:`roqsim.schema`.
     #:
     #: **Declaring it is what enforces it.** ``instantiate_plugins`` runs the check for every plugin
     #: that has one, beside its ``validate_config``; there is no call to remember. A schema the
@@ -49,6 +49,12 @@ class Plugin:
     #: entity), so a plugin says so only once its own list is complete. See
     #: :data:`roqsim.schema.INJECTED_KEYS`.
     STRICT_KEYS: bool = False
+
+    #: Why a plugin with a schema accepts keys it does not list -- the one way to leave
+    #: :data:`STRICT_KEYS` off. A schema that stays open without saying why is refused by the guard
+    #: test over every shipped plugin, because an open schema publishes a contract a typo passes.
+    #: Published by ``roqsim plugins describe`` beside ``strict_keys``.
+    OPEN_KEYS: str = ""
 
     #: Set True on a plugin whose ``post_step`` only *reads* ``data`` (no writes, no shared mutable
     #: state) so a future executor may run it concurrently with other parallel-safe post_steps.
@@ -161,6 +167,34 @@ class Plugin:
         the robot's namespace.
         """
         return (self.config.get("topics") or {}).get(endpoint_name)
+
+    @property
+    def settings(self):
+        """This plugin's config through its :data:`CONFIG_SCHEMA`: attribute access, defaults filled.
+
+        A :class:`roqsim.schema.Settings` view: ``self.settings.rate_hz`` is the configured value or
+        the schema's default, an undeclared name raises ``AttributeError``, and nothing may be
+        assigned to it. A plugin without a schema has none and reads ``self.config``. See
+        :meth:`settings_for` for the view of a config other than this instance's own.
+        """
+        return type(self).settings_for(self.config)
+
+    @classmethod
+    def settings_for(cls, config: dict):
+        """The :attr:`settings` view of *config* -- what ``validate_config`` reads its argument by.
+
+        ``validate_config`` is handed the config to check, which is not always this instance's own,
+        so it reads that one rather than ``self.settings``. The view reads through to *config*, so
+        it may hold a value of the wrong type: the schema check reports that beside whatever the
+        validator adds, and a validator comparing a number guards the comparison.
+        """
+        if not cls.CONFIG_SCHEMA:
+            raise AttributeError(
+                f"{cls.__name__} declares no CONFIG_SCHEMA, so it has no settings; read self.config"
+            )
+        from .schema import Settings
+
+        return Settings(cls.CONFIG_SCHEMA, config, owner=cls.__name__)
 
     @classmethod
     def validate_schema(cls, config: dict) -> list[str]:
