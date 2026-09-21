@@ -70,6 +70,11 @@ COPY roqsim_nav        ./roqsim_nav
 COPY roqsim_walker     ./roqsim_walker
 COPY roqsim_webctrl        ./roqsim_webctrl
 
+# The commit these sources are, baked into the installed roqsim (roqsim.build_identity): `.git` is not
+# in the build context, so the build cannot read it and has to be told. container/build.sh and the
+# image workflow pass it; without it roqsim's own build refuses rather than recording "unknown".
+ARG ROQSIM_GIT_SHA
+
 # 3) Install our packages with deps already satisfied above (--no-deps keeps this layer cheap and
 #    makes a source edit rebuild only this step). roqsim (core) first, then the dependents.
 RUN pip install --no-cache-dir --no-deps \
@@ -128,6 +133,11 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}" \
     VIRTUAL_ENV=/opt/venv \
     PYTHONUNBUFFERED=1
+
+# The identity has to have survived into the image, not merely into the build: `roqsim --version` is
+# what a caller asks, so it is what is checked.
+RUN version="$(roqsim --version)" && echo "${version}" && \
+    grep -Eq ', build [0-9a-f]{40}(-dirty)?$' <<< "${version}"
 
 # Run as a non-root user.
 RUN useradd --create-home --uid 1000 simsuite

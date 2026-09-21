@@ -110,6 +110,10 @@ COPY roqsim_walker       ./roqsim_walker
 COPY roqsim_webctrl          ./roqsim_webctrl
 COPY roqsim_quadruped    ./roqsim_quadruped
 COPY roqsim_humanoid     ./roqsim_humanoid
+# The commit these sources are, baked into the installed roqsim (roqsim.build_identity): `.git` is not
+# in the build context, so the build cannot read it and has to be told. container/build.sh and the
+# image workflow pass it; without it roqsim's own build refuses rather than recording "unknown".
+ARG ROQSIM_GIT_SHA
 RUN pip install --no-cache-dir --break-system-packages --no-deps \
         ./roqsim \
         ./roqsim_assets \
@@ -131,6 +135,11 @@ RUN pip install --no-cache-dir --break-system-packages --no-deps \
 # falling behind a pyproject. It had -- `click`, `requests` and `onnxruntime` were all missing.
 COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
 RUN python3 /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
+
+# The identity has to have survived into the image, not merely into the build: `roqsim --version` is
+# what a caller asks, so it is what is checked.
+RUN version="$(roqsim --version)" && echo "${version}" && \
+    grep -Eq ', build [0-9a-f]{40}(-dirty)?$' <<< "${version}"
 
 # 5) Volatile layer: colcon-build the ROS 2 workspace (bridge, nav2 example, goal actions).
 COPY ros2_ws/src ./ros2_ws/src

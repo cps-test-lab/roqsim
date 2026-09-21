@@ -241,8 +241,29 @@ class RootGroup(click.Group):
         return super().resolve_command(ctx, args)
 
 
+def _print_version(ctx: click.Context, _param, value: bool) -> None:
+    """``--version``: the version AND the commit this install was built from.
+
+    The version alone names a release line, which every build between two releases shares; the
+    build identity is what tells two images apart (:mod:`roqsim.build_identity`).
+    """
+    if not value or ctx.resilient_parsing:
+        return
+    from .build_identity import version_line
+
+    click.echo(version_line())
+    ctx.exit()
+
+
 @click.group(cls=RootGroup, context_settings={"help_option_names": ["-h", "--help"]})
-@click.version_option(package_name="roqsim", prog_name="roqsim")
+@click.option(
+    "--version",
+    is_flag=True,
+    expose_value=False,
+    is_eager=True,
+    callback=_print_version,
+    help="Show the version and the commit this install was built from, and exit.",
+)
 def cli() -> None:
     """Run simulations and the tools that build what they run.
 

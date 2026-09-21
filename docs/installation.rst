@@ -140,6 +140,40 @@ lands on, not of the image, so both backends are installed and
 :func:`roqsim.gl.select_offscreen_gl` picks at import. Baking a value in would override that choice
 with a guess — see :doc:`architecture`.
 
+Which build an image is
+~~~~~~~~~~~~~~~~~~~~~~~
+
+The version (``0.1.0``) names a release line, and every image built from ``main`` between two
+releases carries the same one. What tells two images apart is the **build identity**: the full git
+commit the installed sources came from, with ``-dirty`` appended when tracked files differed from it.
+Ask an image for it the way you ask for the version:
+
+.. code-block:: bash
+
+   docker run --rm ghcr.io/cps-test-lab/roqsim --version
+   # roqsim, version 0.1.0, build 0123456789abcdef0123456789abcdef01234567
+
+The same fields travel under ``roqsim`` in both answers of ``python3 -m roqsim.introspection``
+(``list`` and ``describe``), so a caller that keeps a plugin catalog per image also knows which
+build it describes.
+
+A regular install **bakes** the commit into the package (``roqsim/_build_identity.json``, written by
+``roqsim/setup.py``). It takes it from ``ROQSIM_GIT_SHA`` when that is set and from ``git`` in the
+source tree otherwise, and **refuses to build** when it can do neither -- a placeholder would make an
+image look identified when it is not. ``.git`` is not in the image build context, so
+``container/build.sh`` and the image workflow pass the commit as ``--build-arg ROQSIM_GIT_SHA=...``,
+and both Dockerfiles check that ``roqsim --version`` names it before the image is finished. Building
+by hand without ``build.sh``:
+
+.. code-block:: bash
+
+   docker build -f container/Dockerfile --build-arg ROQSIM_GIT_SHA=$(git rev-parse HEAD) .
+
+An editable install (``make venv``) bakes nothing: it runs the working tree, so the commit is read
+from ``git`` each time and follows the tree as it moves. An installation with neither -- a package
+directory with no baked file that is not a git checkout of roqsim -- reports ``build not recorded``
+with the reason, never a guess.
+
 What is published, and for how long
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

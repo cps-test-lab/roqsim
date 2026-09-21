@@ -151,7 +151,12 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
-          build-args: ${{ matrix.buildArgs }}
+          # ROQSIM_GIT_SHA: the commit baked into the image's roqsim (roqsim.build_identity), since
+          # `.git` is not in the build context. github.sha is what was checked out -- for a pull
+          # request that is the merge commit, which is what the image is built from.
+          build-args: |
+            ${{ matrix.buildArgs }}
+            ROQSIM_GIT_SHA=${{ github.sha }}
           load: true
           tags: ${{ matrix.image }}:ci
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_REPO }}:${{ matrix.image }}-${{ matrix.arch }}
@@ -186,6 +191,17 @@ jobs:
           echo "--- the roqsim console script"
           docker run --rm --entrypoint roqsim "$img" --help | grep -q sim
 
+          # The commit has to have survived the build, and be this one: a stale layer or a missing
+          # build argument would otherwise publish an image that names the wrong build, or none.
+          echo "--- the build identity"
+          want="${{ github.sha }}"
+          got=$(docker run --rm --entrypoint roqsim "$img" --version)
+          echo "$got"
+          if [ "$got" = "${got%, build ${want}}" ]; then
+            echo "::error::$img reports '$got', not build $want" >&2
+            exit 1
+          fi
+
           echo "--- the image's own entrypoint"
           out=$(docker run --rm "$img" ${{ matrix.entrypointArgs }})
           printf '%s\n' "$out" | head -20
@@ -205,7 +221,12 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platform }}
-          build-args: ${{ matrix.buildArgs }}
+          # ROQSIM_GIT_SHA: the commit baked into the image's roqsim (roqsim.build_identity), since
+          # `.git` is not in the build context. github.sha is what was checked out -- for a pull
+          # request that is the merge commit, which is what the image is built from.
+          build-args: |
+            ${{ matrix.buildArgs }}
+            ROQSIM_GIT_SHA=${{ github.sha }}
           outputs: type=image,name=${{ env.REGISTRY }}/${{ matrix.repo }},push-by-digest=true,name-canonical=true,push=true
           cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.CACHE_REPO }}:${{ matrix.image }}-${{ matrix.arch }}
 

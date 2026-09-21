@@ -33,6 +33,10 @@ have its JSON output parsed by a caller on the host::
 
     python -m roqsim.introspection list
     python -m roqsim.introspection describe <name>
+
+Both answers carry ``roqsim``: the version and build identity of the installation that answered
+(:func:`roqsim.build_identity.describe`). A catalog is a fact about one build, and a caller keeping
+it -- per image, say -- can then tell which build it describes.
 """
 
 from __future__ import annotations
@@ -42,6 +46,7 @@ import json
 import re
 import sys
 
+from roqsim import build_identity
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
@@ -251,8 +256,9 @@ def _parse_config_block(doc: str) -> list[dict]:
 def list_plugins() -> dict:
     """Every registered ``roqsim.plugins`` entry, one line per plugin.
 
-    Returns ``{"items": [{name, kind: "plugin", doc, flags, package}, ...]}``,
-    sorted by name. A plugin whose class fails to import is still listed (with
+    Returns ``{"items": [{name, kind: "plugin", doc, flags, package}, ...], "roqsim": {...}}``,
+    sorted by name, with ``roqsim`` the answering build (:func:`roqsim.build_identity.describe`).
+    A plugin whose class fails to import is still listed (with
     ``doc: None`` and an ``error`` note) rather than sinking the whole catalog --
     the same "one broken entry must not sink the rest" rule the Sphinx directive
     and :func:`roqsim.registry.resolve_plugin` already follow.
@@ -285,7 +291,7 @@ def list_plugins() -> dict:
             }
         )
     items.sort(key=lambda item: item["name"])
-    return {"items": items}
+    return {"items": items, "roqsim": build_identity.describe()}
 
 
 def _declared_schema(cls) -> list[dict] | None:
@@ -307,10 +313,11 @@ def _declared_schema(cls) -> list[dict] | None:
 def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
-    Returns ``{name, kind: "plugin", doc, parameters, flags, package, class}`` where
+    Returns ``{name, kind: "plugin", doc, parameters, flags, package, class, roqsim}`` where
     ``parameters`` is :func:`_parse_config_block`'s output (empty if the plugin has
     no ``Config::`` block, whether because it takes no config or because nobody
-    wrote one) -- or ``{"error": "..."}``.
+    wrote one), and ``roqsim`` is the answering build (:func:`roqsim.build_identity.describe`) -- or
+    ``{"error": "..."}``.
 
     A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
     keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
@@ -345,6 +352,7 @@ def get_plugin_details(name: str) -> dict:
     if schema is not None:
         details["schema"] = schema
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+    details["roqsim"] = build_identity.describe()
     return details
 
 

@@ -73,6 +73,21 @@ if [[ -n "${MULTIARCH}" && -z "${PROJECT}" ]]; then
   exit 1
 fi
 
+# The commit the image is built from, baked into its roqsim (roqsim.build_identity). `.git` is not in
+# the build context, so it is read here and passed in. A tree with uncommitted changes to tracked
+# files is built as `<sha>-dirty`: the image is then not that commit, and says so. An explicit
+# ROQSIM_GIT_SHA in the environment wins (a checkout without git metadata has no other way to say).
+if [[ -z "${ROQSIM_GIT_SHA:-}" ]]; then
+  if ! ROQSIM_GIT_SHA=$(git -C "${CONTEXT}" rev-parse --verify HEAD 2>/dev/null); then
+    echo "ERROR: ${CONTEXT} is not a git checkout, so the commit to bake into the image is unknown." >&2
+    echo "       Set ROQSIM_GIT_SHA=<full commit of these sources> and run again." >&2
+    exit 1
+  fi
+  if [[ -n "$(git -C "${CONTEXT}" status --porcelain --untracked-files=no)" ]]; then
+    ROQSIM_GIT_SHA="${ROQSIM_GIT_SHA}-dirty"
+  fi
+fi
+
 # The architecture policy, shared with .github/workflows/image.yml. Sourced rather than restated.
 # shellcheck source=platforms.env
 source "${BASEDIR}/platforms.env"
@@ -96,6 +111,7 @@ echo "Context:    ${CONTEXT}"
 echo "Image(s):   ${IMAGE}"
 echo "ROS distro: ${ROS_DISTRO}"
 echo "Project:    ${PROJECT:-<none>}"
+echo "Build:      ${ROQSIM_GIT_SHA}"
 
 build_image() {
   local name="$1" dockerfile="$2"; shift 2
@@ -109,6 +125,7 @@ build_image() {
     echo "==> Building ${PROJECT}${tag} for ${platforms} (-f ${dockerfile})"
     DOCKER_BUILDKIT=1 docker buildx build \
       --platform "${platforms}" \
+      --build-arg "ROQSIM_GIT_SHA=${ROQSIM_GIT_SHA}" \
       "$@" \
       ${EXTRA_ARGS} \
       -t "${PROJECT}${tag}" \
@@ -121,6 +138,7 @@ build_image() {
   echo "==> Building ${tag}${platforms:+ for ${platforms}} (-f ${dockerfile})"
   DOCKER_BUILDKIT=1 docker build \
     ${platforms:+--platform "${platforms}"} \
+    --build-arg "ROQSIM_GIT_SHA=${ROQSIM_GIT_SHA}" \
     "$@" \
     ${EXTRA_ARGS} \
     -t "${tag}" \
