@@ -46,6 +46,10 @@ sits rather than a config key::
       topics: {joint_states: /joint_states}  # optional: hardwire the joint_states topic to an
                                  #   absolute name, overriding namespace (see Plugin.topic_override)
       controller_name: arm_controller   # action at <controller_name>/follow_joint_trajectory
+      initial_state: active      # active | inactive -- `inactive` is ros2_control's
+                                 #   `spawner --inactive`: registered, but not holding the arm
+      joint_state_broadcaster_name: joint_state_broadcaster  # the robot's one broadcaster; a
+                                 #   second arm on the entity extends the one the first registered
       goal_tolerance: 0.5        # rad the joints may end from the trajectory's last waypoint before
                                  #   the action reports GOAL_TOLERANCE_VIOLATED instead of success.
                                  #   A scalar applies to every joint; {joint: rad} sets them apart;
@@ -66,6 +70,10 @@ sits rather than a config key::
                                  #   Needed whenever the arm is carried by `spawn_robot`, which sets
                                  #   only the base pose and no joint stance -- see below.
       test_target: [...]         # optional joint vector held every tick (standalone demo)
+      gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd (see below)
+      gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
+      gripper_open: 0.0          # position value that maps to the open end of the actuator ctrlrange
+      gripper_close: 0.8         # position value that maps to the closed end
 
 To pose the arm by hand with the viewer's control sliders instead, run ``roqsim --manual-control``
 (a run-level switch; see :attr:`roqsim.context.SimContext.manual_control`).
@@ -115,12 +123,8 @@ request at or above the model's own limit saturates there, as a drive does, and 
 and every reset restore the model's own force range. The clamp reaches the actuator through the
 transmission, so it needs a constant moment -- a joint transmission or a fixed tendon, which every
 shipped gripper has. Any other keeps its range and executes the position alone, as a
-position-interface controller does. Gripper config::
-
-      gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd
-      gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
-      gripper_open: 0.0          # position value that maps to the open end of the actuator ctrlrange
-      gripper_close: 0.8         # position value that maps to the closed end
+position-interface controller does. Its keys are the ``gripper_*`` entries of the Config block
+above.
 """
 
 from __future__ import annotations

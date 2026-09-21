@@ -245,3 +245,58 @@ def test_a_base_class_block_keyed_by_a_placeholder_still_parses():
         "      clip_far: 100.0         # m\n"
     )
     assert set(_fields(doc)) == {"clip_near", "clip_far"}
+
+
+def test_a_block_whose_first_key_opens_a_mapping_still_anchors():
+    """``overrides:  # one or more`` opens a mapping; its comment is not an example value."""
+    doc = (
+        "Config::\n\n"
+        "    model_override:\n"
+        "      overrides:           # one or more\n"
+        "        - field: geom_friction   # on the allowlist\n"
+        "          to: 0.0\n"
+        "        - field: body_mass\n"
+        "          to: 2.0\n"
+        "      active: false        # initial state\n"
+    )
+    fields = _fields(doc)
+    assert list(fields) == ["overrides", "overrides.field", "overrides.to", "active"]
+    assert fields["overrides"]["example"] is None
+    assert fields["overrides"]["doc"] == "one or more"
+
+
+def test_a_list_of_values_is_an_example_and_does_not_end_the_block():
+    doc = (
+        "Config::\n\n"
+        "    navigator:\n"
+        "      goals:               # the route\n"
+        "        - [4.0, 3.0]\n"
+        "        - [0.0, 3.0]\n"
+        "      dwell: 0.0\n"
+    )
+    assert list(_fields(doc)) == ["goals", "dwell"]
+
+
+def test_a_blank_line_between_groups_of_keys_stays_in_the_block():
+    """A heading comment after the gap heads the next group; it is not the last key's doc."""
+    doc = (
+        "Config::\n\n"
+        "    navigator:\n"
+        "      arrival_radius: 0.25\n"
+        "\n"
+        "      # -- planning ----\n"
+        "      resolution: 0.05     # m per cell\n"
+        "\n"
+        "Prose after the block, at the margin.\n"
+        "    indented: prose\n"
+    )
+    fields = _fields(doc)
+    assert list(fields) == ["arrival_radius", "resolution"]
+    assert fields["arrival_radius"]["doc"] is None
+
+
+def test_a_plugin_publishes_the_keys_it_inherits_from_a_base_plugin():
+    """A lidar documents its fan; the rate gate and the mount TF are its base's, and it reads both."""
+    lidar = {p["name"] for p in get_plugin_details("lidar")["parameters"]}
+    assert {"rays", "angle_min"} <= lidar, "its own block"
+    assert {"rate_hz", "emit_static_tf", "dropout_percent"} <= lidar, "its base's block"

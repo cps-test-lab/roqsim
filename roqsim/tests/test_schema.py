@@ -181,12 +181,35 @@ def test_the_catalog_publishes_a_declared_schema_and_says_when_it_is_strict():
     assert {f["name"] for f in payload["schema"]} == {"mass", "body", "robot"}
     mass = next(f for f in payload["schema"] if f["name"] == "mass")
     assert mass["required"] is True and mass["unit"] == "kg"
-    assert payload["strict_keys"] is False
+    assert payload["strict_keys"] is True
+    assert "open_keys" not in payload
 
     ceiling = get_plugin_details("ceiling")
     assert ceiling["strict_keys"] is True
     keep = next(f for f in ceiling["schema"] if f["name"] == "keep")
     assert keep["type"] == "bool" and keep["default"] is True
+
+
+def test_an_open_schema_publishes_why_it_is_open(monkeypatch):
+    """A caller told `strict_keys: false` should also be told what may pass, and why."""
+    from roqsim.introspection import get_plugin_details
+    from roqsim.plugins.payload import PayloadPlugin
+
+    monkeypatch.setattr(PayloadPlugin, "STRICT_KEYS", False)
+    monkeypatch.setattr(PayloadPlugin, "OPEN_KEYS", "a manifest adds keys this plugin passes on")
+    payload = get_plugin_details("payload")
+    assert payload["strict_keys"] is False
+    assert payload["open_keys"] == "a manifest adds keys this plugin passes on"
+
+
+def test_present_is_never_unknown_because_the_base_class_owns_it():
+    """Read and checked for every plugin by `validate_presence`, which refuses it with the reason
+    on a plugin that registers no entity -- so a schema must not refuse it a second time."""
+    assert "present" in INJECTED_KEYS
+    from roqsim.plugins.ceiling import CeilingPlugin
+
+    errors = CeilingPlugin({}).config_errors({"present": False})
+    assert len(errors) == 1 and "registers none" in errors[0], errors
 
 
 def test_a_plugin_without_one_publishes_no_schema_key_at_all():

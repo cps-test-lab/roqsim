@@ -16,6 +16,7 @@ Config::
       pos: [-0.41, 0.0, 0.76]
       rpy: [0.0, 0.0, 3.14159]   # mount orientation as roll/pitch/yaw (rad)
       home: [...]           # joint home pose (defaults per model); applied on reset
+      default_plugins: true # inject the model manifest's components (and the end effector's)
       actuators:            # OPTIONAL: what law this arm's joints run under, and their gains.
         control: impedance  #   position | velocity | effort | impedance; the model's own if unset
         stiffness: 2.0      #   N*m/rad -- see roqsim.actuators for the gain of each control

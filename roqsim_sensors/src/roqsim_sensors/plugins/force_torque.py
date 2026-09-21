@@ -36,6 +36,8 @@ sits rather than a config key::
       rate_hz: 100.0            # endpoint publish rate
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
+      controller_name: ft_broadcaster  # name of the broadcaster it registers with the controller
+                                #   manager (default: <entry label>_broadcaster)
 
 Endpoint ``tare`` (in) is that zero button as a service; it takes no argument and its reply is
 what lets a scenario fail rather than measure against an offset it only assumed was applied.

@@ -58,8 +58,9 @@ _MAX_HEADER_LINES = 4
 # A Config:: field line: "  name: example_value  # trailing doc comment". The
 # example is whatever text sits between the colon and an optional trailing
 # comment -- kept as raw text (not parsed as YAML) since this is documentation,
-# not a live config value.
-_CONFIG_FIELD_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(.+?)\s*(?:#\s*(.*))?$")
+# not a live config value. An example never opens with "#": "overrides:  # one or more" is a key
+# opening a mapping with a comment, not a key whose example is the comment.
+_CONFIG_FIELD_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?![\s#])(.+?)\s*(?:#\s*(.*))?$")
 # A bare comment line, no leading "name:" -- a trailing doc comment too long for
 # one line wraps onto a second line shaped exactly like this (see ceiling.py's
 # "enabled" field for a real example), so it must extend the previous field's
@@ -69,6 +70,14 @@ _COMMENT_ONLY_RE = re.compile(r"^\s*#\s?(.*)$")
 # it indented further. The world YAML nests, so the block does too, and ending the parse at a key
 # like this would report a plugin's first few keys and silently drop the rest.
 _CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
+# An item of a list of mappings under a nested key ("overrides:" then "  - field: geom_friction"). The
+# item's keys belong to the list's key, so the dash is read as indentation and they are published
+# as overrides.field, overrides.select -- ending the block at the dash would drop every key after
+# the list, which is how a plugin's catalog came to omit its top-level keys.
+_CONFIG_LIST_ITEM_RE = re.compile(r"^(\s+)- (?=[A-Za-z_]\w*:)")
+# An item of a list of values under a nested key ("goals:" then "  - [4.0, 3.0]"): an example of the
+# key's value, not a key of its own.
+_CONFIG_SCALAR_ITEM_RE = re.compile(r"^\s+- (?![A-Za-z_]\w*:)")
 # The line naming the plugin itself, which a block opens with one level above its keys. Written
 # either as a plain key ("sensor_coverage_probe:"), as the list entry a world YAML's
 # "components:" actually takes ("- spawn_sensor:"), or -- in a base class documenting keys its
@@ -179,15 +188,25 @@ def _parse_config_block(doc: str) -> list[dict]:
     # The indent the plugin's own keys sit at. A block opens with the plugin key itself
     # ("sensor_coverage_probe:"), one level shallower than the keys under it; anchoring on the
     # first key that carries a value tells the two apart without knowing the plugin's name.
+    # A plugin whose first key opens a mapping ("overrides:" under "model_override:") has no key
+    # with a value to anchor on until the mapping's children, so the first key-shaped line below
+    # the wrapper anchors instead.
     base = None
+    wrapper = None
     for ln in body:
         if not ln.strip() or _COMMENT_ONLY_RE.match(ln):
             continue
+        indent = len(ln) - len(ln.lstrip())
         if _CONFIG_FIELD_RE.match(ln):
-            base = len(ln) - len(ln.lstrip())
+            base = indent
             break
-        if not _CONFIG_WRAPPER_RE.match(ln):
+        if wrapper is not None and indent > wrapper and _CONFIG_NEST_RE.match(ln):
+            base = indent
             break
+        if wrapper is None and _CONFIG_WRAPPER_RE.match(ln):
+            wrapper = indent
+            continue
+        break
     if base is None:
         return []
 
@@ -196,12 +215,22 @@ def _parse_config_block(doc: str) -> list[dict]:
     #: (indent, key) of each mapping currently open, so a nested key is reported under the
     #: dotted path a world YAML would actually write it at.
     open_maps: list[tuple[int, str]] = []
-    for ln in body:
+    #: Set by a blank line inside the block: a comment right after one heads a group of keys
+    #: ("# -- planning --"), and is not the wrapped doc of the key before the gap.
+    after_gap = False
+    for i, ln in enumerate(body):
         if not ln.strip():
             if in_block:
-                break
+                # A blank line between groups of keys stays inside the block; the prose after a
+                # block is written at the docstring's margin, left of the keys.
+                upcoming = next((nxt for nxt in body[i + 1 :] if nxt.strip()), "")
+                if len(upcoming) - len(upcoming.lstrip()) < base:
+                    break
+                after_gap = True
             continue
         comment_only = _COMMENT_ONLY_RE.match(ln)
+        if comment_only and in_block and after_gap:
+            continue
         if comment_only and in_block and fields:
             extra = comment_only.group(1).strip()
             if extra:
@@ -215,12 +244,21 @@ def _parse_config_block(doc: str) -> list[dict]:
             if not in_block and _CONFIG_WRAPPER_RE.match(ln):
                 continue
             break
+        after_gap = False
+        if open_maps and _CONFIG_SCALAR_ITEM_RE.match(ln):
+            continue  # an example entry of the list the open key holds ("goals:" then "- [4, 3]")
+        item = _CONFIG_LIST_ITEM_RE.match(ln) if open_maps else None
+        if item:
+            ln = f"{item.group(1)}  {ln[item.end() :]}"
+            indent += 2
         while open_maps and indent <= open_maps[-1][0]:
             open_maps.pop()
         prefix = "".join(f"{key}." for _, key in open_maps)
         match = _CONFIG_FIELD_RE.match(ln)
         if match:
             name, example, comment = match.groups()
+            if any(f["name"] == prefix + name for f in fields):
+                continue  # the same key of a second list item
             fields.append(
                 {
                     "name": prefix + name,
@@ -245,6 +283,35 @@ def _parse_config_block(doc: str) -> list[dict]:
             continue
         if in_block:
             break
+    return fields
+
+
+def _config_parameters(cls) -> list[dict]:
+    """The ``Config::`` fields a plugin accepts: its own block's, then each base plugin's it inherits.
+
+    A device built on shared machinery documents what distinguishes it (a lidar's fan) and inherits
+    the rest (the rate gate, the mount TF, the noise model) from a base whose docstring documents
+    those. Reading only the device's block would publish a catalog that omits keys the plugin reads,
+    so a caller checking a world against it would refuse a valid key -- or, trusting it less, check
+    nothing. Each base's block is read once, and a key the subclass restates keeps the subclass's
+    wording.
+    """
+    from roqsim.plugin import Plugin
+
+    fields: list[dict] = []
+    seen_names: set[str] = set()
+    seen_docs: set[str] = set()
+    for klass in cls.__mro__:
+        if klass is Plugin or not issubclass(klass, Plugin):
+            continue
+        doc = _own_or_module_doc(klass)
+        if doc in seen_docs:
+            continue
+        seen_docs.add(doc)
+        for field in _parse_config_block(doc):
+            if field["name"] not in seen_names:
+                seen_names.add(field["name"])
+                fields.append(field)
     return fields
 
 
@@ -308,9 +375,9 @@ def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
     Returns ``{name, kind: "plugin", doc, parameters, flags, package, class}`` where
-    ``parameters`` is :func:`_parse_config_block`'s output (empty if the plugin has
-    no ``Config::`` block, whether because it takes no config or because nobody
-    wrote one) -- or ``{"error": "..."}``.
+    ``parameters`` is :func:`_config_parameters`'s output -- the plugin's ``Config::`` block and
+    those of the base plugins it inherits keys from (empty if none has one, whether because it
+    takes no config or because nobody wrote one) -- or ``{"error": "..."}``.
 
     A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
     keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
@@ -336,7 +403,7 @@ def get_plugin_details(name: str) -> dict:
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
-        "parameters": _parse_config_block(doc),
+        "parameters": _config_parameters(cls),
         "flags": _flags(cls),
         "package": _dist_name(ep),
         "class": ep.value,
@@ -345,6 +412,8 @@ def get_plugin_details(name: str) -> dict:
     if schema is not None:
         details["schema"] = schema
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+        if not details["strict_keys"] and getattr(cls, "OPEN_KEYS", ""):
+            details["open_keys"] = cls.OPEN_KEYS
     return details
 
 
