@@ -43,12 +43,18 @@ Declaring it::
         "body": Field(str, default="", doc="body to load (default: the entity's root body)"),
         "mode": Field(str, default="soft", choices=("soft", "rigid")),
         "pos": Field(list, length=3, unit="m", doc="offset in the body frame"),
+        "gain": Field((float, dict), default=0.0, minimum=0.0, doc="one value, or one per joint"),
     }
 
 What it checks: a required key is present, a value has the declared type (with ``int`` accepted for
 ``float``, since YAML writes ``1`` for a one-metre offset), a number is within ``minimum``/
 ``maximum``, a string is one of ``choices``, a sequence has ``length``, and -- for a plugin that asks
 for it with ``strict_keys`` -- that no key is unknown, which is the typo check nothing else can do.
+
+A key that takes one of several shapes declares a tuple of types, as ``isinstance`` does: ``gain``
+above is a number or a mapping. The value must be one of them, and each rule applies to the shapes it
+has a meaning for -- a bound to a number, a length to a sequence -- so a mapping's entries are the
+plugin's to check in ``validate_config``.
 
 **Unknown keys are opt-in for one reason.** A component's config does not only come from the world:
 a model's manifest injects ``prefix``, a spawn fills in the entity, and a fault block arrives from
@@ -84,7 +90,8 @@ class Field:
     than producing an error message no world can act on.
     """
 
-    type: type
+    #: One type, or a tuple of them for a key that takes several shapes (``(float, dict)``).
+    type: type | tuple[type, ...]
     default: Any = None
     required: bool = False
     minimum: float | None = None
@@ -99,9 +106,12 @@ class Field:
 
     def describe(self, name: str) -> dict:
         """The published form: JSON-friendly, and the same shape for every plugin."""
+        # A union publishes a list of names, as JSON Schema writes one, so a caller matching on a
+        # single name never mistakes "float or dict" for a float.
+        names = [_type_name(t) for t in _types(self.type)]
         described = {
             "name": name,
-            "type": _TYPE_NAMES.get(self.type, getattr(self.type, "__name__", str(self.type))),
+            "type": names[0] if len(names) == 1 else names,
             "required": self.required,
         }
         if not self.required:
@@ -162,20 +172,36 @@ def validate(schema: dict[str, Field], config: dict, *, strict_keys: bool = Fals
 
 def _check_value(name: str, spec: Field, value: Any) -> list[str]:
     errors: list[str] = []
-    if not _has_type(value, spec.type):
-        expected = _TYPE_NAMES.get(spec.type, str(spec.type))
+    wanted = _types(spec.type)
+    if not any(_has_type(value, t) for t in wanted):
+        expected = " or ".join(_type_name(t) for t in wanted)
         errors.append(f"'{name}' must be {expected}, got {type(value).__name__} ({value!r})")
         return errors  # a wrong type makes every other check meaningless
 
-    if spec.length is not None and len(value) != spec.length:
+    # Each rule applies to the shapes it means something for: on a union, a mapping has no length
+    # and no bound, and its entries are the plugin's own to check.
+    number = _is_number(value)
+    if spec.length is not None and isinstance(value, Sequence) and len(value) != spec.length:
         errors.append(f"'{name}' must have exactly {spec.length} entries, got {len(value)}")
     if spec.choices is not None and value not in spec.choices:
         errors.append(f"'{name}' must be one of {', '.join(map(str, spec.choices))}, got {value!r}")
-    if spec.minimum is not None and value < spec.minimum:
+    if number and spec.minimum is not None and value < spec.minimum:
         errors.append(f"'{name}' must be >= {spec.minimum}{_unit(spec)}, got {value}")
-    if spec.maximum is not None and value > spec.maximum:
+    if number and spec.maximum is not None and value > spec.maximum:
         errors.append(f"'{name}' must be <= {spec.maximum}{_unit(spec)}, got {value}")
     return errors
+
+
+def _types(declared: type | tuple[type, ...]) -> tuple[type, ...]:
+    return declared if isinstance(declared, tuple) else (declared,)
+
+
+def _type_name(wanted: type) -> str:
+    return _TYPE_NAMES.get(wanted, getattr(wanted, "__name__", str(wanted)))
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _unit(spec: Field) -> str:
