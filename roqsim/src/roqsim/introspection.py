@@ -315,6 +315,62 @@ def _config_parameters(cls) -> list[dict]:
     return fields
 
 
+def _schema_example(spec) -> str | None:
+    """A declared default written as a world YAML writes it, or None where there is none."""
+    if spec.required or spec.default is None:
+        return None
+    if isinstance(spec.default, bool):
+        return "true" if spec.default else "false"
+    if isinstance(spec.default, str):
+        return (
+            spec.default
+            if spec.default.strip() and ":" not in spec.default
+            else json.dumps(spec.default)
+        )
+    return json.dumps(spec.default)
+
+
+def _schema_doc(spec) -> str | None:
+    """A declared field's doc, led by what the parsed block would have said in prose."""
+    lead = ", ".join(part for part in ("required" if spec.required else "", spec.unit) if part)
+    if lead and spec.doc:
+        return f"{lead}; {spec.doc}"
+    return lead or spec.doc or None
+
+
+def _schema_parameters(schema: dict) -> list[dict]:
+    """A declared schema in the ``parameters`` shape :func:`_parse_config_block` produces.
+
+    For a plugin with a schema the keys are derived from it rather than parsed from prose, so the
+    list a caller reads and the list validation runs on are one list. The typed form is ``schema``.
+    """
+    return [
+        {"name": name, "example": _schema_example(spec), "doc": _schema_doc(spec)}
+        for name, spec in schema.items()
+    ]
+
+
+def schema_config_block(name: str, cls) -> list[str]:
+    """A ``Config::`` block generated from *cls*'s schema, for a page that renders one per plugin.
+
+    What the docs page shows for a plugin with a schema, in the shape every other plugin's
+    hand-written block has, so the page reads the same everywhere while the keys come from the
+    declaration. A key without a default reads ``<required>`` or ``<unset>``.
+    """
+    strict = " -- unknown keys are refused" if getattr(cls, "STRICT_KEYS", False) else ""
+    rows = []
+    for field in _schema_parameters(cls.CONFIG_SCHEMA):
+        example = field["example"]
+        if example is None:
+            example = "<required>" if cls.CONFIG_SCHEMA[field["name"]].required else "<unset>"
+        rows.append((f"{field['name']}: {example}", field["doc"]))
+    width = max(len(key) for key, _ in rows)
+    lines = [f"Config (declared in ``CONFIG_SCHEMA``{strict})::", "", f"    {name}:"]
+    for key, doc in rows:
+        lines.append(f"      {key.ljust(width)}  # {doc}" if doc else f"      {key}")
+    return lines
+
+
 def list_plugins() -> dict:
     """Every registered ``roqsim.plugins`` entry, one line per plugin.
 
@@ -358,10 +414,9 @@ def list_plugins() -> dict:
 def _declared_schema(cls) -> list[dict] | None:
     """The plugin's own ``CONFIG_SCHEMA``, published -- or ``None`` when it declares none.
 
-    Published BESIDE the docstring-parsed ``config`` rather than instead of it: the parsed block is
-    all most plugins have, and a caller that can read only one of the two should get the one that is
-    always there. Where both exist the declared one is authoritative -- it is what validation runs
-    on, so it cannot drift from behaviour the way a comment can.
+    Published beside ``parameters``, which every plugin has: a caller that can read only one of the
+    two gets the one that is always there, and for a plugin with a schema that one is derived from
+    the same declaration.
     """
     schema = getattr(cls, "CONFIG_SCHEMA", None)
     if not schema:
@@ -379,10 +434,11 @@ def get_plugin_details(name: str) -> dict:
     those of the base plugins it inherits keys from (empty if none has one, whether because it
     takes no config or because nobody wrote one) -- or ``{"error": "..."}``.
 
-    A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
-    keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
-    needs and what prose cannot give it. It is authoritative where it exists, because validation
-    runs on it -- unlike a docstring, it cannot drift from behaviour.
+    A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` has its ``parameters``
+    derived from that schema instead, and also gets ``schema``: the same keys with their TYPES,
+    defaults, units and bounds, which is what a caller generating a world needs and what prose
+    cannot give it. Both come from the declaration validation runs on, so neither can drift from
+    behaviour the way a docstring can.
     """
     matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -399,18 +455,19 @@ def get_plugin_details(name: str) -> dict:
         if not ln.strip():
             break
         summary_lines.append(ln)
+    schema = getattr(cls, "CONFIG_SCHEMA", None)
     details = {
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
-        "parameters": _config_parameters(cls),
+        "parameters": _schema_parameters(schema) if schema else _config_parameters(cls),
         "flags": _flags(cls),
         "package": _dist_name(ep),
         "class": ep.value,
     }
-    schema = _declared_schema(cls)
-    if schema is not None:
-        details["schema"] = schema
+    declared = _declared_schema(cls)
+    if declared is not None:
+        details["schema"] = declared
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
         if not details["strict_keys"] and getattr(cls, "OPEN_KEYS", ""):
             details["open_keys"] = cls.OPEN_KEYS
