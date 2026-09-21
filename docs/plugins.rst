@@ -241,7 +241,11 @@ inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace
 are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
 the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
 else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. The ``spawn_sensor`` and
+none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
+parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
+own, as a second instance of the macro would: two mounts that would publish any one frame name are
+refused. A device that declares no ``frames:`` chain has no vendor link to hang from, and a robot
+mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it

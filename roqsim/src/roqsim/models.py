@@ -39,6 +39,14 @@ coexist in one model. Search order: the model's **own** declared ``meshdir`` fir
 never be shadowed by same-named provider files), then the listed providers in order, then the
 provider default and the model file's dir.
 
+**A retired name is refused, not missing.** When a model is renamed because what its numbers mean
+changed -- a mount frame re-seated on the vendor link, say -- a world naming it by the old name must
+not keep loading with its old pose silently reinterpreted; a pose change cannot be caught at load,
+but a name can. A provider module may declare ``RETIRED_MODELS``, a mapping of old name to
+:class:`RetiredModel`, and :func:`resolve_model` refuses the old name with the new one, why it
+changed and what the world must re-express. The table beside this module (:data:`RETIRED_MODELS`)
+holds the core's own, and an entry is deleted once downstream has moved.
+
 A **provider** is a module exposing a ``MODELS_DIR`` path (and optionally ``MESHES_DIR`` /
 ``TEXTUREDIR``; they default to ``MODELS_DIR/"meshes"`` and ``MODELS_DIR``). A package registers one
 in its ``pyproject.toml``::
@@ -61,6 +69,29 @@ ENTRY_POINT_GROUP = "roqsim.models"
 
 class ModelError(Exception):
     """Raised when a ``model:`` reference cannot be resolved to a model file."""
+
+
+@dataclass(frozen=True)
+class RetiredModel:
+    """A model name that was retired, and what a world that still names it has to do.
+
+    The refusal reads ``<plugin>: model '<old>' — renamed to '<renamed_to>' <because>. <then>``, so
+    ``because`` is a clause (``"when its mount frame became the vendor link"``) and ``then`` whole
+    sentences.
+    """
+
+    plugin: str
+    renamed_to: str
+    because: str
+    then: str
+
+    def message(self, old: str) -> str:
+        return f"{self.plugin}: model {old!r} — renamed to {self.renamed_to!r} {self.because}. {self.then}"
+
+
+#: The core's retired model names (see "A retired name is refused" in the module docstring). A
+#: provider module declares its own as ``RETIRED_MODELS`` beside its ``MODELS_DIR``.
+RETIRED_MODELS: dict[str, RetiredModel] = {}
 
 
 @dataclass(frozen=True)
@@ -229,6 +260,27 @@ def providers() -> list[tuple[str, Path, Path, Path]]:
     return out
 
 
+def retired_models() -> dict[str, RetiredModel]:
+    """Every retired model name: the core's :data:`RETIRED_MODELS` plus each provider's own."""
+    table = dict(RETIRED_MODELS)
+    for ep in _entry_points(ENTRY_POINT_GROUP):
+        declared = getattr(ep.load(), "RETIRED_MODELS", None) or {}
+        for old, entry in declared.items():
+            if not isinstance(entry, RetiredModel):
+                raise ModelError(
+                    f"'{ENTRY_POINT_GROUP}' provider {ep.name!r}: RETIRED_MODELS[{old!r}] must be "
+                    f"a roqsim.models.RetiredModel, got {type(entry).__name__}"
+                )
+            table[old] = entry
+    return table
+
+
+def _refuse_retired(model: str) -> None:
+    entry = retired_models().get(model)
+    if entry is not None:
+        raise ModelError(entry.message(model))
+
+
 @functools.cache
 def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
     """Resolve a ``model:`` reference to a :class:`ModelAsset`. See the module docstring for forms.
@@ -272,6 +324,7 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
             if name == left:
                 found = _find_in_dir(models_dir, modelname)
                 if found is None:
+                    _refuse_retired(modelname)
                     raise ModelError(
                         f"model {modelname!r} not found in provider {left!r} ({models_dir})"
                     )
@@ -293,7 +346,9 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
             raise ModelError(f"model {modelname!r} not found in provider {left!r} ({models_dir})")
         return _finalize(found, meshdir, texturedir)
 
-    # 3) short name -> first match across all registered providers.
+    # 3) short name -> first match across all registered providers, unless the name was retired:
+    #    that refusal wins over any provider, since its point is that the old name means nothing now.
+    _refuse_retired(model)
     searched: list[str] = []
     for _name, models_dir, meshdir, texturedir in providers():
         searched.append(str(models_dir))
