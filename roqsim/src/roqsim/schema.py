@@ -71,10 +71,12 @@ from dataclasses import field as dataclass_field
 from typing import Any
 
 #: Config keys a component may carry without its own schema mentioning them, because something other
-#: than the world's author put them there: the spawn plugins' ``prefix``, the transport scope, the
-#: topic hardwire map, and a sensor's runtime fault block. A plugin that declares one of these in its
-#: own schema (with a type or a default) overrides the entry here.
-INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm"})
+#: than the plugin owns them: the spawn plugins' ``prefix``, the transport scope, the topic hardwire
+#: map, a sensor's runtime fault block, and ``present``, which the base class reads and checks for
+#: every plugin (:meth:`roqsim.plugin.Plugin.validate_presence` refuses it, with the reason, on one
+#: that registers no entity). A plugin that declares one of these in its own schema (with a type or
+#: a default) overrides the entry here.
+INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm", "present"})
 
 #: How a type is named in the published schema -- the vocabulary a caller matches on, not Python's.
 _TYPE_NAMES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", dict: "dict"}

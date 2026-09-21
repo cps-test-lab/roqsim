@@ -42,7 +42,8 @@ entry sits rather than a config key::
         stop: true            # look ahead and hold until the way is clear
         steer: none           # none | give_way | orca | module:Class -- which model gives way
         reroute: false        # remember what stopped it and plan around it (needs `stop`)
-        params: {}            # per-agent keys the chosen model accepts, checked at load
+        params: {}            # keys of the chosen model itself, checked at load; the first
+                              #   mover to ask for a model fixes it for the world
 
         # the probe's own tuning, in the same block
         lookahead: 1.2        # m of clear corridor needed, measured from the mover's FRONT
@@ -54,6 +55,10 @@ entry sits rather than a config key::
         forget_after: 5.0     # s a remembered blockage keeps steering the planner (reroute only)
         blockage_radius: 0    # m of the disc a blockage marks; 0 -> half the corridor width
         ignore: []            # entities this mover never stops for
+      radius: 0.3             # m, this mover's disc to the avoidance model (default: measured
+                              #   from its footprint) and the planner's inflation (default: 0.3)
+      max_speed: 1.0          # m/s the avoidance model may command it (default: max(1, 2*speed))
+      params: {}              # this mover's own keys for the avoidance model, passed to add_agent
 
       # -- output: drive ---------------------------------------------------------------------
       kinematics: auto        # auto | unicycle | holonomic | ackermann (auto asks the output)
@@ -72,6 +77,13 @@ entry sits rather than a config key::
       planner:  {inflation_radius: 0.35, waypoint_radius: 0.3}
       recovery: {enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       update_hz: 20.0               # nav pipeline rate; physics steps far faster
+
+      # -- the goal interface ----------------------------------------------------------------
+      namespace: ""           # scope of the goal actions (default: the owner's)
+      goal_endpoint: true     # false -> declare no goal action, so a bridge needs no handler
+      actions: [navigate_to_pose, navigate_through_poses, start_route]  # which it serves
+      action_names: {}        # {action: name} renames one, e.g. {navigate_to_pose: goto}
+      action_name: ""         # the walker's spelling of navigate_through_poses's name
 
 ``obstacle_height`` is per mover on purpose: a 0.4 m pallet is not stopped by a ceiling beam that
 blocks a walker, so "what counts as a wall" is a property of the thing navigating, not of the world.

@@ -50,6 +50,12 @@ class Plugin:
     #: :data:`roqsim.schema.INJECTED_KEYS`.
     STRICT_KEYS: bool = False
 
+    #: Why a plugin with a schema accepts keys it does not list -- the one way to leave
+    #: :data:`STRICT_KEYS` off. A schema that stays open without saying why is refused by the guard
+    #: test over every shipped plugin, because an open schema publishes a contract a typo passes.
+    #: Published by ``roqsim plugins describe`` beside ``strict_keys``.
+    OPEN_KEYS: str = ""
+
     #: Set True on a plugin whose ``post_step`` only *reads* ``data`` (no writes, no shared mutable
     #: state) so a future executor may run it concurrently with other parallel-safe post_steps.
     parallel_safe: bool = False

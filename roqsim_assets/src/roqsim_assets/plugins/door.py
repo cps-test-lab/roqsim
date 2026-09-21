@@ -39,6 +39,8 @@ Config::
       width: 0.9             # opening / leaf width (m)
       height: 2.0            # leaf height (m)
       thickness: 0.04        # leaf thickness (m); box leaf only
+      floor_gap: 0.01        # clearance above the floor and below the lintel (m), so the leaf
+                             #   does not scrape the ground and fight its actuator
       leaf: true             # false -> a cased opening: the casing is welded, no leaf is hung
       model: door            # optional leaf mesh model (door | door_glass | pkg:name); omit -> box
       color: [r, g, b, a]    # repaint the leaf (omit -> the model's own colours); alpha optional
@@ -56,6 +58,9 @@ Config::
       namespace: ""          # transport scope -> /<ns>/cmd , /<ns>/state , /<ns>/door
       kp: 40.0               # position-actuator stiffness
       kv: 8.0                # position-actuator damping (velocity gain)
+      max_torque: 15.0       # actuator force cap (N*m): an obstacle is nudged, never crushed
+      stall_timeout: 3.0     # s blocked before the door gives up and holds where it is
+      stall_speed: 0.02      # openness fraction/s below which a door short of its target is blocked
 
 The leaf-mesh convention (``model:``) mirrors the rest of the asset library but with one addition: a
 door model's origin is its **hinge (fixed) vertical edge** at floor level, the leaf extending along
