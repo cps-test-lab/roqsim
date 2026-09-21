@@ -95,7 +95,7 @@ class Xacro:
         self.root = ET.parse(path).getroot()
         #: ``pi``, plus what the macro reads from files it includes (``cm2m``, say), which a
         #: caller names rather than this class resolving the include.
-        self.values: dict[str, float] = {"pi": math.pi, **(values or {})}
+        self.values: dict[str, float | str] = {"pi": math.pi, "name": name, **(values or {})}
         for prop in self._iter("property"):
             self.values[prop.get("name")] = self.eval(prop.get("value"))
         self.name = name
@@ -107,7 +107,8 @@ class Xacro:
 
     def eval(self, text: str):
         def one(expr: str) -> str:
-            return repr(eval(expr, {"__builtins__": {}}, dict(self.values)))  # noqa: S307
+            value = eval(expr, {"__builtins__": {}}, dict(self.values))  # noqa: S307
+            return value if isinstance(value, str) else repr(value)
 
         out = re.sub(r"\$\{([^}]*)\}", lambda m: one(m.group(1)), text.strip())
         try:
