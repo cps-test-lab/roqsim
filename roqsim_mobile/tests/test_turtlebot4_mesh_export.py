@@ -36,6 +36,24 @@ def exported():
     return exporter, exporter.merge(1.0)
 
 
+@pytest.fixture(scope="module")
+def mounted_export():
+    """The robot as a world spawns it, its devices mounted -- the OAK-D is one of them now."""
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {"components": [{"spawn_robot": {"model": "turtlebot4", "prefix": "r_"}, "name": "robot"}]},
+        overrides={"components": {"robot.oakd.oakd_camera": {"enabled": False}}},
+    )
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    exporter = MeshExporter(engine.ctx.model, prefix="r_")
+    exporter.collect()
+    return exporter
+
+
 def geom_of(exporter, name):
     return [g for g in exporter.geoms if g["name"] == name]
 
@@ -69,16 +87,18 @@ def test_the_whole_visible_robot_travels(exported):
     assert all(g["group"] != 3 for g in exporter.geoms)
 
 
-def test_the_camera_is_carried_by_its_bracket(exported):
+def test_the_camera_is_carried_by_its_bracket(mounted_export):
     """The camera sits on its bracket mesh; without the bracket the camera body hangs in mid-air.
 
     Asserted as a distance rather than as "the mesh exists", because a bracket present but misplaced
     looks the same in a part list and still leaves the camera floating. The chain the numbers come from
-    is base_link -> shell_link (0 0 0.0942) -> bracket (-0.118 0 0.05257) -> oakd (0.0584 0 0.09676).
+    is base_link -> shell_link (0 0 0.0942) -> bracket (-0.118 0 0.05257) -> oakd (0.0584 0 0.09676):
+    the bracket is this model's part, the camera the `oakd_pro` device its manifest mounts there.
     """
-    exporter, _ = exported
-    parts = {g["name"]: g["verts"] for g in exporter.geoms}
+    exporter = mounted_export
+    parts = {g["name"].removeprefix("r_"): g["verts"] for g in exporter.geoms}
     assert "camera_bracket" in parts, "the OAK-D bracket mesh is not in the model"
+    assert "oakd_oakd_visual" in parts, "the mounted OAK-D's box is not in the export"
 
     def closest(a, b):
         return float(np.sqrt(((a[:, None, :] - b[None, :, :]) ** 2).sum(-1)).min())
@@ -86,7 +106,10 @@ def test_the_camera_is_carried_by_its_bracket(exported):
     # It stands on the shell, and it reaches the camera: the box spans x -0.0818..-0.0593 and the
     # bracket ends at x -0.0820, so they abut in x while overlapping in z.
     assert closest(parts["camera_bracket"], parts["shell"]) < 1e-3
-    bracket_hi, camera_lo = parts["camera_bracket"].max(axis=0), parts["base_link_box"].min(axis=0)
+    bracket_hi, camera_lo = (
+        parts["camera_bracket"].max(axis=0),
+        parts["oakd_oakd_visual"].min(axis=0),
+    )
     assert camera_lo[0] - bracket_hi[0] == pytest.approx(0.0, abs=5e-4)
     assert camera_lo[2] < bracket_hi[2]  # the camera's underside is below the bracket's top
 

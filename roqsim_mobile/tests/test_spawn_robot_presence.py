@@ -34,7 +34,7 @@ def _engine(present=None):
             # The manifest's camera wants a GL context the moment the engine steps, and nothing here
             # is about what a camera sees. Presence is decided in the model, which the lidar and the
             # contact set read without one.
-            overrides={"components": {"robot.oakd_camera": {"enabled": False}}},
+            overrides={"components": {"robot.oakd.oakd_camera": {"enabled": False}}},
         )
     )
 

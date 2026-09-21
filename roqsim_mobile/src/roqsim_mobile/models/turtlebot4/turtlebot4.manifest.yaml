@@ -12,6 +12,9 @@ frames:
   # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
   # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
   - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
+  # urdf/standard/turtlebot4.urdf.xacro:35-37 (camera_mount_*_offset) and :119-121: the camera
+  # bracket on the shell, which carries the OAK-D.
+  - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257], rpy: [0.0, 0.0, 0.0]}
 
 components:
   # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
@@ -52,16 +55,28 @@ components:
     components:
       - lidar:
           rays: 360                              # TurtleBot 4 datasheet: 1 deg angular resolution
-  - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
-      camera: oakd_rgb                           # skips rendering when nobody subscribes (see
+  # The OAK-D Pro device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:39-41,
+  # 123-125 @ 7fd29fb (the macro's default name `oakd`, which is the device's default device_name).
+  # Addressed as `<robot>.oakd.oakd_camera`; the images are stamped oakd_rgb_camera_optical_frame,
+  # and the mount publishes oakd_camera_bracket -> oakd_link -> ... as static TF.
+  - spawn_sensor:
+      model: oakd_pro
+      parent_frame: oakd_camera_bracket
+      pos: [0.0584, 0.0, 0.09676]
+      rpy: [0.0, 0.0, 0.0]
+    name: oakd
+    components:
+      - oakd_camera:                             # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
+                                                 # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).
-      # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish them.
-      topics:
-        image: oakd/rgb/preview/image_raw
-        image_compressed: oakd/rgb/preview/image_raw/compressed
-        camera_info: oakd/rgb/preview/camera_info
-        depth: oakd/rgb/preview/depth
-        depth_camera_info: oakd/rgb/preview/depth/camera_info
+          # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish
+          # them.
+          topics:
+            image: oakd/rgb/preview/image_raw
+            image_compressed: oakd/rgb/preview/image_raw/compressed
+            camera_info: oakd/rgb/preview/camera_info
+            depth: oakd/rgb/preview/depth
+            depth_camera_info: oakd/rgb/preview/depth/camera_info
 
   # ---- The Create 3 base's own sensors, as the reference description carries them ------------
   #

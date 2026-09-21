@@ -145,7 +145,7 @@ class SensorSpec:
 CATALOG: dict[str, SensorSpec] = {
     "oakd_camera": SensorSpec(
         type="oakd_camera",
-        model="roqsim_sensors:oakd",
+        model="roqsim_sensors:oakd_pro",
         cost=1.0,
         mount=MountConstraint(surfaces=("wall", "ceiling"), z_range=(0.5, 3.5), can_tilt=True),
         description="OAK-D Pro RGB-D camera (narrow-ish FOV, medium range).",

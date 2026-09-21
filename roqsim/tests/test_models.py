@@ -129,3 +129,65 @@ def test_apply_assets_own_meshdir_beats_provider(tmp_path):
     resolved = {m.name: Path(m.file) for m in spec.meshes}
     assert resolved["part"] == (own / "part.STL").resolve()  # own mesh, not the impostor
     assert resolved["borrowed"] == (provider / "borrowed.STL").resolve()  # borrowing still works
+
+
+def test_a_retired_model_name_is_refused_naming_its_replacement(monkeypatch):
+    """A rename that changed what a mount's pose means is loud at load, where a pose change is not."""
+    import roqsim.models as models
+
+    entry = models.RetiredModel(
+        plugin="spawn_sensor",
+        renamed_to="realsense_d455",
+        because=(
+            "when its mount frame became the vendor link (it was a display convention pointing "
+            "the lens along +y)"
+        ),
+        then=(
+            "Update the name, and re-express this mount's pos/rpy against the vendor link; see "
+            "roqsim_sensors/README.md."
+        ),
+    )
+    monkeypatch.setitem(models.RETIRED_MODELS, "retired_cam", entry)
+    resolve_model.cache_clear()
+    try:
+        with pytest.raises(ModelError) as exc:
+            resolve_model("retired_cam")
+    finally:
+        resolve_model.cache_clear()
+    assert str(exc.value) == (
+        "spawn_sensor: model 'retired_cam' — renamed to 'realsense_d455' when its mount frame "
+        "became the vendor link (it was a display convention pointing the lens along +y). Update "
+        "the name, and re-express this mount's pos/rpy against the vendor link; see "
+        "roqsim_sensors/README.md."
+    )
+
+
+def test_a_provider_declares_its_own_retired_names(monkeypatch):
+    import roqsim.models as models
+
+    class _Provider:
+        MODELS_DIR = Path(__file__).parent
+        RETIRED_MODELS = {
+            "old_scanner": models.RetiredModel("spawn_sensor", "new_scanner", "when X", "Do Y.")
+        }
+
+    class _EP:
+        name, value = "fake", "fake:provider"
+
+        def load(self):
+            return _Provider
+
+    monkeypatch.setattr(models, "_entry_points", lambda group: (_EP(),))
+    resolve_model.cache_clear()
+    try:
+        with pytest.raises(
+            ModelError, match="model 'old_scanner' — renamed to 'new_scanner' when X"
+        ):
+            resolve_model("old_scanner")
+        with pytest.raises(ModelError, match="renamed to 'new_scanner'"):
+            resolve_model("fake:old_scanner")
+        _Provider.RETIRED_MODELS = {"bad": "new_scanner"}
+        with pytest.raises(ModelError, match="must be a roqsim.models.RetiredModel"):
+            resolve_model("bad")
+    finally:
+        resolve_model.cache_clear()

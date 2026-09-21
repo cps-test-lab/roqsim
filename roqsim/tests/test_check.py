@@ -44,7 +44,7 @@ def test_a_working_world_reaches_the_last_stage_and_says_what_it_is(tmp_path):
     assert world["model"]["nbody"] > 1
     assert world["integrator"] == "implicitfast"  # the spelling a world writes, not the enum's
     # The robot, and the scanner its manifest mounts: a mounted device is an entity of its own.
-    assert {e["name"] for e in world["entities"]} == {"robot", "robot.rplidar"}
+    assert {e["name"] for e in world["entities"]} == {"robot", "robot.rplidar", "robot.oakd"}
     # The inventory is the half that is not about failure: what to write the next thing against.
     assert {"cmd_vel", "odom", "scan"} <= {e["topic"] for e in world["endpoints"]}
     assert all(c["address"] for c in world["components"])
@@ -105,7 +105,7 @@ def test_a_package_ref_is_accepted_the_way_roqsim_sim_takes_one():
     pytest.importorskip("roqsim_mobile")
     report = check_world("roqsim_mobile:turtlebot4_demo")
     assert report["ok"] is True
-    assert {e["name"] for e in report["world"]["entities"]} == {"robot", "robot.rplidar"}
+    assert {e["name"] for e in report["world"]["entities"]} == {"robot", "robot.rplidar", "robot.oakd"}
     topics = {e["topic"] for e in report["world"]["endpoints"]}
     assert {"cmd_vel", "odom", "scan"} <= topics
 

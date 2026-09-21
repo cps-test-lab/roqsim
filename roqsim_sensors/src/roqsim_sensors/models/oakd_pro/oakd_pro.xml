@@ -1,0 +1,34 @@
+<mujoco model="oakd_pro">
+  <!--
+    Luxonis OAK-D Pro, mounted by `spawn_sensor` at the vendor joint origin of `<name>_link`. Written
+    by external/convert/build_oakd_pro.py from turtlebot4_description/urdf/sensors/oakd.urdf.xacro
+    @ turtlebot4 7fd29fb; see OAKD_PRO_LICENSE.
+
+    The `mount` body IS `oakd_link`: x forward (the lens normal), y left, z up. It carries the vendor
+    inertial. There is no mesh (the vendor oakd_pro.dae is 12 MB / 152k triangles): the vendor
+    collision box, at its vendor offset, is both what collides and what renders, and the front plate
+    is a display cue on its lens face. `oakd_rgb` is the vendor `oakd_rgb_camera_optical_frame`
+    turned into MuJoCo's camera convention (looks down -z, +y up); its fovy is the xacro Gazebo
+    block's horizontal_fov re-expressed vertically at that block's 320x240. The manifest's
+    `frames:` publishes the vendor chain from this body.
+  -->
+  <compiler angle="radian" autolimits="true"/>
+
+  <asset>
+    <!-- The source DAE's own phong diffuse (0.19216 0.2039 0.2039): the device's dark grey shell. -->
+    <material name="oakd_body" rgba="0.192 0.204 0.204 1" specular="0.4" shininess="0.3"/>
+    <material name="oakd_glass" rgba="0.05 0.05 0.05 1" specular="0.6" shininess="0.6"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0" mass="0.061" diaginertia="2.02475e-06 1.52732e-05 1.605536e-05"/>
+      <geom name="oakd_visual" type="box" pos="-0.011 0 -0.005" size="0.01125 0.0485 0.015"
+            material="oakd_body"/>
+      <geom name="oakd_front" type="box" pos="0.0006 0 -0.005"
+            size="0.0004 0.045 0.008" material="oakd_glass" contype="0" conaffinity="0"/>
+      <camera name="oakd_rgb" pos="0 0 0" xyaxes="0 -1 0 0 0 1"
+              fovy="56.84" resolution="320 240"/>
+    </body>
+  </worldbody>
+</mujoco>

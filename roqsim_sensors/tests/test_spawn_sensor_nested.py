@@ -249,7 +249,7 @@ def test_two_identical_devices_on_one_carrier_resolve_distinct_names(tmp_path):
 def test_two_mounts_on_one_carrier_left_on_the_same_default_are_refused(tmp_path):
     """They share the carrier's namespace, so one frame name would be published from two poses."""
     device = _device(tmp_path)
-    with pytest.raises(PluginError, match="both use frame_id 'scanner_link'"):
+    with pytest.raises(PluginError, match=r"would both publish frame\(s\) \['scanner_link'"):
         _world(_carrier(tmp_path, _front(device) + _rear(device)))
 
 
@@ -355,3 +355,98 @@ def test_a_world_level_device_hangs_its_chain_off_the_world(tmp_path):
     root = _endpoint(engine, "frames", "tripod").backend["ros2"]["static_tf"][0]
     assert (root["parent"], root["child"]) == ("world", "laser")
     assert np.allclose(root["translation"], [0, 0, 1.0])
+
+
+# A device whose vendor macro prefixes every link with its `name` parameter, as a camera
+# description does: the chain is `<name>_link -> <name>_optical_frame`.
+NAMED_DEVICE_MANIFEST = """
+device_name: cam
+frame_id: "{device_name}_optical_frame"
+components:
+  - lidar: {site: scan, frame_id: "{frame_id}", exclude_body: mount, emit_static_tf: false,
+            rays: 4, max_range: 4.0, range_min: 0.0}
+frames:
+  - {name: "{device_name}_link", parent: mount}
+  - {name: "{frame_id}", parent: "{device_name}_link", pos: [0, 0, 0.01]}
+"""
+
+
+def _named_device(tmp_path, manifest=NAMED_DEVICE_MANIFEST) -> str:
+    (tmp_path / "camdev.xml").write_text(DEVICE_XML)
+    (tmp_path / "camdev.manifest.yaml").write_text(textwrap.dedent(manifest))
+    return str(tmp_path / "camdev.xml")
+
+
+def _mount(device, name, parent="cover_link", extra=""):
+    return f"""
+    - spawn_sensor: {{model: {device}, parent_frame: {parent}{extra}}}
+      name: {name}
+    """
+
+
+def _chain(engine, owner):
+    tfs = _endpoint(engine, "frames", owner).backend["ros2"]["static_tf"]
+    return [(t["parent"], t["child"]) for t in tfs]
+
+
+def test_device_name_defaults_to_the_vendor_macro_name_and_fills_the_chain(tmp_path):
+    engine = _engine(_world(_carrier(tmp_path, _mount(_named_device(tmp_path), "head"))))
+    mount = _plugin(engine, "robot.head")
+    assert mount.config["device_name"] == "cam"
+    assert mount.config["frame_id"] == "cam_optical_frame"  # the default, its name filled in
+    assert _chain(engine, "robot.head") == [
+        ("cover_link", "cam_link"),
+        ("cam_link", "cam_optical_frame"),
+    ]
+    scan = _endpoint(engine, "scan", "robot.head")
+    assert scan.backend["ros2"]["frame_id"] == "cam_optical_frame"
+
+
+def test_two_mounts_of_one_device_each_name_their_own_instance(tmp_path):
+    device = _named_device(tmp_path)
+    mounts = _mount(device, "head", extra=", device_name: head_camera") + _mount(
+        device, "chest", parent="base_link", extra=", device_name: chest_camera"
+    )
+    engine = _engine(_world(_carrier(tmp_path, mounts)))
+    assert _chain(engine, "robot.head") == [
+        ("cover_link", "head_camera_link"),
+        ("head_camera_link", "head_camera_optical_frame"),
+    ]
+    assert _chain(engine, "robot.chest") == [
+        ("base_link", "chest_camera_link"),
+        ("chest_camera_link", "chest_camera_optical_frame"),
+    ]
+
+
+def test_two_mounts_that_share_an_intermediate_frame_are_refused(tmp_path):
+    """Distinct scan frames are not enough: the chain's `<device_name>_link` would still be one name
+    published from two poses."""
+    device = _named_device(tmp_path)
+    mounts = _mount(device, "head", extra=", frame_id: head_optical") + _mount(
+        device, "chest", parent="base_link", extra=", frame_id: chest_optical"
+    )
+    with pytest.raises(PluginError, match=r"would both publish frame\(s\) \['cam_link'\]"):
+        _world(_carrier(tmp_path, mounts))
+
+
+def test_a_device_that_names_frames_after_device_name_needs_one(tmp_path):
+    manifest = NAMED_DEVICE_MANIFEST.replace("device_name: cam\n", "")
+    device = _named_device(tmp_path, manifest)
+    with pytest.raises(PluginError, match="declares no default 'device_name'"):
+        _world(_carrier(tmp_path, _mount(device, "head")))
+    cfg = _world(_carrier(tmp_path, _mount(device, "head", extra=", device_name: eye")))
+    mount = next(s for s in cfg.plugins if s.address == "robot.head")
+    assert mount.config["frame_id"] == "eye_optical_frame"
+
+
+def test_a_carrier_mount_of_a_device_without_a_frame_chain_is_refused(tmp_path):
+    """No vendor link to hang from, and nothing to connect its data's frame to the carrier's tree."""
+    (tmp_path / "bare.xml").write_text(DEVICE_XML)
+    (tmp_path / "bare.manifest.yaml").write_text("components: []\n")
+    with pytest.raises(PluginError, match=r"device '.*bare\.xml' declares no 'frames:' chain"):
+        _world(_carrier(tmp_path, _mount(str(tmp_path / "bare.xml"), "cam")))
+    # The same device still mounts on its own in a world.
+    cfg = load_config_from_dict(
+        {"components": [{"spawn_sensor": {"model": str(tmp_path / "bare.xml")}, "name": "cam"}]}
+    )
+    _engine(cfg)

@@ -10,7 +10,7 @@
 # that gives every sensor something to see. Each `spawn_sensor` pulls its capture plugin from the
 # model manifest automatically (mid360 -> livox_mid360, robin_w1g -> seyond_robin_w1g,
 # d435 -> realsense_d435, d415 -> realsense_d415, d455 -> realsense_d455, zivid -> zivid,
-# oakd -> oakd_camera).
+# oakd_pro -> oakd_camera).
 #
 # Covered here: livox_mid360 (3D lidar, 360° dome), seyond_robin_w1g (3D lidar, forward 120°×70°),
 # lidar (2D), realsense_d435, realsense_d415, realsense_d455, zivid (RGB-D), oakd_camera (RGB-D),
@@ -108,13 +108,15 @@ components:
 
   # --- Luxonis OAK-D Pro in the remaining corner, looking toward the centre ----------------------
   # Its manifest auto-attaches `oakd_camera` -> `image` + `depth` + `camera_info` (RGB-D). The model
-  # is a box at the source URDF's collision dimensions rather than a mesh (see models/oakd/oakd.xml);
-  # what it provides is the camera. Its fovy is the TurtleBot 4's, which carries the same device.
+  # is a box at the source URDF's collision dimensions rather than a mesh (see
+  # models/oakd_pro/oakd_pro.xml); what it provides is the camera. The TurtleBot 4 mounts the same
+  # device. pos/rpy are the pose of the vendor `oakd_link` (x along the lens normal, z up), and the
+  # mount publishes its vendor frame chain (oakd_link -> oakd_rgb_camera_optical_frame, ...).
   - spawn_sensor:
-      model: oakd
+      model: oakd_pro
       prefix: "oakd_"
       pos: [-1.5, -1.5, 0.6]
-      rpy: [0.0, 0.0, -0.7854]   # yaw -45° so the mount's +y optical axis faces the centre
+      rpy: [0, 0, 0.7853963268]  # oakd_link's x faces the centre
       show_fov: true
       fov_alpha: 0.25
       fov_range: 4.0             # override the manifest far (8 m) to fit this room, as the others do

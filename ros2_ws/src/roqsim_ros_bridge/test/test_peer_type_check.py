@@ -66,7 +66,11 @@ def test_a_twist_published_at_a_stamped_base_fails_the_run(tmp_path):
                 "name": "robot",
                 "components": [
                     {"diff_drive": {"stamped_cmd_vel": True}},
-                    {"oakd_camera": {"enabled": False}},
+                    {
+                        "spawn_sensor": {},
+                        "name": "oakd",
+                        "components": [{"oakd_camera": {}, "enabled": False}],
+                    },
                 ],
             }
         ],

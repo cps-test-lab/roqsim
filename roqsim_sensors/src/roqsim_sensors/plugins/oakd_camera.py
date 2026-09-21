@@ -2,9 +2,9 @@
 
 Mirrors the Gazebo TurtleBot 4 ``rgbd_camera`` topic (a ``sensor_msgs/Image`` colour + depth pair,
 each with its own ``CameraInfo`` -- ``rgbd_camera/camera_info`` and
-``rgbd_camera/depth/camera_info``). Bundled as a default TurtleBot 4 sensor (see
-``turtlebot4.manifest.yaml`` in ``roqsim_mobile``), reading resolution/FOV from the model's
-``oakd_rgb`` camera.
+``rgbd_camera/depth/camera_info``). Bundled with the ``oakd_pro`` device model, which
+``turtlebot4.manifest.yaml`` in ``roqsim_mobile`` mounts, reading resolution/FOV from its
+``oakd_rgb`` camera; the mount publishes the vendor chain to the frame the images are stamped in.
 
 Config (in addition to ``camera_common.CameraPlugin``'s, and ``depth_camera.DepthCameraPlugin``'s
 ``clip_near``/``clip_far``/``depth_encoding``)::
