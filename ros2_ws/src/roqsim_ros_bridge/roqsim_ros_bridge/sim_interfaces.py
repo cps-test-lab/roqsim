@@ -4,7 +4,7 @@ Implements the interfaces most useful for scenario-driven testing of the M1 turt
   * GetSimulatorFeatures   — advertise what is supported
   * GetEntities            — list entities from the registry
   * GetEntityState/SetEntityState — read/teleport an entity's free-joint body
-  * GetSpawnables          — the compiled entities SpawnEntity can select, by uri
+  * GetSpawnables          — the absent entities SpawnEntity can select, by uri
   * SpawnEntity/DeleteEntity — make a compiled entity perceivable at initial_pose, or absent
   * GetSimulationState/SetSimulationState — play/pause/stop (standalone driver)
   * StepSimulation         — step N times while paused
@@ -125,6 +125,20 @@ def _spawnable(uri, description):
     return s
 
 
+def _spawnables(entities):
+    """The entities ``SpawnEntity`` can select right now: the declared ones that are ABSENT.
+
+    Spawning here is activation, so a spawnable is CONSUMED by spawning it -- unlike a simulator
+    whose uri names a model file and spawns a copy per call. A present entity's name is not a uri
+    a spawn accepts (it answers "already present"), and the service asks for the uris that are
+    valid, so listing it would offer one that cannot be used.
+
+    Together with ``GetEntities``, which lists the present ones, this covers everything the world
+    declared.
+    """
+    return [_spawnable(e.name, e.kind) for e in entities if not e.present]
+
+
 def _spawn_target(req, names):
     """``(name, None)`` for the declared entity a spawn request selects, or ``(None, refusal)``.
 
@@ -146,8 +160,9 @@ def _spawn_target(req, names):
         return None, (
             SpawnEntity.Response.UNSUPPORTED_FORMAT,
             f"'uri' {uri!r} is not an entity this world declared, and this simulator loads no "
-            f"geometry (get_simulator_features advertises no spawn_formats). Spawnable: "
-            f"{', '.join(sorted(names)) or 'none'}.",
+            f"geometry (get_simulator_features advertises no spawn_formats). Declared: "
+            f"{', '.join(sorted(names)) or 'none'}; get_spawnables lists the absent ones a spawn "
+            "can select.",
         )
     if req.name and req.name != uri:
         return None, (
@@ -300,12 +315,7 @@ class SimInterfacesPlugin(Plugin):
         return resp
 
     def _get_spawnables(self, req, resp):
-        # Every declared entity, present or not: a present one is refused only until it is
-        # deleted, and a list that changed with presence would make the uri a caller holds stale.
-        resp.spawnables = [
-            _spawnable(e.name, f"{e.kind}, {'present' if e.present else 'absent'}")
-            for e in self._ctx.entities.all()
-        ]
+        resp.spawnables = _spawnables(self._ctx.entities.all())
         # The service asks for unrecognised sources to be named without failing the call; this
         # simulator searches none, because everything spawnable was compiled in.
         sources = list(getattr(req, "sources", []))

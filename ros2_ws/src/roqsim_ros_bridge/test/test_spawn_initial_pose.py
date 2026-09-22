@@ -27,6 +27,7 @@ from roqsim_ros_bridge.sim_interfaces import (
     _resource_of,
     _spawn_target,
     _spawnable,
+    _spawnables,
     _unsupported_spawn_request,
 )
 
@@ -172,9 +173,27 @@ def test_the_resource_is_read_in_either_interface_shape():
 
 
 def test_a_spawnable_carries_the_uri_a_spawn_selects_by():
-    s = _spawnable("robot", "robot, absent")
+    s = _spawnable("robot", "robot")
     assert _resource_of(s)[0] == "robot"
-    assert s.description == "robot, absent"
+    assert s.description == "robot"
+
+
+class _Entity:
+    def __init__(self, name, present, kind="object"):
+        self.name, self.present, self.kind = name, present, kind
+
+
+def test_only_the_absent_entities_are_spawnable():
+    """A spawn ACTIVATES, so spawning consumes the spawnable: a present entity is refused."""
+    entities = [_Entity("robot", True, "robot"), _Entity("obstacle_0", False)]
+    assert [_resource_of(s)[0] for s in _spawnables(entities)] == ["obstacle_0"]
+
+
+def test_a_deleted_entity_becomes_spawnable_again():
+    entity = _Entity("obstacle_0", True)
+    assert _spawnables([entity]) == []
+    entity.present = False
+    assert [_resource_of(s)[0] for s in _spawnables([entity])] == ["obstacle_0"]
 
 
 def test_a_namespace_is_refused_rather_than_ignored():

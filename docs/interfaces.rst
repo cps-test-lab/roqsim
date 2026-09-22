@@ -595,7 +595,7 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
-* ``GetSpawnables`` — the declared entities ``SpawnEntity`` can select.
+* ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
 * ``StepSimulation`` — step N times while paused.
@@ -610,7 +610,9 @@ name, as ``GetSpawnables`` lists it. ``name`` may be left empty or repeat the ``
 one would be a rename, which a compiled entity cannot take. A request with no ``uri`` selects by
 ``name``, which the service does not define but older callers rely on. A ``uri`` the world does not
 carry is refused rather than approximated, because the alternative is a trial that believes it
-spawned something. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
+spawned something. Spawning CONSUMES a spawnable, since it activates one entity rather than
+copying a model: ``GetSpawnables`` lists the absent ones, ``GetEntities`` the present ones, and an
+entity moves between the two lists as it is spawned and deleted. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
 caller to send geometry that nothing can load.
 
 ``DeleteEntity`` makes an entity absent: excluded from raycasts, from rendering, from contacts,
