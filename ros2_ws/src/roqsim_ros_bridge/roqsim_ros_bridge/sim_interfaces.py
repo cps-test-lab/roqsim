@@ -4,6 +4,7 @@ Implements the interfaces most useful for scenario-driven testing of the M1 turt
   * GetSimulatorFeatures   — advertise what is supported
   * GetEntities            — list entities from the registry
   * GetEntityState/SetEntityState — read/teleport an entity's free-joint body
+  * GetSpawnables          — the absent entities SpawnEntity can select, by uri
   * SpawnEntity/DeleteEntity — make a compiled entity perceivable at initial_pose, or absent
   * GetSimulationState/SetSimulationState — play/pause/stop (standalone driver)
   * StepSimulation         — step N times while paused
@@ -28,13 +29,14 @@ import numpy as np
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from simulation_interfaces.msg import Result, SimulationState, SimulatorFeatures
+from simulation_interfaces.msg import Result, SimulationState, SimulatorFeatures, Spawnable
 from simulation_interfaces.srv import (
     DeleteEntity,
     GetEntities,
     GetEntityState,
     GetSimulationState,
     GetSimulatorFeatures,
+    GetSpawnables,
     ResetSimulation,
     SetEntityState,
     SetSimulationState,
@@ -106,6 +108,71 @@ def _already_at(state, pose) -> bool:
     return abs(sum(a * b for a, b in zip(rot, quat, strict=True))) > 1.0 - _POSE_EPS
 
 
+def _resource_of(msg):
+    """``(uri, resource_string)`` of a request or a spawnable, in either interface shape.
+
+    simulation_interfaces 1.x (Jazzy) carries both flat; 2.x moved them into a ``Resource``
+    sub-message (``entity_resource``). Reading only the flat fields would miss every 2.x request.
+    """
+    src = getattr(msg, "entity_resource", msg)
+    return getattr(src, "uri", ""), getattr(src, "resource_string", "")
+
+
+def _spawnable(uri, description):
+    s = Spawnable()
+    getattr(s, "entity_resource", s).uri = uri
+    s.description = description
+    return s
+
+
+def _spawnables(entities):
+    """The entities ``SpawnEntity`` can select right now: the declared ones that are ABSENT.
+
+    Spawning here is activation, so a spawnable is CONSUMED by spawning it -- unlike a simulator
+    whose uri names a model file and spawns a copy per call. A present entity's name is not a uri
+    a spawn accepts (it answers "already present"), and the service asks for the uris that are
+    valid, so listing it would offer one that cannot be used.
+
+    Together with ``GetEntities``, which lists the present ones, this covers everything the world
+    declared.
+    """
+    return [_spawnable(e.name, e.kind) for e in entities if not e.present]
+
+
+def _spawn_target(req, names):
+    """``(name, None)`` for the declared entity a spawn request selects, or ``(None, refusal)``.
+
+    ``uri`` is the service's selector, and here it names one of the entities ``GetSpawnables``
+    lists. ``name`` may be empty or repeat it; any other name would be a rename, and a compiled
+    entity keeps the name its world gave it. With no ``uri`` the request selects by ``name`` alone:
+    the service calls that invalid, but callers written before ``GetSpawnables`` rely on it, and it
+    cannot select anything other than what it names.
+    """
+    uri, _ = _resource_of(req)
+    if not uri:
+        if not req.name:
+            return None, (
+                SpawnEntity.Response.NO_RESOURCE,
+                "the request names no entity: set 'uri' to one get_spawnables lists.",
+            )
+        return req.name, None
+    if uri not in names:
+        return None, (
+            SpawnEntity.Response.UNSUPPORTED_FORMAT,
+            f"'uri' {uri!r} is not an entity this world declared, and this simulator loads no "
+            f"geometry (get_simulator_features advertises no spawn_formats). Declared: "
+            f"{', '.join(sorted(names)) or 'none'}; get_spawnables lists the absent ones a spawn "
+            "can select.",
+        )
+    if req.name and req.name != uri:
+        return None, (
+            SpawnEntity.Response.NAME_INVALID,
+            f"'name' {req.name!r} would rename {uri!r}, and a compiled entity keeps the name its "
+            "world gave it. Leave 'name' empty or repeat the uri.",
+        )
+    return uri, None
+
+
 def _unsupported_spawn_request(req):
     """``(result_code, message)`` for a request this simulator cannot serve as asked, else ``None``.
 
@@ -119,6 +186,8 @@ def _unsupported_spawn_request(req):
     ``RESULT_FEATURE_UNSUPPORTED`` is for a call option this simulator does not offer, which is
     what that code is for.
 
+    ``uri`` and ``name`` are not here: they select the entity, which :func:`_spawn_target` resolves.
+
     Why none of these is a gap to fill: geometry, because the model is compiled once, which
     ``get_simulator_features`` already says by advertising no ``spawn_formats``; a namespace,
     because an entity's name is settled when the model compiles; renaming, because spawning here
@@ -126,11 +195,11 @@ def _unsupported_spawn_request(req):
     ``allow_renaming`` resolves; and a frame, because the service requires one the simulator
     knows, and this one knows only the world frame the empty default already names.
     """
-    if getattr(req, "uri", "") or getattr(req, "resource_string", ""):
+    if _resource_of(req)[1]:
         return SpawnEntity.Response.UNSUPPORTED_FORMAT, (
-            "this simulator spawns entities the world compiled and loads no geometry, so 'uri' / "
+            "this simulator spawns entities the world compiled and loads no geometry, so "
             "'resource_string' cannot be honoured (get_simulator_features advertises no "
-            "spawn_formats). Declare the entity in the world instead."
+            "spawn_formats). Declare the entity in the world and spawn it by 'uri'."
         )
     if getattr(req, "entity_namespace", ""):
         return Result.RESULT_FEATURE_UNSUPPORTED, (
@@ -179,6 +248,7 @@ class SimInterfacesPlugin(Plugin):
 
         node.create_service(GetSimulatorFeatures, "get_simulator_features", self._get_features)
         node.create_service(GetEntities, "get_entities", self._get_entities)
+        node.create_service(GetSpawnables, "get_spawnables", self._get_spawnables)
         # Spawning here is ACTIVATION, not creation: the model is compiled once and never
         # rebuilt, so these two make an entity the world already carries perceivable or not.
         node.create_service(SpawnEntity, "spawn_entity", self._spawn_entity)
@@ -214,6 +284,7 @@ class SimInterfacesPlugin(Plugin):
             # Both are served over presence, not creation -- see _spawn_entity. Advertised
             # because a caller's question is "can I make this entity appear", and here it can.
             SimulatorFeatures.SPAWNING,
+            SimulatorFeatures.SPAWNABLES,
             SimulatorFeatures.DELETING,
             SimulatorFeatures.ENTITY_STATE_GETTING,
             SimulatorFeatures.ENTITY_STATE_SETTING,
@@ -230,8 +301,8 @@ class SimInterfacesPlugin(Plugin):
         f.spawn_formats = []
         f.custom_info = (
             "roqsim bridge (M1 subset); spawn/delete activate entities the world compiled, "
-            "spawn placing a free-jointed one at initial_pose (world frame only) -- the model "
-            "is never rebuilt at runtime"
+            "spawn selecting one by the uri get_spawnables lists and placing a free-jointed one "
+            "at initial_pose (world frame only) -- the model is never rebuilt at runtime"
         )
         resp.features = f
         return resp
@@ -241,6 +312,17 @@ class SimInterfacesPlugin(Plugin):
         # or touch it, so listing it would make this disagree with every sensor.
         resp.entities = self._ctx.entities.names(present_only=True)
         resp.result = Result(result=Result.RESULT_OK)
+        return resp
+
+    def _get_spawnables(self, req, resp):
+        resp.spawnables = _spawnables(self._ctx.entities.all())
+        # The service asks for unrecognised sources to be named without failing the call; this
+        # simulator searches none, because everything spawnable was compiled in.
+        sources = list(getattr(req, "sources", []))
+        resp.result = Result(
+            result=Result.RESULT_OK,
+            error_message=f"sources not searched: {', '.join(sources)}" if sources else "",
+        )
         return resp
 
     def _spawn_entity(self, req, resp):
@@ -259,7 +341,8 @@ class SimInterfacesPlugin(Plugin):
         if it is already at the pose asked for, and is refused otherwise rather than appearing
         somewhere else under a RESULT_OK.
         """
-        unsupported = _unsupported_spawn_request(req)
+        name, unsupported = _spawn_target(req, self._ctx.entities.names())
+        unsupported = unsupported or _unsupported_spawn_request(req)
         if unsupported:
             code, message = unsupported
             resp.result = Result(result=code, error_message=message)
@@ -272,7 +355,7 @@ class SimInterfacesPlugin(Plugin):
                 "rotation. Send a unit quaternion; the identity is w=1.",
             )
             return resp
-        return self._set_presence(req.name, True, resp, verb="spawn", pose=pose)
+        return self._set_presence(name, True, resp, verb="spawn", pose=pose)
 
     def _delete_entity(self, req, resp):
         """Make an entity absent: invisible to sensors, untouchable, and unlisted.

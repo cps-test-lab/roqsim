@@ -24,6 +24,10 @@ from simulation_interfaces.srv import SpawnEntity
 from roqsim_ros_bridge.sim_interfaces import (
     _already_at,
     _pose_of,
+    _resource_of,
+    _spawn_target,
+    _spawnable,
+    _spawnables,
     _unsupported_spawn_request,
 )
 
@@ -107,10 +111,89 @@ def test_a_zero_length_quaternion_is_reported_not_repaired():
 
 
 def test_geometry_is_refused_with_the_services_own_code():
-    for req in (_Request(uri="model://box"), _Request(resource_string="<sdf/>")):
-        code, message = _unsupported_spawn_request(req)
-        assert code == SpawnEntity.Response.UNSUPPORTED_FORMAT
-        assert "uri" in message
+    code, message = _unsupported_spawn_request(_Request(resource_string="<sdf/>"))
+    assert code == SpawnEntity.Response.UNSUPPORTED_FORMAT
+    assert "resource_string" in message
+
+
+DECLARED = ["robot", "obstacle_0"]
+
+
+def test_the_uri_selects_a_declared_entity():
+    assert _spawn_target(_Request(name="", uri="robot"), DECLARED) == ("robot", None)
+    assert _spawn_target(_Request(name="robot", uri="robot"), DECLARED) == ("robot", None)
+
+
+def test_a_uri_the_world_did_not_declare_is_refused():
+    """A file path is the common case, and nothing here loads one."""
+    name, (code, message) = _spawn_target(_Request(uri="model://box"), DECLARED)
+    assert name is None
+    assert code == SpawnEntity.Response.UNSUPPORTED_FORMAT
+    assert "robot" in message
+
+
+def test_a_name_other_than_the_uri_is_refused_as_a_rename():
+    name, (code, _) = _spawn_target(_Request(name="robot_2", uri="robot"), DECLARED)
+    assert name is None
+    assert code == SpawnEntity.Response.NAME_INVALID
+
+
+def test_without_a_uri_the_name_selects():
+    assert _spawn_target(_Request(name="obstacle_0"), DECLARED) == ("obstacle_0", None)
+
+
+def test_a_request_naming_nothing_is_refused_with_no_resource():
+    name, (code, _) = _spawn_target(_Request(name=""), DECLARED)
+    assert name is None
+    assert code == SpawnEntity.Response.NO_RESOURCE
+
+
+class _Resource:
+    def __init__(self, uri="", resource_string=""):
+        self.uri, self.resource_string = uri, resource_string
+
+
+class _Request2x:
+    """simulation_interfaces 2.x: the resource is a sub-message, and the flat fields are gone."""
+
+    def __init__(self, uri="", resource_string=""):
+        self.name = ""
+        self.entity_resource = _Resource(uri, resource_string)
+        self.initial_pose = _Stamped()
+        self.entity_namespace = ""
+        self.allow_renaming = False
+
+
+def test_the_resource_is_read_in_either_interface_shape():
+    assert _resource_of(_Request(uri="robot")) == ("robot", "")
+    assert _resource_of(_Request2x(uri="robot")) == ("robot", "")
+    assert _spawn_target(_Request2x(uri="robot"), DECLARED) == ("robot", None)
+    code, _ = _unsupported_spawn_request(_Request2x(resource_string="<sdf/>"))
+    assert code == SpawnEntity.Response.UNSUPPORTED_FORMAT
+
+
+def test_a_spawnable_carries_the_uri_a_spawn_selects_by():
+    s = _spawnable("robot", "robot")
+    assert _resource_of(s)[0] == "robot"
+    assert s.description == "robot"
+
+
+class _Entity:
+    def __init__(self, name, present, kind="object"):
+        self.name, self.present, self.kind = name, present, kind
+
+
+def test_only_the_absent_entities_are_spawnable():
+    """A spawn ACTIVATES, so spawning consumes the spawnable: a present entity is refused."""
+    entities = [_Entity("robot", True, "robot"), _Entity("obstacle_0", False)]
+    assert [_resource_of(s)[0] for s in _spawnables(entities)] == ["obstacle_0"]
+
+
+def test_a_deleted_entity_becomes_spawnable_again():
+    entity = _Entity("obstacle_0", True)
+    assert _spawnables([entity]) == []
+    entity.present = False
+    assert [_resource_of(s)[0] for s in _spawnables([entity])] == ["obstacle_0"]
 
 
 def test_a_namespace_is_refused_rather_than_ignored():

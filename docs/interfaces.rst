@@ -256,7 +256,7 @@ image pull.
 
 ``entities`` is ``null`` unless ``--entities`` is passed, because naming them means compiling the
 model. There is no cheaper way to ask: which entities exist is settled at compile time, since roqsim
-never recompiles mid-run and ``simulation_interfaces`` serves no ``SpawnEntity``. A caller checking
+never recompiles mid-run -- ``SpawnEntity`` makes a declared entity present, it adds none. A caller checking
 that a scenario only drives entities the world has pays for it; one resolving paths does not.
 
 ``overridable`` answers the same question one layer down, for the model values a run can change while
@@ -595,6 +595,7 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
+* ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
 * ``StepSimulation`` — step N times while paused.
@@ -604,10 +605,15 @@ Spawning is activation, not creation
 `````````````````````````````````````
 
 roqsim never recompiles the model at runtime, so there is no body to add. A world declares
-everything a trial may bring in, and ``SpawnEntity`` selects one of those; a name the world does
-not carry is refused rather than approximated, because the alternative is a trial that believes
-it spawned something. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite
-a caller to send geometry that nothing can load.
+everything a trial may bring in, and ``SpawnEntity`` selects one of those by ``uri``: the entity's
+name, as ``GetSpawnables`` lists it. ``name`` may be left empty or repeat the ``uri``; a different
+one would be a rename, which a compiled entity cannot take. A request with no ``uri`` selects by
+``name``, which the service does not define but older callers rely on. A ``uri`` the world does not
+carry is refused rather than approximated, because the alternative is a trial that believes it
+spawned something. Spawning CONSUMES a spawnable, since it activates one entity rather than
+copying a model: ``GetSpawnables`` lists the absent ones, ``GetEntities`` the present ones, and an
+entity moves between the two lists as it is spawned and deleted. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
+caller to send geometry that nothing can load.
 
 ``DeleteEntity`` makes an entity absent: excluded from raycasts, from rendering, from contacts,
 and from what ``GetEntities`` lists. Its pose does not move, which is the point — parking it out
@@ -623,7 +629,10 @@ registers it::
     - spawn_model: {model: pallet, pose: {position: {x: 4.0, y: 1.0}}, motion: physics, present: false}
       name: obstacle
 
-That is what gives a trial something to spawn. The declared value is restored on every reset, so a
+That is what gives a trial something to spawn. A population entry (``boxes``, ``cylinders``)
+forwards it to every instance, and each instance is an entity of its own, so a pool of spares is a
+uri per spare -- ``obstacle_0``, ``obstacle_1``, or whatever an instance names itself -- and each
+leaves the list as it is spawned. The declared value is restored on every reset, so a
 spare brought in during one repetition is a spare again in the next. Do not confuse it with
 ``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
 to spawn.
