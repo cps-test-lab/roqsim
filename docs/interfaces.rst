@@ -629,7 +629,10 @@ registers it::
     - spawn_model: {model: pallet, pose: {position: {x: 4.0, y: 1.0}}, motion: physics, present: false}
       name: obstacle
 
-That is what gives a trial something to spawn. The declared value is restored on every reset, so a
+That is what gives a trial something to spawn. A population entry (``boxes``, ``cylinders``)
+forwards it to every instance, and each instance is an entity of its own, so a pool of spares is a
+uri per spare -- ``obstacle_0``, ``obstacle_1``, or whatever an instance names itself -- and each
+leaves the list as it is spawned. The declared value is restored on every reset, so a
 spare brought in during one repetition is a spare again in the next. Do not confuse it with
 ``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
 to spawn.
