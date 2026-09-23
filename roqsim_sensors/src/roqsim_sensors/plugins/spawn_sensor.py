@@ -4,38 +4,22 @@ The generic, robot-free analogue of ``spawn_arm``/``spawn_robot``: for a sensor 
 by a robot -- a fixed overhead camera, a mast-mounted lidar -- this plugin places the mount, and
 ``motion:`` says whether anything may move it afterwards (see below). It registers an
 ``Entity(kind='sensor')`` the same way a spawned robot/arm does, so a capture plugin
-(``lidar``/``oakd_camera``/``realsense_d435``) resolves this mount's ``prefix``/``namespace``
-via its own ``robot: <name>`` config -- no sensor-specific wiring needed here.
+(``lidar``/``oakd_camera``/``realsense_d435``) nested under this entry resolves the mount's
+``prefix``/``namespace`` from the entity it belongs to -- no sensor-specific wiring needed here.
 
-Config::
+Every key is declared in :attr:`SpawnSensorPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins
+describe spawn_sensor`` and the plugin catalog publish. A fixed camera, for instance::
 
     - spawn_sensor:
-        model: d435            # bundled model name, filename, or absolute path
-        namespace: ""          # optional transport scope; the capture plugin's endpoints inherit it
-        prefix: ""             # MJCF name prefix (use distinct prefixes for >1 mount of the model)
-        pos: [0.0, 0.0, 0.0]
-        rpy: [0.0, 0.0, 0.0]   # mount orientation as roll/pitch/yaw (rad)
-        motion: static         # who owns the mount's pose: static (default; welded, nothing moves
-                               #   it), driven (a plugin or scenario places it), physics (the solver)
-        attach_to: wrist_3_link # OPTIONAL: weld the mount to this body of an ALREADY-SPAWNED robot
-                               #   or arm instead of to the world, so it rides what carries it.
-                               #   `pos`/`rpy` are then relative to that body. Same spelling as
-                               #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
-        attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
-        parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
-                               #   the carrier to hang from; `pos`/`rpy` are the vendor joint origin
-        frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
-                               #   vendor name its manifest's `frame_id:` declares (see below)
-        show_fov: false        # reveal / synthesise the sensor's FOV visualisation (see below)
-        fov_alpha: 0.25        # per-cone translucency when show_fov is true (0..1); ~0.25 maximises the
-                               #   darkness step between single- and multi-sensor overlap
-        fov_range: <far>       # far plane of a synthesised camera frustum (m); default: model manifest
-        fov_near: <near>       # near plane (m); >0 truncates the cone; default: model manifest 'fov:'
-        fov_rays: [32, 24]     # ray grid [horizontal, vertical] used for the occlusion clip
-        intrinsics:            # this UNIT's measured lens, rendered as well as published
-          {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
-      name: camera_1           # the entry's label -- a sibling of the ref -- names this mount's
-                               #   entity, which a capture plugin's `robot:` then points at
+        model: d435
+        pos: [0.0, 0.0, 2.5]
+        intrinsics: {fx: 1330.23, fy: 1329.37, cx: 974.25, cy: 538.99, width: 1920, height: 1080}
+      name: camera_1
+
+``name:`` is the entry's label -- a sibling of the ref, not a key -- and names this mount's entity.
+``intrinsics`` is this UNIT's measured lens, rendered as well as published. ``show_fov`` reveals or
+synthesises the sensor's field-of-view volume; ``fov_alpha`` around 0.25 maximises the darkness step
+between single- and multi-sensor overlap.
 
 **Mounting on something that moves: eye-in-hand and friends.** ``attach_to`` welds the mount to a
 named body of a robot or arm spawned EARLIER in the document, so the sensor rides the flange, the
@@ -550,32 +534,61 @@ class SpawnSensorPlugin(Plugin):
 
     #: Every key this plugin and its ``expand`` read -- including ``attach_prefix``/``prefix``/
     #: ``frame_id``, which a carrier's manifest or the expansion fills in -- and nothing else, which
-    #: is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried: an
+    #: is what makes refusing any other key safe. A key outside it is refused rather than carried: an
     #: override that stops at this mount instead of reaching its device component would otherwise
     #: leave a key nothing reads. Ranges and combinations stay in :meth:`validate_config`.
     CONFIG_SCHEMA = {
-        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "model": Field(str, required=True, doc="bundled model name, filename, or absolute path"),
         "namespace": Field(
             str, default="", doc="transport scope; a nested mount's is its carrier's"
         ),
         "prefix": Field(str, default="", doc="MJCF name prefix; nested: <attach_prefix><name>_"),
-        "pos": Field(list, unit="m", doc="[x, y] or [x, y, z] mount position"),
-        "rpy": Field(list, unit="rad", doc="[roll, pitch, yaw] mount orientation"),
-        "motion": Field(str, default="static", doc="static | driven | physics"),
-        "attach_to": Field(str, doc="body of an already-spawned carrier to weld the mount to"),
-        "attach_prefix": Field(str, doc="carrier's MJCF prefix for attach_to/parent_frame"),
-        "parent_frame": Field(str, doc="carrier body or declared frame to hang from"),
+        "pos": Field(
+            list, default=[0.0, 0.0, 0.0], unit="m", doc="[x, y] or [x, y, z] mount position"
+        ),
+        "rpy": Field(
+            list,
+            default=[0.0, 0.0, 0.0],
+            length=3,
+            unit="rad",
+            doc="[roll, pitch, yaw] mount orientation",
+        ),
+        "motion": Field(
+            str,
+            default="static",
+            doc="who owns the mount's pose: static (welded), driven (a plugin), physics (the solver)",
+        ),
+        "attach_to": Field(
+            str,
+            default="",
+            doc="body of an already-spawned carrier to weld the mount to; pos/rpy then relative "
+            "to it, and motion is refused",
+        ),
+        "attach_prefix": Field(
+            str, default="", doc="carrier's MJCF prefix for attach_to/parent_frame"
+        ),
+        "parent_frame": Field(
+            str,
+            default="",
+            doc="instead of attach_to: a carrier body or declared frame to hang from; pos/rpy "
+            "are the vendor joint origin",
+        ),
         "frame_id": Field(str, doc="the device's scan frame; default: its manifest's frame_id"),
         "show_fov": Field(bool, default=False, doc="draw the sensor's field of view"),
-        "fov_alpha": Field(float, default=0.25, doc="FOV translucency, 0..1"),
-        "fov_near": Field(float, unit="m", doc="FOV near plane; default: model manifest"),
+        "fov_alpha": Field(
+            float, default=0.25, minimum=0.0, maximum=1.0, doc="FOV translucency, 0..1"
+        ),
+        "fov_near": Field(
+            float, unit="m", doc="FOV near plane; > 0 truncates the cone; default: model manifest"
+        ),
         "fov_range": Field(float, unit="m", doc="FOV far plane; default: model manifest"),
-        "fov_rays": Field(list, default=[32, 24], doc="occlusion-clip ray grid [nu, nv]"),
+        "fov_rays": Field(
+            list, default=[32, 24], length=2, doc="occlusion-clip ray grid [nu, nv], each 2..256"
+        ),
         "intrinsics": Field(dict, doc="this unit's measured lens: fx, fy, cx, cy, width, height"),
         "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
     }
-    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
@@ -647,11 +660,12 @@ class SpawnSensorPlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
+        settings = self.settings
         self.sensor_name = self.address
-        self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
+        self.prefix = settings.prefix
+        pos = settings.pos
         self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
+        rpy = settings.rpy
         self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
         # for a prop. `static` is the default: the mount is part of the model, and nothing can
@@ -659,13 +673,13 @@ class SpawnSensorPlugin(Plugin):
         # A body of an already-spawned carrier to ride, instead of the world. Same key and same
         # spelling `fiducial_marker` uses for the same idea, so a world states "welded to that
         # body" one way whatever it is welding.
-        self.attach_to = self.config.get("attach_to", "")
-        self.attach_prefix = self.config.get("attach_prefix", "")
+        self.attach_to = settings.attach_to
+        self.attach_prefix = settings.attach_prefix
         #: A carrier body or declared frame to hang from; see "A device mounted by its carrier".
-        self.parent_frame = self.config.get("parent_frame", "")
+        self.parent_frame = settings.parent_frame
         #: The device's own fixed frames, templated and parsed in :meth:`build`.
         self.frames: list = []
-        self.motion = self.config.get("motion", "static")
+        self.motion = settings.motion
         self.driven = self.motion == "driven"
         self.free = self.motion == "physics"
         #: The joint a free mount is placed through, recorded for the entity's meta -- which is
@@ -674,32 +688,32 @@ class SpawnSensorPlugin(Plugin):
         # This UNIT's measured lens, written onto the model's camera at build time so MuJoCo renders
         # through it (see :meth:`_apply_intrinsics`). Empty keeps the model's own
         # fovy, an ideal pinhole, a centred principal point.
-        self._intrinsics = dict(self.config.get("intrinsics") or {})
-        self.show_fov = bool(self.config.get("show_fov", False))
-        self.fov_alpha = float(self.config.get("fov_alpha", 0.25))
+        self._intrinsics = dict(settings.intrinsics or {})
+        self.show_fov = settings.show_fov
+        self.fov_alpha = settings.fov_alpha
         # Valid detection band (m) of the synthesised camera FOV frustum: ``fov_near`` is the near
         # plane, ``fov_range`` the far plane. Both DEFAULT to the sensor model's own manifest ``fov:``
         # block (device knowledge lives with the device, not each world); a world-YAML value overrides
         # per placement. ``fov_near > 0`` cuts off the apex so the drawn cone starts where the sensor
         # becomes valid. Resolved against the manifest at build time (see :meth:`_resolve_fov_range`).
-        self._fov_near_cfg = self.config.get("fov_near")
-        self._fov_far_cfg = self.config.get("fov_range")
+        self._fov_near_cfg = settings.fov_near
+        self._fov_far_cfg = settings.fov_range
         # A synthesised camera frustum is always clipped against the world at build time so it stops at
         # walls/objects (a visibility volume); ``fov_rays`` is that clip's ray grid [horizontal, vertical].
-        rays = self.config.get("fov_rays", [32, 24])
+        rays = settings.fov_rays
         self.fov_rays = (int(rays[0]), int(rays[1]))
 
     def validate_config(self, config: dict) -> list[str]:
+        # Presence, type, the lengths and the translucency bound are the schema's. What is left is
+        # what resolving the model says and the rules between keys. Whether a key was STATED is
+        # read from the config itself: a default is not a world asking for something.
         errors = []
-        if not config.get("model"):
-            errors.append("'model' is required")
-        else:
+        settings = self.settings_for(config)
+        if isinstance(settings.model, str) and settings.model:
             try:
-                resolve_model(config["model"], base_dir=self.base_dir)
+                resolve_model(settings.model, base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
         if config.get("attach_to") and config.get("motion"):
             errors.append(
                 "'attach_to' and 'motion' are mutually exclusive: a mount welded to a body has "
@@ -717,10 +731,10 @@ class SpawnSensorPlugin(Plugin):
                 f"spawn_sensor '{self.address}' is mounted on '{self.entity}' but says nowhere to "
                 "hang from: set 'parent_frame' to a body or declared frame of the carrier."
             )
-        if (nested or config.get("parent_frame")) and config.get("motion", "static") != "static":
+        if (nested or config.get("parent_frame")) and settings.motion != "static":
             errors.append(
-                f"'motion: {config['motion']}' on a mount that rides its carrier: the mount is welded "
-                "to what carries it, so its pose is that carrier's to move."
+                f"'motion: {settings.motion}' on a mount that rides its carrier: the mount is "
+                "welded to what carries it, so its pose is that carrier's to move."
             )
         if (
             config.get("attach_prefix")
@@ -730,31 +744,30 @@ class SpawnSensorPlugin(Plugin):
             errors.append(
                 "'attach_prefix' prefixes 'attach_to'/'parent_frame', neither of which is set"
             )
-        if "motion" in config and config["motion"] not in {"static", "driven", "physics"}:
+        if settings.motion not in {"static", "driven", "physics"}:
             errors.append(
-                f"'motion' must be one of static, driven, physics -- got {config['motion']!r}. "
+                f"'motion' must be one of static, driven, physics -- got {settings.motion!r}. "
                 "It says who owns the mount's pose: nobody (static, the default -- welded into "
                 "the model), a plugin or a scenario (driven), or the solver (physics)."
             )
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
+        if isinstance(settings.pos, list) and len(settings.pos) not in (2, 3):
             errors.append("'pos' must be [x, y] or [x, y, z]")
-        if not 0.0 <= float(config.get("fov_alpha", 0.25)) <= 1.0:
-            errors.append("'fov_alpha' must be in [0, 1]")
         # Only explicit world values are checked here (the manifest default is validated at build time,
         # in _resolve_fov_range, where the model is resolved).
-        near = config.get("fov_near")
-        far = config.get("fov_range")
-        if near is not None and float(near) < 0.0:
+        near, far = settings.fov_near, settings.fov_range
+        if isinstance(near, float) and near < 0.0:
             errors.append("'fov_near' must be >= 0")
-        if near is not None and far is not None and float(near) >= float(far):
+        if isinstance(near, float) and isinstance(far, float) and near >= far:
             errors.append(
                 f"'fov_near' ({near}) must be < 'fov_range' ({far}); a near plane at or "
                 "beyond the far plane leaves no volume to draw"
             )
-        rays = config.get("fov_rays", [32, 24])
-        if len(rays) != 2 or any(int(r) < 2 or int(r) > 256 for r in rays):
+        rays = settings.fov_rays
+        if isinstance(rays, list) and any(
+            isinstance(r, bool) or not isinstance(r, int) or not 2 <= r <= 256 for r in rays
+        ):
             errors.append("'fov_rays' must be [nu, nv] with each in 2..256")
-        errors.extend(_intrinsics_errors(config.get("intrinsics")))
+        errors.extend(_intrinsics_errors(settings.intrinsics))
         return errors
 
     def _resolve_fov_range(self, asset) -> tuple[float, float]:
@@ -770,14 +783,14 @@ class SpawnSensorPlugin(Plugin):
         near, far = float(near), float(far)
         if near < 0.0 or near >= far:
             raise RuntimeError(
-                f"spawn_sensor: invalid FOV range for model {self.config['model']!r}: "
+                f"spawn_sensor: invalid FOV range for model {self.settings.model!r}: "
                 f"near={near} far={far} (need 0 <= near < far). Check the world config or the "
                 f"model manifest 'fov:' block."
             )
         return near, far
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        asset = resolve_model(self.config["model"], base_dir=self.base_dir)
+        asset = resolve_model(self.settings.model, base_dir=self.base_dir)
         child = mujoco.MjSpec.from_file(str(asset.path))
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
@@ -793,7 +806,7 @@ class SpawnSensorPlugin(Plugin):
             self._show_fov(child, asset, near, far, world_spec=spec)
         self._apply_motion(child, asset)
         # After the FOV synthesis, which reads the model's sole scan site: frame sites are extra.
-        where = f"spawn_sensor {self.sensor_name} ({self.config['model']})"
+        where = f"spawn_sensor {self.sensor_name} ({self.settings.model})"
         raw_frames = substitute(manifest_frames(asset.path), _placeholders(self.config), where)
         self.frames = parse_frames(raw_frames, where)
         add_frame_sites(child, self.frames, where)
@@ -876,13 +889,13 @@ class SpawnSensorPlugin(Plugin):
         bodies = list(getattr(child.worldbody, "bodies", []))
         if not bodies:
             raise ModelError(
-                f"spawn_sensor {self.config['model']!r}: motion: {self.motion} needs a root body "
+                f"spawn_sensor {self.settings.model!r}: motion: {self.motion} needs a root body "
                 f"to act on, but {asset.path} declares none (its geoms sit directly on worldbody)."
             )
         root = bodies[0]
         if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
             raise ModelError(
-                f"spawn_sensor {self.config['model']!r}: motion: {self.motion}, but {asset.path} "
+                f"spawn_sensor {self.settings.model!r}: motion: {self.motion}, but {asset.path} "
                 f"already gives its root body a joint. Leave motion at its default -- the model "
                 f"defines its own articulation."
             )
@@ -929,17 +942,17 @@ class SpawnSensorPlugin(Plugin):
                     return cam
             raise RuntimeError(
                 f"spawn_sensor: 'intrinsics.camera' is {wanted!r}, which model "
-                f"{self.config['model']!r} does not have. It has: {[c.name for c in cameras]}"
+                f"{self.settings.model!r} does not have. It has: {[c.name for c in cameras]}"
             )
         if len(cameras) == 1:
             return cameras[0]
         if not cameras:
             raise RuntimeError(
-                f"spawn_sensor: 'intrinsics' states a lens but model {self.config['model']!r} has no "
+                f"spawn_sensor: 'intrinsics' states a lens but model {self.settings.model!r} has no "
                 f"camera to give it to."
             )
         raise RuntimeError(
-            f"spawn_sensor: model {self.config['model']!r} has {len(cameras)} cameras "
+            f"spawn_sensor: model {self.settings.model!r} has {len(cameras)} cameras "
             f"({[c.name for c in cameras]}), which do not share a lens -- name the one this "
             f"calibration measured with 'intrinsics.camera'."
         )
@@ -976,7 +989,7 @@ class SpawnSensorPlugin(Plugin):
         )
         if revealed == 0:
             raise RuntimeError(
-                f"spawn_sensor: show_fov is set but model {self.config['model']!r} ships no FOV geom "
+                f"spawn_sensor: show_fov is set but model {self.settings.model!r} ships no FOV geom "
                 f"(none ending {FOV_GEOM_SUFFIX!r}), has no camera to synthesise a frustum from, and "
                 f"declares no angular 'fov:' band in its manifest to draw a lidar sector"
             )
@@ -1016,7 +1029,7 @@ class SpawnSensorPlugin(Plugin):
         pd = mujoco.MjData(pm)
         mujoco.mj_forward(pm, pd)  # populate cam_xpos/cam_xmat (child-root frame)
         wm, wd = _compile_world_snapshot(
-            world_spec, plugin=self.name or "spawn_sensor", model=self.config["model"]
+            world_spec, plugin=self.name or "spawn_sensor", model=self.settings.model
         )
         r_mount = np.zeros(9)  # world <- child-root: the attach frame's rotation
         mujoco.mju_quat2Mat(r_mount, np.asarray(self.quat, dtype=np.float64))
@@ -1155,7 +1168,7 @@ class SpawnSensorPlugin(Plugin):
         ):  # the site exists in the spec but not the compiled probe -- nothing to cast from
             return far
         wm, wd = _compile_world_snapshot(
-            world_spec, plugin=self.name or "spawn_sensor", model=self.config["model"]
+            world_spec, plugin=self.name or "spawn_sensor", model=self.settings.model
         )
         r_mount = np.zeros(9)  # world <- child-root: the attach frame's rotation
         mujoco.mju_quat2Mat(r_mount, np.asarray(self.quat, dtype=np.float64))
@@ -1175,13 +1188,13 @@ class SpawnSensorPlugin(Plugin):
         sites = list(child.sites)
         if len(sites) != 1:
             raise RuntimeError(
-                f"spawn_sensor: lidar FOV synthesis for model {self.config['model']!r} expects the "
+                f"spawn_sensor: lidar FOV synthesis for model {self.settings.model!r} expects the "
                 f"mount to carry exactly one site (the scan origin), found {len(sites)}"
             )
         return sites[0]
 
     def configure(self, ctx: SimContext) -> None:
-        namespace = self.config.get("namespace", "")
+        namespace = self.settings.namespace
         if "namespace" not in self.config and self.entity is not None:
             carrier = ctx.entities.get(self.entity)
             if carrier is None:
@@ -1197,7 +1210,7 @@ class SpawnSensorPlugin(Plugin):
                 body=self.prefix + "mount",
                 meta={
                     "prefix": self.prefix,
-                    "model": self.config["model"],
+                    "model": self.settings.model,
                     # Inherited by the mount's capture plugin (manifest-injected or explicit), so
                     # it needs no namespace plumbing of its own. A nested mount's is its carrier's.
                     "namespace": namespace,

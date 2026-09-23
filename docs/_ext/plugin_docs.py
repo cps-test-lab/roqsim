@@ -7,7 +7,8 @@
 Enumerates the same entry-point group the runtime loader uses
 (:data:`roqsim.registry.ENTRY_POINT_GROUP`), groups plugins by the package that ships them, and
 renders each plugin's short name (the key used in a world YAML), its lifecycle flags, a one-line
-summary, and its ``Config::`` block. A plugin whose class fails to import is still listed, with a note
+summary, and its ``Config::`` block -- generated from ``CONFIG_SCHEMA`` for a plugin that declares
+one. A plugin whose class fails to import is still listed, with a note
 -- so the ``-W`` docs build never aborts on an optional/heavy dependency.
 """
 
@@ -17,7 +18,7 @@ from _render import docstring_lines, parse_rst, rubric
 from docutils.parsers.rst import Directive
 
 from roqsim.introspection import _dist_name, _flags as _plugin_flags
-from roqsim.introspection import _own_or_module_doc, _summary_and_config
+from roqsim.introspection import _own_or_module_doc, _summary_and_config, schema_config_block
 
 # Core package first, then alphabetical -- mirrors the Makefile's PKGS sort and the hand-written page.
 _CORE = "roqsim"
@@ -62,7 +63,11 @@ class SimSuitePluginsDirective(Directive):
                 if flags:
                     lines += [f"*Flags:* {', '.join(flags)}", ""]
                 doc = _own_or_module_doc(cls)
-                lines += docstring_lines("\n".join(_summary_and_config(doc)))
+                text = _summary_and_config(doc)
+                if getattr(cls, "CONFIG_SCHEMA", None):
+                    # Declared keys render from the declaration, the one validation runs on.
+                    text = [*text, "", *schema_config_block(ep.name, cls)]
+                lines += docstring_lines("\n".join(text))
                 lines += [""]
         return parse_rst(self, lines)
 

@@ -14,14 +14,9 @@ and sensing untouched.
 
 Height is the whole definition -- no per-object name list -- so the same plugin opens any baked scene.
 
-Config::
-
-    ceiling:
-      keep: true         # true = keep the ceiling (no-op, the default, so adding this plugin never
-                         # surprise-deletes geometry). false = remove it.
-      above_z: 2.5       # a geom is "ceiling" iff its whole world-space AABB is above this height (m)
-
-Set ``keep: false`` in the world YAML (or via ``--set`` / an ``extends`` override / a campaign
+Its two keys are declared in :attr:`CeilingPlugin.CONFIG_SCHEMA`, which is what ``roqsim plugins
+describe ceiling`` and the plugin catalog publish. ``keep`` defaults to true, a no-op, so adding this
+plugin never deletes geometry by surprise. Set ``keep: false`` in the world YAML (or via ``--set`` / an ``extends`` override / a campaign
 factor) to open the roof.
 
 The key is ``keep`` rather than ``enabled`` because this plugin is SUBTRACTIVE: it does its work by
@@ -51,17 +46,11 @@ _log = logging.getLogger(__name__)
 class CeilingPlugin(Plugin):
     parallel_safe = True  # build-only; no per-step work
 
-    def __init__(self, config=None, *, name=None, entity=None, label=None):
-        super().__init__(config, name=name, entity=entity, label=label)
-        # Default keep=true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into
-        # a world never deletes geometry unless the world explicitly asks (keep: false).
-        self.keep = bool(self.config.get("keep", True))
-        self.above_z = float(self.config.get("above_z", 2.5))
-
-    #: Two keys, both with defaults, and nothing else -- which is why this plugin can afford
-    #: `STRICT_KEYS`: a misspelt `above_Z` would otherwise leave the ceiling standing and look like
-    #: the plugin not working.
+    #: Two keys, both with defaults, and nothing else -- so any other key is refused: a misspelt
+    #: `above_Z` would otherwise leave the ceiling standing and look like the plugin not working.
     CONFIG_SCHEMA = {
+        # Default true: a bare `- ceiling: {}` keeps the ceiling, so dropping this plugin into a
+        # world never deletes geometry unless the world explicitly asks (keep: false).
         "keep": Field(bool, default=True, doc="false removes the ceiling; true is a no-op"),
         "above_z": Field(
             float,
@@ -70,7 +59,6 @@ class CeilingPlugin(Plugin):
             doc="a geom is 'ceiling' iff its whole world-space AABB is above this height",
         ),
     }
-    STRICT_KEYS = True
 
     def validate_config(self, config: dict) -> list[str]:
         errors: list[str] = []
@@ -80,7 +68,8 @@ class CeilingPlugin(Plugin):
                 "plugin works by REMOVING geometry -- so `enabled: false` leaves the ceiling "
                 "standing, the opposite of what you are asking for. Use `keep:` instead."
             )
-        if "above_z" in config and not np.isfinite(float(config.get("above_z", 0.0) or 0.0)):
+        above_z = self.settings_for(config).above_z
+        if isinstance(above_z, float) and not np.isfinite(above_z):
             # The schema has no "finite" rule and should not grow one for a single caller: an
             # infinite cut is legal as a float and means "remove nothing", which is not what anyone
             # writing it meant.
@@ -88,7 +77,8 @@ class CeilingPlugin(Plugin):
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
-        if self.keep:
+        above_z = self.settings.above_z
+        if self.settings.keep:
             return  # keep the ceiling: no-op
 
         # Measure world-space geom heights on a throwaway compile (the only reliable source of mesh
@@ -108,13 +98,13 @@ class CeilingPlugin(Plugin):
             # R = geom_xmat (row-major), so R[2,:] is row 2 -> geom_xmat.reshape(3,3)[2].
             local = center + corners * half
             world_z = data.geom_xpos[g][2] + local @ data.geom_xmat[g].reshape(3, 3)[2]
-            if world_z.min() > self.above_z:
+            if world_z.min() > above_z:
                 nm = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g)
                 if nm:  # unnamed geoms can't be addressed on the spec; scene geoms are all named
                     ceiling_names.add(nm)
 
         if not ceiling_names:
-            _log.info("ceiling: nothing above z=%.2f m to remove", self.above_z)
+            _log.info("ceiling: nothing above z=%.2f m to remove", above_z)
             return
 
         # Delete the ceiling geoms, remembering their meshes so we can drop the ones nothing else uses.
@@ -134,6 +124,6 @@ class CeilingPlugin(Plugin):
         _log.info(
             "ceiling: removed %d geoms above z=%.2f m (+%d meshes); world is open",
             len(ceiling_names),
-            self.above_z,
+            above_z,
             meshes_removed,
         )

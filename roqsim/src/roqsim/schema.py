@@ -25,7 +25,9 @@ running.
 
 A plugin that declares :data:`Plugin.CONFIG_SCHEMA` gets both from one place: :func:`validate` turns
 the declaration into the same error strings the hand-written checks produce, and the introspection
-API publishes the fields with their types, defaults, units and bounds.
+API publishes the fields with their types, defaults, units and bounds -- as ``schema``, and as the
+``parameters`` and docs block that a plugin without one parses from its docstring. The plugin reads
+its config through it too (:class:`Settings`, ``self.settings``), so a default is written once.
 
 Opt-in. A plugin without a schema is unchecked by it, and a plugin with one still owns
 ``validate_config`` for whatever else it knows (that two lists must be the same length, that a file
@@ -43,32 +45,44 @@ Declaring it::
         "body": Field(str, default="", doc="body to load (default: the entity's root body)"),
         "mode": Field(str, default="soft", choices=("soft", "rigid")),
         "pos": Field(list, length=3, unit="m", doc="offset in the body frame"),
+        "gain": Field((float, dict), default=0.0, minimum=0.0, doc="one value, or one per joint"),
     }
 
 What it checks: a required key is present, a value has the declared type (with ``int`` accepted for
 ``float``, since YAML writes ``1`` for a one-metre offset), a number is within ``minimum``/
-``maximum``, a string is one of ``choices``, a sequence has ``length``, and -- for a plugin that asks
-for it with ``strict_keys`` -- that no key is unknown, which is the typo check nothing else can do.
+``maximum``, a string is one of ``choices``, a sequence has ``length``, and -- with ``strict_keys``,
+which every plugin's schema is checked with unless it says why not -- that no key is unknown, which
+is the typo check nothing else can do.
 
-**Unknown keys are opt-in for one reason.** A component's config does not only come from the world:
-a model's manifest injects ``prefix``, a spawn fills in the entity, and a fault block arrives from
-elsewhere. Rejecting what a schema does not mention would break those the moment a plugin adopted a
-schema, so the shared keys are known here (:data:`INJECTED_KEYS`) and a plugin opts in when it is
-sure its own list is complete.
+A key that takes one of several shapes declares a tuple of types, as ``isinstance`` does: ``gain``
+above is a number or a mapping. The value must be one of them, and each rule applies to the shapes it
+has a meaning for -- a bound to a number, a length to a sequence -- so a mapping's entries are the
+plugin's to check in ``validate_config``.
+
+**An unknown key is refused by default.** A plugin that declares a schema says what its config is,
+and a key outside it is a typo that would otherwise leave a setting at its default and look
+configured. What a component carries without the world's author writing it -- a manifest's
+``prefix``, the transport keys, a sensor's fault block, ``present`` -- is known here
+(:data:`INJECTED_KEYS`), so a complete schema need not list it. A plugin whose schema cannot be
+complete (one that passes keys through to something else) sets ``STRICT_KEYS = False`` and says why
+in ``OPEN_KEYS``; the guard test over every shipped plugin refuses the first without the second.
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
 
 #: Config keys a component may carry without its own schema mentioning them, because something other
-#: than the world's author put them there: the spawn plugins' ``prefix``, the transport scope, the
-#: topic hardwire map, and a sensor's runtime fault block. A plugin that declares one of these in its
-#: own schema (with a type or a default) overrides the entry here.
-INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm"})
+#: than the plugin owns them: the spawn plugins' ``prefix``, the transport scope, the topic hardwire
+#: map, a sensor's runtime fault block, and ``present``, which the base class reads and checks for
+#: every plugin (:meth:`roqsim.plugin.Plugin.validate_presence` refuses it, with the reason, on one
+#: that registers no entity). A plugin that declares one of these in its own schema (with a type or
+#: a default) overrides the entry here.
+INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm", "present"})
 
 #: How a type is named in the published schema -- the vocabulary a caller matches on, not Python's.
 _TYPE_NAMES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", dict: "dict"}
@@ -84,7 +98,8 @@ class Field:
     than producing an error message no world can act on.
     """
 
-    type: type
+    #: One type, or a tuple of them for a key that takes several shapes (``(float, dict)``).
+    type: type | tuple[type, ...]
     default: Any = None
     required: bool = False
     minimum: float | None = None
@@ -99,9 +114,12 @@ class Field:
 
     def describe(self, name: str) -> dict:
         """The published form: JSON-friendly, and the same shape for every plugin."""
+        # A union publishes a list of names, as JSON Schema writes one, so a caller matching on a
+        # single name never mistakes "float or dict" for a float.
+        names = [_type_name(t) for t in _types(self.type)]
         described = {
             "name": name,
-            "type": _TYPE_NAMES.get(self.type, getattr(self.type, "__name__", str(self.type))),
+            "type": names[0] if len(names) == 1 else names,
             "required": self.required,
         }
         if not self.required:
@@ -119,6 +137,67 @@ class Field:
         if self.static:
             described["static"] = True
         return described
+
+
+class Settings:
+    """A plugin's config, read through its schema: ``plugin.settings.rate_hz``.
+
+    What :attr:`roqsim.plugin.Plugin.settings` returns for a plugin that declares a schema. Three
+    things a ``config.get("rate_hz", 5.0)`` does not do:
+
+    * **The default is the schema's.** A key the world left out reads as its declared default, so
+      the default is written once -- where ``describe`` publishes it -- and cannot differ between
+      ``__init__``, ``validate_config`` and the catalog. A mutable default is copied per read.
+    * **An undeclared name is an AttributeError**, naming what is declared. ``config.get`` of a
+      misspelt key returns ``None`` and the plugin runs on it.
+    * **It is read-only.** Assigning to it raises; the config a world stated is the record of the
+      run, and a plugin that wants a derived value keeps it on itself.
+
+    An ``int`` given for a ``float`` key reads as a ``float``, the one coercion the schema already
+    accepts from YAML. Nothing else is converted: a value of the wrong type reads as given, and
+    the schema check reports it -- a view that fell back to the default would run the plugin on a
+    value nobody stated.
+
+    Only declared keys are here. The keys another owner injects (:data:`INJECTED_KEYS`) stay where
+    their owner reads them, on ``self.config``.
+    """
+
+    __slots__ = ("_config", "_owner", "_schema")
+
+    def __init__(self, schema: dict[str, Field], config: dict, owner: str = "this plugin"):
+        object.__setattr__(self, "_schema", schema)
+        object.__setattr__(self, "_config", config)
+        object.__setattr__(self, "_owner", owner)
+
+    def __getattr__(self, name: str) -> Any:
+        if name.startswith("_"):
+            # Private and dunder lookups (copy, pickle) are not settings; answering them from the
+            # schema would recurse on a view whose slots are not filled yet.
+            raise AttributeError(name)
+        spec = self._schema.get(name)
+        if spec is None:
+            raise AttributeError(
+                f"{self._owner} declares no setting {name!r}. Declared: {', '.join(self._schema)}"
+            )
+        if name not in self._config:
+            return copy.deepcopy(spec.default)
+        value = self._config[name]
+        if float in _types(spec.type) and isinstance(value, int) and not isinstance(value, bool):
+            return float(value)
+        return value
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError(f"{self._owner}'s settings are read-only; {name!r} was not assigned")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError(f"{self._owner}'s settings are read-only; {name!r} was not deleted")
+
+    def __dir__(self) -> list[str]:
+        return list(self._schema)
+
+    def __repr__(self) -> str:
+        values = ", ".join(f"{name}={getattr(self, name)!r}" for name in self._schema)
+        return f"Settings({values})"
 
 
 def describe(schema: dict[str, Field]) -> list[dict]:
@@ -162,20 +241,36 @@ def validate(schema: dict[str, Field], config: dict, *, strict_keys: bool = Fals
 
 def _check_value(name: str, spec: Field, value: Any) -> list[str]:
     errors: list[str] = []
-    if not _has_type(value, spec.type):
-        expected = _TYPE_NAMES.get(spec.type, str(spec.type))
+    wanted = _types(spec.type)
+    if not any(_has_type(value, t) for t in wanted):
+        expected = " or ".join(_type_name(t) for t in wanted)
         errors.append(f"'{name}' must be {expected}, got {type(value).__name__} ({value!r})")
         return errors  # a wrong type makes every other check meaningless
 
-    if spec.length is not None and len(value) != spec.length:
+    # Each rule applies to the shapes it means something for: on a union, a mapping has no length
+    # and no bound, and its entries are the plugin's own to check.
+    number = _is_number(value)
+    if spec.length is not None and isinstance(value, Sequence) and len(value) != spec.length:
         errors.append(f"'{name}' must have exactly {spec.length} entries, got {len(value)}")
     if spec.choices is not None and value not in spec.choices:
         errors.append(f"'{name}' must be one of {', '.join(map(str, spec.choices))}, got {value!r}")
-    if spec.minimum is not None and value < spec.minimum:
+    if number and spec.minimum is not None and value < spec.minimum:
         errors.append(f"'{name}' must be >= {spec.minimum}{_unit(spec)}, got {value}")
-    if spec.maximum is not None and value > spec.maximum:
+    if number and spec.maximum is not None and value > spec.maximum:
         errors.append(f"'{name}' must be <= {spec.maximum}{_unit(spec)}, got {value}")
     return errors
+
+
+def _types(declared: type | tuple[type, ...]) -> tuple[type, ...]:
+    return declared if isinstance(declared, tuple) else (declared,)
+
+
+def _type_name(wanted: type) -> str:
+    return _TYPE_NAMES.get(wanted, getattr(wanted, "__name__", str(wanted)))
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
 def _unit(spec: Field) -> str:
