@@ -364,6 +364,47 @@ def _diag3(variance: float) -> list:
     return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
 
 
+#: sensor_msgs/NavSatStatus and NavSatFix constants, by value so this module keeps its rule of
+#: resolving message types by string rather than importing them.
+NAVSAT_STATUS_NO_FIX = -1
+NAVSAT_STATUS_FIX = 0
+NAVSAT_SERVICE_GPS = 1
+NAVSAT_COVARIANCE_UNKNOWN = 0
+NAVSAT_COVARIANCE_DIAGONAL_KNOWN = 2
+
+
+@converter("sensor_msgs.msg.NavSatFix")
+def fill_navsatfix(msg, payload, stamp: Time, hints: dict) -> None:
+    """A GNSS fix (the mapping ``roqsim_aerial.plugins.gnss.GnssPlugin.read_fix`` returns).
+
+    ``valid`` decides the message's *status*, not whether it is sent: a receiver with no fix still
+    publishes, with ``status.status = NO_FIX`` and an unknown covariance, which is what a real
+    driver does and what lets a consumer tell "denied" from "unplugged". The position fields are
+    passed through as the producer reports them; with no fix that is zeros, and the status is the
+    field a consumer must read first.
+
+    The covariance is built from the producer's declared ``eph``/``epv`` (1-sigma metres), squared
+    onto the diagonal, and marked DIAGONAL_KNOWN -- the same policy as :func:`fill_imu`: the filter
+    downstream weights the channel by the noise the world configured.
+    """
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "gnss_link")
+    valid = bool(payload.get("valid", True))
+    msg.status.service = NAVSAT_SERVICE_GPS
+    msg.latitude = float(payload["lat"])
+    msg.longitude = float(payload["lon"])
+    msg.altitude = float(payload["alt"])
+    if not valid:
+        msg.status.status = NAVSAT_STATUS_NO_FIX
+        msg.position_covariance = [0.0] * 9
+        msg.position_covariance_type = NAVSAT_COVARIANCE_UNKNOWN
+        return
+    msg.status.status = NAVSAT_STATUS_FIX
+    eph, epv = float(payload.get("eph", 0.0)), float(payload.get("epv", 0.0))
+    msg.position_covariance = [eph * eph, 0.0, 0.0, 0.0, eph * eph, 0.0, 0.0, 0.0, epv * epv]
+    msg.position_covariance_type = NAVSAT_COVARIANCE_DIAGONAL_KNOWN
+
+
 @converter("vision_msgs.msg.Detection2DArray")
 def fill_detection2d_array(msg, payload, stamp: Time, hints: dict) -> None:
     """2D image-space detections from a mask.
