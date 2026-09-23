@@ -70,6 +70,12 @@ ROS_TESTS  := $(wildcard ros2_ws/src/*/test)
 # pip-only environment. Those run with --no-communication when ROS is not sourced -- the world still
 # compiles and every mesh and texture still has to resolve, which is what smoke is actually for, it
 # just publishes nothing. With ROS sourced they run as authored.
+#
+# The package worlds always run with --no-communication. They are ROS-free by contract, so for most
+# of them the flag drops nothing; it exists for a world whose transport is not ROS but a process
+# smoke can never supply -- an autopilot that dials in over a socket (`px4_sitl`). The plugin
+# declares itself transport-only, so the flag removes it and the airframe still loads, which is
+# the half of that world smoke can check.
 WORLDS     := $(wildcard $(addsuffix /src/*/worlds/*.yaml,$(PKGS)))
 ROS_WORLDS := $(wildcard ros2_ws/src/*/worlds/*.yaml)
 SMOKE_STEPS ?= 200
@@ -173,7 +179,7 @@ smoke:  ## Headless-run every shipped world (compiles the MJCF, loads plugins, r
 		if [ -n "$$miss" ] && grep -qF "$$(basename $$miss)" .gitignore; then skipped="$$skipped $$1"; \
 		else fail="$$fail $$1"; fi; \
 	}; \
-	for w in $(WORLDS); do run "$$w" ""; done; \
+	for w in $(WORLDS); do run "$$w" "--no-communication"; done; \
 	echo "-- ros2_ws worlds $$note"; \
 	for w in $(ROS_WORLDS); do run "$$w" "$$mute"; done; \
 	rm -f "$$log"; \

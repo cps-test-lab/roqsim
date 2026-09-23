@@ -6,7 +6,9 @@
 # stabiliser is `quadrotor_controller` running inside the simulator, this airframe's stabiliser is
 # PX4 — a separate process. Started alone, the drone sits on the ground with its motors at zero and
 # `px4_sitl` waits on TCP 4560 for the autopilot to dial in, then fails by name after
-# `connect_timeout`. Start PX4 SITL against it:
+# `connect_timeout`. (`--no-communication` drops `px4_sitl` the way it drops a ROS bridge, so the
+# world still loads, renders and smoke-runs where no autopilot will ever connect.) Start PX4 SITL
+# against it:
 #
 #   PX4_SYS_AUTOSTART=10016 PX4_SIM_MODEL=none_iris \
 #     ./build/px4_sitl_default/bin/px4
@@ -62,7 +64,8 @@ components:
   - spawn_robot:
       model: x500
       prefix: "x500_"
-      pos: [0.0, 0.0]           # spawn_robot places it on the floor; PX4 decides when it leaves
+      pose:
+        position: {x: 0.0, y: 0.0}   # spawn_robot places it on the floor; PX4 decides when it leaves
       namespace: drone
     name: drone
 

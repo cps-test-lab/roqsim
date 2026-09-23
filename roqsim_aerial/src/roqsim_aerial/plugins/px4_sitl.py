@@ -256,6 +256,14 @@ class Px4SitlPlugin(Plugin):
     #: Flies one entity's airframe, so it belongs inside that entity's ``components:`` block.
     requires_owner = True
 
+    #: Transport, in the sense ``--no-communication`` and the scene-only consumers use: this plugin
+    #: builds nothing and only talks to a process outside the simulator. Dropping it leaves the
+    #: airframe loadable and renderable, sitting on the floor with its motors at zero -- which is
+    #: what a run without an autopilot honestly is, and what lets the demo world be smoke-run and
+    #: rendered where no PX4 will ever dial in. With the plugin present, an absent PX4 is still the
+    #: loud failure ``_await_connection`` makes it.
+    transport_only = True
+
     #: NOT parallel-safe, and not merely because it writes: it binds a FIXED TCP port, which is a
     #: process-wide (indeed host-wide) singleton. Two of these in one process is a port conflict,
     #: and the failure is made explicit in `configure` rather than left to a stray EADDRINUSE.

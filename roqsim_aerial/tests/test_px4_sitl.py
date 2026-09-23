@@ -498,6 +498,27 @@ def test_teardown_releases_the_port():
         probe.bind(("127.0.0.1", port))  # raises if the listener leaked
 
 
+# -- transport ----------------------------------------------------------------------------------
+def test_the_bridge_is_transport_and_the_demo_world_loads_without_it():
+    """``--no-communication`` (and every scene-only consumer) drops what only talks to the outside;
+    an autopilot socket is that. The demo world must then still be a loadable world -- an X500 on
+    the floor with its motors at zero -- or it could never be smoke-run or rendered without PX4."""
+    from pathlib import Path
+
+    from roqsim.config import drop_transport, load_config
+
+    assert Px4SitlPlugin.transport_only is True
+
+    world = Path(__file__).resolve().parents[1] / "src/roqsim_aerial/worlds/x500_px4_demo.yaml"
+    cfg = load_config(str(world))
+    dropped = drop_transport(cfg)
+    assert [d for d in dropped if "px4_sitl" in d], dropped
+    assert not [spec for spec in cfg.plugins if spec.ref == "px4_sitl"]
+    # The airframe and its actuation are what remain: the motors plugin from the manifest, the GNSS
+    # the world declared. Nothing else went with the bridge.
+    assert {spec.ref for spec in cfg.plugins} >= {"spawn_robot", "multirotor_motors", "gnss"}
+
+
 # -- config --------------------------------------------------------------------------------------
 def test_refuses_a_seed_of_its_own():
     assert any("seed" in e for e in Px4SitlPlugin({}).validate_config({"seed": 3}))
