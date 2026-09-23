@@ -9,7 +9,7 @@ description = "Shared, reusable assets for roqsim scenes: surface textures (roqs
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
-# The conveyor plugin drives a MuJoCo belt, so this package now carries a light runtime dependency on
+# The conveyor plugin drives a MuJoCo belt, so this package carries a light runtime dependency on
 # the core simulator + mujoco (the texture/prop assets themselves remain code-free data).
 dependencies = [
     "roqsim",
@@ -22,6 +22,15 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.0"]
+# `roqsim assets collision`: surface sampling, convex hulls and nearest-point queries. An extra and
+# not a dependency because PLACING a prop needs none of it -- this is for the person adding one, the
+# same line `roqsim_scenes` draws around its CAD readers. The floors match the two packages that
+# already carry these (roqsim_walker, roqsim_scenes); scipy 1.11 in particular is what the ROS base
+# image ships as a Debian package with no RECORD file, which pip can neither upgrade nor remove.
+# `rtree` is deliberately absent: trimesh's exact point-to-triangle query wants it, and it is a
+# binding to a native spatial index for accuracy far below the millimetre tolerance anyone asks here
+# -- the sampled query reports its own resolution instead.
+collision = ["trimesh>=3.20", "scipy>=1.11"]
 
 # `sketchfab_helper` on the venv PATH: search redistributable + downloadable models and pull thumbnail
 # previews, in front of the tools/ import pipeline. Implementation in roqsim_assets.sketchfab;
@@ -43,6 +52,10 @@ box = "roqsim_assets.plugins.box:BoxPlugin"
 boxes = "roqsim_assets.plugins.boxes:BoxesPlugin"
 moving_box = "roqsim_assets.plugins.moving_box:MovingBoxPlugin"
 cylinder = "roqsim_assets.plugins.cylinder:CylinderPlugin"
+# The round population, for the same reason `boxes` exists: the count becomes one config value a
+# campaign can override, and the entries are heterogeneous -- a family of round workpieces differs
+# in diameter at a shared height, which `spawn_model`'s uniform scaling cannot express.
+cylinders = "roqsim_assets.plugins.cylinders:CylindersPlugin"
 conveyor = "roqsim_assets.plugins.conveyor:ConveyorPlugin"
 # Carries a prop along a prescribed 2-D path. Distinct from `moving_box` (mocap) on purpose: a mocap
 # body has no velocity in MuJoCo's dynamics, so friction against it sees zero relative slip and it
@@ -50,7 +63,7 @@ conveyor = "roqsim_assets.plugins.conveyor:ConveyorPlugin"
 # staying in contact. Mocap blocks; a force-driven joint carries. See the plugin docstring.
 prop_trajectory = "roqsim_assets.plugins.prop_trajectory:PropTrajectoryPlugin"
 shelf = "roqsim_assets.plugins.shelf:ShelfPlugin"
-# Foliage: the one prop class the library had none of. A palm crown is a thin, radially arranged,
+# Foliage: a prop class of its own. A palm crown is a thin, radially arranged,
 # self-occluding obstacle set -- a different planning problem from boxes and shelves.
 palm_tree = "roqsim_assets.plugins.palm_tree:PalmTreePlugin"
 door = "roqsim_assets.plugins.door:DoorPlugin"

@@ -55,6 +55,16 @@ Multi-robot pattern: one MuJoCo world with prefixed robots (``turtlebot/``, ``sp
 instances -- ``{owner: [turtlebot, ped_a, ped_b], domain_id: 1, strip_namespace: turtlebot}`` and
 ``{owner: spot, domain_id: 2, strip_namespace: spot}`` -- gives each robot a clean single-robot ROS
 graph on its own domain (nav2 needs no namespacing), all from the one shared physics world.
+
+Merged ``joint_states``: a robot with several controllers declares one ``joint_states`` endpoint
+per controller, and where those are scoped apart by namespace nothing publishes the topic a
+``robot_state_publisher`` / ``move_group`` over their combined ``robot_description`` listens on. The
+bridge closes that with one extra merged publisher per group, in addition to each endpoint's own
+topic. Which endpoints form a group is DECLARED (``merged_joint_states``), because it is a fact about
+the stack's ``robot_description``s, not about the world: ``"auto"`` (default) groups by entity, so
+several arms on one robot merge and separate robots stay separate; ``true`` merges everything this
+bridge serves into one ``/joint_states`` (two entities, one combined description); ``false`` disables
+it; a list of ``{topic, owners}`` states the groups outright. See ``_joint_state_groups``.
 """
 
 from __future__ import annotations
@@ -85,20 +95,88 @@ from roqsim_ros_bridge.services import get_service_handler
 #: numeric because 0 already means "no /clock at all" here, unlike _RateGate's rate<=0.
 _CLOCK_EVERY_STEP = "step"
 
+#: The backend type string a joint-state-producing endpoint declares. Endpoints of this type are
+#: candidates for the merged ``/joint_states`` publisher below.
+_JOINT_STATE_TYPE = "sensor_msgs.msg.JointState"
+
+
+def _merge_joint_state_payloads(payloads: list[tuple]) -> tuple:
+    """Concatenate several ``(names, positions, velocities[, efforts])`` payloads into one.
+
+    Order follows the order ``payloads`` is given in (the endpoints' own registration order), which
+    is what lets a caller line this up against another consumer of the same order -- e.g. a URDF
+    exporter that also reads the endpoints in registration order.
+
+    Effort is included only if at least one source reports it (real drivers do; a wheel/locomotion
+    source may not), and a source that omits it is padded with zeros rather than dropped, so every
+    joint still has an effort entry once any of them does -- a message can't state effort for some
+    joints and omit it for others.
+    """
+    names: list = []
+    positions: list = []
+    velocities: list = []
+    efforts: list = []
+    any_effort = False
+    for payload in payloads:
+        n, p, v, *rest = payload
+        names.extend(n)
+        positions.extend(p)
+        velocities.extend(v)
+        if rest:
+            efforts.extend(rest[0])
+            any_effort = True
+        else:
+            efforts.extend([0.0] * len(n))
+    return (names, positions, velocities, efforts) if any_effort else (names, positions, velocities)
+
+
+def _common_ns(namespaces) -> str:
+    """The deepest namespace every one of ``namespaces`` sits in ("" if they share nothing)."""
+    parts = [ns.strip("/").split("/") if ns.strip("/") else [] for ns in namespaces]
+    common: list[str] = []
+    # zip stops at the shortest, which is exactly the depth a common prefix can reach.
+    for segments in zip(*parts, strict=False):
+        if len(set(segments)) > 1:
+            break
+        common.append(segments[0])
+    return "/".join(common)
+
 
 def _gate_period(gate: _RateGate, dt: float) -> float:
-    """The period a gate ACTUALLY fires at, which is its requested period rounded UP to the physics
-    grid -- ``due()`` is only ever evaluated at step boundaries. A 60 Hz gate on a 2 ms step fires
-    every 9 steps (18 ms), not every 16.67 ms, and it is the 18 that has to divide the /clock grid.
+    """The period a gate ACTUALLY fires at, in whole physics steps -- ``due()`` is only ever evaluated
+    at step boundaries, so it is that period, not the requested one, that has to divide the /clock
+    grid. A gate bound by :meth:`~roqsim.bridge.BridgeBase._rate_gate` carries its own step count; one
+    built straight from a rate has its period rounded up to the grid instead.
     """
     if gate.rate_hz <= 0.0:
         return dt
+    if gate.every is not None:
+        return gate.every * dt
     return math.ceil((1.0 / gate.rate_hz - 1e-9) / dt) * dt
 
 
 def _join_ns(*parts: str) -> str:
     """Join namespace/prefix parts, skipping empties (no leading/trailing slashes)."""
     return "/".join(p for p in parts if p)
+
+
+def _ros_type_name(type_path: str) -> str:
+    """``pkg.msg.Type`` as the ROS graph spells it, ``pkg/msg/Type``."""
+    return type_path.replace(".", "/")
+
+
+def _foreign_types(peers, own_type: str, own_node: str) -> list[tuple[str, str]]:
+    """``(node, type)`` of every peer on a topic whose type is not ours, our own node aside.
+
+    A ROS 2 topic is one name and one type, and the middleware matches on both: a publisher of
+    another type on the same name is not a degraded connection but no connection at all, and
+    neither side logs it. ``peers`` are the graph's ``TopicEndpointInfo`` records.
+    """
+    return [
+        (f"{p.node_namespace.rstrip('/')}/{p.node_name}", p.topic_type)
+        for p in peers
+        if p.topic_type != own_type and p.node_name != own_node
+    ]
 
 
 def _resolve_topic(namespace: str, topic: str) -> str:
@@ -203,6 +281,10 @@ class Ros2Bridge(BridgeBase):
         self._static_tf: StaticTransformBroadcaster | None = None
         self._clock_pub = None
         self._clock_msg = ClockMsg()
+        # One (publisher, gate, endpoints) per merged joint-state group (see
+        # _setup_merged_joint_states); empty when nothing needs merging, which is the single-robot,
+        # single-controller case.
+        self._merged_joint_states: list[tuple[_Pub, _RateGate, list]] = []
         # "step" (the default) publishes one tick per physics step: the finest grid available, and
         # the only setting that divides every gated period whatever they are. 0 keeps its older
         # meaning of "no /clock at all", which is why "every step" needed a name of its own rather
@@ -215,15 +297,171 @@ class Ros2Bridge(BridgeBase):
         # world that runs a robot_state_publisher over the robot's URDF, which publishes the same
         # links itself (see the emit site in _make_publisher).
         self._publish_static_tf = bool(self.config.get("publish_static_tf", True))
+        # (topic, type, endpoint, role) of every topic endpoint, for the peer-type check in _tick.
+        self._peer_checks: list[tuple[str, str, Any, str]] = []
+        self._peer_gate = _RateGate(1.0)
 
     def _eff_ns(self, ep) -> str:
         """The endpoint's effective namespace for topic/frame scoping — ``""`` if it is stripped."""
         return "" if ep.namespace in self._strip else ep.namespace
 
     def configure(self, ctx) -> None:
-        # After super(), because the check reads the gates _bind() built.
+        # After super(), because the check reads the gates _bind() built, and the merge needs
+        # ctx.interface fully populated -- true only once _bind() (called by super()) has run.
         super().configure(ctx)
+        self._snap_clock_gate(ctx)
         self._warn_on_clock_aliasing(ctx)
+        self._setup_merged_joint_states(ctx)
+
+    def _snap_clock_gate(self, ctx) -> None:
+        """Put ``/clock``'s own rate on the physics grid, like every other publication's.
+
+        A ``clock_rate_hz`` is a request like any other -- and the one every other publisher's stamps
+        are quantised to, so a /clock left beside the grid while the outputs are on it would make the
+        aliasing check below compare a snapped period against a rounded-up one. ``step`` (a gate with
+        no rate) IS the grid and needs nothing; the rate is recorded either way, because it appears in
+        no world document as a realised number and nothing else states it.
+        """
+        if not self._clock_enabled:
+            return
+        requested = max(self._clock_gate.rate_hz, 0.0)  # "step" is a rate <= 0: one tick per step
+        if requested > 0.0:
+            self._clock_gate = self._rate_gate(ctx, requested, "/clock")
+        self._record_rate(ctx, "/clock", None, "", requested, self._clock_gate)
+
+    def _joint_state_endpoints(self, ctx) -> list:
+        """Every joint-state output endpoint this bridge instance serves, in registration order."""
+        out = []
+        for ep in ctx.interface.all():
+            if ep.direction != "out":
+                continue
+            hints = ep.backend.get(self.BACKEND)
+            if hints is None or hints.get("type") != _JOINT_STATE_TYPE:
+                continue
+            if self._owners is not None and ep.owner not in self._owners:
+                continue
+            out.append(ep)
+        return out
+
+    def _ep_topic(self, ep) -> str:
+        """The topic an endpoint publishes on by itself -- what a merged group must not duplicate."""
+        hints = ep.backend.get(self.BACKEND, {})
+        return self._gt_topic(_resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name)))
+
+    def _joint_state_groups(self, sources: list, logger=None) -> list[tuple[str, list]]:
+        """Which joint-state endpoints belong on ONE merged topic, and what that topic is.
+
+        The grouping is a statement about the ROS graph -- how many ``robot_description``s the stack
+        runs -- which the world model alone cannot answer: two arms may be two independent robots,
+        each with its own ``robot_state_publisher`` and ``move_group``, or two planning groups of one
+        combined description (what ``arm_controller``'s ``joint_prefix`` exists for). So it is
+        declared, via ``merged_joint_states``:
+
+        * ``"auto"`` (the default) groups by ``owner``, i.e. by spawned entity: several controllers on
+          one robot (a dual-arm entity, an arm plus a torso) merge into that robot's own scope, and
+          separate robots stay separate. Safe without any declaration, because endpoints of one entity
+          describe one physical robot whatever the stack above does.
+        * ``true`` merges every endpoint this bridge serves into one ``/joint_states`` -- the combined
+          ``robot_description`` case, across entities.
+        * ``false`` disables merging.
+        * A list of ``{topic: ..., owners: [...]}`` states the groups outright, for a world whose
+          descriptions cut across entities in some other way.
+
+        A group whose endpoints already resolve to ONE topic needs no merged publisher: they meet on
+        the wire, and both ``robot_state_publisher`` and MoveIt's current-state monitor accumulate
+        partial joint states. Only a group scoped apart (each endpoint under its own namespace) needs
+        one.
+        """
+        decl = self.config.get("merged_joint_states", "auto")
+        if decl is False:
+            return []
+        if decl is True:
+            return [(self._gt_topic("joint_states"), sources)]
+        if isinstance(decl, list):
+            groups = []
+            for entry in decl:
+                owners = set(entry["owners"])
+                members = [ep for ep in sources if ep.owner in owners]
+                if members:
+                    groups.append((self._gt_topic(entry.get("topic", "joint_states")), members))
+            return groups
+        if decl != "auto":
+            raise ValueError(
+                f"ros2 bridge: merged_joint_states must be 'auto', true, false or a list of "
+                f"{{topic, owners}} groups, got {decl!r}"
+            )
+        by_owner: dict[str, list] = {}
+        for ep in sources:
+            by_owner.setdefault(ep.owner, []).append(ep)
+        if len(by_owner) > 1 and logger is not None:
+            logger.warning(
+                "ros2 bridge: %d entities publish joint states here; each is merged into its own "
+                "scope. If they share ONE robot_description, declare it -- merged_joint_states: true "
+                "(one /joint_states across all of them) or a list of {topic, owners} groups -- "
+                "otherwise a combined description gets no TF and move_group no current state.",
+                len(by_owner),
+            )
+        groups = []
+        for members in by_owner.values():
+            # The merged topic sits in the scope the group shares -- the deepest namespace common
+            # to its endpoints, which is the robot's own scope when its controllers are namespaced
+            # below it (``dual/left``, ``dual/right`` -> ``dual``). Nothing in common puts it at the
+            # root, where an unnamespaced robot's stack looks for it anyway.
+            groups.append(
+                (
+                    self._gt_topic(
+                        _join_ns(_common_ns(self._eff_ns(ep) for ep in members), "joint_states")
+                    ),
+                    members,
+                )
+            )
+        return groups
+
+    def _setup_merged_joint_states(self, ctx) -> None:
+        """Publish one merged ``joint_states`` per declared group (see :meth:`_joint_state_groups`),
+        in ADDITION to each endpoint's own topic, which keeps publishing unchanged.
+
+        MoveIt's convention -- and this substrate's own exporter contract (see
+        ``roqsim.export_moveit``, which documents the joint names it emits as "the ones that reach
+        ``/joint_states``") -- is one ``robot_description`` implies one merged joint-state stream. A
+        robot with several controllers declares one ``joint_states`` endpoint PER controller, and
+        where those are scoped apart by namespace nothing publishes the topic
+        ``robot_state_publisher`` and MoveIt's planning-scene monitor actually listen on. This closes
+        that gap without guessing across robots: what belongs together is declared, and the default
+        groups by entity, which is true independently of the stack.
+        """
+        sources = self._joint_state_endpoints(ctx)
+        if len(sources) < 2:
+            return
+        msg_type = reg.resolve_type(_JOINT_STATE_TYPE)
+        for topic, members in self._joint_state_groups(sources, getattr(ctx, "logger", None)):
+            if len(members) < 2 or len({self._ep_topic(ep) for ep in members}) < 2:
+                continue
+            publisher = self._node.create_publisher(msg_type, topic, 10)
+            handle = _Pub(
+                publisher=publisher,
+                msg_type=msg_type,
+                convert=reg.get_converter(_JOINT_STATE_TYPE),
+                hints={},
+                msg=msg_type() if self._reuse else None,
+                emit_tf=False,
+            )
+            requested = max(ep.rate_hz for ep in members)
+            gate = self._rate_gate(ctx, requested, f"{topic!r}")
+            self._merged_joint_states.append((handle, gate, members))
+            # Recorded like a bound endpoint: this publisher belongs to no endpoint, so the run's
+            # record is the only place its rate can be read at all.
+            owners = {ep.owner for ep in members}
+            owner = owners.pop() if len(owners) == 1 else None
+            self._record_rate(ctx, topic, owner, "", requested, gate)
+
+    def _publish_merged_joint_states(self, stamp, t: float) -> None:
+        for handle, gate, members in self._merged_joint_states:
+            if not gate.due(t):
+                continue
+            payloads = [p for ep in members if (p := ep.read()) is not None]
+            if payloads:
+                self._publish(handle, _merge_joint_state_payloads(payloads), stamp)
 
     def _warn_on_clock_aliasing(self, ctx) -> None:
         """Warn for each output whose publish period is not a whole number of /clock ticks.
@@ -280,6 +518,19 @@ class Ros2Bridge(BridgeBase):
             # Absolute name: /clock is the domain's time source, never namespaced.
             self._clock_pub = node.create_publisher(ClockMsg, "/clock", 10)
 
+        # The controller_manager surface, for every robot that registered controllers. No world
+        # entry asks for this: on real hardware nobody opts into a controller_manager, it is there
+        # because ros2_control is -- and a world with no controllers gets no services, which is the
+        # same answer. Imported here so a deployment without controller_manager_msgs still brings
+        # the bridge up for every world that does not need them.
+        try:
+            from .controller_manager import serve as _serve_controller_manager
+
+            self._controller_managers = _serve_controller_manager(node, ctx)
+        except ImportError:
+            self._controller_managers = []
+            ctx.logger.info("controller_manager_msgs absent; not serving the controller surface")
+
         self._executor.add_node(node)
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
         self._spin_thread.start()
@@ -309,6 +560,7 @@ class Ros2Bridge(BridgeBase):
         topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name)))
         qos = int(hints.get("qos", 10))
         publisher = self._node.create_publisher(msg_type, topic, qos)
+        self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
         # Let an expensive producer (e.g. a rendered camera) skip work when nobody's listening --
         # generic, not camera-specific; cheap endpoints (lidar, odom) just never check it.
         ep.has_subscribers = lambda p=publisher: p.get_subscription_count() > 0
@@ -326,17 +578,25 @@ class Ros2Bridge(BridgeBase):
         # robot's URDF: that publishes the same base -> sensor links from the model, and two
         # publishers for one static transform is a TF conflict rather than redundancy. The default
         # stays true, because a world without an RSP has no other source for these frames.
+        #
+        # The hint is one transform whose child is this endpoint's ``frame_id``, or a list of them
+        # each naming its own ``child``: a mount's chain of fixed links is several frames, and an
+        # endpoint that exists only to carry them has no payload frame to borrow.
         st = hints.get("static_tf") if self._publish_static_tf else None
         if st:
             if self._static_tf is None:
                 self._static_tf = self._make_tf_broadcaster(static=True)
-            parent = reg.namespaced(frame_prefix, st["parent"])
-            child = reg.namespaced(frame_prefix, hints["frame_id"])
-            self._static_tf.sendTransform(
-                reg.make_static_tf(
-                    reg.to_time_msg(0.0), parent, child, st["translation"], st["rotation"]
+            links = st if isinstance(st, list) else [{**st, "child": hints["frame_id"]}]
+            for link in links:
+                self._static_tf.sendTransform(
+                    reg.make_static_tf(
+                        reg.to_time_msg(0.0),
+                        reg.namespaced(frame_prefix, link["parent"]),
+                        reg.namespaced(frame_prefix, link["child"]),
+                        link["translation"],
+                        link["rotation"],
+                    )
                 )
-            )
         return _Pub(
             publisher=publisher,
             msg_type=msg_type,
@@ -389,6 +649,33 @@ class Ros2Bridge(BridgeBase):
         qos = int(hints.get("qos", 10))
         decode = reg.get_decoder(hints["type"])
         self._node.create_subscription(msg_type, topic, lambda m: on_payload(decode(m)), qos)
+        self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "in"))
+
+    def _check_peer_types(self) -> None:
+        """Refuse a peer of another type on one of our topics, instead of letting it go silent.
+
+        The classic case is a command: a stack publishing a plain ``Twist`` on ``cmd_vel`` to a base
+        that subscribes a ``TwistStamped``, or the reverse. Nothing arrives, nothing is logged, and
+        the only symptom is a robot that never moves. The graph knows both types, so the bridge
+        asks it once a second and fails the run naming the topic, both types and both sides.
+        """
+        node = self._node
+        own = node.get_name()
+        for topic, own_type, ep, role in self._peer_checks:
+            if role == "in":
+                peers = node.get_publishers_info_by_topic(topic)
+                verb, theirs = "subscribes", "publishes"
+            else:
+                peers = node.get_subscriptions_info_by_topic(topic)
+                verb, theirs = "publishes", "subscribes"
+            for peer, peer_type in _foreign_types(peers, own_type, own):
+                full = node.resolve_topic_name(topic)
+                raise RuntimeError(
+                    f"{ep.owner}.{ep.name} {verb} {full!r} as {own_type}, but {peer} {theirs} "
+                    f"{peer_type} on it: a topic is one type, so the two never meet and neither "
+                    f"side logs it. Give the endpoint the stack's type (a base's `stamped_cmd_vel`, "
+                    f"for a command) or the stack the endpoint's."
+                )
 
     def _shutting_down(self) -> bool:
         """True once rclpy has invalidated our context -- i.e. the process is on its way out.
@@ -396,8 +683,8 @@ class Ros2Bridge(BridgeBase):
         A shutting-down context is not an error. On SIGINT/SIGTERM rclpy invalidates the context from
         its signal handler, but the physics loop owns the thread and finishes the step it is in, so
         the next publish lands on a dead context and raises. Left to propagate, that aborts the
-        process with an RCLError traceback which reads exactly like a mid-run crash -- it was
-        repeatedly misdiagnosed as one, while the run had in fact completed and was being torn down.
+        process with an RCLError traceback which reads exactly like a mid-run crash, while the run has
+        in fact completed and is being torn down.
         Publishes are skipped from here on; anything else still raises.
         """
         return not (self._context.ok() if self._context is not None else rclpy.ok())
@@ -427,10 +714,17 @@ class Ros2Bridge(BridgeBase):
         if self._clock_pub is not None and self._clock_gate.due(t):
             self._clock_msg.clock = stamp
             self._clock_pub.publish(self._clock_msg)
+        if self._merged_joint_states:
+            self._publish_merged_joint_states(stamp, t)
+        if self._peer_gate.due(t):
+            self._check_peer_types()
 
     def on_reset(self, ctx) -> None:
         super().on_reset(ctx)
         self._clock_gate.reset()
+        self._peer_gate.reset()
+        for _, gate, _ in self._merged_joint_states:
+            gate.reset()
 
     def _teardown(self, ctx) -> None:
         for server in self._action_servers:

@@ -2,8 +2,8 @@
 
 Three failures this catches, none of which the per-model drive tests would:
 
-* a model whose MJCF moved into ``models/<name>/`` but whose ``<compiler meshdir=...>`` still points at
-  the old shared ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it compiles
+* a model whose ``<compiler meshdir=...>`` points anywhere but its own ``models/<name>/meshes/``
+  -- MuJoCo does not error on an unresolvable mesh path, it compiles
   the model with the reference as given, so the robot silently loses its geometry;
 * a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
   from an editable checkout and fails at RUN time inside a campaign container, where the checkout is
@@ -30,8 +30,11 @@ MODEL_NAMES = sorted(
     p.name for p in MODELS_DIR.iterdir() if p.is_dir() and (p / f"{p.name}.xml").is_file()
 )
 # `floor` is a bare ground plane, not a platform: no vendor geometry to licence, no controller to
-# declare in a manifest, no port to log. Every other folder here is a robot and must carry all three.
-ROBOTS = [n for n in MODEL_NAMES if n != "floor"]
+# declare in a manifest, no port to log. `create3_dock` is the TurtleBot 4's charging dock, a prop
+# a world places with `spawn_model` (which reads no manifest): vendor geometry with its licence, but
+# no controller. Every other folder here is a robot and must carry all three.
+PROPS = {"floor", "create3_dock"}
+ROBOTS = [n for n in MODEL_NAMES if n not in PROPS]
 
 
 def test_every_model_is_a_folder():
@@ -41,6 +44,7 @@ def test_every_model_is_a_folder():
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
     assert set(ROBOTS) == {
         "clearpath_jackal", "husky_a200", "panther", "raspimouse", "ridgeback", "rosbot",
+        "rox_diff",
         "lgdxrobot2", "makerspet_mini", "mp_400", "mpo_500", "mpo_700", "oomwoo_one", "piracer",
         "turtlebot3_waffle",
         "turtlebot4", "warthog",
@@ -89,3 +93,9 @@ def test_package_data_globs_cover_every_shipped_file():
         and not any(fnmatch.fnmatch(str(p.relative_to(pkg)), g) for g in globs)
     ]
     assert not missing, f"not covered by package-data (would be absent from the wheel): {missing}"
+
+
+def test_the_dock_ships_its_vendor_licence():
+    folder = MODELS_DIR / "create3_dock"
+    assert (folder / "create3_dock_LICENSE").is_file()
+    assert not (folder / "create3_dock.manifest.yaml").exists(), "a prop reads no manifest"

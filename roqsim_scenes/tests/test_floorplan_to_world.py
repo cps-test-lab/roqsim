@@ -146,10 +146,10 @@ def test_world_doc_spawns_mapped_markers():
         {
             "spawn_model": {
                 "model": "industrial_table",
-                "name": "marker_1",
                 "prefix": "marker_1_",
-                "pos": [2.5, 3.0, 0.0],
-            }
+                "pose": {"position": {"x": 2.5, "y": 3.0, "z": 0.0}},
+            },
+            "name": "marker_1",
         }
     ]
 
@@ -172,17 +172,19 @@ def test_world_doc_yaw_from_map_and_sketch_with_map_override():
         "2": "plant",
         "3": {"model": "desk", "yaw_deg": 0},
     }
-    plugins = [
-        p["spawn_model"]
-        for p in fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["components"]
-    ]
-    assert plugins[0]["model"] == "bed" and plugins[0]["rpy"] == pytest.approx(
-        [0, 0, math.pi], abs=1e-4
+    entries = fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["components"]
+    plugins = [p["spawn_model"] for p in entries]
+    # Each marker answers to its own label, so the world loads with more than one of them.
+    assert [p["name"] for p in entries] == ["marker_1", "marker_2", "marker_3"]
+    assert plugins[0]["model"] == "bed"
+    assert plugins[0]["pose"]["orientation"]["yaw"] == pytest.approx(math.pi, abs=1e-4)
+    assert plugins[1]["model"] == "plant"
+    assert plugins[1]["pose"]["orientation"]["yaw"] == pytest.approx(
+        math.radians(90), abs=1e-4
     )
-    assert plugins[1]["model"] == "plant" and plugins[1]["rpy"] == pytest.approx(
-        [0, 0, math.radians(90)], abs=1e-4
-    )
-    assert "rpy" not in plugins[2]  # heading resolved to 0 -> axis-aligned, no rpy emitted
+    # A heading resolved to 0 leaves the prop axis-aligned, and the pose says so by omission --
+    # `orientation` defaults to the identity, so writing a zero yaw would state nothing extra.
+    assert "orientation" not in plugins[2]["pose"]
 
 
 def test_world_doc_errors_on_map_dict_without_model():
@@ -196,7 +198,9 @@ def test_door_placements_defaults_to_a_passive_wooden_door():
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
     (entry,) = fw.door_placements(lines, doors, {}, ceiling_h=2.5, opening_h=2.0)
     d = entry["door"]
-    assert d["name"] == "door_1" and d["model"] == "door"
+    assert entry["name"] == "door_1"  # a sibling of the ref, not one of the door's config keys
+    assert "name" not in d
+    assert d["model"] == "door"
     assert d["pos"] == [2.0, 0.0, 0.0]  # opening centre on the wall
     assert d["rpy"][2] == pytest.approx(0.0)  # yaw along the +x wall
     assert d["width"] == 0.9 and d["hinge_side"] == "left"
@@ -230,11 +234,11 @@ def test_door_placements_skips_full_height_openings():
 
 def test_world_doc_emits_doors_before_markers():
     markers = [{"id": 1, "x_m": 2.5, "y_m": 3.0}]
-    doors = [{"door": {"name": "door_1"}}]
+    doors = [{"door": {}, "name": "door_1"}]
     plugins = fw.world_doc(
         "r", "r/r.xml", (0.0, 0.0, 8.0, 6.0), markers, {"1": "industrial_table"}, doors=doors
     )["components"]
-    assert list(plugins[0]) == ["door"] and list(plugins[1]) == ["spawn_model"]
+    assert list(plugins[0])[0] == "door" and list(plugins[1])[0] == "spawn_model"
 
 
 def test_cut_openings_splits_and_drops_slivers():

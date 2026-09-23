@@ -17,10 +17,10 @@ with it commented out (obs is 102, not 107).
 **The world must set ``sim.timestep: 0.001``** -- the PD loop and ``decimation`` are tuned for a
 1000 Hz step / 100 Hz policy (see the demo world).
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     oli_locomotion:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot)
       policy_path: <bundled>       # override the ONNX policy (default: policy/oli/policy.onnx)
       config_path: <bundled>       # override the deploy config (default: policy/oli/walk_param.yaml)

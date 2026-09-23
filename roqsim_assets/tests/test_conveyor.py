@@ -14,7 +14,7 @@ from roqsim.engine import Engine
 
 def _belt_only(tmp_path, conv_extra=None):
     plugins = [
-        {"conveyor": {"name": "conveyor", **(conv_extra or {})}},
+        {"conveyor": dict(conv_extra or {}), "name": "conveyor"},
     ]
     return load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path)
 
@@ -126,9 +126,9 @@ def test_placed_belt_keeps_its_package(tmp_path):
 
 
 def test_belt_ships_no_table(tmp_path):
-    # The belt is a benchtop unit: the industrial table it used to bundle is a separate prop now,
-    # so a bare conveyor must contribute no table geometry (and the feet must still expect a
-    # ~0.76 m top under them, which is what makes the split poses in the worlds line up).
+    # The belt is a benchtop unit and the industrial table a separate prop, so a bare conveyor
+    # must contribute no table geometry (and the feet must still expect a ~0.76 m top under them,
+    # which is what makes the separate poses in the worlds line up).
     engine = Engine(_belt_only(tmp_path))
     engine.setup()
     m = engine.ctx.model
@@ -139,11 +139,17 @@ def test_belt_ships_no_table(tmp_path):
 
 
 def test_industrial_table_top_carries_the_belt(tmp_path):
-    # The split-out table must present its top exactly where the belt's feet land, so
-    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the old bundled cell.
+    # The separate table must present its top exactly where the belt's feet land, so
+    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the source cell.
     plugins = [
-        {"spawn_model": {"model": "industrial_table", "name": "bench", "pos": [-0.13, 0.6, 0.0]}},
-        {"conveyor": {"name": "conveyor"}},
+        {
+            "spawn_model": {
+                "model": "industrial_table",
+                "pose": {"position": {"x": -0.13, "y": 0.6, "z": 0.0}},
+            },
+            "name": "bench",
+        },
+        {"conveyor": {}, "name": "conveyor"},
     ]
     engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
     engine.setup()

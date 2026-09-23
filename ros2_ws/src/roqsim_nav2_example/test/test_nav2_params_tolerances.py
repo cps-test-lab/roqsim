@@ -13,8 +13,8 @@ collapses the goal to a default-constructed pose at the frame origin -- which is
 started. The first goal of a run reads as an arrival milliseconds after being accepted.
 
 So the rule is a floor, not a preference, and it is asserted rather than left in a comment: a
-comment is advice to whoever reads it, and the params file that needed this had none of the four
-values set correctly. A new params file added beside this one is covered without anyone remembering.
+comment is advice to whoever reads it, and nothing stops a params file from setting none of the four
+values correctly. A new params file added beside this one is covered without anyone remembering.
 """
 
 import pathlib

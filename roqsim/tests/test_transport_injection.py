@@ -90,9 +90,8 @@ def test_a_checked_in_world_stays_ros_free(tmp_path):
 def test_transport_is_applied_before_overrides_resolve(tmp_path):
     """So an injected bridge is addressable like anything else.
 
-    It was not: transport was appended after overrides had already been resolved, which meant
-    `plugins.ros2_bridge.*` named nothing in a world that did not author its own bridge -- the
-    deployment that added it could not then configure it.
+    Appended after overrides resolve, `plugins.ros2_bridge.*` would name nothing in a world that
+    does not author its own bridge -- and the deployment that adds it could not configure it.
     """
     world = _world(tmp_path, "sim: {}\ncomponents:\n  - dummy: {}\n")
     cfg = load_config(world, {"sim": {"pacing": "asap"}}, {"ros": True})

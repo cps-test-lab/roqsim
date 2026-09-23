@@ -15,17 +15,63 @@ from __future__ import annotations
 
 import numpy as np
 
+from roqsim.placement import PLACEABLE_MODES_HINT, base_joint_of, place_body
+
 from . import (
     AccessError,
+    NavCall,
+    NavOutcome,
     OverrideCall,
     OverrideOutcome,
     Pose,
+    SpawnCall,
+    SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
 )
 
 _MISSING = object()
+
+
+def _unplaceable(name, joint_name) -> str:
+    """Why a pose could not be applied, in terms of what the WORLD would have to say instead.
+
+    The advice half comes from :data:`~roqsim.placement.PLACEABLE_MODES_HINT`, so this transport
+    and the ROS bridge cannot recommend different modes for the same refusal.
+    """
+    return (
+        f"entity {name!r} is welded scenery: it has neither a mocap body nor a free joint named "
+        f"{joint_name!r}, so no pose can be written to it. {PLACEABLE_MODES_HINT}"
+    )
+
+
+class _PostedRoute(NavCall):
+    """A route sent to a navigator, polled on its sequence number.
+
+    ``wait=False`` succeeds as soon as the route is *applied* -- fire-and-forget traffic, where the
+    scenario wants the mover moving and has something else to be doing. Even then it waits for the
+    sequence to land rather than returning immediately, because the route is marshalled onto the
+    physics thread and "accepted" must mean the simulator has it.
+    """
+
+    def __init__(self, handle, seq: int, *, wait: bool):
+        self._handle = handle
+        self._seq = seq
+        self._wait = wait
+
+    def poll(self):
+        applied, finished, _goals, _dist = self._handle.status()
+        if applied > self._seq:
+            return NavOutcome(False, "a newer route preempted this one")
+        if applied < self._seq:
+            return None  # not applied yet: the post has not been drained
+        if not self._wait:
+            return NavOutcome(True, "route accepted")
+        return NavOutcome(True, "arrived") if finished else None
+
+    def cancel(self) -> None:
+        self._handle.cancel()
 
 
 class InProcessAccess(WorldAccess):
@@ -113,8 +159,47 @@ class InProcessAccess(WorldAccess):
         ctx.post(lambda _ctx: handle.set_active(bool(active)))
         return _PostedCall(handle, before)
 
+    # -- navigation --------------------------------------------------------------------------------
+    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        handle = self._nav_handle(name)
+        poses = [(float(p[0]), float(p[1])) for p in goal_poses]
+        try:
+            seq = handle.send_goals(poses)
+        except ValueError as err:
+            raise AccessError(str(err)) from None
+        return _PostedRoute(handle, seq, wait=wait)
+
+    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+        handle = self._nav_handle(name)
+        try:
+            seq = handle.start()
+        except ValueError as err:
+            raise AccessError(str(err)) from None
+        return _PostedRoute(handle, seq, wait=wait)
+
+    def _nav_handle(self, name: str):
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        handle = ctx.blackboard.get(f"nav:{name}:handle")
+        if handle is None:
+            offered = sorted(
+                k.split(":", 1)[1].removesuffix(":handle")
+                for k in getattr(ctx.blackboard, "_data", {})
+                if k.startswith("nav:") and k.endswith(":handle")
+            )
+            raise AccessError(
+                f"entity {name!r} has no navigator, so nothing can drive it. A `navigator` component "
+                f"must be nested under the entry that provides it (spawn_robot, spawn_model with "
+                f"`mocap: true`, or walker). This world can navigate: "
+                f"{', '.join(offered) if offered else '(nothing)'}."
+            )
+        return handle
+
     # -- teleport ---------------------------------------------------------------------------------
-    def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
+    def set_entity_state(
+        self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
+    ) -> TeleportCall:
         # Imported HERE, not at module scope -- see the note on `_body_id`: this pulls in MuJoCo,
         # and the behaviour tree is built before any world is compiled.
         import mujoco
@@ -128,7 +213,7 @@ class InProcessAccess(WorldAccess):
                 f"the simulator has no entity called {name!r}. The name is the world's `name:` for "
                 "that spawn, not a body name and not a TF frame."
             )
-        joint_name = (entity.meta or {}).get("base_joint")
+        joint_name = base_joint_of(entity)
         outcome_box: dict = {}
 
         def _write(
@@ -136,29 +221,112 @@ class InProcessAccess(WorldAccess):
             joint_name=joint_name,
             pos=np.asarray(pos, dtype=float),
             quat=np.asarray(quat, dtype=float),
+            vel=np.asarray(
+                [
+                    *(lin if lin is not None else (0.0, 0.0, 0.0)),
+                    *(ang if ang is not None else (0.0, 0.0, 0.0)),
+                ],
+                dtype=float,
+            ),
         ):
-            jid = (
-                mujoco.mj_name2id(_ctx.model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-                if joint_name
-                else -1
-            )
-            if jid < 0 or _ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
+            # The velocity the caller asked for, defaulting to zero: a body PUT somewhere is at
+            # rest unless the caller says otherwise, which is what distinguishes a placement from
+            # a launch.
+            if not place_body(_ctx, entity, pos, quat, vel):
                 outcome_box["outcome"] = TeleportOutcome(
-                    ok=False,
-                    detail=f"entity {name!r} has no free joint named {joint_name!r} -- it cannot be "
-                    "teleported (a static prop, or a model without a base_joint in its meta).",
+                    ok=False, detail=_unplaceable(name, joint_name)
                 )
                 return
-            q = _ctx.model.jnt_qposadr[jid]
-            _ctx.data.qpos[q : q + 3] = pos
-            _ctx.data.qpos[q + 3 : q + 7] = quat
-            dof = _ctx.model.jnt_dofadr[jid]
-            _ctx.data.qvel[dof : dof + 6] = 0.0
             mujoco.mj_forward(_ctx.model, _ctx.data)
-            outcome_box["outcome"] = TeleportOutcome(ok=True, detail=f"placed at {pos.tolist()}")
+            moving = "" if not vel.any() else f", moving at {vel.tolist()}"
+            outcome_box["outcome"] = TeleportOutcome(
+                ok=True, detail=f"placed at {pos.tolist()}{moving}"
+            )
 
         ctx.post(_write)
         return _PostedTeleport(outcome_box)
+
+    def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
+        """Flip presence and place the entity in ONE posted callback.
+
+        One callback, not two, because that is the whole reason to spawn rather than teleport: a
+        flip and a pose applied in separate transactions leave the entity perceivable for a step at
+        wherever the world compiled it, and a free body accelerating under gravity in between.
+        """
+        import mujoco
+
+        from roqsim.presence import set_present
+
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        entity = ctx.entities.get(name)
+        if entity is None:
+            raise AccessError(
+                f"the simulator has no entity called {name!r}. A spawn ACTIVATES what the world "
+                "already declares -- it does not create one -- so the name must be a `name:` in "
+                "the world, and a world that declares no such entity cannot be made to have it."
+            )
+        joint_name = base_joint_of(entity)
+        outcome_box: dict = {}
+
+        def _apply(
+            _ctx,
+            joint_name=joint_name,
+            pos=None if pos is None else np.asarray(pos, dtype=float),
+            quat=None if quat is None else np.asarray(quat, dtype=float),
+        ):
+            # Refused BEFORE the pose is written, and refused at all: `SpawnEntity` over ROS answers
+            # RESULT_OPERATION_FAILED for an entity that is already in the state asked for, and two
+            # transports must not answer one question differently -- a scenario is written once and
+            # does not learn which shape it is running in. Checked first because refusing after the
+            # write would leave the entity moved by a call that reported failure.
+            if bool(getattr(entity, "present", True)) == bool(present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False,
+                    detail=f"entity {name!r} is already {'present' if present else 'absent'}",
+                )
+                return
+            if pos is not None:
+                # The velocity is left at zero for the same reason a teleport zeroes it: an entity
+                # that has just appeared has no history, and a velocity carried over from before it
+                # was hidden is one this trial never applied.
+                if not place_body(_ctx, entity, pos, quat):
+                    outcome_box["outcome"] = SpawnOutcome(
+                        ok=False,
+                        detail=_unplaceable(name, joint_name)
+                        + " Or spawn it without a pose, to activate it where the world put it.",
+                    )
+                    return
+            # The return value is the confirmation that something changed, so it is what the
+            # outcome is built from. Ignoring it would report success for a no-op.
+            if not set_present(_ctx, entity, present):
+                outcome_box["outcome"] = SpawnOutcome(
+                    ok=False, detail=f"entity {name!r} did not change presence"
+                )
+                return
+            mujoco.mj_forward(_ctx.model, _ctx.data)
+            where = "" if pos is None else f" at {pos.tolist()}"
+            outcome_box["outcome"] = SpawnOutcome(
+                ok=True, detail=f"{'present' if present else 'absent'}{where}"
+            )
+
+        ctx.post(_apply)
+        return _PostedSpawn(outcome_box)
+
+
+class _PostedSpawn(SpawnCall):
+    """Waits for the queued presence flip, then reports what ``_apply`` recorded.
+
+    Same box-as-confirmation shape as :class:`_PostedTeleport`, and safe unlocked for the same
+    reason: the stepped runner ticks the tree and steps physics on one thread, alternating.
+    """
+
+    def __init__(self, outcome_box: dict):
+        self._box = outcome_box
+
+    def poll(self) -> SpawnOutcome | None:
+        return self._box.get("outcome")
 
 
 class _PostedTeleport(TeleportCall):

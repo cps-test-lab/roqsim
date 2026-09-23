@@ -13,12 +13,19 @@ its Franka Hand already carries fingertip-pad collision geoms, both better than 
 `omron.dae` is converted (via dae2obj.py). The model therefore borrows the panda meshes through its
 manifest `assets: [roqsim_manipulation_assets]` key rather than copying them -- see architecture.rst §4.
 
+The base's safety laser scanner is not part of this MJCF: the manifest mounts the `omron_os32c` device
+(roqsim_sensors). What this script owns is the opening that scanner looks through -- see
+"The safety laser scanner" below.
+
 Provenance
 ----------
 Base geometry + mount transform: `qut_frankie_description`, vendored in
 petercorke/robotics-toolbox-python @ 0bb96454 under `rtb-data/rtbdata/xacro/qut_frankie_description`
 (MIT, (c) 2020 jhavl). The URDF fixes `panda_base_arm_joint` at xyz="0.15 0 0.38" from the base link to
 `panda_link0`, and declares a base collision box of 0.68 x 0.47 x 0.38 m centred at z=0.19.
+
+Scanner and opening: Omron "LD-60/90 Platform User's Manual", Cat. No. I611-E-09 ("I611"), and Omron
+"OS32C Safety Laser Scanner" data sheet, Cat. No. Z298-E2-05-X ("Z298").
 
 Run:
     python external/convert/dae2obj.py <rtb>/.../qut_frankie_description/meshes/visual  /tmp/omron_out
@@ -29,14 +36,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import shutil
 import tempfile
 from pathlib import Path
 
 import mujoco
 import numpy as np
+from model_headline import with_headline
 
 from roqsim.models import resolve_model
+
+HEADLINE = "Frankie - a Franka Emika Panda on an Omron LD-60 differential-drive base - for MuJoCo."
 
 HERE = Path(__file__).resolve()
 # external/ is a sibling of the family packages, so anchor back through parents[2] (see robot-porting
@@ -87,6 +98,32 @@ WHEEL_MASS = 1.5
 # floor itself. Consequence (documented): obstacles below 0.125 m are not collided by the base.
 CHASSIS_Z0 = 0.125
 SPAWN_Z = 0.010  # spawn just above rest height, like husky_a200
+
+# --- The safety laser scanner -------------------------------------------------------------------------
+# The LD-60's Safety Laser Scanner is an Omron OS32C (I611 p. 16, 1-30, 4-49: "OS32C laser settings"),
+# which the manifest mounts as the `omron_os32c` device. Its scan plane is 190 mm above the floor
+# (I611 p. 1-6, 2-13); the CAD's floor is base z 0 (mesh min z 0, and the low laser's opening omron__m6
+# is centred on I611's 58 mm), where base_link rests. The horizontal position is the CAD's scanner
+# space, the centre of omron__m8 -- no source states it.
+SCAN_ORIGIN = (0.265, 0.0, 0.190)
+SCAN_FIELD_HALF_ANGLE_DEG = 120.0  # I611 p. 1-6, 2-13: a 240 deg field
+# omron__m8 is the CAD's block in that space, 101.6 x 99.4 x 66.5 mm -- not an OS32C, whose housing is
+# 133.0 x 104.5 x 142.7 mm (Z298 p. 5, 8). The device carries its own housing, so it is not shipped.
+EXCLUDED_MESHES = ("omron__m8",)
+# The opening the scanner looks through. I611 p. 1-19: "the Safety Laser Scanner is positioned inside a
+# channel along the front of the AMR. This channel along the front and sides of the AMR allows a clear
+# line-of-sight for the Safety Laser Scanner." Omron gives no dimension for it; photos of Frankie and of
+# the LD-60 show it as the dark band between the front upper skin and the bumper skin, wrapping into
+# the sides. The CAD's skin carries that channel: about SCAN_ORIGIN its visual meshes are open from
+# z 0.1815 to 0.2235 over +-125 deg (checked below by casting against them). It contains the 240 deg
+# field, and the OS32C's optical head -- 57.0 to 104.5 mm above the scanner's base (Z298 p. 8), so
+# z 0.180 to 0.2275 on this mount -- spans it.
+CHANNEL_Z = (0.1815, 0.2235)
+CHANNEL_HALF_ANGLE_DEG = 125.0
+# The URDF's collision box encloses the scan origin. The real channel is cut into it: below the channel,
+# above it, and behind the plane where a ray at +-CHANNEL_HALF_ANGLE_DEG leaves the box's side face, the
+# box stays; the channel's front and sides are open.
+CHANNEL_REAR_X = SCAN_ORIGIN[0] + (BOX_W / 2) / math.tan(math.radians(CHANNEL_HALF_ANGLE_DEG))
 
 # The timestep this model is verified at, and the reason it is not the substrate default.
 #
@@ -159,6 +196,12 @@ def _rp(quat) -> tuple[float, float]:
     return round(float(np.degrees(roll)), 3), round(float(np.degrees(pitch)), 3)
 
 
+def _box(name: str, lo: tuple[float, float, float], hi: tuple[float, float, float]) -> str:
+    size = " ".join(f"{(h - lo_) / 2:.4f}" for lo_, h in zip(lo, hi, strict=True))
+    pos = " ".join(f"{(h + lo_) / 2:.4f}" for lo_, h in zip(lo, hi, strict=True))
+    return f'      <geom name="{name}" type="box" size="{size}" pos="{pos}" class="f_collision"/>'
+
+
 def base_xml(materials: list[tuple[str, list[float]]]) -> str:
     """The Omron LD-60 base as standalone MJCF, ready to receive the panda at MOUNT_XYZ."""
     mats = "\n".join(
@@ -170,8 +213,15 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
         f'        <geom mesh="{n}" material="{n}" class="f_visual"/>' for n, _ in materials
     )
     hy = WHEEL_SEP / 2.0
-    box_hz = (BOX_H - CHASSIS_Z0) / 2.0
-    box_cz = CHASSIS_Z0 + box_hz
+    hx, hw = BOX_L / 2.0, BOX_W / 2.0
+    ch_lo, ch_hi = CHANNEL_Z
+    chassis = "\n".join(
+        (
+            _box("chassis", (-hx, -hw, ch_hi), (hx, hw, BOX_H)),
+            _box("chassis_below_channel", (-hx, -hw, CHASSIS_Z0), (hx, hw, ch_lo)),
+            _box("chassis_behind_channel", (-hx, -hw, ch_lo), (CHANNEL_REAR_X, hw, ch_hi)),
+        )
+    )
     return (
         f"""<mujoco model="frankie_base">
   <compiler angle="radian" autolimits="true" meshdir="meshes"/>
@@ -187,30 +237,29 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
       </default>
       <default class="f_wheel">
         <!-- `fromto` rather than size+quat: a `quat` on a geom DEFAULT is silently dropped by
-             MjSpec's XML round-trip, which left the wheel cylinders unrotated -- flat discs lying on
-             the floor instead of upright wheels, with the bbox and mass unchanged. fromto states the
-             axis in the geom itself and survives. -->
+             MjSpec's XML round-trip, which leaves the wheel cylinders unrotated -- flat discs lying
+             on the floor instead of upright wheels, with the bbox and mass unchanged. fromto states
+             the axis in the geom itself and survives. -->
         <geom type="cylinder" fromto="0 {-WHEEL_HW} 0 0 {WHEEL_HW} 0" size="{WHEEL_R}"
               friction="1.2 0.005 0.0001" condim="4" group="3" rgba="0.15 0.15 0.15 1"/>
         <!-- `armature` is the drivetrain's reflected rotor inertia (rotor inertia x gear ratio^2), as
              on the jackal; `frictionloss` is the Coulomb term that makes zero velocity an ATTRACTOR.
              Both are needed for stability, not realism: a bare wheel (I~0.003) under a kv=40 velocity
-             servo at dt=2 ms has kv*dt/I >> 1, and the first build of this model sat in a permanent
-             +/-10 rad/s limit cycle -- wheels chattering while the base stood still, which also shook
-             the arm at ~1 rad/s. armature raises the effective inertia to make the servo loop stable
-             (kv*dt/I ~ 1) and frictionloss stops the residual hunting. The husky uses frictionloss
-             2.0, the jackal armature 0.02 + frictionloss 0.15. -->
+             servo at dt=2 ms has kv*dt/I >> 1, and without them the model sits in a permanent
+             +/-10 rad/s limit cycle -- wheels chattering while the base stands still, which also
+             shakes the arm at ~1 rad/s. armature raises the effective inertia to make the servo
+             loop stable (kv*dt/I ~ 1) and frictionloss stops the residual hunting. The husky uses
+             frictionloss 2.0, the jackal armature 0.02 + frictionloss 0.15. -->
         <joint type="hinge" axis="0 1 0" armature="0.08" frictionloss="1.0"/>
       </default>
       <default class="f_caster">
         <!-- A passive ball caster must not resist yaw, and a LOW `friction` ON THE GEOM DOES NOT
              ACHIEVE THAT: MuJoCo combines the two geoms' friction as the element-wise MAX, so a
-             0.02-friction sphere on a 1.0-friction floor still drags at 1.0. The first build made
-             exactly that mistake. The turtlebot4's pattern is the reliable one -- disable automatic
-             collision (contype/conaffinity 0) and give the caster a single explicit <pair> with
-             condim="1" (normal force only, genuinely frictionless). Modelled as a sphere rather than
-             an articulated swivel: the LD-60's casters are small and their swivel dynamics do not
-             matter at 0.2-0.5 m/s. -->
+             0.02-friction sphere on a 1.0-friction floor still drags at 1.0. The turtlebot4's
+             pattern is the reliable one -- disable automatic collision (contype/conaffinity 0) and
+             give the caster a single explicit <pair> with condim="1" (normal force only, genuinely
+             frictionless). Modelled as a sphere rather than an articulated swivel: the LD-60's
+             casters are small and their swivel dynamics do not matter at 0.2-0.5 m/s. -->
         <geom type="sphere" size="{CASTER_R}" contype="0" conaffinity="0" group="3"
               rgba="0.2 0.2 0.2 1"/>
       </default>
@@ -233,9 +282,10 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
       <site name="base_mount" pos="{MOUNT_XYZ[0]} {MOUNT_XYZ[1]} {MOUNT_XYZ[2]}" size="0.008"
             rgba="0 1 0 0"/>
 {visuals}
-      <!-- Chassis collision: the URDF's declared footprint in x/y, raised clear of the wheels in z. -->
-      <geom name="chassis" type="box" size="{BOX_L / 2} {BOX_W / 2} {box_hz:.4f}"
-            pos="0 0 {box_cz:.4f}" class="f_collision"/>
+      <!-- Chassis collision: the URDF's declared footprint in x/y, raised clear of the wheels in z, with
+           the LD's scanner channel cut out of it (build_frankie_mjcf.py CHANNEL_Z, z {CHANNEL_Z[0]} to
+           {CHANNEL_Z[1]}, open ahead of x {CHANNEL_REAR_X:.4f}). -->
+{chassis}
       <body name="left_wheel" pos="0 {hy} {WHEEL_R}">
         <joint name="left_wheel_joint" class="f_wheel"/>
         <geom name="left_wheel" class="f_wheel" mass="{WHEEL_MASS}"/>
@@ -291,6 +341,51 @@ def base_xml(materials: list[tuple[str, list[float]]]) -> str:
     )
 
 
+def _first_robot_hit(model, data, local_origin, bearing_deg: float, geomgroup=None) -> str | None:
+    """Name of the robot geom (or its mesh) a horizontal ray from a base-frame point meets first."""
+    base = model.body("base_link").id
+    rot = data.xmat[base].reshape(3, 3)
+    origin = data.xpos[base] + rot @ np.asarray(local_origin, dtype=float)
+    bearing = math.radians(bearing_deg)
+    direction = rot @ np.array([math.cos(bearing), math.sin(bearing), 0.0])
+    geomid = np.array([-1], dtype=np.int32)
+    mujoco.mj_ray(model, data, origin, direction, geomgroup, 1, -1, geomid)
+    gid = int(geomid[0])
+    if gid < 0 or model.geom_bodyid[gid] == 0:
+        return None
+    if model.geom_type[gid] == mujoco.mjtGeom.mjGEOM_MESH:
+        return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, int(model.geom_dataid[gid]))
+    return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or f"geom {gid}"
+
+
+def check_scan_channel(model, data) -> None:
+    """The CAD skin's channel is where CHANNEL_Z says, and the collision cut opens exactly it.
+
+    Visual meshes only (group 2): rays at the channel's floor and top and at the scan plane leave over
+    +-CHANNEL_HALF_ANGLE_DEG, and a ray 2.5 mm below or above the channel meets the skin. All geometry:
+    the 240 deg field at the scan plane meets no part of the robot.
+    """
+    visual = np.zeros(6, dtype=np.uint8)
+    visual[2] = 1
+    x, y, scan_z = SCAN_ORIGIN
+    edge = CHANNEL_HALF_ANGLE_DEG - 0.5
+    for z in (CHANNEL_Z[0] + 0.0005, scan_z, CHANNEL_Z[1] - 0.0005):
+        for bearing in np.arange(-edge, edge + 1e-9, 0.5):
+            hit = _first_robot_hit(model, data, (x, y, z), bearing, visual)
+            assert hit is None, f"the skin's channel is closed at z {z}, bearing {bearing}: {hit}"
+    for z in (CHANNEL_Z[0] - 0.0025, CHANNEL_Z[1] + 0.0025):
+        hit = _first_robot_hit(model, data, (x, y, z), 0.0, visual)
+        assert hit is not None, f"the skin is open at z {z}: CHANNEL_Z is narrower than the CAD"
+    field = SCAN_FIELD_HALF_ANGLE_DEG
+    for bearing in np.arange(-field, field + 1e-9, 0.4):
+        hit = _first_robot_hit(model, data, SCAN_ORIGIN, bearing)
+        assert hit is None, f"the 240 deg field meets {hit} at bearing {bearing}"
+    print(
+        f"  scanner channel : skin open z {CHANNEL_Z[0]}..{CHANNEL_Z[1]} over +-{CHANNEL_HALF_ANGLE_DEG} deg; "
+        f"collision cut ahead of x {CHANNEL_REAR_X:.4f}; the +-{field} deg field is clear"
+    )
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument(
@@ -307,14 +402,21 @@ def main() -> int:
         raise SystemExit(
             f"error: {mats_path} missing -- run dae2obj.py on the frankie visual meshes"
         )
-    materials = [(n, c) for n, c in json.loads(mats_path.read_text())["omron"]]
-    print(f"omron: {len(materials)} material sub-meshes")
+    converted = [(n, c) for n, c in json.loads(mats_path.read_text())["omron"]]
+    if missing := sorted(set(EXCLUDED_MESHES) - {n for n, _ in converted}):
+        raise SystemExit(f"error: {missing} not among the converted meshes -- the CAD has changed")
+    materials = [(n, c) for n, c in converted if n not in EXCLUDED_MESHES]
+    print(
+        f"omron: {len(materials)} material sub-meshes (not shipped: {', '.join(EXCLUDED_MESHES)})"
+    )
 
     # Install the converted base meshes into the model folder's own mesh dir.
     dest = MODEL_DIR / "meshes"
     dest.mkdir(parents=True, exist_ok=True)
     for name, _ in materials:
         shutil.copy2(args.omron_objs / f"{name}.obj", dest / f"{name}.obj")
+    for name in EXCLUDED_MESHES:
+        (dest / f"{name}.obj").unlink(missing_ok=True)
     print(f"installed {len(materials)} meshes -> {dest.relative_to(ROOT)}")
 
     # --- compose ------------------------------------------------------------------------------------
@@ -326,8 +428,8 @@ def main() -> int:
         stage = Path(tmp) / "meshes"
         stage.mkdir()
         # Resolve the borrowed arm through `resolve_model`, not a hardcoded package path: `panda.xml`
-        # and its meshes have already moved once (roqsim_manipulation -> roqsim_manipulation_assets), and a
-        # literal path turns that into a silent break in a *build* script, which nothing tests.
+        # and its meshes live in another package, and a literal path turns any move of them into a
+        # silent break in a *build* script, which nothing tests.
         arm = resolve_model("panda")
         # roqsim_manipulation_assets is laid out one folder per model, so the borrowed provider's mesh
         # root is its MODELS dir and the arm's own meshes sit one level down in `panda/meshes/` --
@@ -346,8 +448,13 @@ def main() -> int:
         )
         spec = mujoco.MjSpec.from_string(base_c)
         panda = mujoco.MjSpec.from_file(str(arm.path))
-        # panda.xml names its meshes bare and resolves them against its own folder's meshes/.
-        panda.meshdir = str(arm.path.parent / "meshes")
+        # panda.xml names its meshes bare against its own folder's meshes/. Written into frankie.xml
+        # they must resolve against the provider's models root, `panda/meshes/<file>` (the staging
+        # dir's layout); a bare name is what spec.to_xml() would write otherwise, and it resolves
+        # nowhere.
+        for mesh in panda.meshes:
+            mesh.file = f"panda/meshes/{mesh.file}"
+        panda.meshdir = str(stage)
 
         # Keyframes cannot merge across an attach (spawn_robot strips them for the same reason).
         for s in (panda,):
@@ -380,10 +487,12 @@ def main() -> int:
 
         print(f"  total mass      : {model.body_subtreemass[model.body('base_link').id]:.2f} kg")
 
+        check_scan_channel(model, data)
+
         # Settle test. The composition spec already carries the `floor` plane its contact pairs
-        # reference, so it is reused as-is here. (A bare model MJCF has no floor at all -- before that
-        # plane existed the settle test dropped the robot to z = -78 m, which read as a physics bug and
-        # was only a missing ground.)
+        # reference, so it is reused as-is here. (A bare model MJCF has no floor at all -- without
+        # that plane the settle test drops the robot to z = -78 m, which reads as a physics bug and
+        # is only a missing ground.)
         repaired = _repair_defaults(spec.to_xml())
         gspec = mujoco.MjSpec.from_string(repaired)
         gspec.meshdir = str(stage)
@@ -394,8 +503,9 @@ def main() -> int:
             gdata.qpos[gmodel.joint(name).qposadr[0]] = val
             # HOLD the arm at the rest pose, as arm_controller does every pre_step. Without this the
             # position servos drive toward ctrl=0, i.e. all-zeros -- a pose where the stock Panda's
-            # link5 and hand collision geoms genuinely overlap (-0.030 m). Leaving ctrl at 0 made the
-            # settle test report a "self-collision" that is an artifact of not commanding the arm.
+            # link5 and hand collision geoms genuinely overlap (-0.030 m). Leaving ctrl at 0 makes
+            # the settle test report a "self-collision" that is an artifact of not commanding the
+            # arm.
             gdata.ctrl[gmodel.actuator(f"actuator{arm_joints.index(name) + 1}").id] = val
         for _ in range(3000):  # 6 s at the default 2 ms timestep
             mujoco.mj_step(gmodel, gdata)
@@ -422,7 +532,7 @@ def main() -> int:
         print(f"  contacts at rest: {gdata.ncon} on {[c for c in carriers if c != 'floor']}")
         # Load-bearing check, time-AVERAGED. A single-frame contact snapshot is worthless here: with
         # four near-coplanar contacts it reports whichever geom happens to be penetrating this tick,
-        # and it once showed the robot balanced on one caster with both drive wheels off the ground.
+        # and it can show the robot balanced on one caster with both drive wheels off the ground.
         fl = gmodel.geom("floor").id
         force = {}
         for _ in range(500):
@@ -486,8 +596,8 @@ def main() -> int:
         # TRACTION UNDER DRIVE. The static support check passes even when the base rocks the wheels off
         # the ground the moment it moves, so the wheels must also be shown loaded WHILE driving: spin
         # them open-loop and require the hull to actually travel at the wheels' surface speed. This is
-        # the check that caught the see-saw (wheels at full commanded speed, robot creeping at a third
-        # of it, normal force periodically 0 N on both).
+        # the check that detects a see-saw (wheels at full commanded speed, robot creeping at a
+        # third of it, normal force periodically 0 N on both).
         lw = gmodel.actuator("left_wheel_motor").id
         rw = gmodel.actuator("right_wheel_motor").id
         wheel_cmd = 0.3 / WHEEL_R  # 0.3 m/s of wheel surface speed
@@ -549,9 +659,12 @@ def main() -> int:
             half = cmodel.geom_size[gid]
             print(f"  {w}: r={half[0]:.4f} halfwidth={half[1]:.4f} quat={np.round(axis, 4)}")
             assert abs(half[0] - WHEEL_R) < 1e-9, f"{w} radius wrong"
+        cdata = mujoco.MjData(cmodel)
+        mujoco.mj_forward(cmodel, cdata)
+        check_scan_channel(cmodel, cdata)
         print("  round-trip: XML reads back with an identical model")
 
-    args.out.write_text(xml)
+    args.out.write_text(with_headline(xml, HEADLINE))
     print(f"\nwrote {args.out.relative_to(ROOT)}  ({len(xml.splitlines())} lines)")
     return 0
 

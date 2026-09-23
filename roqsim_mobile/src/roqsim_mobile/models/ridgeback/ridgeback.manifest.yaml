@@ -27,15 +27,25 @@ components:
       wheels: [front_left_wheel, front_right_wheel, rear_left_wheel, rear_right_wheel]
       wheel_actuators: [front_left_wheel_motor, front_right_wheel_motor,
                         rear_left_wheel_motor, rear_right_wheel_motor]
-  # The description ships no scanner. Ridgebacks are usually fitted with one at each front corner;
-  # this is a single planar scan, and the mount height is an assumption -- see the port log.
-  - lidar:
-      site: lidar
-      frame_id: laser
-      rays: 720
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.1
-      max_range: 25.0
-      rate_hz: 10.0
-      exclude_body: base_link
+  # The scanner Clearpath's default Ridgeback configuration mounts: one Hokuyo UST-10LX, forward, on
+  # chassis_link (clearpath_config sample/r100/r100_default.yaml:13-17 @ b2a64ba; the UST-10LX is the
+  # Ridgeback's standard forward lidar, user manual rev. 1.1.2 section 1.1). The platform description
+  # carries no scanner of its own. The `hokuyo_ust` device hangs its bracket base at the joint origin
+  # and stamps the scan in `lidar2d_0_laser`, 0.0474 m higher, so the scan plane is at z 0.2330 in
+  # chassis_link. Clearpath's ROS 1 ridgeback_description put the same scanner's `front_laser` at
+  # (0.3932, 0, 0.2330) (urdf/accessories/hokuyo_ust-10lx_mount.urdf.xacro, melodic-devel), 1 mm
+  # further forward; the ROS 2 configuration is followed. Field, rays, range, rate and noise are the
+  # device's UST-10LX specification values, not Clearpath's noise-free simulation.
+  - spawn_sensor:
+      model: hokuyo_ust
+      parent_frame: chassis_link     # r100_default.yaml:15
+      pos: [0.3922, 0.0, 0.1856]     # r100_default.yaml:16
+      rpy: [0.0, 0.0, 0.0]           # no rpy in r100_default.yaml: Accessory default (0, 0, 0)
+      frame_id: lidar2d_0_laser      # clearpath_config sensors/types/lidars_2d.py get_frame_id_from_idx
+    name: lidar2d_0
+    components:
+      - lidar:
+          # Relative, so the robot's namespace scopes it: `<ns>/sensors/lidar2d_0/scan`
+          # (clearpath_sensors_description hokuyo_ust.urdf.xacro:52 @ b0f6d92; clearpath_config
+          # sensors/types/sensor.py get_topic_name).
+          topics: {scan: sensors/lidar2d_0/scan}

@@ -1,4 +1,5 @@
 <mujoco model="frankie_base">
+  <!-- Frankie - a Franka Emika Panda on an Omron LD-60 differential-drive base - for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" />
   <default>
     <default class="frankie">
@@ -56,7 +57,6 @@
     <material name="omron__m5" class="frankie" rgba="0.7255 0.7255 0.7255 1" />
     <material name="omron__m6" class="frankie" rgba="0.098 0.0902 0.1059 1" />
     <material name="omron__m7" class="frankie" rgba="0.6275 0.6275 0.6275 1" />
-    <material name="omron__m8" class="frankie" rgba="0.5 0.5 0.5 1" />
     <material name="white" class="panda" />
     <material name="off_white" class="panda" rgba="0.901961 0.921569 0.929412 1" />
     <material name="panda_black" class="panda" rgba="0.25 0.25 0.25 1" />
@@ -70,7 +70,6 @@
     <mesh name="omron__m5" file="omron__m5.obj" />
     <mesh name="omron__m6" file="omron__m6.obj" />
     <mesh name="omron__m7" file="omron__m7.obj" />
-    <mesh name="omron__m8" file="omron__m8.obj" />
     <mesh name="link0_c" file="panda/meshes/link0.stl" />
     <mesh name="link1_c" file="panda/meshes/link1.stl" />
     <mesh name="link2_c" file="panda/meshes/link2.stl" />
@@ -151,8 +150,9 @@
       <geom class="f_visual" material="omron__m5" mesh="omron__m5" />
       <geom class="f_visual" material="omron__m6" mesh="omron__m6" />
       <geom class="f_visual" material="omron__m7" mesh="omron__m7" />
-      <geom class="f_visual" material="omron__m8" mesh="omron__m8" />
-      <geom name="chassis" class="f_collision" size="0.34 0.235 0.1275" pos="0 0 0.2525" type="box" />
+      <geom name="chassis" class="f_collision" size="0.34 0.235 0.0783" pos="0 0 0.3018" type="box" />
+      <geom name="chassis_below_channel" class="f_collision" size="0.34 0.235 0.0282" pos="0 0 0.1532" type="box" />
+      <geom name="chassis_behind_channel" class="f_collision" size="0.2202 0.235 0.021" pos="-0.1198 0 0.2025" type="box" />
       <geom name="caster_front" class="f_caster" pos="0.26 0 0.0625" mass="0" />
       <geom name="caster_rear" class="f_caster" pos="-0.26 0 0.0775" mass="0" />
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0" />
@@ -255,6 +255,7 @@
                         <geom class="p_visual" material="white" mesh="hand_3" />
                         <geom class="p_visual" material="off_white" mesh="hand_4" />
                         <geom class="p_collision" mesh="hand_c" />
+                        <site name="pinch" pos="0 0 0.1034" group="5" rgba="0.9 0.9 0.9 1" />
                         <body name="left_finger" pos="0 0 0.0584">
                           <inertial pos="0 0 0" mass="0.015" diaginertia="2.375e-06 2.375e-06 7.5e-07" />
                           <joint name="finger_joint1" class="finger" pos="0 0 0" axis="0 1 0" />

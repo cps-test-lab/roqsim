@@ -1,0 +1,35 @@
+<mujoco model="lds01">
+  <!--
+    ROBOTIS LDS-01 (HLS-LFCD2) 2D lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from ROBOTIS `turtlebot3_description` (urdf/turtlebot3_waffle.urdf), the scanner on the
+    TurtleBot 3: the body is `base_scan`, the mesh has no visual origin, and the scan is stamped in
+    the link itself. Inertial as the vendor writes it (0.114 kg; the datasheet gives under 125 g).
+
+    Body-local axes: x = the scan's zero bearing, z = up; the mesh spans z -30.2 .. +9.0 mm.
+
+    Built by external/convert/build_scanner_devices.py from turtlebot3 @ 0c0be84e3f5c3194fb2adea8426a58a96060eab5.
+    Scan parameters and the `frames:` entry for this site are in lds01.manifest.yaml; see
+    lds01_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="lds_mat" rgba="0.3 0.3 0.3 1"/>
+    <mesh name="lds" file="lds.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0" mass="0.114" diaginertia="0.001 0.001 0.001"/>
+      <geom name="lds01_visual" type="mesh" mesh="lds" material="lds_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision cylinder (r 55 mm, 31.5 mm long), offset 15 mm forward. -->
+      <geom name="lds01_collision" type="cylinder" pos="0.015 0 -0.0065" size="0.055 0.01575" group="3"/>
+      <!-- The vendor scan frame (base_scan) is the mount itself.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

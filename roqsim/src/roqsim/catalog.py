@@ -64,7 +64,7 @@ from pathlib import Path
 
 import yaml
 
-from roqsim.manifest import manifest_path
+from roqsim.manifest import manifest_license, manifest_path
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
 from roqsim.models import _entry_points, _provider_dirs
 from roqsim.world import _world_entry_points, available_worlds
@@ -102,11 +102,20 @@ def _manifest_components(model_file: Path) -> list[str]:
 
 
 def _provenance(model_file: Path) -> list[str]:
-    """Names of the licence/credits files shipped beside a model (its folder, then its parent)."""
-    found: list[str] = []
-    for directory in dict.fromkeys((model_file.parent,)):
-        for pattern in _PROVENANCE_GLOBS:
-            found += sorted(p.name for p in directory.glob(pattern) if p.is_file())
+    """Names of the licence/credits files that apply to a model.
+
+    A model that names its licence (``license:`` in its manifest) is reported by that name plus any
+    credits beside it; only a model that names none falls back to everything licence-shaped in its
+    directory. The fallback is right for the folder-per-model layout, where the sidecar sits alone
+    beside the MJCF, and wrong for a flat provider whose one directory holds several vendors' terms
+    -- which is what the declaration is for (:func:`roqsim.manifest.manifest_license`).
+    """
+    declared = [path.name for path in manifest_license(model_file)]
+    found: list[str] = list(declared)
+    for pattern in _PROVENANCE_GLOBS if not declared else ("CREDITS.txt",):
+        found += sorted(
+            p.name for p in model_file.parent.glob(pattern) if p.is_file() and p.name not in found
+        )
     return found
 
 

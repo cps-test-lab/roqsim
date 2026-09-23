@@ -32,8 +32,8 @@ from pathlib import Path
 
 DEFAULT_URDF = "/opt/ros/{distro}/share/open_manipulator_description/urdf/open_manipulator_x/open_manipulator_x.urdf"
 DEFAULT_SRDF = "/opt/ros/{distro}/share/open_manipulator_moveit_config/config/open_manipulator_x/open_manipulator_x.srdf"
-# roqsim_manipulation_assets, NOT roqsim_manipulation: the models moved to the asset half of that package
-# when it was split (roqsim_manipulation kept the plugins). external/ is a sibling of the family packages,
+# roqsim_manipulation_assets, NOT roqsim_manipulation: the models live in the asset package, and
+# roqsim_manipulation holds the plugins. external/ is a sibling of the family packages,
 # so anchor back through parents[2] -- see external/convert/README.md.
 OUT = (
     Path(__file__).resolve().parents[2]
@@ -44,6 +44,8 @@ OUT = (
 #: `gripper` note in the port log: the fingers are welded at their URDF-zero pose because the arm's
 #: only consumer (the palm-harvesting benchmark) states the gripper is out of scope, and an
 #: unactuated prismatic joint is a numerical nuisance that buys nothing.
+HEADLINE = "ROBOTIS OpenMANIPULATOR-X (4-joint serial arm + parallel gripper) for MuJoCo."
+
 ARM_JOINTS = ["joint1", "joint2", "joint3", "joint4"]
 
 #: Welded finger links: (link name, parent joint name whose URDF origin places it).
@@ -192,6 +194,7 @@ def build(urdf: Path, srdf: Path) -> str:
 
     L = []
     L.append('<mujoco model="open_manipulator_x">')
+    L.append(f"  <!-- {HEADLINE} -->")
     # roqsim_manipulation_assets is one folder per model, so the model's meshes are its own subdir.
     L.append('  <compiler angle="radian" meshdir="meshes" autolimits="true"/>')
     L.append("")

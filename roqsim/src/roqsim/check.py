@@ -16,7 +16,7 @@
 
 """Would this world load, and what would it be? One command, before any compute is spent.
 
-Everything this reports was already knowable, and that was the problem: it took ``roqsim scenes
+Everything this reports is knowable elsewhere, just not in one place: it takes ``roqsim scenes
 inputs`` to learn whether the files resolve, ``roqsim scenes describe`` to learn what the world
 contains, ``roqsim render --check`` to learn whether it compiles, and a run to learn whether the
 plugins agree with the model. Four commands, three of them in a package a world need not depend on,
@@ -121,7 +121,7 @@ def check_world(target: str) -> dict:
     from roqsim.engine import Engine
 
     try:
-        engine = Engine(cfg)
+        engine = Engine(cfg, preview=True)
     except PluginError as exc:
         report["problems"].append(_problem("config", str(exc)))
         return report

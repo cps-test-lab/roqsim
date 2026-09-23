@@ -21,8 +21,9 @@ components:
   # spot_locomotion + lidar come from the spot model manifest (models/spot.manifest.yaml).
   - spawn_robot:
       model: spot
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # The bridge reads the robot's declared endpoints from ctx.interface and publishes

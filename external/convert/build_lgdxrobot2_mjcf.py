@@ -5,11 +5,10 @@ A 0.24 m four-wheel **mecanum** research platform, 2.68 kg. The second holonomic
 `roqsim_mobile` after the Ridgeback, so it uses ``omni_drive`` and carries **no** ``slip_factor`` --
 it does not turn by scrubbing.
 
-The platform ledger recorded "skid-steer or mecanum" as this port's biggest unknown, on the strength
-of four *distinct* per-wheel meshes (mirrored roller directions need separate geometry where a
-skid-steer reuses two files). That hint was right, and it did not have to be relied on: the vendor's
-own ``lgdxrobot2_sim.urdf`` declares ``gz::sim::systems::MecanumDrive`` outright, and the drive
-geometry below is that plugin's own configuration.
+Four *distinct* per-wheel meshes point to mecanum rather than skid-steer (mirrored roller directions
+need separate geometry where a skid-steer reuses two files), and the vendor's own
+``lgdxrobot2_sim.urdf`` settles it: it declares ``gz::sim::systems::MecanumDrive`` outright, and the
+drive geometry below is that plugin's own configuration.
 
 **Two descriptions, and only one of them is usable.** ``lgdxrobot2.urdf`` is the visualisation
 description: nine links, twelve meshes, and **no inertial or collision elements whatsoever** -- it
@@ -71,7 +70,11 @@ PALETTE = {
     (0.447, 0.474, 0.502): ("lgdx_steel", "0.447 0.474 0.502 1"),
 }
 #: Massless fixed links whose visual rides on the base.
-FIXED_VISUAL_LINKS = ("camera_link", "lidar_link")
+FIXED_VISUAL_LINKS = ("camera_link",)
+#: `lidar_link`'s mesh is the RPLIDAR C1's housing (55.6 x 55.6 x 41.3 mm). The scanner is the
+#: `rplidar_c1` device the manifest mounts at lidar_link_joint, which brings its own housing, so the
+#: description's copy is neither converted nor placed.
+DEVICE_MESHES = ("b_Lidar_001_",)
 WHEELS = ("wheel1_link", "wheel2_link", "wheel3_link", "wheel4_link")
 
 
@@ -88,7 +91,9 @@ def convert_meshes(description: Path) -> dict[str, list]:
             check=True, capture_output=True,
         )
         palette = json.loads((raw / "materials.json").read_text())
-        for parts in palette.values():
+        for stem, parts in palette.items():
+            if stem in DEVICE_MESHES:
+                continue
             for sub, _rgb in parts:
                 subprocess.run(
                     [sys.executable, "-m", "roqsim.commands", "assets", "reduce-mesh",
@@ -160,7 +165,6 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
             **inertial(link),
         )
 
-    lidar_xyz, _ = pose(joints["lidar_link"])
     imu_xyz, _ = pose(joints["imu_link"])
     wheel_z = float(pose(joints["wheel1_link"])[0].split()[2])
     radius = float(links["wheel1_link"].find("collision/geometry/sphere").get("radius"))
@@ -168,12 +172,14 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
         f'    <material name="{n}" rgba="{rgba}"/>\n' for n, rgba in sorted(PALETTE.values())
     ) + "".join(
         f'    <mesh file="{sub}.obj"/>\n'
-        for sub in sorted(s for parts in palette.values() for s, _ in parts)
+        for sub in sorted(
+            s for stem, parts in palette.items() if stem not in DEVICE_MESHES for s, _ in parts
+        )
     )
     return TEMPLATE.format(
         commit=LGDX_COMMIT, assets=assets, base_visuals=base_visuals,
         box_half=half, box_pos=box_pos, box_quat=box_quat, wheels=wheels,
-        lidar_pos=lidar_xyz, imu_pos=imu_xyz,
+        imu_pos=imu_xyz,
         rest_height=f"{radius - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
@@ -243,8 +249,8 @@ TEMPLATE = """<mujoco model="lgdxrobot2">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="{imu_pos}" size="0.005" rgba="0 0 0 0"/>
-      <!-- The scan plane, off the description's own lidar_link_joint. -->
-      <site name="lidar" pos="{lidar_pos}" size="0.005" rgba="1 0 0 0.6"/>
+      <!-- No scanner here: the RPLIDAR C1 on lidar_link is the `rplidar_c1` device the manifest
+           mounts at the description's lidar_link_joint, with its own housing. -->
 {base_visuals}        <geom class="collision" type="box" size="{box_half}" name="base_collision"
               pos="{box_pos}"{box_quat}/>
 {wheels}    </body>

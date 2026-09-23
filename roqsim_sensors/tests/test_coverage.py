@@ -9,7 +9,7 @@ import mujoco
 import numpy as np
 import pytest
 import yaml
-from external_meshes import needs_mid360, needs_robin, needs_zivid
+from external_meshes import needs_robin, needs_zivid
 from roqsim_sensors.coverage import adapters, optimize
 from roqsim_sensors.coverage.adapters import PlacedSensor, build_fov
 from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
@@ -365,7 +365,7 @@ def _luminance(rgb: np.ndarray) -> float:
 
 def test_density_ramp_gets_darker_with_more_sensors():
     # The density palette must encode "more overlapping sensors = darker": luminance strictly decreases
-    # as the coverage count rises. This is the property the user asked to see.
+    # as the coverage count rises.
     from roqsim_sensors.coverage.viz import _DENSITY_RAMP
 
     lums = [_luminance(row) for row in _DENSITY_RAMP]
@@ -409,17 +409,13 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
 # -- the CLI's two entry-point contracts -------------------------------------------------------------
 
 
-@needs_mid360
 @needs_zivid
 @needs_robin
 def test_load_world_accepts_a_world_yaml():
     """`--world` must take a world YAML, not only a bare MJCF.
 
-    That branch imported `rst.config` / `rst.engine` / `rst.world` -- the package's name before it was
-    renamed to roqsim -- so every world YAML and package ref died with
-    `cannot load world ...: No module named 'rst'`, and only a raw .xml worked. The ImportError is
-    caught and re-raised as SystemExit, so the dead import read as "this world is unloadable" rather
-    than as a broken rename.
+    That branch imports the engine, and an ImportError there is caught and re-raised as SystemExit,
+    so a dead import reads as "this world is unloadable" while a raw .xml still loads.
     """
     from pathlib import Path
 
@@ -436,8 +432,8 @@ def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
     """`roqsim-coverage` is its own entry point and never reaches mujoco through roqsim.
 
     Its submodules `import mujoco` at module scope, and MUJOCO_GL is read once while that runs -- so
-    the coverage package has to select the backend itself. When it did not, the CLI bound glfw and
-    `--render 3d` had no offscreen renderer: dead on a headless node, and silently off the GPU
+    the coverage package has to select the backend itself. Otherwise the CLI binds glfw and
+    `--render 3d` has no offscreen renderer: dead on a headless node, and silently off the GPU
     everywhere else. Checked in a subprocess with MUJOCO_GL unset, since the variable binds at first
     import and the test session has already bound it.
     """
@@ -464,10 +460,9 @@ def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
 
 # -- the sampler's free-space classification -------------------------------------------------------
 #
-# `_classify_points` used to cast six axis rays per point and classify that point inside the loop.
-# It now casts through `raycast.cast_many` and classifies every point at once with numpy. The
-# vectorised form (an einsum over (P, 6, 3) normals) is where a transcription error would hide, so
-# this pins it against the per-point logic it replaced.
+# `_classify_points` casts through `raycast.cast_many` and classifies every point at once with
+# numpy. The vectorised form (an einsum over (P, 6, 3) normals) is where a transcription error would
+# hide, so this pins it against the per-point logic: six axis rays per point, classified in a loop.
 
 _CLASSIFY_XML = """
 <mujoco><worldbody>
@@ -484,7 +479,7 @@ _CLASSIFY_XML = """
 
 
 def _classify_reference(model, data, points, *, max_dist, geomgroup):
-    """The pre-change implementation: one ``mj_multiRay`` per point, classified per point."""
+    """The per-point reference: one ``mj_multiRay`` per point, classified per point."""
     from roqsim_sensors.coverage.sampling import _AXES6, _HORIZONTAL
 
     keep = np.zeros(len(points), dtype=bool)
@@ -539,8 +534,8 @@ def test_batched_classification_matches_the_per_point_loop():
 
 # -- the catalog derives its optics -------------------------------------------------------------------
 #
-# The catalog used to restate `fovy`/resolution/`near`/`far` that the models already declared, and the
-# copies had drifted (its zivid entry claimed 704x704 against the model's 480x480). These pin the
+# The catalog reads `fovy`/resolution/`near`/`far` from the models rather than restating them, since
+# a restated copy drifts from the model it names. These pin the
 # derivation itself, because a bug there is silent: `_model_optics` returning nothing would fall
 # through to `camera_adapter`'s last-resort constants and report coverage for a lens no device has.
 
@@ -584,8 +579,7 @@ def test_search_cannot_propose_a_type_the_catalog_lacks():
     """`greedy --types X` must not die in `placed_from_proposal`.
 
     `optimize._DOWN_RPY` is what `generate_candidates` will propose and `--types` is user-facing, so a
-    type listed there without a CATALOG entry is a KeyError reachable from the CLI. That is exactly
-    what `realsense_d415` was.
+    type listed there without a CATALOG entry is a KeyError reachable from the CLI.
     """
     assert set(optimize._DOWN_RPY) <= set(CATALOG)
 
@@ -598,7 +592,7 @@ def test_every_catalog_type_has_an_adapter():
 
 
 def test_catalog_as_dict_is_json_serialisable():
-    # fov_template is a property doing file IO now, so the CLI's `catalog` command (and the planner
+    # fov_template is a property that does file IO, so the CLI's `catalog` command (and the planner
     # reading its output) would break on a non-serialisable leak rather than at import.
     assert (
         json.loads(json.dumps(catalog_as_dict()))["realsense_d435"]["fov_template"]["near"] == 0.28
@@ -609,8 +603,8 @@ def test_catalog_as_dict_is_json_serialisable():
 def test_manifest_fov_near_matches_the_capture_plugin(name):
     """A sensor model's `fov.near` is its device's min range, so it must equal the plugin's clip_near.
 
-    d435 stated 0.2 while `realsense_d435` clipped at 0.28, so the drawn cone began 8 cm nearer than
-    any depth was returned. Only `near` is pinned: both this manifest and the catalog document `far`
+    A manifest `near` of 0.2 against a 0.28 clip would draw the cone 8 cm nearer than any depth is
+    returned. Only `near` is pinned: both this manifest and the catalog document `far`
     as an analysis/display range deliberately independent of `clip_far`.
     """
     asset = resolve_model(f"roqsim_sensors:{name}")

@@ -21,8 +21,8 @@ uses that mesh for BOTH visual and collision geometry. In roqsim the meshes are 
 collision is authored as primitives (chassis box, wheel cylinders, caster spheres) — so the budget here
 is about model size and render cost, not physics.
 
-**Budgets are per-part and were chosen by LOOKING at the result, not by ratio.** The tires and the
-scanner housing are smooth solids and survive aggressive collapse; the chassis is a lattice and does
+**Budgets are per-part and are chosen by LOOKING at the result, not by ratio.** The tires are
+smooth solids and survive aggressive collapse; the chassis is a lattice and does
 not (see the comment on its entry below). Rendering the converted mesh is the only check that catches
 this — extents, vertex counts and masses all pass on a shredded mesh.
 
@@ -34,7 +34,9 @@ Verified extents after conversion (metres, raw OBJ bounds):
     waffle_base  (x, y, z) = (0.271, 0.279, 0.124)  chassis plate; datasheet 0.281 x 0.306 x 0.141
                                                      includes bumper/camera/lidar protrusions
     left_tire / right_tire = (0.066, 0.018, 0.066)  radius 0.033, width 0.0182, axle along Y
-    lds                    = (0.094, 0.069, 0.039)  LDS-01 scanner housing
+
+The LDS-01 is not converted here: the manifest mounts the ``lds01`` device model from
+``roqsim_sensors``, which carries its own housing mesh.
 """
 
 from __future__ import annotations
@@ -57,12 +59,11 @@ MESHES = {
     # ratio actually delivered as 29k) the plate rendered as jagged spikes with holes torn
     # through it while every numeric check — extents, vertex count, mass — still passed.
     # At 100k it is visually indistinguishable from the 326k source, at a third the size.
-    # Cost of carrying it: essentially nothing, because the lidar plugin excludes
-    # base_link from its ray casts and all collision is primitives.
+    # Cost of carrying it: essentially nothing. All collision is primitives, and the
+    # scan plane at base_scan clears the plate, so no scan ray meets it.
     "waffle_base.stl": ("waffle_base.obj", 100000),
     "left_tire.stl": ("left_tire.obj", 2000),
     "right_tire.stl": ("right_tire.obj", 2000),
-    "lds.stl": ("lds.obj", 3000),
 }
 
 # reduce_mesh.py lives in roqsim_assets/tools/ (the prop pipeline's step 2); reused here rather than

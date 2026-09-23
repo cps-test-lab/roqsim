@@ -123,12 +123,12 @@ both ordinary Python:
 * the docstring's **first line is a one-line summary** — it is what a listing shows, so keep it plain
   prose (a terminal prints ``\`\`markup\`\``` verbatim);
 * the parser says ``ArgumentParser(description=__doc__.split("\n")[0])``. Handing it the *whole*
-  docstring is what once made a single ``--help`` cost more than the rest of the tree together.
+  docstring can make a single ``--help`` cost more than the rest of the tree together.
 
 ``make test`` **fails** while a tool with a ``__main__`` block is unregistered, while a wrapper carries
 logic, or while a ``--help`` grows an essay. These are checks (``roqsim/tests/test_command_registry.py``),
-not conventions — the previous convention decayed silently until a checked-in Makefile was calling a
-binary that had never existed.
+not conventions — a convention nothing checks decays silently, until a checked-in Makefile calls a
+binary that does not exist.
 
 A tool that runs inside Blender is registered with ``tool(..., blender=True)``: it cannot be imported
 here, so the command locates ``blender`` and runs the module inside it.

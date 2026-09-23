@@ -17,15 +17,36 @@ components:
       right_actuators: [wheel_right_motor]
       left_joints:  [mp_400_fixed_wheel_left_joint]
       right_joints: [mp_400_fixed_wheel_right_joint]
-  # ONE scanner here, unlike both holonomic siblings' two -- the vendor's own single front mount
-  # (lidar_1_joint). SICK S300, whose published field is 270 degrees; range and rate are ours.
-  - lidar:
-      site: lidar
-      frame_id: lidar_1_link
-      rays: 541
-      angle_min: -2.356194490
-      angle_max: 2.356194490
-      range_min: 0.1
-      max_range: 29.0
-      rate_hz: 12.5
-      exclude_body: base_link
+  # ONE scanner here, unlike both holonomic siblings' two: the vendor's single front SICK S300, mounted
+  # as the `sick_s300` device model at lidar_1_joint's rotation (neo_simulation2 @ 8320414,
+  # robots/mp_400/urdf/mp_400_body.urdf.xacro:36-41). The vendor writes the roll as 3.14: the scanner
+  # hangs upside down, and the value is kept as written. Field, rays, range, rate and noise are the
+  # device's datasheet values. The vendor's Gazebo sensor (720 rays over +-1.48 rad at 100 Hz, sigma
+  # 0.01, mp_400_gazebo.urdf.xacro:39-50) comes from a macro whose noise comment derives the value for
+  # a Hokuyo (components/common_macro/gazebo_lidar_macro.xacro:41-44) and which the MPO-500's
+  # microScan3s share, so it is no value for the S300 on this robot and is not copied; its topic is
+  # the robot's ROS interface and is.
+  #
+  # HEIGHT: Neobotix's hardware documentation, not the description. The MP-400 "Mechanical
+  # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mp-400/mechanical.html) puts the
+  # front scanner LS1 at Z 110 mm in the platform frame, whose origin is on the floor under the drive
+  # axle (its coordinate-system figure). Its drive wheels are 150 mm across, and the description's
+  # wheel joints sit at z 0.074, so base_link is 1 mm above the floor and the scan plane is at z 0.109.
+  # The S300's scan plane is 4.1 mm above lidar_1_link on this upside-down mount (sick_s300.xml), so
+  # the frame is at z 0.1049. The description's 0.141 puts the scan inside its own body cover; the
+  # cover's scanner pocket spans z 0.069-0.125 and is open to the front at 0.109.
+  #
+  # X: the same page, X 230 mm from the origin under the drive axle, where the description's joint
+  # writes 0.244; the drive wheel joints are at x 0 in base_link, so 0.230 applies unchanged. There the
+  # S300's optics head clears the pocket's rear wall (inner face x 0.179) by 4.3 mm, and the housing
+  # above the pocket roof stands in the cover's open interior.
+  - spawn_sensor:
+      model: sick_s300
+      parent_frame: base_link
+      pos: [0.230, 0.0, 0.1049]      # Neobotix MP-400 Positions of Sensors, LS1; see HEIGHT and X
+      rpy: [3.14, 0.0, 0.0]          # mp_400_body.urdf.xacro:38, lidar_1_joint origin rpy
+      frame_id: lidar_1_link         # mp_400_gazebo.urdf.xacro:41, the link the scan is stamped in
+    name: scan_front
+    components:
+      - lidar:
+          topics: {scan: scan}       # mp_400_gazebo.urdf.xacro:50; relative, so the namespace scopes it

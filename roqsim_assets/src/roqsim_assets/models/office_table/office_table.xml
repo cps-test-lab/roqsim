@@ -1,0 +1,73 @@
+<mujoco model="office_table">
+  <!--
+    Trestle office desk, 1.20 x 0.60 m top at z=0.68..0.72, carried by two A-frames at x = +-0.55.
+    Each frame is a central column that splays into two diagonal legs standing on a floor pad, so the
+    whole span between the frames (1.04 m wide, 0.68 m of headroom) is open: a small ground robot
+    drives through it and out the other side.
+
+    That open span is the reason the visual mesh carries NO contacts. MuJoCo collides a mesh geom as
+    its CONVEX HULL, and this table's hull is a solid block from the floor to the top -- with the mesh
+    collidable, the space a robot is meant to drive through is filled, and the pass becomes a crash.
+    So the mesh is visual-only (group 2) and collision is the primitive skeleton below (group 3),
+    which keeps the opening open and still stops a robot that runs into a leg or a foot.
+
+    The skeleton is within ~1 cm of the mesh everywhere. Two deliberate departures: it is symmetric
+    in y while the mesh's feet sit ~7 mm off centre, and each foot pad is squared off to the full
+    0.09 m the diagonal reaches down to rather than following its taper. Both err towards a slightly
+    larger obstacle, which is the safe direction for a navigation trial and far below a costmap cell.
+
+    MuJoCo can't read the OBJ's .mtl and loads PNG only, so the colour map is declared here.
+    Load standalone or <include> it into a scene.
+  -->
+  <compiler meshdir="." texturedir="."/>
+  <asset>
+    <texture name="office_table_color" type="2d" file="textures/DefaultMaterial_baseColor.png"/>
+    <material name="office_table" texture="office_table_color"/>
+    <material name="office_table_frame" rgba="0.55 0.56 0.58 1"/>
+    <mesh name="office_table" file="office_table.obj"/>
+  </asset>
+
+  <default>
+    <default class="office_table_collision">
+      <geom type="box" material="office_table_frame" group="3"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="office_table">
+      <geom name="office_table_mesh" type="mesh" mesh="office_table" material="office_table"
+            contype="0" conaffinity="0" group="2"/>
+
+      <!-- Top slab. -->
+      <geom class="office_table_collision" name="office_table_top"
+            pos="0 0 0.6995" size="0.600 0.300 0.0175"/>
+
+      <!-- Right A-frame (x = +0.55): column, two diagonals, two floor pads. The diagonals run from
+           the pads up to the foot of the column, tilted 47.6 deg about x. That tilt is a quat and
+           not an euler because this file declares no <compiler angle>: an angle written here would
+           be read in MuJoCo's default DEGREES, and the legs would silently stand up straight. -->
+      <geom class="office_table_collision" name="office_table_r_column"
+            pos="0.55 0 0.516" size="0.012 0.028 0.166"/>
+      <geom class="office_table_collision" name="office_table_r_leg_front"
+            pos="0.55 0.178 0.225" quat="0.914995 0.403464 0 0" size="0.012 0.019 0.185"/>
+      <geom class="office_table_collision" name="office_table_r_leg_back"
+            pos="0.55 -0.178 0.225" quat="0.914995 -0.403464 0 0" size="0.012 0.019 0.185"/>
+      <geom class="office_table_collision" name="office_table_r_foot_front"
+            pos="0.55 0.305 0.045" size="0.030 0.028 0.045"/>
+      <geom class="office_table_collision" name="office_table_r_foot_back"
+            pos="0.55 -0.305 0.045" size="0.030 0.028 0.045"/>
+
+      <!-- Left A-frame (x = -0.55), mirrored. -->
+      <geom class="office_table_collision" name="office_table_l_column"
+            pos="-0.55 0 0.516" size="0.012 0.028 0.166"/>
+      <geom class="office_table_collision" name="office_table_l_leg_front"
+            pos="-0.55 0.178 0.225" quat="0.914995 0.403464 0 0" size="0.012 0.019 0.185"/>
+      <geom class="office_table_collision" name="office_table_l_leg_back"
+            pos="-0.55 -0.178 0.225" quat="0.914995 -0.403464 0 0" size="0.012 0.019 0.185"/>
+      <geom class="office_table_collision" name="office_table_l_foot_front"
+            pos="-0.55 0.305 0.045" size="0.030 0.028 0.045"/>
+      <geom class="office_table_collision" name="office_table_l_foot_back"
+            pos="-0.55 -0.305 0.045" size="0.030 0.028 0.045"/>
+    </body>
+  </worldbody>
+</mujoco>

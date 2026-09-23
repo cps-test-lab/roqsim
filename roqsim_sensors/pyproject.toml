@@ -24,13 +24,17 @@ distortion = ["opencv-python>=4.6"]  # CameraPlugin `distortion:`: forward lens 
 coverage = ["matplotlib>=3.8"]  # coverage 2D heatmap; the 3D render uses mujoco + numpy only
 
 [project.scripts]
-# Legacy alias of `roqsim sensors coverage` (the documented entry point, registered below). Kept because
-# the bare name is already written into notes and run scripts -- same reason roqsim keeps `roqsim-export-*`.
+# Alias of `roqsim sensors coverage` (the documented entry point, registered below), because the
+# bare name is written into notes and run scripts -- same reason roqsim keeps `roqsim-export-*`.
 roqsim-coverage = "roqsim_sensors.coverage.cli:main"
 
 # Sensor plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
 lidar = "roqsim_sensors.plugins.lidar:LidarPlugin"
+# The small range sensors a base carries -- IR proximity, ToF, ultrasonic, a downward cliff
+# sensor: a narrow cone cast as an h x v grid of rays and published as one LaserScan, rows
+# concatenated. What a cliff or an obstacle IS stays with the consumer.
+range_sensor = "roqsim_sensors.plugins.range_sensor:RangeSensorPlugin"
 livox_mid360 = "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin"
 seyond_robin_w1g = "roqsim_sensors.plugins.seyond_robin_w1g:SeyondRobinW1GPlugin"
 oakd_camera = "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"
@@ -48,6 +52,7 @@ object_detector = "roqsim_sensors.plugins.object_detector:ObjectDetectorPlugin"
 # computed against, plus the 2D boxes that fall out of the same mask.
 segmentation_camera = "roqsim_sensors.plugins.segmentation_camera:SegmentationCameraPlugin"
 force_torque = "roqsim_sensors.plugins.force_torque:ForceTorquePlugin"
+force_limit = "roqsim_sensors.plugins.force_limit:ForceLimitPlugin"
 # The one sensor every platform here carries in reality and none could publish: a strap-down IMU.
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
 # and attitude already; this makes them an observable with covariances, TF and a fault switch.

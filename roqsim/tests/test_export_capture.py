@@ -6,9 +6,9 @@ descriptor exports, the binary must be readable by a browser's typed-array views
 mean exactly one thing (a body driven by joint tracks must not also carry a pose track, or two
 writers fight over one transform).
 
-The redundancy test is the one that earns its keep: an earlier cut marked only the body that *owns* a
-joint as explained, which emitted a pose track for every link welded to a moving parent -- 36 tracks
-instead of 2 on a real recording, silently.
+The redundancy test is the one that earns its keep: marking only the body that *owns* a joint as
+explained emits a pose track for every link welded to a moving parent -- 36 tracks instead of 2 on a
+real recording, silently.
 """
 
 from __future__ import annotations
@@ -226,8 +226,8 @@ def test_session_path_anchors_relative_output(monkeypatch, tmp_path):
     assert _session_path("capture") == tmp_path / "cfg" / "0" / "capture"
 
     # SCENARIO_OUTPUT_DIR is the *campaign* root and must never anchor a per-run artifact: every run
-    # of a sweep would write the same shared path, the last one winning. This is not hypothetical --
-    # it is what a first cut did, and the capture landed beside campaign.db instead of in the run.
+    # of a sweep would write the same shared path, the last one winning, and the capture would land
+    # beside campaign.db instead of in the run.
     monkeypatch.delenv("RUN_OUTPUT_DIR")
     monkeypatch.delenv("OUTPUT_DIR")
     monkeypatch.setenv("SCENARIO_OUTPUT_DIR", str(tmp_path / "campaign_root"))

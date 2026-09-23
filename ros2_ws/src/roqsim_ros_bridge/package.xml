@@ -27,6 +27,9 @@
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>simulation_interfaces</exec_depend>
   <exec_depend>control_msgs</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>std_srvs</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>ackermann_msgs</exec_depend>
 

@@ -18,10 +18,10 @@ Cascaded, in the usual quadrotor form:
    a rate damping term. This is used rather than Euler angles because it does not degenerate as the
    drone tilts, and a quadrotor recovering from a large disturbance does tilt.
 
-Config::
+Config -- a component of the entry that spawns the drone, since ownership is where the entry
+sits rather than a config key::
 
     quadrotor_controller:
-      robot: drone                  # entity name registered by spawn_robot
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       body: cf2                     # the drone's root body (default: the entity's root)
       thrust_actuator: body_thrust  # collective thrust, in newtons
@@ -44,7 +44,7 @@ convention, and a future airframe need not share it.
 moment and the model's actuator gear converts it to ``ctrl``. They are sized from the airframe: for a
 body inertia I and a target attitude bandwidth wn with damping zeta, ``kp_att ~ I*wn^2`` and
 ``kd_att ~ 2*zeta*I*wn``. The defaults are I = 2.4e-5 kg*m^2 at wn = 20 rad/s, zeta = 0.9. This is
-also why the Crazyflie's moment gear had to be tuned during the port: at the arbitrary 1e-5 N*m
+also why the Crazyflie's moment gear is tuned rather than upstream's: at the arbitrary 1e-5 N*m
 upstream ships, full deflection buys 0.42 rad/s^2 and no attitude loop can track a position
 controller's tilt command -- the drone hovers perfectly and flies away the moment it is asked to
 translate. See the port log.
@@ -57,6 +57,7 @@ The plugin logs a warning rather than silently flying in vacuum.
 from __future__ import annotations
 
 import logging
+import math
 
 import mujoco
 import numpy as np
@@ -84,6 +85,12 @@ _DEFAULTS = {
 def _hat_vee(matrix: np.ndarray) -> np.ndarray:
     """The vee map: the axial vector of a 3x3 skew-symmetric matrix."""
     return np.array([matrix[2, 1], matrix[0, 2], matrix[1, 0]])
+
+
+def _yaw_of(quat) -> float:
+    """Heading out of a ``(w, x, y, z)`` quaternion."""
+    w, x, y, z = (float(v) for v in quat)
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
 
 
 class QuadrotorControllerPlugin(Plugin):
@@ -184,7 +191,11 @@ class QuadrotorControllerPlugin(Plugin):
                 direction="in",
                 owner=self.robot,
                 namespace=ns,
-                write=lambda p: self.set_target(p[0], p[1], p[2], p[3] if len(p) > 3 else None),
+                # (position, quaternion): an airframe holds pitch and roll to fly, so only the
+                # heading out of the commanded orientation is a setpoint for it. The projection is
+                # here, with the consumer that wants it, rather than in the decoder -- a Cartesian
+                # controller subscribing to the same type needs the full orientation.
+                write=lambda p: self.set_target(*p[0], _yaw_of(p[1]) if len(p) > 1 else None),
                 backend={"ros2": {"type": "geometry_msgs.msg.PoseStamped", "topic": "cmd_pos"}},
             )
         )

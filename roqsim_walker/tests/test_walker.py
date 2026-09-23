@@ -1,4 +1,7 @@
-"""Unit tests for the walker: skeleton FK, clips, planner, blueprint, and the plugin end-to-end."""
+"""Unit tests for the walker: skeleton FK, clips, blueprint, and the plugin end-to-end.
+
+The planner and occupancy-grid tests live with the code, in ``roqsim_nav/tests/test_planner.py``.
+"""
 
 from __future__ import annotations
 
@@ -20,8 +23,6 @@ from roqsim_walker.humanoid import (
     to_skeleton,
 )
 from roqsim_walker.motion import Clip, procedural_idle, procedural_walk, smoothstep
-from roqsim_walker.nav.occupancy import OccupancyGrid
-from roqsim_walker.nav.planner import GridPlanner
 
 IDENT = {n: np.array([1.0, 0.0, 0.0, 0.0]) for n in JOINT_NAMES}
 
@@ -89,49 +90,6 @@ def test_smoothstep_edges():
     assert smoothstep(1.5, 1.0, 2.0) == pytest.approx(0.5)
 
 
-# -- planner -----------------------------------------------------------------------------------
-_BOUNDS = (-2.0, -2.0, 2.0, 2.0)  # OccupancyGrid.from_polygons pads this by 1 m on every side
-
-
-def _wall_grid(top: float = 1.0):
-    """A room bisected by a wall at x=0 running from below the padded floor up to ``top``, so the
-    only way across is over the gap at the top."""
-    wall = [(-0.1, -3.5), (0.1, -3.5), (0.1, top), (-0.1, top)]
-    return OccupancyGrid.from_polygons([wall], resolution=0.05, bounds=_BOUNDS)
-
-
-def test_planner_routes_around_a_wall():
-    planner = GridPlanner(_wall_grid(), inflation_radius=0.2)
-    path = planner.plan((-1.0, -1.0), (1.0, -1.0))
-    assert path, "goal should be reachable via the gap above the wall"
-    assert path[-1] == pytest.approx((1.0, -1.0))
-    # The straight line would cross x=0 at y=-1 (solid); the plan must detour over the wall's top.
-    assert max(y for _, y in path) > 1.0
-
-
-def test_planner_returns_none_when_the_goal_is_walled_off():
-    # A wall spanning the whole padded grid seals the two halves apart.
-    sealed = _wall_grid(top=3.5)
-    planner = GridPlanner(sealed, inflation_radius=0.0)
-    assert planner.plan((-1.0, 0.0), (1.0, 0.0)) is None
-
-
-def test_planner_simplifies_a_clear_run_to_a_straight_shot():
-    grid = OccupancyGrid.from_polygons([[(9.0, 9.0), (9.1, 9.0), (9.1, 9.1)]], bounds=_BOUNDS)
-    planner = GridPlanner(grid, inflation_radius=0.0)
-    path = planner.plan((-1.5, -1.5), (1.5, 1.5))
-    assert path is not None
-    assert len(path) <= 2, f"line-of-sight string-pulling should collapse the path, got {path}"
-
-
-def test_occupancy_inflation_grows_obstacles():
-    grid = _wall_grid()
-    base = grid.inflate(0.0).sum()
-    grown = grid.inflate(0.3).sum()
-    assert grown > base
-
-
-# -- blueprint ---------------------------------------------------------------------------------
 def test_obj_groups_key_by_material_name():
     # Regression: trimesh only keys the OBJ groups by their material names when the blueprint's .mtl
     # sits next to the OBJ. Without it every group falls back to a generic name, materials.get()
@@ -257,14 +215,65 @@ def test_build_humanoid_with_a_skinned_blueprint_compiles():
     assert model.ntex >= want, "no textures loaded for the character"
 
 
+def _stand(model, data, name: str, root) -> None:
+    """Put a walker's mocap bodies where its rest pose says, with the pelvis at *root*."""
+    for part, (pos, quat) in forward_kinematics(root, 0.0, IDENT).items():
+        mocap = model.body_mocapid[
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{name}/{part}")
+        ]
+        data.mocap_pos[mocap] = pos
+        data.mocap_quat[mocap] = quat
+    mujoco.mj_forward(model, data)
+
+
+def test_a_walkers_hit_boxes_are_not_transparent():
+    """``mj_ray`` skips a geom whose resolved alpha is zero, so a transparent hit box is solid to
+    contact and absent from every scan. A hit box is kept out of a picture by its group instead."""
+    spec = mujoco.MjSpec()
+    build_humanoid(spec, name="ped", mesh=None)
+    model = spec.compile()
+    hit_boxes = [i for i in range(model.ngeom) if model.geom_group[i] == 3]
+    assert hit_boxes
+    assert all(model.geom_rgba[i][3] > 0.0 for i in hit_boxes)
+
+
+def test_a_ray_at_a_skinned_walker_comes_back_with_its_distance():
+    """The failure this guards is silent: a robot's costmap never marks the person, its controller
+    never brakes, and the trial reports whatever it was going to report. A skinned character has no
+    visual geoms to fall back on -- its hit boxes are the only thing a ray can return."""
+    blueprint = resolve_walker("MaleVisitorWalk")
+    spec = mujoco.MjSpec()
+    build_humanoid(
+        spec,
+        name="ped",
+        mesh=blueprint["mesh"],
+        materials=blueprint["materials"],
+        tpose=blueprint["tpose"],
+        skeleton=blueprint["skeleton"],
+        collision=blueprint["collision"],
+    )
+    model = spec.compile()
+    data = mujoco.MjData(model)
+    skel = to_skeleton(blueprint["skeleton"])
+    _stand(model, data, "ped", [3.0, 0.0, skel.root_height])
+
+    geom = np.zeros(1, dtype=np.int32)
+    dist = mujoco.mj_ray(
+        model, data, np.array([0.0, 0.0, 1.2]), np.array([1.0, 0.0, 0.0]), None, 1, -1, geom
+    )
+    assert dist > 0.0, "a ray at chest height passed through the walker"
+    assert dist == pytest.approx(3.0, abs=0.5)
+    assert model.geom_group[geom[0]] == 3
+
+
 # -- blueprints resolve across packages ------------------------------------------------------------
 def test_a_foreign_package_can_ship_a_blueprint(tmp_path, monkeypatch):
     """A character does not have to live in this package.
 
     Blueprints resolve across every registered ``roqsim.models`` provider, so a downstream package
     ships its own people without this one being edited -- and a world still names only the walker.
-    Without this, a blueprint outside ``roqsim_walker/models`` is unreachable no matter how it is
-    registered, because the lookup used to be one hardcoded directory.
+    A lookup of one hardcoded directory would leave a blueprint outside ``roqsim_walker/models``
+    unreachable no matter how it is registered.
     """
     from roqsim_walker import blueprint
 
@@ -277,9 +286,7 @@ def test_a_foreign_package_can_ship_a_blueprint(tmp_path, monkeypatch):
         if f.is_file():
             shutil.copy(f, actor / f.name)
 
-    monkeypatch.setattr(
-        blueprint, "_providers", lambda: [("foreign", foreign)], raising=False
-    )
+    monkeypatch.setattr(blueprint, "_providers", lambda: [("foreign", foreign)], raising=False)
     monkeypatch.setattr(
         "roqsim.models.providers",
         lambda: [("foreign", foreign, foreign / "meshes", foreign)],

@@ -52,7 +52,17 @@ there is reason to think it is still alive**:
 Either way a message states what was *observed* -- how long since the last row, and where -- and
 never asserts a cause.
 
-Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every root body and
+**Each record is read from its window, not from its start.** Every check judges the newest minute
+(:data:`CLOCK_READ_S`, :data:`POSE_READ_S`), so a record is entered at the first row inside that
+window and the rows before it are never parsed; only what arrives afterwards is read incrementally.
+That is what "cheap enough to poll" rests on: a supervisor runs this as a *new process* on every
+poll, usually inside the simulator's own container and memory budget, and a reader that parsed the
+whole record each time would cost more on every poll for as long as the run lasted -- until the
+transient was larger than the simulator's budget had room for. A verdict is therefore about the
+run's newest minute: a robot that stood still earlier and has moved since is not reported, which is
+what a caller asking "what does the run look like right now" means.
+
+Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every recorded body and
 the clock, with the sim-to-wall rate. It is here rather than in a command of its own because both
 answers come from the same two records in the same read, and a caller asking "is anything wrong"
 almost always wants "and where is it" next. A *latest-value* answer, not an interpolation to the
@@ -108,6 +118,23 @@ RATE_WINDOW_S = 60.0
 #: Seconds between polls in ``--watch``. The checks answer questions measured in minutes, so this
 #: only decides how promptly a finding is reported, never whether it is found.
 POLL_S = 2.0
+
+#: How much of a record is read when it is opened, in the seconds of its own first column: the
+#: longest window any check over it judges, plus this slack. **What keeps the cost of a check
+#: independent of the length of the run.** Every check here answers a question about the most
+#: recent minute, so the rows before that minute are read for nothing -- and a reader started fresh
+#: on every poll, as a supervisor does, would otherwise parse a whole run's record each time, with a
+#: transient footprint that grows for as long as the run does. The slack is what lets a window be
+#: measured *inside* the rows read: the rate check anchors on the last row before its cutoff, and
+#: the motion check needs a still robot to have been still for the whole window since its anchor.
+READ_SLACK_S = 10.0
+CLOCK_READ_S = max(START_TIMEOUT_S, RATE_WINDOW_S) + READ_SLACK_S
+POSE_READ_S = MOTION_WINDOW_S + READ_SLACK_S
+
+#: Step of the backward scan that finds where a window begins. Coarse against a row and fine against
+#: a window: a minute of poses for a handful of bodies is a few hundred KiB, so the over-read at the
+#: window's edge is at most one of these.
+_SCAN_CHUNK = 64 * 1024
 
 #: A sim_ts smaller than the one before it by more than this is a reset, not a rewind. The columns
 #: are written at six decimals, so anything above rounding is a real step backwards.
@@ -178,12 +205,24 @@ class Tail:
     Read in binary because the position has to be a byte offset that can be compared with a size;
     a text handle's ``tell()`` is documented as an opaque cookie. Lines are decoded one at a time,
     so a multi-byte character split across two reads cannot corrupt one.
+
+    **Opened at the window, not at the start.** With a *window*, in the seconds of the record's own
+    first column, a file that already holds more than that is entered at the first row inside the
+    window and the rows before it are never read (``skipped`` counts the bytes left unread). The
+    checks judge the newest minute of a run, and a reader that is a new process on every poll would
+    otherwise parse the whole record every time -- a footprint that grows with the run, inside the
+    simulator's own memory budget when the two share a container. Everything appended after the open
+    is still read incrementally, exactly as before. A record that resets its clock -- the pose
+    record's sim time at a world reset -- is entered no earlier than the reset: the checks re-anchor
+    there anyway, so nothing before it would change a verdict.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, window: float | None = None) -> None:
         self.path = path
+        self.window = window
         self.malformed = 0
         self.restarts = 0
+        self.skipped = 0
         self._handle = None
         self._buffer = b""
         self._fields: list[str] | None = None
@@ -192,6 +231,21 @@ class Tail:
         self.close()
         self._buffer = b""
         self._fields = None
+
+    def _open(self) -> None:
+        self._handle = self.path.open("rb")
+        if self.window is None:
+            return
+        header = self._handle.readline()
+        if not header.endswith(b"\n"):
+            # The writer is between creating the file and finishing its header. Nothing to
+            # window yet; the incremental read below picks the header up once it is whole.
+            self._handle.seek(0)
+            return
+        self._fields = header.decode("utf-8").strip("\r\n").split(",")
+        start = _window_start(self._handle, len(header), self.window)
+        self.skipped = start - len(header)
+        self._handle.seek(start)
 
     def rows(self) -> list[dict[str, str]]:
         """Every complete row appended since the last call. Empty while the file does not exist."""
@@ -206,7 +260,7 @@ class Tail:
         if self._handle is None:
             if not self.path.exists():
                 return []
-            self._handle = self.path.open("rb")
+            self._open()
         self._buffer += self._handle.read()
         *complete, self._buffer = self._buffer.split(b"\n")
         out: list[dict[str, str]] = []
@@ -237,6 +291,69 @@ class Tail:
             self._handle = None
 
 
+def _window_start(handle, body_start: int, window: float) -> int:
+    """The offset of the first row within *window* seconds of the newest one, scanning backwards.
+
+    Reads the file from its end in :data:`_SCAN_CHUNK` steps, so what it costs is the window and one
+    chunk, never the file. Each chunk contributes its earliest complete line, whose first field is
+    the record's time column; the scan stops at the first such line older than the window, at a
+    line whose time is *greater* than the one after it (the record's clock was reset there, and the
+    checks start over at a reset), or at the start of the rows. The answer is the offset of that
+    line, so the window is over-read by at most one chunk, and the checks trim it by time as they
+    always have. Returns *body_start* -- everything -- when nothing is older than the window or when
+    the time column cannot be read: the bounded answer on an unreadable record is to fall back to
+    the whole of it once, not to guess an offset into it.
+    """
+    handle.seek(0, 2)
+    end = handle.tell()
+    newest: float | None = None
+    oldest: float | None = None
+    hi = end
+    carry = b""  # the front of the chunk read last: a line that begins before it
+    while hi > body_start:
+        lo = max(body_start, hi - _SCAN_CHUNK)
+        handle.seek(lo)
+        data = handle.read(hi - lo) + carry
+        lines = data.split(b"\n")
+        if hi == end:
+            lines.pop()  # after the final newline: a row still being written, or nothing
+        if lo > body_start:
+            # Begins somewhere before this chunk, so it is complete only with the next one read.
+            carry = lines.pop(0) if lines else data
+        else:
+            carry = b""
+        first_at = lo + len(carry) + (1 if lo > body_start else 0)
+        if newest is None:
+            last = next((line for line in reversed(lines) if line.strip()), None)
+            if last is None:
+                hi = lo
+                continue
+            newest = _first_field(last)
+            if newest is None:
+                return body_start
+        offset = first_at
+        for line in lines:
+            if not line.strip():
+                offset += len(line) + 1
+                continue
+            stamp = _first_field(line)
+            if stamp is None:
+                return body_start
+            if stamp <= newest - window or (oldest is not None and stamp > oldest + SERIES_EPS):
+                return offset
+            oldest = stamp
+            break
+        hi = lo
+    return body_start
+
+
+def _first_field(line: bytes) -> float | None:
+    try:
+        return float(line.split(b",", 1)[0])
+    except ValueError:
+        return None
+
+
 def find_clock_record(run_dir: Path) -> Path | None:
     """The run's clock record. Named after the recording, so it is found by suffix, newest first.
 
@@ -265,13 +382,23 @@ class FileSource:
     Kept behind this small surface -- ``clock()`` and ``poses()`` returning plain rows -- because the
     checks below are written against the rows and not against the files. A source that answered from
     somewhere else (an endpoint, for a checker that has to run off-node) would change nothing else.
+
+    Each record is entered at its own window (:data:`CLOCK_READ_S` of wall time, :data:`POSE_READ_S`
+    of sim time -- the column each is sampled on), which is what bounds a check by the window it
+    judges rather than by the length of the run. ``None`` for either reads the whole file.
     """
 
-    def __init__(self, clock_path: Path | None, poses_path: Path | None) -> None:
+    def __init__(
+        self,
+        clock_path: Path | None,
+        poses_path: Path | None,
+        clock_window: float | None = CLOCK_READ_S,
+        pose_window: float | None = POSE_READ_S,
+    ) -> None:
         self.clock_path = clock_path
         self.poses_path = poses_path
-        self._clock = Tail(clock_path) if clock_path else None
-        self._poses = Tail(poses_path) if poses_path else None
+        self._clock = Tail(clock_path, clock_window) if clock_path else None
+        self._poses = Tail(poses_path, pose_window) if poses_path else None
 
     def clock(self) -> list[ClockRow]:
         if self._clock is None:
@@ -493,7 +620,7 @@ class RobotMoves:
             set()
         )  # every frame the record offers, for the "no such robot" report
         self._span: tuple[float, float] | None = None
-        self._samples = 0  # distinct sample stamps seen; every sample writes every root body
+        self._samples = 0  # distinct sample stamps seen; every sample writes every named body
 
     def on_new_series(self) -> None:
         """Re-anchor every robot. A reset either teleports it home (a delta that would mask a real
@@ -502,7 +629,7 @@ class RobotMoves:
         self._anchor.clear()
 
     def update(self, rows: list[PoseRow]) -> None:
-        # One row per root body per sample, so a frame is revisited once per sample. Each row is a
+        # One row per named body per sample, so a frame is revisited once per sample. Each row is a
         # coherent snapshot of `sim - dt` carrying the label `sim` (capture.py states the
         # convention): a one-step lag that cancels in any difference, and this check differences
         # over a minute. Do not "correct" it -- it is what makes this table and the TF one describe
@@ -573,7 +700,7 @@ class RobotMoves:
         nothing wrong about a robot it never once looked at.
 
         Held only until a second sample has been seen, not until a full motion window: every sample
-        writes every root body, so two of them establish the whole roster. Waiting the window would
+        writes every named body, so two of them establish the whole roster. Waiting the window would
         mean a mistyped name went unreported on every run shorter than a simulated minute -- which
         is the run most likely to be a quick check with a mistyped name in it.
         """
@@ -660,7 +787,7 @@ class Monitor:
                 "check 1 (robot-motion): nothing to watch. "
                 + (
                     no_robots
-                    or f"{SIM_POSE_FILENAME} names root bodies; it does not say which "
+                    or f"{SIM_POSE_FILENAME} names bodies; it does not say which "
                     f"are robots, and no {ENTITIES_FILENAME} said either."
                 )
             )
@@ -723,9 +850,9 @@ class Monitor:
         and all these records can honestly give: they are sampled, so this is the most recent
         sample and not an interpolation to the instant of the call.
 
-        ``rate`` is sim seconds per wall second over the current series -- the same quantity
-        check 3 judges, reported rather than judged, so a caller can see 0.05x without having to
-        infer it from a finding. Absent when the window is too short to divide.
+        ``rate`` is sim seconds per wall second over the rows read of the current series -- the
+        same quantity check 3 judges, reported rather than judged, so a caller can see 0.05x without
+        having to infer it from a finding. Absent when the window is too short to divide.
 
         ``kind`` is added by the caller from the recorder's roster when there is one (see
         :func:`read_roster`), and left off otherwise. Never guessed here: the pose record names root
@@ -834,7 +961,7 @@ def read_roster(directory: Path) -> tuple[dict, str | None]:
     """``{frame: (entity name, kind, present)}`` from the recorder's roster, or why there is none.
 
     The roster is what turns check 1 from a per-world configuration job into something that runs
-    unattended: the pose record names root bodies, and only the entity registry knows which of them
+    unattended: the pose record names bodies, and only the entity registry knows which of them
     is a robot. See ``capture.ENTITIES_FILENAME``.
 
     Keyed by the *body* name, because that is what the pose record's ``frame`` column holds; an
@@ -952,7 +1079,7 @@ def main(argv: list | None = None) -> int:
     source = FileSource(clock_path, poses_path)
     # The roster answers "which of these bodies is a robot" so nobody has to pass the names per
     # world -- which is what makes check 1 safe to run unattended, from a command that is the same
-    # for every campaign. ``--robot`` stays, as an override for a run with no roster and for
+    # for every campaign. ``--robot`` is an override, for a run with no roster and for
     # watching something the registry does not call a robot.
     roster, roster_error = read_roster(poses_path.parent if poses_path else Path(args.run_dir))
     robots, no_robots = args.robot, ""
@@ -1023,6 +1150,13 @@ def main(argv: list | None = None) -> int:
         else:
             report.notes.append(short + "; still accumulating")
     for label, tail in source.tails():
+        if tail.skipped:
+            # Said so a reader knows the verdict is about the run's newest minute and not its
+            # whole: the rows before the window were left unread, which is the point.
+            report.notes.append(
+                f"{label} record: read from its last {tail.window:.0f} s; "
+                f"{tail.skipped / (1024 * 1024):.1f} MiB before that were not read"
+            )
         if tail.restarts:
             # Worth reporting: the writer re-created the file, so the series the checks measured is
             # not the whole run.

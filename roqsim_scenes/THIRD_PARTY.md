@@ -1,6 +1,7 @@
 # Third-party assets & provenance
 
-This package vendors one imported environment: the **Depot** warehouse, brought in from Gazebo Fuel.
+This package vendors two imported environments: the **Depot** warehouse, brought in from Gazebo Fuel,
+and the ROS 2 **TurtleBot3 World**, brought in from ROBOTIS `turtlebot3_simulations`.
 
 ## Depot warehouse (committed, CC-BY 4.0)
 
@@ -14,6 +15,21 @@ This package vendors one imported environment: the **Depot** warehouse, brought 
 | --- | --- |
 | `worlds/depot/depot.xml` + `assets/` | The **baked world**: the Fuel model converted to plain MJCF, one geom per object, with its own textures under `assets/` |
 | `scenes/depot/scene.json`, `depot.sdf`, `assets.lock.json` | The port's provenance and re-bake recipe. The tessellated source meshes and textures (~43 MB) are **not** committed -- they are regenerable from the pinned Fuel model, and are git-ignored |
+
+## TurtleBot3 World (committed, Apache-2.0)
+
+- **Upstream:** ROBOTIS `turtlebot3_simulations` on GitHub, pinned by commit and by the sha256 of
+  every file the import reads — both in `scenes/tb3_world/CREDITS.txt`, which is the attribution of
+  record, and checked by `external/convert/build_tb3_world_scene.py` before it imports anything. The
+  world's two Fuel `<include>`s (ground plane, sun; CC0) are pinned in
+  `scenes/tb3_world/assets.lock.json`.
+- **Licence:** Apache-2.0 — permissive, but it **requires the notice to travel**: keep that
+  `CREDITS.txt` with the assets or anything built from them.
+
+| Vendored file | Source |
+| --- | --- |
+| `worlds/tb3_world/tb3_world.xml` + `assets/` | The **baked world**: the Gazebo model converted to plain MJCF, one geom per object |
+| `scenes/tb3_world/scene.json`, `assets.lock.json`, `port_log.md` | The port's provenance, decisions and re-bake recipe. The tessellated source meshes are **not** committed — they regenerate from the pin, and are git-ignored |
 
 ## Textures
 

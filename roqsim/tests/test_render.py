@@ -223,9 +223,9 @@ def test_unwritable_output_directory_is_refused(tmp_path):
 def test_headless_without_a_backend_names_both_options(tmp_path, monkeypatch):
     """The verdict comes from the backend mujoco BOUND, not from DISPLAY.
 
-    ``DISPLAY`` is deliberately set here, and must not rescue the render. The old spelling was
-    ``not os.environ.get("MUJOCO_GL") and not has_display()``, which a container defeats twice
-    over: a base image exports ``DISPLAY=:0`` with no X server behind it, and
+    ``DISPLAY`` is deliberately set here, and must not rescue the render. A check spelled
+    ``not os.environ.get("MUJOCO_GL") and not has_display()`` is defeated twice over by a
+    container: a base image exports ``DISPLAY=:0`` with no X server behind it, and
     ``MUJOCO_GL`` can be set long after ``import mujoco`` already bound something else. Both let a
     doomed render past this guard and into ``mujoco.FatalError: gladLoadGL error``.
     """
@@ -495,9 +495,9 @@ def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp
     """--view must reach the camera on the recording path too, not just on a live render.
 
     A live render gets its overrides through the world config, which is loaded with them. A
-    recording rebuilds its world from its own provenance and never sees that config, so the flag was
-    accepted and silently did nothing -- the worst shape a bug can take, because the render succeeds
-    and only the framing is wrong. The docstring in `_render_recording` promised the opposite.
+    recording rebuilds its world from its own provenance and never sees that config, so unless it is
+    handed on the flag is accepted and silently does nothing -- the worst shape a bug can take,
+    because the render succeeds and only the framing is wrong.
     """
     _scene, npz = a_recording
     record = render.render_target(
@@ -508,14 +508,18 @@ def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp
 
 
 def test_view_is_partial_when_replaying_too(a_recording, tmp_path):
-    """One stated key must not reset the others -- the same rule a live render follows."""
+    """One stated key must not reset the others -- the same rule a live render follows. The
+    baseline a stated key merges over is the world's own sim.view (here: MuJoCo's default), so two
+    partial views share every key neither states."""
     _scene, npz = a_recording
-    base = render.render_target(None, tmp_path / "a.png", size="120x90", state=npz)
+    only_azimuth = render.render_target(
+        None, tmp_path / "a.png", size="120x90", state=npz, view=["azimuth=80"]
+    )
     only_elevation = render.render_target(
         None, tmp_path / "b.png", size="120x90", state=npz, view=["elevation=-25"]
     )
     assert only_elevation["camera"]["elevation"] == pytest.approx(-25)
-    assert only_elevation["camera"]["distance"] == pytest.approx(base["camera"]["distance"])
+    assert only_elevation["camera"]["distance"] == pytest.approx(only_azimuth["camera"]["distance"])
 
 
 def test_out_of_range_at_is_refused(a_recording, tmp_path):
@@ -526,16 +530,23 @@ def test_out_of_range_at_is_refused(a_recording, tmp_path):
         render.render_target(None, tmp_path / "o.png", size="120x90", state=npz, at=999.0)
 
 
-def test_a_replay_uses_the_worlds_own_camera(a_recording, tmp_path):
-    """Rendering world X and replaying a recording of world X must look the same.
+def test_a_replay_with_no_camera_frames_the_whole_scene(a_recording, tmp_path):
+    """A recording rendered with nothing said about the camera shows the whole scene from above:
+    everything in it, as close as the field of view allows, at MuJoCo's default orbit. A stated
+    --view merges over the world's own sim.view instead, so the two paths give different cameras."""
+    from roqsim.recording import open_recording
+    from roqsim.rendering import scene_camera
 
-    Without this the replay auto-frames, and the same world looks different depending on how it was
-    reached -- which is exactly the kind of inconsistency nobody would think to check for.
-    """
-    scene, npz = a_recording
-    live = render.render_target(scene, tmp_path / "a.png", size="120x90")
+    _scene, npz = a_recording
     replay = render.render_target(None, tmp_path / "b.png", size="120x90", state=npz)
-    assert live["camera"] == replay["camera"]
+    rec = open_recording(npz)
+    model, _ctx = rec.build()
+    expected = render._camera_record(scene_camera(model, rec.at(None).data, aspect=120 / 90))
+    assert replay["camera"] == expected
+    stated = render.render_target(
+        None, tmp_path / "c.png", size="120x90", state=npz, view=["azimuth=10"]
+    )
+    assert stated["camera"]["azimuth"] == 10.0
 
 
 def test_a_video_has_one_frame_per_sample(a_recording, tmp_path):
@@ -765,3 +776,286 @@ def test_the_preview_fill_leaves_a_light_that_casts_no_shadow_alone():
     before = np.array(model.light_diffuse[i])
     render.fill_preview_self_shadows(model)
     assert np.allclose(model.light_diffuse[i], before)
+
+
+# -- geom groups: seeing what a model COLLIDES as, not only what it shows ---------------------------
+
+_TWO_GROUPS = """
+<mujoco model="two_groups">
+  <worldbody>
+    <geom name="shown" type="box" size="0.3 0.3 0.3" pos="0 0 0.3"
+          contype="0" conaffinity="0" group="2" rgba="1 0 0 1"/>
+    <geom name="solid" type="box" size="0.1 0.1 0.9" pos="0 0 0.9" group="3" rgba="0 1 0 1"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _render_groups(tmp_path, groups):
+    from roqsim.rendering import FrameRenderer
+
+    path = tmp_path / "two_groups.xml"
+    path.write_text(_TWO_GROUPS)
+    model = mujoco.MjModel.from_xml_path(str(path))
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    frame = FrameRenderer(model, 96, 72, geomgroup=groups)
+    try:
+        image = frame.render(data).astype(int)
+    finally:
+        frame.close()
+    # Which of the two coloured boxes reached the picture.
+    return {
+        "red": bool((image[..., 0] > image[..., 1] + 40).any()),
+        "green": bool((image[..., 1] > image[..., 0] + 40).any()),
+    }
+
+
+def test_collision_geometry_is_invisible_until_it_is_asked_for(tmp_path):
+    # MuJoCo's default MjvOption draws groups 0-2 and nothing above, so a model's collision
+    # primitives -- group 3 by this tree's convention -- never appear in a default render. A
+    # reviewer looking at a prop is therefore looking at the half that carries no contacts.
+    assert _render_groups(tmp_path, None) == {"red": True, "green": False}
+
+
+def test_a_group_can_be_rendered_on_its_own_or_over_the_other(tmp_path):
+    assert _render_groups(tmp_path, [3]) == {"red": False, "green": True}
+    assert _render_groups(tmp_path, [2]) == {"red": True, "green": False}
+    assert _render_groups(tmp_path, [2, 3]) == {"red": True, "green": True}
+
+
+def test_absence_is_not_a_drawing_preference(tmp_path):
+    # An absent entity stays out of the picture whatever groups are named: it is a property of the
+    # entity, and letting a render flag re-admit it would make absence two decisions instead of one.
+    from roqsim.presence import ABSENT_GEOM_GROUP
+    from roqsim.rendering import FrameRenderer
+
+    path = tmp_path / "absent.xml"
+    path.write_text(_TWO_GROUPS)
+    model = mujoco.MjModel.from_xml_path(str(path))
+    frame = FrameRenderer(model, 32, 24, geomgroup=[ABSENT_GEOM_GROUP, 3])
+    try:
+        assert frame._vopt.geomgroup[ABSENT_GEOM_GROUP] == 0
+        assert frame._vopt.geomgroup[3] == 1
+    finally:
+        frame.close()
+
+
+@pytest.mark.parametrize("bad", ["9", "-1", "two", ""])
+def test_a_group_outside_mujocos_range_is_refused(bad):
+    parser = pytest.importorskip("argparse").ArgumentParser()
+    with pytest.raises(SystemExit):
+        render._parse_geomgroup(parser, bad)
+
+
+def test_no_groups_named_means_mujocos_own_defaults():
+    parser = pytest.importorskip("argparse").ArgumentParser()
+    assert render._parse_geomgroup(parser, None) is None
+    assert render._parse_geomgroup(parser, "2,3") == [2, 3]
+    assert render._parse_geomgroup(parser, "2 3") == [2, 3]
+
+
+# -- cameras over a recording: chase, path, the scene default -------------------------------------
+
+
+_YAWING_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light pos="1 -1 2" dir="-1 1 -2"/>
+    <geom type="plane" size="3 3 .1" rgba=".4 .4 .5 1"/>
+    <body name="spinner" pos="0 0 .3">
+      <joint name="spin" type="hinge" axis="0 0 1" stiffness="2" springref="90" damping="0.2"/>
+      <geom type="box" size=".3 .1 .1" rgba=".8 .3 .2 1" mass="1"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def a_yawing_recording(tmp_path, monkeypatch):
+    """A recording of a body that turns about z, so a chase camera has a heading to follow."""
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
+    scene = tmp_path / "spin.xml"
+    scene.write_text(_YAWING_XML)
+    from roqsim.runner import run
+
+    out = tmp_path / "spin.npz"
+    run(str(scene), headless=True, pacing="asap", seconds=1.0, record=str(out), capture_fps=25)
+    return out
+
+
+def _azimuths(npz, view, path=None):
+    """The chase camera's azimuth at each sample, through the same object a video uses."""
+    from roqsim.recording import open_recording
+
+    rec = open_recording(npz)
+    model, ctx = rec.build()
+    # As _render_recording merges them: --view keys over the world's own sim.view.
+    world_view = {**(rec.view or {}), **render.view_overrides(view)["sim"]["view"]}
+    cameras = render._VideoCamera(model, ctx, world_view, view, None, None, 160, 90, path=path)
+    out = []
+    for sample in rec.range(None, None):
+        cam = cameras.for_sample(sample)
+        out.append((sample.sim_time, float(cam.azimuth), float(cam.distance)))
+    return out
+
+
+def test_a_chase_camera_turns_with_the_robot(a_yawing_recording):
+    """The regression: a tracked video used to rebuild its camera every frame, so follow_heading
+    never ran and the camera sat at a world-frame azimuth while the robot turned away from it."""
+    seen = _azimuths(a_yawing_recording, ["track=spinner", "follow_heading=true", "azimuth=180"])
+    first, last = seen[0][1], seen[-1][1]
+    assert abs(last - first) > 30, f"camera never turned: {first:.1f} -> {last:.1f}"
+
+
+def test_a_path_orbits_a_chase_camera_through_its_offset(a_yawing_recording):
+    """An azimuth-only path over a follow_heading view animates the angle BEHIND the robot, so the
+    robot's own turning and the orbit add up rather than fight."""
+    from roqsim.camera_path import CameraPath
+
+    view = ["track=spinner", "follow_heading=true", "azimuth=180"]
+    plain = _azimuths(a_yawing_recording, view)
+    orbit = CameraPath.from_doc(
+        {
+            "keyframes": [
+                {"t": 0, "azimuth": 180, "distance": 2},
+                {"t": 1, "azimuth": 270, "distance": 4},
+            ]
+        }
+    )
+    moved = _azimuths(a_yawing_recording, view, path=orbit)
+    assert moved[0][1] == pytest.approx(plain[0][1], abs=1.0)  # the first sample is at t~0
+    t_last = min(moved[-1][0], 1.0)
+    assert moved[-1][1] - plain[-1][1] == pytest.approx(90.0 * t_last, abs=1.0)
+    assert moved[-1][2] == pytest.approx(2 + 2 * t_last, abs=0.05)
+
+
+def test_a_still_through_a_path_is_the_frame_a_video_would_draw(a_recording, tmp_path):
+    """`--at` with a path is how a path is checked before a whole clip is spent on it."""
+    _scene, npz = a_recording
+    path = {
+        "keyframes": [
+            {"t": 0, "distance": 1.0, "azimuth": 10},
+            {"t": 2, "distance": 3.0, "azimuth": 50},
+        ]
+    }
+    still = render.render_target(
+        None, tmp_path / "s.png", size="96x64", state=npz, at=1.0, camera_path=json.dumps(path)
+    )
+    assert still["camera"]["distance"] == pytest.approx(2.0, abs=0.05)
+    assert still["camera"]["azimuth"] == pytest.approx(30.0, abs=1.0)
+    assert still["camera_path"]["keyframes"] == 2
+
+
+def test_check_reports_the_resolved_keyframes(a_recording, tmp_path, monkeypatch):
+    """Every named moment -- --from, --at, a keyframe -- resolves against one table, found once."""
+    from roqsim import motion
+
+    calls = []
+
+    def fake_onset(rec, **kwargs):
+        calls.append(rec.path)
+        return motion.Onset(
+            moved=True,
+            time=0.3,
+            detected=0.8,
+            index=20,
+            kind="mobile",
+            select="auto",
+            channel="lin",
+        )
+
+    monkeypatch.setattr(motion, "motion_onset", fake_onset)
+    _scene, npz = a_recording
+    path = {"keyframes": [{"t": "onset", "azimuth": 0}, {"t": "onset+0.5", "azimuth": 90}]}
+    record = render.render_target(
+        None,
+        tmp_path / "v.webm",
+        size="96x64",
+        state=npz,
+        start="onset-0.1",
+        stop="onset+1",
+        camera_path=json.dumps(path),
+        check=True,
+    )
+    assert len(calls) == 1
+    resolved = record["camera_path"]["resolved"]
+    assert resolved[1]["t"] - resolved[0]["t"] == pytest.approx(0.5)
+    assert resolved[0]["t"] == pytest.approx(record["onset"]["time"])
+    assert record["rendered"] is False
+
+
+def test_a_path_needs_a_recording_and_refuses_a_fixed_camera(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    path = '{"keyframes": [{"t": 0, "azimuth": 1}]}'
+    with pytest.raises(render.RenderError, match="needs --state"):
+        render.render_target("w.yaml", tmp_path / "x.png", camera_path=path)
+    with pytest.raises(render.RenderError, match="cannot move it"):
+        render.render_target(
+            None, tmp_path / "x.png", state="r.npz", camera="cam", camera_path=path
+        )
+
+
+def test_a_malformed_path_is_a_render_error(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    with pytest.raises(render.RenderError, match="unknown key"):
+        render.render_target(
+            None,
+            tmp_path / "x.png",
+            state="r.npz",
+            camera_path='{"keyframes": [{"t": 0, "zoom": 1}]}',
+        )
+
+
+def test_moments_are_accepted_wherever_a_time_is(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    with pytest.raises(render.RenderError, match="neither a time"):
+        render.render_target(None, tmp_path / "x.png", state="r.npz", at="five seconds")
+
+
+def test_a_video_with_an_overlay_keeps_its_frame_count(a_recording, tmp_path):
+    from roqsim.recording import open_recording
+
+    _scene, npz = a_recording
+    samples = len(open_recording(npz))
+    record = render.render_target(
+        None, tmp_path / "o.webm", size="96x64", state=npz, overlays=["clock"]
+    )
+    assert record["frames"] == samples and record["overlays"] == ["clock"]
+
+
+def test_an_unknown_overlay_fails_before_the_world_is_built(tmp_path, monkeypatch):
+    monkeypatch.setenv("MUJOCO_GL", "egl")
+    with pytest.raises(render.RenderError, match="nothing installed registers it"):
+        render.render_target(None, tmp_path / "x.png", state="r.npz", overlays=["nope"])
+
+
+def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
+    """A recording of a roofed world, rendered with no camera of its own, loses its ceiling; one
+    with a stated camera keeps the world as it was."""
+    from roqsim.recording import open_recording
+
+    monkeypatch.setenv("MUJOCO_GL", os.environ.get("MUJOCO_GL", "egl"))
+    world = tmp_path / "roofed.yaml"
+    world.write_text("sim: {name: roofed}\ncomponents:\n  - ceiling: {}\n")
+    from roqsim.runner import run
+
+    npz = tmp_path / "roofed.npz"
+    try:
+        run(str(world), headless=True, pacing="asap", seconds=0.2, record=str(npz), capture_fps=25)
+    except Exception as err:  # noqa: BLE001 - the mobile package with `floorplan` may be absent
+        pytest.skip(f"no roofed world to record here: {err}")
+    assert open_recording(npz).has_ceiling
+    seen = []
+    real_build = render.build_target
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("no_ceiling"))
+        return real_build(*args, **kwargs)
+
+    monkeypatch.setattr(render, "build_target", spy)
+    render.render_target(None, tmp_path / "a.png", size="64x48", state=npz)
+    render.render_target(None, tmp_path / "b.png", size="64x48", state=npz, view=["azimuth=10"])
+    assert seen == [True, False]

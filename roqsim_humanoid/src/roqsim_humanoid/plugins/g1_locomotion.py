@@ -11,10 +11,10 @@ The observation/action conventions, PD gains, default angles, scales and timing 
 from unitree_rl_gym's ``deploy/deploy_mujoco/deploy_mujoco.py`` + ``configs/g1.yaml`` (bundled in this
 package under ``policy/``), so the policy runs on exactly what it was trained on.
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     g1_locomotion:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       policy: g1_stand             # use a spec-driven policy instead of the bundled walk one: names a
                                    #   directory under policy/ holding <name>.spec.yaml + its checkpoint

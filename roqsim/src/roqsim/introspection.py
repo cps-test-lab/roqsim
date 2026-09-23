@@ -45,9 +45,16 @@ import sys
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
-# "Config (same keys as livox_mid360; only the defaults differ)::") rather than a bare "Config::" --
-# matched too, as long as the "::" that starts the block is on the same source line as "Config".
-_CONFIG_HEADER_RE = re.compile(r"\s*Config\b.*::\s*$")
+# "Config (same keys as livox_mid360; only the defaults differ)::") rather than writing a bare
+# "Config::", and a long qualifier wraps over two or three source lines. The "::" therefore does
+# not have to sit on the same line as the word: the header is a line opening with "Config" plus
+# however many lines it takes to reach "::".
+_CONFIG_HEADER_START_RE = re.compile(r"\s*Config\b")
+_CONFIG_HEADER_END_RE = re.compile(r".*::\s*$")
+#: How far a wrapped header may run before it is read as prose rather than a header. Three is the
+#: longest in the tree; the bound is what stops an ordinary sentence opening with the word from
+#: swallowing the docstring behind it.
+_MAX_HEADER_LINES = 4
 # A Config:: field line: "  name: example_value  # trailing doc comment". The
 # example is whatever text sits between the colon and an optional trailing
 # comment -- kept as raw text (not parsed as YAML) since this is documentation,
@@ -58,6 +65,34 @@ _CONFIG_FIELD_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(.+?)\s*(?:#\s*(.*))?$")
 # "enabled" field for a real example), so it must extend the previous field's
 # doc rather than end the block.
 _COMMENT_ONLY_RE = re.compile(r"^\s*#\s?(.*)$")
+# A key that opens a nested mapping rather than carrying a value: "  sample:" with the keys under
+# it indented further. The world YAML nests, so the block does too, and ending the parse at a key
+# like this would report a plugin's first few keys and silently drop the rest.
+_CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
+# The line naming the plugin itself, which a block opens with one level above its keys. Written
+# either as a plain key ("sensor_coverage_probe:"), as the list entry a world YAML's
+# "components:" actually takes ("- spawn_sensor:"), or -- in a base class documenting keys its
+# subclasses inherit -- as a placeholder standing in for whichever name they register under
+# ("<plugin short name>:"). All three are skipped rather than parsed, so the keys underneath are
+# read at the level they are written.
+_CONFIG_WRAPPER_RE = re.compile(r"^\s+-?\s*(?:[A-Za-z_]\w*|<[^>]+>):\s*(?:#\s*(.*))?$")
+
+
+def _config_header_span(lines: list[str]) -> tuple[int, int] | None:
+    """``(first, last)`` line indices of the ``Config::`` header, or ``None``.
+
+    Bounded by :data:`_MAX_HEADER_LINES` and never crossing a blank line or a field line, so a
+    sentence that merely opens with the word cannot be read as a header.
+    """
+    for i, ln in enumerate(lines):
+        if not _CONFIG_HEADER_START_RE.match(ln):
+            continue
+        for j in range(i, min(i + _MAX_HEADER_LINES, len(lines))):
+            if not lines[j].strip() or (j > i and _CONFIG_FIELD_RE.match(lines[j])):
+                break
+            if _CONFIG_HEADER_END_RE.match(lines[j]):
+                return i, j
+    return None
 
 
 def _own_or_module_doc(cls) -> str:
@@ -67,11 +102,21 @@ def _own_or_module_doc(cls) -> str:
     no docstring of its own; that base text is useless in a per-plugin catalog. Most plugins put
     their description (+ ``Config::``) at module level, so that is the fallback.
     """
-    own = cls.__dict__.get("__doc__")
-    if own and own.strip():
-        return inspect.cleandoc(own)
+    own_raw = cls.__dict__.get("__doc__")
+    own = inspect.cleandoc(own_raw) if own_raw and own_raw.strip() else ""
     module = inspect.getmodule(cls)
-    return inspect.cleandoc(module.__doc__) if module and module.__doc__ else ""
+    mod = inspect.cleandoc(module.__doc__) if module and module.__doc__ else ""
+    # A class docstring that documents no config while its module does is a pointer to the module
+    # ("See the module docstring."), and preferring it publishes the pointer and hides the block.
+    # The catalog exists to say what a plugin's config keys are, so the docstring that has them wins.
+    if (
+        own
+        and mod
+        and _config_header_span(own.splitlines()) is None
+        and _config_header_span(mod.splitlines()) is not None
+    ):
+        return mod
+    return own or mod
 
 
 def _summary_and_config(doc: str) -> list[str]:
@@ -83,10 +128,9 @@ def _summary_and_config(doc: str) -> list[str]:
             break
         summary.append(ln)
     config: list[str] = []
-    for i, ln in enumerate(lines):
-        if _CONFIG_HEADER_RE.match(ln):
-            config = lines[i:]
-            break
+    span = _config_header_span(lines)
+    if span is not None:
+        config = lines[span[0] :]
     out = list(summary)
     if config:
         out += ["", *config]
@@ -114,41 +158,48 @@ def _parse_config_block(doc: str) -> list[dict]:
     plugin's ``Config::`` block, e.g. ``roqsim/plugins/contact_monitor.py``, for the
     convention). A doc comment too long for one line wraps onto a bare ``#``
     continuation line (e.g. ``ceiling.py``'s ``enabled`` field), which extends the
-    previous field's doc rather than ending the block. Otherwise best-effort: a
-    line that doesn't match either shape (a nested/multi-line value, a bare
-    mapping header) is skipped rather than crashing the whole parse -- the block
-    ends at the first blank line, or the first line that is neither a field nor a
-    comment continuation, encountered *after* at least one field has been parsed
-    -- which is what keeps trailing prose paragraphs (common after a ``Config::``
-    block) from being mistaken for more fields.
+    previous field's doc rather than ending the block.
+
+    A key that opens a **nested mapping** (``sample:``, with its keys indented under it) is
+    reported itself and then its children, each under the dotted path a world YAML writes it
+    at (``sample.resolution``). The world YAML nests, so a reader that stopped at the first
+    nested key described the plugin's first few options and silently omitted the rest.
+
+    The block ends at the first blank line, or the first line that is neither a field, a
+    nested key, nor a comment continuation, encountered *after* at least one field -- which
+    keeps the trailing prose paragraphs common after a ``Config::`` block from being read as
+    more fields.
     """
     lines = doc.splitlines()
-    start = None
-    for i, ln in enumerate(lines):
-        if _CONFIG_HEADER_RE.match(ln):
-            start = i + 1
+    span = _config_header_span(lines)
+    if span is None:
+        return []
+    body = lines[span[1] + 1 :]
+
+    # The indent the plugin's own keys sit at. A block opens with the plugin key itself
+    # ("sensor_coverage_probe:"), one level shallower than the keys under it; anchoring on the
+    # first key that carries a value tells the two apart without knowing the plugin's name.
+    base = None
+    for ln in body:
+        if not ln.strip() or _COMMENT_ONLY_RE.match(ln):
+            continue
+        if _CONFIG_FIELD_RE.match(ln):
+            base = len(ln) - len(ln.lstrip())
             break
-    if start is None:
+        if not _CONFIG_WRAPPER_RE.match(ln):
+            break
+    if base is None:
         return []
 
     fields: list[dict] = []
     in_block = False
-    for ln in lines[start:]:
+    #: (indent, key) of each mapping currently open, so a nested key is reported under the
+    #: dotted path a world YAML would actually write it at.
+    open_maps: list[tuple[int, str]] = []
+    for ln in body:
         if not ln.strip():
             if in_block:
                 break
-            continue
-        match = _CONFIG_FIELD_RE.match(ln)
-        if match:
-            name, example, comment = match.groups()
-            fields.append(
-                {
-                    "name": name,
-                    "example": example.strip(),
-                    "doc": comment.strip() if comment else None,
-                }
-            )
-            in_block = True
             continue
         comment_only = _COMMENT_ONLY_RE.match(ln)
         if comment_only and in_block and fields:
@@ -156,6 +207,41 @@ def _parse_config_block(doc: str) -> list[dict]:
             if extra:
                 last = fields[-1]
                 last["doc"] = f"{last['doc']} {extra}" if last["doc"] else extra
+            continue
+        indent = len(ln) - len(ln.lstrip())
+        if indent < base:
+            # The wrapper naming the plugin, above its keys. Anything else out here has left
+            # the block.
+            if not in_block and _CONFIG_WRAPPER_RE.match(ln):
+                continue
+            break
+        while open_maps and indent <= open_maps[-1][0]:
+            open_maps.pop()
+        prefix = "".join(f"{key}." for _, key in open_maps)
+        match = _CONFIG_FIELD_RE.match(ln)
+        if match:
+            name, example, comment = match.groups()
+            fields.append(
+                {
+                    "name": prefix + name,
+                    "example": example.strip(),
+                    "doc": comment.strip() if comment else None,
+                }
+            )
+            in_block = True
+            continue
+        nested = _CONFIG_NEST_RE.match(ln)
+        if nested:
+            name, comment = nested.groups()
+            fields.append(
+                {
+                    "name": prefix + name,
+                    "example": None,
+                    "doc": comment.strip() if comment else None,
+                }
+            )
+            open_maps.append((indent, name))
+            in_block = True
             continue
         if in_block:
             break
@@ -202,6 +288,22 @@ def list_plugins() -> dict:
     return {"items": items}
 
 
+def _declared_schema(cls) -> list[dict] | None:
+    """The plugin's own ``CONFIG_SCHEMA``, published -- or ``None`` when it declares none.
+
+    Published BESIDE the docstring-parsed ``config`` rather than instead of it: the parsed block is
+    all most plugins have, and a caller that can read only one of the two should get the one that is
+    always there. Where both exist the declared one is authoritative -- it is what validation runs
+    on, so it cannot drift from behaviour the way a comment can.
+    """
+    schema = getattr(cls, "CONFIG_SCHEMA", None)
+    if not schema:
+        return None
+    from roqsim.schema import describe
+
+    return describe(schema)
+
+
 def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
@@ -209,6 +311,11 @@ def get_plugin_details(name: str) -> dict:
     ``parameters`` is :func:`_parse_config_block`'s output (empty if the plugin has
     no ``Config::`` block, whether because it takes no config or because nobody
     wrote one) -- or ``{"error": "..."}``.
+
+    A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
+    keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
+    needs and what prose cannot give it. It is authoritative where it exists, because validation
+    runs on it -- unlike a docstring, it cannot drift from behaviour.
     """
     matches = [ep for ep in _entry_points(ENTRY_POINT_GROUP) if ep.name == name]
     if not matches:
@@ -225,7 +332,7 @@ def get_plugin_details(name: str) -> dict:
         if not ln.strip():
             break
         summary_lines.append(ln)
-    return {
+    details = {
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
@@ -234,6 +341,11 @@ def get_plugin_details(name: str) -> dict:
         "package": _dist_name(ep),
         "class": ep.value,
     }
+    schema = _declared_schema(cls)
+    if schema is not None:
+        details["schema"] = schema
+        details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
+    return details
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────

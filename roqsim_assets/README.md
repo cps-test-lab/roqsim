@@ -48,6 +48,29 @@ Add a texture by dropping `assets/<Name>/<Name>_Color.png` (+ optional `manifest
 referenceable as `roqsim_assets:<Name>`. Any other package can serve textures the same way — expose
 an `ASSETS_DIR` and reference it as `<that_package>:<Name>`.
 
+## Props: what a prop collides as
+
+`roqsim assets finalize-mujoco` gives a prop **one mesh geom**, and MuJoCo collides a mesh geom as
+its **convex hull**. For anything with a span under it — a trestle desk, a shelf, a chair — that hull is a solid
+block filling the very opening the shape exists to leave: a robot meant to drive under the prop hits
+geometry that is not there, and the contact it reports names a geom the model never named.
+
+A prop is therefore not finished when it is reduced, textured and grounded. It is finished when what
+it collides as resembles what it looks like:
+
+```bash
+roqsim assets collision audit                   # which props collide as a hull that is not the shape
+roqsim assets collision diff office_table       # how far one candidate is from its own mesh, both ways
+roqsim render office_table --geomgroup 2,3      # and what that looks like
+```
+
+A prop whose shape differs from its hull carries the two separately: the mesh is visual-only
+(`contype="0" conaffinity="0" group="2"`), and a small skeleton of primitives carries the contacts
+(`group="3"`). `office_table` and `industrial_table` are the worked examples. Every collision geom is
+named, because a contact report is attributable only if the geom that produced it has one — which is
+the whole reason `contact_monitor` is preferred over a proximity threshold. A solid-ish prop needs
+none of this: it *is* its hull, and `audit` says which is which.
+
 ## Props: reusing another prop's mesh (hierarchical props)
 
 Placeable props live one-per-folder under `models/<name>/<name>.xml` (see `models/__init__.py` and
@@ -85,7 +108,8 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   two are shape and position and nothing else, which is what a navigation experiment's scenery
   usually is. Both take `pos` as `[x, y]` to sit on the floor or `[x, y, z]` for an explicit centre,
   plus `color` / `collide` / `friction` / `prefix`; `box` additionally takes `yaw` (a cylinder is
-  rotationally symmetric, so it has none). Declared in the world YAML rather than baked into a scene,
+  rotationally symmetric, so it has none), and `cylinder` additionally takes `mass` (kg — unset means
+  MuJoCo's default 1000 kg/m³ density, several times too heavy for anything hollow). Declared in the world YAML rather than baked into a scene,
   deliberately: a scene is what an occupancy grid gets generated *from*, so a baked obstacle lands in
   the map — and an experiment about *unknown* obstacles then has none. Round vs square is not
   cosmetic where clearance is the subject: two diagonally adjacent boxes of the cell pitch seal the
@@ -103,6 +127,11 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   populations are heterogeneous: a generator scales the count by path length and gives each obstacle
   its own pose and size, and it — not the substrate — knows the map and the clearance rule. Names are
   `<name>_<index>` unless an entry names itself, so `SetEntityState` can still address one of them.
+- **`cylinders`** — the round counterpart of `boxes`, entry for entry (`instances: [{pos, radius,
+  height, …}, …]`, each accepting every `cylinder` key). It exists for the same override reason, and
+  for one that is specific to round objects: a population of graspable cylinders differs in
+  *diameter* at a shared height, and a modelled asset scaled uniformly cannot change one without the
+  other — so a family of radii is only expressible as a list of parametric entries.
 - **`moving_box`** — the same anonymous box, but **moving**: a mocap body the plugin drives at a
   constant `speed`, either along `waypoints` (fixed route, `loop` / `ping_pong`) or as a seeded
   `random_walk` that ray-casts the compiled model ahead of itself and picks a new heading before it
@@ -126,11 +155,11 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   given to you (a dynamic-grasping benchmark's object motion).
 - **`conveyor`** — a velocity-driven belt an object rides via a friction pair; live speed over ROS.
   It is a **benchtop** unit (feet at z=0.76): put a table under it with `spawn_model` — the
-  `industrial_table` prop is the one the model used to bundle (spawn it at the belt's local
+  `industrial_table` prop is the one the belt is laid out for (spawn it at the belt's local
   `[-0.13, 0.6, 0]`), and any other ~0.76 m top (e.g. `desk_diy`, 0.758) does just as well.
 - **`shelf`** — a parametric chipboard shelf built from boxes (`layers`/`width`/`depth`/`height`).
 - **`palm_tree`** — a parametric artificial palm-like tree: trunk on a pot, a two-tier crown of
-  arching fronds, and fruit-bunch clusters with a site at each bunch centre. The library's first
+  arching fronds, and fruit-bunch clusters with a site at each bunch centre. The library's
   foliage, and not decoration: a palm crown is a *thin, radially arranged, self-occluding* obstacle
   set with narrow passages between the fronds and the target tucked underneath — a different planning
   problem from boxes and shelves, and the reason the harvesting literature treats palm-like trees

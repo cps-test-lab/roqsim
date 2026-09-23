@@ -1,0 +1,116 @@
+<mujoco model="tb3_world">
+  <compiler angle="radian" meshdir="assets/" texturedir="assets/"/>
+
+  <visual>
+    <headlight ambient="0.3 0.3 0.3"/>
+  </visual>
+
+  <asset>
+    <texture type="2d" colorspace="auto" name="ground_tex" builtin="checker" rgb1="0.85 0.85 0.85" rgb2="0.78 0.78 0.79" width="512" height="512"/>
+    <material name="ground_mat" texture="ground_tex" texuniform="true" reflectance="0.2"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_one" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_one.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_two" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_two.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_three" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_three.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_one" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_one.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_two" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_two.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_three" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_three.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_one" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_one.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_two" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_two.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_three" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_three.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_head" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_head.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_left_hand.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_right_hand.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_left_foot.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_right_foot.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_000" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_000.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_001" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_001.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_002" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_002.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_003" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_003.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_004" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_004.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_005" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_005.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_006" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_006.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_007" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_007.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_008" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_008.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_009" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_009.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_010" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_010.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_011" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_011.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_012" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_012.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_013" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_013.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_014" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_014.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_015" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_015.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_016" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_016.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_017" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_017.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_018" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_018.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_019" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_019.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_one_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_one_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_two_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_two_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_one_three_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_one_three_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_one_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_one_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_two_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_two_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_two_three_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_two_three_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_one_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_one_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_two_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_two_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_three_three_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_three_three_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_head_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_head_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_left_hand_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_right_hand_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_left_foot_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_right_foot_vis.obj" inertia="shell"/>
+    <mesh name="scene_turtlebot3_world_turtlebot3_world_symbol_body_vis" content_type="model/obj" file="turtlebot3_world_turtlebot3_world_symbol_body_vis.obj" inertia="shell"/>
+  </asset>
+
+  <worldbody>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_one" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_one"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_two" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_two"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_three" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_three"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_one" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_one"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_two" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_two"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_three" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_three"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_one" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_one"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_two" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_two"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_three" type="mesh" group="3" rgba="0.7 0.7 0.72 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_three"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_head" type="mesh" group="3" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_head"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand" type="mesh" group="3" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand" type="mesh" group="3" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot" type="mesh" group="3" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot" type="mesh" group="3" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_000" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_000"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_001" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_001"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_002" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_002"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_003" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_003"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_004" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_004"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_005" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_005"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_006" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_006"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_007" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_007"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_008" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_008"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_009" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_009"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_010" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_010"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_011" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_011"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_012" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_012"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_013" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_013"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_014" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_014"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_015" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_015"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_016" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_016"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_017" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_017"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_018" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_018"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_019" type="mesh" group="3" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_019"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_one_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_one_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_two_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_two_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_one_three_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_one_three_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_one_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_one_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_two_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_two_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_two_three_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_two_three_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_one_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_one_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_two_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_two_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_three_three_vis" type="mesh" contype="0" conaffinity="0" rgba="1 1 1 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_three_three_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_head_vis" type="mesh" contype="0" conaffinity="0" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_head_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand_vis" type="mesh" contype="0" conaffinity="0" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_left_hand_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand_vis" type="mesh" contype="0" conaffinity="0" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_right_hand_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot_vis" type="mesh" contype="0" conaffinity="0" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_left_foot_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot_vis" type="mesh" contype="0" conaffinity="0" rgba="0.392157 0.976471 0.121569 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_right_foot_vis"/>
+    <geom name="scene_turtlebot3_world_turtlebot3_world_symbol_body_vis" type="mesh" contype="0" conaffinity="0" rgba="0.603922 0.647059 0.686275 1" mesh="scene_turtlebot3_world_turtlebot3_world_symbol_body_vis"/>
+    <geom name="floor" size="3.9864 3.3985 0.05" pos="0.6868 0 0" type="plane" group="3" friction="2" rgba="0 0 0 0"/>
+    <geom name="floor_visual" size="3.9864 3.3985 0.05" pos="0.6868 0 -0.002" type="plane" contype="0" conaffinity="0" material="ground_mat"/>
+    <light pos="0.6868 0 3.5" cutoff="90" exponent="0" diffuse="0.4 0.4 0.4"/>
+  </worldbody>
+</mujoco>

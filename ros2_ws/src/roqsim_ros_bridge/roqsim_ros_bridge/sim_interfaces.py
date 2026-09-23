@@ -4,6 +4,8 @@ Implements the interfaces most useful for scenario-driven testing of the M1 turt
   * GetSimulatorFeatures   — advertise what is supported
   * GetEntities            — list entities from the registry
   * GetEntityState/SetEntityState — read/teleport an entity's free-joint body
+  * GetSpawnables          — the absent entities SpawnEntity can select, by uri
+  * SpawnEntity/DeleteEntity — make a compiled entity perceivable at initial_pose, or absent
   * GetSimulationState/SetSimulationState — play/pause/stop (standalone driver)
   * StepSimulation         — step N times while paused
   * ResetSimulation        — reset the world
@@ -20,19 +22,21 @@ Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2
 
 from __future__ import annotations
 
+import math
 import threading
 
 import numpy as np
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from simulation_interfaces.msg import Result, SimulationState, SimulatorFeatures
+from simulation_interfaces.msg import Result, SimulationState, SimulatorFeatures, Spawnable
 from simulation_interfaces.srv import (
     DeleteEntity,
     GetEntities,
     GetEntityState,
     GetSimulationState,
     GetSimulatorFeatures,
+    GetSpawnables,
     ResetSimulation,
     SetEntityState,
     SetSimulationState,
@@ -41,6 +45,7 @@ from simulation_interfaces.srv import (
 )
 
 from roqsim import control as ctl
+from roqsim.placement import PLACEABLE_MODES_HINT, place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
 
@@ -53,6 +58,167 @@ _STATE_TO_MSG = {
     ctl.QUITTING: SimulationState.STATE_QUITTING,
 }
 _MSG_TO_STATE = {v: k for k, v in _STATE_TO_MSG.items()}
+
+#: How far a welded entity's pose may differ from a requested one and still count as satisfied.
+#: Tight, because it exists to absorb float round-trips through the message, not to accept a pose
+#: somewhere else.
+_POSE_EPS = 1e-6
+
+#: Frame names that mean the world frame. Empty is the service's own default for it; 'world' is
+#: spelled out because that is the name the service description gives that frame.
+_WORLD_FRAMES = ("", "world")
+
+
+def _pose_of(req):
+    """``initial_pose`` as ``(pos, quat)``, or ``None`` when the quaternion is not a rotation.
+
+    ``SpawnEntity.srv`` states ``initial_pose`` unconditionally -- there is no "unset": a
+    default-constructed request carries the origin and, because ``geometry_msgs/Quaternion``
+    declares ``w 1``, the IDENTITY. So every request asks for a pose, and this reads the one it
+    asks for rather than guessing which fields the caller meant to fill in.
+
+    A zero-norm quaternion is the one thing that cannot be a rotation, and the service has a code
+    saying so (``INVALID_POSE``), so it is reported rather than repaired.
+    """
+    p = req.initial_pose.pose.position
+    o = req.initial_pose.pose.orientation
+    norm = math.sqrt(o.w * o.w + o.x * o.x + o.y * o.y + o.z * o.z)
+    if norm < _POSE_EPS:
+        return None
+    # Normalised because MuJoCo reads the free joint's quaternion as a unit one; a caller's
+    # near-unit value would otherwise scale the body's orientation.
+    return (p.x, p.y, p.z), (o.w / norm, o.x / norm, o.y / norm, o.z / norm)
+
+
+def _already_at(state, pose) -> bool:
+    """Is the body described by *state* already at *pose*?
+
+    What an entity with no free joint is asked instead of "can you move there": it cannot, so the
+    only honourable answer is whether it is there already. The quaternion is compared through its
+    dot product because ``q`` and ``-q`` are the same rotation, which a component-wise test would
+    call a mismatch.
+    """
+    pos, quat = pose
+    at = state.get("pos")
+    rot = state.get("quat")
+    if at is None or rot is None:
+        return False
+    if any(abs(a - b) > _POSE_EPS for a, b in zip(at, pos, strict=True)):
+        return False
+    return abs(sum(a * b for a, b in zip(rot, quat, strict=True))) > 1.0 - _POSE_EPS
+
+
+def _resource_of(msg):
+    """``(uri, resource_string)`` of a request or a spawnable, in either interface shape.
+
+    simulation_interfaces 1.x (Jazzy) carries both flat; 2.x moved them into a ``Resource``
+    sub-message (``entity_resource``). Reading only the flat fields would miss every 2.x request.
+    """
+    src = getattr(msg, "entity_resource", msg)
+    return getattr(src, "uri", ""), getattr(src, "resource_string", "")
+
+
+def _spawnable(uri, description):
+    s = Spawnable()
+    getattr(s, "entity_resource", s).uri = uri
+    s.description = description
+    return s
+
+
+def _spawnables(entities):
+    """The entities ``SpawnEntity`` can select right now: the declared ones that are ABSENT.
+
+    Spawning here is activation, so a spawnable is CONSUMED by spawning it -- unlike a simulator
+    whose uri names a model file and spawns a copy per call. A present entity's name is not a uri
+    a spawn accepts (it answers "already present"), and the service asks for the uris that are
+    valid, so listing it would offer one that cannot be used.
+
+    Together with ``GetEntities``, which lists the present ones, this covers everything the world
+    declared.
+    """
+    return [_spawnable(e.name, e.kind) for e in entities if not e.present]
+
+
+def _spawn_target(req, names):
+    """``(name, None)`` for the declared entity a spawn request selects, or ``(None, refusal)``.
+
+    ``uri`` is the service's selector, and here it names one of the entities ``GetSpawnables``
+    lists. ``name`` may be empty or repeat it; any other name would be a rename, and a compiled
+    entity keeps the name its world gave it. With no ``uri`` the request selects by ``name`` alone:
+    the service calls that invalid, but callers written before ``GetSpawnables`` rely on it, and it
+    cannot select anything other than what it names.
+    """
+    uri, _ = _resource_of(req)
+    if not uri:
+        if not req.name:
+            return None, (
+                SpawnEntity.Response.NO_RESOURCE,
+                "the request names no entity: set 'uri' to one get_spawnables lists.",
+            )
+        return req.name, None
+    if uri not in names:
+        return None, (
+            SpawnEntity.Response.UNSUPPORTED_FORMAT,
+            f"'uri' {uri!r} is not an entity this world declared, and this simulator loads no "
+            f"geometry (get_simulator_features advertises no spawn_formats). Declared: "
+            f"{', '.join(sorted(names)) or 'none'}; get_spawnables lists the absent ones a spawn "
+            "can select.",
+        )
+    if req.name and req.name != uri:
+        return None, (
+            SpawnEntity.Response.NAME_INVALID,
+            f"'name' {req.name!r} would rename {uri!r}, and a compiled entity keeps the name its "
+            "world gave it. Leave 'name' empty or repeat the uri.",
+        )
+    return uri, None
+
+
+def _unsupported_spawn_request(req):
+    """``(result_code, message)`` for a request this simulator cannot serve as asked, else ``None``.
+
+    EVERY field of the request is either honoured or named here, and that is the point rather than
+    tidiness: a field read off the request and discarded under a ``RESULT_OK`` is the failure this
+    module is shaped against -- a trial that believes it spawned something. A
+    field added to the service later must join one list or the other.
+
+    The codes are the service's OWN extended ones where it defines a fitting one, which
+    ``Result.msg`` asks of an implementation rather than leaving to taste; the generic
+    ``RESULT_FEATURE_UNSUPPORTED`` is for a call option this simulator does not offer, which is
+    what that code is for.
+
+    ``uri`` and ``name`` are not here: they select the entity, which :func:`_spawn_target` resolves.
+
+    Why none of these is a gap to fill: geometry, because the model is compiled once, which
+    ``get_simulator_features`` already says by advertising no ``spawn_formats``; a namespace,
+    because an entity's name is settled when the model compiles; renaming, because spawning here
+    SELECTS an entity by name, so an existing name is the required case rather than the collision
+    ``allow_renaming`` resolves; and a frame, because the service requires one the simulator
+    knows, and this one knows only the world frame the empty default already names.
+    """
+    if _resource_of(req)[1]:
+        return SpawnEntity.Response.UNSUPPORTED_FORMAT, (
+            "this simulator spawns entities the world compiled and loads no geometry, so "
+            "'resource_string' cannot be honoured (get_simulator_features advertises no "
+            "spawn_formats). Declare the entity in the world and spawn it by 'uri'."
+        )
+    if getattr(req, "entity_namespace", ""):
+        return Result.RESULT_FEATURE_UNSUPPORTED, (
+            "'entity_namespace' cannot be honoured: an entity's name is settled when the model "
+            "compiles, so this simulator cannot place one under a namespace. Name it in the world."
+        )
+    if getattr(req, "allow_renaming", False):
+        return Result.RESULT_FEATURE_UNSUPPORTED, (
+            "'allow_renaming' cannot be honoured: spawning here selects the entity the world "
+            "compiled under this name, so an existing name is what the request needs rather than "
+            "a collision to rename around. Ask for the name you want."
+        )
+    frame_id = getattr(getattr(req.initial_pose, "header", None), "frame_id", "")
+    if frame_id and frame_id not in _WORLD_FRAMES:
+        return SpawnEntity.Response.INVALID_POSE, (
+            f"initial_pose is stated in frame {frame_id!r}, which this simulator does not know. "
+            "It places entities in the world frame, which the empty default already names."
+        )
+    return None
 
 
 class SimInterfacesPlugin(Plugin):
@@ -82,6 +248,7 @@ class SimInterfacesPlugin(Plugin):
 
         node.create_service(GetSimulatorFeatures, "get_simulator_features", self._get_features)
         node.create_service(GetEntities, "get_entities", self._get_entities)
+        node.create_service(GetSpawnables, "get_spawnables", self._get_spawnables)
         # Spawning here is ACTIVATION, not creation: the model is compiled once and never
         # rebuilt, so these two make an entity the world already carries perceivable or not.
         node.create_service(SpawnEntity, "spawn_entity", self._spawn_entity)
@@ -117,6 +284,7 @@ class SimInterfacesPlugin(Plugin):
             # Both are served over presence, not creation -- see _spawn_entity. Advertised
             # because a caller's question is "can I make this entity appear", and here it can.
             SimulatorFeatures.SPAWNING,
+            SimulatorFeatures.SPAWNABLES,
             SimulatorFeatures.DELETING,
             SimulatorFeatures.ENTITY_STATE_GETTING,
             SimulatorFeatures.ENTITY_STATE_SETTING,
@@ -132,8 +300,9 @@ class SimInterfacesPlugin(Plugin):
         # caller offering MJCF would be refused -- saying "mjcf" here would invite exactly that.
         f.spawn_formats = []
         f.custom_info = (
-            "roqsim bridge (M1 subset); spawn/delete activate entities the world "
-            "compiled -- the model is never rebuilt at runtime"
+            "roqsim bridge (M1 subset); spawn/delete activate entities the world compiled, "
+            "spawn selecting one by the uri get_spawnables lists and placing a free-jointed one "
+            "at initial_pose (world frame only) -- the model is never rebuilt at runtime"
         )
         resp.features = f
         return resp
@@ -145,15 +314,48 @@ class SimInterfacesPlugin(Plugin):
         resp.result = Result(result=Result.RESULT_OK)
         return resp
 
+    def _get_spawnables(self, req, resp):
+        resp.spawnables = _spawnables(self._ctx.entities.all())
+        # The service asks for unrecognised sources to be named without failing the call; this
+        # simulator searches none, because everything spawnable was compiled in.
+        sources = list(getattr(req, "sources", []))
+        resp.result = Result(
+            result=Result.RESULT_OK,
+            error_message=f"sources not searched: {', '.join(sources)}" if sources else "",
+        )
+        return resp
+
     def _spawn_entity(self, req, resp):
-        """Make an entity the world compiled perceivable again.
+        """Make an entity the world compiled perceivable again, at the pose the request states.
 
         Not creation. roqsim does not recompile the model at runtime, so there is no body to add:
         a world declares everything a trial may bring in, and this selects one. A request for a
         name the world does not carry is refused rather than approximated -- the alternative is
         a trial that believes it spawned something.
+
+        ``initial_pose`` is applied, in the same physics transaction as the presence flip, so the
+        entity is never perceivable at a pose nobody asked for. The service states that pose
+        unconditionally and a default request carries the origin, so THAT is what a caller sending
+        no pose asks for and what it gets; to bring an entity back where it was, state where that
+        is. An entity the model welded cannot be moved at all, so for it the request succeeds only
+        if it is already at the pose asked for, and is refused otherwise rather than appearing
+        somewhere else under a RESULT_OK.
         """
-        return self._set_presence(req.name, True, resp, verb="spawn")
+        name, unsupported = _spawn_target(req, self._ctx.entities.names())
+        unsupported = unsupported or _unsupported_spawn_request(req)
+        if unsupported:
+            code, message = unsupported
+            resp.result = Result(result=code, error_message=message)
+            return resp
+        pose = _pose_of(req)
+        if pose is None:
+            resp.result = Result(
+                result=SpawnEntity.Response.INVALID_POSE,
+                error_message="initial_pose carries a zero-length quaternion, which is not a "
+                "rotation. Send a unit quaternion; the identity is w=1.",
+            )
+            return resp
+        return self._set_presence(name, True, resp, verb="spawn", pose=pose)
 
     def _delete_entity(self, req, resp):
         """Make an entity absent: invisible to sensors, untouchable, and unlisted.
@@ -164,7 +366,7 @@ class SimInterfacesPlugin(Plugin):
         """
         return self._set_presence(req.entity, False, resp, verb="delete")
 
-    def _set_presence(self, name, present, resp, *, verb):
+    def _set_presence(self, name, present, resp, *, verb, pose=None):
         entity = self._ctx.entities.get(name)
         if entity is None:
             resp.result = Result(
@@ -182,16 +384,51 @@ class SimInterfacesPlugin(Plugin):
             )
             return resp
         # Physics-thread only, like every other write to model/data -- and WAITED FOR, so RESULT_OK
-        # means the entity really has appeared. Posting and answering OK immediately (which this did)
-        # reports success before the flip has run, so a paused or stalled simulator accepts spawns
+        # means the entity really has appeared. Posting and answering OK immediately would report
+        # success before the flip has run, so a paused or stalled simulator accepts spawns
         # that never happen and the caller has no way to tell.
-        if not run_on_physics(
-            self._ctx, lambda ctx: set_present(ctx, ctx.entities.get(name), present)
-        ):
+        #
+        # Pose first, then presence, in ONE transaction: placing an entity that is already
+        # perceivable would show it at the compiled pose for the steps in between.
+        #
+        # Each outcome is recorded POSITIVELY, never inferred from a flag that stayed unset:
+        # run_on_physics sets its event in a `finally`, so a raising command still returns True,
+        # and reading "no outcome" as one particular failure would explain an exception as a
+        # missing free joint.
+        outcome = {}
+
+        def _apply(ctx):
+            if pose is not None and not place_body(ctx, entity, pose[0], pose[1]):
+                state = self._read_body(ctx, entity.body) if entity.body else {}
+                if not _already_at(state, pose):
+                    outcome["welded_at"] = state.get("pos")
+                    return
+            set_present(ctx, entity, present)
+            outcome["done"] = True
+
+        if not run_on_physics(self._ctx, _apply):
             resp.result = Result(
                 result=Result.RESULT_OPERATION_FAILED,
                 error_message=f"the simulation did not apply {verb} {name!r} within "
                 f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+            )
+            return resp
+        if "welded_at" in outcome:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=(
+                    f"{verb} {name!r} asks for a pose the entity cannot take: the world compiled "
+                    f"it as welded scenery at {outcome['welded_at']}, with neither a mocap body "
+                    f"nor a free joint to write. Ask for that pose, or place it: "
+                    f"{PLACEABLE_MODES_HINT}"
+                ),
+            )
+            return resp
+        if not outcome.get("done"):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"{verb} {name!r} did not complete in the simulation; "
+                "its log carries the reason.",
             )
             return resp
         if hasattr(resp, "entity_name"):
@@ -231,13 +468,52 @@ class SimInterfacesPlugin(Plugin):
         p = req.state.pose.position
         o = req.state.pose.orientation
         quat = (o.w, o.x, o.y, o.z) if any([o.w, o.x, o.y, o.z]) else (1.0, 0.0, 0.0, 0.0)
-        ok = {}
-        run_on_physics(
-            self._ctx, lambda c: ok.update(done=self._write_body(c, entity, (p.x, p.y, p.z), quat))
-        )
-        resp.result = Result(
-            result=Result.RESULT_OK if ok.get("done") else Result.RESULT_OPERATION_FAILED
-        )
+        pose = ((p.x, p.y, p.z), quat)
+        # The twist is part of the state: `EntityState` carries one and the GETTER reports one, so
+        # answering RESULT_OK while ignoring whatever was asked for would let a caller read a
+        # velocity it could not set.
+        #
+        # Absent rather than zero when the request has no twist at all, which a real EntityState
+        # always does but a partial caller may not: `None` is what `place_body` already reads as
+        # "zero the velocity", so a pose write never fails for want of a field it does not use.
+        twist = getattr(req.state, "twist", None)
+        vel = None
+        if twist is not None:
+            tl, ta = twist.linear, twist.angular
+            vel = (tl.x, tl.y, tl.z, ta.x, ta.y, ta.z)
+        # Recorded POSITIVELY, and each failure told apart, exactly as the spawn door does it:
+        # run_on_physics sets its event in a `finally`, so a command that raised still returns
+        # True, and reading "no outcome" as one particular failure would explain an exception as
+        # a missing free joint. A welded entity asked for the pose it already holds succeeds --
+        # the caller got what it asked for, and only a MOVE is what a weld refuses.
+        outcome = {}
+
+        def _apply(ctx):
+            if not place_body(ctx, entity, pose[0], pose[1], vel):
+                state = self._read_body(ctx, entity.body) if entity.body else {}
+                if not _already_at(state, pose):
+                    outcome["welded_at"] = state.get("pos")
+                    return
+            outcome["done"] = True
+
+        if not run_on_physics(self._ctx, _apply):
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=f"the simulation did not place {req.entity!r} within "
+                f"{DEFAULT_TIMEOUT_S} s (is it paused?)",
+            )
+            return resp
+        if "welded_at" in outcome:
+            resp.result = Result(
+                result=Result.RESULT_OPERATION_FAILED,
+                error_message=(
+                    f"{req.entity!r} cannot be moved: the world compiled it as welded scenery "
+                    f"at {outcome['welded_at']}, with neither a mocap body nor a free joint to "
+                    f"write. {PLACEABLE_MODES_HINT}"
+                ),
+            )
+            return resp
+        resp.result = Result(result=Result.RESULT_OK)
         return resp
 
     def _get_sim_state(self, req, resp):
@@ -285,22 +561,6 @@ class SimInterfacesPlugin(Plugin):
             "ang": [float(v) for v in vel[:3]],
             "lin": [float(v) for v in vel[3:]],
         }
-
-    @staticmethod
-    def _write_body(ctx, entity, pos, quat) -> bool:
-        import mujoco
-
-        jname = entity.meta.get("base_joint")
-        jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, jname) if jname else -1
-        if jid < 0 or ctx.model.jnt_type[jid] != mujoco.mjtJoint.mjJNT_FREE:
-            return False
-        q = ctx.model.jnt_qposadr[jid]
-        ctx.data.qpos[q : q + 3] = pos
-        ctx.data.qpos[q + 3 : q + 7] = quat
-        dof = ctx.model.jnt_dofadr[jid]
-        ctx.data.qvel[dof : dof + 6] = 0.0
-        mujoco.mj_forward(ctx.model, ctx.data)
-        return True
 
     def validate_config(self, config: dict) -> list[str]:
         return []

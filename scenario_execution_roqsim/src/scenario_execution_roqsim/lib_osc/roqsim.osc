@@ -7,7 +7,7 @@
 # declared here, so a scenario moves between the two unedited. None of them can run under `remote()`:
 # a remote server is handed no simulation and no node.
 
-import osc.types  # pose_3d, for entity_teleport
+import osc.types  # pose_3d / velocity_6d, for set_entity_state
 
 # How a displacement is reduced to one number.
 #
@@ -52,12 +52,88 @@ action entity_rotated:
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
 
-action entity_teleport:
-    # Place a free-jointed entity at `pose` and zero its velocity, matching a fresh spawn. The
+action entity_navigate:
+    # Send an entity somewhere, and succeed when it gets there. The mover is the SIMULATOR's -- a
+    # `navigator` component on that entity plans and drives it internally -- so this drives the
+    # traffic in a trial, never the robot under test. Contrast `osc.nav2`'s `nav_to_pose`, which
+    # commands an EXTERNAL nav2 stack over ROS: that one is the subject, this one is the apparatus.
+    # They stay separate actions because they prove different things -- a goal reached through nav2
+    # says something about nav2; a goal reached through this says the traffic arrived on cue.
+    #
+    # POSITIONS only: the navigator drives to a point and stops facing the way it arrived, so a
+    # nonzero orientation is REFUSED rather than accepted and dropped. A final heading is a
+    # capability to add to the navigator, not a value to pass and ignore.
+    # The route replaces whatever the navigator was doing, and the entity's own configured route
+    # resumes when it finishes, if it had one. A branch that is abandoned cancels the route rather
+    # than leaving the mover driving to a goal the scenario has given up on.
+    #
+    # Over ROS this is the simulator's own NavigateThroughPoses server, reached at
+    # `<entity>/navigate_through_poses` by the same convention `set_model_override` uses for
+    # `<instance>/override`. `action_name` is the escape hatch for a deployment that scoped it
+    # differently; leaving it empty is what keeps a scenario identical on both transports.
+    entity: string                        # roqsim entity name -- the world's `name:`, not a body
+                                          #   and not a TF frame
+    goal_poses: list of pose_3d           # world-frame. One goal is a 1-element list; OSC has no
+                                          #   union type, the same rule the rest of this file follows
+    success_on_acceptance: bool = false   # true -> succeed once the route is accepted, without
+                                          #   waiting for arrival (fire-and-forget traffic)
+    action_name: string = ''              # ROS only; empty = `<entity>/navigate_through_poses`
+
+action entity_navigate_start:
+    # Run the route the entity was CONFIGURED with, and succeed when it finishes.
+    #
+    # A separate action rather than `entity_navigate` with an empty list, because a list parameter
+    # cannot carry a default in this grammar -- and because the distinction is worth a name. With
+    # the route in the world (`navigator: {goals: [...], autostart: false}`) and only the trigger
+    # here, the trajectory is part of the world's provenance -- identical in every repetition, and
+    # visible in a campaign's config diff -- while its timing belongs to the trial. Sending the
+    # route from the scenario instead puts both in the scenario. Both are legitimate; they answer
+    # different questions.
+    #
+    # An entity with no configured route is refused rather than reported as arrived. Over ROS this
+    # is the simulator's own `roqsim_nav_interfaces/StartRoute` action at `<entity>/start_route`,
+    # which the navigator serves only when it has a configured route. Stopping it early is the
+    # scenario's, as for any action: `until`, `one_of` or `timeout` cancel the route.
+    entity: string
+    success_on_acceptance: bool = false
+    action_name: string = ''              # ROS only; empty = `<entity>/start_route`
+
+action spawn_entity:
+    # Make an entity the world DECLARED perceivable, at the pose it appears at. Activation, not
+    # creation: roqsim never recompiles the model, so a name the world does not carry is refused --
+    # which is also why there is no `uri` here. The pose is applied in the same transaction as the
+    # presence flip, so the entity is never perceivable at a pose nobody asked for; a `pose_3d`,
+    # read by the parser a world document and simulation_interfaces both use.
+    #
+    # This is the verb for a per-RUN start pose. Fails the trial when the spawn does not land.
+    #
+    # `scenario_execution_sim` declares one of these too. An action name is unique within a
+    # LIBRARY: an invocation binds to the implementation from the package whose library declared
+    # it, so importing `osc.roqsim` is what selects this one.
+    entity: string                                    # roqsim entity name -- the world's `name:`
+    pose: pose_3d
+
+action delete_entity:
+    # Make an entity the world declared ABSENT, where it is: no sensor sees it, nothing touches it,
+    # and the control plane stops listing it. Absence, not removal -- roqsim never recompiles the
+    # model -- so the pose is kept and a later `spawn_entity` brings it back. `spawn_entity` run the
+    # other way, which is why it takes no pose.
+    #
+    # Fails the trial when the delete does not land, including for an entity already absent.
+    #
+    # `scenario_execution_sim` declares one of these too; importing `osc.roqsim` selects this one.
+    entity: string                                    # roqsim entity name -- the world's `name:`
+
+action set_entity_state:
+    # Put a free-jointed entity in a state: at `pose`, moving at `twist`. The name and shape are
+    # `simulation_interfaces`' SetEntityState, because it is the same operation -- and `twist`
+    # defaults to zero, so a placement that states none behaves as a fresh spawn does. The
     # counterpart of `spawn_robot.pos`/`.yaw` for a factor that is decided per RUN (a campaign's
     # randomly generated start pose) rather than per CONFIGURATION -- nothing before compile knows a
-    # value drawn once per repetition, and the substrate does not recompile mid-run. Only yaw is
-    # applied; a nonzero roll or pitch in `pose.orientation` is refused (see the action's docstring).
+    # value drawn once per repetition, and the substrate does not recompile mid-run. A FULL pose:
+    # `orientation` takes roll/pitch/yaw or a quaternion, read by the same parser a world document
+    # and `simulation_interfaces/SetEntityState` go through, so one orientation means one thing
+    # everywhere. What a body cannot take, the simulator refuses (see below).
     #
     # Fails the trial when the write does not land (Result != RESULT_OK, or the entity has no free
     # joint) -- a teleport that did not happen must not leave a row whose recorded start_pose the
@@ -65,6 +141,7 @@ action entity_teleport:
     entity: string                                    # roqsim entity name -- the world's `name:`, not
                                                       # a body or a TF frame
     pose: pose_3d
+    twist: velocity_6d = velocity_6d()                # zero unless stated
 
 action set_sensor_override:
     # Degrade a SENSOR mid-run: apply (or restore) the `fault:` block the sensor carries in its own

@@ -1,0 +1,16 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_common_bringup/config/wheel_status_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation), so the node runs with the parameters its
+# maintainers ship; roqsim's TurtleBot 4 publishes on the topics named here.
+/**:
+  wheel_status_publisher:
+    ros__parameters:
+      # Publish rate
+      publish_rate: 62.0
+      # Encoder resolution
+      encoder_resolution: 508.8
+      # Wheel radius
+      wheel_radius: 0.03575
+      # Wheels angular velocity topic
+      velocity_topic: wheel_vels
+      # Wheels' net encoder ticks topic
+      ticks_topic: wheel_ticks

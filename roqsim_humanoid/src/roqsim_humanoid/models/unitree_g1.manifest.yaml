@@ -5,12 +5,35 @@
 # override a default, declare the same plugin for the same robot in the world; to opt out entirely,
 # set `spawn_robot` config `default_plugins: false`. Each entry's `robot` is filled in from the
 # spawn_robot `name`.
-#
-# lidar comes from roqsim_sensors (a dependency of this package) -- borrowed here by name so the
-# G1 publishes /scan for nav2 exactly like the turtlebot does.
+
+# The models directory is flat, so the licence this model carries is named rather than guessed
+# from what sits beside it: the 12-DoF model comes from unitree_rl_gym, the dex1 variant from
+# unitree_ros, and the two ship separate BSD-3-Clause texts (THIRD_PARTY.md).
+license: LICENSE.unitree_rl_gym
+
+# Fixed links of unitree_ros g1_description @ f3772ce that this MJCF flattens into base_link;
+# spawn_robot makes each a site and publishes it as static TF. The 12-DoF model welds the waist, so
+# torso_link is the pelvis frame moved by the waist joints' origins at zero angle:
+# g1_29dof_rev_1_0.urdf:436-437 (waist_yaw_joint, 0 0 0), :457-458 (waist_roll_joint,
+# -0.0039635 0 0.044), :484-485 (waist_pitch_joint, 0 0 0). Not inherited by unitree_g1_dex1, whose
+# torso_link is a jointed body.
+frames:
+  - {name: torso_link, parent: base_link, pos: [-0.0039635, 0.0, 0.044], rpy: [0.0, 0.0, 0.0]}
+
 components:
   - g1_locomotion: {}                              # RL walking policy + PD; gains/config bundled
-  - lidar:
-      site: lidar
-      rays: 360
-      max_range: 12.0
+  # The Livox Mid-360 device model at the vendor joint origin: mid360_joint on torso_link,
+  # g1_29dof_rev_1_0.urdf:572-576 (the same origin in g1_23dof_rev_1_0.urdf:530-534 and
+  # g1_29dof_mode_15_with_dex1_1.urdf:548-552), upside down and pitched 2.9 deg. The URDF link is
+  # the point-cloud frame, which is the device's mount origin, so pos/rpy are verbatim; the scan is
+  # stamped in that link's name so it joins the robot's TF tree. Scan values are the device's: no
+  # Unitree source configures the G1's Mid-360 differently. The head mesh carries the opening the
+  # real head has for the sensor (external/convert/g1_head_window.py). Addressed as
+  # `<robot>.mid360.livox_mid360`; the cloud is `livox/lidar` in the robot's namespace.
+  - spawn_sensor:
+      model: mid360
+      parent_frame: torso_link
+      pos: [0.0002835, 0.00003, 0.428434]
+      rpy: [3.141592653589793, 0.05112069379091391, 0.0]
+      frame_id: mid360_link
+    name: mid360

@@ -1,13 +1,13 @@
 """Controller plugin: differential-drive kinematics + wheel-encoder odometry.
 
-Ported from our earlier in-house nav prototype's ``TurtleBot4``. Consumes a body-frame twist target (set via the published
+Consumes a body-frame twist target (set via the published
 :class:`RobotHandle` — e.g. by the ROS bridge — or a scripted ``test_cmd`` for standalone demos),
 writes wheel velocity-servo targets in ``pre_step``, and integrates encoder odometry in ``post_step``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     diff_drive:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       wheel_radius: 0.03575
       wheel_separation: 0.233
@@ -18,7 +18,17 @@ Config::
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
+      odom_child_frame: base_link   # frame the odometry TF points at (see below)
+      odom_rate_hz: 50.0           # publish rate of odom (and its TF) and joint_states
+      stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
+      cmd_vel_timeout: 0.0         # s; > 0 stops the base when no command arrives for this long
+      publish_joint_states: true   # false when a joint_state_publisher covers the whole robot
       test_cmd: [0.15, 0.4]        # optional [v, w] applied every tick (standalone demo)
+      odom_noise:                  # optional odometry error (see below); omitted = exact odometry
+        linear_stddev: 0.0         # m/s, white noise on the reported linear velocity
+        angular_stddev: 0.0        # rad/s, white noise on the reported yaw rate
+        linear_scale: 1.0          # multiplicative bias (e.g. a wheel radius off by 1 %)
+        angular_scale: 1.0         # multiplicative bias on the yaw rate (e.g. an effective track error)
 
 Skid-steer (>1 wheel per side, e.g. Husky A200): give the per-side actuator/joint *lists* instead of
 the singular keys; every left wheel gets the same command, every right wheel the same, and odometry
@@ -34,12 +44,50 @@ averages each side's wheel velocities. ``slip_factor`` compensates the lateral s
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
 
+``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
+for the velocity command. Which of the two a stack publishes is a property of that stack, not of
+the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
+configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
+so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
+which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
+naming the topic, both types and both sides.
+
+``cmd_vel_timeout`` is the watchdog every real base driver has: a command is good for this long
+and then the base stops, so a stack that dies mid-run leaves a stationary robot rather than one
+driving at its last velocity into a wall. ``ros2_control``'s ``diff_drive_controller`` ships it at
+0.5 s and the Create 3's firmware behaves the same. It is off by default here, because an in-process
+driver that sets a twist once and steps expects it to hold; a world that runs a real stack sets it
+to that stack's value. The stop goes through the same acceleration ramp as any command.
+
+``publish_joint_states`` switches this plugin's own ``joint_states`` (the wheel joints) off, for a
+robot whose ``joint_state_publisher`` publishes every joint in one message -- a consumer that needs
+a suspension travel in the same message as the wheels must not get two messages on one topic that
+each carry half.
+
+``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT
+of whatever URDF ``robot_state_publisher`` is running: a robot_state_publisher rooted at
+``base_footprint`` (every published TurtleBot 3 description) already gives ``base_link`` a parent,
+and a second parent from here leaves the frame with two, which tf2 cannot resolve. Robots whose
+description is rooted at ``base_link`` (TurtleBot 4) keep the default.
+
 ``slip_factor`` exists because a 4-wheel skid-steer turns by scrubbing its wheels sideways: with
 MuJoCo point contacts the base yaws at only ~15% of the ideal differential-drive prediction, which
 would leave a planner unable to rotate. The factor inflates the yaw term of the wheel command and is
 divided back out of odometry, so commanded yaw is achieved and odometry stays consistent with the
 base's real motion. It is a per-robot *calibration* against the model's contact/friction setup --
 re-measure it (achieved vs commanded yaw rate) if wheel friction, mass, or the timestep change.
+
+``odom_noise`` makes the odometry wrong the way real wheel odometry is wrong, and leaves the robot's
+motion alone. The error is applied to the velocities read off the wheels, before they are integrated,
+so the reported pose drifts rather than jitters: a ``linear_scale`` of 1.01 is a wheel radius stated
+1 % too small and overstates every metre by a centimetre, and the ``*_stddev`` terms are zero-mean
+white noise on each reading, drawn per physics step. A white velocity error integrates to a random
+walk, so the pose spread grows with the square root of the distance driven and shrinks with the
+timestep; state the stddev together with the world's ``sim.timestep``. Everything downstream that
+consumes odometry sees it -- the ``odom`` endpoint, its TF, the ``RobotHandle`` -- and nothing that
+reports the truth does: the body's pose, ``sim_poses`` and a ground-truth pose plugin are exact.
+Draws come from ``ctx.rng_for`` (``docs/architecture.rst`` §9.1), so a noisy run needs a seed and
+reproduces from it; with the block omitted nothing is drawn and the odometry is exact, as before.
 """
 
 from __future__ import annotations
@@ -75,6 +123,27 @@ class DiffDrivePlugin(Plugin):
         self.wheel_accel = float(self.config.get("wheel_accel_limit", 0.9))
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
         self.base_body = self.config.get("base_body", "base_link")
+        # Link the odometry TF points at: the root of the robot description published alongside,
+        # which differs per platform (base_link on a TurtleBot 4, base_footprint on a TurtleBot 3).
+        self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
+        #: Message type of the velocity command: the stack decides it, not the kinematics.
+        self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: Watchdog: a command older than this stops the base; 0 = hold the last command forever.
+        self.cmd_vel_timeout = float(self.config.get("cmd_vel_timeout", 0.0))
+        self.odom_rate_hz = float(self.config.get("odom_rate_hz", 50.0))
+        self.publish_joint_states = bool(self.config.get("publish_joint_states", True))
+        self._last_cmd = float("-inf")  # sim time of the last drive(); -inf until one arrives
+        self._ctx: SimContext | None = None
+        #: Odometry error: (linear_stddev, angular_stddev, linear_scale, angular_scale), or None.
+        noise = self.config.get("odom_noise")
+        self._odom_noise = None
+        if noise:
+            self._odom_noise = (
+                float(noise.get("linear_stddev", 0.0)),
+                float(noise.get("angular_stddev", 0.0)),
+                float(noise.get("linear_scale", 1.0)),
+                float(noise.get("angular_scale", 1.0)),
+            )
         self._sign_l: list[float] = []
         self._sign_r: list[float] = []
         self._target_v = 0.0
@@ -124,9 +193,31 @@ class DiffDrivePlugin(Plugin):
                 errors.append(f"'{side}_actuators' and '{side}_joints' must have the same length")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
+        if float(config.get("cmd_vel_timeout", 0.0)) < 0:
+            errors.append("'cmd_vel_timeout' must be >= 0 (0 = no watchdog)")
+        if float(config.get("odom_rate_hz", 50.0)) <= 0:
+            errors.append("'odom_rate_hz' must be > 0")
+        noise = config.get("odom_noise")
+        if noise is not None:
+            known = ("linear_stddev", "angular_stddev", "linear_scale", "angular_scale")
+            if not isinstance(noise, dict):
+                errors.append("'odom_noise' must be a mapping of " + ", ".join(known))
+            else:
+                unknown = sorted(set(noise) - set(known))
+                if unknown:
+                    errors.append(
+                        f"'odom_noise' has unknown keys {unknown}; it takes {list(known)}"
+                    )
+                for key in ("linear_stddev", "angular_stddev"):
+                    if key in noise and float(noise[key]) < 0:
+                        errors.append(f"'odom_noise.{key}' must be >= 0")
+                for key in ("linear_scale", "angular_scale"):
+                    if key in noise and float(noise[key]) <= 0:
+                        errors.append(f"'odom_noise.{key}' must be > 0")
         return errors
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
         # Transport scope for this robot's endpoints: own config wins, else inherited from the spawn.
@@ -164,11 +255,10 @@ class DiffDrivePlugin(Plugin):
         # wheel carries the base forward when it spins about the base's +y, and sign = +axis_y.
         #
         # Derived rather than assumed, because a source URDF may express the same wheel about either
-        # y direction and both are correct: the Neobotix MP-400's are -y. This plugin previously
-        # wrote the commanded rate straight to the actuator, which silently required +y -- a
-        # convention every model here satisfied only because our own generators wrote them, and which
-        # drove the MP-400 backwards until its axis was flipped to suit. omni_drive has always
-        # derived this; it simply had the sign inverted until 2026-08-28.
+        # y direction and both are correct: the Neobotix MP-400's are -y. Writing the commanded rate
+        # straight to the actuator would silently require +y, and a model that states the other
+        # convention then drives backwards -- a fault visible only in the base's motion, which is
+        # where it is hardest to attribute to a sign.
         base_b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, prefix + self.base_body)
         if base_b < 0:
             raise RuntimeError(
@@ -205,7 +295,9 @@ class DiffDrivePlugin(Plugin):
                 write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
                 backend={
                     "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
+                        "type": "geometry_msgs.msg.TwistStamped"
+                        if self.stamped_cmd_vel
+                        else "geometry_msgs.msg.Twist",
                         "topic": self.topic_override("cmd_vel") or "cmd_vel",
                     }
                 },
@@ -218,39 +310,43 @@ class DiffDrivePlugin(Plugin):
                 owner=self.robot,
                 namespace=ns,
                 read=self.read_odom,
-                rate_hz=50.0,
+                rate_hz=self.odom_rate_hz,
                 backend={
                     "ros2": {
                         "type": "nav_msgs.msg.Odometry",
                         "topic": self.topic_override("odom") or "odom",
                         "frame_id": "odom",
-                        "child_frame_id": "base_link",
+                        "child_frame_id": self.odom_child_frame,
                         "emit_tf": True,
                     }
                 },
             )
         )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
+        if self.publish_joint_states:
+            ctx.interface.add(
+                Endpoint(
+                    name="joint_states",
+                    direction="out",
+                    owner=self.robot,
+                    namespace=ns,
+                    read=self.read_joint_states,
+                    rate_hz=self.odom_rate_hz,
+                    backend={
+                        "ros2": {
+                            "type": "sensor_msgs.msg.JointState",
+                            "topic": self.topic_override("joint_states") or "joint_states",
+                        }
+                    },
+                )
             )
-        )
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(np.clip(w, -self.max_w, self.max_w))
+        # Stamped for the watchdog. Physics thread by construction: a bridge posts the command
+        # onto it, and an in-process driver calls this between steps.
+        self._last_cmd = self._ctx.sim_time if self._ctx is not None else 0.0
 
     def read_odom(self):
         x, y, yaw, v, w = self._odom
@@ -263,6 +359,7 @@ class DiffDrivePlugin(Plugin):
         self._target_v = self._target_w = 0.0
         self._cmd_wl = self._cmd_wr = 0.0
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self._last_cmd = float("-inf")
 
     def pre_step(self, ctx: SimContext) -> None:
         if ctx.manual_control:
@@ -270,6 +367,10 @@ class DiffDrivePlugin(Plugin):
         if "test_cmd" in self.config:
             v, w = self.config["test_cmd"]
             self.drive(float(v), 0.0, float(w))
+        if self.cmd_vel_timeout > 0.0 and ctx.sim_time - self._last_cmd > self.cmd_vel_timeout:
+            # The watchdog: the last command has expired, so the target is a stop. The ramp below
+            # still applies, so the base decelerates as it would on any command to zero.
+            self._target_v = self._target_w = 0.0
         # differential-drive inverse kinematics -> target wheel angular velocities
         # (slip == 1.0 is the ideal model; > 1.0 compensates skid-steer scrub, see __init__)
         yaw_term = self._target_w * self.slip * self.L / 2.0
@@ -308,6 +409,13 @@ class DiffDrivePlugin(Plugin):
         # Invert the same slip model used to command the wheels, so odometry tracks the base's
         # actual yaw rather than the (inflated) ideal-differential prediction.
         w = self.r * (wr - wl) / (self.L * self.slip)
+        if self._odom_noise is not None:
+            # Wrong the way wheel odometry is wrong: on the readings, before integration, so the pose
+            # drifts. One draw per step for both terms, keyed on the time it happens (§9.1).
+            lin_sd, ang_sd, lin_scale, ang_scale = self._odom_noise
+            n = ctx.rng_for(f"{self.name or 'diff_drive'}.odometry").standard_normal(2)
+            v = v * lin_scale + lin_sd * float(n[0])
+            w = w * ang_scale + ang_sd * float(n[1])
         o = self._odom
         o[0] += v * np.cos(o[2]) * ctx.dt
         o[1] += v * np.sin(o[2]) * ctx.dt

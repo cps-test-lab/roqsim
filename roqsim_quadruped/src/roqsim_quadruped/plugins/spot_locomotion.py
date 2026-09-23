@@ -17,10 +17,10 @@ Policy weights are NVIDIA-licensed and *not committed*: fetch them with
 ``python -m roqsim_quadruped.policy.fetch_policy`` or point ``policy_path`` / ``$SPOT_POLICY_PATH``
 at a local ``spot_policy.pt``.
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     spot_locomotion:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       policy_path: <fetched>       # TorchScript policy (default: $SPOT_POLICY_PATH or policy/spot_policy.pt)
       config_path: <bundled>       # deploy config (default: policy/spot.yaml)

@@ -31,6 +31,8 @@ from pathlib import Path
 
 import yaml
 
+from . import keys
+
 log = logging.getLogger(__name__)
 
 
@@ -38,17 +40,14 @@ class ViewSaveError(RuntimeError):
     """The world YAML could not be rewritten (no target, unparseable, or the edit changed too much)."""
 
 
-#: GLFW keycode for F8. Simulate claims F1-F7 (help/info/profiler/sensor/fullscreen/frame/label) and
-#: roqsim's recording toggle is on F9, which leaves F8 -- and *only* a function key will do. Every one of
-#: the 26 letters is bound by Simulate to a visualization or rendering flag (``V`` is ``mjVIS_TENDON``;
-#: see ``mjVISSTRING``/``mjRNDSTRING``), and the passive viewer's key callback runs *in addition to*
-#: Simulate's own handling rather than instead of it, so a letter here would toggle rendering on every
-#: save. Same constraint that put travel on the arrows in :mod:`roqsim.viewer`.
-KEY_F8 = 297
+#: GLFW keycode for F8, from the binding this module's handler declares -- so the key that saves and
+#: the key the window's F1 list names cannot become two different keys. :mod:`roqsim.keys` holds that
+#: binding, every other key roqsim takes, and why these are the ones it may take at all.
+KEY_F8 = keys.KEY_F8
 
 #: Auto-repeat delivers several presses from one held key (~0.2 s apart); above that, below a
-#: deliberate double-press. Matches :attr:`roqsim.capture.RecordToggle.DEBOUNCE_S`.
-DEBOUNCE_S = 0.4
+#: deliberate double-press.
+DEBOUNCE_S = keys.DEBOUNCE_S
 
 #: Decimals kept for positions and distances (mm) and for angles (a tenth of a degree). The camera
 #: carries far more precision than a framing decision has, and a world YAML is read by people.
@@ -69,10 +68,18 @@ class SaveViewKey:
     else's keys.
     """
 
-    def __init__(self, chain=None) -> None:
+    #: What this handler answers to, and what the window's F1 list says of it.
+    key_bindings = (keys.SAVE_VIEW,)
+
+    def __init__(self, chain=None, *, savable: bool = True) -> None:
         self._chain = chain
         self._pending = 0
         self._last_accepted = 0.0
+        if not savable:
+            # A run started from an MJCF scene or a model reference has no world YAML to write into.
+            # The key stays live -- pressing it must still say why it cannot save, rather than do
+            # nothing -- but the key list stops offering what this run cannot do.
+            self.key_bindings = ()
 
     def key_callback(self, keycode: int) -> None:
         """UI thread. Debounce, count, return -- no camera read, no dialog, no file I/O."""

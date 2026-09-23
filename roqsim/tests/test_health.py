@@ -161,6 +161,139 @@ def test_tail_skips_a_row_it_cannot_trust(tmp_path):
     assert tail.malformed == 1
 
 
+# -- the tailer enters a long record at its window ------------------------------------------------
+#
+# A supervisor runs `roqsim health` as a NEW PROCESS on every poll, inside the simulator's own
+# container and memory budget. A reader that parsed the whole record on every poll had a transient
+# footprint that grew for as long as the run did -- until, several minutes into a run under a
+# calibrated limit, the poll's own allocation was what put the simulator over it. The checks judge
+# the newest minute, so that is all a reader may read.
+
+
+def test_a_windowed_tail_reads_the_window_and_skips_the_rest(tmp_path, monkeypatch):
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)  # ten rows, so the over-read is visible
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(10000)))
+    tail = health.Tail(path, window=70.0)
+    rows = tail.rows()
+    stamps = [float(r["wall_ts"]) for r in rows]
+    assert stamps[-1] == 10999.0, "the newest row is read"
+    assert stamps[0] <= 10999.0 - 70.0, "the whole window is covered"
+    assert stamps[0] > 10999.0 - 70.0 - 12, "and at most one chunk more"
+    assert tail.skipped > 0.9 * path.stat().st_size, "the rest of the file was never read"
+    assert "sim_ts" in rows[0], "the header is consumed as a header although it was skipped over"
+
+
+def test_a_windowed_tail_still_follows_what_arrives(tmp_path):
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(1000)))
+    tail = health.Tail(path, window=70.0)
+    assert tail.rows()
+    with path.open("a") as handle:
+        handle.write(clock_line(2000.0, 1000.0))
+        handle.write("2001.0,1001.0")  # a row still being written
+        handle.flush()
+    assert [r["sim_ts"] for r in tail.rows()] == ["1000.000000"]
+    with path.open("a") as handle:
+        handle.write("\n")
+    assert [r["sim_ts"] for r in tail.rows()] == ["1001.0"]
+
+
+def test_a_windowed_tail_reads_a_short_record_whole(tmp_path):
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(30)))
+    tail = health.Tail(path, window=70.0)
+    assert len(tail.rows()) == 30
+    assert tail.skipped == 0
+
+
+def test_a_windowed_tail_ignores_a_partial_last_row_when_placing_the_window(tmp_path, monkeypatch):
+    """The newest stamp is taken from the last COMPLETE row: the fragment after the final newline
+    may be cut inside its first field, and a window placed from a truncated number is placed wrong."""
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)
+    path = tmp_path / "c.csv"
+    path.write_text(
+        CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(1000)) + "1"
+    )
+    tail = health.Tail(path, window=70.0)
+    stamps = [float(r["wall_ts"]) for r in tail.rows()]
+    assert stamps[-1] == 1999.0
+    assert stamps[0] <= 1999.0 - 70.0
+
+
+def test_a_windowed_tail_enters_a_reset_record_no_earlier_than_the_reset(tmp_path, monkeypatch):
+    """The pose record's time column is sim time, which a world reset sends back to zero. Scanning
+    backwards from a young series, the rows before the reset are OLDER in the file but LATER in sim
+    time, so the window's arithmetic would never find a row old enough and the scan would read the
+    whole run. The checks re-anchor at a reset, so nothing before it changes a verdict: stop there."""
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)
+    path = tmp_path / "p.csv"
+    before = [pose_line(float(t), "base", 0.0) for t in range(5000)]  # long; all before the reset
+    after = [pose_line(float(t), "base", 0.0) for t in range(20)]  # young: shorter than any window
+    path.write_text(POSE_HEADER + "".join(before) + "".join(after))
+    tail = health.Tail(path, window=70.0)
+    rows = tail.rows()
+    assert [r["timestamp"] for r in rows][-20:] == [f"{t:.6f}" for t in range(20)]
+    assert len(rows) <= 20 + 4, "at most one chunk from before the reset"
+
+
+def test_a_one_shot_check_on_a_long_run_costs_the_window_and_not_the_run(tmp_path, capsys):
+    """The property the tailer's window exists for, asserted end to end through the CLI.
+
+    A run an hour long at 25 Hz, one body: several megabytes of poses, of which the checks need the
+    last minute. Peak allocation while judging it must not scale with the file -- the bound here is
+    loose against the window and far below what parsing the whole record costs.
+    """
+    import tracemalloc
+
+    now = time.time()
+    hz, seconds = 25, 3600
+    write_run(
+        tmp_path,
+        [clock_line(now - seconds + i / hz, i / hz) for i in range(seconds * hz)],
+        [pose_line(i / hz, "base", (i / hz) * 0.5) for i in range(seconds * hz)],
+    )
+    size = (tmp_path / "sim_poses.csv").stat().st_size
+    assert size > 8 * 1024 * 1024, "the record has to be large for the bound to mean anything"
+    tracemalloc.start()
+    try:
+        code = health.main([str(tmp_path), "--robot", "base", "--json"])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert code == health.EXIT_OK
+    assert peak < size / 2, f"peak {peak} bytes against a {size} byte record"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"]["sim_ts"] == pytest.approx(seconds - 1 / hz)
+    assert any("were not read" in note for note in payload["notes"]), "and the report says so"
+
+
+def test_a_long_run_whose_robot_stopped_is_still_caught_from_the_window(tmp_path, capsys):
+    """A robot that moved for an hour and has stood still for the last two minutes: the finding
+    comes from the newest minute alone, which is exactly what the window keeps."""
+    now = time.time()
+    moving = [pose_line(float(t), "base", t * 0.5) for t in range(0, 3600)]
+    parked = [pose_line(float(t), "base", 1800.0) for t in range(3600, 3720)]
+    write_run(
+        tmp_path,
+        [clock_line(now - 3720 + t, float(t)) for t in range(0, 3720)],
+        moving + parked,
+    )
+    assert health.main([str(tmp_path), "--robot", "base"]) == health.EXIT_OK
+    out = capsys.readouterr().out
+    assert "robot-motion" in out and "moved under 1 cm" in out
+
+
+def test_a_long_run_whose_clock_wedged_is_still_caught_from_the_window(tmp_path, capsys):
+    """An hour at realtime, then sim time flat for two minutes while wall time went on."""
+    now = time.time()
+    running = [clock_line(now - 3720 + t, float(t)) for t in range(0, 3600)]
+    wedged = [clock_line(now - 3720 + t, 3600.0) for t in range(3600, 3720)]
+    write_run(tmp_path, running + wedged)
+    assert health.main([str(tmp_path)]) == health.EXIT_FINDING
+    assert "sim-time-rate" in capsys.readouterr().out
+
+
 # -- check 2: sim time starts ------------------------------------------------------------------
 
 

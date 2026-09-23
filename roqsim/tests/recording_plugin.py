@@ -4,8 +4,8 @@
 It is imported by name from two places -- ``test_plugin_lifecycle`` imports the class, and the
 registry resolves it from the plugin ref ``"recording_plugin:RecordingPlugin"`` -- so it needs a
 module name that means one thing. ``conftest`` does not: pytest puts every test directory on
-``sys.path``, so the moment a second package grew a ``conftest.py`` the bare name resolved to
-whichever was imported first, and this class vanished from under the import. (Importing a conftest
+``sys.path``, so once a second package has a ``conftest.py`` the bare name resolves to
+whichever was imported first, and this class vanishes from under the import. (Importing a conftest
 directly is discouraged for exactly this reason.) A unique module name has no such ambiguity.
 """
 

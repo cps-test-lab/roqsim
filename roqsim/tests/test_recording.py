@@ -1,10 +1,10 @@
 """What a recording must preserve, and what it must refuse.
 
-The first test in this file is the important one. ``mjSTATE_FULLPHYSICS`` -- the obvious choice, and the
-one the deleted ``recorder`` plugin used -- silently drops ``ctrl`` and the mocap fields, so a recording
+The first test in this file is the important one. ``mjSTATE_FULLPHYSICS`` -- the obvious choice --
+silently drops ``ctrl`` and the mocap fields, so a recording
 made with it replays every pedestrian and moving prop frozen at its compile-time pose and every door
-driven toward 0. A fidelity test on a *static* world passes the whole time that is happening, which is
-exactly how the bug survived the first draft of this work. So the world here has a mocap body and a
+driven toward 0. A fidelity test on a *static* world passes the whole time that is happening. So the
+world here has a mocap body and a
 nonzero ``ctrl``, and the assertion is field by field.
 """
 
@@ -406,7 +406,7 @@ def test_replay_after_close_still_works(tmp_path, moving):
 
 
 def test_a_recording_path_without_the_suffix_is_still_found_where_it_says(tmp_path, moving):
-    """np.savez used to append the .npz behind our backs, leaving close() returning a missing path."""
+    """np.savez appends .npz behind our backs; close() must not return a missing path."""
     model, data = moving
     ctx = _Ctx(model, data)
     rec = StateRecorder(ctx, tmp_path / "out", snap_fps(25, model.opt.timestep), world="w")
@@ -531,7 +531,7 @@ def test_a_dtype_that_disagrees_with_the_provenance_is_refused(tmp_path):
 
 
 def test_a_fullphysics_recording_is_refused_not_rendered(tmp_path, moving):
-    """The whole point: an old recording must fail loudly, not replay with frozen pedestrians."""
+    """The whole point: a FULLPHYSICS recording must fail loudly, not replay with frozen pedestrians."""
     model, data = moving
     ctx = _Ctx(model, data)
     rec = StateRecorder(ctx, tmp_path / "old.npz", snap_fps(25, 0.002), world="w")
@@ -652,3 +652,138 @@ def test_a_rate_is_read_back_as_the_exact_rational(tmp_path):
     }
     rec = Recording(tmp_path / "x.npz", meta, samples)
     assert rec.fps == CaptureRate(snap_fps(30, 0.002).fps, 17, snap_fps(30, 0.002).fps, 0).fps
+
+
+# -- the pose record --------------------------------------------------------------------------------
+
+# A free base carrying a hinged link, a tool welded to that link, and one unnamed body: the three
+# kinds of thing below a robot's root that a success rule may read, plus the one the record cannot
+# name.
+_ARM_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <worldbody>
+    <body name="base" pos="0 0 .5">
+      <freejoint/>
+      <geom type="box" size=".1 .1 .1"/>
+      <body name="link" pos="0 0 .1">
+        <joint type="hinge" axis="0 1 0"/>
+        <geom type="capsule" size=".02" fromto="0 0 0 .3 0 0"/>
+        <body name="tool" pos=".3 0 0"><geom type="sphere" size=".02"/></body>
+        <body pos="0 0 .05"><geom type="sphere" size=".01"/></body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_the_pose_record_carries_every_named_body_not_only_roots(tmp_path, caplog):
+    model = mujoco.MjModel.from_xml_string(_ARM_XML)
+    data = mujoco.MjData(model)
+    ctx = _Ctx(model, data)
+    rec = StateRecorder(
+        ctx, tmp_path / "run.npz", snap_fps(1 / model.opt.timestep, model.opt.timestep),
+        sim_poses=True,
+    )
+    with caplog.at_level(logging.INFO):
+        for _ in range(20):
+            mujoco.mj_step(model, data)
+            rec.sample(ctx)
+
+    rows = [line.split(",") for line in (tmp_path / "sim_poses.csv").read_text().splitlines()[1:]]
+    assert {r[2] for r in rows} == {"base", "link", "tool"}, "every named body, and only those"
+    last_tool = [r for r in rows if r[2] == "tool"][-1]
+    # xpos after the last step is the pose the last row was taken from (capture.py's one-step note).
+    tool = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "tool")
+    assert [float(v) for v in last_tool[3:6]] == pytest.approx(data.xpos[tool], abs=1e-5)
+    # The unnamed body is reported, with its parent, rather than silently absent.
+    assert "1 unnamed bodies have no row (under link)" in caplog.text
+    rec.close()
+
+
+# -- decimation: fewer samples, the same states ----------------------------------------------------
+
+
+def test_decimating_keeps_original_rows_and_divides_the_rate_exactly(tmp_path, moving):
+    """The invariant ``roqsim render`` rests on: every frame is a state the simulation actually had.
+
+    So decimation must *drop* rows, never resample or interpolate them -- and the declared rate has to
+    follow exactly, which works because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
+    by 8 is ``[250, 8]``, i.e. 31.25 fps rather than a rounded 31.
+    """
+    from fractions import Fraction
+
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=250, samples=80)
+    out = decimated(rec, 8, tmp_path / "thin.npz")
+    thin = open_recording(out)
+
+    assert thin.fps == Fraction(250, 8)
+    assert len(thin) == len(range(0, len(rec), 8))
+    assert thin.samples.dtype == rec.samples.dtype
+    for i in range(len(thin)):
+        assert np.array_equal(thin.samples["s"][i], rec.samples["s"][i * 8])
+        assert thin.samples["t"][i] == rec.samples["t"][i * 8]
+
+
+def test_decimating_by_one_is_a_copy(tmp_path, moving):
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=50, samples=20)
+    same = open_recording(decimated(rec, 1, tmp_path / "same.npz"))
+
+    assert same.fps == rec.fps
+    assert len(same) == len(rec)
+    assert np.array_equal(same.samples["s"], rec.samples["s"])
+
+
+def test_decimating_away_the_span_is_refused(tmp_path, moving):
+    """Two samples is the minimum that still has a span; one is a still, not a recording."""
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=25, samples=6)
+
+    with pytest.raises(RecordingError, match="at least two"):
+        decimated(rec, 100, tmp_path / "gone.npz")
+
+
+def test_a_decimate_factor_below_one_is_refused(tmp_path, moving):
+    from roqsim.capture import decimated
+
+    model, data = moving
+    rec = _recorded(tmp_path, model, data, fps=25, samples=10)
+
+    with pytest.raises(RecordingError, match="1 or more"):
+        decimated(rec, 0, tmp_path / "no.npz")
+
+
+def _recorded(tmp_path, model, data, *, fps: int, samples: int):
+    """A recording of ``model`` stepped ``samples`` times, at a declared ``fps``."""
+    import json
+
+    from roqsim.capture import STATE_SPEC, record_dtype
+
+    size = mujoco.mj_stateSize(model, STATE_SPEC)
+    rows = np.zeros(samples, dtype=record_dtype(size, False))
+    buf = np.zeros(size)
+    for i in range(samples):
+        mujoco.mj_step(model, data)
+        mujoco.mj_getState(model, data, buf, STATE_SPEC)
+        rows["t"][i] = data.time
+        rows["w"][i] = i / fps
+        rows["s"][i] = buf
+    meta = {
+        "format_version": 2,
+        "state_size": size,
+        "capture_fps": [fps, 1],
+        "world": "synthetic.yaml",
+        "model": {"nq": int(model.nq), "nv": int(model.nv), "nu": int(model.nu)},
+    }
+    path = tmp_path / f"src-{fps}-{samples}.npz"
+    np.savez(path, meta=np.array(json.dumps(meta)), samples=rows)
+    return open_recording(path)

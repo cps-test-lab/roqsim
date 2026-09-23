@@ -7,8 +7,8 @@ export that agrees with the datasheet is right for a reason; one that agrees wit
 proves nothing changed.
 
 Two facts about the shipped visual meshes are pinned here on purpose. ``tower_standoff`` closes only
-because vertices that are merely duplicated get welded, and ``shell``/``rplidar`` do not close at all.
-Both are properties of the source OBJs, so if either changes this test is where it shows up.
+because vertices that are merely duplicated get welded, and ``shell`` does not close at all. Both are
+properties of the source OBJs, so if either changes this test is where it shows up.
 """
 
 from __future__ import annotations
@@ -55,7 +55,6 @@ def test_the_whole_visible_robot_travels(exported):
         "body_visual",
         "bumper_visual",
         "tower_sensor_plate",
-        "rplidar",
         "camera_bracket",
     } <= set(names)
     # The wheels and the caster are group 0, not the visual group: a "visual geoms only" selection
@@ -71,7 +70,7 @@ def test_the_whole_visible_robot_travels(exported):
 
 
 def test_the_camera_is_carried_by_its_bracket(exported):
-    """Regression: the bracket mesh was missing from the port, so the camera body hung in mid-air.
+    """The camera sits on its bracket mesh; without the bracket the camera body hangs in mid-air.
 
     Asserted as a distance rather than as "the mesh exists", because a bracket present but misplaced
     looks the same in a part list and still leaves the camera floating. The chain the numbers come from
@@ -146,7 +145,7 @@ def test_which_visual_meshes_are_not_watertight(exported):
     """A property of the shipped OBJs, not of the export -- and the reason CAD may need a repair pass."""
     exporter, _ = exported
     open_meshes = {g["name"] for g in exporter.geoms if not _edge_stats(g["faces"])["closed"]}
-    assert open_meshes == {"shell", "rplidar"}
+    assert open_meshes == {"shell"}
 
 
 def test_every_closed_part_winds_outward(exported):

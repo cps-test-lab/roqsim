@@ -11,8 +11,7 @@ sim:
   # as badly tuned gains rather than as missing air. rk4 because a quadrotor's attitude loop is
   # stiff relative to the timestep; Euler needs a much smaller step for the same stability.
   # (These live here rather than in the model because they are world-scoped -- they would apply to
-  # every other robot in the scene too. `integrator` was already a sim key; `density`/`viscosity`
-  # were added for this port, since nothing that flies had ever needed a medium.)
+  # every other robot in the scene too.)
   integrator: rk4
   density: 1.225        # kg/m^3, air at sea level
   viscosity: 1.8e-5     # Pa*s, air
@@ -22,7 +21,8 @@ components:
   - spawn_robot:
       model: crazyflie_2
       prefix: "cf2_"
-      pos: [0.0, 0.0]           # spawn_robot places on the floor (it takes [x, y]); the drone takes off
+      pose:
+        position:    {x: 0.0, y: 0.0}
     name: drone
 
     components:

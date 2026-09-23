@@ -16,7 +16,7 @@
 
 """Sensor plugin: per-pixel class and instance labels, and the 2D boxes that fall out of them.
 
-The perception ground truth the substrate was missing. ``object_detector`` answers *where is the
+Per-pixel perception ground truth. ``object_detector`` answers *where is the
 parcel, in the robot's frame* -- the input a manipulation stack wants. It cannot answer *which pixels
 are the parcel*, and that is what a segmentation or detection experiment is measured against: a
 labelled frame is what an IoU, a mask AP or a training set is computed from, and it is the one
@@ -27,6 +27,25 @@ MuJoCo renders it already. With ``mjRND_SEGMENT`` + ``mjRND_IDCOLOR`` a pass ret
 would need. This plugin is the mapping from that to an experiment's own vocabulary: a world says
 which bodies are a ``parcel``, and gets a class image, an instance image, and tight 2D boxes measured
 **from the mask** rather than projected from a bounding volume.
+
+**Three selectors, because a label does not always follow a body.** ``bodies`` and ``entities``
+label everything a body (or a whole kinematic subtree) carries, which is what a parcel or a
+pedestrian is. ``geoms`` labels named geoms directly, which is what the PARTS of one prop are: a
+procedural shelf is a single body carrying its boards and its legs as separate geoms, and a
+workbench its top and its frame, so a body-granular vocabulary can only ever call the whole thing
+one class. An experiment that measures whether a mapper separates a surface from its support needs
+the parts named apart.
+
+**Finding the names.** A prop's parts are geoms, and
+``roqsim scenes describe <world> --overridable '*'`` lists every geom a world carries -- the same
+listing, and the same names, that ``model_override``'s ``select:`` is written against. So a part
+vocabulary is not guesswork, and it is not a second naming scheme to learn either.
+
+Selectors compose within one class and across classes, first match wins in declaration order, so a
+specific ``geoms`` entry above a broad ``bodies`` glob keeps its class -- the same precedence the
+body patterns already follow. A geom takes the instance of the body it sits in, so two boards of one
+shelf are one instance of ``shelf_board``: an instance image of a rack should say "one rack", not
+"five planks".
 
 **Visible extent, not projected extent, and the difference is the measurement.** Gazebo's
 bounding-box camera offers a *full* box (the whole object, including the part behind a wall) beside a
@@ -43,6 +62,7 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
       classes:                  # REQUIRED: the experiment's vocabulary, in priority order
         - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
         - {class_id: 2, name: person, entities: [walker_1]}   # whole kinematic subtree
+        - {class_id: 3, name: shelf_board, geoms: ["board_*"]}   # PARTS of one body
       instances: false          # also publish the instance-id image (16UC1)
       detections: true          # publish 2D boxes derived from the mask
       min_pixels: 16            # an instance with fewer visible pixels is not reported
@@ -169,9 +189,11 @@ class SegmentationCameraPlugin(CameraPlugin):
                     # the second's bodies join the first's class and its name is never seen again.
                     errors.append(f"{where}: 'class_id' {class_id} is already declared above")
                 seen.add(class_id)
-            if not entry.get("bodies") and not entry.get("entities"):
-                errors.append(f"{where} must name 'bodies' (names or globs) or 'entities'")
-            for key in ("bodies", "entities"):
+            if not any(entry.get(k) for k in ("bodies", "entities", "geoms")):
+                errors.append(
+                    f"{where} must name 'bodies' (names or globs), 'entities', or 'geoms'"
+                )
+            for key in ("bodies", "entities", "geoms"):
                 if entry.get(key) is not None and not isinstance(entry[key], list):
                     errors.append(f"{where}: '{key}' must be a list")
         if int(config.get("min_pixels", 16)) < 1:
@@ -249,7 +271,7 @@ class SegmentationCameraPlugin(CameraPlugin):
             )
             ctx.interface.add(detections_ep)
             # Gated too: the boxes come off the same render, so a consumer that wants only boxes
-            # must still get frames -- the lesson camera_common's _gate_endpoints records for depth.
+            # must still get frames -- the rule camera_common's _gate_endpoints states for depth.
             self._extra_outputs.append(detections_ep)
 
     def _build_lookups(self, ctx: SimContext, prefix: str) -> None:
@@ -265,6 +287,9 @@ class SegmentationCameraPlugin(CameraPlugin):
         self._instance_of_geom = np.zeros(m.ngeom, dtype=np.uint16)
         body_names = [
             mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "" for b in range(m.nbody)
+        ]
+        geom_names = [
+            mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "" for g in range(m.ngeom)
         ]
 
         for entry in self.classes:
@@ -288,6 +313,38 @@ class SegmentationCameraPlugin(CameraPlugin):
                 matched.extend(hits)
             for name in entry.get("entities") or []:
                 matched.extend(self._entity_subtree(ctx, m, name, class_id))
+
+            # Geoms are labelled directly rather than through a body, because the parts of a
+            # procedural prop share one: a shelf is a single body carrying its boards and its
+            # legs as separate geoms, so `bodies:` can only ever call the whole thing one class.
+            # Same first-match-wins rule as below, and the same instance as the body it sits in --
+            # two boards of one shelf are one instance of `board`, which is what an instance image
+            # of a rack should say.
+            for pattern in entry.get("geoms") or []:
+                wanted = f"{prefix}{pattern}"
+                hits = [
+                    g
+                    for g, name in enumerate(geom_names)
+                    if name and (name == wanted or fnmatchcase(name, wanted))
+                ]
+                if not hits:
+                    raise RuntimeError(
+                        f"segmentation_camera[{self.label}]: class {class_id} geom pattern "
+                        f"{wanted!r} matches no geom in this world. "
+                        f"`roqsim scenes describe <world> --overridable '*'` lists the geom names "
+                        f"a world carries, which is where a prop's parts appear."
+                    )
+                for geom in hits:
+                    if self._class_of_geom[geom] != BACKGROUND:
+                        continue
+                    instance = self._instance_root(m, int(m.geom_bodyid[geom]), matched)
+                    if instance > MAX_INSTANCE_ID:
+                        raise RuntimeError(
+                            f"segmentation_camera[{self.label}]: body id {instance} exceeds the "
+                            f"{MAX_INSTANCE_ID} an instance image (16UC1) can carry"
+                        )
+                    self._class_of_geom[geom] = class_id
+                    self._instance_of_geom[geom] = instance
 
             for body in matched:
                 instance = self._instance_root(m, body, matched)

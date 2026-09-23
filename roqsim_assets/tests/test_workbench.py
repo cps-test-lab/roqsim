@@ -13,7 +13,7 @@ from roqsim_assets.plugins.workbench import WorkbenchPlugin
 
 
 def _built(tmp_path, extra=None):
-    plugins = [{"workbench": {"name": "bench", **(extra or {})}}]
+    plugins = [{"workbench": dict(extra or {}), "name": "bench"}]
     engine = Engine(load_config_from_dict({"sim": {}, "plugins": plugins}, base_dir=tmp_path))
     engine.setup()
     return engine

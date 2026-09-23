@@ -1,4 +1,5 @@
 <mujoco model="ur10e">
+  <!-- Universal Robots UR10e (6-DoF collaborative arm) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
   <default>

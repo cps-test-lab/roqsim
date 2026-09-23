@@ -13,8 +13,9 @@ components:
   # carries the platform's datasheet limits (0.26 m/s, 1.82 rad/s) and its stock LDS-01 scanner.
   - spawn_robot:
       model: turtlebot3_waffle
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this

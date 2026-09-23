@@ -40,6 +40,7 @@ from . import logging_setup
 from .capture import (
     DEFAULT_FPS,
     CaptureError,
+    RecordingError,
     RecordToggle,
     StateRecorder,
     TakeRecorder,
@@ -61,20 +62,22 @@ from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
 from .plugin import PluginError
+from .replay import is_recording
+from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
 from .view_save import SaveViewKey, save_current_view
 from .viewer import (
     GL_HELP,
     DisplayError,
     ViewError,
-    apply_walk,
+    apply_viewer_keys,
     close_viewer,
     has_display,
     launch_viewer,
     prepare_viewer_gl,
     setup_camera,
 )
-from .window_title import retitle_window_async
+from .window_branding import brand_window_async
 from .world import resolve_world_yaml_ref
 
 log = logging.getLogger(__name__)
@@ -83,7 +86,7 @@ log = logging.getLogger(__name__)
 #: Finalizing a mesh into a model (roqsim_assets/tools/finalize_mujoco.py) is a separate step.
 _MESH_EXT = (".obj", ".stl", ".glb", ".gltf", ".fbx", ".dae", ".ply")
 
-# Backward-compatible alias: the message text now lives in roqsim.viewer.
+# Backward-compatible alias: the message text lives in roqsim.viewer.
 _GL_HELP = GL_HELP
 
 #: Interactive-viewer render rate (Hz), decoupled from the physics step rate. High-rate worlds step
@@ -253,13 +256,24 @@ def _run_headless(
                 recorder.sample(engine.ctx)
 
 
-def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_callback=None):
+def open_loading_viewer(
+    *,
+    name: str | None = None,
+    left_ui: bool = False,
+    right_ui: bool = False,
+    key_callback=None,
+    key_sources=(),
+):
     """Open the viewer on an empty placeholder and draw the splash overlay immediately.
 
     An empty model compiles and opens in ~1 ms (no meshes/textures to build), so the window and the
     splash come up as fast as MuJoCo can create the GL context -- *before* the real world compiles,
     so the splash covers the whole load. The real world is swapped into this same window later by
     :func:`adopt_world`; the splash (full-bleed navy art) stays up until then.
+
+    The window is branded here too, not only in :func:`adopt_world`: a world that takes half a minute
+    to compile is half a minute of taskbar and title bar, and the placeholder carries MuJoCo's name
+    and no icon at all.
 
     Returns ``(handle, open_seconds)``, or ``(None, 0.0)`` if the window could not be opened -- the
     caller then falls back to opening on the real model, where the GL error is reported properly.
@@ -271,12 +285,18 @@ def open_loading_viewer(*, left_ui: bool = False, right_ui: bool = False, key_ca
         model = mujoco.MjSpec().compile()  # empty world (worldbody only); compiles in ~1 ms
         data = mujoco.MjData(model)
         handle = launch_viewer(
-            model, data, left_ui=left_ui, right_ui=right_ui, key_callback=key_callback
+            model,
+            data,
+            left_ui=left_ui,
+            right_ui=right_ui,
+            key_callback=key_callback,
+            key_sources=key_sources,
         )
     except Exception as err:  # noqa: BLE001 — no pre-window is fine; the real launch reports GL errors
         log.debug("loading window skipped: %s", err)
         return None, 0.0
     show_loading_overlay(handle)
+    brand_window_async(model, name=name)
     return handle, time.perf_counter() - started
 
 
@@ -294,7 +314,7 @@ def adopt_world(viewer, engine: Engine, *, name: str | None = None) -> float:
     started = time.perf_counter()
     sim.load(engine.ctx.model, engine.ctx.data, "")
     mujoco.mj_forward(engine.ctx.model, engine.ctx.data)
-    retitle_window_async(engine.ctx.model, name=name)
+    brand_window_async(engine.ctx.model, name=name)
     return time.perf_counter() - started
 
 
@@ -330,6 +350,7 @@ def _run_windowed(
                 left_ui=left_ui,
                 right_ui=right_ui,
                 key_callback=_key_callback(toggle, saver),
+                key_sources=(toggle, saver),
             )
         except Exception as err:  # noqa: BLE001 — any GL init failure maps to the same guidance
             raise DisplayError(GL_HELP.format(err=err)) from err
@@ -344,7 +365,7 @@ def _run_windowed(
             if profile:
                 print(f"[loading] world swap-in: {swap_s * 1e3:.0f} ms", file=sys.stderr)
         else:
-            retitle_window_async(engine.ctx.model, name=name)
+            brand_window_async(engine.ctx.model, name=name)
         camera = setup_camera(viewer, view, engine.ctx, preview=preview)
         if loading:
             # Scene loaded and camera framed under the splash: reveal it in one clean cut.
@@ -363,7 +384,7 @@ def _run_windowed(
             # pose being saved cannot move while the question is on screen.
             if toggle is not None and toggle.take_pending():
                 recorder.toggle()
-                retitle_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
+                brand_window_async(engine.ctx.model, name=_rec_name(name, recorder.recording))
             if saver is not None and saver.take_pending():
                 save_current_view(
                     _live_camera(viewer),
@@ -385,14 +406,14 @@ def _run_windowed(
             if now - last_render >= render_period:
                 if camera is not None:
                     camera.update(viewer)
-                apply_walk(viewer)  # arrow-key camera travel, integrated per rendered frame
+                apply_viewer_keys(viewer)  # arrow-key travel and the F1 list, per rendered frame
                 viewer.sync()
                 last_render = now
     finally:
         close_viewer(viewer)
 
 
-def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
+def _hotkeys(*, can_save_view: bool = True) -> tuple[RecordToggle, SaveViewKey]:
     """roqsim's own viewer hotkeys, chained: F9 starts/stops a recording take, F8 saves the camera view.
 
     ``launch_passive`` accepts exactly one key callback, so each handler takes a ``chain`` it forwards
@@ -401,7 +422,7 @@ def _hotkeys() -> tuple[RecordToggle, SaveViewKey]:
     outermost of them (:func:`_key_callback`).
     """
     toggle = RecordToggle()
-    return toggle, SaveViewKey(chain=toggle.key_callback)
+    return toggle, SaveViewKey(chain=toggle.key_callback, savable=can_save_view)
 
 
 def _key_callback(toggle: RecordToggle | None, saver: SaveViewKey | None):
@@ -415,7 +436,7 @@ def _rec_name(name: str | None, recording: bool) -> str | None:
     """Append a recording marker to the window title, so the state is visible where the person looks.
 
     A toggle you cannot see is a toggle you will get wrong -- and the window title is the one piece of
-    chrome roqsim already owns (:mod:`roqsim.window_title` retitles through ctypes libX11).
+    chrome roqsim already owns (:mod:`roqsim.window_branding` sets title and icon through ctypes libX11).
     """
     base = name or ""
     return f"{base} [REC]" if recording else base or None
@@ -629,14 +650,19 @@ def run(
     # Built before the window, because the window opens on an empty placeholder *before* the world
     # compiles -- so the key callback has to exist first. Both are pointed at their targets below: the
     # toggle at the recorder, the saver at the world YAML this run came out of.
-    toggle, saver = _hotkeys() if not headless else (None, None)
+    # Windowed only, both of them: the hotkeys are the window's, and the world YAML is resolved here
+    # only to answer whether F8 has anywhere to save to. A headless run has neither question.
+    world_yaml = world_yaml_path(target) if not headless else None
+    toggle, saver = _hotkeys(can_save_view=world_yaml is not None) if not headless else (None, None)
 
     loading_view, open_s = (None, 0.0)
     if not headless and has_display():
         loading_view, open_s = open_loading_viewer(
+            name=cfg.name,
             left_ui=left_ui,
             right_ui=right_ui,
             key_callback=_key_callback(toggle, saver),
+            key_sources=(toggle, saver),
         )
         if open_s:
             log.debug("loading window: opened in %.3fs", open_s)
@@ -648,9 +674,9 @@ def run(
         # Before setup(): configure() may read it, and pre_step certainly does.
         engine.ctx.manual_control = manual_control
         # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
-        # recorded, so it can be repeated. Before this the sensors read a ctx.rng nothing ever set, so a
-        # noisy run could not be reproduced at all.
-        engine.ctx.seed = _resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
+        # recorded, so it can be repeated. A seed nothing sets and nothing reports is the case where
+        # a noisy run cannot be reproduced at all.
+        engine.ctx.seed = resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
         engine.setup()
     except BaseException:
         # The compile failed while the loading window is up -- close it so it doesn't dangle.
@@ -694,8 +720,8 @@ def run(
         rate.report(engine.logger or log)
 
     # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
-    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point is what
-    # silently killed F9: the window went on setting the flag on an object the loop no longer held.
+    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
+    # kills F9: the window goes on setting the flag on an object the loop no longer holds.
     recorder = None
     if headless:
         if record:
@@ -748,7 +774,7 @@ def run(
                     recorder=recorder,
                     toggle=toggle,
                     saver=saver,
-                    world_yaml=world_yaml_path(target),
+                    world_yaml=world_yaml,
                 )
         finally:
             # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or
@@ -829,26 +855,6 @@ def _export_capture_at_exit(engine, recorder, target, overrides, logger: logging
         logger.warning("run capture export failed (%s); the recording itself is unaffected", err)
 
 
-def _resolve_seed(seed: int | None, logger: logging.Logger, config_seed: int | None = None) -> int:
-    """The run's noise seed, by precedence: explicit > world config > drawn.
-
-    An explicitly passed seed wins because it is the more specific instruction -- the
-    world states what a run normally uses, the caller states what THIS run uses. With
-    neither, one is drawn and announced, exactly as before ``sim.seed`` existed.
-    """
-    if seed is not None:
-        logger.info("seed: %d (given)", seed)
-        return int(seed)
-    if config_seed is not None:
-        logger.info("seed: %d (from sim.seed)", config_seed)
-        return int(config_seed)
-    import secrets
-
-    drawn = secrets.randbelow(2**31)
-    logger.info("seed: %d (drawn -- pass --seed %d to repeat this run)", drawn, drawn)
-    return drawn
-
-
 def _numbered(path: str, index: int) -> str:
     """``run.webm`` -> ``run-2.webm`` for the second take, matching the recordings' own numbering."""
     p = Path(path)
@@ -899,6 +905,62 @@ def _refuse_swallowed_target(argv: list[str]) -> None:
                 )
 
 
+def _replay(args, parser) -> int:
+    """Play a recording back, refusing the flags that only a live run can honour.
+
+    Refused by name rather than ignored: a flag that silently does nothing is how a wrong command
+    line survives in a checked-in script.
+    """
+    from .replay import run_replay
+
+    # Compared against the parser's own defaults rather than truthiness: an option whose default is
+    # a number (--capture-fps) would otherwise report itself as stated on every replay.
+    live_only = {
+        "--headless": "headless",
+        "--record": "record",
+        "--video": "video",
+        "--capture-fps": "capture_fps",
+        "--steps": "steps",
+        "--seconds": "seconds",
+        "--pacing": "pacing",
+        "--seed": "seed",
+        "--manual-control": "manual_control",
+        "--ros": "ros",
+        "--sim-control": "sim_control",
+        "--tf-namespace": "tf_namespace",
+        "--no-communication": "no_communication",
+    }
+    stated = sorted(
+        flag for flag, dest in live_only.items() if getattr(args, dest) != parser.get_default(dest)
+    )
+    if stated:
+        parser.error(
+            f"{', '.join(stated)}: {args.target} is a recording, which is replayed rather than run. "
+            "Those options drive a live simulation and have nothing to act on here."
+        )
+    overrides = deep_merge(
+        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
+    )
+    try:
+        return run_replay(
+            args.target,
+            at=args.at,
+            view=(overrides.get("sim") or {}).get("view"),
+            shots=args.shots,
+            project=args.project,
+            png_dir=args.png_dir,
+            render_size=args.render_size,
+            no_ceiling=False,
+            transport_window=not args.no_transport_window,
+            left_ui=args.left_ui,
+            right_ui=args.right_ui,
+            world=args.world,
+        )
+    except (DisplayError, ViewError, PluginError, ModelError, CaptureError, RecordingError) as err:
+        print(f"roqsim sim: {err}", file=sys.stderr)
+        return 1
+
+
 def main(argv: list | None = None) -> int:
     # Opening a window: default the offscreen backend to egl and preload libGLEW (re-exec'ing once
     # if needed), before anything loads GL, to dodge MuJoCo's "gladLoadGL error" on camera worlds.
@@ -935,6 +997,45 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument(
         "--headless", action="store_true", help="no viewer window (for CI and containers)"
+    )
+    replaying = parser.add_argument_group(
+        "replaying a recording",
+        "for a run.npz target: the run is played back rather than simulated, and moments of it are "
+        "written to a shots file that `roqsim render` draws later",
+    )
+    replaying.add_argument(
+        "--at", type=float, default=None, metavar="T", help="open at this sim time"
+    )
+    replaying.add_argument(
+        "--shots",
+        default=None,
+        metavar="PATH",
+        help="shots file to append to (default: beside the recording)",
+    )
+    replaying.add_argument(
+        "--project",
+        default=None,
+        metavar="DIR",
+        help="directory a render of these shots runs in (default: here)",
+    )
+    replaying.add_argument("--png-dir", default=None, metavar="DIR", help="where a shot's PNG goes")
+    replaying.add_argument(
+        "--render-size",
+        default="1920x1080",
+        metavar="WxH",
+        help="size a shot states for its render",
+    )
+    replaying.add_argument(
+        "--no-transport-window",
+        action="store_true",
+        help="no slider window: scrub with the keys the F1 list names",
+    )
+    replaying.add_argument(
+        "--world",
+        default=None,
+        metavar="PATH",
+        help="rebuild from this world instead of the recording's own provenance: for a run whose "
+        "world loaded files from beside itself that are not beside the recording",
     )
     parser.add_argument(
         "--ros",
@@ -1051,6 +1152,12 @@ def main(argv: list | None = None) -> int:
     args = parser.parse_args(argv)
 
     logging_setup.configure(verbose=args.verbose)
+
+    # A recording is replayed, not simulated. The target's extension selects that, the way it already
+    # selects a mesh here and a still or a video for `roqsim render`: nothing else hands `roqsim sim`
+    # an .npz, and one that is not a roqsim recording is refused by name when it is opened.
+    if is_recording(args.target):
+        return _replay(args, parser)
 
     pacing = args.pacing
     if pacing is not None and pacing not in ("realtime", "asap"):

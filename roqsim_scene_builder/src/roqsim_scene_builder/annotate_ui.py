@@ -11,7 +11,8 @@ module owns those shared parts so neither window re-implements them:
 * :func:`build_point_rows`, :func:`build_comment_box`, :func:`build_button_row` -- the right-panel
   widgets, driven by whatever items the window holds,
 * :func:`build_scrollable`, the panel's one scrolling region -- what keeps a long ``message`` from
-  pushing the submit buttons out of the window.
+  pushing the submit buttons out of the window,
+* :func:`set_window_icon`, so both windows wear the roqsim mark rather than the desktop placeholder.
 
 Everything here is either pure (theme/colours/renumber, tested headless) or a thin tkinter widget
 factory; the window-specific left canvas, picking, and result assembly stay in each window module.
@@ -19,8 +20,11 @@ factory; the window-specific left canvas, picking, and result assembly stay in e
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Sequence
 from typing import Protocol
+
+log = logging.getLogger(__name__)
 
 # Dark palette shared by every widget (tkinter has no real theming; we colour widgets by hand).
 BG = "#1e1e1e"
@@ -177,13 +181,14 @@ def build_scrollable(tk, parent, *, padx: int = 12, pady: tuple[int, int] = (6, 
 
     Pack the **footer first**, ``side="bottom"``, and call this after: Tk's packer hands out parcels
     in packing order, so a footer that is packed last gets whatever cavity the content above it did
-    not eat -- which is nothing, once a caller passes a long enough ``message``. That is how the
-    submit buttons went missing. With the footer's parcel already claimed, everything variable (the
+    not eat -- which is nothing, once a caller passes a long enough ``message``, and the submit
+    buttons are gone. With the footer's parcel already claimed, everything variable (the
     title, the message, the tool row, the item rows) goes in ``inner`` and scrolls instead of pushing.
 
     ``sync`` re-measures: call it after adding or removing rows programmatically, since a change made
     outside the geometry manager's own resize path produces no ``<Configure>``. The scrollbar is only
-    mapped while the content actually overflows, so a short panel looks exactly as it did before.
+    mapped while the content actually overflows, so a short panel looks exactly as it would without
+    one.
 
     The wheel is bound on ``bind_all`` between ``<Enter>`` and ``<Leave>`` of the region rather than
     on the canvas: the pointer is almost always over a row's frame/label/entry, not the canvas, and a
@@ -319,3 +324,27 @@ def build_button_row(tk, parent, buttons: Sequence[tuple[str, Callable[[], None]
             relief="flat",
             font=("TkDefaultFont", 13, "bold"),
         ).pack(side="left", expand=True, fill="x", padx=pad, ipady=8)
+
+
+def set_window_icon(root) -> None:
+    """Give a toplevel (and every later one, via ``default``) the roqsim mark.
+
+    Tk keeps only a weak reference to an icon image, so the ``PhotoImage`` is stashed on the widget
+    -- collected, it leaves the window icon-less again. Best-effort like the viewer's own X11
+    branding (:mod:`roqsim.window_branding`): an unreadable or missing mark leaves the desktop's
+    placeholder in place rather than failing a review window nobody could then open.
+    """
+    import tkinter as tk
+
+    from roqsim.window_branding import icon_path
+
+    path = icon_path()
+    if path is None:
+        return
+    try:
+        image = tk.PhotoImage(master=root, file=path)  # Tk 8.6 reads PNG natively
+        root.iconphoto(True, image)
+    except tk.TclError as err:
+        log.debug("window icon skipped: %s", err)
+        return
+    root._roqsim_icon = image

@@ -5,17 +5,145 @@
 # LABEL under that spawn_robot's `components:` (it merges into this one, per key); to opt out
 # entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
 # spawned entity because it is nested under it -- there is no ownership key to fill in.
+
+# Fixed links of turtlebot4_description @ 7fd29fb that this MJCF flattens into base_link; spawn_robot
+# makes each a site and publishes it as static TF.
+frames:
+  # urdf/standard/turtlebot4.urdf.xacro:43-47: z = shell_z_offset (3 cm, :13) + base_link_z_offset
+  # (6.42 cm, irobot_create_description/urdf/create3.urdf.xacro:53 @ 1fccb76).
+  - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942], rpy: [0.0, 0.0, 0.0]}
+
 components:
-  - diff_drive: {}                               # Create 3 geometry lives in the plugin defaults
-  - lidar:
-      site: lidar
-      frame_id: rplidar_link                       # the name the TurtleBot 4's own URDF gives this
-                                                   # frame; the site's 90 deg yaw is aligned to it
-                                                   # (see turtlebot4.xml). Without this the scan
-                                                   # would be stamped `lidar` (the site name), the
-                                                   # plugin's default.
-      rays: 360
-      max_range: 12.0
-  - oakd_camera:                                 # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
+  # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
+  # the Create 3's own limits and driver behaviour (create3_docs api/safety, and
+  # irobot_create_control's control.yaml, which the reference simulator drives the same wheels with):
+  #   * 0.46 m/s, 1.9 rad/s and 0.9 m/s^2 per wheel -- the base's limits. The 0.306 m/s a robot
+  #     drives at with its safety features on is the Create 3 stack's clamp (motion_control,
+  #     `safety_override`), not the base's, and belongs to a world that runs that stack;
+  #   * a command expires after 0.5 s, and odometry publishes at 62 Hz.
+  # The command is a plain Twist on `cmd_vel`, as the Create 3 takes it; a TurtleBot 4's bringup
+  # renames the base's stamped input onto `cmd_vel`, and a world that runs such a stack says
+  # `stamped_cmd_vel: true`.
+  # Its own joint_states are off because the joint_state_publisher below carries every joint --
+  # the wheels AND the wheel-drop suspension -- in one message, which a consumer deriving a
+  # controller-side state from each message (the Create 3 stack's dynamic_joint_states) needs.
+  - diff_drive:
+      max_linear_vel: 0.46
+      max_angular_vel: 1.9
+      wheel_accel_limit: 0.9
+      cmd_vel_timeout: 0.5
+      odom_rate_hz: 62.0
+      publish_joint_states: false
+  - joint_state_publisher: {rate_hz: 62}
+  # The RPLIDAR A1 device model at the vendor joint origin, urdf/standard/turtlebot4.urdf.xacro:31-33,
+  # 114-117 @ 7fd29fb. Scan values are the device's except the angular resolution, which Clearpath's
+  # TurtleBot 4 datasheet states for this robot's lidar: 0.15-12 m range, 8 kHz sampling rate, 360 deg
+  # angular range, 1 deg angular resolution. Range and sampling equal the device's; 1 deg over the
+  # device's 0 .. 359 deg layout is 360 rays. The vendor's Gazebo block (sensors/rplidar.urdf.xacro:38-41)
+  # is a simulation and overrides nothing. Addressed as `<robot>.rplidar.lidar`; the scan is `scan`
+  # in the robot's namespace, stamped `rplidar_link`.
+  - spawn_sensor:
+      model: rplidar_a1
+      parent_frame: shell_link
+      pos: [-0.04, 0.0, 0.098715]
+      rpy: [0.0, 0.0, 1.5707963267948966]
+      frame_id: rplidar_link
+    name: rplidar
+    components:
+      - lidar:
+          rays: 360                              # TurtleBot 4 datasheet: 1 deg angular resolution
+  - oakd_camera:                                # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);
       camera: oakd_rgb                           # skips rendering when nobody subscribes (see
                                                  # Endpoint.has_subscribers in roqsim core).
+      # The TurtleBot 4's topic names, as its depthai driver and its Gazebo simulator publish them.
+      topics:
+        image: oakd/rgb/preview/image_raw
+        image_compressed: oakd/rgb/preview/image_raw/compressed
+        camera_info: oakd/rgb/preview/camera_info
+        depth: oakd/rgb/preview/depth
+        depth_camera_info: oakd/rgb/preview/depth/camera_info
+
+  # ---- The Create 3 base's own sensors, as the reference description carries them ------------
+  #
+  # Each is a generic plugin over a site the MJCF places at create3.urdf.xacro's pose; what the
+  # readings MEAN (a cliff, an obstacle, a dock in view) is the stack's business, and the topics are
+  # named as the Create 3's simulator names its raw streams so its adapter nodes consume them
+  # unchanged. All of them are `lazy`: a world that never launches that stack publishes nothing.
+  #
+  # The bumper: five zones by bearing of the contact on the body shell, the sector table the Create
+  # 3's simulator uses (irobot_create_toolbox/sensors/bumpers.hpp), radians counter-clockwise from +x.
+  - bumper:
+      geoms: [body_collision]
+      zones:
+        bump_right: [-1.5707963, -0.9424778]
+        bump_front_right: [-0.9424778, -0.3141593]
+        bump_front_center: [-0.3141593, 0.3141593]
+        bump_front_left: [0.3141593, 0.9424778]
+        bump_left: [0.9424778, 1.5707963]
+  # Four cliff sensors: one ray each, 5 deg field, 0.01 cm .. 15 cm, 62 Hz (cliff_sensor.urdf.xacro);
+  # a floor return reads ~1.95 cm and a hole reads no return. Every site sits on or inside the body
+  # cylinder's surface, so the casts skip the base's own geoms (the wheels are separate bodies and
+  # lie inboard of every ray).
+  - range_sensor: {site: cliff_front_left, range_min: 0.0001, max_range: 0.15, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false, topics: {range: _internal/cliff_front_left/scan}}
+    name: cliff_front_left
+  - range_sensor: {site: cliff_front_right, range_min: 0.0001, max_range: 0.15, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false, topics: {range: _internal/cliff_front_right/scan}}
+    name: cliff_front_right
+  - range_sensor: {site: cliff_side_left, range_min: 0.0001, max_range: 0.15, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false, topics: {range: _internal/cliff_side_left/scan}}
+    name: cliff_side_left
+  - range_sensor: {site: cliff_side_right, range_min: 0.0001, max_range: 0.15, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false, topics: {range: _internal/cliff_side_right/scan}}
+    name: cliff_side_right
+  # Seven IR proximity sensors: a 5x5 ray grid over 10 x 10 deg, 2.5 .. 20 cm, 62 Hz
+  # (ir_intensity.urdf.xacro); the stack turns the nearest return into an intensity.
+  - range_sensor: {site: ir_intensity_front_center_left, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_front_center_left/scan}}
+    name: ir_intensity_front_center_left
+  - range_sensor: {site: ir_intensity_front_center_right, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_front_center_right/scan}}
+    name: ir_intensity_front_center_right
+  - range_sensor: {site: ir_intensity_front_left, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_front_left/scan}}
+    name: ir_intensity_front_left
+  - range_sensor: {site: ir_intensity_front_right, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_front_right/scan}}
+    name: ir_intensity_front_right
+  - range_sensor: {site: ir_intensity_left, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_left/scan}}
+    name: ir_intensity_left
+  - range_sensor: {site: ir_intensity_right, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_right/scan}}
+    name: ir_intensity_right
+  - range_sensor: {site: ir_intensity_side_left, h_rays: 5, v_rays: 5, h_fov: 0.1745329, v_fov: 0.1745329,
+                   range_min: 0.025, max_range: 0.2, rate_hz: 62, lazy: true,
+                   exclude_body: base_link, emit_static_tf: false,
+                   topics: {range: _internal/ir_intensity_side_left/scan}}
+    name: ir_intensity_side_left
+  # The IMU at the Create 3's mount (imu.urdf.xacro), on its `imu` topic at its 62 Hz.
+  - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+  # Ground truth the Create 3's simulator streams for its adapter: the base's world pose under the
+  # robot's name, and the optical-flow mouse and IR receiver poses relative to the base, all on one
+  # topic at 62 Hz. `child_frame` is the name the adapter's `robot_name` parameter matches.
+  - ground_truth_pose: {child_frame: turtlebot4, rate_hz: 62, lazy: true,
+                        topics: {pose: _internal/sim_ground_truth_pose}}
+    name: gt_base
+  - ground_truth_pose: {site: mouse, relative_to: base, rate_hz: 62, lazy: true,
+                        topics: {pose: _internal/sim_ground_truth_pose}}
+    name: gt_mouse
+  - ground_truth_pose: {site: ir_omni, relative_to: base, rate_hz: 62, lazy: true,
+                        topics: {pose: _internal/sim_ground_truth_pose}}
+    name: gt_ir_omni

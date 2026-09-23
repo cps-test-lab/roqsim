@@ -23,7 +23,6 @@ configure, and asking for one means changing how the generator cuts openings, no
 Config::
 
     window:
-      name: window        # entity name (default 'window')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 window)
       pos: [0.0, 0.0, 0.0]  # opening CENTRE, [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation; yaw aligns the pane with its wall
@@ -41,31 +40,17 @@ drive through the window.
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 # Defaults that make a window line up with this library's door unit -- see the module docstring.
 _DOOR_MATCHED_H = 2.06
 _WALL_THICKNESS = 0.10
 _FRAME_RGBA = [0.62, 0.62, 0.64, 1.0]
 _GLASS_RGBA = [0.60, 0.75, 0.85, 0.35]
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
 
 
 class WindowPlugin(Plugin):
@@ -86,9 +71,7 @@ class WindowPlugin(Plugin):
         else:
             self.pos = [0.0, 0.0, 0.0]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = (
-            _rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
-        )
+        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports them
         # with a friendly message rather than crashing construction.
         self.width = self._float(self.config.get("width"), 0.94)

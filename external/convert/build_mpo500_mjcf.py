@@ -4,8 +4,8 @@
 A 72.8 kg four-wheel **omnidirectional** base: all four wheels drive, none steers. Holonomic, so it
 uses ``omni_drive``'s existing mecanum path -- no swerve inverse kinematics and no ``slip_factor``.
 
-The ledger's recorded unknown was "whether its omni wheels are mecanum or Swedish-roller … the macro
-was listed rather than opened". Opened: the only wheel macro is ``mpo_500_omni_wheel``, axis
+The ledger's open question is whether its omni wheels are mecanum or Swedish-roller. The macros
+answer it: the only wheel macro is ``mpo_500_omni_wheel``, axis
 ``0 1 0``, and there is **no caster macro at all**, so nothing steers. Either roller type reduces to
 the same planar model here, and the wheel spin that keeps ``joint_states`` honest is the mecanum
 convention ``omni_drive`` already applies to the TIAGo Pro and the Ridgeback.
@@ -20,6 +20,11 @@ so unlike the MPO-700 the wheels are articulated without our intervention.
 the mesh pipeline but differ in body structure (steer layer or not), and the two remaining Neobotix
 platforms are *differential*, a third shape again. Consolidating two of four shapes now and reworking
 for the third is worse than consolidating once when all three are known -- see the port log.
+
+**The two SICK microScan3s are not in this model.** The manifest mounts the ``sick_microscan3`` device
+model at each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the
+housings, meshes and masses. This generator removes both links from the expanded tree before it reads it
+(:func:`neobotix.drop_scanner_links`).
 
 Usage::
 
@@ -41,7 +46,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from neobotix import (  # noqa: E402
-    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, drop_scanner_links, subs_for, wrapper,
 )
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
@@ -56,7 +61,13 @@ DEFAULT_FACES = 4000
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
+#: Scanner links removed from the expanded tree: the manifest mounts a sick_microscan3 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
+#: The wheel contact sphere's radius (m): Neobotix's hardware documentation, not the description.
+#: The MPO-500 "Mechanical Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-500/
+#: mechanical.html) gives wheel diameter D 254 mm, and the vendor's own wheel mesh (MPO-500-WHEEL)
+#: spans 254 mm, where the description's collision sphere is r 0.117 (macro/mpo_500_wheel_macro.xacro).
+WHEEL_RADIUS = 0.127
 
 
 
@@ -81,8 +92,10 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
             shape = collision.find("geometry")[0]
             xyz, quat = pose(collision)
             if shape.tag == "sphere":
+                if not wheel:
+                    raise ValueError(f"{link.get('name')}: a sphere collision on a non-wheel link")
                 out += (f'{indent}<geom class="wheel_collision" name="{link.get("name")}_tyre"'
-                        f' size="{float(shape.get("radius")):g}" pos="{xyz}"/>\n')
+                        f' size="{WHEEL_RADIUS:g}" pos="{xyz}"/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
                 sub = subs_for(stem, shipped)[0]
@@ -91,13 +104,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
         return out
 
     base = links["base_link"]
-    sensors = ""
-    for name in SENSOR_LINKS:
-        pos, quat = pose(joints[name])
-        sensors += SENSOR_BODY.format(
-            name=name, body_pos=pos, body_quat=quat,
-            geoms=geoms(links[name], "          "), **inertial(links[name]),
-        )
     wheels = ""
     for corner in CORNERS:
         name = f"mpo_500_omni_wheel_{corner}_link"
@@ -111,22 +117,13 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
     )
     assets = asset_block(shipped, palette, scales)
     wheel_z = float(pose(joints[f"mpo_500_omni_wheel_{CORNERS[0]}_link"])[0].split()[2])
-    radius = float(links[f"mpo_500_omni_wheel_{CORNERS[0]}_link"]
-                   .find("collision/geometry/sphere").get("radius"))
-    lidar_1, _ = pose(joints["lidar_1_link"])
-    lidar_2, _ = pose(joints["lidar_2_link"])
     return TEMPLATE.format(
         commit=NEO_COMMIT, assets=assets, excludes=excludes,
-        base_geoms=geoms(base, "        "), sensors=sensors, wheels=wheels,
-        lidar_1=lidar_1, lidar_2=lidar_2, rest_height=f"{radius - wheel_z:g}",
+        base_geoms=geoms(base, "        "), wheels=wheels, wheel_radius=f"{WHEEL_RADIUS:g}",
+        rest_height=f"{WHEEL_RADIUS - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
 
-
-SENSOR_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
-          <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
-{geoms}        </body>
-"""
 
 WHEEL_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
           <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
@@ -149,11 +146,16 @@ TEMPLATE = """<mujoco model="mpo_500">
 
     Wheel contact is the vendor's own SPHERE, not this 8.3 MB roller mesh: a sphere has no preferred
     rolling direction, which is what an omni wheel approximates. The mesh is cosmetic and decimated
-    accordingly.
+    accordingly. The sphere's radius, {wheel_radius}, is Neobotix's documented 254 mm wheel, which the
+    wheel mesh also spans; the description's sphere is 0.117. See build_mpo500_mjcf.WHEEL_RADIUS.
 
     One consequence to know: omni_drive integrates odometry from the ACHIEVED twist and models no
     wheel slip, so encoder odometry and ground truth coincide by construction. This platform cannot
     be used to study odometry drift.
+
+    The two SICK microScan3s are not in this file: the manifest mounts a `sick_microscan3` device
+    model at each of the vendor's lidar_1_joint and lidar_2_joint, and those devices carry the
+    scanners' housings and mass.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
   <!--
@@ -205,10 +207,7 @@ TEMPLATE = """<mujoco model="mpo_500">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
-      <!-- The vendor's own two scanner mounts, front and rear on the centreline. -->
-      <site name="lidar_1" pos="{lidar_1}" size="0.01" rgba="1 0 0 0.6"/>
-      <site name="lidar_2" pos="{lidar_2}" size="0.01" rgba="1 0 0 0.6"/>
-{base_geoms}{sensors}{wheels}    </body>
+{base_geoms}{wheels}    </body>
   </worldbody>
 
   <actuator>
@@ -245,6 +244,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_500.urdf.xacro"),
                             Path(tmp), wrapper=wrapper("mpo_500", "revolute"))
+    drop_scanner_links(urdf, SENSOR_LINKS)
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}

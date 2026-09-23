@@ -17,7 +17,6 @@ in the world's plugins, since build order is list order and it can only delete w
 Config::
 
     ceiling_panels:
-      name: panels        # entity name (default 'panels')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 field)
       area: [x0, y0, x1, y1]  # world rectangle to cover (REQUIRED)
       z: 3.5              # soffit height, m -- panels hang below this

@@ -4,8 +4,8 @@
 
 """A recording carries the components that RAN, and is rebuilt by reading them.
 
-It used to carry only the recipe -- a world reference and the override document -- so replaying meant
-re-running the whole load path. That coupled every recording to the override grammar: a change to how
+Carrying only the recipe -- a world reference and the override document -- would make replaying mean
+re-running the whole load path. That couples every recording to the override grammar: a change to how
 an override resolves would silently rebuild a *different* world, or refuse one that had been fine.
 Recording the resolved tree makes rebuilding a read.
 """
@@ -13,7 +13,7 @@ Recording the resolved tree makes rebuilding a read.
 import numpy as np
 import pytest
 
-from roqsim.capture import FORMAT_VERSION
+from roqsim.capture import FORMAT_VERSION, snap_fps
 from roqsim.config import SimConfig, load_config_from_dict
 from roqsim.recording import Recording, RecordingError
 
@@ -27,16 +27,16 @@ WORLD = {
 
 def test_the_record_holds_what_ran_not_what_was_asked_for():
     """The manifest's components are in it, and the document never named them."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
     record = cfg.as_record()
     by_address = {c["address"]: c for c in record["components"]}
-    assert "robot.lidar" in by_address
-    assert by_address["robot.lidar"]["config"]["rays"] == 720
+    assert "robot.rplidar.lidar" in by_address
+    assert by_address["robot.rplidar.lidar"]["config"]["rays"] == 720
 
 
 def test_rebuilding_reads_the_tree_rather_than_re_resolving():
     """No document, no overrides, no resolution -- and the same components."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
     rebuilt = SimConfig.from_record(cfg.as_record())
     assert [s.address for s in rebuilt.plugins] == [s.address for s in cfg.plugins]
     assert [s.enabled for s in rebuilt.plugins] == [s.enabled for s in cfg.plugins]
@@ -47,9 +47,9 @@ def test_rebuilding_reads_the_tree_rather_than_re_resolving():
 def test_a_disabled_component_is_recorded_as_disabled():
     """Which is why `enabled: false` is a flag and not a deletion: the record can say so."""
     cfg = load_config_from_dict(
-        WORLD, overrides={"components": {"robot.lidar": {"enabled": False}}}
+        WORLD, overrides={"components": {"robot.rplidar.lidar": {"enabled": False}}}
     )
-    entry = next(c for c in cfg.as_record()["components"] if c["address"] == "robot.lidar")
+    entry = next(c for c in cfg.as_record()["components"] if c["address"] == "robot.rplidar.lidar")
     assert entry["enabled"] is False
 
 
@@ -74,3 +74,71 @@ def test_an_older_record_still_reads_but_will_not_rebuild(tmp_path):
     assert len(rec) == 2
     with pytest.raises(RecordingError, match="pass the world explicitly"):
         rec.build()
+
+
+def test_the_provenance_carries_the_resolved_actuator_table(tmp_path):
+    """What the joints RAN under, beside what the world declared.
+
+    ``world_model`` above is the declared half. It cannot answer "what gains did this run use": a
+    model's own values are not in it, and a block that changes one joint leaves the rest described by
+    nothing. The resolved table is every actuator, with the law, the gains, and where each came from.
+    """
+    from roqsim.capture import StateRecorder
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(
+        {
+            "sim": {"world": "empty_room"},
+            "components": [
+                {
+                    "spawn_robot": {
+                        "model": "turtlebot4",
+                        "actuators": {"control": "velocity", "d": 12.0},
+                    },
+                    "name": "robot",
+                }
+            ],
+        }
+    )
+    engine = Engine(cfg)
+    try:
+        engine.setup()
+        recorder = StateRecorder(
+            engine.ctx, tmp_path / "run.npz", snap_fps(30, 0.002), config=cfg, world="w"
+        )
+        actuators = recorder._provenance["actuators"]
+        assert "robot" in actuators
+        rows = actuators["robot"]
+        assert rows and all(row["control"] == "velocity" for row in rows)
+        assert all(row["d"] == 12.0 and row["source"] == "shared" for row in rows)
+        # Prefixed, so a reader can line the table up against the compiled model's actuators.
+        names = {row["name"] for row in rows}
+        assert names == {
+            engine.ctx.model.actuator(i).name for i in range(engine.ctx.model.nu)
+        }
+    finally:
+        engine.shutdown()
+
+
+def test_a_world_that_declares_no_gains_still_records_what_ran(tmp_path):
+    """The table is not a diff: a run nobody overrode must still say what its joints ran under."""
+    from roqsim.capture import StateRecorder
+    from roqsim.engine import Engine
+
+    cfg = load_config_from_dict(WORLD)
+    engine = Engine(cfg)
+    try:
+        engine.setup()
+        recorder = StateRecorder(
+            engine.ctx, tmp_path / "run.npz", snap_fps(30, 0.002), config=cfg, world="w"
+        )
+        rows = recorder._provenance["actuators"]["robot"]
+        assert rows and all(row["source"] == "model" for row in rows)
+    finally:
+        engine.shutdown()
+
+
+def test_the_added_key_needs_no_format_bump():
+    """`Recording` reads `world_model` by name and ignores keys it does not know, so a reader made
+    before the actuator table exists still opens a recording that has one."""
+    assert FORMAT_VERSION == 2

@@ -2,8 +2,8 @@
 
 Three failures this catches, none of which the per-plugin behaviour tests would:
 
-* a model whose MJCF moved into ``models/<name>/`` but whose ``<compiler meshdir=...>`` still points
-  at the old shared ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it
+* a model in ``models/<name>/`` whose ``<compiler meshdir=...>`` points at a shared
+  ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it
   compiles the model with the reference as given, so the device silently loses its geometry;
 * a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
   from an editable checkout and fails at RUN time inside a campaign container, where the checkout is
@@ -50,7 +50,27 @@ def test_every_model_is_a_folder():
     # layout in two -- with its meshes in whichever dir the author happened to pick.
     assert not list(MODELS_DIR.glob("*.xml"))
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
-    assert MODEL_NAMES == ["d415", "d435", "d455", "mid360", "oakd", "robin_w1g", "zivid"]
+    assert MODEL_NAMES == [
+        "d415",
+        "d435",
+        "d455",
+        "hokuyo_ust",
+        "lds01",
+        "mid360",
+        "oakd",
+        "omron_os32c",
+        "robin_w1g",
+        "rplidar_a1",
+        "rplidar_c1",
+        "rplidar_s3",
+        "sick_lms1xx",
+        "sick_microscan3",
+        "sick_nanoscan3",
+        "sick_s300",
+        "sick_tim571",
+        "velodyne_vlp16",
+        "zivid",
+    ]
 
 
 @pytest.mark.parametrize("name", MODEL_NAMES)

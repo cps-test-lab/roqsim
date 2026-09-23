@@ -38,7 +38,9 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
-from .plugin import Plugin
+from .plugin import Plugin, PluginError
+from .presence import arm_gravity_compensation
+from .seed import PREVIEW_SEED
 from .world import build_world, world_file
 
 _EMPTY_MJCF = "<mujoco><worldbody/></mujoco>"
@@ -103,10 +105,30 @@ class Engine:
         plugins: list[Plugin] | None = None,
         logger: logging.Logger | None = None,
         profile: bool = False,
+        preview: bool = False,
     ):
+        """Build the engine for *config*.
+
+        *preview* says this driver compiles the world in order to LOOK at it -- a render, a map,
+        an export, a load check -- and will never step it into a run whose numbers anyone keeps.
+        It pins :data:`roqsim.seed.PREVIEW_SEED` on the context, which is what makes such a tool
+        work on a world whose plugins draw.
+
+        The seed is otherwise the driver's to resolve, and an unresolved one raises rather than
+        defaulting to zero -- deliberately, because a run whose randomness nobody chose cannot be
+        replayed. That rule has no useful meaning for a tool that produces a picture: there is no
+        run to replay, and the tool refused a world it could perfectly well have drawn, naming a
+        seed the caller has no way to supply. `preview` is how a driver says which of the two it
+        is, once, at the place where it is obvious.
+        """
         self.config = config
         self.logger = logger or logging.getLogger("roqsim.engine")
         self.ctx = SimContext(config.raw, logger=self.logger)
+        if preview:
+            # Assigned HERE and not in `setup`, because a driver may read or override it in
+            # between -- and because a fixed seed a caller can see is the whole point: two renders
+            # of one world are the same picture.
+            self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
@@ -132,13 +154,46 @@ class Engine:
             self._setup()
         self._setup_done = True
 
+    def _world_plugins(self) -> list[Plugin]:
+        """The plugins that build their own ground + lighting, in declaration order."""
+        return [p for p in self.plugins if getattr(p, "provides_world", False)]
+
+    def _check_one_world(self, world_name: str | None) -> None:
+        """Refuse a world whose static environment is claimed twice.
+
+        Ground, lighting and enclosure are one slot, filled either by a world definition
+        (``sim.world``) or by a ``provides_world`` scene plugin -- never both, and never by two
+        such plugins. Both collisions build a scene that compiles: a second ground plane is
+        coplanar with the first and a second light only brightens it, so the world looks plausible
+        and the robot drives on a floor nobody asked for. What the author wrote is then not what
+        ran, which is exactly the difference a campaign is measuring.
+
+        The fix is always to delete one of the two, so the message names both and says so.
+        """
+        providers = self._world_plugins()
+        if len(providers) > 1:
+            raise PluginError(
+                "two scene plugins each provide the world's ground and lighting: "
+                + ", ".join(sorted(p.address for p in providers))
+                + ". They build one on top of the other. Keep the one whose environment this "
+                "world is, and drop the other."
+            )
+        if providers and world_name is not None:
+            raise PluginError(
+                f"sim.world={world_name!r} and the scene plugin {providers[0].address!r}, which "
+                "provides its own ground and lighting, both define the static environment. Drop "
+                f"sim.world to let {providers[0].address!r} build it, or drop the plugin to sit "
+                f"in {world_name!r}."
+            )
+
     def _setup(self) -> None:
         # World definition goes in first, so plugins attach onto it. ``sim.world`` is either a
         # built-in name (ground + lighting) or a path to an MJCF file (a baked scene, e.g.
         # depot/depot.xml) loaded as the base scene. A scene plugin that provides its own
-        # ground+light (provides_world, e.g. the mobile floorplan) overrides ``sim.world``.
+        # ground+light (provides_world, e.g. the mobile floorplan) fills the same slot instead.
         with self._span("world_load"):
             world_name = self.config.sim.get("world")
+            self._check_one_world(world_name)
             world_path = world_file(world_name, self.config.base_dir)
             if world_path is not None:
                 spec = mujoco.MjSpec.from_file(world_path)
@@ -146,14 +201,9 @@ class Engine:
                 spec = mujoco.MjSpec.from_string(_EMPTY_MJCF)
             self.ctx.spec = spec
 
-            if any(getattr(p, "provides_world", False) for p in self.plugins):
-                if world_name is not None:
-                    self.logger.warning(
-                        "sim.world=%r is overridden by a scene plugin that provides its own "
-                        "ground+lighting (e.g. floorplan); ignoring sim.world.",
-                        world_name,
-                    )
-            elif world_path is None:
+            # After the check above exactly one of these fills the slot: a loaded MJCF, a
+            # ``provides_world`` plugin's own build, or a world definition.
+            if world_path is None and not self._world_plugins():
                 build_world(spec, world_name)  # a built-in name (or None -> empty_room)
 
         for plugin in self.plugins:
@@ -184,7 +234,8 @@ class Engine:
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
         # jaws at millimetres per second under an under-solved contact -- measured, and it responds to
         # solver/constraint hardness rather than to friction, so it reads as a friction problem and is
-        # not one. There was previously no way to ask for a tighter solve from a world.
+        # not one -- so a world that needs a tighter solve asks for one here, in the document, rather
+        # than in whatever code happens to build it.
         for key, attr in (
             ("solver", "solver"),
             ("iterations", "iterations"),
@@ -226,6 +277,11 @@ class Engine:
         elif not spec.modelname or spec.modelname == "MuJoCo Model":
             spec.modelname = "Roqsim"
 
+        # Presence freezes an absent entity by compensating its gravity, and MuJoCo decides whether
+        # that field is live at all when the model compiles. Armed for every world rather than for
+        # the ones that declare an absent entity: any entity can be deleted at run time.
+        arm_gravity_compensation(spec)
+
         with self._span("compile"):
             self.ctx.model = spec.compile()
         with self._span("make_data"):
@@ -233,6 +289,10 @@ class Engine:
 
         for plugin in self.plugins:
             self._timed(plugin, "configure", plugin.configure, self.ctx)
+            # After configure, because the entity has to be registered before its presence can
+            # be set; here rather than inside each plugin so that a plugin registering an entity
+            # gets the world's `present:` honoured by declaring that it registers one.
+            plugin.apply_declared_presence(self.ctx)
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -245,6 +305,13 @@ class Engine:
         A partial vector is padded from MuJoCo's current value rather than zero-filled, so
         ``{solref: [0.05]}`` varies the contact time constant and leaves the damping ratio alone —
         which is what a sweep over one element means.
+
+        A contact time constant below ``2 * timestep`` is refused, because MuJoCo clamps it there
+        and says nothing: asked for 0.5 ms at a 2 ms step, a world gets 4 ms and a penetration
+        bit-identical to the one it was trying to tighten away from. That is the same invisibility
+        this key's unknown-name check exists for, one level down — a value rather than a spelling.
+        The floor moves with the step, so the fix is a smaller ``sim.timestep``, and the error says
+        so. It is checked here rather than at load because the step may come from the model.
         """
         override = self.config.sim.get("contact_override")
         if not override:
@@ -254,10 +321,31 @@ class Engine:
             if value is None:
                 continue
             values = [float(v) for v in (value if isinstance(value, (list, tuple)) else [value])]
+            if key == "solref":
+                self._check_solref_floor(values, float(spec.option.timestep))
             current = list(getattr(spec.option, attr))
             setattr(spec.option, attr, values + current[len(values) :])
         spec.option.enableflags |= mujoco.mjtEnableBit.mjENBL_OVERRIDE
         self.logger.info("contact_override active: %s", dict(override))
+
+    @staticmethod
+    def _check_solref_floor(values: list[float], timestep: float) -> None:
+        """Refuse a contact time constant MuJoCo would silently clamp to ``2 * timestep``.
+
+        Only the POSITIVE form is a time constant. A negative ``solref[0]`` is MuJoCo's direct
+        parameterisation, where the pair is ``(-stiffness, -damping)`` and no floor applies; refusing
+        it would reject a world that is not asking for a time constant at all.
+        """
+        if not values or values[0] <= 0.0:
+            return
+        floor = 2.0 * timestep
+        if values[0] < floor:
+            raise PluginError(
+                f"sim.contact_override.solref: a contact time constant of {values[0]} s is below "
+                f"MuJoCo's floor of 2 * timestep = {floor} s, which it would silently use instead — "
+                f"the run would report the tighter value and behave as though {floor} s had been "
+                f"asked for. Lower sim.timestep to reach it, or state {floor} s or more."
+            )
 
     def reset(self, **params) -> None:
         """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
@@ -280,6 +368,13 @@ class Engine:
             self.ctx.blackboard.set("reset_params", params)
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
+            # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
+            # in one episode would still be in the room at the start of the next.
+            plugin.apply_declared_presence(self.ctx)
+        # Once more, after every plugin has written its part of the initial state -- a pose, a
+        # command, a presence: until the next step, the derived quantities (site poses, sensor data,
+        # contacts) must describe that state and not the one before the plugins ran.
+        mujoco.mj_forward(self.ctx.model, self.ctx.data)
         for gate in self.ctx.gates():
             gate.reset()
 

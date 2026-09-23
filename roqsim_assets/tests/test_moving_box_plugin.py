@@ -56,7 +56,7 @@ def _run(plugin, ctx, seconds):
 
 
 def _cfg(**over):
-    cfg = dict(pos=[0.0, 0.0], size=[0.3, 0.3, 0.3], speed=0.5)
+    cfg = dict(pose={"position": {"x": 0.0, "y": 0.0}}, size=[0.3, 0.3, 0.3], speed=0.5)
     cfg.update(over)
     return cfg
 
@@ -182,7 +182,7 @@ def test_random_walk_moves_at_the_configured_speed():
 
 def test_reset_restores_pose_and_reseeds():
     """Repetition N must not inherit repetition N-1's obstacle position or RNG state."""
-    _, data, plugin, ctx = _build(**_cfg(pos=[1.0, 2.0], speed=0.5, random_walk={"seed": 4}))
+    _, data, plugin, ctx = _build(**_cfg(pose={"position": {"x": 1.0, "y": 2.0}}, speed=0.5, random_walk={"seed": 4}))
     first = _run(plugin, ctx, 5.0)
     plugin.on_reset(ctx)
     assert data.mocap_pos[0][:2] == pytest.approx([1.0, 2.0])
@@ -205,11 +205,11 @@ def test_reset_restores_waypoint_progress():
 @pytest.mark.parametrize(
     "cfg, needle",
     [
-        (dict(pos=[0, 0], size=[0.3, 0.3, 0.3]), "'speed' is required"),
-        (dict(pos=[0, 0], size=[0.3, 0.3, 0.3], speed=0.5), "needs a motion"),
+        (dict(pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0.3, 0.3]), "'speed' is required"),
+        (dict(pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0.3, 0.3], speed=0.5), "needs a motion"),
         (
             dict(
-                pos=[0, 0],
+                pose={"position": {"x": 0, "y": 0}},
                 size=[0.3, 0.3, 0.3],
                 speed=0.5,
                 waypoints=[[1, 0]],
@@ -217,18 +217,18 @@ def test_reset_restores_waypoint_progress():
             ),
             "not both",
         ),
-        (dict(pos=[0, 0], size=[0.3, 0.3, 0.3], speed=0.5, random_walk={}), "requires a 'seed'"),
+        (dict(pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0.3, 0.3], speed=0.5, random_walk={}), "requires a 'seed'"),
         (
-            dict(pos=[0, 0], size=[0.3, 0.3, 0.3], speed=-1, waypoints=[[1, 0]]),
+            dict(pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0.3, 0.3], speed=-1, waypoints=[[1, 0]]),
             "positive number of m/s",
         ),
         (
-            dict(pos=[0, 0], size=[0.3, 0, 0.3], speed=0.5, waypoints=[[1, 0]]),
+            dict(pose={"position": {"x": 0, "y": 0}}, size=[0.3, 0, 0.3], speed=0.5, waypoints=[[1, 0]]),
             "three positive numbers",
         ),
         (
             dict(
-                pos=[0, 0],
+                pose={"position": {"x": 0, "y": 0}},
                 size=[0.3, 0.3, 0.3],
                 speed=0.5,
                 random_walk={"seed": 1, "bounds": [1, 1, 0, 0]},

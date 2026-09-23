@@ -1,6 +1,14 @@
 # Default controller + sensors shipped with the Raspberry Pi Mouse description.
 #
 # `spawn_robot: {model: raspimouse}` pulls these in automatically.
+
+# Fixed links of raspimouse_description @ ed2c8b7 (expanded with `lidar:=lds`) that this MJCF flattens;
+# spawn_robot makes each a site and publishes it as static TF. The mount's mesh is robot geometry and
+# stays in raspimouse.xml.
+frames:
+  # urdf/raspimouse.urdf.xacro:85-88: the multi-lidar mount on base_link.
+  - {name: lds_multi_mount_link, parent: base_link, pos: [0.0, 0.0, 0.0855], rpy: [0.0, 0.0, 0.0]}
+
 components:
   # A TRUE two-wheel differential drive: the wheels roll, they do not scrub, so unlike husky_a200 /
   # clearpath_jackal / rosbot / panther there is NO slip_factor here -- the same line
@@ -16,17 +24,18 @@ components:
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
-  # The LDS-01 on RT's own multi-lidar mount. NOT an assumption: the description supports it as
-  # `lidar:=lds`, and the generator expands with that option, so the mount, the scanner geometry and
-  # the 0.120 m scan height are all the vendor's own values. Rates and ranges are the LDS-01's
-  # published figures (the same sensor turtlebot3_waffle carries).
-  - lidar:
-      site: lidar
+  # The LDS-01 device model on RT's multi-lidar mount, at the vendor joint origin:
+  # urdf/raspimouse.urdf.xacro:89-91 @ ed2c8b7, frame `laser` (`lidar_frame` default, :9). The yaw is
+  # the vendor's 3.14 as written, not pi. Scan values are the device's datasheet defaults (360 deg at
+  # 1 deg, 5 Hz, 0.12-3.5 m, 10 mm sigma): RT's only scanner settings are its lidar_gazebo macro
+  # (urdf/sensors/lidar.gazebo.xacro:13-31: 720 samples, 10 Hz, 30 mm sigma), which RT applies unchanged
+  # to its URG, LDS and RPLIDAR options (urdf/raspimouse.urdf.xacro:150-160), so it states no value for
+  # the LDS-01 on this robot. Addressed as `<robot>.lds01.lidar`; the scan is `scan` in the robot's
+  # namespace.
+  - spawn_sensor:
+      model: lds01
+      parent_frame: lds_multi_mount_link
+      pos: [0.0, 0.0, 0.0345]
+      rpy: [0.0, 0.0, 3.14]
       frame_id: laser
-      rays: 360
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.12
-      max_range: 3.5
-      rate_hz: 5.0
-      exclude_body: base_link
+    name: lds01

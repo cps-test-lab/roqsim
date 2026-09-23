@@ -16,10 +16,10 @@ It also registers an :class:`ArmHandle` on the blackboard under ``arm:<name>`` e
 ``joint_names``, ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers;
 a scripted ``test_target`` drives the arm standalone.
 
-Config::
+Config -- a component of the entry that spawns the arm, since ownership is where the entry
+sits rather than a config key::
 
     arm_controller:
-      arm: ur10e                 # entity name registered by spawn_arm
       joints: [shoulder_pan_joint, ...]  # optional: the joints this controller owns. Omitted, the
                                  #   plugin claims every joint actuator sharing the entity's prefix,
                                  #   which is right for a standalone arm and wrong for an arm that
@@ -103,7 +103,19 @@ plugin declares a ``control_msgs/GripperCommand`` action endpoint at
 ``<gripper_controller_name>/gripper_cmd`` and publishes a ``() -> (position, velocity)`` reader on the
 blackboard under ``gripper:<arm>`` (the bridge's GripperCommand handler watches it to report
 reached/stalled). The commanded position (the gripper joint angle, e.g. 0=open .. 0.8=closed for a
-Robotiq 2F-85) is mapped linearly onto the tendon actuator's ctrlrange. Gripper config::
+Robotiq 2F-85) is mapped linearly onto the tendon actuator's ctrlrange.
+
+**Grip force.** Beside the position the plugin publishes a :class:`GripperEffort` under
+``gripper_effort:<arm>``, the key the endpoint's ``effort_key`` hint names. It takes GripperCommand's
+``max_effort`` as ros2_control's gripper action controller does: a clamp on the gripper joint's
+effort, in that joint's own unit -- newtons for a slide jaw, newton-metres for a knuckle, the unit
+``/joint_states`` reports -- which is what that controller's effort adapter applies
+(``gripper_controllers/hardware_interface_adapter.hpp``). A goal is never refused for its effort: a
+request at or above the model's own limit saturates there, as a drive does, and ``max_effort <= 0``
+and every reset restore the model's own force range. The clamp reaches the actuator through the
+transmission, so it needs a constant moment -- a joint transmission or a fixed tendon, which every
+shipped gripper has. Any other keeps its range and executes the position alone, as a
+position-interface controller does. Gripper config::
 
       gripper_controller_name: gripper_controller   # action at <name>/gripper_cmd
       gripper_joint: right_driver_joint  # joint whose angle is the reported gripper position
@@ -119,6 +131,7 @@ from dataclasses import dataclass
 import mujoco
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
 from roqsim.plugin import Plugin
 
 from ._arm import (
@@ -128,6 +141,48 @@ from ._arm import (
     prefixed_joints,
     strip_prefix,
 )
+
+
+def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> float:
+    """The effort on ``joint_id`` per unit of the actuator's force, or 0.0 where it is not constant.
+
+    Read from the model alone, so it holds in every configuration or not at all: an actuator on the
+    joint carries its gear, and one on a fixed tendon carries gear times the tendon's coefficient on
+    that joint. The unit is the joint's own -- newtons for a slide joint, newton-metres for a hinge --
+    the unit ``/joint_states`` reports its effort in. A spatial tendon, a site transmission, or a joint
+    the transmission does not reach has no constant moment, and gets 0.0.
+    """
+    gear = abs(float(model.actuator_gear[actuator_id][0]))
+    target = int(model.actuator_trnid[actuator_id][0])
+    trn = model.actuator_trntype[actuator_id]
+    if trn == mujoco.mjtTrn.mjTRN_JOINT:
+        return gear if target == joint_id else 0.0
+    if trn != mujoco.mjtTrn.mjTRN_TENDON:
+        return 0.0
+    first = int(model.tendon_adr[target])
+    coef = 0.0
+    for wrap in range(first, first + int(model.tendon_num[target])):
+        if model.wrap_type[wrap] != mujoco.mjtWrap.mjWRAP_JOINT:
+            return 0.0
+        if int(model.wrap_objid[wrap]) == joint_id:
+            coef = abs(float(model.wrap_prm[wrap]))
+    return gear * coef
+
+
+@dataclass
+class GripperEffort:
+    """GripperCommand's ``max_effort`` for one gripper: a clamp on its joint's effort.
+
+    Published by :class:`ArmControllerPlugin` beside the gripper's position reader, under the key the
+    ``gripper_cmd`` endpoint names in its ``effort_key`` hint. ``limit`` is the most effort the
+    gripper joint can carry, in its own unit (N or N*m), and 0.0 where no clamp can be applied.
+    ``set_max_effort`` runs on the physics thread; ``read_effort`` returns the joint's effort now, the
+    value ``/joint_states`` reports for it.
+    """
+
+    limit: float
+    set_max_effort: Callable[[float], None]
+    read_effort: Callable[[], float]
 
 
 @dataclass
@@ -148,6 +203,16 @@ class ArmHandle:
     # `velocity_commands: true`; None otherwise, so a consumer can detect the capability rather than
     # discovering it by silent no-op.
     set_velocities: Callable[[list[str], list[float]], None] | None = None
+    #: Register the one plugin that computes this arm's targets each step (see
+    #: :meth:`ArmControllerPlugin.set_command_source`).
+    set_command_source: Callable[[Callable[[object], None], str], None] | None = None
+    #: Run that source for this step if it has not run yet. Whoever reaches it first triggers it,
+    #: so the result does not depend on where either plugin sits in the world file.
+    ensure_updated: Callable[[object], None] | None = None
+    #: Whether this controller currently holds the arm. An inactive one keeps its last target and
+    #: takes no new ones, the way a deactivated ros2_control controller does.
+    is_active: Callable[[], bool] | None = None
+    set_active: Callable[[bool], None] | None = None
 
 
 class ArmControllerPlugin(Plugin):
@@ -219,6 +284,17 @@ class ArmControllerPlugin(Plugin):
         self.velocity_commands = bool(self.config.get("velocity_commands", False))
         self.velocity_timeout_s = float(self.config.get("velocity_timeout_s", 0.5))
         self._vel_cmd: dict[str, float] = {}
+        # The one plugin that computes this arm's targets, and the step its work last ran
+        # for. Pulled from `pre_step`, so declaration order cannot decide whether a command
+        # lands this step or the next.
+        self._command_source = None
+        self._command_source_owner = ""
+        self._commanded_step = -1
+        self._registered = None
+        # Whether this controller holds the arm. Active unless the world says otherwise, so a world
+        # that never switches behaves exactly as it always has; `inactive` is what ros2_control's
+        # `spawner --inactive` leaves behind.
+        self._active = str(self.config.get("initial_state", "active")) != "inactive"
         self._vel_stamp = -1.0  # sim time of the last velocity command; -1 = never
         self._jnt_range: dict[
             str, tuple[float, float]
@@ -244,6 +320,13 @@ class ArmControllerPlugin(Plugin):
         self._grip_ctrl_lo = 0.0
         self._grip_ctrl_hi = 255.0
         self._gripper_key = ""  # set in configure; the reader key the bridge is pointed at
+        # Grip force: the model's own force range on the gripper actuator (what a reset restores), the
+        # gripper joint's effort per unit of actuator force, and the joint-effort limit that range
+        # allows. `_grip_cap_warned` keeps a gripper that cannot take a clamp to one warning.
+        self._grip_forcerange: tuple[float, float] | None = None
+        self._grip_gain = 0.0
+        self._grip_limit = 0.0
+        self._grip_cap_warned = False
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = (
@@ -332,6 +415,48 @@ class ArmControllerPlugin(Plugin):
                     f"`gripper_controller_name`, else they overwrite each other's handles."
                 )
 
+        # This arm's controllers, as ros2_control would list them. The trajectory controller
+        # claims the joints it drives; the broadcaster claims nothing and reads them, which is how
+        # both are active at once on every real robot.
+        registry = registry_for(ctx)
+        self._registered = registry.register(
+            Controller(
+                name=controller,
+                type="joint_trajectory_controller/JointTrajectoryController",
+                claims=tuple(f"{j}/position" for j in self._ctrl_names),
+                state=ACTIVE if self._active else INACTIVE,
+                namespace=ns,
+                owner=self.arm,
+                apply=self.set_active,
+            )
+        )
+        # A robot has ONE joint_state_broadcaster reading every joint, however many arms it has, so
+        # a second arm on the same entity extends the broadcaster the first one registered.
+        broadcaster = self.config.get("joint_state_broadcaster_name", "joint_state_broadcaster")
+        broadcaster_type = "joint_state_broadcaster/JointStateBroadcaster"
+        reads = tuple(f"{j}/position" for j in self._ctrl_names)
+        shared = next(
+            (
+                c
+                for c in registry.all(ns)
+                if c.owner == self.arm and c.name == broadcaster and c.type == broadcaster_type
+            ),
+            None,
+        )
+        if shared is not None:
+            shared.reads += tuple(r for r in reads if r not in shared.reads)
+        else:
+            registry.register(
+                Controller(
+                    name=broadcaster,
+                    type=broadcaster_type,
+                    reads=reads,
+                    state=ACTIVE,
+                    namespace=ns,
+                    owner=self.arm,
+                )
+            )
+
         # ArmHandle: for in-process consumers (scripted drivers, tests) that bypass any transport.
         ctx.blackboard.set(
             arm_key,
@@ -341,6 +466,10 @@ class ArmControllerPlugin(Plugin):
                 set_targets=self.set_targets,
                 read_state=self.read_state,
                 set_velocities=self.set_velocities if self.velocity_commands else None,
+                set_command_source=self.set_command_source,
+                is_active=self.is_active,
+                set_active=self.set_active,
+                ensure_updated=self.ensure_updated,
             ),
         )
 
@@ -469,6 +598,20 @@ class ArmControllerPlugin(Plugin):
                 self._grip_qposadr = int(m.jnt_qposadr[jid])
                 self._grip_dofadr = int(m.jnt_dofadr[jid])
             ctx.blackboard.set(self._gripper_key, self.read_gripper_state)
+            grip = self._aux_acts[0]
+            self._grip_forcerange = tuple(float(v) for v in m.actuator_forcerange[grip])
+            if self._grip_jid is not None and m.actuator_forcelimited[grip]:
+                self._grip_gain = joint_effort_per_actuator_force(m, grip, self._grip_jid)
+            self._grip_limit = min(abs(v) for v in self._grip_forcerange) * self._grip_gain
+            effort_key = self._gripper_key.replace("gripper:", "gripper_effort:", 1)
+            ctx.blackboard.set(
+                effort_key,
+                GripperEffort(
+                    limit=self._grip_limit,
+                    set_max_effort=self.set_gripper_max_effort,
+                    read_effort=self.read_gripper_effort,
+                ),
+            )
             ctx.interface.add(
                 Endpoint(
                     name="gripper_cmd",
@@ -483,6 +626,9 @@ class ArmControllerPlugin(Plugin):
                             # Tell the bridge's handler which reader to watch; its default is
                             # gripper:<owner>, which cannot distinguish two grippers on one entity.
                             "state_key": self._gripper_key,
+                            # Where the handler finds the gripper's effort clamp (GripperCommand's
+                            # max_effort), a second command beside the position.
+                            "effort_key": effort_key,
                         }
                     },
                 )
@@ -552,10 +698,19 @@ class ArmControllerPlugin(Plugin):
         # and the G1's own /lowstate carries per-motor tau_est. ``qfrc_actuator`` is the actuator force
         # already projected onto the joint's DOF, so it is the per-joint effort even for a gripper
         # finger driven through a tendon.
+        #
+        # ``qfrc_gravcomp`` is added because a compensated arm splits one physical quantity across
+        # two fields. A real drive that holds its own weight delivers that torque and its sensor
+        # reads it; MuJoCo's ``body_gravcomp`` supplies the same torque outside the actuator, so
+        # ``qfrc_actuator`` alone reports a motor doing nothing while the arm hangs off it. The sum
+        # is what the joint carries, and it matches an uncompensated arm's reading in the same pose.
         m, d = self._ctx.model, self._ctx.data
         pos = [float(d.qpos[m.jnt_qposadr[jid]]) for jid in self._report_jids]
         vel = [float(d.qvel[m.jnt_dofadr[jid]]) for jid in self._report_jids]
-        eff = [float(d.qfrc_actuator[m.jnt_dofadr[jid]]) for jid in self._report_jids]
+        eff = [
+            float(d.qfrc_actuator[m.jnt_dofadr[jid]] + d.qfrc_gravcomp[m.jnt_dofadr[jid]])
+            for jid in self._report_jids
+        ]
         return (self._report_names, pos, vel, eff)
 
     def read_controller_state(self):
@@ -579,6 +734,38 @@ class ArmControllerPlugin(Plugin):
         self._gripper_ctrl_target = self._grip_ctrl_lo + frac * (
             self._grip_ctrl_hi - self._grip_ctrl_lo
         )
+
+    def set_gripper_max_effort(self, effort: float) -> None:
+        """Clamp the gripper joint's effort at GripperCommand's ``max_effort``. Physics thread.
+
+        The unit is the joint's own. ``effort <= 0``, and ``effort`` at or above the model's limit,
+        leave the model's own force range: a drive saturates at what it can give. A gripper that cannot
+        take a clamp (``limit == 0``) keeps its range and executes the position alone, as a
+        position-interface controller does, and says so once.
+        """
+        grip = self._aux_acts[0]
+        if self._grip_limit <= 0.0 and effort > 0.0 and not self._grip_cap_warned:
+            self._grip_cap_warned = True
+            self._ctx.logger.warning(
+                "arm_controller[%s]: the gripper actuator has no constant moment on its joint, so "
+                "max_effort cannot be applied; the position runs with the model's own force range",
+                self.arm,
+            )
+        if effort <= 0.0 or effort >= self._grip_limit:
+            self._ctx.model.actuator_forcerange[grip] = self._grip_forcerange
+            return
+        limit = effort / self._grip_gain
+        self._ctx.model.actuator_forcerange[grip] = (-limit, limit)
+
+    def read_gripper_effort(self) -> float:
+        """The gripper joint's effort now, as ``/joint_states`` reports it.
+
+        NaN when the arm has no gripper joint.
+        """
+        if self._grip_jid is None:
+            return float("nan")
+        d = self._ctx.data
+        return float(d.qfrc_actuator[self._grip_dofadr] + d.qfrc_gravcomp[self._grip_dofadr])
 
     def read_gripper_state(self):
         # Computed on demand (see read_state); (0, 0) when the arm has no gripper joint.
@@ -604,17 +791,81 @@ class ArmControllerPlugin(Plugin):
         self._apply_rest(ctx)
         self._vel_cmd.clear()  # a stale velocity command must not survive a reset
         self._gripper_ctrl_target = self.gripper_ctrl
+        if self._grip_forcerange is not None:
+            # A trial's grip force is that trial's: the next one starts from the model's own.
+            ctx.model.actuator_forcerange[self._aux_acts[0]] = self._grip_forcerange
         if "test_target" in self.config:
             for name, val in zip(self._ctrl_names, self.config["test_target"], strict=False):
                 self._target[name] = float(val)
-        # Manual mode: seed ctrl to the home target once so the arm starts there (and the sliders
-        # open at that pose); pre_step then leaves ctrl alone for the user to drag.
-        if ctx.manual_control:
-            self._write_ctrl(ctx.data)
+        # The commands that hold this pose, written now rather than at the first step: a reset zeroes
+        # every actuator command, so until they are written the physics state is the arm pulled
+        # toward zero, and anything read before the first step -- a wrench, a tare -- reads that
+        # transient. In manual mode this is also what opens the sliders at the pose; pre_step then
+        # leaves ctrl alone for the user to drag.
+        self._write_ctrl(ctx.data)
+
+    def set_command_source(self, update, owner: str = "") -> None:
+        """Name the plugin that computes this arm's targets, so its work can be PULLED.
+
+        One source per arm: two plugins computing targets for the same joints would each overwrite
+        the other's within a step, and which one won would be decided by their order in the world
+        file. Refused by naming both, rather than silently letting the later one win.
+        """
+        if self._command_source is not None and self._command_source_owner != owner:
+            raise RuntimeError(
+                f"arm_controller[{self.name}]: {owner!r} wants to command arm "
+                f"{self.arm!r}, but {self._command_source_owner!r} already does. An arm takes its "
+                f"targets from ONE controller; deactivate one, or give them separate `joints:`."
+            )
+        self._command_source = update
+        self._command_source_owner = owner
+        # A world that declares a Cartesian controller has declared which controller drives the
+        # arm. Leaving the trajectory role active as well would come up in a state real
+        # ros2_control refuses outright -- two active controllers claiming the same command
+        # interfaces -- so it releases them here and a scenario switches back when it wants them.
+        self._active = False
+        if self._registered is not None:
+            self._registered.state = INACTIVE
+
+    def ensure_updated(self, ctx: SimContext) -> None:
+        """Run the command source for this step, once, whoever asks first.
+
+        Pulled rather than ordered. A Cartesian controller can only be DECLARED after the arm --
+        its `configure` needs the handle this plugin publishes -- so in `pre_step` order the arm
+        wrote `ctrl` first and the controller computed the next targets immediately after, landing
+        them a step late, every tick. Stamping the work with the step it ran for makes the order
+        irrelevant instead of merely correct, which is the same reason the avoidance solve is
+        stamped rather than placed.
+        """
+        step = round(ctx.sim_time / ctx.dt) if ctx.dt else 0
+        if self._command_source is None or step == self._commanded_step:
+            return
+        self._commanded_step = step
+        self._command_source(ctx)
+
+    def is_active(self) -> bool:
+        return self._active
+
+    def set_active(self, active: bool) -> None:
+        """Take or release the arm's TRAJECTORY role -- not its role as the joint command writer.
+
+        Two things live in this plugin and only one of them is a ros2_control controller. Writing
+        `ctrl` from the held target is the hardware: it never stops, or the joints would fall.
+        Executing trajectories is the controller, and that is what activates and deactivates -- an
+        inactive one rejects goals and integrates no velocity, and the joints stay where they are
+        while another controller commands them through `set_targets`.
+
+        """
+        self._active = bool(active)
 
     def pre_step(self, ctx: SimContext) -> None:
         if not ctx.manual_control:
-            self._integrate_velocity(ctx.data)
+            # The command source is a controller in its own right and gates itself, so the pull is
+            # not conditioned on the trajectory role. Velocity integration IS that role's, and
+            # stops with it.
+            self.ensure_updated(ctx)
+            if self._active:
+                self._integrate_velocity(ctx.data)
             self._write_ctrl(ctx.data)
 
     # joint / gripper state are computed on demand in read_state / read_gripper_state (the bridge reads

@@ -59,6 +59,32 @@ def get_service_handler(
     return fn
 
 
+@service_handler("std_srvs.srv.Trigger")
+def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
+    """Press a producer's button: a command that takes no argument and still needs an outcome.
+
+    The sibling of :func:`set_bool` for the commands that carry nothing -- zeroing a force/torque
+    sensor is the first, and it is the shape a real driver's ``zero_ftsensor`` has. There is no
+    argument to marshal, so the request is not read at all; what the caller needs back is whether
+    the simulator got to it, which is what the barrier answers.
+
+    One barrier, not two. ``set_bool`` waits a second time because a producer may publish a verdict
+    that only the following ``post_step`` computes; a command with no argument has no such verdict
+    to wait for -- it either ran on the physics thread or the simulation is not stepping.
+    """
+    on_payload(None)  # queued for the physics thread by the bridge's inbound marshaller
+    if not barrier(ctx):
+        response.success = False
+        response.message = (
+            f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
+            "(is it paused?)"
+        )
+        return response
+    response.success = True
+    response.message = "applied"
+    return response
+
+
 @service_handler("std_srvs.srv.SetBool")
 def set_bool(request, response, ctx, on_payload, endpoint=None):
     """Switch a producer on or off, and report whether it took effect.

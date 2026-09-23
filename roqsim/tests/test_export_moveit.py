@@ -9,7 +9,10 @@ three copies would have failed.
 
 from __future__ import annotations
 
+import logging
+import tempfile
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 import mujoco
 import pytest
@@ -19,10 +22,14 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_moveit import (
     ARM_GROUP,
+    TURN,
+    ArmFacts,
     arm_facts,
     infer_collapse,
+    kinematics_yaml,
     moveit_controllers_yaml,
     ompl_planning_yaml,
+    wrapped_joints,
 )
 
 
@@ -120,6 +127,25 @@ def test_gripper_units_come_from_the_gripper_manifest(ur5e):
     assert facts.gripper_close == pytest.approx(0.8)
 
 
+def test_gripper_max_effort_is_the_grippers_own_limit(ur5e, tmp_path):
+    """MoveIt sends this with every gripper goal, and the controller clamps the joint effort at it.
+
+    A fixed number either asks for more than the drive can give or weakens every grasp; the limit the
+    controller publishes is neither. It is in the gripper joint's own unit: N*m for the 2F-85's
+    knuckle, N for the PG+70's jaw.
+    """
+    facts = arm_facts(ur5e)
+    assert facts.gripper_effort_limit == pytest.approx(2.5)
+    body = yaml.safe_load(moveit_controllers_yaml(facts))["moveit_simple_controller_manager"]
+    assert body[facts.gripper_controller]["max_effort"] == pytest.approx(2.5)
+    told = yaml.safe_load(moveit_controllers_yaml(facts, 1.0))["moveit_simple_controller_manager"]
+    assert told[facts.gripper_controller]["max_effort"] == pytest.approx(1.0)
+
+    engine = Engine(_cell(tmp_path, gripper="schunk_pg70"))
+    engine.setup()
+    assert arm_facts(engine).gripper_effort_limit == pytest.approx(100.0)
+
+
 def test_the_arms_namespace_reaches_the_reported_actions(tmp_path):
     """Two arms under one bridge are told apart by namespace, so a config that drops it points at
     an action nothing serves."""
@@ -164,15 +190,15 @@ def test_equalities_outside_the_robot_are_ignored(ur5e):
 # -- ompl_planning: the one derived value in the file that is otherwise the experiment's ----------
 
 
-def test_a_range_limited_arm_gets_no_start_state_bounds_slack(ur5e):
+def test_a_range_limited_arm_gets_no_start_state_normalization(ur5e):
     """The UR joints are range-limited, so the setting would be noise -- and a reader who sees it on
     every arm learns nothing from its presence."""
     body = yaml.safe_load(ompl_planning_yaml(arm_facts(ur5e)))
-    assert "start_state_max_bounds_error" not in body
+    assert "fix_start_state" not in body
     assert arm_facts(ur5e).continuous_joints == []
 
 
-def test_a_continuous_joint_arm_gets_the_slack_and_is_told_why(tmp_path):
+def test_a_continuous_joint_arm_gets_normalization_and_is_told_why(tmp_path):
     """The expensive failure this prevents: a phase failing instantly with START_STATE_INVALID
     (-26) right after a phase that succeeded, at a different phase each run."""
     engine = Engine(_cell(tmp_path, model="gen3", gripper=None, name="gen3"))
@@ -181,7 +207,7 @@ def test_a_continuous_joint_arm_gets_the_slack_and_is_told_why(tmp_path):
     # Read off the model, and these four are exactly the ones a hand-written config named.
     assert facts.continuous_joints == ["joint_1", "joint_3", "joint_5", "joint_7"]
     text = ompl_planning_yaml(facts)
-    assert yaml.safe_load(text)["start_state_max_bounds_error"] == 0.1
+    assert yaml.safe_load(text)["fix_start_state"] is True
     assert "joint_1" in text, "the file should say WHICH joints made it necessary"
 
 
@@ -239,6 +265,30 @@ _WORLD = {
 }
 
 
+def test_the_cli_says_when_the_mesh_uris_cannot_be_read_anywhere_else(caplog):
+    """This CLI writes the description move_group is launched with, through the same URDF export.
+
+    A path that only the exporting process has is the ordinary case for a campaign: the generation
+    step runs in one container and the planner reads the files in another. move_group fetches
+    nothing at such a URI, keeps the links without their collision geometry, and plans through them.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_moveit"):
+            code, _out = _run_cli(Path(tmp), _WORLD, "--tip-site", "pinch")
+        assert code == 0
+        assert "--mesh-prefix" in caplog.text
+
+
+def test_the_cli_is_silent_when_told_where_the_meshes_will_be_read(caplog):
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_moveit"):
+            code, _out = _run_cli(
+                Path(tmp), _WORLD, "--tip-site", "pinch", "--mesh-prefix", "file:///config/meshes"
+            )
+        assert code == 0
+        assert "mesh" not in caplog.text
+
+
 def test_the_cli_writes_the_six_files_and_they_parse(tmp_path):
     code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--check")
     assert code == 0
@@ -294,7 +344,13 @@ def test_a_world_with_no_arm_says_so(tmp_path):
     world = {
         "sim": {},
         "plugins": [
-            {"spawn_model": {"model": "industrial_table", "pos": [0, 0, 0]}, "name": "bench"}
+            {
+                "spawn_model": {
+                    "model": "industrial_table",
+                    "pose": {"position": {"x": 0, "y": 0, "z": 0}},
+                },
+                "name": "bench",
+            }
         ],
     }
     with pytest.raises(SystemExit, match="follow_joint_trajectory"):
@@ -486,3 +542,180 @@ def test_one_arm_still_gets_the_group_called_arm(tmp_path):
     ), "one arm keeps the model's own joint names, unprefixed"
     ompl = yaml.safe_load((out / "ompl_planning.yaml").read_text(encoding="utf-8"))
     assert "both_arms" not in ompl
+
+
+# -- selecting the pipelines ---------------------------------------------------------------------
+
+
+def test_one_pipeline_is_the_default_and_writes_no_selector(tmp_path):
+    """A configuration that asked for nothing new must be what it always was: OMPL alone, and no
+    planning_pipelines.yaml, which with one pipeline would only restate the directory."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    assert (out / "ompl_planning.yaml").is_file()
+    assert not (out / "chomp_planning.yaml").exists()
+    assert not (out / "planning_pipelines.yaml").exists()
+
+
+def test_two_pipelines_are_offered_and_move_group_is_told_which_is_default(tmp_path):
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    body = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert body == {
+        "planning_pipelines": ["ompl", "chomp"],
+        "default_planning_pipeline": "ompl",
+    }
+
+
+def test_only_ompl_gets_a_parameter_file(tmp_path):
+    """Its projection_evaluator names joints this model has, which is what makes it derivable. An
+    optimizer's cost weights are the operating point of a minimisation -- an experiment decision -- so
+    writing a table of them here would be the exporter choosing the experiment. MoveIt's packaged
+    config stands in until the experiment supplies its own."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    assert (out / "ompl_planning.yaml").is_file()
+    assert not (out / "chomp_planning.yaml").exists()
+
+
+def test_a_pipeline_this_export_never_heard_of_is_accepted(tmp_path):
+    """The list is open: a name is offered to move_group, which loads the plugin and the parameters.
+    Refusing an unknown one would only mean this file has to learn every planner MoveIt ships."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,stomp")
+    listed = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert listed["planning_pipelines"] == ["ompl", "stomp"]
+
+
+def test_the_first_named_pipeline_is_the_default(tmp_path):
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "chomp,ompl")
+    listed = yaml.safe_load((out / "planning_pipelines.yaml").read_text(encoding="utf-8"))
+    assert listed["default_planning_pipeline"] == "chomp"
+
+
+def test_a_joint_space_only_pipeline_says_so_in_the_file(tmp_path):
+    """CHOMP rejects any goal carrying a position or orientation constraint. A comparison that sends
+    pose targets would lose every CHOMP trial to that, and read it as the planner performing badly."""
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,chomp")
+    text = (out / "planning_pipelines.yaml").read_text(encoding="utf-8")
+    assert "JOINT SPACE only" in text
+    assert "pose target" in text
+
+
+def test_a_repeated_pipeline_name_is_refused(tmp_path):
+    with pytest.raises(SystemExit, match="repeats"):
+        _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,ompl")
+
+
+# -- the one file whose content is not an answer --------------------------------------------------
+
+
+def test_the_kinematics_file_says_its_answer_is_not_reproducible(tmp_path):
+    """Every other file here is a reading of the model, so a build has no reason to suspect this one.
+
+    KDL solves from the seed on its first attempt and from a configuration drawn uniformly inside
+    the joint limits on every attempt after that, until its timeout, and takes the first that
+    converges (searchPositionIK, kdl_kinematics_plugin.cpp). Both answers satisfy the pose, so the
+    IK succeeds, the plan succeeds, and the arm is in another posture -- there is nothing to see in
+    a log. The header is where a build meets that before a trial is built on a run-time query.
+    """
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    text = (out / "kinematics.yaml").read_text(encoding="utf-8")
+    assert "NOT REPRODUCIBLE BETWEEN TWO RUNS" in text
+    assert "Cartesian path" in text, "the header must say what to do instead, not only what breaks"
+    assert yaml.safe_load(text)[ARM_GROUP]["kinematics_solver"].endswith("KDLKinematicsPlugin")
+
+
+def test_no_attempt_count_is_written_where_the_bound_is_a_timeout(tmp_path):
+    """A count here would read as a bound on the re-seeding, and there is no such bound.
+
+    The plugin re-seeds until ``kinematics_solver_timeout`` is spent and reads no attempt count: its
+    parameters are joint weights, max_solver_iterations, epsilon, orientation_vs_position and
+    position_only_ik (kdl_kinematics_parameters.yaml). How many attempts fit in the budget is the
+    machine's answer, not the configuration's.
+    """
+    _code, out = _run_cli(tmp_path, _WORLD, "--tip-site", "pinch")
+    text = (out / "kinematics.yaml").read_text(encoding="utf-8")
+    assert "kinematics_solver_attempts" not in text
+    assert yaml.safe_load(text)[ARM_GROUP]["kinematics_solver_timeout"] == 0.05
+
+
+def test_the_joints_that_hold_one_posture_twice_are_named(ur5e):
+    """The wrapped answer -- the same posture with a joint turned once round -- is inside the limits
+    this description carries, so the solver returns it as readily as the unwrapped one. Which joints
+    admit it is a fact about the model, so the file names them rather than warning in general."""
+    facts = arm_facts(ur5e)
+    assert wrapped_joints(facts) == [
+        "shoulder_pan_joint",
+        "shoulder_lift_joint",
+        "wrist_1_joint",
+        "wrist_2_joint",
+        "wrist_3_joint",
+    ], "every UR5e joint but the elbow, whose range is under a full turn"
+    assert facts.ranges["elbow_joint"][1] - facts.ranges["elbow_joint"][0] < TURN
+    text = kinematics_yaml(facts)
+    assert f"#   {ARM_GROUP}: shoulder_pan_joint" in text
+    assert "elbow_joint" not in text
+    assert "turned a full revolution" in text
+
+
+def test_an_arm_inside_one_turn_is_said_to_have_no_wrap():
+    """The line is written either way: "none" is an answer a build can act on, and its absence would
+    leave a reader guessing whether the export had looked."""
+    facts = ArmFacts(
+        arm="a",
+        prefix="",
+        namespace="",
+        joints=["j1", "j2"],
+        home={"j1": 0.0, "j2": 0.0},
+        controller="arm_controller",
+        trajectory_action="follow_joint_trajectory",
+        collapse=(),
+        ranges={"j1": (-1.5, 1.5), "j2": (-3.0, 3.0)},
+    )
+    assert wrapped_joints(facts) == []
+    assert "none -- every posture is inside these limits once" in kinematics_yaml(facts)
+
+    facts.continuous_joints = ["j2"]
+    assert wrapped_joints(facts) == ["j2"], "a joint with no limits holds every posture repeatedly"
+
+
+def test_the_same_world_exported_twice_gives_the_same_files(tmp_path):
+    """What varies between two runs of one configuration is the solver's answer, not this export.
+
+    Two separate processes, each compiling the world from the same document and writing a full
+    configuration: every generated file has to come out byte for byte the same, which is what makes
+    the header's claim about the odd one out worth reading. ``--mesh-prefix`` pins the mesh URIs,
+    which otherwise carry the directory each run was told to write into -- an argument, not a
+    difference between the runs.
+    """
+    import subprocess
+    import sys
+
+    (tmp_path / "cell.yaml").write_text(yaml.safe_dump(_WORLD), encoding="utf-8")
+    outs = []
+    for run in ("a", "b"):
+        out = tmp_path / run
+        subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "roqsim.export_moveit",
+                "--world",
+                str(tmp_path / "cell.yaml"),
+                "--out",
+                str(out),
+                "--tip-site",
+                "pinch",
+                "--samples",
+                "60",
+                "--mesh-prefix",
+                "file:///config/meshes",
+            ],
+            check=True,
+            capture_output=True,
+            cwd=tmp_path,
+        )
+        outs.append(out)
+    first, second = outs
+    written = sorted(p.relative_to(first) for p in first.rglob("*") if p.is_file())
+    assert [n.name for n in written].count("kinematics.yaml") == 1
+    assert written == sorted(p.relative_to(second) for p in second.rglob("*") if p.is_file())
+    for name in written:
+        assert (first / name).read_bytes() == (second / name).read_bytes(), f"{name} differs"

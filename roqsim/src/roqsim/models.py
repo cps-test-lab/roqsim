@@ -21,8 +21,8 @@ lives in *any* installed package -- not just its own:
 
 Crucially, each resolved model carries **its own** ``meshdir``/``texturedir`` (its provider's, or
 the model file's own directory), so a model bundled in one package uses that package's meshes -- a
-spawn plugin from another package no longer forces its own asset dirs onto it (which is what made a
-cross-package model impossible before).
+spawn plugin from another package does not force its own asset dirs onto it (which would make a
+cross-package model impossible).
 
 **Borrowing another package's assets.** A model that reuses another package's meshes (e.g. a custom
 arm variant that keeps the stock arm meshes) need not copy them: add an ``assets:`` key to its
@@ -235,8 +235,8 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
 
     Results are cached per (model, base_dir): resolution is deterministic within a process (the
     provider set is fixed and the CWD stable), ``ModelAsset`` is frozen, and every spawn plugin
-    resolves twice (validate_config + build) — a world spawning N copies of a prop went from
-    2N provider searches to one. Errors are not cached (lru_cache does not memoize raises).
+    resolves twice (validate_config + build) — a world spawning N copies of a prop does one
+    provider search rather than 2N. Errors are not cached (lru_cache does not memoize raises).
     """
     # 1) filesystem path: absolute, else relative to ONE anchor -- `base_dir`, or the process's
     #    working directory for a caller that has no document to be relative to (a CLI argument
@@ -249,8 +249,8 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
     #    otherwise shadow it, and the failure is silent in the worst way: resolution "succeeds"
     #    with a path that is not a model, so the `<model>.manifest.yaml` lookup beside it finds
     #    nothing and the robot spawns with none of its intrinsic components -- no drive, no
-    #    lidar -- while the world loads and runs. Observed with a scratch directory named `rosbot`
-    #    next to a test world. A directory now falls through to the provider search, which is where
+    #    lidar -- while the world loads and runs. A scratch directory named `rosbot` next to a test
+    #    world is enough. A directory therefore falls through to the provider search, which is where
     #    the packaged model it was shadowing actually lives.
     p = Path(model)
     if p.is_absolute():

@@ -23,9 +23,13 @@ Standalone
 The target is a world YAML, an MJCF scene, or a ``<pkg>:<name>`` reference resolved from an installed
 package (``roqsim sim roqsim_mobile:turtlebot4_demo``).
 
-Pacing is ``realtime`` (default), a numeric factor, or ``asap``. Headless works anywhere, offscreen
+Pacing is ``realtime`` (default), a numeric factor, or ``asap``. It is what the run *asks* for and
+not what it gets: the achieved factor is a property of the host's load, a step that is already late
+is never made up, and the runner warns at the end of a run it could not pace. So a duration a trial
+must actually get is counted on simulated time — the recording's ``t``, or ``/clock`` for a node —
+and never on a wall clock, which buys a varying amount of it. Headless works anywhere, offscreen
 sensors included: ``import roqsim`` picks a backend that exists on this machine (``egl`` where there
-is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer has to be set by hand
+is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` need not be set by hand
 — set it only to override that choice. To record a run, add ``--record`` — see
 :ref:`recording-a-run` below.
 
@@ -54,6 +58,14 @@ is a render device, ``osmesa`` where there is not), so ``MUJOCO_GL`` no longer h
    A stale libGLEW preload lingering in the shell, combined with the ``egl`` default, drags GLX into
    the same process as MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with
    ``undefined symbol: eglQueryString``. If you see that, clear it with ``export -n LD_PRELOAD``.
+
+.. _viewer-keys:
+
+Keys in the window
+~~~~~~~~~~~~~~~~~~
+
+**F1** lists the keys roqsim adds to the window, and leaves the list up until F1 comes again. MuJoCo's
+own help opens with it, in the opposite corner, listing Simulate's keys rather than these.
 
 Moving the camera
 ~~~~~~~~~~~~~~~~~
@@ -240,9 +252,221 @@ from any camera, at any resolution, as a still or a video — without re-running
    roqsim render --state run.npz --at 12.5 --out t.png # one moment
    roqsim render --state run.npz --out run.webm        # the whole run as video
 
+With nothing said about the camera, a recording is shown as **the whole scene from above**: every
+geom in the world, angled rather than top-down, as close as the field of view allows -- and with the
+ceiling removed where the world had one, since a view from above would otherwise be a view of a
+roof. That is the video you get with no flags at all. A ``--view``, ``--focus`` or ``--camera``
+frames it otherwise and keeps the world as it is (``--no-ceiling`` is then yours to add), and a
+recording made in a window keeps the camera the person watched it through.
+
+Those three commands name no world, and that is not a shorthand: a recording carries the **resolved**
+component tree rather than a recipe, so it rebuilds from itself and needs only the model packages it
+referred to. What ran is recorded outright — including the actuator table, which says what control
+law and gains every joint ran under and whether each value came from the model or from the world's
+``actuators:`` block, so a result can state its gains without anyone reopening the MJCF.
+
 Without ``--at`` you get the **last** sample, and the command says so on stderr along with the sample's
 time — that is a choice you did not make, so it is not made silently. A video render reports progress the
 same way: one line rewritten in place at a terminal, and a handful of lines when the output is a log.
+
+.. _first-movement:
+
+Starting where the run starts moving
+------------------------------------
+
+A run recorded from a live stack opens with the robot standing still while its nodes come up, a map
+arrives and a plan is computed. ``--from onset`` skips that, and ``roqsim state --onset`` reports it
+as JSON without drawing anything:
+
+.. code-block:: bash
+
+   roqsim render --state run.npz --from onset --out clip.mp4
+   roqsim state --state run.npz --onset
+
+The hard part is not the threshold, it is *which velocity to read*. A robot is spawned a little above
+the floor and drops onto it, so something is moving at t=0 in almost every recording — and the drop is
+sometimes faster than the drive that follows, so ranking motion by speed picks the fall. What separates
+them is direction: a robot that falls moves along ``z`` and rocks about ``x``/``y``, while a robot that
+drives moves along ``x``/``y`` and turns about ``z``.
+
+So the signal is chosen by what the robot is, and the fall is not in it at all:
+
+A **mobile base**
+    is read by the planar motion of its base — ``vx``, ``vy`` and yaw rate. The fall is ``vz`` and the
+    settle is roll and pitch, so none of it is in the signal.
+
+A **fixed base**
+    is read by the velocity of its actuated joints. A bolted-down arm does not fall.
+
+Which one a recording gets is read off the model rather than off any name: *a robot is mobile iff the
+kinematic root of its* **actuated** *joints carries a free joint*. Reaching the base through the
+actuators is what makes a world with props work — a parcel on a conveyor is a free body too, but it is
+the root of no actuated joint, so it is never mistaken for a base.
+
+``--onset-select`` overrides the choice with ``planar``, ``actuated``, a comma-separated list of joint
+names, or ``any``. ``any`` reads every velocity and needs no world rebuild, which is what lets it
+answer for a recording whose world can no longer be built — at the cost of seeing the spawn drop, so
+it reports ``kind: any`` to say the answer is the weaker one.
+
+**A run that never moved says so** rather than reporting a time. ``moved`` means a sustained crossing
+was found, not that the peak was high: a single sample of motion — a contact tick, a teleport — is not
+a run in which anything drove, and reading the peak alone would clip a stationary robot.
+
+``onset`` is a *moment*, and a moment goes anywhere a time does: ``--from onset-1``, ``--to onset+20``,
+``--at onset+5`` all resolve against the same table, found once.
+
+.. _camera-paths:
+
+Moving the camera: chase, path, and a person flying it
+------------------------------------------------------
+
+Three ways to say where the camera is during a clip, and they compose.
+
+A **chase camera** is the world's own ``track`` view, stated on the command line::
+
+   roqsim render --state run.npz --from onset --no-ceiling \
+       --view track=robot follow_heading=true distance=2.5 elevation=-20 azimuth=180 --out clip.mp4
+
+``track`` attaches ``lookat`` to the robot's body; ``follow_heading`` re-aims the camera each frame so
+``azimuth`` is an angle *behind the robot* (180 is directly behind) rather than a compass bearing.
+
+A **camera path** moves it along keyframes, from a file or inline as JSON:
+
+.. code-block:: yaml
+
+   # orbit.yaml -- one orbit around the driving robot, then settle behind it
+   ease: smoothstep          # linear | smoothstep
+   wrap: false               # let azimuth sweep past 180 (a full orbit)
+   keyframes:                # t: seconds, `onset`, or `onset+N`
+     - {t: onset,    azimuth: 180, distance: 2.5}
+     - {t: onset+8,  azimuth: 540, distance: 4.5, elevation: -35}
+     - {t: onset+11, azimuth: 540, distance: 2.5, elevation: -20}
+
+.. code-block:: bash
+
+   roqsim render --state run.npz --from onset --view track=robot follow_heading=true \
+       --camera-path orbit.yaml --out clip.mp4
+
+Each key -- ``lookat``, ``distance``, ``azimuth``, ``elevation`` -- is its own track: it interpolates
+between the keyframes that *state* it and holds beyond them, and a key no keyframe states is never
+written, so the base camera keeps it. That is what lets an ``azimuth``-only path orbit a chase camera
+while the robot's own turning still counts: under ``follow_heading`` the path animates the angle
+behind the robot, not a bearing. A keyframe may instead say where to stand and where to look, in
+metres -- ``{t: 0, eye: [9, -6, 5], target: [4, 2, 0.5]}`` -- which converts to the orbit keys at
+load. Azimuth takes the shortest arc between keyframes unless ``wrap: false``.
+
+**Checking a path costs a still, not a clip.** ``--at`` with ``--camera-path`` draws the frame the
+clip would have at that moment, ``--check`` prints the resolved keyframes without drawing, and
+``roqsim state --state run.npz --at T`` says where the robot is when choosing an ``eye``::
+
+   roqsim render --state run.npz --camera-path orbit.yaml --check
+   roqsim render --state run.npz --camera-path orbit.yaml --at onset+4 --out look.png
+
+That loop -- where is the robot, write keyframes, look, adjust -- is what makes a path something an
+agent can author as readily as a person.
+
+A **camera take** is a person as the camera operator. In the replay window (:ref:`below
+<replaying>`), **Shift+F9** starts a take; play, fly the camera with the mouse and the flight keys;
+Shift+F9 ends it. What lands is a *clip* in the shots file -- ``from``/``to`` spanning the take and a
+``camera_path`` file beside the shots file holding the flown camera, one keyframe per frame -- so
+``roqsim render`` reproduces the flight exactly as it was flown. Scrubbing back and playing again
+overwrites that stretch rather than doubling it, and a take that never played is dropped and says so.
+
+Drawing on the frames
+---------------------
+
+``--overlay`` paints an inset on every frame after the scene is rendered: ``clock`` puts the simulated
+time in a corner, and installed packages add their own -- a navigation package's ``costmap``, say --
+under the ``roqsim.render_overlays`` entry-point group (see :doc:`interfaces`). A bare name takes the
+defaults; options ride along as JSON, ``anchor``, ``width`` and ``margin`` being the ones every
+overlay shares::
+
+   roqsim render --state run.npz --overlay clock --out clip.mp4
+   roqsim render --state run.npz --overlay '{"clock": {"anchor": "bottom-left", "format": "{t:.1f} s"}}' --out clip.mp4
+   roqsim render --overlay list
+
+An overlay that nothing installed registers is refused before the world is built, naming what is
+available.
+
+Rendering fewer frames than the recording holds
+-----------------------------------------------
+
+``roqsim render`` draws one frame per sample and never decimates, so every frame in a video is a state
+the simulation actually had. A recording captured at 250 Hz therefore draws eight frames for every one
+that survives to a 30 fps video. ``--decimate`` drops them first instead:
+
+.. code-block:: bash
+
+   roqsim state --state run.npz --decimate 8 --out thin.npz
+
+The rows that remain are untouched, so the invariant holds; what changes is how many there are and the
+declared rate that says so. That rate stays exact because it is a numerator and a denominator — 250 Hz
+by 8 is 31.25 fps, not a rounded 31.
+
+**F9 records a take**, in any windowed run — with or without ``--record``. Press it once to start
+and again to stop; the window title carries ``[REC]`` while one is running, and takes are numbered
+(``run.npz``, ``run-2.npz``, …) beside the ``--record`` path, or beside the default when the run was
+started without one. It is the way to capture the interesting minute of a long run rather than all
+of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
+same way.
+
+.. _replaying:
+
+Replaying a run
+---------------
+
+Hand ``roqsim sim`` a recording instead of a world and it plays the run back, in the window a live run
+uses — the same free camera, the same flight keys, the same visualization toggles. Nothing is
+simulated: every frame is a state restored out of the file, so what the window shows is what happened.
+
+.. code-block:: bash
+
+   roqsim sim run.npz                      # from the start
+   roqsim sim run.npz --at 12.5            # open at one moment
+   roqsim sim run.npz --no-transport-window
+   roqsim sim run.npz --world cell/world.yaml   # a world that loaded files from beside itself
+
+The extension is what selects it, as it does for a mesh target and for ``roqsim render``'s output.
+Options that drive a live simulation — ``--record``, ``--steps``, ``--pacing``, ``--ros`` and their
+kind — are refused by name rather than ignored, and a time outside the recording is refused the way
+``roqsim render --at`` refuses one. A recording rebuilds its world from its own provenance; where
+that world loaded a plugin or a model by path from beside itself and those files are not beside the
+recording, ``--world`` names the world to rebuild from, as ``roqsim render``'s target does. The
+provenance check still refuses one that does not match, and a shot taken in such a replay names the
+world too, so its render rebuilds the same way.
+
+A replay opens **two** windows. MuJoCo's own takes a key callback and nothing else — no mouse
+callback, no way to add a widget — so the slider, the timestamp box and the buttons are a small
+window beside it, which is also what drives the replay. Without a display for that window, or with
+``--no-transport-window``, the overlay bar and the keys carry it on their own: **F11/F12** scrub (hold
+Shift to jump), **F8** plays and pauses, **F9** writes a shot, **Shift+F9** starts and ends a camera
+take (:ref:`camera-paths`). F1 lists what the run actually has.
+
+**A shot** is why a replay exists. A figure needs one moment of one run seen from one place, and
+neither half can be guessed at a command line: ``--at`` is a number nobody knows until they have
+watched the run, and a camera is a pose nobody writes by hand. Pressing *Add shot* appends a document
+to a shots file naming the sample, the camera, and the recording it came from — which
+``roqsim render`` draws later, at whatever size the figure wants:
+
+.. code-block:: bash
+
+   roqsim sim run.npz --shots shots.yaml --render-size 1920x1080
+
+   python3 -c "import yaml,subprocess as s;from roqsim.shots import read_shots,render_args
+   [s.run(['roqsim','render',*render_args(d)]) for d in read_shots('shots.yaml')]"
+
+:func:`roqsim.shots.render_args` is the one place those flags are built, so the picture the window's
+*Add + PNG* button draws and the picture a figure script draws are the same command. Two of its rules
+matter to anyone reading a shot: the render names **no world** (a recording rebuilds from its own
+resolved tree only while no target is passed), and a shot framed by hand in a world whose ``sim.view``
+tracks the robot carries ``track: null`` and ``follow_heading: false``, because ``--view`` merges over
+that view and tracking would otherwise quietly ignore the ``lookat`` that was chosen.
+
+A **clip** is a shot with a range where a shot has a moment: ``from``/``to`` instead of ``at``, and
+``video`` instead of ``png``. It carries the same ``state``, ``view``, ``size`` and ``source``, plus
+two keys a still has no use for -- ``camera_path`` (a file, or the keyframe document inline) and
+``overlays`` (a list, in drawing order) -- and :func:`roqsim.shots.render_args` turns both into the
+flags above. A camera take writes one; so can a person or an agent.
 
 ``--capture-fps`` is **samples per simulated second**, so a recording plays back at 1× sim time
 whatever pacing the run used. Samples can only be taken on a physics step, so the rate is snapped onto
@@ -302,13 +526,19 @@ The pose series
 ~~~~~~~~~~~~~~~
 
 ``ROQSIM_SIM_POSES`` streams a plain ``sim_poses.csv`` beside the recording: one row per sample per
-free-standing body (those parented to the world — every robot, prop and walker, but not a wheel or an
-arm link), with the world pose as a **quaternion** and the world **twist** read from the solver via
+**named body** — robot bases, links, wheels, attached tools and workpieces, props and walkers — with
+the world pose as a **quaternion** and the world **twist** read from the solver via
 ``mj_objectVelocity``:
 
 .. code-block:: text
 
    timestamp,wall_time,frame,position.x/y/z,orientation.x/y/z/w,twist.linear.x/y/z,twist.angular.x/y/z
+
+Every named body, and not only the ones parented to the world, because what a trial is judged on is
+often welded below a robot — a tool on a flange, a workpiece in a gripper — and a reader cannot know in
+advance which. The price is rows: a manipulator world writes several times as many as a mobile one.
+Sites and unnamed bodies have no row (the run log counts the unnamed ones and names their parents);
+the recording itself is the complete state, from which those are derivable.
 
 Two reasons it exists rather than leaving callers to difference the recording. A velocity obtained by
 differencing positions is only ever as good as the interval it is divided by, and a consumer reading
@@ -473,7 +703,7 @@ error-level finding, and ``2`` when the checks could not run at all. Exiting on 
 a backgrounded command's output is invisible until it exits.
 
 **Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
-free-standing body and cannot say which is which, so the recorder writes ``entities.json`` beside it
+named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
 from the entity registry — name, ``kind``, ``body``, ``present`` — and check 1 watches the entities of
 kind ``robot`` that are currently there. That is what makes one command correct for every world:
 a check whose names have to be passed per world is a check that is absent from the run that needed
@@ -500,6 +730,14 @@ container, on a bounded interval while somebody is watching the run — and read
 what such a supervisor ends a run on. So the exit code and the document are a public interface, and ``check`` slugs are names other
 software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
 into a run's output by this: it is read on demand and answered.
+
+**What one check costs does not grow with the run.** Every check judges the newest minute, so each
+record is entered at the first row inside that window and the rows before it are never read; only
+what arrives afterwards is read incrementally, and the report notes how much of a long record was
+left unread. That is what makes it safe to run as a fresh process on every poll, inside the
+simulator's own container and memory budget: a reader that parsed a whole record each time would
+cost more on every poll for as long as the run lasted. A verdict is accordingly about the run *now*
+-- a robot that stood still earlier and has moved since is not reported.
 
 **Silence means different things live and after the fact**, which is why the two modes differ. Both
 records are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and

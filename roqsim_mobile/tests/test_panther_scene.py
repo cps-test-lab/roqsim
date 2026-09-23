@@ -2,27 +2,42 @@
 
 The finding this file pins is ``test_vendor_multiplier_is_not_the_sim_factor``. Husarion publishes
 ``wheel_separation_multiplier: 1.5`` in its controller config -- the ICR compensation a skid-steer
-needs on the real robot, and the same *quantity* as our ``slip_factor``. The assessment expected that
-to make this port cheaper than the husky's blind calibration. It did not: at 1.5 this base achieves
-only 0.40 of commanded yaw in MuJoCo, because point-contact scrub is far worse than a real tyre's.
+needs on the real robot, and the same *quantity* as our ``slip_factor`` -- but not the same value:
+at 1.5 this base achieves only 0.40 of commanded yaw in MuJoCo, because point-contact scrub is far worse than a real tyre's.
 The simulator needs 3.4. A vendor's real-robot correction is a starting point, not an answer, and
 that is worth a test rather than a sentence.
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
+import yaml
+from mobile_scene_utils import named
+from scan_mount_utils import (
+    chain,
+    endpoint,
+    forward_range,
+    lidar,
+    pose_in_base,
+    robot_hits,
+    same_rotation,
+    spawn,
+    static_tf,
+    urdf_rotation,
+)
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.models import resolve_model
 
 #: From Husarion's expanded husarion_ugv_description @ 559e784b, not measured from our model.
-TOTAL_MASS = 55.0
+#: The mounted RPLIDAR S3 adds Husarion's 0.115033 kg (slamtec_rplidar.urdf.xacro:58 @ 5f783f8).
+TOTAL_MASS = 55.0 + 0.115033
 WHEEL_RADIUS = 0.1825          # config/WH01.yaml
 WHEEL_SEPARATION = 0.697       # WH01_controller.yaml, and the URDF geometry agrees (2 x 0.3485)
 
@@ -37,6 +52,7 @@ def _engine(**diff_drive):
         }],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 1  # a test driving an Engine is the driver; the scanner draws range noise
     engine.setup()
     engine.reset()
     return engine
@@ -100,7 +116,7 @@ def test_uses_the_vendor_collision_hull():
     """Husarion ships a real simplified hull; it must be what we collide against.
 
     base_collision.stl is 9.7 kB against the 1.4 MB visual mesh -- unlike Doosan, whose *_collision
-    files are byte-for-byte copies of its visual CAD and had to be replaced.
+    files are byte-for-byte copies of its visual CAD and are replaced in its port.
     """
     meshes = resolve_model("roqsim_mobile:panther").path.parent / "meshes"
     assert (meshes / "base_collision.stl").is_file()
@@ -164,7 +180,7 @@ def test_vendor_multiplier_is_not_the_sim_factor():
 def test_wheels_are_upright_and_coloured():
     """Wheel axles on y, and the vendor's materials present.
 
-    The same regression the ROSbot needed: a mesh can be rotated 90 degrees or stripped of every
+    The same guard the ROSbot carries: a mesh can be rotated 90 degrees or stripped of every
     colour without moving a number any drive test measures, because the robot drives on its
     collision cylinders.
     """
@@ -204,3 +220,111 @@ def test_wheels_are_upright_and_coloured():
             assert abs(axis[1]) > 0.99, f"{name}: cylinder axis is {axis}, not along y"
     finally:
         engine.shutdown()
+
+
+# --------------------------------------------------------------------------- C. scanner
+#
+# The fixtures are Husarion's numbers, not the model's. husarion_ugv_description config/components.yaml
+# :5-14 @ 559e784b names an RPLIDAR S3 (LDR06) on mount_link at xyz (0, -0.1, 0) called
+# `second_lidar`, and the chain to its scan frame is
+#   urdf/panther/base.urdf.xacro:87-91         body_link -> cover_link (0, 0, 0.14)
+#   base.urdf.xacro:95-99                      cover_link -> mount_link (0, 0, 0.0315)
+#   husarion_components_description urdf/slamtec_rplidar.urdf.xacro:249-253 @ 5f783f8
+#                                              mount_link -> second_lidar_link (0, -0.1, 0)
+#   slamtec_rplidar.urdf.xacro:63-65, 272-276  second_lidar_link -> second_lidar_laser (0, 0, 0.0305), yaw pi
+
+LABEL = "second_lidar"
+SCAN_FRAME = "second_lidar_laser"
+TOPIC = "second_lidar/scan"
+OWNER, PREFIX, NAMESPACE = "pt", "pt_", "panther1"
+COVER = ((0.0, 0.0, 0.14), (0.0, 0.0, 0.0))
+MOUNT = ((0.0, 0.0, 0.0315), (0.0, 0.0, 0.0))
+COMPONENT = ((0.0, -0.1, 0.0), (0.0, 0.0, 0.0))
+LASER = ((0.0, 0.0, 0.0305), (0.0, 0.0, math.pi))
+#: What the S3's fan meets of the robot from outside: the Husarion hull, at 0.254 m and beyond.
+OUTSIDE_RETURNS = {"body_link": 48}
+
+
+@pytest.fixture(scope="module")
+def scan():
+    """The robot spawned with a prefix and namespace in a room of known walls, its scanner cast once."""
+    engine = spawn("panther", {LABEL: None}, owner=OWNER, prefix=PREFIX, namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
+
+
+def test_c1_the_scan_frame_is_husarions_chain(scan):
+    """C1: 0.202 m above body_link, 0.1 m to the right of the centreline, turned half a revolution."""
+    want_pos, want_rot = chain(COVER, MOUNT, COMPONENT, LASER)
+    assert np.allclose(want_pos, (0.0, -0.1, 0.202), atol=1e-9)
+    for site in (f"{PREFIX}{LABEL}_scan", f"{PREFIX}{LABEL}_{SCAN_FRAME}"):
+        pos, rot = pose_in_base(scan, site, PREFIX)
+        assert np.allclose(pos, want_pos, atol=1e-6), f"{site} at {pos}"
+        assert np.allclose(rot, want_rot, atol=1e-6), f"{site} rotation {rot}"
+
+
+def test_c2_the_forward_ray_reads_the_wall(scan):
+    published, true = forward_range(scan, lidar(scan, f"{OWNER}.{LABEL}"))
+    assert published == pytest.approx(true, abs=1e-3), (
+        f"reads {published:.4f} m, wall at {true:.4f} m"
+    )
+
+
+def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan):
+    model = scan.ctx.model
+    scanner = lidar(scan, f"{OWNER}.{LABEL}")
+    mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"{PREFIX}{LABEL}_mount")
+    assert scanner._bodyexclude == mount, "the scanner excludes something other than its housing"
+
+
+def test_c4_no_ray_starts_inside_robot_geometry(scan):
+    """C4: from the device mount no ray starts inside robot geometry, and none reads too close."""
+    scanner = lidar(scan, f"{OWNER}.{LABEL}")
+    inside, _ = robot_hits(scan, scanner, PREFIX)
+    assert not inside, {body: len(d) for body, d in inside.items()}
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray reads too close"
+
+
+def test_c5_the_robot_returns_are_the_hull_seen_from_outside(scan):
+    """C5: real returns of a scanner that sees part of its own robot, pinned by body and ray count."""
+    _, outside = robot_hits(scan, lidar(scan, f"{OWNER}.{LABEL}"), PREFIX)
+    assert {body: len(d) for body, d in outside.items()} == OUTSIDE_RETURNS
+
+
+def test_c6_the_tf_chain_and_topic(scan):
+    address = f"{OWNER}.{LABEL}"
+    tf = static_tf(scan, address, NAMESPACE)
+    assert [(t["parent"], t["child"]) for t in tf] == [(f"{LABEL}_link", SCAN_FRAME)], tf
+    assert np.allclose(tf[0]["translation"], LASER[0], atol=1e-6)
+    assert same_rotation(tf[0]["rotation"], urdf_rotation(LASER[1]))
+    robot = static_tf(scan, OWNER, NAMESPACE)
+    want = [
+        # The chain starts at body_link, so its link to the root comes first; the two coincide.
+        ("base_link", "body_link", (0.0, 0.0, 0.0)),
+        ("body_link", "cover_link", COVER[0]),
+        ("cover_link", "mount_link", MOUNT[0]),
+        ("mount_link", f"{LABEL}_link", COMPONENT[0]),
+    ]
+    assert [(t["parent"], t["child"]) for t in robot] == [(p, c) for p, c, _ in want], robot
+    for t, (_, _, xyz) in zip(robot, want, strict=True):
+        assert np.allclose(t["translation"], xyz, atol=1e-9), t
+    hints = endpoint(scan, "scan", address).backend["ros2"]
+    assert (hints["frame_id"], hints["topic"]) == (SCAN_FRAME, TOPIC)
+    assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
+
+
+def test_c7_the_scan_is_the_s3_devices(scan):
+    """C7: the robot publishes what sllidar_ros2 publishes for an S3, with the device's range noise.
+
+    Husarion's Gazebo std_dev 0.015 (slamtec_rplidar.urdf.xacro:48 @ 5f783f8) is a simulation value
+    and overrides nothing.
+    """
+    from roqsim_sensors.models import MODELS_DIR
+
+    manifest = yaml.safe_load((MODELS_DIR / "rplidar_s3" / "rplidar_s3.manifest.yaml").read_text())
+    (device,) = [c["lidar"] for c in manifest["components"] if "lidar" in c]
+    scanner = lidar(scan, f"{OWNER}.{LABEL}")
+    for key in ("rays", "angle_min", "angle_max", "range_min", "max_range", "too_close",
+                "no_return", "rate_hz", "range_stddev"):
+        assert scanner.config[key] == device[key], f"{key}: {scanner.config[key]} != {device[key]}"
+    assert scanner.num_rays == 3240

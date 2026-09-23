@@ -9,6 +9,7 @@ this repository. No third-party content.
   favicon.ico                        256 x 256    docs favicon (html_favicon)
   roqsim-favicon.png                 512 x 512    PNG favicon variant
 
-These are presentation assets: they are NOT packaged into the wheel. The one image loaded at runtime
-is roqsim/src/roqsim/assets/splash.jpg (the viewer's loading overlay, see roqsim/splash.py) and it
-stays in the package on purpose.
+These are presentation assets: they are NOT packaged into the wheel. The two images loaded at runtime
+are roqsim/src/roqsim/assets/splash.jpg (the viewer's loading overlay, see roqsim/splash.py) and
+icon.png beside it (the window icon, resampled from roqsim-favicon.png, see roqsim/window_branding.py);
+both stay in the package on purpose.

@@ -123,7 +123,7 @@ def test_a_straight_run_keeps_the_rack_centred_and_tracks_the_speed():
 
 
 def test_the_car_rests_on_four_tyres_and_the_chassis_clears_the_floor():
-    """The description as authored puts the car 19 mm THROUGH the floor; this is the fix, pinned.
+    """The description as authored puts the car 19 mm THROUGH the floor; this pins the correction.
 
     Also that the chassis box is not a bearing surface: the front tyres sit inside the chassis
     footprint, and MuJoCo filters contacts only against a body's DIRECT parent -- so without an

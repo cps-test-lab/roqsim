@@ -58,6 +58,7 @@ from roqsim_scenes.floorplan_geometry import (  # noqa: F401 - re-exported: the 
     assign_doors,
     cut_openings,
     line_segments,
+    wall_pieces,
 )
 
 from . import scene_to_mjcf
@@ -83,33 +84,6 @@ def _yaw_matrix(yaw: float, translate) -> np.ndarray:
     mat[:3, :3] = [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]]
     mat[:3, 3] = translate
     return mat
-
-
-def wall_pieces(lines: list[dict], doors: list[dict], ceiling_h: float, opening_h: float):
-    """The wall boxes to build as ``(p0, p1, z0, z1)``, with each line's door openings cut out.
-
-    A drawn line becomes: full-height solid pieces ``(0, ceiling_h)`` around its openings, plus one
-    lintel per opening spanning ``(height, ceiling_h)`` over the opening width (skipped when the
-    opening reaches the ceiling). So a door is a 2 m-high hole with a beam above it, not a full gap.
-    """
-    per_seg = assign_doors(lines, doors, opening_h)
-    pieces = []
-    for i, ((x0, y0), (x1, y1)) in enumerate(line_segments(lines)):
-        length = math.hypot(x1 - x0, y1 - y0)
-        ux, uy = (x1 - x0) / length, (y1 - y0) / length
-        openings = per_seg.get(i, [])
-        for t0, t1 in cut_openings(length, [(t, w) for t, w, _ in openings]):
-            pieces.append(
-                ((x0 + ux * t0, y0 + uy * t0), (x0 + ux * t1, y0 + uy * t1), 0.0, ceiling_h)
-            )
-        for t_m, width, height in openings:
-            if height >= ceiling_h:
-                continue  # a full-height opening keeps a true doorway -- no lintel above it
-            g0, g1 = max(0.0, t_m - width / 2), min(length, t_m + width / 2)
-            pieces.append(
-                ((x0 + ux * g0, y0 + uy * g0), (x0 + ux * g1, y0 + uy * g1), height, ceiling_h)
-            )
-    return pieces
 
 
 def wall_box(
@@ -291,8 +265,8 @@ def door_placements(
         )  # keep the opening inside the wall
         cx, cy = x0 + ux * t_m, y0 + uy * t_m
         yaw = math.atan2(uy, ux)
+        label = entry.get("name", f"door_{did}")
         door = {
-            "name": entry.get("name", f"door_{did}"),
             "prefix": entry.get("prefix", f"door_{did}_"),
             "pos": [round(cx, 3), round(cy, 3), 0.0],
             "rpy": [0.0, 0.0, round(yaw, 5)],
@@ -316,7 +290,10 @@ def door_placements(
         ):
             if key in entry:
                 door[key] = entry[key]
-        out.append({"door": door})
+        # `name` is the entry's reserved SIBLING, not one of the door plugin's config keys. Inside
+        # the config it never reaches the label, so every door would answer to the plugin default
+        # and a floorplan with two of them is refused for duplicate labels.
+        out.append({"door": door, "name": label})
     return out
 
 
@@ -333,8 +310,8 @@ def world_doc(
     Every marker id must be in ``markers_map``; a missing one raises (fail loud, no placeholder). A
     map value is a bare model name or ``{"model", "yaw_deg"}``. A prop is placed axis-aligned unless a
     heading is given: the map's ``yaw_deg`` wins, else the marker's own ``yaw_deg`` (set in the sketch
-    UI's Mark mode); the chosen yaw is emitted as spawn_model's ``rpy`` (roll/pitch stay 0 -- a
-    floor-standing prop only turns about +Z).
+    UI's Mark mode); the chosen yaw is emitted as the pose's ``orientation.yaw`` (roll/pitch stay 0 --
+    a floor-standing prop only turns about +Z).
     """
     plugins = []
     for m in markers:
@@ -349,15 +326,18 @@ def world_doc(
             yaw_deg is None
         ):  # caller gave no heading -> honour a heading the human drew in the sketch
             yaw_deg = m.get("yaw_deg")
-        spawn = {
-            "model": model,
-            "name": f"marker_{mid}",
-            "prefix": f"marker_{mid}_",
-            "pos": [round(float(m["x_m"]), 3), round(float(m["y_m"]), 3), 0.0],
+        pose = {
+            "position": {
+                "x": round(float(m["x_m"]), 3),
+                "y": round(float(m["y_m"]), 3),
+                "z": 0.0,
+            }
         }
         if yaw_deg:
-            spawn["rpy"] = [0.0, 0.0, round(math.radians(float(yaw_deg)), 5)]
-        plugins.append({"spawn_model": spawn})
+            pose["orientation"] = {"yaw": round(math.radians(float(yaw_deg)), 5)}
+        spawn = {"model": model, "prefix": f"marker_{mid}_", "pose": pose}
+        # `name` is a sibling of the plugin ref, not part of its config -- see the door entries.
+        plugins.append({"spawn_model": spawn, "name": f"marker_{mid}"})
     # Doors first (structural), then the marker props.
     plugins = list(doors or []) + plugins
     return {
@@ -490,8 +470,8 @@ def generate(
     with tempfile.TemporaryDirectory() as tmp:
         if ceiling:
             config_path = light_under_ceiling(config_path, ceiling_h, Path(tmp))
-        # Stage 2 is a module now, so call it directly: a subprocess here only bought a path to a
-        # script file, and that path is exactly what stopped working when the tools were installed.
+        # Stage 2 is a module, so call it directly: a subprocess would need a path to a script file,
+        # and an installed package has no such path.
         if scene_to_mjcf.main(
             ["--scene", str(out_dir), "--config", str(config_path), "--out", str(baked_xml)]
         ):

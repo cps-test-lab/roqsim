@@ -33,9 +33,15 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import yaml
+from model_headline import with_headline
 from sources import resolve_source
 
 # Pinned upstream revisions -- must match the table in roqsim_humanoid/THIRD_PARTY.md.
+HEADLINE = (
+    "LimX Oli (HU_D04_01) humanoid for MuJoCo, in the serial PR-space form the vendor walk "
+    "policy expects."
+)
+
 OLI_DESC_COMMIT = "a90f734c153aa3ecffc8b674af1e0a323cb55d1a"  # humanoid-description 1.0.0.20260706
 OLI_DEPLOY_COMMIT = "6d8771cd2b5599e90e7598cfad3623dce66d1218"  # humanoid-rl-deploy 1.0.0.20260330
 
@@ -165,9 +171,8 @@ def main() -> None:
     here = Path(__file__).resolve().parent  # roqsim/external/convert/
     pkg = here.parents[1] / "roqsim_humanoid"  # sibling of external/
     ap = argparse.ArgumentParser()
-    # Default to the pinned upstream fetched into external/sources/ (see sources.resolve_source).
-    # These were absolute paths into an agent session scratchpad that no longer exists, which made
-    # the documented rebuild path unrunnable on every machine including the one that wrote it.
+    # Default to the pinned upstream fetched into external/sources/ (see sources.resolve_source),
+    # so the documented rebuild path runs on any machine.
     ap.add_argument("--desc-dir", type=Path, default=None)
     ap.add_argument("--deploy-dir", type=Path, default=None)
     args = ap.parse_args()
@@ -370,7 +375,7 @@ def main() -> None:
     xml = spec.to_xml().replace(f'meshdir="{abs_meshdir}"', 'meshdir="meshes/oli/"')
     xml = xml.replace(f'meshdir="{abs_meshdir}/"', 'meshdir="meshes/oli/"')
     out_xml = models / "oli.xml"
-    out_xml.write_text(xml)
+    out_xml.write_text(with_headline(xml, HEADLINE))
 
     total_mass = float(model.body_mass.sum())
     print(f"wrote {out_xml}")

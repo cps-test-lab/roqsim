@@ -66,6 +66,7 @@ COPY roqsim_manipulation ./roqsim_manipulation
 COPY roqsim_manipulation_assets ./roqsim_manipulation_assets
 COPY roqsim_mobile_manipulation ./roqsim_mobile_manipulation
 COPY roqsim_scenes     ./roqsim_scenes
+COPY roqsim_nav        ./roqsim_nav
 COPY roqsim_walker     ./roqsim_walker
 COPY roqsim_webctrl        ./roqsim_webctrl
 
@@ -80,6 +81,7 @@ RUN pip install --no-cache-dir --no-deps \
         ./roqsim_manipulation_assets \
         ./roqsim_mobile_manipulation \
         ./roqsim_scenes \
+        ./roqsim_nav \
         ./roqsim_walker \
         ./roqsim_webctrl
 

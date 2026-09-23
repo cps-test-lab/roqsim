@@ -2,7 +2,7 @@
 
 Two things are pinned here that no reader can check by eye. The mount pose in
 ``d435.manifest.yaml`` is re-derived from the published ``realsense2_description`` constants -- and
-so is the ``d435_color`` camera pose the model has carried all along, which is what shows the same
+so is the ``d435_color`` camera pose the model carries, which is what shows the same
 transform chain reproduces a number nobody is arguing about. And a device on a fixed mount must read
 1 g: MuJoCo computes no acceleration for a body welded to the world, so without the plugin's
 closed-form branch a tripod-mounted camera would report free fall forever.

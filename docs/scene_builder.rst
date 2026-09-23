@@ -52,8 +52,7 @@ the CLI (:func:`roqsim.config_for_input`), the shared offscreen renderer
 MuJoCo's own ``mjv_moveCamera`` for the pan). The window is plain **tkinter** + Pillow (no Qt),
 dark-themed.
 
-(The generic *image* review tool that used to live here now ships as its own standalone project,
-``mcp-media-review`` — see below.)
+(The generic *image* review tool is a separate project, ``mcp-media-review`` — see below.)
 
 Install and register
 --------------------
@@ -302,7 +301,7 @@ Internals
 Roadmap
 -------
 
-* **Sketch-authored hinge side.** A door opening now gets a real swing leaf (the ``door`` plugin),
+* **Sketch-authored hinge side.** A door opening gets a real swing leaf (the ``door`` plugin),
   but which edge is hinged / which way it swings still comes from the generator's ``--doors-map`` (or
   its defaults), not the 2D sketch. Capturing hinge side + swing direction as the human draws the
   opening is future work.
@@ -312,9 +311,9 @@ The generic image tool (``mcp-media-review``)
 ---------------------------------------------
 
 The browser-based *image* review tool (``review_by_human``: show an image, block for a pass/fail or
-OK verdict) that previously lived in this package now ships as a **standalone, dependency-light
-project**, ``mcp-media-review`` — it is generic (nothing roqsim-specific) and intended to be
-reusable and open-sourced on its own (``github.com/fred-labs/mcp-media-review``). It lives in its own
+OK verdict) ships as a **standalone, dependency-light project**, ``mcp-media-review`` — it is generic
+(nothing roqsim-specific), so it is reusable and open-sourced on its own
+(``github.com/fred-labs/mcp-media-review``). It lives in its own
 git repo, so check it out beside this one, install it with ``pip install -e mcp-media-review``, and
 register it with your MCP client as the ``media-review`` server. It is the still-image counterpart to
 this package's 3D review.

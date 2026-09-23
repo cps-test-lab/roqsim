@@ -34,10 +34,17 @@ def _no_gl_reexec(monkeypatch):
 
 @pytest.fixture
 def make_engine():
-    """Factory: build an Engine from a plugins list (dicts of ref/name/config)."""
+    """Factory: build an Engine from a plugins list (dicts of ref/name/config).
+
+    Seeded, because a seed is driver-owned and this factory is the driver: ``ctx.rng_for`` refuses
+    an unset one, so a plugin that draws would fail here for the wrong reason. Fixed rather than
+    drawn, so a test that does draw is reproducible.
+    """
 
     def _factory(plugins):
         cfg = load_config_from_dict({"sim": {}, "plugins": plugins})
-        return Engine(cfg)
+        engine = Engine(cfg)
+        engine.ctx.seed = 0
+        return engine
 
     return _factory

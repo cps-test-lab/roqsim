@@ -19,17 +19,26 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   in `32FC1` metres or `16UC1` millimetres), `realsense_d415` (RGB only), `force_torque` (six-axis
   wrench at a site — the one contact-force observable), `fiducial_marker` (ArUco/AprilTag,
   OpenCV-generated; optional `markers` extra). Models are one folder per device
-  (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`.
+  (`models/<name>/<name>.xml` + its own `meshes/`). Depends on `roqsim`. The 2D scanners
+  (`sick_s300`, `sick_microscan3`, `sick_nanoscan3`, `sick_tim571`, `sick_lms1xx`, `hokuyo_ust`,
+  `rplidar_a1`, `rplidar_c1`, `rplidar_s3`, `lds01`, `omron_os32c`, and the VLP-16 as
+  `velodyne_vlp16`, cast as one horizontal plane) are device models too: datasheet values and their
+  own housing (`exclude_body: mount`; the OS32C's is primitives from its data sheet, no mesh being
+  redistributable) live there, and a robot mounts one from its manifest with a nested `spawn_sensor`
+  at the vendor's parent frame and joint origin, overriding a value only where its vendor
+  configuration differs.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
   wheeled base models, and demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled
   **bases only**.
-  - `diff_drive`: turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, mp_400, raspimouse,
-    makerspet_mini (170 mm, the smallest), oomwoo_one (a robot vacuum; its 12-plate bumper ring is
-    collision geometry with no plugin reading it), and the skid-steer rosbot, panther and warthog
-    (260 kg, the largest).
+  - `diff_drive`: turtlebot4, turtlebot3_waffle, husky_a200, clearpath_jackal, mp_400, rox_diff,
+    raspimouse, makerspet_mini (170 mm, the smallest), oomwoo_one (a robot vacuum; its 12-plate
+    bumper ring is collision geometry with no plugin reading it), and the skid-steer rosbot, panther
+    and warthog (260 kg, the largest).
   - `omni_drive`: ridgeback and lgdxrobot2 (mecanum), mpo_500 (omni wheels), mpo_700 (SWERVE —
-    four independently steered wheels). The two Neobotix are the only models declaring two lidars
-    each.
+    four independently steered wheels). The two Neobotix MPOs, the rox_diff and the warthog each
+    mount two scanner devices, as `roqsim_mobile_manipulation`'s tiago_pro does; every other model
+    carries at most one lidar. The rox_diff is the only one whose two are at opposite CORNERS rather
+    than front and rear, so its chassis stands in a third of each scanner's field.
 - `roqsim_manipulation/` — manipulator **plugins only** (spawn_arm, arm_controller,
   cartesian_admittance). No geometry, and no experiment logic. Depends on `roqsim`.
 - `roqsim_manipulation_assets/` — the arm and gripper **models** (UR10e, UR5e, Panda, Gen3,
@@ -47,12 +56,23 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   1.32, so core roqsim's `payload` plugin is what sets an aerial flight envelope: the hover boundary
   sits at ~9 g. `wind_field` is the one plugin that owns an `opt.*` global (`opt.wind`), so it
   refuses to load beside a `sim.wind` — see `docs/architecture.rst` §9.2.
-- `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid, A\* +
-  behaviour-tree navigation with optional ORCA, character blueprints (`models/people/`) and CARLA
-  locomotion clips (`models/anims/`). Depends on `roqsim` only — it is a *dynamic obstacle*, not a robot
-  family, so no robot package depends on it and it depends on none. Zero DOFs (mocap bodies), but its
-  per-limb capsules are what a robot's lidar and contacts see. **Its assets are CC-BY** (CARLA), so
-  attribution travels with anything that ships them — see `roqsim_walker/THIRD_PARTY.md`.
+- `roqsim_nav/` — 2D navigation, shared by everything that moves under its own control: A\* over a
+  grid rasterized from the model's own wall geoms (no map file), a py-trees behaviour tree that
+  follows it, a forward caution probe, and the `navigator` plugin. Depends on `roqsim` only and
+  ships **no geometry** — which is what lets a robot family depend on it. Two entry-point registries
+  keep it that way: `roqsim_nav.outputs` (how motion reaches the physics — a `RobotHandle`'s twist, a
+  mocap pose, a walker's skeleton) and `roqsim_nav.avoidance` (the local model; `orca` is one
+  implementation, behind the `[avoidance]` extra). Nothing in the package branches on the name of an
+  output or a model, so an out-of-tree embodiment or local planner needs no edit here. py-trees lives
+  here rather than in core for the same reason the package exists.
+- `roqsim_walker/` — kinematic pedestrian **walkers**: the `walker` plugin, the 17-joint humanoid,
+  the character blueprints (`models/people/`) and CARLA locomotion clips (`models/anims/`), and the
+  `walker` **output** it registers into `roqsim_nav`. Navigation is not here: a walker is one
+  embodiment of the shared navigator, so a pedestrian, a robot and a prop are moved by the same
+  plugin and differ only in what the motion is written into. Depends on `roqsim` + `roqsim_nav`;
+  no robot package depends on it. Zero DOFs (mocap bodies), but its per-limb capsules are what a
+  robot's lidar and contacts see. **Its assets are CC-BY** (CARLA), so attribution travels with
+  anything that ships them — see `roqsim_walker/THIRD_PARTY.md`.
 
 **Plugins and geometry are separate packages.** Every family with an actuated limb needs
 `arm_controller` — a humanoid's arms, a mobile manipulator's arm, a gantry — and almost none needs
@@ -62,12 +82,12 @@ plugins intrinsic to it, and the plugins know nothing about any particular model
 
 **The substrate ships mechanism; an experiment ships what it is measuring.** The test is reuse, not
 file type. `arm_controller` serves every arm and `ur10e` is a robot anyone can mount — those stay.
-Four things did not, and each was a *what* rather than a *how*:
+These live downstream, and each is a *what* rather than a *how*:
 
-| left | to | because |
+| not here | but in | because |
 | --- | --- | --- |
 | `peg_in_hole` | a downstream experiment | a bored block with a swept clearance (+7.7 MB of meshes) |
-| `insertion_task` | a downstream experiment | one paper's trial protocol — its defaults were that paper's constants |
+| `insertion_task` | a downstream experiment | one paper's trial protocol — its defaults are that paper's constants |
 | `pipe_weldment`, `welding_torch` | a downstream experiment | a workpiece we sized ourselves |
 | `pick_place_metrics` | a downstream experiment | a rule for what counts as success in one trial |
 
@@ -92,6 +112,11 @@ widen a family's dependencies to accommodate it.
   the names it uses (entities, plugin instances) are identical on both.
 - `ros2_ws/src/roqsim_ros_bridge/` — colcon package: ROS 2 bridge + `simulation_interfaces` (plugins).
 - `ros2_ws/src/roqsim_nav2_example/` — colcon package: minimal nav2 example + headless goal test.
+- `ros2_ws/src/roqsim_create3_toolbox/` — colcon package: the Create 3 / TurtleBot 4 stack over the
+  `turtlebot4` model -- the one simulator adapter the released `irobot_create_gz_toolbox` cannot
+  supply (bumper zones into hazard events), the launch files that run `irobot_create_nodes` and
+  `turtlebot4_node` unchanged, and the world with the base's contract to that stack. The stack is
+  never reimplemented here; the raw streams it reads are the model manifest's (`docs/create3_stack.rst`).
 - `docs/` — Sphinx user docs (roqsim) incl. `architecture.rst` (architecture + porting playbook).
 
 ## Golden rules
@@ -112,7 +137,7 @@ widen a family's dependencies to accommodate it.
   not an error but a choice, and it resolves to **glfw**, which aborts on a headless node with
   `mujoco.FatalError: gladLoadGL error`. The package `__init__` is the only place that runs before
   every `roqsim.*` submodule and therefore before every `import mujoco` of ours. Do not "tidy" that
-  call into a driver's `main` (it lived in `runner.main` and was inert for every headless run), do
+  call into a driver's `main` (a selection in `runner.main` is inert for every headless run), do
   not let isort merge it into the import block below it (the `E402` per-file-ignore in
   `pyproject.toml` is what keeps it separable), and do not let `roqsim/gl.py` import mujoco even
   transitively. This class of bug is invisible in testing: without a camera no `mujoco.Renderer` is
@@ -125,17 +150,24 @@ widen a family's dependencies to accommodate it.
   package READMEs, module/config docstrings, and the commented example worlds — and update what the
   change made stale.
 - Sensor noise is per-sensor config (e.g. lidar `range_stddev`); there is no generic error-model
-  framework (it was removed on purpose — see architecture.rst §9).
+  framework, on purpose — see architecture.rst §9.
 - **Draw randomness from `ctx.rng_for(name)`, never from a module-level `np.random` or a stateful
   generator.** It is counter-based (Philox) and keyed on `(seed, episode, sim_time, name)`, so a draw is a
   pure function of the world rather than of how many draws happened before it. A shared stateful
   stream's position depends on sensor rates, step count, and whether anyone was subscribed to a
   camera — which makes a value at t = 12.5 unreproducible without replaying the whole run, and breaks
   re-running a sensor from a recording. Call it once per (sensor, step), not once per value; draws
-  are vectorised anyway. The run's seed comes from `sim.seed` in the world or `roqsim sim --seed`
-  (which wins), and a run without either draws and logs a seed so it can be replayed. The `episode`
-  is in the key because `reset()` restarts `sim_time`: without it every trial after the first in one
-  process re-draws the first one's noise, so repetitions are duplicates rather than samples.
+  are vectorised anyway. The run's seed comes from `sim.seed` in the world, `roqsim sim --seed`, or
+  `ROQSIM_SEED` for the scenario adapter (an explicit one wins), and a run without any of them draws
+  and logs a seed so it can be replayed. The `episode` is in the key because `reset()` restarts
+  `sim_time`: without it every trial after the first in one process re-draws the first one's noise,
+  so repetitions are duplicates rather than samples.
+- **A seed is driver-owned, and an unresolved one raises** (`roqsim.seed.SeedError`) rather than
+  defaulting to 0. Any code that builds an Engine and steps it is a driver: resolve a seed with
+  `roqsim.seed.resolve_seed` and assign `ctx.seed` **before** `setup()`, since `configure` may read
+  it. A preview that only settles a world to look at it pins `roqsim.seed.PREVIEW_SEED`. Never
+  inject a held generator where a draw is wanted — pass `lambda ...: ctx.rng_for(name)...` so each
+  draw is keyed on the time it happens; a captured generator is the stateful stream this forbids.
 - **End a trial with `ctx.request_stop(reason)`, not by padding `--seconds`.** A wall-clock limit has
   to be guessed high enough for the slowest cell and is then wasted on every faster one. It is a
   request, not a kill switch: the driver polls it and exits cleanly, so `shutdown` runs and files

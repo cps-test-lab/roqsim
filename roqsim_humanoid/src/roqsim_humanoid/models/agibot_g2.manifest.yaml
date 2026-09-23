@@ -10,6 +10,11 @@
 # (from roqsim_mobile) as a planar skid-steer approximation of the real 4-wheel swerve chassis
 # (the swerve steer joints are welded straight in the MJCF); `agibot_g2_controller` holds the torso/
 # head/arm/gripper position joints; `lidar` comes from roqsim_sensors.
+
+# The models directory is flat, so the licence this model carries is named rather than guessed
+# from what sits beside it: the G2's description and meshes are AgiBot's (MPL-2.0, THIRD_PARTY.md).
+license: LICENSE.genie_sim
+
 components:
   # Base: planar diff-drive over the four wheel roll actuators (left pair / right pair together).
   # Limits are a documented assumption (G2 is a slow indoor manipulator; the source gives no base

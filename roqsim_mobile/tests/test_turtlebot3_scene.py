@@ -7,8 +7,12 @@ and the controller are verified together.
 
 Reference dimensions come from ROBOTIS's own MuJoCo model (robotis_tb3 @ d8344c0, see
 turtlebot3_waffle_LICENSE) cross-checked against turtlebot3_description: wheel r=0.033 m,
-w=0.0184 m, m=0.0285 kg; track 0.288 m; base mass 1.8 kg; base_link rest height 0.010 m;
-base_scan 0.122 m above base_link (0.132 m above the floor).
+w=0.0184 m, m=0.0285 kg; track 0.288 m; base mass 1.8 kg with the scanner; base_link rest height
+0.010 m; base_scan 0.122 m above base_link (0.132 m above the floor).
+
+The LDS-01 is not in the MJCF: the manifest mounts the ``lds01`` device model at the vendor joint, so
+the MJCF's base is the vendor's less the scanner's 0.114 kg, and section D pins the mount against
+``turtlebot3_description`` @ 0c0be84.
 
 **Unlike the Husky and the Jackal, this is a true differential drive** — two driven wheels and two
 passive frictionless casters, so turning rolls instead of scrubbing. There is no ``slip_factor`` to
@@ -24,6 +28,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 import pytest
+import scan_mount_utils as scan_mount
 import yaml
 
 from roqsim.context import Entity, SimContext
@@ -38,11 +43,16 @@ WHEEL_R = 0.033
 WHEEL_W = 0.0184
 TRACK = 0.288
 REST_Z = 0.010  # base_link above the floor = wheel r 0.033 - offset 0.023
-TOTAL_MASS = 1.8 + 2 * 0.0285  # 1.857 kg
+#: The LDS-01's inertial, which the lds01 device model carries (turtlebot3_waffle.urdf:226 @ 0c0be84).
+LDS_MASS = 0.114
+#: The vendor base (robotis_tb3 @ d8344c0: 1.8 kg, scanner drawn on it) less the mounted scanner.
+BASE_MASS = 1.8 - LDS_MASS
+TOTAL_MASS = BASE_MASS + 2 * 0.0285  # the MJCF alone
+SPAWNED_MASS = 1.8 + 2 * 0.0285  # 1.857 kg: the vendor's total, once the manifest mounts the scanner
 PLATE_L, PLATE_W = 0.272, 0.276  # chassis plate (the datasheet's 0.306 m width is the wheels)
 HULL_W = 2 * 0.144 + WHEEL_W  # 0.3064 m — datasheet 0.306 m
-LIDAR_Z_BASE = 0.122  # turtlebot3_description base_scan
-LIDAR_Z_GROUND = LIDAR_Z_BASE + REST_Z  # 0.132
+#: base_link -> base_scan, turtlebot3_description @ 0c0be84 urdf/turtlebot3_waffle.urdf:203-207.
+BASE_SCAN = ((-0.064, 0.0, 0.122), (0.0, 0.0, 0.0))
 # Datasheet rated limits, which the actuator ctrlrange (+/-7.88 rad/s) encodes.
 MAX_V = 0.26
 MAX_W = 1.82
@@ -146,7 +156,7 @@ def test_a2_mass_audit():
     model, _ = _build()
     base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "base_link")
     assert float(model.body_subtreemass[base]) == pytest.approx(TOTAL_MASS, rel=0.01)
-    assert float(model.body_mass[base]) == pytest.approx(1.8, rel=0.01)
+    assert float(model.body_mass[base]) == pytest.approx(BASE_MASS, rel=0.01)
     for side in ("left", "right"):
         wid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wheel")
         assert float(model.body_mass[wid]) == pytest.approx(0.0285, rel=0.01)
@@ -337,30 +347,47 @@ def test_b7_casters_do_not_drag():
 # --------------------------------------------------------------------------- C. sensors
 
 
-def test_c1_lidar_mount_height():
-    """C1: the scan plane sits at turtlebot3_description's base_scan (0.132 m above ground)."""
-    model, data = _build()
-    for _ in range(int(2.0 / model.opt.timestep)):
-        mujoco.mj_step(model, data)
-    sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "lidar")
-    assert float(data.site_xpos[sid][2]) == pytest.approx(LIDAR_Z_GROUND, abs=0.003)
-    assert float(data.site_xpos[sid][0]) == pytest.approx(-0.064, abs=0.003)
-    assert abs(float(data.site_xpos[sid][1])) < 0.003
+def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
+    """C1: the scanner is the lds01 device model at turtlebot3_description's own scan joint.
 
-
-def test_c2_lidar_manifest_matches_the_lds01():
-    """C2: the shipped lidar config is the platform's own sensor, not a placeholder.
-
-    The paper states no lidar parameter at all (spec gap g_lidar_params), so the manifest values ARE
-    the assumption of record — pin them here so a future edit is deliberate.
+    No lidar override: every scan value is the device's datasheet default, and the MJCF has no scan
+    site of its own that a second scanner could be cast from.
     """
-    cfg = _manifest_plugin("lidar")
-    assert cfg["rays"] == 360
-    assert cfg["range_min"] == pytest.approx(0.12)
-    assert cfg["max_range"] == pytest.approx(3.5)
-    assert cfg["rate_hz"] == pytest.approx(5.0)
-    assert cfg["angle_max"] == pytest.approx(2 * math.pi, abs=1e-6)
-    assert cfg["frame_id"] == "base_scan"
+    manifest = yaml.safe_load(MANIFEST.read_text())
+    (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
+    assert mount["name"] == "lds01"
+    assert mount["spawn_sensor"] == {
+        "model": "lds01",
+        "parent_frame": "base_link",
+        "pos": [*BASE_SCAN[0]],
+        "rpy": [*BASE_SCAN[1]],
+        "frame_id": "base_scan",
+    }
+    assert "components" not in mount and "frames" not in manifest
+    model, _ = _build()
+    assert model.nsite == 1  # base_imu
+    assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_MESH, "tb3_lds") < 0
+
+
+def test_c2_the_mounted_scan_is_the_lds01(mounted):
+    """C2: the scan the robot publishes is the LDS-01's driver layout, datasheet window and noise.
+
+    The paper states no lidar parameter at all (spec gap g_lidar_params), so these values are the
+    assumption of record -- pinned here so a change to the device or the mount is deliberate.
+    """
+    _, lidar = mounted
+    assert lidar.num_rays == 360
+    # hls_lfcd_lds_driver: 0 .. 2 pi - 1 deg, last ray at angle_max.
+    assert (lidar.angle_min, lidar.angle_max) == pytest.approx(
+        (0.0, 2 * math.pi - math.radians(1.0)), abs=1e-6
+    )
+    assert lidar.range_min == pytest.approx(0.12)
+    assert lidar.range_max == pytest.approx(3.5)
+    assert lidar.rate_hz == pytest.approx(5.0)
+    assert lidar.config["range_stddev"] == pytest.approx(0.01)
+    assert lidar.config["range_stddev_relative"] == pytest.approx(0.035)
+    assert lidar.config["range_stddev_relative_from"] == pytest.approx(0.5)
+    assert lidar.frame_id == "base_scan"
 
 
 def test_c3_wheel_encoders_and_imu_exist():
@@ -377,3 +404,138 @@ def test_c3_wheel_encoders_and_imu_exist():
         "base_quat",
     ):
         assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SENSOR, name) >= 0, f"missing {name}"
+
+
+def test_c4_odometry_tf_points_at_the_description_root():
+    """C4: ``odom ->`` targets base_footprint, the root of every published TurtleBot 3 URDF.
+
+    A robot_state_publisher running that description already parents base_link to base_footprint,
+    so an odometry TF aimed at base_link would give the frame two parents and tf2 would resolve
+    neither. The default is base_link (a TurtleBot 4 description is rooted there), which is why
+    this platform has to state it.
+    """
+    assert _manifest_plugin("diff_drive")["odom_child_frame"] == "base_footprint"
+
+    model, data = _build()
+    ctx, _ = _plugin(model, data)
+    odom = next(e for e in ctx.interface.all() if e.name == "odom")
+    assert odom.backend["ros2"]["frame_id"] == "odom"
+    assert odom.backend["ros2"]["child_frame_id"] == "base_footprint"
+
+
+def test_c5_odometry_tf_default_is_base_link():
+    """C5: platforms that say nothing keep base_link, so only a platform that opts in moves."""
+    model, data = _build()
+    cfg = {k: v for k, v in _manifest_plugin("diff_drive").items() if k != "odom_child_frame"}
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.entities.add(
+        Entity(name="robot", kind="robot", body="base_link", meta={"prefix": "", "namespace": ""})
+    )
+    plugin = DiffDrivePlugin(cfg)
+    plugin.configure(ctx)
+    odom = next(e for e in ctx.interface.all() if e.name == "odom")
+    assert odom.backend["ros2"]["child_frame_id"] == "base_link"
+
+
+def test_c6_cmd_vel_type_follows_the_stack():
+    """C6: the velocity command's message type is the stack's choice, not the plugin's.
+
+    Nav2 publishes ``geometry_msgs/TwistStamped`` when its own ``enable_stamped_cmd_vel`` is set
+    -- the TurtleBot 4's shipped configuration does -- and a subscription is one type, so a
+    mismatch delivers nothing at all rather than something degraded. The failure has no message
+    of its own: the robot simply never moves while the controller reports it cannot make progress.
+    """
+    model, data = _build()
+
+    ctx, _ = _plugin(model, data)
+    plain = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
+    assert plain.backend["ros2"]["type"] == "geometry_msgs.msg.Twist"
+
+    ctx, _ = _plugin(model, data, stamped_cmd_vel=True)
+    stamped = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
+    assert stamped.backend["ros2"]["type"] == "geometry_msgs.msg.TwistStamped"
+    assert stamped.backend["ros2"]["topic"] == plain.backend["ros2"]["topic"]
+
+
+# --------------------------------------------------------------------------- D. the mounted scanner
+
+
+@pytest.fixture(scope="module")
+def mounted():
+    """The robot spawned as a world spawns it, prefixed and namespaced, its LDS-01 cast once."""
+    engine = scan_mount.spawn("turtlebot3_waffle", ["lds01"])
+    lidar = scan_mount.lidar(engine, "robot.lds01")
+    yield engine, lidar
+    engine.shutdown()
+
+
+def test_d1_scan_frame_is_the_vendor_joint(mounted):
+    """D1: rays are cast from base_link -> base_scan exactly as the URDF places it, and the frame the
+    mount publishes is that same pose."""
+    engine, _ = mounted
+    want_pos, want_rot = scan_mount.chain(BASE_SCAN)
+    for site in ("r_lds01_scan", "r_lds01_base_scan"):
+        pos, rot = scan_mount.pose_in_base(engine, site)
+        np.testing.assert_allclose(pos, want_pos, atol=1e-9, err_msg=site)
+        np.testing.assert_allclose(rot, want_rot, atol=1e-9, err_msg=site)
+
+
+def test_d2_the_forward_ray_reads_the_true_wall_distance(mounted):
+    """D2: bearing 0 is base_scan +x, which is base_link +x (forward)."""
+    engine, lidar = mounted
+    origin, dirs, bearings = scan_mount.world_rays(engine, lidar)
+    fwd = scan_mount.forward_index(bearings)
+    np.testing.assert_allclose(dirs[fwd], scan_mount.base_rotation(engine)[:, 0], atol=1e-9)
+    assert lidar.latest.ranges[fwd] == pytest.approx(
+        scan_mount.wall_distance(origin, dirs[fwd]), abs=1e-6
+    )
+
+
+def test_d3_no_ray_starts_inside_the_robot_or_returns_from_its_own_mount(mounted):
+    """D3: every ray meets its first surface from outside, and the housing is the only exclusion."""
+    engine, lidar = mounted
+    mount_body = scan_mount.mount_body(engine, "lds01")
+    dirs, hits = scan_mount.recast(engine, lidar, bodyexclude=mount_body)
+    assert lidar._bodyexclude == mount_body
+    hit = hits.geomid >= 0
+    assert hit.all(), "a closed room leaves no ray without a return"
+    facing = np.einsum("ij,ij->i", hits.normal[hit], dirs[hit])
+    assert not np.any(facing > 0), f"{int((facing > 0).sum())} ray(s) start inside robot geometry"
+    own = lidar._hits.geomid
+    assert not np.any(engine.ctx.model.geom_bodyid[own[own >= 0]] == mount_body)
+
+
+def test_d4_the_scan_sees_nothing_of_the_robot(mounted):
+    """D4: the scan plane clears the Waffle's plate and camera mount, so every ray reaches a wall."""
+    engine, lidar = mounted
+    _, hits = scan_mount.recast(engine, lidar)
+    assert scan_mount.robot_returns(engine, hits) == (set(), set())
+
+
+def test_d5_the_static_tf_is_published_from_base_link(mounted):
+    """D5: the mount publishes base_link -> base_scan; the robot declares no flattened frames."""
+    engine, _ = mounted
+    (scan,) = scan_mount.static_tf(engine, "robot.lds01")
+    assert (scan["parent"], scan["child"]) == ("base_link", "base_scan")
+    np.testing.assert_allclose(scan["translation"], BASE_SCAN[0], atol=1e-9)
+    assert scan_mount.same_rotation(scan["rotation"], np.eye(3))
+    assert not [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == "robot"]
+
+
+def test_d6_the_scan_topic_is_the_robots(mounted):
+    """D6: `scan`, relative, in the robot's namespace, stamped base_scan; the mount owns the TF."""
+    engine, _ = mounted
+    scan = scan_mount.scan_endpoint(engine)
+    assert scan.owner == "robot.lds01" and scan.namespace == scan_mount.NAMESPACE
+    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan.backend["ros2"]["frame_id"] == "base_scan"
+    assert "static_tf" not in scan.backend["ros2"]
+
+
+def test_d7_the_spawned_robot_keeps_the_vendor_total_mass(mounted):
+    """D7: base less scanner, plus the scanner the manifest mounts, is the vendor's 1.857 kg."""
+    engine, _ = mounted
+    m = engine.ctx.model
+    base = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_base_link")
+    assert float(m.body_subtreemass[base]) == pytest.approx(SPAWNED_MASS, abs=1e-6)

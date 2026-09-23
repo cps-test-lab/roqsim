@@ -26,7 +26,9 @@ class _Scene(Plugin):
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         base = spec.worldbody.add_body(
-            name="base_footprint", pos=[1, 2, 0], quat=[math.cos(math.pi / 4), 0, 0, math.sin(math.pi / 4)]
+            name="base_footprint",
+            pos=[1, 2, 0],
+            quat=[math.cos(math.pi / 4), 0, 0, math.sin(math.pi / 4)],
         )
         base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.1, 0.1, 0.1])
         target = spec.worldbody.add_body(name="target", pos=[3, 2, 0.5])
@@ -34,7 +36,9 @@ class _Scene(Plugin):
 
 
 def _engine(**config) -> Engine:
-    config.setdefault("objects", [{"body": "target", "class_id": "parcel", "size": [0.04, 0.024, 0.09]}])
+    config.setdefault(
+        "objects", [{"body": "target", "class_id": "parcel", "size": [0.04, 0.024, 0.09]}]
+    )
     cfg = load_config_from_dict(
         {
             "sim": {},
@@ -45,6 +49,11 @@ def _engine(**config) -> Engine:
         }
     )
     eng = Engine(cfg)
+    # A test driving an Engine IS the driver, and `ctx.seed` is driver-owned: `rng_for`
+    # refuses an unset one. The world's own `sim.seed` is honoured so declaring one here
+    # does what it looks like it does; the fallback is fixed, not drawn, so a noisy test
+    # stays reproducible.
+    eng.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     eng.setup()
     # Populate xpos/xmat: the detector reads body world poses, and without a forward they are zero,
     # which reads as "every object is exactly at the robot" rather than as an error.

@@ -38,12 +38,13 @@ components:
       rgba: [0.38, 0.42, 0.28, 1.0]
 
   # diff_drive (outdoor skid-steer, 4 driven wheels, and the calibrated slip_factor of 5.25) and the
-  # lidar come from the warthog model manifest. The lidar sweeps the terrain here, so what it returns
+  # two scanners come from the warthog model manifest. They sweep the terrain here, so what they return
   # is the hills -- the ground itself is an obstacle, which is the whole point of the world.
   - spawn_robot:
       model: warthog
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

@@ -13,7 +13,8 @@ gripper onto the shipped ``g1_29dof_rev_1_0.xml`` MJCF, because the two disagree
 ``left_wrist_yaw_joint`` at x=0.046 and the Dex1 URDF at x=0.051 (different wrist hardware, the
 ``_5010`` parts). Mixing them silently mismatches the gripper mount by 5 mm.
 
-Four upstream quirks this handles, each of which is silently wrong if taken at face value:
+Five upstream and conversion quirks this handles, each of which is silently wrong if taken at face
+value:
 
   * The URDF carries BOTH ``<side>_rubber_hand`` and the Dex1 gripper on the same wrist mount
     (palm joint at 0.0415 0.003 0, gripper base at 0.0415 0 0). The rubber hand is dropped; keeping it
@@ -22,14 +23,26 @@ Four upstream quirks this handles, each of which is silently wrong if taken at f
     ``meshes/``, so MuJoCo looks for ``meshes/meshes/*.STL``. The prefix is stripped.
   * The floating base is commented out ("uncomment when convert to mujoco"). Without it MuJoCo fuses
     ``pelvis`` into the world body at parse time and the root link vanishes.
+  * ``MjSpec.to_xml()`` of a URDF import whose fixed links were fused into their parents writes the
+    fused geoms without the fixed joint's offset and the parent's inertial without the fused mass:
+    ``head_link`` and ``logo_link`` land 44 mm high on ``torso_link`` with the head's 1.036 kg gone,
+    and each Dex1 base and its fingers 41.5 mm inside the wrist with 0.191 kg gone. Static links are
+    therefore kept as welded bodies (``fusestatic`` off), and :func:`verify_against_urdf` compares
+    every mesh geom's pose, the total mass and the centre of mass with MuJoCo's direct compile of
+    the same URDF. The links that carry nothing (the IMU, camera and lidar frames) are removed.
   * Both finger joints are prismatic on OPPOSING axes and their origins coincide at q=0 -- from which
     "q=0 is fully closed" follows and is FALSE. The pads sit ~23 mm outboard each, so q=0 already
     stands 45.9 mm open and the whole useful closing range is upstream's NEGATIVE half. Measured, not
-    inferred: see the aperture table below. An earlier version of this script clamped that half away as
-    a "crossed" state and produced a gripper that could not grip anything.
+    inferred: see the aperture table below. Clamping that half away as a "crossed" state leaves a
+    gripper that cannot grip anything.
 
-Run:  python external/convert/build_g1_dex1.py [--src DIR]
+The head carries the Livox Mid-360 the ``unitree_g1`` manifest mounts at ``mid360_joint``; its mesh is
+cut with the sensor's housing and field by ``g1_head_window.py``, so the scan leaves the head.
+
+Run:  python external/convert/build_g1_dex1.py [--src DIR] [--check]
 Emits models/unitree_g1_dex1.xml and copies the referenced meshes into models/meshes/unitree_g1_dex1/.
+``--check`` rebuilds in memory and fails if the committed model or its cut head mesh differs.
+Needs ``manifold3d`` for the head cut (see g1_head_window.py).
 
 A caller planning with this robot can ask for the matching MoveIt-side URDF in the same pass:
 
@@ -46,13 +59,23 @@ from __future__ import annotations
 import argparse
 import re
 import shutil
+import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import mujoco
+import numpy as np
+from g1_head_window import cut_head, stl_bytes
+from model_headline import with_headline
 from sources import resolve_source
 
 # Pinned upstream revision -- must match the table in roqsim_humanoid/THIRD_PARTY.md.
+HEADLINE = (
+    "Unitree G1, 29-DoF manipulation variant: the 12-DoF walking legs plus waist, arms and a "
+    "Dex1 parallel gripper per side."
+)
+
 UNITREE_ROS_COMMIT = "f3772ce54c56ef2d34c6aee8100bc768896c7d19"
 UNITREE_ROS_URL = "https://github.com/unitreerobotics/unitree_ros"
 URDF_NAME = "g1_29dof_mode_15_with_dex1_1.urdf"
@@ -108,8 +131,8 @@ GAINS = {
 # sides: aperture(q) = PAD_GAP_AT_ZERO + 2q. MEASURED from the collision-mesh vertices, because the
 # body origins are coincident at q=0 and reasoning from those says the fingers touch there, which is
 # wrong -- the pads sit ~23 mm outboard each, so q=0 already stands 45.9 mm open. The whole useful
-# closing range is therefore the NEGATIVE half of upstream's limits, which an earlier version of this
-# script clamped away as a "crossed" state, leaving a gripper that could not grip anything.
+# closing range is therefore the NEGATIVE half of upstream's limits; clamping it away as a "crossed"
+# state leaves a gripper that cannot grip anything.
 #
 #   q = -0.0200 -> 5.9 mm aperture (closed)
 #   q =  0.0000 -> 45.9 mm
@@ -117,10 +140,13 @@ GAINS = {
 FINGER_OPEN = 0.0245
 FINGER_CLOSE = -0.02
 PAD_GAP_AT_ZERO = 0.0459  # measured; documented here so the manifest's box sizing is traceable
-# Tool centre point between the pads, in the wrist_yaw frame: measured pad span x[0.077, 0.143],
-# z[-0.0145, 0.0145], centred on y. This is the frame a grasp is planned to and MoveIt's
-# end-effector link, so it belongs in the model rather than being re-derived by every caller.
-TCP_POS = (0.1112, 0.0, 0.0)
+# Tool centre point between the pads, in the wrist_yaw frame: the pad span of the finger collision
+# meshes at q=0, x[0.1185, 0.1848], z[-0.0145, 0.0145], centred on y. This is the frame a grasp is
+# planned to and MoveIt's end-effector link, so it belongs in the model rather than being re-derived
+# by every caller. :func:`verify_tcp` re-measures it on every build.
+TCP_POS = (0.1517, 0.0, 0.0)
+#: How far the measured pad centre may sit from TCP_POS before the build refuses.
+TCP_TOLERANCE = 0.0005
 # The tendon sums both fingers with coef -1, so its length is -(q1+q2). The sign matters:
 # roqsim_manipulation.arm_controller maps its configured `gripper_open` onto the actuator's ctrlrange LOW
 # end (see its set_gripper docstring, and gen3 where Robotiq ctrl 0 == open). With coef +1 the low end
@@ -140,10 +166,18 @@ FOOT_SPHERE_SIZE = 0.005
 
 # Standing height of the pelvis, matching unitree_g1.xml (and upstream's own 29-DoF MJCF).
 BASE_HEIGHT = 0.793
-# Lidar mount, kept on the pelvis rather than the torso: the torso now hangs off three waist joints,
-# so a torso-mounted scan would rotate with the waist and break nav2's scan matching. Same offset as
-# unitree_g1.xml -> ~1.09 m off the ground when standing.
-LIDAR_SITE_POS = (0.0, 0.0, 0.30)
+
+#: The head mesh the Mid-360's opening is cut into, and the file the cut is written to.
+HEAD_MESH = "head_link"
+HEAD_WINDOW_FILE = "head_link_mid360_window.STL"
+
+#: Welded links with no geometry and no mass that the URDF declares only as frames. Removed from the
+#: MJCF, which the build checks: a link listed here that carried anything would be refused.
+FRAME_ONLY_LINKS = ("imu_in_pelvis", "imu_in_torso", "d435_link", "mid360_link")
+
+#: Tolerances of the comparison with MuJoCo's direct URDF compile: float round trips through XML.
+POSE_TOLERANCE = 1e-5
+MASS_TOLERANCE = 1e-6
 
 
 def gains_for(joint: str) -> tuple[float, float]:
@@ -159,7 +193,7 @@ def gains_for(joint: str) -> tuple[float, float]:
 
 
 def prepare_urdf(text: str) -> str:
-    """Apply the four upstream fixups described in the module docstring."""
+    """Apply the three URDF fixups described in the module docstring."""
     for side in ("left", "right"):
         # Drop the rubber hand: its link AND the fixed joint mounting it, so no orphan remains.
         text, n_joint = re.subn(
@@ -194,11 +228,99 @@ def prepare_urdf(text: str) -> str:
     return text
 
 
-def urdf_to_mjcf(urdf_path: Path) -> str:
-    """Convert via MjSpec, which resolves inertias, joint limits and mesh references for us."""
+def urdf_to_mjcf(urdf_path: Path) -> tuple[str, mujoco.MjModel]:
+    """``(MJCF text, MuJoCo's direct compile)`` of the URDF, static links kept as welded bodies.
+
+    The direct compile fuses static links and is the reference :func:`verify_against_urdf` checks
+    the written model against: its fusion is right, only ``to_xml()`` of a fused spec is not.
+    """
+    reference = mujoco.MjSpec.from_file(str(urdf_path)).compile()
     spec = mujoco.MjSpec.from_file(str(urdf_path))
+    spec.compiler.fusestatic = False
     spec.compile()  # fail here, on the untouched conversion, rather than after our edits
-    return spec.to_xml()
+    return spec.to_xml(), reference
+
+
+def _mesh_geom_poses(model: mujoco.MjModel, root: str) -> list[tuple]:
+    """Every mesh geom as ``(mesh, group, position, rotation)`` relative to *root*, sorted."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    rid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, root)
+    rmat = data.xmat[rid].reshape(3, 3)
+    out = []
+    for g in range(model.ngeom):
+        if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+            continue
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, model.geom_dataid[g])
+        pos = rmat.T @ (data.geom_xpos[g] - data.xpos[rid])
+        rot = rmat.T @ data.geom_xmat[g].reshape(3, 3)
+        out.append((name, int(model.geom_group[g]), pos, rot))
+    return sorted(out, key=lambda e: (e[0], e[1], tuple(np.round(e[2], 4))))
+
+
+def verify_against_urdf(model: mujoco.MjModel, reference: mujoco.MjModel, root: str) -> None:
+    """Refuse a model whose geometry or mass differs from MuJoCo's direct compile of the URDF.
+
+    Only geoms and mass this build does not change on purpose are compared: the head, whose mesh is
+    cut, and the feet, whose contact spheres are replaced, are primitives or named exceptions.
+    """
+    ours = [e for e in _mesh_geom_poses(model, "base_link") if e[0] != HEAD_MESH]
+    ref = [e for e in _mesh_geom_poses(reference, root) if e[0] != HEAD_MESH]
+    if [e[:2] for e in ours] != [e[:2] for e in ref]:
+        raise RuntimeError("the built model's mesh geoms are not the URDF's")
+    for a, b in zip(ours, ref, strict=True):
+        if not (
+            np.allclose(a[2], b[2], atol=POSE_TOLERANCE)
+            and np.allclose(a[3], b[3], atol=POSE_TOLERANCE)
+        ):
+            raise RuntimeError(
+                f"mesh geom {a[0]!r} (group {a[1]}) sits at {np.round(a[2], 5)} relative to "
+                f"base_link, the URDF puts it at {np.round(b[2], 5)}"
+            )
+    if abs(model.body_mass.sum() - reference.body_mass.sum()) > MASS_TOLERANCE:
+        raise RuntimeError(
+            f"total mass {model.body_mass.sum():.6f} kg, the URDF's is {reference.body_mass.sum():.6f} kg"
+        )
+    com = []
+    for m, r in ((model, "base_link"), (reference, root)):
+        d = mujoco.MjData(m)
+        mujoco.mj_forward(m, d)
+        rid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, r)
+        com.append(d.xmat[rid].reshape(3, 3).T @ (d.subtree_com[rid] - d.xpos[rid]))
+    if not np.allclose(com[0], com[1], atol=POSE_TOLERANCE):
+        raise RuntimeError(f"centre of mass {com[0]} relative to base_link, the URDF's is {com[1]}")
+
+
+def verify_tcp(model: mujoco.MjModel) -> None:
+    """Refuse a TCP_POS that is not the centre of the finger pads at q=0, measured on *model*."""
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    for side in ("left", "right"):
+        wid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{side}_wrist_yaw_link")
+        wpos, wmat = data.xpos[wid], data.xmat[wid].reshape(3, 3)
+        pads = []
+        for g in range(model.ngeom):
+            mesh = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_MESH, model.geom_dataid[g])
+            body = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, model.geom_bodyid[g])
+            if model.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH or not (
+                mesh.startswith("dex1_col_") and body.startswith(f"{side}_dex1_finger")
+            ):
+                continue
+            mid = model.geom_dataid[g]
+            vert = model.mesh_vert[
+                model.mesh_vertadr[mid] : model.mesh_vertadr[mid] + model.mesh_vertnum[mid]
+            ]
+            world = vert @ data.geom_xmat[g].reshape(3, 3).T + data.geom_xpos[g]
+            pads.append((world - wpos) @ wmat)
+        if len(pads) != 2:
+            raise RuntimeError(f"{side}: expected two finger collision meshes, found {len(pads)}")
+        span = np.vstack(pads)
+        centre = (span.min(axis=0) + span.max(axis=0)) / 2
+        if not np.allclose(centre, TCP_POS, atol=TCP_TOLERANCE):
+            raise RuntimeError(
+                f"{side}: the pads are centred at {np.round(centre, 4)} in the wrist_yaw frame, "
+                f"TCP_POS says {TCP_POS}. Re-measure before changing the pin."
+            )
 
 
 def find_body(root: ET.Element, name: str) -> ET.Element:
@@ -206,6 +328,16 @@ def find_body(root: ET.Element, name: str) -> ET.Element:
     if body is None:
         raise RuntimeError(f"body {name!r} not in the converted MJCF")
     return body
+
+
+def remove_frame_only_links(root: ET.Element) -> None:
+    """Remove the welded links the URDF declares only as frames; refuse one that carries anything."""
+    parents = {child: parent for parent in root.iter() for child in parent}
+    for name in FRAME_ONLY_LINKS:
+        body = find_body(root, name)
+        if len(body):
+            raise RuntimeError(f"{name} carries {[c.tag for c in body]}; it is not only a frame")
+        parents[body].remove(body)
 
 
 def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
@@ -223,16 +355,18 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
     free.set("limited", "false")
     free.set("actuatorfrclimited", "false")
 
-    # The nav2 scan mount. Inserted after the free joint so the body still reads joint-then-geoms.
-    site = ET.Element(
-        "site", {"name": "lidar", "pos": " ".join(map(str, LIDAR_SITE_POS)), "size": "0.01"}
-    )
-    pelvis.insert(list(pelvis).index(free) + 1, site)
+    remove_frame_only_links(root)
 
     # -- joint defaults, matching unitree_g1.xml ---------------------------------------------------
     default = ET.Element("default")
     ET.SubElement(default, "joint", {"damping": "0.001", "armature": "0.01", "frictionloss": "0.1"})
     root.insert(list(root).index(root.find("compiler")) + 1, default)
+
+    # -- head: the mesh with the Mid-360's opening (g1_head_window.py) -----------------------------
+    head = root.find(f"asset/mesh[@name='{HEAD_MESH}']")
+    if head is None:
+        raise RuntimeError(f"mesh {HEAD_MESH!r} not in the converted MJCF")
+    head.set("file", HEAD_WINDOW_FILE)
 
     # -- feet: replace upstream's single sphere per sole with the roqsim four-sphere footprint --------
     for side in ("left", "right"):
@@ -261,7 +395,7 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
                     f"derived from that range -- re-measure before changing the pin."
                 )
         # Tool centre point between the pads: the frame a grasp is planned to, and MoveIt's
-        # end-effector link origin. Sited on wrist_yaw, which the gripper base is welded into.
+        # end-effector link origin. Sited on wrist_yaw, which the gripper base is welded to.
         wrist = find_body(root, f"{side}_wrist_yaw_link")
         wrist.append(
             ET.Element(
@@ -310,13 +444,13 @@ def apply_roqsim_conventions(xml: str) -> ET.ElementTree:
                 "ctrlrange": f"{2 * FINGER_OPEN * TENDON_COEF} {2 * FINGER_CLOSE * TENDON_COEF}",
                 # Stiff and force-limited, which is how a real gripper grasps: the servo saturates
                 # against `forcerange` (the URDF's 20 N finger effort limit) rather than being told a
-                # gentle position. Both numbers were arrived at by failing:
-                #   * kp=200 gave only kp*err = 2 N at a 10 mm over-closure, so friction (~4.8 N) barely
-                #     matched the 0.5 kg box's weight (4.9 N) and the parcel slid out of the jaws. At
+                # gentle position. Both numbers are set by how lower ones fail:
+                #   * kp=200 gives only kp*err = 2 N at a 10 mm over-closure, so friction (~4.8 N) barely
+                #     matches the 0.5 kg box's weight (4.9 N) and the parcel slides out of the jaws. At
                 #     kp=2000 the same command saturates at 20 N -> ~48 N of friction.
-                #   * kv=5 was underdamped: the servo overshot the commanded aperture by ~9 mm, which
-                #     squeezed a 40 mm box to 28 mm and extruded it sideways before settling on target.
-                #     kv is now near-critical for the ~0.17 kg of moving finger (2*sqrt(kp*m) ~= 37).
+                #   * kv=5 is underdamped: the servo overshoots the commanded aperture by ~9 mm, which
+                #     squeezes a 40 mm box to 28 mm and extrudes it sideways before settling on target.
+                #     kv=40 is near-critical for the ~0.17 kg of moving finger (2*sqrt(kp*m) ~= 37).
                 # The failure in both cases looks like insufficient friction and is not.
                 "kp": "2000",
                 "kv": "40",
@@ -343,10 +477,11 @@ def urdf_for_moveit(prepared_urdf: str, mesh_package: str) -> ET.ElementTree:
         robot to the world with an SRDF ``virtual_joint``, and a URDF floating joint would double it.
       * Mesh references become ``package://<mesh_package>/meshes/...``. The meshes themselves are
         not copied: the ament package installs them from ``roqsim_humanoid``'s vendored set at build time,
-        so there is exactly one copy of 19 MB of STLs in the tree.
-      * The MJCF's roqsim-only additions (the ``lidar`` site, the four-sphere foot contacts, actuators,
-        tendons) have no URDF equivalent and are simply absent -- MoveIt needs kinematics, limits and
-        collision geometry, none of which they affect.
+        so there is exactly one copy of 19 MB of STLs in the tree. The head keeps upstream's uncut
+        mesh: the planner's collision model is not what a lidar sees through.
+      * The MJCF's roqsim-only additions (the four-sphere foot contacts, actuators, tendons) have no
+        URDF equivalent and are simply absent -- MoveIt needs kinematics, limits and collision
+        geometry, none of which they affect.
     """
     root = ET.fromstring(prepared_urdf)
     root.set("name", "unitree_g1_dex1")
@@ -375,7 +510,7 @@ def urdf_for_moveit(prepared_urdf: str, mesh_package: str) -> ET.ElementTree:
 
     # Tool frames. The MJCF carries these as <site>s, which URDF has no equivalent for, so MoveIt would
     # otherwise have no frame to plan a grasp to -- and the obvious substitute, the wrist link, is
-    # 111 mm short of where the fingers actually meet. Massless fixed links at the identical offset, so
+    # 152 mm short of where the fingers actually meet. Massless fixed links at the identical offset, so
     # the sim's `<side>_grasp` site and MoveIt's `<side>_grasp` link are the same point by construction.
     for side in ("left", "right"):
         ET.SubElement(root, "link", {"name": f"{side}_grasp"})
@@ -388,24 +523,60 @@ def urdf_for_moveit(prepared_urdf: str, mesh_package: str) -> ET.ElementTree:
     return ET.ElementTree(root)
 
 
-def copy_meshes(xml_root: ET.Element, src_meshes: Path, dst: Path) -> int:
-    dst.mkdir(parents=True, exist_ok=True)
-    n = 0
-    for mesh in xml_root.findall(".//mesh[@file]"):
+def build(
+    src: Path, prepared_text: str, mesh_dst: Path
+) -> tuple[str, dict[str, bytes], mujoco.MjModel]:
+    """``(MJCF text, {mesh file: bytes}, compiled model)``, with the meshes staged in *mesh_dst*.
+
+    The compiled model is loaded from *mesh_dst*, so what is verified is what would be written.
+    """
+    prepared = src / "_roqsim_build_g1_dex1.urdf"
+    try:
+        prepared.write_text(prepared_text)
+        mjcf, reference = urdf_to_mjcf(prepared)
+    finally:
+        prepared.unlink(missing_ok=True)
+    tree = apply_roqsim_conventions(mjcf)
+    root = tree.getroot()
+    root.find("compiler").set("meshdir", "meshes/unitree_g1_dex1/")
+
+    meshes: dict[str, bytes] = {}
+    for mesh in root.findall(".//mesh[@file]"):
         fname = mesh.get("file")
-        src = src_meshes / fname
-        if not src.exists():
-            raise RuntimeError(f"mesh {fname} referenced but not found in {src_meshes}")
-        shutil.copy2(src, dst / fname)
-        n += 1
-    return n
+        if fname == HEAD_WINDOW_FILE:
+            meshes[fname] = stl_bytes(cut_head(src / "meshes" / f"{HEAD_MESH}.STL", prepared_text))
+            continue
+        source = src / "meshes" / fname
+        if not source.exists():
+            raise RuntimeError(f"mesh {fname} referenced but not found in {src / 'meshes'}")
+        meshes[fname] = source.read_bytes()
+    mesh_dst.mkdir(parents=True, exist_ok=True)
+    for fname, data in meshes.items():
+        (mesh_dst / fname).write_bytes(data)
+
+    xml = ET.tostring(root, encoding="unicode")
+    xml = with_headline(xml, HEADLINE) + "\n"
+    staged = mesh_dst.parent.parent / "_roqsim_build_g1_dex1.xml"
+    try:
+        staged.write_text(xml)
+        model = mujoco.MjModel.from_xml_path(str(staged))
+    finally:
+        staged.unlink(missing_ok=True)
+    verify_against_urdf(model, reference, "pelvis")
+    verify_tcp(model)
+    return xml, meshes, model
 
 
-def main() -> None:
+def main() -> int:
     here = Path(__file__).resolve().parent  # <repo>/external/convert/
     pkg = here.parents[1] / "roqsim_humanoid"
     ap = argparse.ArgumentParser()
     ap.add_argument("--src", type=Path, default=None, help="g1_description dir (default: pinned)")
+    ap.add_argument(
+        "--check",
+        action="store_true",
+        help="rebuild in a scratch directory and fail if the committed model or head mesh differs",
+    )
     # The MoveIt-side URDF is OPTIONAL and its destination is the caller's, because the MoveIt config
     # is not the substrate's -- it belongs to whichever task plans with this robot. This script emits
     # the MJCF; a task that also wants the matching URDF asks for it by path, and owns keeping the two
@@ -425,36 +596,41 @@ def main() -> None:
     if bool(args.moveit_urdf) != bool(args.mesh_package):
         ap.error("--moveit-urdf and --mesh-package must be given together")
 
-    src = args.src or resolve_source(
-        "unitree_ros",
-        UNITREE_ROS_URL,
-        UNITREE_ROS_COMMIT,
-        subdir="robots/g1_description",
-        sparse="robots/g1_description",
-    )
+    src = (
+        args.src
+        or resolve_source(
+            "unitree_ros",
+            UNITREE_ROS_URL,
+            UNITREE_ROS_COMMIT,
+            subdir="robots/g1_description",
+            sparse="robots/g1_description",
+        )
+    ).resolve()
 
     models = pkg / "src/roqsim_humanoid/models"
     out_xml = models / "unitree_g1_dex1.xml"
     mesh_dst = models / "meshes/unitree_g1_dex1"
-
-    prepared = src / "_roqsim_build_g1_dex1.urdf"
     prepared_text = prepare_urdf((src / URDF_NAME).read_text())
-    try:
-        prepared.write_text(prepared_text)
-        tree = apply_roqsim_conventions(urdf_to_mjcf(prepared))
-    finally:
-        prepared.unlink(missing_ok=True)
 
-    root = tree.getroot()
-    # Meshes live beside the model in their own subdir, so set meshdir accordingly.
-    root.find("compiler").set("meshdir", "meshes/unitree_g1_dex1/")
-    n_meshes = copy_meshes(root, src / "meshes", mesh_dst)
-    tree.write(out_xml, encoding="unicode")
-    out_xml.write_text(out_xml.read_text() + "\n")
+    if args.check:
+        with tempfile.TemporaryDirectory() as tmp:
+            xml, meshes, _ = build(src, prepared_text, Path(tmp) / "meshes" / "unitree_g1_dex1")
+        stale = [] if out_xml.is_file() and out_xml.read_text() == xml else [out_xml.name]
+        stale += [f for f, data in meshes.items() if (mesh_dst / f).read_bytes() != data]
+        if stale:
+            print(f"differs from a fresh build - was it hand-edited? {stale}", file=sys.stderr)
+            return 1
+        print(f"{out_xml.name}: up to date with {UNITREE_ROS_COMMIT[:12]}")
+        return 0
 
-    # Compile the emitted model: an MJCF that does not load is worse than no MJCF at all.
-    model = mujoco.MjModel.from_xml_path(str(out_xml))
-    print(f"wrote {out_xml.relative_to(pkg.parent)} ({n_meshes} meshes -> {mesh_dst.name}/)")
+    with tempfile.TemporaryDirectory() as tmp:
+        staging = Path(tmp) / "meshes" / "unitree_g1_dex1"
+        xml, meshes, model = build(src, prepared_text, staging)
+        mesh_dst.mkdir(parents=True, exist_ok=True)
+        for fname in meshes:
+            shutil.copy2(staging / fname, mesh_dst / fname)
+    out_xml.write_text(xml)
+    print(f"wrote {out_xml.relative_to(pkg.parent)} ({len(meshes)} meshes -> {mesh_dst.name}/)")
     print(f"  nq={model.nq} nv={model.nv} nu={model.nu} nbody={model.nbody}")
     print(f"  total mass {sum(model.body_mass):.3f} kg")
 
@@ -465,11 +641,15 @@ def main() -> None:
     if args.moveit_urdf:
         urdf_dst = args.moveit_urdf.resolve()
         if not urdf_dst.parent.is_dir():
-            raise SystemExit(f"error: {urdf_dst.parent} does not exist -- nothing to write the URDF to")
+            raise SystemExit(
+                f"error: {urdf_dst.parent} does not exist -- nothing to write the URDF to"
+            )
         urdf_tree = urdf_for_moveit(prepared_text, args.mesh_package)
         urdf_tree.write(urdf_dst, encoding="unicode")
         urdf_dst.write_text(urdf_dst.read_text() + "\n")
-        joints = [j.get("name") for j in urdf_tree.getroot().iter("joint") if j.get("type") != "fixed"]
+        joints = [
+            j.get("name") for j in urdf_tree.getroot().iter("joint") if j.get("type") != "fixed"
+        ]
         print(f"wrote {urdf_dst} ({len(joints)} movable joints)")
         # The two artifacts must name the same joints, or MoveIt plans for joints the controller does
         # not own. Cheap to check here, expensive to discover at execution time.
@@ -478,7 +658,8 @@ def main() -> None:
         } - {"base_free"}
         if missing := sorted(set(joints) - mjcf_joints):
             raise RuntimeError(f"URDF joints absent from the MJCF: {missing}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

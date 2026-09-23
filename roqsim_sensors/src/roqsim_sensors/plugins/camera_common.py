@@ -88,7 +88,7 @@ def intrinsics_from_model(
        "unset" value is 0), because then the model describes a real lens: ``fx != fy`` and an
        off-centre principal point are both expressible, and the projection matrix already honours
        them.
-    2. **``fovy``** -- the historical path, and still the default. One angle cannot express a
+    2. **``fovy``** -- the default. One angle cannot express a
        non-central principal point, so ``cx, cy`` land at the image centre and ``fx == fy``.
 
     Plugin config overrides either, per field, and is applied last -- that is how a world states a
@@ -191,10 +191,10 @@ def sibling_topic(topic: str, name: str) -> str:
 class CameraPlugin(Plugin):
     """Base for a ``post_step`` RGB(-D) camera rendered from a named MuJoCo ``<camera>``.
 
-    Config::
+    Config -- a component of the entry that spawns the robot or sensor mount it rides
+    on, since ownership is where the entry sits rather than a config key::
 
         <plugin short name>:
-          robot: robot
           namespace: ""          # transport scope (default: inherited from spawn_robot's namespace)
           camera: <DEFAULT_CAMERA>
           width: null            # override the MJCF's resolution
@@ -405,9 +405,8 @@ class CameraPlugin(Plugin):
 
         Every one that CARRIES A RENDER PASS, not just the colour image: a subclass's depth or point
         cloud is produced by ``_capture_extra`` off the same render, so gating on the colour endpoint
-        alone means a consumer that wants only depth gets an endless stream of nothing. That is not
-        hypothetical -- MoveIt's octomap updater subscribes to the point cloud and never to the colour
-        image, and it silently saw an empty world until this looked at both.
+        alone means a consumer that wants only depth gets an endless stream of nothing. MoveIt's
+        octomap updater, for one, subscribes to the point cloud and never to the colour image.
 
         ``camera_info`` is deliberately NOT here: it needs no render, so a lone info subscriber (an
         rviz panel, say) must not switch the renderer on.

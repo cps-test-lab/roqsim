@@ -486,6 +486,55 @@ def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
         msg.effort = _as_f64(rest[0])
 
 
+@converter("geometry_msgs.msg.PointStamped")
+def fill_point_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A point, from either an ``(x, y, z)`` sequence or any payload carrying ``.x``/``.y``/``.z``.
+
+    Both shapes because a producer of a point usually has more to say than the point -- a contact
+    report carries what kind of contact it was and how spread out -- and the message can only carry
+    the centre. Reading the attributes off the richer payload keeps the producer's own type intact.
+    """
+    if hasattr(payload, "x"):
+        x, y, z = payload.x, payload.y, payload.z
+    else:
+        x, y, z = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.point.x, msg.point.y, msg.point.z = float(x), float(y), float(z)
+
+
+@converter("geometry_msgs.msg.WrenchStamped")
+def fill_wrench_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A six-axis force/torque reading, ``(force_xyz, torque_xyz)``.
+
+    The frame matters as much as the numbers: a wrench reported in the sensor frame and consumed as
+    if it were the world's produces a controller that drifts sideways under load. The producer states
+    which frame it resolved into, and it lands here as the header frame so a subscriber can tell.
+    """
+    force, torque = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z = (float(v) for v in force)
+    msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z = (float(v) for v in torque)
+
+
+@converter("geometry_msgs.msg.PoseStamped")
+def fill_pose_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A pose as ``(position_xyz, quaternion_wxyz)`` -- MuJoCo's quaternion order, not ROS's.
+
+    The reorder is the whole reason this is not a reflective fill: MuJoCo puts w first and ROS puts
+    it last, and a quaternion passed straight through is a rotation nobody commanded, wrong in a way
+    that still looks like a valid orientation.
+    """
+    position, quat = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = (float(v) for v in position)
+    w, x, y, z = (float(v) for v in quat)
+    msg.pose.orientation.x, msg.pose.orientation.y = x, y
+    msg.pose.orientation.z, msg.pose.orientation.w = z, w
+
+
 @converter("control_msgs.msg.JointTrajectoryControllerState")
 def fill_controller_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, desired, actual, velocities). The third interface a ros2_control
@@ -659,13 +708,32 @@ def decode_ackermann_stamped(msg) -> tuple[float, float]:
 
 
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[float, float, float, float]:
-    """Position setpoint -> neutral ``(x, y, z, yaw)``. Yaw is projected out of the quaternion: a
-    setpoint names where to be and which way to face, and no consumer of this payload commands
-    pitch or roll -- an airframe holds those to fly, it is not told them."""
+def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...]]:
+    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz)``, in MuJoCo's quaternion order.
+
+    The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
+    division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
+    every consumer of the type, and a Cartesian controller commanded to hold its tool upright needs
+    exactly the part that would have been thrown away.
+    """
     q = msg.pose.orientation
-    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-    return (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z, yaw)
+    return (
+        (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
+        (q.w, q.x, q.y, q.z),
+    )
+
+
+def yaw_of(quat) -> float:
+    """Yaw from a ``(w, x, y, z)`` quaternion, for a consumer that commands only heading."""
+    w, x, y, z = quat
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+@decoder("geometry_msgs.msg.WrenchStamped")
+def decode_wrench_stamped(msg) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Wrench setpoint -> neutral ``(force_xyz, torque_xyz)``, the shape a wrench reader reads out."""
+    f, t = msg.wrench.force, msg.wrench.torque
+    return ((f.x, f.y, f.z), (t.x, t.y, t.z))
 
 
 @decoder("trajectory_msgs.msg.JointTrajectory")

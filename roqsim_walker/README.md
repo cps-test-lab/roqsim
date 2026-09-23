@@ -5,13 +5,18 @@ Kinematic pedestrian **walkers** for roqsim. Pure Python + MuJoCo: **no ROS depe
 A walker is a character mesh skinned onto a 17-joint skeleton of MuJoCo **mocap bodies**.
 Blueprints are discovered across every installed `roqsim.models` provider, so a downstream
 package can ship its own characters and a world still names only the walker. Body
-pose comes from motion clips; the nav root comes from an A\* planner + a py-trees behaviour tree +
-(optionally) ORCA local avoidance. Because it is fully kinematic it adds **zero DOFs** to the solver,
-yet its per-limb collision capsules are what the robot's lidar and contacts see.
+pose comes from motion clips. Because it is fully kinematic it adds **zero DOFs** to the solver, yet
+its per-limb collision capsules are what the robot's lidar and contacts see — and, because the solver
+treats a mocap body as immovable, a walker will shove anything free that it walks into.
+
+**Navigation is not here.** A walker is one *embodiment* of `roqsim_nav`'s navigator — the `walker`
+output this package registers — so a pedestrian, a robot and a driven prop are moved by the same
+plugin and differ only in what the motion is written into. This package owns the body: the skeleton,
+the skin, the blueprints and the motion clips.
 
 It either **patrols** a configured route, or is **driven to goals** through a backend-neutral
-endpoint — which the ROS 2 bridge serves as `nav2_msgs/NavigateThroughPoses`
-(see `ros2_ws/src/roqsim_walker_ros`).
+endpoint — which the ROS 2 bridge serves as `nav2_msgs/NavigateToPose` and
+`NavigateThroughPoses` (see `ros2_ws/src/roqsim_nav_ros`).
 
 ## Quick start
 

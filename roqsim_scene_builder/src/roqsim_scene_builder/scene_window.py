@@ -80,10 +80,11 @@ from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 # color_for / rgba_hex are re-exported here so callers (and tests) can import the whole annotation
-# vocabulary from the 3D window module as before the theme moved to annotate_ui.
+# vocabulary from the 3D window module, although the theme lives in annotate_ui.
 __all__ = [
     "Dot",
     "DotModel",
@@ -180,7 +181,9 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
                     file=sys.stderr,
                     flush=True,
                 )
-    engine = Engine(cfg)
+    # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
+    # one rather than the driver's to resolve.
+    engine = Engine(cfg, preview=True)
     engine.setup()
     engine.reset()
     for _ in range(max(0, settle_steps)):
@@ -464,6 +467,7 @@ class _ReviewApp:
 
         root = tk.Tk()
         root.title("roqsim scene review")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root = root
@@ -520,7 +524,7 @@ class _ReviewApp:
 
         # Footer FIRST, pinned to the bottom, so Pass/Fail are reachable however long the caller's
         # message is and however many dots are dropped. Tk hands out parcels in packing order: packed
-        # last, as this was, the buttons got whatever cavity the text above had not already eaten.
+        # last, the buttons get whatever cavity the text above has not already eaten.
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         self.comment = build_comment_box(tk, footer)
@@ -1075,7 +1079,7 @@ class _ReviewApp:
 
         cfg = self.engine.config
         cam = self.fr.camera
-        new = Engine(cfg)
+        new = Engine(cfg, preview=True)  # a rebuilt preview, same reasoning as the first build
         new.setup()
         new.reset()
         for _ in range(max(0, self.settle_steps)):

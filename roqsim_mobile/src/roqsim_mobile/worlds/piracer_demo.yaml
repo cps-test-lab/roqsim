@@ -23,8 +23,9 @@ components:
   # with v = 0 would leave it sitting still however large the yaw rate, because curvature is w/v.
   - spawn_robot:
       model: piracer
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

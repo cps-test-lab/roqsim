@@ -59,8 +59,8 @@ def world(tmp_path):
             {
                 "spawn_model": {
                     "model": str(tmp_path / "rover.xml"),
-                    "pos": [0.0, 0.0],
-                    "free": True,
+                    "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    "motion": "physics",
                 },
                 "name": "robot",
                 "components": [{"clearance_monitor": {"ignore": ["floor"]}}],

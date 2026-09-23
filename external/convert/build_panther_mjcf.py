@@ -1,22 +1,21 @@
 #!/usr/bin/env python3
 """Build roqsim's Husarion Panther MJCF from `husarion/husarion_ugv_ros`'s description.
 
-The third xacro-tree port, and the cheapest of them: the Husarion path was already established by the
-ROSbot, and this vendor is unusually generous with what it publishes. Every mass, inertia, link
-offset and wheel parameter below is Husarion's own value, read out of the expanded xacro and
-``config/WH01.yaml``.
+The cheapest xacro-tree port: it follows the ROSbot's Husarion path, and this vendor is unusually
+generous with what it publishes. Every mass, inertia, link offset and wheel parameter below is
+Husarion's own value, read out of the expanded xacro and ``config/WH01.yaml``.
 
-Two things this source gives that the earlier ports had to work for:
+Two things this source gives that the other xacro-tree ports have to supply themselves:
 
 * **A real collision mesh.** ``meshes/panther/base_collision.stl`` is 9.7 kB against the visual
-  ``base.dae``'s 1.4 MB -- a genuinely simplified hull, not the copy-of-the-visual-CAD that made the
-  Doosan port fit its own primitives. It is used as shipped, which is what the porting playbook asks
-  for whenever a vendor supplies one.
+  ``base.dae``'s 1.4 MB -- a genuinely simplified hull, not the copy-of-the-visual-CAD that makes
+  the Doosan port fit its own primitives. It is used as shipped, which is what the porting playbook
+  asks for whenever a vendor supplies one.
 * **A published skid-steer correction.** ``husarion_ugv_controller``'s ``WH01_controller.yaml``
   carries ``wheel_separation_multiplier: 1.5``, which is the same quantity as our ``slip_factor``:
-  the ICR compensation a skid-steer needs because it turns by scrubbing. The husky's 3.0 had to be
-  calibrated blind; this one starts from a vendor number and is then re-measured against *this*
-  model's friction, mass and timestep (see the manifest).
+  the ICR compensation a skid-steer needs because it turns by scrubbing. The husky's 3.0 is
+  calibrated with no vendor number; this one starts from a vendor number and is then re-measured
+  against *this* model's friction, mass and timestep (see the manifest).
 
 Like the ROSbot, only the base robot is built. The vendor's top-level ``panther.urdf.xacro`` pulls in
 ``husarion_components_description``, a separate repository bolting on whichever sensors a unit was
@@ -211,9 +210,6 @@ TEMPLATE = """<mujoco model="panther">
       <body name="body_link" pos="0 0 0">
         <inertial pos="{body_pos}" mass="{body_mass}" diaginertia="{body_inertia}"/>
 {body_geoms}        <geom class="collision" mesh="base_collision"/>
-        <!-- The lidar mast. Height is an assumption (see the port log): the base description ships
-             no scanner, because Husarion keeps sensors in a separate package. -->
-        <site name="lidar" pos="0 0 0.2035" size="0.008" rgba="1 0 0 0.6"/>
 {wheels}      </body>
     </body>
   </worldbody>

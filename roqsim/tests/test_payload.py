@@ -44,10 +44,10 @@ def _ctx(scene=SCENE, *, seed=7, body="cart"):
     return ctx
 
 
-def _plugin(cls, config, *, name="p"):
+def _plugin(cls, config, *, name="p", entity="robot"):
     """A configured plugin. Config errors are raised rather than returned."""
-    plugin = cls(config, name=name, entity="robot")
-    errors = plugin.validate_config(config)
+    plugin = cls(config, name=name, entity=entity)
+    errors = plugin.config_errors(config)
     if errors:
         raise ValueError("; ".join(errors))
     return plugin
@@ -66,9 +66,9 @@ def test_the_added_mass_reaches_the_dynamics():
     for mass in (0.0, 1.0):
         ctx = _ctx()
         _plugin(PayloadPlugin, {"mass": mass}).configure(ctx)
-        ctx.data.xfrc_applied[
-            mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart"), 0
-        ] = 1.0
+        ctx.data.xfrc_applied[mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "cart"), 0] = (
+            1.0
+        )
         mujoco.mj_forward(ctx.model, ctx.data)
         accelerations[mass] = float(ctx.data.qacc[0])
     # 1 N on 1 kg, then on 2 kg.
@@ -105,5 +105,7 @@ def test_requires_a_mass():
 
 
 def test_names_the_entity_it_could_not_find():
+    # The entity comes from the entry this one is nested under, so an absent one is an owner that
+    # registered nothing -- not a config key pointing somewhere else.
     with pytest.raises(RuntimeError, match="no entity named"):
-        _plugin(PayloadPlugin, {"mass": 0.5, "robot": "absent"}).configure(_ctx())
+        _plugin(PayloadPlugin, {"mass": 0.5}, entity="absent").configure(_ctx())

@@ -3,10 +3,9 @@
 # `spawn_robot: {model: makerspet_mini}` pulls these in automatically, so a world does not re-declare
 # the robot's intrinsic kinematics/sensors.
 #
-# NOTHING here is an assumption of ours: every value is the description's own, from urdf/params.xacro,
-# urdf/plugins.xacro and config/navigation.yaml. That is unusual -- most mobile ports here have to
-# invent at least a scanner mount height -- and it is the same property the OOMWOO vacuum has, from
-# the same vendor.
+# Drive values are the description's own, from urdf/params.xacro and config/navigation.yaml. The scan
+# is the real robot's: its LD14P as Maker's Pet configures the publishing node (config/telem.yaml),
+# at the height of the manufacturer's CAD.
 components:
   # A TRUE two-wheel differential drive with a modelled caster -- so no slip_factor, the same line
   # turtlebot3_waffle, raspimouse and oomwoo_one draw. It does not turn by scrubbing.
@@ -20,16 +19,45 @@ components:
       right_actuators: [wheel_right_motor]
       left_joints:  [wheel_left_joint]
       right_joints: [wheel_right_joint]
-  # The vendor's own scan, from plugins.xacro's laser_scan_sensor: 360 samples over a full turn,
-  # 0.1-10 m, 5 Hz. The mount is the description's scan_joint -- 0.0704 m above base_link with the
-  # puck INVERTED (rpy -pi), which is how this design fits a 360-degree scanner under its head.
+  # The scanner is an LDROBOT LD14P, embedded rather than a device model: no manufacturer data sheet
+  # could be retrieved (its published URL returns no document) and the one housing drawing is in the
+  # store's CAD, so there is no source for a device's housing or its accuracy.
+  #
+  # MOUNT. Frame and rotation are the description's scan_joint, rpy (0, -pi, 0): the frame the robot
+  # stamps its scan in, so the `lidar` site carries it and bearings are measured as a consumer reads
+  # them. The height is the manufacturer's CAD, not the description's 0.0704: makerspet/store
+  # @ e338516e MINI-BDC30P-BODY v1.0.1 STEP stands the LD14P upright on its skirt with its rotating
+  # optical block 68.0-76.5 mm above the floor, and base_link stands 14.9 mm above the floor, so the
+  # site is at z 0.05735 (build_makerspet_mjcf.CAD_SCAN_HEIGHT). The rays skip only base_scan; the
+  # head ends at the puck's bottom face, z 0.04935, as the real Mini has no body material beside its
+  # LiDAR, and the CAD's four posts end 17 mm below the scan plane -- see the port log.
+  #
+  # PUBLISHED SCAN: Maker's Pet's config/telem.yaml (@ 77d196b, :4-7) runs kaiaai/kaiaai_telemetry
+  # (@ 7ea0d663) with lidar_model LDROBOT-LD14P and mask_radius_meters 0.0625. For that model the node's
+  # config/telem.yaml:13-19 sets 720 rays, angle offset 0, range 0.1-8.0 m; src/telem.cpp publishes
+  # angle_min = offset, angle_max = offset + 360 deg * 719/720 (:473-477), bins each point to the
+  # nearest 0.5 deg (:421-428), and every bin with no point stays 0.0 (:435), as does a point the
+  # device reports at distance 0 (:410) or within the mask radius (:415).
   - lidar:
       site: lidar
-      frame_id: laser
-      rays: 360
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.1
-      max_range: 10.0
-      rate_hz: 5.0
-      exclude_body: base_link
+      frame_id: base_scan
+      rays: 720                      # kaiaai_telemetry config/telem.yaml:15 (pub_scan_size)
+      angle_min: 0.0                 # config/telem.yaml:14 (angle_offset_deg 0.0)
+      angle_max: 6.274458661         # 359.5 deg, the last bin (src/telem.cpp:474)
+      range_min: 0.1                 # config/telem.yaml:17
+      max_range: 8.0                 # config/telem.yaml:18
+      # Physical limits: LD14P 0.1-8 m at 80% reflectivity (0.1-6 m at 4%), Maker's Pet's LD14P
+      # product page (https://makerspet.com/product/ldrobot-ld14p-lidar/).
+      detection_min: 0.1
+      detection_max: 8.0
+      # Nothing measured is a 0.0 in the published array (see PUBLISHED SCAN). What the LD14P reports
+      # for a surface nearer than 0.1 m is unverified; kaiaai_telemetry zeroes anything within 0.0625 m.
+      too_close: 0.0
+      no_return: 0.0
+      rate_hz: 6.0                   # LDROBOT LD14P Development Manual V0.2 1.2: 6 Hz default speed
+      # Neither LDROBOT nor Maker's Pet states a ranging accuracy, so no noise is applied. The
+      # description's Gazebo block (plugins.xacro:34-64: 360 samples, 0.1-10 m, 5 Hz, stddev 0.01)
+      # matches no LD14P figure and is not a value for this scanner.
+      range_stddev: 0.0
+      exclude_body: base_scan
+      tf_parent: base_link

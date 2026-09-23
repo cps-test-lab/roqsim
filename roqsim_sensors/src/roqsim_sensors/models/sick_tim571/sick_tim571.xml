@@ -1,0 +1,37 @@
+<mujoco model="sick_tim571">
+  <!--
+    SICK TiM571 2D lidar: a standalone mount (housing mesh + a `scan` site) for the `spawn_sensor`
+    plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from PAL Robotics `pal_urdf_utils` (sick_tim571_laser.urdf.xacro), the macro TIAGo Pro's
+    base lasers use: the body is `<name>_link` and the scan is stamped in it. The vendor macro draws
+    the TiM571 with the TiM551 mesh -- the same TiM5xx housing -- and no TiM571 mesh exists upstream.
+    Inertial as the vendor writes it (0.289 kg; the datasheet weight is 250 g).
+
+    Body-local axes: x = the scan's zero bearing, z = up. The dimensional drawing puts the light
+    emission level 23.3 mm below the housing top, which is where the mesh places the vendor frame.
+
+    Built by external/convert/build_scanner_devices.py from pal_urdf_utils @ 775cdd6886296e6c00f17dbdfd9bcdd20e0e6622.
+    Scan parameters and the `frames:` entry for this site are in sick_tim571.manifest.yaml; see
+    sick_tim571_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="sick_tim551_mat" rgba="0.1 0.1 0.1 1"/>
+    <mesh name="sick_tim551" file="sick_tim551.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="-0.02559 -0.00056 -0.05732" mass="0.28922" fullinertia="0.00002628919 0.00003374542 0.00005832599 0.00000024298 -0.00000368129 -0.0000000133"/>
+      <geom name="sick_tim571_visual" type="mesh" mesh="sick_tim551" material="sick_tim551_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision: a 1 cm cylinder at the link origin, not the housing. -->
+      <geom name="sick_tim571_collision" type="cylinder" pos="0 0 0" size="0.01 0.005" group="3"/>
+      <!-- The vendor scan frame (<name>_link) is the mount itself.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -31,11 +31,11 @@ never collide and land in ``Never`` -- consistent, not a special case.
 
 The base joint is computed too
 ------------------------------
-Whether the robot's base FLOATS is the other mechanical fact in this file, and it used to be assumed:
-a ``planar`` ``virtual_joint`` from ``odom`` was emitted unconditionally, which is right for the mobile
-manipulators the substrate mostly serves and wrong for an arm bolted to a pedestal. It is readable from
-the model -- a floating base rides a MuJoCo free joint, a bolted one is welded to the world -- so
-``resolve_base_joint`` reads it instead, and ``--base-joint`` only overrides the verdict.
+Whether the robot's base FLOATS is the other mechanical fact in this file, and it is computed rather
+than assumed. Emitting a ``planar`` ``virtual_joint`` from ``odom`` unconditionally is right for the
+mobile manipulators the substrate mostly serves and wrong for an arm bolted to a pedestal. It is
+readable from the model -- a floating base rides a MuJoCo free joint, a bolted one is welded to the
+world -- so ``resolve_base_joint`` reads it, and ``--base-joint`` only overrides the verdict.
 
 Getting it wrong is expensive and nearly silent, which is why it is computed and why the two
 directions are treated differently. A virtual joint nothing publishes leaves move_group logging "The
@@ -236,8 +236,8 @@ def _require_self_collision(model: mujoco.MjModel, links: dict[int, str]) -> Non
 
     Every pair would come back ``Never`` on no evidence, which is not a conservative default but the
     most dangerous possible SRDF: it disables self-collision checking for the whole robot, and nothing
-    downstream says so. Measured on the TIAGo Pro before this check existed: 0 contacts over 200 random
-    poses, 1711 pairs marked ``Never``, 0 marked ``Always``.
+    downstream says so. A masked-apart two-arm model samples 200 random poses without a single
+    contact, which the matrix reports as seventeen hundred pairs that can never touch.
     """
     collidable = [
         g

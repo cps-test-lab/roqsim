@@ -5,13 +5,13 @@ reached bare through ``<compiler meshdir="meshes">`` -- and its manifest, licenc
 beside it. Same shape as ``roqsim_manipulation_assets`` and ``roqsim_assets``, and a form
 :func:`roqsim.models.resolve_model` accepts directly.
 
-This replaced every MJCF flat in this directory over one shared ``meshes/``. Two reasons it had to
-go, both specific to sensors: a device's mesh files could only be kept apart from another's by
-prefixing each one (``mid360_body.obj``, ``zivid_body.obj`` -- the folder does that job now), and
-three of the six models have meshes that are *generated, not committed* (see
-``external/external_assets.yaml``), so a pooled dir mixed tracked and git-ignored files with nothing
-in the path to say which was which. A folder makes the grouping the filesystem's job: adding or
-removing a sensor is one ``mv``, and its licence sidecar travels with the mesh it covers.
+Not every MJCF flat in this directory over one shared ``meshes/``, for two reasons specific to
+sensors: there a device's mesh files could only be kept apart from another's by prefixing each one
+(``mid360_body.obj``, ``zivid_body.obj`` -- the folder does that job), and three of the six models
+have meshes that are *generated, not committed* (see ``external/external_assets.yaml``), so a pooled
+dir would mix tracked and git-ignored files with nothing in the path to say which was which. A
+folder makes the grouping the filesystem's job: adding or removing a sensor is one ``mv``, and its
+licence sidecar travels with the mesh it covers.
 
 ``MESHES_DIR`` is this directory rather than a ``meshes/`` child, because with per-model folders the
 root a mesh reference resolves against IS the models root: a model reaches its own meshes through its

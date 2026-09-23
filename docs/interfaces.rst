@@ -24,19 +24,55 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
      - "./plugins/x.py:Foo": { ... }    # (3) path to a .py file (relative to this YAML)
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
-plus an optional reserved ``name:`` sibling. The plugin ref has three resolution forms:
+plus an optional reserved ``name:`` sibling, which defaults to the ref. Writing ``name:`` *inside* the
+config map is refused with the corrected spelling: no plugin reads it there, and a document that
+placed it there would load with every entry answering to the plugin's ref. The plugin ref has three
+resolution forms:
 
 #. **short name** — a registered ``roqsim.plugins`` entry-point.
 #. **module.path:Class** — imported off ``PYTHONPATH``.
 #. **path/to/file.py:Class** — loaded directly from a file (relative to the YAML).
 
-Because forms 2 and 3 contain a colon and the ref is now the entry's *key*, **quote it**
+Because forms 2 and 3 contain a colon and the ref is the entry's *key*, **quote it**
 (``- "my_pkg.mod:MyPlugin": {...}``): unquoted it parses only while no space follows the colon, so a
 stray ``key: value`` space would silently truncate the ref. Short names have no colon and need no
 quotes.
 
 Each plugin validates its own ``config:`` section; the engine aggregates all errors and fails fast
 before the scene is built.
+
+Stating a joint's gains (``actuators:``)
+````````````````````````````````````````
+
+A spawn plugin's ``actuators:`` block says what law the model's joints run under, and with which
+gains, without editing the shared model file. Start from the names it keys on::
+
+   roqsim catalog model ur5e     # lists the actuators, and the joint each drives
+
+Then state the law once, and only what differs per actuator:
+
+.. code-block:: yaml
+
+   - spawn_arm:
+       model: ur5e
+       actuators:
+         control: impedance     # position | velocity | effort | impedance
+         stiffness: 2.0         # N*m/rad
+         damping: 0.02          # N*m*s/rad
+         each:
+           shoulder_lift: {stiffness: 5.0, effort_limit: 150}   # N*m
+           wrist_3: {control: position, p: 2000, d: 500}
+
+Anything not stated keeps the model's own value, so a world says what the experiment fixes and
+nothing else. The names in ``each:`` are **actuator** names (``wrist_3``), not joint names
+(``wrist_3_joint``) — a joint name is refused, naming the actuator that drives it.
+
+The gains a real robot exposes are the ones written here: ``control`` is a ros2_control command
+interface, ``p``/``d`` are a controller's PID gains, ``effort_limit`` is URDF's ``<limit effort=>``.
+``impedance`` is joint-impedance control — a position law that also carries the arm's own weight, so
+a soft stiffness holds a pose instead of folding; at zero gravity it is identical to ``position``.
+Which law and gains every joint ended up with is written into the run's recording, so a result can
+state what its joints ran under. See :ref:`architecture` for the full mechanism.
 
 Overriding the world
 --------------------
@@ -121,6 +157,12 @@ This replaces a rewrite that copied the world to a temporary file and appended t
 implemented twice in one experiment, in bash and in Python. Nothing is copied now, so the scene's
 relative path needs no fixing up either.
 
+Once up, the bridge holds the graph to its endpoints' types. A ROS 2 topic is one name and one
+type, and the middleware never connects a publisher of another type to it -- nor logs that it did
+not -- so a stack sending a plain ``Twist`` to a base subscribing ``TwistStamped`` shows up only as
+a robot that never moves. The bridge asks the graph once a second and fails the run when a peer of
+another type sits on one of its topics, naming the topic, both types and both sides.
+
 Choosing a GL backend
 ---------------------
 
@@ -141,10 +183,10 @@ cannot know.
 
 The **package** ``__init__`` is the call site, not a driver's ``main``, and that is load-bearing
 rather than tidy. A driver's own module-level imports reach mujoco long before its ``main`` body
-executes, so a selection made there is made too late to bind anything -- which is exactly what
-happened: the choice lived in ``roqsim.runner.main``, was silently ineffective for every headless
-run, and stayed invisible because a world with no camera never constructs a ``Renderer``. The first
-camera world dispatched to a cluster is what finally instantiated the mis-bound backend.
+executes, so a selection made there (in ``roqsim.runner.main``, say) is made too late to bind
+anything. It is silently ineffective for every headless run, and stays invisible because a world
+with no camera never constructs a ``Renderer``: the first camera world on a headless node is what
+instantiates the mis-bound backend.
 
 Because the residual case -- a consumer that imports ``mujoco`` before ``roqsim`` -- cannot be
 reached from here, :func:`roqsim.rendering.check_gl_backend` guards every renderer in the tree and
@@ -170,6 +212,16 @@ caller is often not a roqsim process: something staging a world into a container
 reason to have roqsim installed, so it asks the image that does. ``packaged: true`` means the files
 arrive with an installed package and nothing has to travel.
 
+The walk is best-effort: a world that does not fully resolve yields what *was* resolved, so a
+caller about to report its own error is not pre-empted by this one. ``--require-complete`` is for
+the caller who cannot use that answer -- one copying these files somewhere the originals are
+unreachable -- and it fails instead, naming on stderr every part it gave up on: an ``extends`` that
+does not resolve, a YAML in the chain it cannot read, a world that does not load, a plugin it
+cannot ask. A file that is simply *absent* is not one of those: dropping it is the contract
+``Plugin.sources`` is written against, where an optional file needs no guard. Without the flag a
+short list and a whole one are the same value, and what is missing surfaces wherever the files were
+going -- after the copy.
+
 Listing what a world provides
 ------------------------------
 
@@ -180,10 +232,12 @@ The other half of the same question, for a caller holding an *override* rather t
     "plugins": [{"address": "robot", "ref": "spawn_robot", "name": "robot",
                  "entity": null, "enabled": true, "origin": "document",
                  "paths": ["components.robot.model", "components.robot.pos"]},
-                {"address": "robot.lidar", "ref": "lidar", "name": null,
-                 "entity": "robot", "enabled": true, "origin": "manifest",
-                 "paths": ["components.robot.lidar.rays", "components.robot.lidar.max_range"]}],
-    "addresses": ["robot", "robot.diff_drive", "robot.lidar", "robot.oakd_camera"],
+                {"address": "robot.rplidar.lidar", "ref": "lidar", "name": null,
+                 "entity": "robot.rplidar", "enabled": true, "origin": "manifest",
+                 "paths": ["components.robot.rplidar.lidar.rays",
+                           "components.robot.rplidar.lidar.max_range"]}],
+    "addresses": ["robot", "robot.diff_drive", "robot.rplidar", "robot.rplidar.lidar",
+                  "robot.oakd_camera"],
     "entities": null}
 
 ``plugins`` reports every component that will **run** -- the document's own entries and everything its
@@ -202,7 +256,7 @@ image pull.
 
 ``entities`` is ``null`` unless ``--entities`` is passed, because naming them means compiling the
 model. There is no cheaper way to ask: which entities exist is settled at compile time, since roqsim
-never recompiles mid-run and ``simulation_interfaces`` serves no ``SpawnEntity``. A caller checking
+never recompiles mid-run -- ``SpawnEntity`` makes a declared entity present, it adds none. A caller checking
 that a scenario only drives entities the world has pays for it; one resolving paths does not.
 
 ``overridable`` answers the same question one layer down, for the model values a run can change while
@@ -251,8 +305,8 @@ That build has **no transport in it**, and ``dropped_transport`` names what went
 
 A describe publishes nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim
 render`` and the exporters -- and since the ROS bridge ships in a colcon package, a pip-only
-environment cannot resolve it at all, which used to fail the build over plugins that contribute no
-geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
+environment cannot resolve it at all, so requiring it would fail a describe over plugins that
+contribute no geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
 ``drop_transport_plugins``): a misspelt geometry plugin has to stay fatal, because dropping it would
 leave an entity missing from a list a caller reads as complete. The bridge is still in ``plugins``,
 so ``plugins.ros2_bridge.*`` remains a checkable override.
@@ -282,17 +336,50 @@ inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elem
    disable:                       # OPTIONAL: drop inherited plugins by name (needs ``extends``)
      - graspable_box
    components:                    # child entries are APPENDED after the (kept) parent entries
-     - spawn_robot: {model: oli, name: oli, prefix: oli_, pos: [13.2, 2.6]}
+     - spawn_robot: {model: oli, name: oli, prefix: oli_, pose: {position: {x: 13.2, y: 2.6}}}
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
 ``roqsim.worlds`` provider (to that provider's ``<world>.yaml``), or a path relative to the child
-YAML's dir. The parent's relative ``sim.world`` is absolutized so it keeps resolving from the child's
-location, and parent worlds may themselves ``extends`` (cycles are rejected).
+YAML's dir. The parent's relative ``sim.world`` keeps resolving from the child's location: a path
+parent's becomes an absolute path, and a package parent's becomes a ``<package>:<path>`` ref
+(``roqsim_scenes:depot/depot.xml``) -- by reference, never by where this interpreter has the package
+installed, so a run's provenance rebuilds on any machine that has the package. Parent worlds may
+themselves ``extends`` (cycles are rejected).
 
 ``disable`` selectors match a plugin's reserved ``name:`` **or** its config ``name`` field (e.g.
 ``spawn_model: {name: graspable_box, ...}``); a selector that matches nothing is an error, not a
 silent no-op. There is no separate "modify" key -- to change an inherited plugin, ``disable`` it and
 re-add a tweaked copy in the child's ``plugins``.
+
+Drawing on a render (``roqsim.render_overlays``)
+-------------------------------------------------
+
+``roqsim render`` draws a recording one sample per frame, and an **overlay** paints on each frame
+after the scene is rasterised and before it is encoded -- in pixels, with the sample's simulated time
+in hand. ``clock`` ships with roqsim; any installed package adds its own under the
+``roqsim.render_overlays`` entry-point group, and it is then available by name on the command line and in a
+shot document without roqsim knowing it::
+
+   [project.entry-points."roqsim.render_overlays"]
+   costmap = "some_package.video:CostmapOverlay"
+
+The contract is small and duck-typed. An overlay is constructed as ``cls(placement, **options)`` --
+or through a ``from_spec(options, placement)`` classmethod where it wants to validate them -- and
+provides::
+
+   name: str
+   prepare(width, height, *, state) -> None     # optional; once, before the first frame
+   draw(frame, t) -> frame                      # every frame
+
+``frame`` is the rendered picture as an ``HxWx3`` ``uint8`` array and may be painted in place; what
+comes back must be the same shape and type, and a frame that is not is refused *by the overlay's
+name* rather than handed to the encoder, which would silently produce a sheared video. ``state`` is
+the recording being drawn (a path, or ``None``), so an overlay that reads files beside it can find them
+without being told where. ``placement`` (:class:`roqsim.render_overlays.Placement`) carries the three
+options every overlay shares -- ``anchor``, ``width`` as a fraction of the frame, ``margin`` -- and
+:func:`roqsim.render_overlays.paste` composites a PIL image at it.
+
+``roqsim render --overlay list`` prints what this environment registers, with where each comes from.
 
 The plugin lifecycle
 --------------------
@@ -346,6 +433,64 @@ Every hook receives a ``SimContext`` with:
   another thread.
 * ``control`` — run-control (play / pause / step / reset) consulted by the standalone driver.
 
+Switching an arm between controllers
+------------------------------------
+
+A robot that registers controllers is served a ``controller_manager`` at
+``/<namespace>/controller_manager``, with the message set and the semantics ros2_control uses --
+so ``ros2 control list_controllers`` and ``ros2 run controller_manager spawner`` work against a
+world, and a scenario that switches here is the scenario that switches on the robot. Nothing in a
+world asks for it: on real hardware nobody opts into a controller manager, and a robot with no
+controllers is served none.
+
+.. list-table::
+   :header-rows: 1
+   :widths: 34 66
+
+   * - service
+     - what it does
+   * - ``list_controllers``
+     - every controller of that robot, with its state and what it holds
+   * - ``switch_controller``
+     - activate and deactivate, atomically
+   * - ``load_controller`` / ``configure_controller``
+     - move a **declared** controller to ``inactive``
+   * - ``unload_controller``
+     - refused while the controller is active, as upstream refuses it
+   * - ``list_hardware_interfaces``
+     - the command and state interfaces, and which are claimed
+
+Each controller also publishes ``<controller>/transition_event`` stamped with the **simulation**
+time, which is where a run reads the instant of a hand-over rather than inferring it from when the
+motion changed.
+
+**The world file is the parameter file.** ros2_control's manager is given its controllers as
+parameters and ``load_controller`` instantiates one of *those*; here the robot's ``components:`` is
+that list. A controller the world never declared cannot be loaded -- which is what ``spawner`` does
+against the real robot for a name absent from its parameters, so it is the behaviour rather than a
+limitation.
+
+Three semantics are worth stating because getting them wrong makes a scenario that works here fail
+on the arm:
+
+* **Only command interfaces are claimed, and only while a controller is active.** A broadcaster
+  claims nothing, which is why it reads a joint another controller drives. ``claimed_interfaces``
+  is empty while inactive; ``required_command_interfaces`` is what a controller *would* take.
+* **Neither ``STRICT`` nor ``BEST_EFFORT`` deactivates a controller the caller did not name.** A
+  hand-over names both sides in one request. ``FORCE_AUTO`` is the one that arbitrates.
+* **``strictness`` has no zero.** A default-constructed request carries one and it is read as best
+  effort, so pass the field explicitly from a scenario::
+
+      service_call('/ur5e/controller_manager/switch_controller',
+                   'controller_manager_msgs.srv.SwitchController',
+                   '{\"activate_controllers\": [\"cartesian_compliance_controller\"],
+                     \"deactivate_controllers\": [\"scaled_joint_trajectory_controller\"],
+                     \"strictness\": 2}')
+
+Controller parameters are **not** settable at runtime. A real controller is retuned with
+``ros2 param set``; here the gains are world-authored, because a campaign varies them by varying the
+world and a run whose gains changed mid-flight is not reproducible.
+
 Declaring a robot interface (endpoints)
 ---------------------------------------
 
@@ -390,6 +535,13 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
        - an action server
        - the input is a **goal that takes time**, with feedback and cancellation
          (``FollowJointTrajectory`` for MoveIt 2).
+
+  An action handler whose only output is a stream of setpoints must command a STOP when its goal is
+  cancelled, because the producer holds the last target it was given every tick: ending the stream
+  leaves that setpoint standing and the robot converging on a path nobody wants any more. The
+  trajectory and gripper handlers post the *measured* position as that hold before they return, and
+  grade the cancelled goal on the pose it stopped in -- so a caller that cancels and reads the
+  joints reads an arm that has stopped, and a result it can tell from a goal that ran to its end.
 
   ``write`` returns ``None`` in all three cases. A reply is assembled by the backend's handler from
   the producer's published state — named by a ``state_key`` hint — rather than returned from the
@@ -443,6 +595,7 @@ The ``sim_interfaces`` plugin (in ``roqsim_ros_bridge``) exposes a subset of
 
 * ``GetSimulatorFeatures`` — advertised capabilities.
 * ``GetEntities``, ``GetEntityState``, ``SetEntityState`` — list and read/teleport entities.
+* ``GetSpawnables`` — the absent entities ``SpawnEntity`` can select.
 * ``SpawnEntity``, ``DeleteEntity`` — make an entity appear or disappear (see below).
 * ``GetSimulationState``, ``SetSimulationState`` — play / pause / stop.
 * ``StepSimulation`` — step N times while paused.
@@ -452,10 +605,15 @@ Spawning is activation, not creation
 `````````````````````````````````````
 
 roqsim never recompiles the model at runtime, so there is no body to add. A world declares
-everything a trial may bring in, and ``SpawnEntity`` selects one of those; a name the world does
-not carry is refused rather than approximated, because the alternative is a trial that believes
-it spawned something. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite
-a caller to send geometry that nothing can load.
+everything a trial may bring in, and ``SpawnEntity`` selects one of those by ``uri``: the entity's
+name, as ``GetSpawnables`` lists it. ``name`` may be left empty or repeat the ``uri``; a different
+one would be a rename, which a compiled entity cannot take. A request with no ``uri`` selects by
+``name``, which the service does not define but older callers rely on. A ``uri`` the world does not
+carry is refused rather than approximated, because the alternative is a trial that believes it
+spawned something. Spawning CONSUMES a spawnable, since it activates one entity rather than
+copying a model: ``GetSpawnables`` lists the absent ones, ``GetEntities`` the present ones, and an
+entity moves between the two lists as it is spawned and deleted. ``spawn_formats`` is therefore **empty** — offering ``mjcf`` would invite a
+caller to send geometry that nothing can load.
 
 ``DeleteEntity`` makes an entity absent: excluded from raycasts, from rendering, from contacts,
 and from what ``GetEntities`` lists. Its pose does not move, which is the point — parking it out
@@ -464,3 +622,34 @@ back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the t
 this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ignores
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
+
+A world can declare an entity absent from the start, with ``present: false`` on the entry that
+registers it::
+
+    - spawn_model: {model: pallet, pose: {position: {x: 4.0, y: 1.0}}, motion: physics, present: false}
+      name: obstacle
+
+That is what gives a trial something to spawn. A population entry (``boxes``, ``cylinders``)
+forwards it to every instance, and each instance is an entity of its own, so a pool of spares is a
+uri per spare -- ``obstacle_0``, ``obstacle_1``, or whatever an instance names itself -- and each
+leaves the list as it is spawned. The declared value is restored on every reset, so a
+spare brought in during one repetition is a spare again in the next. Do not confuse it with
+``enabled: false``, which removes the entry entirely -- no body is built, and there is nothing left
+to spawn.
+
+Moving one needs a free joint
+`````````````````````````````
+
+``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
+same joint when it is given a pose. A body compiled without one is welded scenery: it holds the
+pose the world gave it, and both services refuse to move it, naming the weld and the
+``motion: physics`` that resolves it.
+
+This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
+exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an
+obstacle out of the way and teleports it in on cue fails on its first call, every run, and the
+count and names all agree. A placement is ``motion: physics`` by default, so this is what a world
+says when it has welded something with ``motion: static`` that the trial then tries to move.
+
+Asking a welded entity for the pose it already holds succeeds. Only a move is what a weld refuses,
+so a world that states a pose twice is not an error.

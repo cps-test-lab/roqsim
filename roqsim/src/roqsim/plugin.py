@@ -33,14 +33,34 @@ class Plugin:
     hooks you need; unimplemented hooks are skipped by the engine (no per-tick cost).
     """
 
+    #: This plugin's config, declared once: ``{key: roqsim.schema.Field(...)}``. Optional. A
+    #: plugin that declares one gets two things from it: the mechanical checks (types, ranges,
+    #: required keys, unknown keys) run against it, and ``roqsim plugins describe`` publishes the
+    #: fields with their types and defaults rather than a docstring's prose. See
+    #: :mod:`roqsim.schema`.
+    #:
+    #: **Declaring it is what enforces it.** ``instantiate_plugins`` runs the check for every plugin
+    #: that has one, beside its ``validate_config``; there is no call to remember. A schema the
+    #: catalog publishes and nothing checks would be prose with a type annotation.
+    CONFIG_SCHEMA: dict | None = None
+
+    #: With a schema, whether a key it does not mention is an error. Opt-in: a component's config
+    #: also carries keys the world's author did not write (a manifest's ``prefix``, a spawn's
+    #: entity), so a plugin says so only once its own list is complete. See
+    #: :data:`roqsim.schema.INJECTED_KEYS`.
+    STRICT_KEYS: bool = False
+
     #: Set True on a plugin whose ``post_step`` only *reads* ``data`` (no writes, no shared mutable
     #: state) so a future executor may run it concurrently with other parallel-safe post_steps.
     parallel_safe: bool = False
 
     #: Set True on a scene plugin that builds its own ground + lighting (e.g. the mobile
-    #: ``floorplan``). It overrides the engine's default ``sim.world`` (see :mod:`roqsim.world`):
-    #: when such a plugin is present the engine skips building the world definition, and if
-    #: ``sim.world`` was also set explicitly the engine warns and lets the plugin win.
+    #: ``floorplan``). Such a plugin fills the same slot as a world definition (``sim.world``, see
+    #: :mod:`roqsim.world`), so the engine skips building one -- and refuses a world that also
+    #: sets ``sim.world``, or that carries a second such plugin, rather than stacking two grounds.
+    #: This is also the only way to contribute an environment computed from config rather than
+    #: baked as geometry: the built-in definitions are a closed set and ``roqsim.worlds`` providers
+    #: offer MJCF files.
     provides_world: bool = False
 
     #: Set True on a plugin that only moves data across a process boundary: it builds no geometry and
@@ -63,6 +83,12 @@ class Plugin:
     #: document it has nothing to attach to, and is refused with the fix in the message rather than
     #: silently running alongside the default it meant to replace.
     requires_owner: bool = False
+
+    #: Config keys :meth:`expand` reads. An override of one on a component a manifest injected
+    #: arrives after that component expanded, so what it brought in would keep the old value while
+    #: the component itself took the new one; :func:`roqsim.config.load_config` refuses it instead
+    #: and says to declare the component in the world, where the value lands before expansion.
+    expansion_keys: frozenset[str] = frozenset()
 
     def __init__(
         self,
@@ -88,7 +114,7 @@ class Plugin:
         self.name: str = name or type(self).__name__
         #: How this entry is addressed among its siblings: its ``name:``, else its plugin ref. For a
         #: ``provides_entity`` plugin this IS the name of the entity it registers -- one spelling, so
-        #: an entity name can no longer be written in a config key *and* in a sibling and disagree.
+        #: an entity name cannot be written in a config key *and* in a sibling and disagree.
         self.label: str = label or (name or type(self).__name__)
         #: The entity this instance belongs to -- the label of the entry it is nested under, filled
         #: in by the loader. ``None`` for an entry at the top of a document, which belongs to the
@@ -113,40 +139,142 @@ class Plugin:
 
         Called once at config load, before any plugin is instantiated, so a plugin can pull in
         others it implies -- e.g. a spawn plugin injecting a model's default controller/sensor
-        plugins from its manifest (see :func:`roqsim.manifest.expand_manifest`). ``world`` is the
-        list of explicitly-declared specs, so a plugin can skip a default the world already
-        declares. Default: none.
+        plugins from its manifest (see :func:`roqsim.manifest.expand_manifest`). ``world`` is every
+        spec declared or injected so far, so a plugin can skip a default the world -- or an outer
+        manifest -- already declares. What this returns is expanded in turn, depth-first (see
+        :func:`roqsim.config.expand_document`); list the config keys read here in
+        :attr:`expansion_keys`. Default: none.
         """
         return []
 
     # -- endpoint topic hardwiring ------------------------------------------------------------
     def topic_override(self, endpoint_name: str) -> str | None:
-        """Absolute topic hardwired for the endpoint ``endpoint_name``, or ``None`` if unset.
+        """Topic set for the endpoint ``endpoint_name``, or ``None`` if unset.
 
-        Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: /abs/topic}``), keyed by
+        Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: <topic>}``), keyed by
         the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). An
         endpoint-producing plugin uses it as ``self.topic_override("image") or <namespaced default>``
         when filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
         the bridge, overriding the endpoint's ``namespace`` -- so a producer can match external /
-        hardware topic names regardless of its scope.
+        hardware topic names regardless of its scope. A relative value renames the endpoint inside
+        its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
+        the robot's namespace.
         """
         return (self.config.get("topics") or {}).get(endpoint_name)
 
+    @classmethod
+    def validate_schema(cls, config: dict) -> list[str]:
+        """Config errors from :data:`CONFIG_SCHEMA`, or ``[]`` when none is declared.
+
+        Run by ``instantiate_plugins`` for every plugin that declares a schema, *beside* its
+        ``validate_config`` rather than instead of it: the schema covers what is the same everywhere
+        (a required key, a type, a range) and the plugin keeps what only it knows (that two lists
+        must be the same length, that a site must exist in the model). A plugin does not call this
+        itself -- doing so reports each error twice.
+        """
+        if not cls.CONFIG_SCHEMA:
+            return []
+        from .schema import validate
+
+        return validate(cls.CONFIG_SCHEMA, config, strict_keys=cls.STRICT_KEYS)
+
+    def config_errors(self, config: dict) -> list[str]:
+        """Every error for *config*: the declared schema's, then this plugin's own.
+
+        What ``instantiate_plugins`` asks, and therefore what a world is actually held to. It is one
+        method rather than two calls at the call site so that "a schema is checked because it is
+        declared" has a single place to be true -- including for a test, which would otherwise reach
+        for ``validate_config`` and quietly check less than a run does.
+        """
+        errors = list(type(self).validate_schema(config))
+        errors += self.validate_presence(config)
+        try:
+            errors += self.validate_config(config) or []
+        except Exception as exc:  # a plugin's validator itself blew up
+            errors.append(f"validate_config raised: {exc}")
+        return errors
+
+    def validate_presence(self, config: dict) -> list[str]:
+        """Check ``present:``, and refuse it where it would do nothing.
+
+        Read here rather than left to each plugin because the plugins that register an entity are
+        the ones this applies to, and they say so already (:attr:`provides_entity`). A plugin that
+        ACCEPTS the key and drops it gives a world declaring a prop absent a present one, silently,
+        which is the reading of ``present: false`` nobody wants and the one that looks like it
+        worked.
+        """
+        if "present" not in config:
+            return []
+        if not self.provides_entity:
+            return [
+                "'present' says whether the entity this entry registers starts perceivable, "
+                f"and {type(self).__name__} registers none"
+            ]
+        if not isinstance(config["present"], bool):
+            return ["'present' must be true or false"]
+        return []
+
+    @property
+    def declared_present(self) -> bool:
+        """Whether the world declares this plugin's entity perceivable from the first step."""
+        return bool(self.config.get("present", True))
+
+    def apply_declared_presence(self, ctx) -> None:
+        """Put this plugin's entity back to the presence the world declared. Physics thread only.
+
+        Run after ``configure`` AND after every ``on_reset``, because presence lives in ``model``
+        while ``mj_resetData`` restores ``data``: an entity a trial spawned is still present when
+        the next episode begins, and a world that declares a spare means it every episode.
+
+        Driven from the engine rather than from each plugin's own hooks, so a plugin registering an
+        entity gets this by declaring that it does. The alternative is the same three lines copied
+        into every prop, where the copies drift apart.
+        """
+        if not self.provides_entity:
+            return
+        from .presence import set_present
+
+        # `address` is what a provides_entity plugin names its entity, but a few compute the name
+        # and keep it; ask for that first so this cannot address a different entity than the one
+        # the plugin registered.
+        name = getattr(self, "entity_name", None) or self.address
+        entity = ctx.entities.get(name)
+        if entity is None:
+            if not self.declared_present:
+                # A world asked for a spare and did not get one. Silence here would be the bug
+                # this method exists to remove, arrived at from the other side.
+                raise RuntimeError(
+                    f"{type(self).__name__} declares 'present: false' but registered no entity "
+                    f"named {name!r}, so the declaration could not be applied"
+                )
+            return
+        set_present(ctx, entity, self.declared_present)
+
     @staticmethod
     def validate_topics(config: dict) -> list[str]:
-        """Validate the optional ``topics:`` hardwire map; call from ``validate_config``.
+        """Validate the optional ``topics:`` map; call from ``validate_config``.
 
-        ``topics`` must be a mapping of endpoint-name -> absolute topic string (leading ``/``).
+        ``topics`` must be a mapping of endpoint-name -> topic: absolute (leading ``/``, used
+        verbatim) or relative (scoped under the endpoint's namespace).
         """
         topics = config.get("topics")
         if topics is None:
             return []
         if not isinstance(topics, dict):
-            return ["'topics' must be a mapping of endpoint-name -> absolute topic"]
+            return ["'topics' must be a mapping of endpoint-name -> topic"]
         errors = []
         for key, value in topics.items():
-            if not isinstance(value, str) or not value.startswith("/"):
-                errors.append(f"topics[{key!r}] must be an absolute topic (start with '/')")
+            if (
+                not isinstance(value, str)
+                or value.strip("/") == ""
+                or value.endswith("/")
+                or "//" in value
+                or any(c.isspace() for c in value)
+            ):
+                errors.append(
+                    f"topics[{key!r}] must be a topic name: '/abs/name' (verbatim) or 'name' "
+                    f"(under the endpoint's namespace), with no empty segment or whitespace"
+                )
         return errors
 
     # -- validation ---------------------------------------------------------------------------

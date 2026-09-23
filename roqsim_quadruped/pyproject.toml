@@ -11,7 +11,8 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "roqsim",
-    "roqsim_sensors",
+    "roqsim_sensors",  # lidar
+    "roqsim_mobile",   # spawn_robot: a world places spot with `spawn_robot: {model: spot}`
     "mujoco>=3.0",
     "numpy>=1.24",
     "pyyaml>=6.0",

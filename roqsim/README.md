@@ -67,7 +67,7 @@ sim:
   pacing: realtime          # realtime | asap | {factor: N}
 
 components:
-  - spawn_robot: {model: husky_a200, pos: [0, 0], yaw: 0}
+  - spawn_robot: {model: husky_a200, pose: {position: {x: 0, y: 0}, orientation: {yaw: 0}}}
     name: robot                              # names the entry, and so the entity it spawns
     components:                              # what belongs to that robot
       - diff_drive: {test_cmd: [0.5, 0.4]}
@@ -80,16 +80,17 @@ no mention here at all; nest an entry only to add something the model does not s
 Plugins are referenced by registered name, by `module:Class`, or by `file.py:Class` beside the world —
 which is how an experiment loads its own plugin without registering anything.
 
-> **Two changes to the world format.**
+> **Two rules of the world format.**
 >
-> `plugins:` was renamed to **`components:`**. The former spelling still loads, so existing worlds and
-> model manifests keep working; a document carrying *both* keys is refused, because two spellings of
-> one key in one file is a merge nobody can predict. Anything that reads a loaded world back — `roqsim
-> scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — now emits `components:`.
+> The entry list is **`components:`**. `plugins:` is accepted as an alias, so worlds and model
+> manifests spelled that way keep working; a document carrying *both* keys is refused, because two
+> spellings of one key in one file is a merge nobody can predict. Anything that reads a loaded world
+> back — `roqsim scenes describe`, the exporters, `roqsim scenes floorplan-to-world` — emits
+> `components:`.
 >
 > **Ownership is nesting, and `name:` is a sibling.** A sensor or controller belongs to the entry it
-> is nested under, so the per-family `robot:` / `arm:` config keys are gone. An entry's `name:` moved
-> out of the plugin's config to sit beside the plugin ref, and it is now the *one* name an entry has:
+> is nested under, so there are no per-family `robot:` / `arm:` config keys. An entry's `name:` sits
+> beside the plugin ref rather than in the plugin's config, and it is the *one* name an entry has:
 > it labels the entry, names the entity a `spawn_*` or prop creates, and is what `disable:` and an
 > override address.
 >
@@ -106,7 +107,7 @@ which is how an experiment loads its own plugin without registering anything.
 `--set` and `--override` address a **component by its address** and set a key in its config:
 
 ```console
-$ roqsim sim world.yaml --set components.robot.lidar.rays=720
+$ roqsim sim world.yaml --set components.robot.rplidar.lidar.rays=720
 ```
 
 That reaches a lidar no file declares — it comes from the turtlebot4's manifest — and leaves every
@@ -115,14 +116,14 @@ is what `--override` takes:
 
 ```yaml
 components:
-  robot.lidar: {rays: 720}
+  robot.rplidar.lidar: {rays: 720}
 ```
 
 `*` matches one address segment, so a fleet-wide sweep needs no enumeration of entities the world
 may not have when the campaign is written:
 
 ```console
-$ roqsim sim world.yaml --set 'components.*.lidar.range_stddev=0.05'
+$ roqsim sim world.yaml --set 'components.*.rplidar.lidar.range_stddev=0.05'
 ```
 
 A wildcard that reaches nothing is refused like a typo — a sweep that changed nothing would otherwise
@@ -141,6 +142,20 @@ components:
 
 The added entry is wired, checked and merged exactly as though the document had declared it.
 
+The owner must be one the document declares. A component a model's manifest supplies (a robot's
+mounted `rplidar`) expands before an override can reach it, so adding under it is refused. Add
+through its declared owner instead, naming the component, and the manifest fills in the rest:
+
+```yaml
+components:
+  robot:
+    components:
+      - spawn_sensor: {}
+        name: rplidar
+        components:
+          - contact_monitor: {min_force: 2.0}
+```
+
 Setting `enabled: false` removes a component without deleting it:
 
 ```console
@@ -150,8 +165,8 @@ $ roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
 That makes "is this sensor present" a value a campaign can sweep rather than an edit to the world
 file. The component stays addressable and stays in the run's record saying it was turned off, and a
 later override can turn it back on. Disabling an entry disables everything it owns, so switching off
-a robot switches off its sensors too rather than leaving them aimed at an entity that no longer
-exists. `disable:` in an `extends` chain is the same thing under another name.
+a robot switches off its sensors too rather than leaving them aimed at an entity that does not
+exist. `disable:` in an `extends` chain is the same thing under another name.
 
 Overriding `components.robot.model` swaps the model *and* what its manifest contributes, because
 assignments are applied before expansion reads `model:` as well as after. An assignment that names no
@@ -199,7 +214,10 @@ python -m pytest roqsim/tests
 
 Runtime dependencies are `mujoco`, `numpy`, `pyyaml`, `click` and `pillow`. Video output additionally
 needs `ffmpeg` on `PATH` (checked, with a message, rather than failing mid-render); rendering a raw
-mesh needs `roqsim_assets`. From the repository root, `make venv` installs the whole family and
+mesh needs `roqsim_assets`. A video of a recording shows the whole scene from above unless told
+otherwise; `--camera-path` moves the camera along keyframes (`camera_path.py`), `--overlay` paints
+insets on the frames (`render_overlays.py`, extensible through the `roqsim.render_overlays` entry-point group), and
+the replay window records a person flying the camera as a clip (Shift+F9). From the repository root, `make venv` installs the whole family and
 `make test` runs every package's tests.
 
 ## Docs

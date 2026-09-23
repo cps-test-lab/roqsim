@@ -43,6 +43,7 @@ from roqsim.render import (
     reset_to_home,
 )
 from roqsim.rendering import FrameRenderer
+from roqsim.world import FLOOR_RGB1, FLOOR_RGB2, SKY_RGB1, SKY_RGB2
 
 _SIZE = 480  # square source PNG; the doc pages display it at ~150px.
 
@@ -77,17 +78,24 @@ def _render_mjcf(xml_path: Path, out: Path, apply=None) -> None:
 
 
 def _ground_and_light(spec: mujoco.MjSpec) -> None:
-    """Give a bare model MJCF a checker ground (named ``floor``) + a light so it renders lit and
-    grounded. Some robot models reference a world-provided ``floor`` in a contact pair and won't
+    """Give a bare model MJCF the room's checker ground (named ``floor``) + a light so it renders lit
+    and grounded. Some robot models reference a world-provided ``floor`` in a contact pair and won't
     compile standalone without it. No-ops when the model already defines a ``floor``/its own light."""
     if not any(g.name == "floor" for g in spec.geoms):
+        sky = spec.add_texture()
+        sky.name = "ss_sky"
+        sky.type = mujoco.mjtTexture.mjTEXTURE_SKYBOX
+        sky.builtin = mujoco.mjtBuiltin.mjBUILTIN_GRADIENT
+        sky.width = sky.height = 512
+        sky.rgb1 = SKY_RGB1
+        sky.rgb2 = SKY_RGB2
         tex = spec.add_texture()
         tex.name = "ss_grid"
         tex.type = mujoco.mjtTexture.mjTEXTURE_2D
         tex.builtin = mujoco.mjtBuiltin.mjBUILTIN_CHECKER
         tex.width = tex.height = 512
-        tex.rgb1 = [0.2, 0.3, 0.4]
-        tex.rgb2 = [0.1, 0.15, 0.2]
+        tex.rgb1 = FLOOR_RGB1
+        tex.rgb2 = FLOOR_RGB2
         mat = spec.add_material()
         mat.name = "ss_ground"
         mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = "ss_grid"

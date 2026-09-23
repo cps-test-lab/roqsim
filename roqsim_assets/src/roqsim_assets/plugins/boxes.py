@@ -3,15 +3,15 @@
 The same geometry as :mod:`roqsim_assets.plugins.box`, declared as a *list* rather than as one plugin
 entry per box::
 
-    boxes:
-      name: obstacles      # prefix for the generated entity names (default 'boxes')
-      instances:
-      - {pos: [2.1, -3.4], size: [0.5, 0.5, 1.0]}
-      - {pos: [5.8, -1.2], size: [0.5, 0.5, 1.0], yaw: 0.4}
+    - boxes:
+        instances:
+        - {pose: {position: {x: 2.1, y: -3.4}}, size: [0.5, 0.5, 1.0]}
+        - {pose: {position: {x: 5.8, y: -1.2}, orientation: {yaw: 0.4}}, size: [0.5, 0.5, 1.0]}
+      name: obstacles      # the entry's label, which every generated box is named after
 
-Each entry accepts every key ``box`` does (``pos``, ``size``, ``yaw``, ``color``, ``collide``,
-``friction``, ``free``, and an optional ``name``), because each one *is* a box: this plugin owns the
-list, not the geometry.
+Each entry accepts every key ``box`` does (``pose``, ``size``, ``color``, ``collide``,
+``friction``, ``motion``, and an optional ``name``), because each one *is* a box: this plugin owns
+the list, not the geometry.
 
 Why a list and not a count
 --------------------------
@@ -19,9 +19,9 @@ Why a list and not a count
 The point is **how many** becomes the length of one config value instead of the number of plugin
 entries. That is what lets a campaign vary it: ``roqsim.apply_overrides`` resolves a plugin by name and
 deep-merges into its config, and it *refuses an override that matches no plugin* -- so a campaign can
-replace ``boxes.instances`` wholesale, but could never have appended a fourth ``box:`` entry. Before
-this, "8 obstacles instead of 4" was a structural edit to the world file and therefore not a factor at
-all.
+replace ``boxes.instances`` wholesale, but cannot append a fourth ``box:`` entry. With one
+entry per obstacle, "8 obstacles instead of 4" would be a structural edit to the world file and
+therefore not a factor at all.
 
 A list rather than a ``count:`` scalar because real populations are **heterogeneous**: an obstacle
 generator scales its count by path length and gives each obstacle its own pose and size. A count plus
@@ -29,13 +29,14 @@ in-plugin layout sampling would serve only the uniform case, and would move pose
 substrate -- which does not know the map, the robot's path, or the clearance rule the experiment
 cares about. The generator does.
 
-Entity names are ``<name>_<index>`` unless an entry names itself, so ``SetEntityState`` can address a
-single box out of the population and ``on_reset`` restores each to its own declared pose.
+Entity names are ``<entry label>_<index>`` unless an instance names itself, so ``SetEntityState``
+can address a single box out of the population and ``on_reset`` restores each to its own declared
+pose. An instance's ``name`` is one of the list's own values, not a plugin entry's reserved sibling:
+this plugin owns the list, so it reads the key itself.
 
 Config::
 
     boxes:
-      name: obstacles     # prefix for the generated entity names (default: 'boxes')
       instances: []       # list of box configs, each accepting every key `box` does (required)
 """
 
@@ -77,6 +78,13 @@ class BoxesPlugin(Plugin):
             for index, entry in enumerate(self.config.get("instances") or [])
         ]
 
+    #: The CHILDREN register the entities, and `apply_declared_presence` below forwards to them
+    #: -- but the key is validated against the entry that carries it, so without this a
+    #: population is refused `present:` outright ("registers none"). Declaring an entity absent
+    #: and spawning it in is the substrate's one way to reveal a prop, and a population has to be
+    #: able to say it.
+    provides_entity = True
+
     def _child_label(self, entry: dict, index: int) -> str:
         return str((entry or {}).get("name") or f"{self.entity_name}_{index}")
 
@@ -87,6 +95,11 @@ class BoxesPlugin(Plugin):
         it a second box fails model compilation.
         """
         child = {k: v for k, v in (entry or {}).items() if k != "name"}
+        # This entry's `present:` is the default for every instance under it, so "the whole
+        # population starts absent" is one word rather than one per instance. An instance that
+        # states its own keeps it.
+        if "present" in self.config:
+            child.setdefault("present", self.declared_present)
         child.setdefault("prefix", f"{self._child_label(entry, index)}_")
         return child
 
@@ -124,3 +137,13 @@ class BoxesPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         for child in self._children:
             child.on_reset(ctx)
+
+    def apply_declared_presence(self, ctx: SimContext) -> None:
+        """Forwarded, because the CHILDREN register the entities.
+
+        The engine sees this entry and not the instances under it, so the one hook it would call
+        here belongs to no entity. Each instance carries its own ``present:``, the way it carries
+        its own pose and size.
+        """
+        for child in self._children:
+            child.apply_declared_presence(ctx)

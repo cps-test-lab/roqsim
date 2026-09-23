@@ -6,10 +6,10 @@ that can translate in any direction while holding, or independently changing, it
 for PAL Robotics' OMNI base (TIAGo Pro), whose ROS 2 stack uses
 ``omni_drive_controller/OmniDriveController``.
 
-Config::
+Config -- a component of the entry that spawns the base, since ownership is where the entry
+sits rather than a config key::
 
     omni_drive:
-      robot: robot                  # entity name registered by spawn_robot
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       base_joint: base_free         # the base's free joint
       vx_actuator: base_vx          # planar drive actuators (see "Planar drive" below)
@@ -31,7 +31,22 @@ Config::
       # `wheels`. Their presence is what selects swerve inverse kinematics over mecanum.
       steer_joints: [...]
       steer_actuators: [...]
+      odom_child_frame: base_footprint   # link the odometry TF points at (see below)
+      stamped_cmd_vel: false             # true when the stack publishes TwistStamped (see below)
       test_cmd: [0.2, 0.1, 0.0]     # optional [vx, vy, wz] applied every tick (standalone demo)
+
+``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
+for the velocity command. Which of the two a stack publishes is a property of that stack, not of
+the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
+configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
+so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
+which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
+naming the topic, both types and both sides.
+
+``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
+whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
+``base_footprint`` already gives ``base_link`` a parent, and a second parent from here leaves that
+frame with two, which tf2 cannot resolve.
 
 **Planar drive.** A real omnidirectional base translates sideways because each mecanum wheel's passive rollers let the
 contact patch slide along one diagonal. Those rollers are **not modelled** (~9 per wheel would mean
@@ -102,6 +117,11 @@ class OmniDrivePlugin(Plugin):
         self.base_joint = self.config.get("base_joint", "base_free")
         # Body the wheel axes are expressed in when deriving their roll signs (see configure()).
         self.base_body = self.config.get("base_body", "base_link")
+        # PAL's mobile_base_controller reports odom in base_footprint, which is also the body the
+        # free joint drives -- hence a different default from the two-wheel drives.
+        self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
+        #: Message type of the velocity command: the stack decides it, not the kinematics.
+        self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
         self._act_names = (
             self.config.get("vx_actuator", "base_vx"),
             self.config.get("vy_actuator", "base_vy"),
@@ -247,11 +267,10 @@ class OmniDrivePlugin(Plugin):
         # distance R below the axle, v_contact = v_centre + omega x r = 0 gives omega_y = +V/R. So a
         # wheel spinning about the base's **+y** carries it forward, and sign = +axis_y.
         #
-        # This read `-axis_y` until 2026-08-28, so every omni_drive wheel span backwards. It was
-        # invisible in the dynamics -- these wheels are deliberately near-frictionless load carriers
-        # and the base is driven through the planar actuators -- but it was wrong in the viewer and in
-        # `joint_states`, which is most of what these servos exist for. Found by measuring contact
-        # slip: the four omni bases showed |v_contact| ~ 2V while the diff_drive bases showed ~0.
+        # A wrong sign is invisible in the dynamics -- these wheels are deliberately near-frictionless
+        # load carriers and the base is driven through the planar actuators -- but it shows in the
+        # viewer and in `joint_states`, which is most of what these servos exist for. A backwards
+        # wheel shows |v_contact| ~ 2V instead of ~0, which is what tests/test_wheels_roll.py measures.
         #
         # Derived rather than hardcoded because a source URDF may mirror left/right wheels, as the
         # Neobotix descriptions do -- exactly the kind of thing that should not be assumed.
@@ -272,7 +291,12 @@ class OmniDrivePlugin(Plugin):
 
         ctx.blackboard.set(
             f"robot:{self.robot}",
-            RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
+            RobotHandle(
+                name=self.robot,
+                drive=self.drive,
+                read_odom=self.read_odom,
+                kinematics="holonomic",
+            ),
         )
         ctx.interface.add(
             Endpoint(
@@ -283,7 +307,9 @@ class OmniDrivePlugin(Plugin):
                 write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
                 backend={
                     "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
+                        "type": "geometry_msgs.msg.TwistStamped"
+                        if self.stamped_cmd_vel
+                        else "geometry_msgs.msg.Twist",
                         "topic": self.topic_override("cmd_vel") or "cmd_vel",
                     }
                 },
@@ -302,9 +328,7 @@ class OmniDrivePlugin(Plugin):
                         "type": "nav_msgs.msg.Odometry",
                         "topic": self.topic_override("odom") or "odom",
                         "frame_id": "odom",
-                        # PAL's mobile_base_controller reports odom in base_footprint, which is also
-                        # the body the free joint drives.
-                        "child_frame_id": "base_footprint",
+                        "child_frame_id": self.odom_child_frame,
                         "emit_tf": True,
                     }
                 },

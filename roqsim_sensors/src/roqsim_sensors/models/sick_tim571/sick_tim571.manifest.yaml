@@ -1,0 +1,62 @@
+# SICK TiM571 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: PAL Robotics pal_urdf_utils (see sick_tim571.xml). Scan values: SICK
+# data sheet TiM571-2050101, https://www.sick.com/media/pdf/4/44/444/dataSheet_TiM571-2050101_1075091_en.pdf
+# ("data sheet").
+#
+# No `frame_id` default: PAL's macro stamps the scan in `${name}_link`, where `name` is whatever the
+# robot description calls that laser, so every mount sets `frame_id` and spawn_sensor refuses one
+# that does not.
+# spawn_sensor fills `{frame_id}` from it. `exclude_body: mount` skips this device's housing and
+# nothing else; `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: SICKAG/sick_scan_xd @ a562c5d098de ("driver"), SICK's ROS 2 driver,
+      # with its launch/sick_tim_5xx.launch. A robot whose vendor runs another driver overrides the
+      # published values in its own manifest (PAL's TIAGo Pro runs sick_tim).
+      #
+      # Layout: angle_max = angle_min + (n - 1) * increment (driver/src/sick_lmd_scandata_parser.cpp:
+      # 156-158), so the last ray sits at angle_max; the launch's min_ang/max_ang +-135 deg are written
+      # to the scanner, which crops to them. Data sheet: aperture 270 deg at 0.33 deg, so
+      # 270 * 3 + 1 = 811 rays (computed; the device's count is unverified).
+      rays: 811
+      angle_min: -2.356194490   # -135 deg
+      angle_max: 2.356194490    # +135 deg
+      # Header: launch/sick_tim_5xx.launch:52-53 sets range_min 0.0 and range_max 100.0, copied into
+      # the message (driver/src/sick_generic_parser.cpp:1477-1478). Only published; the data sheet's
+      # working range 0.05 m ... 25 m (8 m typical at 10% remission) decides which rays measure.
+      range_min: 0.0
+      max_range: 100.0
+      detection_min: 0.05
+      detection_max: 25.0
+      # The driver passes the device's distance through (range_filter_handling 0, min_intensity 0).
+      # The TiM's code for a near or absent echo is unverified, so both keep the REP 117 defaults.
+      too_close: -inf           # unverified device code; REP 117 default
+      no_return: +inf           # unverified device code; REP 117 default
+      rate_hz: 15.0             # data sheet: scanning frequency 15 Hz
+      # Data sheet: statistical error < 20 mm (typical, 90% remission up to maximum range). The data
+      # sheet does not say which sigma; taken as 1 sigma. Its systematic error (+-60 mm) has no
+      # stated distribution, so no per-instance bias is modelled.
+      range_stddev: 0.02
+      # Not modelled: the RSSI the launch publishes as intensities.
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and its physical detection limits.
+fov:
+  near: 0.05
+  far: 25.0
+  h_min: -2.356194490
+  h_max: 2.356194490
+  v_min: 0.0
+  v_max: 0.0

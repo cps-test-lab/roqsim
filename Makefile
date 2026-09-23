@@ -18,8 +18,8 @@ PIP        := $(VENV)/bin/pip
 # --system-site-packages makes ROS's launch_testing / launch_testing_ros entry points visible, and they
 # declare hooks with signatures modern pytest removed, so collection dies with PluginValidationError
 # before a single test runs. Nothing in this tree uses a plugin -- fixtures, monkeypatch, parametrize
-# and skipif are all core -- so autoload goes off rather than blocking each offender by name (the
-# first attempt did that and found a second plugin behind the first).
+# and skipif are all core -- so autoload goes off rather than blocking each offender by name
+# (blocking one only exposes the next).
 export PYTEST_DISABLE_PLUGIN_AUTOLOAD ?= 1
 PYTEST     := $(PY) -m pytest
 # Parallelism here is bounded by MEMORY, not by cores, and the margin is thinner than it looks: a
@@ -59,8 +59,8 @@ PKGS       := $(sort $(patsubst %/,%,$(dir \
 	$(wildcard roqsim*/pyproject.toml) $(wildcard scenario_execution_*/pyproject.toml))))
 SRC        := $(addsuffix /src,$(PKGS)) ros2_ws/src
 # Tests that need ROS on the path, so they run only in the sourced branch of `make test`. Every
-# colcon package's own test/ dir, discovered the same way PKGS is -- the bridge's suite had been
-# sitting outside `make test` entirely because only the nav2 example was named here.
+# colcon package's own test/ dir, discovered the same way PKGS is, so no package's suite sits
+# outside `make test` for want of being named here.
 ROS_TESTS  := $(wildcard ros2_ws/src/*/test)
 # Every world any package ships, for `make smoke`. Globbed rather than asked of the CLI: there is no
 # worlds-listing subcommand, and a glob also catches a world a package forgot to register.
@@ -77,18 +77,21 @@ SMOKE_STEPS ?= 200
 # pip extras per package, looked up as EXTRAS_<pkg> with EXTRAS_DEFAULT as the fallback. Deliberately
 # a lookup rather than $(if $(filter ...)): make splits a function's arguments on commas before
 # expanding them, so an extras list written literally inside $(if ...) is torn into separate
-# arguments -- which is what made `make venv` fail with `-e "rstmarkers,coverage],[test]"`.
-# Giving another package extras is now one line here and no change below.
+# arguments, and `make venv` fails with `-e "rstmarkers,coverage],[test]"`.
+# Giving another package extras is one line here and no change below.
 #
-# These keys MUST match the directory names in $(PKGS). One was left at its pre-rename name after the
-# rst -> roqsim rename and silently stopped matching: roqsim_sensors fell back to [test], so
-# matplotlib never entered the venv and the NumPy-1-built SYSTEM matplotlib leaked in through
-# --system-site-packages instead, failing the coverage and passability tests with
+# These keys MUST match the directory names in $(PKGS). A key that matches nothing falls back
+# silently: roqsim_sensors on [test] leaves matplotlib out of the venv, so the NumPy-1-built SYSTEM
+# matplotlib leaks in through --system-site-packages instead, failing the coverage and
+# passability tests with
 # "numpy.core.multiarray failed to import". Same failure mode the scipy pin in roqsim_walker
 # documents. If a package's tests import matplotlib, its extras belong here.
 EXTRAS_DEFAULT        := [test]
 EXTRAS_roqsim_sensors := [test,markers,coverage]
 EXTRAS_roqsim_scenes  := [test,preview]
+# `roqsim assets collision` measures a prop against its own mesh; its tests exercise the measurement,
+# so the dev venv carries the extra even though placing a prop never needs it.
+EXTRAS_roqsim_assets  := [test,collision]
 
 .DEFAULT_GOAL := help
 
@@ -121,8 +124,7 @@ venv:  ## Create .venv (--system-site-packages) and install packages + dev tooli
 	# autoload is off.
 	$(PIP) install --ignore-installed pytest pytest-xdist
 	# ruff is PINNED because it is the formatter: `ruff format` output changes between releases,
-	# so an unpinned one turns `make lint` red on a commit that touched nothing -- 0.16.4 rewrapped
-	# three files 0.16.3 was happy with, and main went red with no code change behind it. It also
+	# so an unpinned one turns `make lint` red on a commit that touched nothing. It also
 	# breaks what the CI workflow promises, that a contributor reproduces CI with one make target:
 	# a contributor whose ruff differs from CI's cannot. Bump this deliberately, reformatting in
 	# the same commit. sphinx/furo only render docs, so they stay floating.

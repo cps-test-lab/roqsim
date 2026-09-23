@@ -1,0 +1,74 @@
+<mujoco model="sick_microscan3">
+  <!--
+    SICK microScan3 Core safety laser scanner: a standalone mount (housing mesh + a `scan` site) for
+    the `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Neobotix `neo_simulation2`, whose MPO-500 carries two of them: the body is
+    `lidar_1_link` (mpo_500_body.urdf.xacro), the mesh keeps that link's visual origin
+    xyz (0, 0, -0.06), rpy (1.57, 0, 0), and the scan is stamped in the link itself.
+
+    Body-local axes: x = the scan's zero bearing, z = up. The mesh is 151.8 mm tall against the
+    operating instructions' 135.1 mm housing, so the datasheet scan plane (40.1 mm below the top,
+    95.0 mm above the bottom) maps to z = -0.0037 or z = -0.0204 depending on which end is taken
+    as reference; the site stays on the vendor frame.
+
+    Built by external/convert/build_scanner_devices.py from neo_simulation2 @ 832041452c1a0199afea1e9b65adf37381e96214.
+    Scan parameters and the `frames:` entry for this site are in sick_microscan3.manifest.yaml; see
+    sick_microscan3_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="SICK-MICROSCAN3__m0_mat" rgba="1 0.6314 0.6 1"/>
+    <material name="SICK-MICROSCAN3__m1_mat" rgba="0 0 0 1"/>
+    <material name="SICK-MICROSCAN3__m2_mat" rgba="0.1216 0.1294 0.149 1"/>
+    <material name="SICK-MICROSCAN3__m3_mat" rgba="0.1451 0.1412 0.1529 1"/>
+    <material name="SICK-MICROSCAN3__m4_mat" rgba="0.1059 0.098 0.1137 1"/>
+    <material name="SICK-MICROSCAN3__m5_mat" rgba="0.302 0.3176 0.3686 1"/>
+    <material name="SICK-MICROSCAN3__m6_mat" rgba="0.0824 0.0863 0.098 1"/>
+    <material name="SICK-MICROSCAN3__m7_mat" rgba="0.9725 0.9765 0.9843 1"/>
+    <material name="SICK-MICROSCAN3__m8_mat" rgba="0.5686 0.5647 0.5373 1"/>
+    <material name="SICK-MICROSCAN3__m9_mat" rgba="0.949 0.7529 0 1"/>
+    <mesh name="SICK-MICROSCAN3__m0" file="SICK-MICROSCAN3__m0.obj"/>
+    <mesh name="SICK-MICROSCAN3__m1" file="SICK-MICROSCAN3__m1.obj"/>
+    <mesh name="SICK-MICROSCAN3__m2" file="SICK-MICROSCAN3__m2.obj"/>
+    <mesh name="SICK-MICROSCAN3__m3" file="SICK-MICROSCAN3__m3.obj"/>
+    <mesh name="SICK-MICROSCAN3__m4" file="SICK-MICROSCAN3__m4.obj"/>
+    <mesh name="SICK-MICROSCAN3__m5" file="SICK-MICROSCAN3__m5.obj"/>
+    <mesh name="SICK-MICROSCAN3__m6" file="SICK-MICROSCAN3__m6.obj"/>
+    <mesh name="SICK-MICROSCAN3__m7" file="SICK-MICROSCAN3__m7.obj"/>
+    <mesh name="SICK-MICROSCAN3__m8" file="SICK-MICROSCAN3__m8.obj"/>
+    <mesh name="SICK-MICROSCAN3__m9" file="SICK-MICROSCAN3__m9.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0" mass="0.0001" diaginertia="0.0001 0.000001 0.0001"/>
+      <geom name="sick_microscan3_visual_0" type="mesh" mesh="SICK-MICROSCAN3__m0" material="SICK-MICROSCAN3__m0_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_1" type="mesh" mesh="SICK-MICROSCAN3__m1" material="SICK-MICROSCAN3__m1_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_2" type="mesh" mesh="SICK-MICROSCAN3__m2" material="SICK-MICROSCAN3__m2_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_3" type="mesh" mesh="SICK-MICROSCAN3__m3" material="SICK-MICROSCAN3__m3_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_4" type="mesh" mesh="SICK-MICROSCAN3__m4" material="SICK-MICROSCAN3__m4_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_5" type="mesh" mesh="SICK-MICROSCAN3__m5" material="SICK-MICROSCAN3__m5_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_6" type="mesh" mesh="SICK-MICROSCAN3__m6" material="SICK-MICROSCAN3__m6_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_7" type="mesh" mesh="SICK-MICROSCAN3__m7" material="SICK-MICROSCAN3__m7_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_8" type="mesh" mesh="SICK-MICROSCAN3__m8" material="SICK-MICROSCAN3__m8_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_microscan3_visual_9" type="mesh" mesh="SICK-MICROSCAN3__m9" material="SICK-MICROSCAN3__m9_mat" pos="0 0 -0.06" quat="0.707388269 0.706825181 0 0"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor collides with the full mesh; this box bounds the converted housing instead. -->
+      <geom name="sick_microscan3_collision" type="box" pos="-0.00045 5e-05 -0.03945" size="0.05555 0.05605 0.07595" group="3"/>
+      <!-- The vendor scan frame (lidar_1_link) is the mount itself.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

@@ -14,6 +14,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .seed import SeedError
+
 if TYPE_CHECKING:
     import mujoco
 
@@ -49,11 +51,28 @@ class RobotHandle:
 
     ``drive`` takes body-frame velocities (vx forward, vy left, w yaw-rate). ``read_odom`` returns
     the latest ``(x, y, yaw, vx, vy, w)`` estimate. Both run on the physics thread.
+
+    ``kinematics`` says which of those three components the base can actually realise, so a consumer
+    that must *shape* a command -- a planner turning a direction into a twist, a teleop mapping a
+    stick -- can do so without a list of robot names. Declared by the controller for the same reason
+    ``transport_only`` is declared by the plugin: a name list in the core would silently serve only
+    the drives we happen to ship, and an out-of-tree one would be shaped wrongly and in silence.
+
+    * ``unicycle`` -- drives and turns, cannot strafe. Differential and skid-steer bases, and the
+      legged platforms, whose locomotion controllers take the same twist.
+    * ``holonomic`` -- any planar velocity, including sideways. Mecanum, omni-wheel and swerve.
+    * ``ackermann`` -- cannot turn in place, and a twist states a *curvature*: the steering angle is
+      derived from ``w / v``, so ``w`` with ``v == 0`` steers the wheels nowhere. A consumer that
+      commands a stop-and-pivot leaves a car sitting still with its wheels straight.
+
+    It defaults to ``unicycle`` because that is the largest family here and because a default lets
+    every existing publisher stay as it is; a base that is not one declares it.
     """
 
     name: str
     drive: Callable[[float, float, float], None]
     read_odom: Callable[[], tuple[float, float, float, float, float, float]]
+    kinematics: str = "unicycle"
 
 
 @dataclass
@@ -119,8 +138,8 @@ class Endpoint:
 
     A plugin that produces or consumes data (a controller, a sensor) registers its ports on
     ``ctx.interface`` in ``configure()``. A transport/bridge plugin (ROS 2, zenoh, zmq, ...) reads
-    the registry and wires each port to its wire protocol -- so the robot and its bridge no longer
-    duplicate a hand-maintained key contract.
+    the registry and wires each port to its wire protocol -- so the robot and its bridge share no
+    hand-maintained key contract.
 
     The robot package imports nothing backend-specific: ``read``/``write`` traffic in *neutral*
     payloads (numpy arrays, tuples, small dataclasses), never wire messages. Backend particulars
@@ -255,6 +274,21 @@ class SimContext:
         self.interface = InterfaceRegistry()
         self.render = None  # lazily set to a RenderService when first needed
 
+        #: What each spawned model's actuators ended up running under, keyed by entity: a list of
+        #: :class:`roqsim.actuators.ResolvedActuator`, filled by the spawn plugins at ``configure``
+        #: and written into the run's provenance. It carries EVERY actuator, not only the ones an
+        #: ``actuators:`` block changed, because "what did this joint run under" is a question about
+        #: the run rather than about the diff -- an answer listing only the changes would need the
+        #: model opened to be understood. A world that overrides nothing still fills it.
+        self.actuator_tables: dict[str, list] = {}
+
+        #: What each published endpoint ended up going out at: one row per output a bridge bound,
+        #: filled at ``configure`` and written into the run's provenance. A publish can only land on
+        #: a physics step, so a requested rate that is not a whole number of steps is served at a
+        #: neighbouring one -- the row carries both numbers, because a reader holding only the world
+        #: document has the requested one and no way to learn the other.
+        self.endpoint_rates: list[dict] = []
+
         # Manual control: when True the *human* owns ``data.ctrl`` this run, so every controller
         # plugin must leave it alone and let the viewer's control sliders drive the actuators. A
         # run-level switch (the runner's ``--manual-control``), not world config: which controller a
@@ -264,8 +298,9 @@ class SimContext:
         # sliders at the robot's home pose); the rule is about the per-tick write in ``pre_step``.
         self.manual_control: bool = False
 
-        # Deterministic noise. `seed` is set by the driver (`roqsim sim --seed`); `None` means "draw one
-        # and record it", which is the driver's job, not this object's. See `rng_for`.
+        # Deterministic noise. `seed` is set by the driver (`roqsim.seed.resolve_seed`); `None` means
+        # "draw one and record it", which is the driver's job, not this object's. `rng_for` raises on
+        # `None` rather than standing in a default -- see its docstring for why.
         self.seed: int | None = None
         #: Which trial this is within the process, counted from 0 and advanced by
         #: :meth:`roqsim.engine.Engine.reset`. It is part of the noise key: a reset puts
@@ -321,10 +356,33 @@ class SimContext:
         costs ~8 us to construct, which is 11% of a 1080-beam lidar's own work at 30 Hz (0.02% of wall
         time) but would be absurd per beam. Noise draws are vectorised anyway, so the natural shape is
         already the right one.
+
+        **An unset seed raises.** A seed is driver-owned, so a run without one is missing a required
+        input, and standing in a default would be the worst possible failure here: every trial of
+        every run draws the same numbers, each run still looks like its own, the recording still
+        reports the seed as absent, and only reading the drawn values reveals it. A world run
+        repeatedly to estimate a spread would estimate nothing, and say nothing. So it fails at
+        the first draw, before there are results to mistake for samples.
+
+        Raised here and not from ``setup()`` because this is the only place that knows a draw is
+        happening: a geometry export or a ``scenes describe`` builds the same world and needs no
+        seed at all.
         """
         import numpy as np
 
-        seed = 0 if self.seed is None else int(self.seed)
+        if self.seed is None:
+            raise SeedError(
+                "no seed was resolved for this run, so there is nothing to draw the "
+                f"randomness for {name!r} from. The seed is the DRIVER's to resolve, and which "
+                "kind of driver this is decides how. A driver that RUNS the world calls "
+                "`roqsim.seed.resolve_seed(explicit, logger, config_seed=cfg.seed)` and assigns "
+                "the result to `ctx.seed` BEFORE `engine.setup()` (`configure` may read it, "
+                "`pre_step` does) -- `roqsim sim` and the scenario adapter both do. A driver that "
+                "only LOOKS at the world -- a render, an export, a map, a load check -- passes "
+                "`Engine(cfg, preview=True)` instead, which pins the fixed preview seed, since "
+                "there is no run to reproduce and a picture is not a measurement."
+            )
+        seed = int(self.seed)
         step = 0 if self.model is None or self.data is None else round(self.sim_time / self.dt)
         # A stable hash of the sensor name: Python's hash() is salted per process, which would make a
         # run irreproducible across processes -- exactly what this exists to prevent.

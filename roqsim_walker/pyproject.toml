@@ -5,27 +5,28 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_walker"
 version = "0.1.0"
-description = "Kinematic pedestrian walkers for roqsim (CARLA characters, A* + behaviour tree navigation)."
+description = "Kinematic pedestrian walkers for roqsim: a skinned humanoid on mocap bodies, navigated by roqsim_nav."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "roqsim",
+    "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
     "mujoco>=3.0",
     "numpy>=1.24",
     "py_trees>=2.2",   # the navigate / stuck-recovery behaviour tree
     "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)
     # trimesh soft-imports scipy and re-raises the wrapped ImportError the first time the grouped
     # OBJ path touches it, so scipy is a hard dependency of our skinning use. skin.py's KD-tree
-    # fast path (formerly the 'fast' extra) needs only `scipy.spatial`, stable since 0.x.
+    # fast path needs only `scipy.spatial`, stable since 0.x.
     #
-    # 1.11, not 1.13, and the reason is that the floor must not encode a NUMPY fact. This used to
-    # say >=1.13 as "the first numpy-2-compatible line", but scipy declares its own numpy range --
+    # 1.11, not 1.13 ("the first numpy-2-compatible line"), because the floor must not encode a
+    # NUMPY fact: scipy declares its own numpy range --
     # 1.11.4 requires numpy<1.28, 1.13 requires numpy<2.3 -- so a resolver in a numpy-2
-    # environment cannot pick 1.11 and lands on 1.13+ without being told. Stating it here only
-    # over-constrained the environments that pin numpy<2, where 1.13 is not required and not
+    # environment cannot pick 1.11 and lands on 1.13+ without being told. Stating it here would only
+    # over-constrain the environments that pin numpy<2, where 1.13 is not required and not
     # always available: the ROS base image ships DEBIAN-packaged scipy 1.11.4, which has no RECORD
-    # file, so pip cannot uninstall it and a >=1.13 floor failed the image build outright with
+    # file, so pip cannot uninstall it and a >=1.13 floor fails the image build outright with
     # "Cannot uninstall SciPy 1.11.4". Same floor `roqsim_scenes` already uses, for that reason.
     "scipy>=1.11",
 ]
@@ -42,13 +43,19 @@ test = ["pytest>=7.0"]
 # with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
 # air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
 # degrades to planned paths without local avoidance and logs why, it does not fail.
-avoidance = ["rvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
+avoidance = ["pyrvo2 @ git+https://github.com/sybrenstuvel/Python-RVO2.git"]
 # `roqsim walker import-actor` only: reads a rigged COLLADA actor to author a new blueprint offline. Not
 # needed to *run* a walker, so it stays out of the runtime deps.
 import = ["pycollada>=0.7"]
 
 [project.entry-points."roqsim.plugins"]
 walker = "roqsim_walker.plugins.walker:WalkerPlugin"
+
+# The pedestrian embodiment of `roqsim_nav`'s navigator. Registered from THIS package, so the
+# dependency runs roqsim_walker -> roqsim_nav and never back: the navigator serves a walker without
+# roqsim_nav knowing walkers exist.
+[project.entry-points."roqsim_nav.outputs"]
+walker = "roqsim_walker.output:WalkerOutput"
 
 # Bundled walker blueprints (people/<Walker>/) + locomotion clips (anims/<set>/).
 [project.entry-points."roqsim.models"]

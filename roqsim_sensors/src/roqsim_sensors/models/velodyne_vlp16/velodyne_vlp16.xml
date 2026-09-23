@@ -1,0 +1,45 @@
+<mujoco model="velodyne_vlp16">
+  <!--
+    Velodyne VLP-16 (Puck) lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Dataspeed's `velodyne_description` (urdf/VLP-16.urdf.xacro), the macro that
+    jackal_description's `vlp16_mount` calls: the body is `${name}_base_link`, whose origin is the
+    housing base, and the scan is stamped in its child `${name}` (default `velodyne`), 37.7 mm up.
+
+    Body-local axes: x = the scan's zero bearing, z = up. The data sheet's dimension drawing puts
+    the optical centre 37.8 mm above the base, 0.1 mm above the vendor frame; the site stays on the
+    vendor frame. The device's manifest casts one horizontal plane of the 16.
+
+    Built by external/convert/build_scanner_devices.py from velodyne_simulator @ 03e3ce2e1a92991c31463f8935a98aa344f17da2.
+    Scan parameters and the `frames:` entry for this site are in velodyne_vlp16.manifest.yaml; see
+    velodyne_vlp16_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="VLP16_base_1_mat" rgba="0.55 0.55 0.55 1"/>
+    <material name="VLP16_base_2_mat" rgba="0.55 0.55 0.55 1"/>
+    <material name="VLP16_scan_mat" rgba="0.1 0.1 0.1 1"/>
+    <mesh name="VLP16_base_1" file="VLP16_base_1.obj"/>
+    <mesh name="VLP16_base_2" file="VLP16_base_2.obj"/>
+    <mesh name="VLP16_scan" file="VLP16_scan.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0.03585" mass="0.83" diaginertia="0.000908059 0.000908059 0.001104962"/>
+      <geom name="velodyne_vlp16_visual_0" type="mesh" mesh="VLP16_base_1" material="VLP16_base_1_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="velodyne_vlp16_visual_1" type="mesh" mesh="VLP16_base_2" material="VLP16_base_2_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="velodyne_vlp16_visual_2" type="mesh" mesh="VLP16_scan" material="VLP16_scan_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision cylinder (r 51.6 mm, 71.7 mm long). -->
+      <geom name="velodyne_vlp16_collision" type="cylinder" pos="0 0 0.03585" size="0.0516 0.03585" group="3"/>
+      <!-- The vendor scan frame `${name}`: 37.7 mm above the housing base.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0.0377" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

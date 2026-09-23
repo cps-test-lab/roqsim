@@ -4,8 +4,8 @@
 
 """A manifest is a document, so it may ``extends:`` another model's.
 
-`unitree_g1_dex1` IS a `unitree_g1` plus hands. It said so by repeating the base's locomotion and
-lidar blocks verbatim, which then had to be kept in step by hand. Inheritance says it once.
+`unitree_g1_dex1` IS a `unitree_g1` plus hands. Inheritance says so once, rather than repeating the
+base's locomotion and lidar blocks verbatim to be kept in step by hand.
 
 What is inherited is COMPONENTS, not geometry: a derived model keeps its own MJCF. `extends:` never
 carried geometry -- `sim.world` did -- and `sim:` is refused in a manifest entirely, because a model

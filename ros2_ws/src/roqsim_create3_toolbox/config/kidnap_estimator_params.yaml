@@ -1,0 +1,10 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_common_bringup/config/kidnap_estimator_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation), so the node runs with the parameters its
+# maintainers ship; roqsim's TurtleBot 4 publishes on the topics named here.
+/**:
+  kidnap_estimator_publisher:
+    ros__parameters:
+      # Kidnap status publisher topic
+      kidnap_status_topic: kidnap_status
+      # Subscription topics
+      hazard_topic: hazard_detection

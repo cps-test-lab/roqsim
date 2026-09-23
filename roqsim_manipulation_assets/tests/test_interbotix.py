@@ -6,13 +6,12 @@ first job is asserting nothing drifted in transit.
 
 The second is the gripper, and it is why this file exists rather than reusing the arm battery.
 ``references/gripper.md`` is blunt about it: *"A grasp that is only checked at the instant it reaches
-height will report picks that did not happen."* This port proved that twice over. Two earlier
-attempts at ``test_holds_a_payload`` reported a "grasp" that was nothing of the kind -- once the box
-had simply free-fallen to the floor before the fingers closed, once the arm swept through it on the
-way to the pose and knocked it aside. Both looked plausible in a summary and both would have shipped
-a gripper that cannot pick anything up. The test now spawns the arm *already at* the grasp stance
-(``rest:``), so there is no approach sweep, and asserts the payload leaves the floor **and** does not
-creep afterwards.
+height will report picks that did not happen."* Two such "grasps" are
+nothing of the kind -- a box that simply free-falls to the floor before the fingers close, and a box
+the arm sweeps through on the way to the pose and knocks aside. Both look plausible in a summary and
+both would ship a gripper that cannot pick anything up. ``test_holds_a_payload`` therefore spawns
+the arm *already at* the grasp stance (``rest:``), so there is no approach sweep, and asserts the
+payload leaves the floor **and** does not creep afterwards.
 """
 
 from __future__ import annotations
@@ -50,10 +49,19 @@ def _engine(model, *, rest=None, gripper_ctrl=None, box=None, grasping=True):
         arm["components"] = [{"arm_controller": {"rest": rest, "gripper_ctrl": gripper_ctrl}}]
     components = [arm]
     if box is not None:
-        components.append({"spawn_model": {"model": "graspable_box", "name": "box", "free": True,
-                                           "pos": box}})
-    engine = Engine(load_config_from_dict({"sim": sim, "components": components},
-                                          base_dir=Path(".")))
+        components.append(
+            {
+                "spawn_model": {
+                    "model": "graspable_box",
+                    "motion": "physics",
+                    "pose": {"position": {"x": box[0], "y": box[1], "z": box[2]}},
+                },
+                "name": "box",
+            }
+        )
+    engine = Engine(
+        load_config_from_dict({"sim": sim, "components": components}, base_dir=Path("."))
+    )
     engine.setup()
     engine.reset()
     controller = next(p for p in engine.plugins if type(p).__name__ == "ArmControllerPlugin")
@@ -140,7 +148,7 @@ def test_holds_a_payload():
     """E-G held load: pick a 0.5 kg box off the floor and keep it there.
 
     The arm spawns already at the grasp stance, because commanding it there from home sweeps the
-    gripper through the box and knocks it away -- which an earlier version of this test scored as a
+    gripper through the box and knocks it away -- which a check at the moment of lifting scores as a
     successful grasp.
     """
     engine, controller = _engine("vx300s", rest=GRASP, box=[GRASP_X, 0.0, 0.025])

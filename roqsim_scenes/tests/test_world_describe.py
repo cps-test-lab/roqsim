@@ -29,18 +29,16 @@ def world(tmp_path):
         "components:\n"
         "- boxes:\n"
         "    instances:\n"
-        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
-        "    - {pos: [3.0, 2.0], size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 1.0, y: 1.0}}, size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 3.0, y: 2.0}}, size: [0.4, 0.4, 0.4]}\n"
         "  name: obstacles\n"
     )
     return path
 
 
 def test_there_is_one_name_and_it_is_both_the_key_and_the_entity_name(capsys, world):
-    """There used to be two `name`s and confusing them was a run-time failure: a reserved sibling
-    that addressed the plugin, and one inside the config that named its entities and addressed
-    nothing. They are now one key -- the entry's label -- so an override written against the name a
-    world gave its boxes reaches the plugin that made them."""
+    """One key is both: the entry's label addresses the plugin and names its entities, so an
+    override written against the name a world gave its boxes reaches the plugin that made them."""
     plugin = _describe(capsys, str(world))["components"][0]
     assert plugin["address"] == "obstacles"
     assert plugin["ref"] == "boxes"
@@ -235,8 +233,8 @@ def test_body_tree_shares_the_one_build_with_entities_and_overridable(
 def ros_world(tmp_path):
     """A `*_ros` world: geometry plus the two bridges that ship in a colcon package.
 
-    Which is to say: exactly what a pip-only environment cannot resolve, and the shape the campaign
-    pre-check was silently losing its answer to.
+    Which is to say: exactly what a pip-only environment cannot resolve, and the shape a campaign
+    pre-check needs an answer for.
     """
     path = tmp_path / "dummy_ros.yaml"
     path.write_text(
@@ -251,7 +249,7 @@ def ros_world(tmp_path):
 
 
 def test_a_ros_world_still_answers_where_the_bridge_does_not_resolve(capsys, ros_world):
-    """The reported failure: the build died on plugins that contribute no geometry."""
+    """The build must not die on plugins that contribute no geometry."""
     assert world_describe.main([str(ros_world), "--entities"]) == 0
     out = capsys.readouterr()
     described = json.loads(out.out)
@@ -281,7 +279,7 @@ def test_overrides_are_applied_before_anything_is_described(capsys, tmp_path):
         "components:\n"
         "  obstacle:\n"  # the entry's LABEL, which is what an address names
         "    instances:\n"
-        "    - {pos: [1.0, 1.0], size: [0.4, 0.4, 0.4]}\n"
+        "    - {pose: {position: {x: 1.0, y: 1.0}}, size: [0.4, 0.4, 0.4]}\n"
     )
 
     plain = _describe(capsys, str(world), "--entities")
@@ -310,7 +308,7 @@ def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
 
 
 def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
-    """The regression guard on which drop helper this uses.
+    """Guards which drop helper this uses.
 
     The lenient one drops any ref that will not resolve, so this world would build without its
     geometry and report an entity list missing `box_a` -- from which a caller concludes the world
@@ -325,7 +323,7 @@ def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
 
 
 def test_a_build_failure_keeps_the_half_that_needed_no_build(capsys, dummy_world, monkeypatch):
-    """A build-only failure used to discard the plugin list too, which cost the campaign its check."""
+    """A build-only failure must not discard the plugin list, which is the campaign's check."""
 
     @contextmanager
     def explode(_config):
@@ -374,15 +372,14 @@ def robot_world(tmp_path):
 def test_it_describes_components_the_document_never_declared(capsys, robot_world):
     """The whole point: a campaign sweeps a model default, so this has to be able to name one.
 
-    It could not -- the payload was zipped against the document's own entries, so the set published
-    and the set an override could reach were the same, and both excluded everything a manifest
-    contributed.
+    Zipped against the document's own entries instead, the set published and the set an override
+    could reach would both exclude everything a manifest contributes.
     """
     described = _describe(capsys, str(robot_world))
     by_address = {p["address"]: p for p in described["components"]}
-    assert by_address["robot.lidar"]["origin"] == "manifest"
+    assert by_address["robot.rplidar.lidar"]["origin"] == "manifest"
     assert by_address["robot"]["origin"] == "document"
-    assert "components.robot.lidar.rays" in by_address["robot.lidar"]["paths"]
+    assert "components.robot.rplidar.lidar.rays" in by_address["robot.rplidar.lidar"]["paths"]
 
 
 def test_every_published_address_is_one_an_override_accepts(capsys, robot_world):
@@ -401,7 +398,7 @@ def test_every_published_address_is_one_an_override_accepts(capsys, robot_world)
 
 def test_a_component_is_reported_under_one_name(capsys, robot_world):
     """`address` and nothing beside it. A second field meaning the same thing is a second thing to
-    keep in step, and the one reader that wanted it now reads `addresses`."""
+    keep in step, and a reader that wants the set reads `addresses`."""
     plugins = _describe(capsys, str(robot_world))["components"]
     assert all("key" not in p for p in plugins)
     assert all(p["address"] for p in plugins)

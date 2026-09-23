@@ -5,8 +5,8 @@
 """Compile a raw mesh into a minimal, lit, grounded MJCF scene -- the one place that knows how.
 
 Not a tool: a library used by ``roqsim render`` (to show a mesh that is not a finalized model yet) and by
-``roqsim assets render-thumbnails`` (for walker blueprints and prop OBJs). Both used to carry their own
-copy; this is the single owner.
+``roqsim assets render-thumbnails`` (for walker blueprints and prop OBJs). It is the single owner of
+that scene, so the two cannot disagree about what a previewed mesh looks like.
 
 It lives in the core rather than beside the prop pipeline that motivated it, because ``roqsim render``
 names ``.obj``/``.stl`` in its own ``--help``: a documented core capability cannot be satisfied by

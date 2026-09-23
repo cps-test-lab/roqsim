@@ -25,6 +25,7 @@ Config::
       ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       latch: true            # once true, stay true until on_reset (a trial is failed, not un-failed)
+      reset_on_spawn: true   # spawning the watched entity restarts the report (see below)
       rate_hz: 30.0          # endpoint publish rate
 
 Endpoint ``contact`` (out) reads a :class:`ContactReport`:
@@ -37,6 +38,27 @@ wants the detail reads the fields directly.
 
 The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
 wheels, so a wheel clipping a box counts exactly as much as the bumper does.
+
+**When the trial spawns the watched entity.** ``reset_on_spawn`` (default true) restarts the
+report when the watched entity GAINS PRESENCE. An entity that has just been spawned has no
+history: it was not in the world a moment ago, so nothing it touched before it went absent is a
+fact about it now, and with ``latch`` that would otherwise be a permanent one.
+
+Only presence does this. A ``SetEntityState`` does not, because the service is specified as "an
+instant change in its pose and/or twist" and nothing more -- a simulator that also cleared an
+observer there would be answering a question the caller did not ask. The standard's verb for
+discarding accumulated state is ``ResetSimulation`` with ``SCOPE_STATE``, which reaches this
+plugin's :meth:`on_reset` like any other.
+
+That distinction decides how a trial should place a robot it does not want observed at the pose
+the world compiled it at: **spawn it into position** rather than teleport it there. An absent
+entity's geoms carry no ``contype``/``conaffinity``, so it registers no contact at all while
+absent, and presence and pose are applied in ONE transaction -- so there is no step in which it is
+perceivable where the world happened to put it. A trial that teleports a present robot instead is
+observed at the compiled pose, and an obstacle placed there by a campaign that never knew about it
+is a collision before the trial has moved.
+
+Set ``reset_on_spawn`` false where a re-spawned entity should carry its history forward.
 """
 
 from __future__ import annotations
@@ -47,6 +69,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from ..contact_scope import ContactScope, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 
@@ -80,11 +103,13 @@ class ContactMonitorPlugin(Plugin):
         self.ignore_prefixes = list(self.config.get("ignore_prefixes", []))
         self.min_force = float(self.config.get("min_force", 1.0))
         self.latch = bool(self.config.get("latch", True))
+        self.reset_on_spawn = bool(self.config.get("reset_on_spawn", True))
         self.rate_hz = float(self.config.get("rate_hz", 30.0))
         self._ctx: SimContext | None = None
-        self._watched: set[int] = set()  # geom ids belonging to the watched subtree
-        self._ignored: set[int] = set()  # geom ids that never count
+        self._scope: ContactScope | None = None  # which contacts count; see configure()
         self._report = ContactReport(False, -1.0, 0, "", "")
+        self._entity = None
+        self._was_present = True
 
     # -- validation ----------------------------------------------------------------------------
     def validate_config(self, config: dict) -> list[str]:
@@ -103,51 +128,27 @@ class ContactMonitorPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
-        prefix = entity.meta.get("prefix", "") if entity else ""
+        self._entity = entity
+        self._was_present = bool(getattr(entity, "present", True)) if entity else True
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
-        body_name = (
-            (prefix + self.body)
-            if self.body
-            else (entity.body if entity and entity.body else prefix + "base_link")
+        # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
+        # severity of the very contacts this reports, and a rule restated in each would be two.
+        self._scope = resolve_contact_scope(
+            model,
+            entity,
+            plugin="contact_monitor",
+            body=self.body,
+            ignore=self.ignore,
+            ignore_prefixes=self.ignore_prefixes,
         )
-        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if root < 0:
-            # Fail loudly: a monitor watching nothing would report "no collisions" forever, which
-            # is indistinguishable from a clean run and would silently pass every trial.
-            raise RuntimeError(f"contact_monitor: base body {body_name!r} not found")
-
-        self._watched = {
-            gid
-            for gid in range(model.ngeom)
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), root)
-        }
-        if not self._watched:
-            raise RuntimeError(
-                f"contact_monitor: body {body_name!r} and its subtree carry no geoms to watch"
-            )
-
-        self._ignored = set()
-        for gid in range(model.ngeom):
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
-            if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
-                self._ignored.add(gid)
-        missing = [
-            n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
-        ]
-        if missing:
-            # Not fatal (a world may legitimately have no `floor` geom), but never silent: an
-            # unmatched ignore entry is how a ground plane starts counting as a collision.
-            _log.warning(
-                "contact_monitor: ignore entry has no matching geom: %s", ", ".join(missing)
-            )
 
         # The same report, for a driver in this process: an `.osc` action, a test, another plugin.
         # A consumer would otherwise have to find this instance in `engine.plugins` and match it by
         # class name -- which is what the handle convention exists to retire (architecture.rst §12).
         # `read_state` rather than the report itself, because the report is REPLACED each step.
         # Keyed on the ADDRESS. `self.name` falls back to the class name, so two unnamed
-        # monitors in one world wrote to a single key and the second silently replaced the
+        # monitors in one world would write to a single key and the second silently replace the
         # first -- one robot's collisions reported as another's.
         ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 
@@ -171,12 +172,6 @@ class ContactMonitorPlugin(Plugin):
                 },
             )
         )
-        _log.info(
-            "contact_monitor: watching %d geoms of %r, ignoring %d",
-            len(self._watched),
-            body_name,
-            len(self._ignored),
-        )
 
     def read_state(self) -> ContactReport:
         """The latest report. What the blackboard handle hands an in-process consumer.
@@ -186,29 +181,37 @@ class ContactMonitorPlugin(Plugin):
         """
         return self._report
 
-    @staticmethod
-    def _in_subtree(model, body: int, root: int) -> bool:
-        while body > 0:
-            if body == root:
-                return True
-            body = int(model.body_parentid[body])
-        return body == root
-
     def on_reset(self, ctx: SimContext) -> None:
         self._report = ContactReport(False, -1.0, 0, "", "")
+        self._was_present = bool(getattr(self._entity, "present", True)) if self._entity else True
+
+    def _became_present(self) -> bool:
+        """Has the watched entity been SPAWNED since the last step -- gained presence?"""
+        if self._entity is None:
+            return False
+        now = bool(getattr(self._entity, "present", True))
+        appeared = now and not self._was_present
+        self._was_present = now
+        return appeared and self.reset_on_spawn
 
     def post_step(self, ctx: SimContext) -> None:
+        if self._became_present():
+            # An entity that has just been spawned has no history: it was not in the world a
+            # moment ago, so nothing it touched before it went absent is a fact about it now.
+            # With `latch` that would otherwise be a permanent one.
+            self._report = ContactReport(False, -1.0, 0, "", "")
+
         data, model = ctx.data, ctx.model
         hits = 0
         first: tuple[str, str] | None = None
         force = np.zeros(6)
-        for i in range(data.ncon):
+        # The scope has already dropped every contact this entity is not in, and every ignored
+        # pair. What is left to decide here is min_force, which is this plugin's alone: a verdict
+        # must reject numerical grazing, an integral must not.
+        for index in self._scope.indices(data):
+            i = int(index)
             c = data.contact[i]
             g1, g2 = int(c.geom1), int(c.geom2)
-            if (g1 in self._watched) == (g2 in self._watched):
-                continue  # neither side watched, or a self-contact: not an external collision
-            if g1 in self._ignored or g2 in self._ignored:
-                continue
             if self.min_force > 0:
                 mujoco.mj_contactForce(model, data, i, force)
                 if abs(float(force[0])) < self.min_force:

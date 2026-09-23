@@ -15,7 +15,6 @@ boards fall back to a plain wood ``rgba`` and a warning is logged.
 Config::
 
     shelf:
-      name: shelf         # entity name (default 'shelf')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 shelf)
       pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)
@@ -33,13 +32,13 @@ drop-in, parameterised replacement.
 from __future__ import annotations
 
 import logging
-import math
 
 import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import ModelError, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 logger = logging.getLogger("roqsim_assets.shelf")
 
@@ -61,19 +60,6 @@ _WOOD_FALLBACK_RGBA = [
 _TEXTURE_TILE_M = 1.0  # real-world metres one chipboard texture tile spans (via texuniform)
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
-
-
 class ShelfPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -93,7 +79,7 @@ class ShelfPlugin(Plugin):
             self.pos = [0.0, 0.0, 0.0]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
         if len(rpy) == 3:
-            self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+            self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
         else:
             self.quat = [1.0, 0.0, 0.0, 0.0]
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config can report

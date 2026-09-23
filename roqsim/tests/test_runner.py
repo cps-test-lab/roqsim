@@ -275,8 +275,8 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
 #
 # A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a scheduler
 # eviction and a campaign timeout all send it. Its *default* action kills the process outright, so no
-# `finally` runs and the recording and the run capture are both lost -- which is how one campaign
-# finished 1/1 clean and produced no `run.npz` at all. These pin that both signals now flip run-control
+# `finally` runs and the recording and the run capture are both lost -- a campaign then finishes 1/1
+# clean and produces no `run.npz` at all. These pin that both signals flip run-control
 # instead, and that the driver leaves the process's handlers as it found them.
 
 
@@ -414,3 +414,29 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.npz"))
     assert closed == [True], "close() did not complete -- the flush was outside the signal window"
+
+
+# -- the window's keys are the window's ------------------------------------------------------------
+
+
+def test_a_headless_run_does_no_key_work(tmp_path, monkeypatch):
+    """No handlers, no key list, and not even the question F8 would need answered.
+
+    The F1 list, the hotkeys and the camera-mode notice all belong to a window. A headless run has
+    none, so none of it may be built, and the world YAML -- resolved only to decide whether F8 has
+    somewhere to save to -- must not be looked up either.
+    """
+    called = []
+    monkeypatch.setattr(
+        "roqsim.runner._hotkeys", lambda **kw: called.append("hotkeys") or (None, None)
+    )
+    monkeypatch.setattr(
+        "roqsim.runner.world_yaml_path", lambda t: called.append("world_yaml") or None
+    )
+    monkeypatch.setattr("roqsim.runner.launch_viewer", lambda *a, **k: called.append("viewer"))
+    monkeypatch.setattr("roqsim.runner.open_loading_viewer", lambda **k: called.append("loading"))
+    monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
+    scene = tmp_path / "s.xml"
+    scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
+    runner.run(str(scene), headless=True, max_steps=1)
+    assert called == []

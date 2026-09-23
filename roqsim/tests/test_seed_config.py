@@ -4,11 +4,10 @@
 
 """``sim.seed`` — the run's noise seed as a world setting, not only a CLI flag.
 
-Sensor noise is seeded through ``SimContext.rng_for``, but the seed could only be
-given on the command line. Everything else about a run is configurable in the world
-YAML and therefore overridable by ``--set`` / ``--override``; the seed was the one
-thing that was not, so the noise a run uses could not be chosen from a world file the
-way every other simulator setting can.
+Sensor noise is seeded through ``SimContext.rng_for``. Everything else about a run is
+configurable in the world YAML and therefore overridable by ``--set`` / ``--override``,
+and the seed is too, so the noise a run uses can be chosen from a world file the way
+every other simulator setting can.
 """
 
 import logging
@@ -16,7 +15,7 @@ import logging
 import pytest
 
 from roqsim.config import PluginError, load_config, load_config_from_dict
-from roqsim.runner import _resolve_seed
+from roqsim.seed import resolve_seed
 
 
 def _cfg(tmp_path, body: str):
@@ -63,18 +62,18 @@ def test_seed_survives_an_override(tmp_path):
 
 def test_explicit_seed_beats_the_config(caplog):
     with caplog.at_level(logging.INFO):
-        assert _resolve_seed(5, logging.getLogger("t"), config_seed=7) == 5
+        assert resolve_seed(5, logging.getLogger("t"), config_seed=7) == 5
 
 
 def test_config_seed_is_used_when_no_explicit_one(caplog):
     with caplog.at_level(logging.INFO):
-        assert _resolve_seed(None, logging.getLogger("t"), config_seed=7) == 7
+        assert resolve_seed(None, logging.getLogger("t"), config_seed=7) == 7
 
 
 def test_a_seed_is_drawn_when_neither_is_given(caplog):
     """Unchanged behaviour: an unseeded run is still varied, and the draw is announced
     so it can be repeated."""
     with caplog.at_level(logging.INFO):
-        drawn = _resolve_seed(None, logging.getLogger("t"), config_seed=None)
+        drawn = resolve_seed(None, logging.getLogger("t"), config_seed=None)
     assert isinstance(drawn, int) and 0 <= drawn < 2**31
     assert "drawn" in caplog.text

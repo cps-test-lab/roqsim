@@ -11,44 +11,106 @@ the Warthog is the replication, and it adds the size trend: husky 3.0, panther 3
 base on a 1.136 m track needs 5.25. MuJoCo's point-contact scrub does not merely fail to match a
 real tyre, it fails *worse the larger the machine*, which is why a slip factor cannot be inherited
 from a sibling platform however similar the drive.
+
+The scanner fixtures are Clearpath's numbers, not the model's. clearpath_config
+sample/w200/w200_dual_laser.yaml @ b2a64ba mounts two `hokuyo_ust` on vertical PACS brackets, one at
+the front of each diff unit, and the chain to each scan frame is
+  w200.urdf.xacro:52-56                     base_link -> chassis_link (0, 0, 0.025)
+  diff_unit.urdf.xacro:253-260, w200:39     chassis_link -> <side>_diff_unit_link (0, +-0.56821, 0)
+  w200_dual_laser.yaml:14-21                <side>_diff_unit_link -> front_left_link / rear_right_link
+  clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:59-64, 100-110 @ 33e4b31
+                                            -> bracket_<i>_link -> bracket_<i>_mount (0, 0, 0.010125)
+                                            -> bracket_<i>_vertical_mount (0.0518, 0, 0.086875), pitch -pi/2
+  w200_dual_laser.yaml:33-35, 46-48         -> lidar2d_<i>_link (identity)
+  clearpath_sensors_description urdf/hokuyo_ust.urdf.xacro:39-44 @ b0f6d92
+                                            lidar2d_<i>_link -> lidar2d_<i>_laser (0, 0, 0.0474)
 """
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 
 import mujoco
 import numpy as np
 import pytest
-
+import yaml
 from mobile_scene_utils import named
+from scan_mount_utils import (
+    chain,
+    endpoint,
+    forward_range,
+    lidar,
+    pose_in_base,
+    quat_matrix,
+    robot_hits,
+    spawn,
+    static_tf,
+    urdf_rotation,
+)
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 
 #: From Clearpath's expanded w200 xacro @ b0f6d920, not measured from our model. The description's
 #: own sum is 260.001 kg; the missing gram is imu_0_link, which is a site here rather than a body.
-TOTAL_MASS = 260.0
-WHEEL_RADIUS = 0.3             # diff_4wd.yaml, and the URDF collision cylinder agrees
-WHEEL_SEPARATION = 1.13642     # the URDF geometry (2 x 0.56821)
-SLIP_FACTOR = 5.25             # calibrated against this model -- see the manifest
+#: The two scanner brackets carry no inertial in Clearpath's macro and add no mass here; the two
+#: UST-10LX devices add their specification weight of 0.13 kg each.
+TOTAL_MASS = 260.0 + 2 * 0.13
+WHEEL_RADIUS = 0.3  # diff_4wd.yaml, and the URDF collision cylinder agrees
+WHEEL_SEPARATION = 1.13642  # the URDF geometry (2 x 0.56821)
+SLIP_FACTOR = 5.25  # calibrated against this model -- see the manifest
 #: diff_4wd.yaml's wheel_separation 1.5 x wheel_separation_multiplier 1.125, over the real track.
 VENDOR_COMPENSATION = 1.5 * 1.125 / WHEEL_SEPARATION
-#: Fender top and scanner height, both in the base_link frame. The scanner must clear the fenders.
-FENDER_TOP = 0.533
-LIDAR_HEIGHT = 0.625
+
+#: The scanner mounts, as Clearpath chains them (fixed joints ``(xyz, rpy)``, see the module docstring).
+OWNER, PREFIX, NAMESPACE = "wh", "wh_", "warthog1"
+CHASSIS = ((0.0, 0.0, 0.025), (0.0, 0.0, 0.0))
+BRACKET_LINK = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+BRACKET_MOUNT = ((0.0, 0.0, 0.010125), (0.0, 0.0, 0.0))
+VERTICAL_MOUNT = ((0.0518, 0.0, 0.086875), (0.0, -math.pi / 2, 0.0))
+SENSOR = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+LASER = ((0.0, 0.0, 0.0474), (0.0, 0.0, 0.0))
+#: label -> (diff unit, unit joint, frame link, frame joint, bracket, scan frame, topic)
+SCANNERS = {
+    "lidar2d_0": (
+        "left_diff_unit_link",
+        ((0.0, 0.56821, 0.0), (0.0, 0.0, 0.0)),
+        "front_left_link",
+        ((0.68, -0.03, 0.35), (0.0, 1.5707, 0.0)),  # w200_dual_laser.yaml:14-17
+        "bracket_0",
+        "lidar2d_0_laser",
+        "sensors/lidar2d_0/scan",
+    ),
+    "lidar2d_1": (
+        "right_diff_unit_link",
+        ((0.0, -0.56821, 0.0), (0.0, 0.0, 0.0)),
+        "rear_right_link",
+        ((-0.68, 0.03, 0.35), (3.1415, 1.5707, 0.0)),  # w200_dual_laser.yaml:18-21
+        "bracket_1",
+        "lidar2d_1_laser",
+        "sensors/lidar2d_1/scan",
+    ),
+}
+#: urg_node's request, w200_dual_laser.yaml:41-42 and 54-55.
+REQUESTED_ANGLE = 1.5707
+#: The UST-10LX's steps per turn: 0.25 deg (Hokuyo specification C-42-04077, 2-2).
+AREA_RESOLUTION = 1440
 
 
 def _engine(**diff_drive):
     world = {
         "sim": {"timestep": 0.002},
-        "components": [{
-            "spawn_robot": {"model": "warthog", "prefix": "w_"},
-            "name": "w",
-            **({"components": [{"diff_drive": diff_drive}]} if diff_drive else {}),
-        }],
+        "components": [
+            {
+                "spawn_robot": {"model": "warthog", "prefix": "w_"},
+                "name": "w",
+                **({"components": [{"diff_drive": diff_drive}]} if diff_drive else {}),
+            }
+        ],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.ctx.seed = 1  # a test driving an Engine is the driver; the scanners draw range noise
     engine.setup()
     engine.reset()
     return engine
@@ -91,12 +153,13 @@ def test_mass_matches_the_vendor_description():
         engine.shutdown()
 
 
-def test_manifest_brings_the_drive_and_the_lidar():
+def test_manifest_brings_the_drive_and_both_scanners():
     """spawn_robot must expand the manifest: a Warthog with no drive is a 260 kg paperweight."""
     engine = _engine()
     try:
         assert engine.ctx.blackboard.get("robot:w") is not None, "diff_drive did not attach"
-        assert any(type(p).__name__ == "LidarPlugin" for p in engine.plugins), "lidar did not attach"
+        scanners = sorted(p.address for p in engine.plugins if type(p).__name__ == "LidarPlugin")
+        assert scanners == ["w.lidar2d_0.lidar", "w.lidar2d_1.lidar"], scanners
     finally:
         engine.shutdown()
 
@@ -192,29 +255,156 @@ def test_slip_factor_is_the_calibrated_one():
         engine.shutdown()
 
 
-def test_wheels_are_upright_and_the_scanner_clears_the_fenders():
-    """Geometry a dynamics battery cannot see.
-
-    Three ports in this batch shipped a defect a green battery missed and a person caught in the
-    viewer, so the checks a test *can* make are made here. The scanner one is specific to this
-    platform: the fenders stand 0.533 m above base_link, which is taller than every other robot in
-    roqsim_mobile, so a deck-height scan would return fender at every bearing.
-    """
+def test_wheels_are_upright():
+    """Geometry a dynamics battery cannot see: all four tyre axes along y."""
     engine = _engine()
     try:
-        model, data = engine.ctx.model, engine.ctx.data
+        data = engine.ctx.data
         for end in ("front", "rear"):
             for side in ("left", "right"):
-                gid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM,
-                                        f"w_{end}_{side}_wheel_tyre")
+                gid = named(
+                    engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, f"w_{end}_{side}_wheel_tyre"
+                )
                 axis = data.geom_xmat[gid].reshape(3, 3)[:, 2]
                 assert abs(abs(axis[1]) - 1.0) < 1e-6, (
-                    f"{end}_{side} tyre axis is {np.round(axis, 4)}, not along y")
-        base = named(model, mujoco.mjtObj.mjOBJ_BODY, "w_base_link")
-        sid = named(model, mujoco.mjtObj.mjOBJ_SITE, "w_lidar")
-        height = float(data.site_xpos[sid][2] - data.xpos[base][2])
-        assert height == pytest.approx(LIDAR_HEIGHT, abs=1e-3)
-        assert height > FENDER_TOP + 0.05, (
-            f"scanner at {height:.3f} m does not clear the {FENDER_TOP} m fenders")
+                    f"{end}_{side} tyre axis is {np.round(axis, 4)}, not along y"
+                )
     finally:
         engine.shutdown()
+
+
+# --------------------------------------------------------------------------- C. scanners
+
+
+def _vendor_chain(label: str):
+    unit, unit_joint, _, frame_joint, *_ = SCANNERS[label]
+    return chain(
+        CHASSIS, unit_joint, frame_joint, BRACKET_LINK, BRACKET_MOUNT, VERTICAL_MOUNT, SENSOR, LASER
+    )
+
+
+@pytest.fixture(scope="module")
+def scan():
+    """The robot spawned with a prefix and namespace in a room of known walls, both scanners cast once."""
+    engine = spawn("warthog", SCANNERS, owner=OWNER, prefix=PREFIX, namespace=NAMESPACE)
+    yield engine
+    engine.shutdown()
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c1_the_scan_frame_is_clearpaths_chain(scan, label):
+    """C1: front-left and rear-right, 0.3706 m above base_link, the rear one facing backwards."""
+    want_pos, want_rot = _vendor_chain(label)
+    sign = 1.0 if label == "lidar2d_0" else -1.0
+    assert np.allclose(want_pos, (sign * 0.777, sign * 0.53821, 0.3706), atol=5e-5), want_pos
+    assert np.allclose(want_rot[:, 0], (sign, 0.0, 0.0), atol=2e-4), "the scan faces the wrong way"
+    for site in (f"{PREFIX}{label}_scan", f"{PREFIX}{label}_{SCANNERS[label][5]}"):
+        pos, rot = pose_in_base(scan, site, PREFIX)
+        assert np.allclose(pos, want_pos, atol=1e-6), f"{site} at {pos}"
+        assert np.allclose(rot, want_rot, atol=1e-6), f"{site} rotation {rot}"
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c2_the_forward_ray_reads_the_wall(scan, label):
+    published, true = forward_range(scan, lidar(scan, f"{OWNER}.{label}"))
+    assert published == pytest.approx(true, abs=1e-3), (
+        f"reads {published:.4f} m, wall at {true:.4f} m"
+    )
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c3_the_scan_skips_its_own_mount_and_nothing_else(scan, label):
+    model = scan.ctx.model
+    scanner = lidar(scan, f"{OWNER}.{label}")
+    mount = named(model, mujoco.mjtObj.mjOBJ_BODY, f"{PREFIX}{label}_mount")
+    assert scanner._bodyexclude == mount, "the scanner excludes something other than its housing"
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c4_no_ray_starts_inside_and_none_returns_from_the_robot(scan, label):
+    """C4: at the front of its diff unit, 0.0474 m above the bracket, each 180 deg fan looks away from
+    the fender, the bracket and the chassis: nothing of the robot is in it."""
+    scanner = lidar(scan, f"{OWNER}.{label}")
+    inside, outside = robot_hits(scan, scanner, PREFIX)
+    assert not inside, {body: len(d) for body, d in inside.items()}
+    assert outside == {}, {body: len(d) for body, d in outside.items()}
+    assert np.asarray(scanner.latest.ranges).min() > scanner.range_min, "a ray reads too close"
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c5_the_scanner_stands_on_its_brackets_upright_plate(scan, label):
+    """C5: the vertical mount lies on the inner face of the bracket's upright plate, whose collision box
+    is fitted to Clearpath's mesh, and the base plate sits on the diff unit's frame link."""
+    m, d = scan.ctx.model, scan.ctx.data
+    unit, _, frame, _, bracket, *_ = SCANNERS[label]
+    mount = named(m, mujoco.mjtObj.mjOBJ_SITE, f"{PREFIX}{bracket}_vertical_mount")
+    for plate, face, axis in (
+        ("upright", mount, 0),
+        ("base", named(m, mujoco.mjtObj.mjOBJ_SITE, f"{PREFIX}{bracket}_link"), 2),
+    ):
+        gid = named(m, mujoco.mjtObj.mjOBJ_GEOM, f"{PREFIX}{bracket}_{plate}_collision")
+        assert m.geom_bodyid[gid] == named(m, mujoco.mjtObj.mjOBJ_BODY, f"{PREFIX}{unit}")
+        local = d.geom_xmat[gid].reshape(3, 3).T @ (d.site_xpos[face] - d.geom_xpos[gid])
+        assert local[axis] == pytest.approx(-m.geom_size[gid][axis], abs=1e-6), (plate, local)
+
+
+def test_c6_the_tf_chain_and_topics(scan):
+    robot = static_tf(scan, OWNER, NAMESPACE)
+    # Each chain starts at a diff unit, a body welded under base_link, so the root's links to the
+    # units come first: base_link -> chassis_link -> <side>_diff_unit_link, composed.
+    want = [
+        ("base_link", unit, (tuple(np.add(CHASSIS[0], unit_joint[0])), (0.0, 0.0, 0.0)))
+        for unit, unit_joint, *_ignored in SCANNERS.values()
+    ]
+    for unit, _, frame, frame_joint, bracket, *_ignored in SCANNERS.values():
+        want += [
+            (unit, frame, frame_joint),
+            (frame, f"{bracket}_link", BRACKET_LINK),
+            (f"{bracket}_link", f"{bracket}_mount", BRACKET_MOUNT),
+            (f"{bracket}_mount", f"{bracket}_vertical_mount", VERTICAL_MOUNT),
+        ]
+    assert [(t["parent"], t["child"]) for t in robot] == [(p, c) for p, c, _ in want], robot
+    for t, (_, _, (xyz, rpy)) in zip(robot, want, strict=True):
+        assert np.allclose(t["translation"], xyz, atol=1e-6), t
+        assert np.allclose(quat_matrix(t["rotation"]), urdf_rotation(rpy), atol=1e-6), t
+    for label, (*_, bracket, frame_id, topic) in SCANNERS.items():
+        address = f"{OWNER}.{label}"
+        tf = static_tf(scan, address, NAMESPACE)
+        assert [(t["parent"], t["child"]) for t in tf] == [(f"{bracket}_vertical_mount", frame_id)]
+        assert np.allclose(tf[0]["translation"], LASER[0], atol=1e-6)
+        assert np.allclose(quat_matrix(tf[0]["rotation"]), np.eye(3), atol=1e-9)
+        hints = endpoint(scan, "scan", address).backend["ros2"]
+        assert (hints["frame_id"], hints["topic"]) == (frame_id, topic)
+        assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"
+
+
+def _urg_step(radian: float) -> int:
+    """urg_c's rad2step for a UST-10LX: round to nearest at its steps per turn (urg_utils.c:144-174)."""
+    return math.floor(AREA_RESOLUTION * radian / (2 * math.pi) + 0.5)
+
+
+@pytest.mark.parametrize("label", SCANNERS)
+def test_c7_the_field_is_the_one_clearpaths_configuration_asks_urg_node_for(scan, label):
+    """C7: angle_min/angle_max +-1.5707 become steps -360 .. +360, published as exactly +-pi/2 with
+    721 rays; every other value is the UST-10LX device's."""
+    from roqsim_sensors.models import MODELS_DIR
+
+    first, last = _urg_step(-REQUESTED_ANGLE), _urg_step(REQUESTED_ANGLE)
+    assert (first, last) == (-360, 360)
+    scanner = lidar(scan, f"{OWNER}.{label}")
+    assert scanner.num_rays == last - first + 1
+    assert scanner.angle_min == pytest.approx(2 * math.pi * first / AREA_RESOLUTION, abs=1e-9)
+    assert scanner.angle_max == pytest.approx(2 * math.pi * last / AREA_RESOLUTION, abs=1e-9)
+    manifest = yaml.safe_load((MODELS_DIR / "hokuyo_ust" / "hokuyo_ust.manifest.yaml").read_text())
+    (device,) = [c["lidar"] for c in manifest["components"] if "lidar" in c]
+    for key in (
+        "range_min",
+        "max_range",
+        "detection_min",
+        "detection_max",
+        "too_close",
+        "no_return",
+        "rate_hz",
+        "range_stddev",
+    ):
+        assert scanner.config[key] == device[key], f"{key}: {scanner.config[key]} != {device[key]}"

@@ -1,5 +1,6 @@
 <?xml version="1.0" ?>
 <mujoco model="agibot_g2">
+  <!-- AgiBot G2 (wheeled dual-arm mobile manipulator) for MuJoCo. -->
   <compiler angle="radian" meshdir="meshes/agibot_g2" autolimits="true"/>
   <default>
     <default class="g2_visual">

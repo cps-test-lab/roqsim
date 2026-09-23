@@ -2,7 +2,7 @@
 
 Stage 2 of the import pipeline (after ``usd_to_scene.py`` produces ``scene.json`` + per-object OBJs):
 emits a self-contained ``<scene>.xml`` you load with any MuJoCo tool -- no roqsim runtime, no
-plugin. It bakes what the old ``static_scene`` plugin did at runtime:
+plugin. It bakes, once and offline:
 
 - one mesh geom per object (rendered from its true triangles, collided by its convex hull),
 - per-object colours or textured materials (textures resolved via :mod:`roqsim.textures`, UVs scaled
@@ -164,7 +164,7 @@ def _bounds(manifest: dict, origin: list[float]) -> tuple[list[float], list[floa
 
 
 #: How far under everything visible the drawn floor sits. Big enough that no depth buffer confuses it
-#: with a scene's own floor (which is what made a single coplanar geom z-fight), small enough that the
+#: with a scene's own floor (a single coplanar geom z-fights), small enough that the
 #: step at the scene's edge is not a visible cliff.
 _FLOOR_VISUAL_DROP = 0.002
 
@@ -189,7 +189,7 @@ def _add_ground_plane(
 
     They are separate because they answer to different constraints. The collider must sit exactly at
     the ground height; the visual must never hide the floor a scene brought of its own. One geom
-    doing both is what made a drawn plane z-fight with a scene's own floor mesh across the whole room.
+    doing both makes a drawn plane z-fight with a scene's own floor mesh across the whole room.
     """
     if not config.get("ground_plane", True):
         return
@@ -220,7 +220,7 @@ def _add_ground_plane(
     if not stated:
         # Drawing a floor at a guessed height is worse than drawing none: everything standing on it
         # appears to hover or sink. Say so, though -- an unexplained void under the robot in the run
-        # view is exactly the report this whole feature came from.
+        # view otherwise reads as a broken bake.
         print(
             "  note: this scene states no ground height, so no floor is DRAWN (it still collides).\n"
             "        The run view, `roqsim render` and the viewer will show the void under the robot.\n"
@@ -237,7 +237,8 @@ def _add_ground_plane(
     # covered by a plane at a fixed offset. Under the minimum it cannot be, whatever the scene's shape.
     visual.pos = [
         *centre,
-        min(z, _lowest_renderable_z(manifest, origin, meshdir)) - _FLOOR_VISUAL_DROP,
+        min(z, _lowest_renderable_z(manifest, origin, meshdir, ground_z=z if stated else None))
+        - _FLOOR_VISUAL_DROP,
     ]
     visual.size = size
     visual.contype = 0
@@ -254,15 +255,26 @@ def _add_ground_plane(
         )
 
 
-def _lowest_renderable_z(manifest: dict, origin: list[float], meshdir: str) -> float:
+def _lowest_renderable_z(
+    manifest: dict, origin: list[float], meshdir: str, ground_z: float | None = None
+) -> float:
     """The lowest point of anything a viewer *draws*, so the drawn floor can go under all of it.
 
     Renderable objects only. A collision-only part routinely reaches below the floor -- a wall's
     footing, a plinth -- and it cannot be covered up by definition, so letting it decide the height
     would drop the backdrop for nothing and put a visible step at the scene's edge.
 
+    An object that RISES above a stated *ground_z* is treated the same way: it is a prop standing on
+    the floor with part of itself buried (a source world sinks a decoration to hide its underside),
+    and a floor drawn at the ground hides only the buried part -- which is what the source shows too.
+    Lowering the whole backdrop to expose it would draw MORE than the original did, and put a 0.5 m
+    step around a room to show the underside of an ornament. Geometry lying entirely below the ground
+    still counts: a recessed slab or an outdoor apron IS floor down there, and covering it is the
+    failure this function exists to prevent. Without a stated ground height nothing can be classified
+    this way, so every renderable object counts -- the conservative read.
+
     The manifest bounds are the fallback for a mesh that will not read, and only then: they cover every
-    object including the ones that do not render, so using them unconditionally would reintroduce
+    object including the ones that do not render, so using them unconditionally would hit
     exactly the footing problem. Falling back keeps the guarantee that matters -- the floor lands lower
     than it needed to, never higher, so it can still hide nothing.
     """
@@ -277,11 +289,20 @@ def _lowest_renderable_z(manifest: dict, origin: list[float], meshdir: str) -> f
             unreadable = True
             continue
         for sub in subs:
-            if len(sub.verts):
-                lowest = min(lowest, float(sub.verts[:, 2].min()) + origin[2])
-    if unreadable or lowest is math.inf:
+            if not len(sub.verts):
+                continue
+            top = float(sub.verts[:, 2].max()) + origin[2]
+            if ground_z is not None and top > ground_z:
+                continue  # a prop standing on the floor, part buried: the floor is meant to hide that
+            lowest = min(lowest, float(sub.verts[:, 2].min()) + origin[2])
+    if unreadable:
         lo, _ = _bounds(manifest, origin)
         return min(lowest, lo[2])
+    # Nothing to go under: every renderable object either starts at the ground or rises above it. That
+    # is not a missing answer -- it is "a floor at the ground height hides nothing" -- so say so, and
+    # let the caller keep its stated height rather than dropping the backdrop to a scene-bounds guess.
+    if lowest is math.inf:
+        return math.inf
     return lowest
 
 

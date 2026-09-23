@@ -26,6 +26,7 @@ If you just want to see it run, start with :doc:`getting_started`.
    coverage
    scene_builder
    nav2_example
+   create3_stack
    ground_truth
 
 .. toctree::

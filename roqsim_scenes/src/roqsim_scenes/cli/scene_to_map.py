@@ -19,7 +19,7 @@ the inside of walls.
 
 Why the scan height is a parameter and not a constant: a planar scan at height h is *exactly* what a
 2D costmap sees, so h decides what counts as an obstacle. Take it from the robot model's lidar mount
-(husky_a200: 0.51 m). On non-planar terrain, a slope projects into spurious occupancy at some heights
+(husky_a200: 0.4202 m). On non-planar terrain, a slope projects into spurious occupancy at some heights
 and not others — frequently the phenomenon under study, so never round it for convenience.
 
 ``--resolution`` and ``--origin`` exist to honour a *published* map's metadata even when the grid
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import deque
 from pathlib import Path
 
@@ -124,10 +125,27 @@ def _load_world(
     """
     import mujoco  # local: roqsim_scenes' other tools do not need MuJoCo
 
+    from roqsim.config import drop_transport_plugins
     from roqsim.engine import Engine
     from roqsim.runner import config_for_input
 
-    engine = Engine(config_for_input(world))
+    cfg = config_for_input(world)
+    # A map wants the scene, not a running simulation: a transport plugin publishes what the others
+    # built and adds no geometry, so it is dropped here as `roqsim render` and the exporters drop it.
+    # That is also what lets a world declaring the ROS bridge be mapped where the bridge is not
+    # installed -- a pip-only environment, or a container that never sourced the ROS overlay.
+    transport, unavailable = drop_transport_plugins(cfg)
+    if transport:
+        print(f"not needed for a map, skipping: {', '.join(transport)}")
+    if unavailable:
+        print(
+            "skipping plugin(s) this environment cannot load: "
+            + ", ".join(unavailable)
+            + ". The geometry is unaffected (a transport plugin builds none) -- but check the "
+            "spelling if you expected one.",
+            file=sys.stderr,
+        )
+    engine = Engine(cfg, preview=True)
     engine.setup()
     engine.reset()
     model, data = engine.ctx.model, engine.ctx.data
@@ -377,10 +395,10 @@ def main(argv: list | None = None) -> int:
         # 0.196, not 0.25. nav2_map_server classifies a pixel by occ = (255 - value)/255 and calls it
         # free when occ < free_thresh. The unknown shade written above is 205, whose occ is exactly
         # 0.19607 -- so free_thresh 0.196 leaves it UNKNOWN (0.19607 is not < 0.196) while 0.25 makes
-        # every unknown cell load as free space. This file writes a trinary map; declaring 0.25 threw
-        # the third state away at load time, letting the planner route through the region outside the
-        # walls and feeding AMCL a likelihood field that claims knowledge it does not have. 0.196 is
-        # the canonical ROS value and it exists for exactly this reason.
+        # every unknown cell load as free space. This file writes a trinary map; declaring 0.25
+        # throws the third state away at load time, letting the planner route through the region
+        # outside the walls and feeding AMCL a likelihood field that claims knowledge it does not
+        # have. 0.196 is the canonical ROS value and it exists for exactly this reason.
         f"free_thresh: 0.196\n"
     )
     free = int((grid == _FREE).sum())

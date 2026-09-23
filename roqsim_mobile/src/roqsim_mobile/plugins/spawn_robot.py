@@ -1,7 +1,6 @@
 """Scene plugin: attach a robot MJCF into the world and own its base spawn pose.
 
-Ported from our earlier in-house nav prototype's ``Robot`` scene assembly, but split into the plugin model: this plugin
-only *places* the robot (build + initial pose). Its kinematics/odometry live in a controller plugin
+This plugin only *places* the robot (build + initial pose). Its kinematics/odometry live in a controller plugin
 (e.g. :mod:`roqsim.plugins.diff_drive`), which finds this robot via the entity registry.
 
 Config::
@@ -10,9 +9,26 @@ Config::
       model: turtlebot4     # bundled model name, filename, or absolute path
       namespace: ""         # optional transport scope; the robot's endpoints inherit it
       prefix: ""            # MJCF name prefix (use distinct prefixes for >1 robot)
-      pos: [0.0, 0.0]       # world XY spawn ([x, y, z] to override the model's rest height)
-      yaw: 0.0              # spawn heading (rad)
+      pose:                 # the spawn pose, as SpawnEntity states one (see below)
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
       base_joint: base_free # free joint used to place the base
+      actuators:            # OPTIONAL: what law this robot's actuators run under, and their gains.
+        control: velocity   #   position | velocity | effort | impedance; the model's own if unset
+        d: 40               #   N*m*s/rad -- see roqsim.actuators for the gain of each control
+        each:               #   per-actuator, on top of the shared keys above
+          front_left_wheel_motor: {d: 25}
+      present: true         # false: compiled in, but absent until it is spawned
+      frames:               # OPTIONAL: fixed links beyond the manifest's own (see below)
+        - {name: cover_link, parent: body_link, pos: [0, 0, 0.05], rpy: [0, 0, 0]}
+
+**Vendor frames.** A top-level ``frames:`` block in the model's manifest -- plus any in this config,
+after it -- names the fixed links the vendor description chains and the MJCF flattens
+(:mod:`roqsim.frames`). Each becomes a site ``<prefix><name>`` on its parent's body at build, so a
+mounted device can hang from it (``spawn_sensor``'s ``parent_frame``), and is published at configure
+as a static transform ``parent -> name`` read from the compiled model, in the robot's namespace.
+Where a chain starts at a body other than the robot's root, ``root -> body`` is published with it,
+so the chain joins the robot's tree; that body must be welded to the root.
 
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
@@ -20,17 +36,62 @@ to that entity by position, and are addressed ``<name>.<label>``.
 
 The plugin registers an ``Entity(kind='robot')`` whose ``meta`` carries ``prefix``, ``model``, and
 ``initial_pose`` so controller/sensor/bridge plugins can resolve the right (prefixed) names.
+
+``pose:`` is the spawn pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose`` -- a
+``geometry_msgs/PoseStamped``. Its orientation may be a quaternion or Euler angles, so the common
+case stays short::
+
+    - spawn_robot: {model: turtlebot4, pose: {position: {x: 1.5, y: 2.0},
+                                              orientation: {yaw: 0.785}}}
+
+It is the ONLY way to state one, which is the point: a world declaring where a robot starts and a
+``SpawnEntity`` call placing it mid-trial are the same pose, so they are written the same way and
+a producer needs no conversion that depends on which door the pose came in at. It also makes the
+pose a value a campaign can write per configuration -- one destination, not two keys to split
+across -- so a swept start pose is spawned rather than applied after the fact.
+
+Omitting it spawns the robot at the origin, at the model's own resting height. See
+:mod:`roqsim.pose` for the shape and the three ways a document may say more than the message can
+(a world-frame ``header``, an omitted ``z`` meaning that resting height rather than zero, and the
+Euler spelling).
+
+The rotation is a full quaternion, because the service's is: a robot can be spawned tilted. Nothing
+here refuses that -- the base has a free joint and MuJoCo holds whatever orientation it is given --
+so a rotation that is not a heading is taken at its word.
+
+``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
+the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
+states (see :mod:`roqsim.presence`). The declared value is restored on ``on_reset``, so what one
+trial spawned does not carry into the next.
+
+Absence hides the robot's BODY, not its software: its controller and sensor plugins keep running,
+so an absent robot still publishes and still responds to a twist -- and being out of the contact
+set, a twist drives it through walls. For a start pose decided per run, move the robot with
+``SetEntityState`` instead; absence is for a machine that is not meant to be in the trial yet.
 """
 
 from __future__ import annotations
 
-import mujoco
-import numpy as np
+from dataclasses import replace
 
+import mujoco
+
+from roqsim.actuators import (
+    apply_gravity_compensation,
+)
+from roqsim.actuators import (
+    resolve as resolve_actuators,
+)
+from roqsim.actuators import (
+    validate_override as validate_actuators,
+)
 from roqsim.context import Entity, SimContext
-from roqsim.manifest import expand_manifest
+from roqsim.frames import add_frame_sites, parse_frames, static_tf_endpoint, static_transforms
+from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
-from roqsim.plugin import Plugin
+from roqsim.plugin import Plugin, PluginError
+from roqsim.pose import PoseError, parse_pose, yaw_of
+from roqsim.schema import Field
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -79,6 +140,25 @@ class SpawnRobotPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
+    expansion_keys = frozenset({"model", "default_plugins", "prefix"})
+
+    #: Every key this plugin, its ``expand`` and the entity it registers read -- and nothing else,
+    #: which is what makes ``STRICT_KEYS`` safe. A key outside it is refused rather than carried:
+    #: ``robot.lidar.rays`` against a robot whose scanner is a mounted device stops at the robot and
+    #: would write a ``lidar`` key here that nothing reads, while the real lidar keeps its value.
+    #: The load names that component's address (:mod:`roqsim.config`); the schema refuses the rest.
+    CONFIG_SCHEMA = {
+        "model": Field(str, doc="bundled model name, filename, or absolute path (required)"),
+        "namespace": Field(str, default="", doc="transport scope the robot's endpoints inherit"),
+        "prefix": Field(str, default="", doc="MJCF name prefix; distinct per robot"),
+        "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
+        "base_joint": Field(str, default="base_free", doc="free joint used to place the base"),
+        "actuators": Field(dict, doc="control law and gains override (roqsim.actuators)"),
+        "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
+        "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
+        "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
+    }
+    STRICT_KEYS = True
 
     @classmethod
     def expand(cls, spec, world, base_dir):
@@ -95,14 +175,29 @@ class SpawnRobotPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.robot_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0])
-        self.initial_pose = (float(pos[0]), float(pos[1]), float(self.config.get("yaw", 0.0)))
-        #: An explicit z in ``pos``, which a world states when the ground under the spawn is not at
-        #: z=0 -- a height field, a ramp, a shelf. Without one the model's own rest height is used.
-        self.spawn_z = float(pos[2]) if len(pos) > 2 else None
+        #: The base orientation as a quaternion ``[w, x, y, z]``: whatever rotation the pose stated,
+        #: which is what makes it the same value the spawn service accepts.
+        self.quat = [1.0, 0.0, 0.0, 0.0]
+        #: The origin at the model's own resting height, for a world that states no pose.
+        x, y, z = 0.0, 0.0, None
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            x, y, z = position
+        #: ``(x, y, yaw)``: what the entity's ``meta`` advertises, and what a consumer that can only
+        #: act on a heading reads. A tilted spawn keeps its full rotation in :attr:`quat`; this is
+        #: the heading part of it.
+        self.initial_pose = (x, y, yaw_of(self.quat))
+        #: An explicit z, which a world states when the ground under the spawn is not at z=0 -- a
+        #: height field, a ramp, a shelf. Without one the model's own rest height is used.
+        self.spawn_z = z
         #: Read from the model's keyframe in :meth:`build`; None for a model that states no stance.
         self.rest_z: float | None = None
         self.base_joint = self.prefix + self.config.get("base_joint", "base_free")
+        #: Every actuator's final law and gains, filled in :meth:`build` and published at
+        #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
+        self.actuator_table: list = []
+        #: The manifest's and this config's fixed frames, read in :meth:`build`.
+        self.frames: list = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -113,9 +208,16 @@ class SpawnRobotPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        pos = config.get("pos", [0.0, 0.0])
-        if len(pos) not in (2, 3):
-            errors.append("'pos' must be [x, y], or [x, y, z] to override the model's rest height")
+        try:
+            parse_frames(config.get("frames"), "spawn_robot")
+        except PluginError as exc:
+            errors.append(str(exc))
+        errors += validate_actuators(config.get("actuators"))
+        if "pose" in config:
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -124,8 +226,32 @@ class SpawnRobotPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (own package plus
         # any borrowed via the manifest's `assets:`), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        # Nothing is grafted onto a base, so both halves of an override land here: the actuator
+        # rewrite, and -- when a joint runs under `impedance` -- the body-level gravity term that
+        # makes a soft stiffness hold a pose instead of folding under the robot's own weight.
+        self.actuator_table = resolve_actuators(
+            child, self.config.get("actuators"), model_name=str(self.config["model"])
+        )
+        # Per body, not per spec, because a robot that stands on the ground has both kinds of
+        # body: a mobile manipulator's ARM links are held up by its own motors, while the base
+        # hangs off nothing and the wheels carry the robot. Compensating all of them would cancel
+        # the weight that presses it onto the floor -- and it would not fall over, so nothing
+        # would say so. `apply_gravity_compensation` draws that line from the actuator table.
+        #
+        # The arm's own sag is small at a real robot's shipped gains (frankie's worst joint holds
+        # to 0.4 deg without this) and it is the same defect an arm on a bench has, so it is
+        # closed the same way rather than left as the one place a drive carries its own weight
+        # and is not modelled doing it.
+        apply_gravity_compensation(child, self.actuator_table)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
+        # Added to the MODEL before attach, so each site takes the robot's prefix like every other
+        # name in it, and a mount declared after this robot can hang from it.
+        where = f"spawn_robot {self.robot_name} ({self.config['model']})"
+        self.frames = parse_frames(
+            manifest_frames(asset.path) + list(self.config.get("frames") or []), where
+        )
+        add_frame_sites(child, self.frames, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -171,14 +297,76 @@ class SpawnRobotPlugin(Plugin):
                 },
             )
         )
+        # Under the names the compiled model has, so a reader can join the table to `nu`.
+        ctx.actuator_tables[self.robot_name] = [
+            replace(
+                row,
+                name=self.prefix + row.name,
+                joint=(self.prefix + row.joint) if row.joint else "",
+            )
+            for row in self.actuator_table
+        ]
+        if self.frames:
+            transforms = static_transforms(
+                ctx.model,
+                self._root_links(ctx, base_body)
+                + [
+                    (f.parent, self.prefix + f.parent, f.name, self.prefix + f.name)
+                    for f in self.frames
+                ],
+                f"spawn_robot {self.robot_name}",
+            )
+            ctx.interface.add(
+                static_tf_endpoint(
+                    "frames", self.robot_name, self.config.get("namespace", ""), transforms
+                )
+            )
         self._apply_initial_pose(ctx)
+
+    def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
+        """``root -> body`` for each body other than the root that a frame chain hangs from.
+
+        A frame is measured from its parent body, and nothing else publishes where that body sits:
+        without this link the chain is a TF tree of its own, and a consumer asking for the scan in
+        ``base_link`` finds two unconnected trees. The body must be welded to the root, since the
+        transform is static; one that a joint moves is refused rather than published at its
+        reference pose.
+        """
+        m = ctx.model
+        root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
+        root_name = base_body.removeprefix(self.prefix)
+        declared = {f.name for f in self.frames}
+        links: list[tuple[str, str, str, str]] = []
+        for frame in self.frames:
+            if frame.parent in declared or any(link[2] == frame.parent for link in links):
+                continue
+            body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + frame.parent)
+            walk = body
+            while walk != root:
+                if walk <= 0:
+                    raise RuntimeError(
+                        f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
+                        f"{frame.parent!r}, which is not a body under the root {root_name!r}"
+                    )
+                if m.body_jntnum[walk]:
+                    moving = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, walk)
+                    raise RuntimeError(
+                        f"spawn_robot {self.robot_name}: frame {frame.name!r} hangs from "
+                        f"{frame.parent!r}, which a joint on {moving!r} moves relative to "
+                        f"{root_name!r}. Its transform from the root is not static; hang the frame "
+                        f"from a body welded to the root."
+                    )
+                walk = int(m.body_parentid[walk])
+            if body != root:
+                links.append((root_name, base_body, frame.parent, self.prefix + frame.parent))
+        return links
 
     def on_reset(self, ctx: SimContext) -> None:
         self._apply_initial_pose(ctx)
         mujoco.mj_forward(ctx.model, ctx.data)
 
     def _apply_initial_pose(self, ctx: SimContext) -> None:
-        x, y, yaw = self.initial_pose
+        x, y, _ = self.initial_pose
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self.base_joint)
         if jid < 0:
             ctx.logger.warning(
@@ -195,5 +383,4 @@ class SpawnRobotPlugin(Plugin):
         z = self.spawn_z if self.spawn_z is not None else self.rest_z
         if z is not None:
             ctx.data.qpos[q + 2] = z
-        h = yaw / 2.0
-        ctx.data.qpos[q + 3 : q + 7] = (np.cos(h), 0.0, 0.0, np.sin(h))
+        ctx.data.qpos[q + 3 : q + 7] = self.quat

@@ -23,17 +23,19 @@ components:
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
-  # LDS-01, the stock Waffle scanner, as a planar 2D scan at the URDF base_scan frame (0.132 m above
-  # the floor). The paper names only "its Lidar sensor" (spec gap g_lidar_params), so these are the
-  # platform's own published values: 360 deg, 1 deg resolution -> 360 rays, 5 Hz, 0.12-3.5 m.
-  - lidar:
-      site: lidar
-      frame_id: base_scan            # the name turtlebot3_description gives this frame; without it
-                                     # the scan would be stamped `lidar` (the site name)
-      rays: 360                      # 360 deg / 1 deg
-      angle_min: 0.0
-      angle_max: 6.283185307         # 2*pi (full 360 deg)
-      range_min: 0.12                # LDS-01 minimum range
-      max_range: 3.5                 # LDS-01 maximum range
-      rate_hz: 5.0                   # LDS-01 scan rate
-      exclude_body: base_link
+      odom_child_frame: base_footprint
+  # The LDS-01 device model, the stock Waffle scanner, at turtlebot3_description's base_scan joint:
+  # urdf/turtlebot3_waffle.urdf:203-207 @ 0c0be84 (0.132 m above the floor). Scan values are the
+  # device's datasheet defaults (360 deg at 1 deg, 5 Hz, 0.12-3.5 m, 10 mm sigma growing to 3.5%).
+  # ROBOTIS's Gazebo sensor (turtlebot3_gazebo models/turtlebot3_waffle/model.sdf:135-159 @ 4563301)
+  # runs at 10 Hz, which the 300 rpm scanner cannot, and its constant stddev 0.01 is the specification's
+  # near-range precision in a noise model that cannot grow with range, so neither is an override. The paper names only "its Lidar sensor" (spec gap
+  # g_lidar_params). Addressed as `<robot>.lds01.lidar`; the scan is `scan` in the robot's
+  # namespace, stamped `base_scan`.
+  - spawn_sensor:
+      model: lds01
+      parent_frame: base_link
+      pos: [-0.064, 0.0, 0.122]
+      rpy: [0.0, 0.0, 0.0]
+      frame_id: base_scan
+    name: lds01
