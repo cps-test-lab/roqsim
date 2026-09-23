@@ -178,9 +178,7 @@ class GnssPlugin(Plugin):
         body = self._resolve_body(entity, prefix)
         self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body)
         if self._bid < 0:
-            raise RuntimeError(
-                f"gnss ({self.name}): body {body!r} is not in the compiled model"
-            )
+            raise RuntimeError(f"gnss ({self.name}): body {body!r} is not in the compiled model")
 
         datum = self.config["datum"]
         self._datum = {

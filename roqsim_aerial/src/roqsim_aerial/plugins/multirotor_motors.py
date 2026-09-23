@@ -78,8 +78,8 @@ disturbance that never settles. The plugin warns rather than silently flying in 
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 import mujoco
 import numpy as np
@@ -196,9 +196,7 @@ class MultirotorMotorsPlugin(Plugin):
         configured = self.config.get("max_thrust")
         if configured is None:
             # The model is the authority on its own actuator limits.
-            self._max_thrust = np.array(
-                [float(model.actuator_ctrlrange[a][1]) for a in self._aids]
-            )
+            self._max_thrust = np.array([float(model.actuator_ctrlrange[a][1]) for a in self._aids])
             if not np.all(self._max_thrust > 0):
                 raise RuntimeError(
                     f"multirotor_motors ({self.robot}): the model's rotor actuators have no upper "
@@ -239,9 +237,7 @@ class MultirotorMotorsPlugin(Plugin):
                 owner=self.robot,
                 namespace=ns,
                 write=lambda msg: self.set_normalized(getattr(msg, "data", msg)),
-                backend={
-                    "ros2": {"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}
-                },
+                backend={"ros2": {"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}},
             )
         )
 
