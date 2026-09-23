@@ -11,7 +11,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   `roqsim render` are driver-level, in `capture.py` / `recording.py` / `render.py`, not plugins). Sources in
   `roqsim/src/roqsim/`, tests in `roqsim/tests/`. Depends on no sibling — keep it that way.
   `health.py` (`roqsim health`) is not even driver-level: it is a **reader**, a separate process that
-  tails the two CSVs `capture.py` streams and touches nothing in a run. Keep it that way too — a
+  tails the mcap recording `capture.py` writes (its format lives in `mcap_format.py`, which imports
+  no MuJoCo for that reason) and touches nothing in a run. Keep it that way too — a
   health check that ran inside the simulator would share the simulator's failure modes, and one that
   went through a transport bridge could not diagnose a broken bridge.
 - `roqsim_sensors/` — generic (robot-family-agnostic) sensor plugins + assets: `lidar`,

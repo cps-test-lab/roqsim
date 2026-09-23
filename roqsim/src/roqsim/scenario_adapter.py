@@ -358,9 +358,9 @@ class MujocoSim(_Base):
         ``RUN_OUTPUT_DIR`` first, because the scenario's own ``output_dir`` is the campaign root
         (scenario-execution is started with ``-o /out``) while a run's results are collected from
         ``/out/<config>/<run>``. Anchored at the root, every run of a sweep writes the same
-        ``run.npz`` and the same ``capture/``, each overwriting the last -- which looks like a working
-        capture until you notice every configuration replays identically, and leaves the run
-        directories with no capture at all.
+        ``run.mcap``, each overwriting the last -- which looks like a working recording until you
+        notice every configuration replays identically, and leaves the run directories with no
+        recording at all.
 
         A campaign runner that packs several runs into one job sets no ``RUN_OUTPUT_DIR`` (one
         variable cannot serve them all), and there the scenario's ``output_dir`` is still the best
@@ -375,10 +375,12 @@ class MujocoSim(_Base):
     def _start_recording(self) -> None:
         """Begin sampling MuJoCo state, when the run asked for it.
 
-        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path, relative to the scenario's ``output_dir``
-        like the scene export), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
-        concern rather than an experiment one -- the same footing as ``sim.headless``, which the world
-        YAML rejects on purpose -- so it is driven by the environment here and never by the world.
+        Opt-in via ``ROQSIM_RECORD`` (the ``.mcap`` path, relative to the scenario's ``output_dir``
+        like the scene export), with ``ROQSIM_CAPTURE_FPS`` for the rate and
+        ``ROQSIM_RECORD_TRACKS`` / ``ROQSIM_RECORD_EXCLUDE`` to narrow the bodies and joints the
+        decoded channels carry. Recording is a *session* concern rather than an experiment one -- the
+        same footing as ``sim.headless``, which the world YAML rejects on purpose -- so it is driven
+        by the environment here and never by the world.
 
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.
@@ -386,7 +388,15 @@ class MujocoSim(_Base):
         target = os.environ.get("ROQSIM_RECORD")
         if not target:
             return
-        from .capture import DEFAULT_FPS, CaptureError, StateRecorder, env_flag, parse_fps, snap_fps
+        from .capture import (
+            DEFAULT_FPS,
+            RECORD_EXCLUDE_VAR,
+            RECORD_TRACKS_VAR,
+            CaptureError,
+            StateRecorder,
+            parse_fps,
+            snap_fps,
+        )
 
         lg = logging.getLogger(__name__)
         try:
@@ -405,48 +415,22 @@ class MujocoSim(_Base):
             rate,
             world=self._world,
             overrides=self._built_overrides if isinstance(self._built_overrides, dict) else None,
-            sim_poses=env_flag("ROQSIM_SIM_POSES"),
+            tracks=os.environ.get(RECORD_TRACKS_VAR),
+            exclude=os.environ.get(RECORD_EXCLUDE_VAR),
             logger=lg,
         )
 
     def _finish_recording(self) -> None:
-        """Write the recording and, when asked, the browser run capture derived from it.
+        """Finish the recording: the summary section that marks a file as ended on purpose.
 
-        Called before the engine is torn down, because the capture is derived against the **live**
-        model: no world rebuild, and no GL backend, since nothing is rendered. Both artifacts land only
-        on a clean stop -- an ``.npz`` writes its zip index at close, so a hard kill (SIGKILL, a
-        campaign's per-run timeout) leaves neither. What such a run *does* leave in its output
-        directory is the recorder's ``run.npz.part``: the samples were streamed there as they were
-        taken, and close is what packs them. Nothing reads it, and the archive's absence stays the
-        signal that the run did not end on purpose.
-
-        The capture is reported-never-fatal: a run whose results are otherwise good must not fail
-        because a viewer artifact could not be written.
+        Called before the engine is torn down. The samples are already on disk, chunk by chunk, as
+        the run went; what a clean stop adds is the summary. A hard kill (SIGKILL, a campaign's
+        per-run timeout) leaves the file without one, still readable up to its last closed chunk,
+        and the missing summary stays the signal that the run did not end on purpose.
         """
         recorder, self._recorder = self._recorder, None
         if recorder is None:
             return
-        lg = logging.getLogger(__name__)
-        out = os.environ.get("ROQSIM_CAPTURE_EXPORT_DIR")
-        if out and self._engine is not None and recorder.frames:
-            from .export_capture import write_capture
-
-            try:
-                write_capture(
-                    self._engine.ctx.model,
-                    recorder.replay(self._engine.ctx),
-                    self._resolve_out(out),
-                    world=self._world,
-                    overrides=self._built_overrides
-                    if isinstance(self._built_overrides, dict)
-                    else {},
-                    seed=getattr(self._engine.ctx, "seed", None),
-                    logger=lg,
-                )
-            except Exception as err:  # pylint: disable=broad-except
-                lg.warning(
-                    "run capture export failed (%s); the recording itself is unaffected", err
-                )
         recorder.close()
 
     # -- SimulationInterface ----------------------------------------------------------------------

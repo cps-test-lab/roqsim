@@ -165,11 +165,11 @@ def test_f9_still_works_with_no_record_flag(cli):
     from roqsim.runner import _DEFAULT_RECORD
 
     assert cli()["record"] is None
-    assert _DEFAULT_RECORD.endswith(".npz")
+    assert _DEFAULT_RECORD.endswith(".mcap")
 
 
 def test_record_takes_a_path(cli):
-    assert cli("--record", "/tmp/x.npz")["record"] == "/tmp/x.npz"
+    assert cli("--record", "/tmp/x.mcap")["record"] == "/tmp/x.mcap"
 
 
 def test_capture_fps_defaults_and_passes_through(cli):
@@ -181,7 +181,7 @@ def test_capture_fps_defaults_and_passes_through(cli):
 
 def test_recording_is_not_world_config(cli):
     """The twin of test_panels_are_not_world_config: capture describes a session, not an experiment."""
-    assert cli("--record", "/tmp/x.npz", "--capture-fps", "10")["overrides"] == {}
+    assert cli("--record", "/tmp/x.mcap", "--capture-fps", "10")["overrides"] == {}
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml", "w.yml"])
@@ -200,7 +200,7 @@ def test_record_refuses_to_eat_the_world(monkeypatch, world):
 
 def test_record_after_the_target_is_fine(cli):
     """The normal spelling must not be caught by that guard."""
-    assert cli("--record", "/tmp/out.npz")["record"] == "/tmp/out.npz"
+    assert cli("--record", "/tmp/out.mcap")["record"] == "/tmp/out.mcap"
 
 
 def test_video_off_by_default(cli):
@@ -268,7 +268,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1, video=str(tmp_path / "out.webm"))
-    assert seen["path"] == str(tmp_path / "out.npz")
+    assert seen["path"] == str(tmp_path / "out.mcap")
 
 
 # -- graceful stop -------------------------------------------------------------------------------
@@ -276,7 +276,7 @@ def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
 # A supervised run ends on SIGTERM, not Ctrl+C: a container teardown, `docker stop`, a scheduler
 # eviction and a campaign timeout all send it. Its *default* action kills the process outright, so no
 # `finally` runs and the recording and the run capture are both lost -- a campaign then finishes 1/1
-# clean and produces no `run.npz` at all. These pin that both signals flip run-control
+# clean and produces no finished `run.mcap` at all. These pin that both signals flip run-control
 # instead, and that the driver leaves the process's handlers as it found them.
 
 
@@ -412,7 +412,7 @@ def test_the_teardown_runs_inside_the_protected_window(monkeypatch, tmp_path):
     monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
     scene = tmp_path / "s.xml"
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
-    runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.npz"))
+    runner.run(str(scene), headless=True, max_steps=1, record=str(tmp_path / "r.mcap"))
     assert closed == [True], "close() did not complete -- the flush was outside the signal window"
 
 

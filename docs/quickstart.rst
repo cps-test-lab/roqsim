@@ -18,7 +18,7 @@ Standalone
    .venv/bin/roqsim sim <world.yaml> --pacing 4.0
 
    # reproducible noise, recorded, rendered to video afterwards
-   .venv/bin/roqsim sim <world.yaml> --seed 7 --record run.npz --video run.webm
+   .venv/bin/roqsim sim <world.yaml> --seed 7 --record run.mcap --video run.webm
 
 The target is a world YAML, an MJCF scene, or a ``<pkg>:<name>`` reference resolved from an installed
 package (``roqsim sim roqsim_mobile:turtlebot4_demo``).
@@ -245,12 +245,12 @@ from any camera, at any resolution, as a still or a video — without re-running
 
 .. code-block:: bash
 
-   roqsim sim world.yaml --record run.npz
+   roqsim sim world.yaml --record run.mcap
    roqsim sim world.yaml --record --capture-fps 10      # a slower rate, a smaller file
 
-   roqsim render --state run.npz --out last.png        # where it ended up
-   roqsim render --state run.npz --at 12.5 --out t.png # one moment
-   roqsim render --state run.npz --out run.webm        # the whole run as video
+   roqsim render --state run.mcap --out last.png        # where it ended up
+   roqsim render --state run.mcap --at 12.5 --out t.png # one moment
+   roqsim render --state run.mcap --out run.webm        # the whole run as video
 
 With nothing said about the camera, a recording is shown as **the whole scene from above**: every
 geom in the world, angled rather than top-down, as close as the field of view allows -- and with the
@@ -280,8 +280,8 @@ as JSON without drawing anything:
 
 .. code-block:: bash
 
-   roqsim render --state run.npz --from onset --out clip.mp4
-   roqsim state --state run.npz --onset
+   roqsim render --state run.mcap --from onset --out clip.mp4
+   roqsim state --state run.mcap --onset
 
 The hard part is not the threshold, it is *which velocity to read*. A robot is spawned a little above
 the floor and drops onto it, so something is moving at t=0 in almost every recording — and the drop is
@@ -324,7 +324,7 @@ Three ways to say where the camera is during a clip, and they compose.
 
 A **chase camera** is the world's own ``track`` view, stated on the command line::
 
-   roqsim render --state run.npz --from onset --no-ceiling \
+   roqsim render --state run.mcap --from onset --no-ceiling \
        --view track=robot follow_heading=true distance=2.5 elevation=-20 azimuth=180 --out clip.mp4
 
 ``track`` attaches ``lookat`` to the robot's body; ``follow_heading`` re-aims the camera each frame so
@@ -344,7 +344,7 @@ A **camera path** moves it along keyframes, from a file or inline as JSON:
 
 .. code-block:: bash
 
-   roqsim render --state run.npz --from onset --view track=robot follow_heading=true \
+   roqsim render --state run.mcap --from onset --view track=robot follow_heading=true \
        --camera-path orbit.yaml --out clip.mp4
 
 Each key -- ``lookat``, ``distance``, ``azimuth``, ``elevation`` -- is its own track: it interpolates
@@ -357,10 +357,10 @@ load. Azimuth takes the shortest arc between keyframes unless ``wrap: false``.
 
 **Checking a path costs a still, not a clip.** ``--at`` with ``--camera-path`` draws the frame the
 clip would have at that moment, ``--check`` prints the resolved keyframes without drawing, and
-``roqsim state --state run.npz --at T`` says where the robot is when choosing an ``eye``::
+``roqsim state --state run.mcap --at T`` says where the robot is when choosing an ``eye``::
 
-   roqsim render --state run.npz --camera-path orbit.yaml --check
-   roqsim render --state run.npz --camera-path orbit.yaml --at onset+4 --out look.png
+   roqsim render --state run.mcap --camera-path orbit.yaml --check
+   roqsim render --state run.mcap --camera-path orbit.yaml --at onset+4 --out look.png
 
 That loop -- where is the robot, write keyframes, look, adjust -- is what makes a path something an
 agent can author as readily as a person.
@@ -381,8 +381,8 @@ under the ``roqsim.render_overlays`` entry-point group (see :doc:`interfaces`). 
 defaults; options ride along as JSON, ``anchor``, ``width`` and ``margin`` being the ones every
 overlay shares::
 
-   roqsim render --state run.npz --overlay clock --out clip.mp4
-   roqsim render --state run.npz --overlay '{"clock": {"anchor": "bottom-left", "format": "{t:.1f} s"}}' --out clip.mp4
+   roqsim render --state run.mcap --overlay clock --out clip.mp4
+   roqsim render --state run.mcap --overlay '{"clock": {"anchor": "bottom-left", "format": "{t:.1f} s"}}' --out clip.mp4
    roqsim render --overlay list
 
 An overlay that nothing installed registers is refused before the world is built, naming what is
@@ -397,7 +397,7 @@ that survives to a 30 fps video. ``--decimate`` drops them first instead:
 
 .. code-block:: bash
 
-   roqsim state --state run.npz --decimate 8 --out thin.npz
+   roqsim state --state run.mcap --decimate 8 --out thin.mcap
 
 The rows that remain are untouched, so the invariant holds; what changes is how many there are and the
 declared rate that says so. That rate stays exact because it is a numerator and a denominator — 250 Hz
@@ -405,7 +405,7 @@ by 8 is 31.25 fps, not a rounded 31.
 
 **F9 records a take**, in any windowed run — with or without ``--record``. Press it once to start
 and again to stop; the window title carries ``[REC]`` while one is running, and takes are numbered
-(``run.npz``, ``run-2.npz``, …) beside the ``--record`` path, or beside the default when the run was
+(``run.mcap``, ``run-2.mcap``, …) beside the ``--record`` path, or beside the default when the run was
 started without one. It is the way to capture the interesting minute of a long run rather than all
 of it, and what a take holds is what ``--record`` holds, so ``roqsim render --state`` reads it the
 same way.
@@ -421,10 +421,10 @@ simulated: every frame is a state restored out of the file, so what the window s
 
 .. code-block:: bash
 
-   roqsim sim run.npz                      # from the start
-   roqsim sim run.npz --at 12.5            # open at one moment
-   roqsim sim run.npz --no-transport-window
-   roqsim sim run.npz --world cell/world.yaml   # a world that loaded files from beside itself
+   roqsim sim run.mcap                      # from the start
+   roqsim sim run.mcap --at 12.5            # open at one moment
+   roqsim sim run.mcap --no-transport-window
+   roqsim sim run.mcap --world cell/world.yaml   # a world that loaded files from beside itself
 
 The extension is what selects it, as it does for a mesh target and for ``roqsim render``'s output.
 Options that drive a live simulation — ``--record``, ``--steps``, ``--pacing``, ``--ros`` and their
@@ -450,7 +450,7 @@ to a shots file naming the sample, the camera, and the recording it came from �
 
 .. code-block:: bash
 
-   roqsim sim run.npz --shots shots.yaml --render-size 1920x1080
+   roqsim sim run.mcap --shots shots.yaml --render-size 1920x1080
 
    python3 -c "import yaml,subprocess as s;from roqsim.shots import read_shots,render_args
    [s.run(['roqsim','render',*render_args(d)]) for d in read_shots('shots.yaml')]"
@@ -481,29 +481,28 @@ scene-geometry bound, so resolution barely matters), against ~0.001 ms for a sta
 of magnitude, which is the whole reason the picture is made afterwards.
 
 It costs the run almost no *memory* either, which is why an hour-long recording is a disk question and
-not a "will this fit" one: each sample is written to a ``<recording>.npz.part`` stream as it is taken,
-and ``close()`` packs that stream into the archive and removes it. Measured against holding the run in
-memory, the loop cost is the same to within noise. The rate is otherwise a *disk* decision: at 25 fps a
-mobile manipulator produces about 0.25 MB of samples per simulated minute, and the archive deflates that
-by a factor that depends on the world — 70% of raw for a bare mobile robot, 11% for a world of
-pedestrians — because a state vector repeats: most of a world stands still, so most of a record is the
-record before it.
+not a "will this fit" one: the file is written chunk by chunk as the run goes, and a chunk is closed and
+flushed at least once per wall second (and at 256 KiB). The rate is otherwise a *disk* decision: at
+25 fps a mobile manipulator produces about 0.25 MB of state per simulated minute, and the chunks are
+zstd-compressed by a factor that depends on the world, because a state vector repeats: most of a world
+stands still, so most of a sample is the sample before it.
 
-The file is a plain ``.npz``, so anything with numpy can read it — ``np.load("run.npz")`` gives a JSON
-``meta`` member and a structured ``samples`` member with **both clocks** per sample: ``t`` is simulated
-seconds and ``w`` is wall seconds *elapsed since the recording started* (``meta["wall_clock_origin"]``
-names that zero). ``w`` is deliberately not a Unix timestamp — it is monotonic, so an NTP step mid-run
-cannot make it go backwards, and it keeps nanosecond resolution that a float64 holding 1.7e9 does not.
-Both are kept because neither is derivable from the other: their ratio is the run's real-time factor,
-which is exactly what varies. Use ``t`` to ask what the physics did and ``w`` to ask what the run cost —
-a stall on a slow sensor, or the gap where a viewer sat paused, exists only in ``w``. For arbitrary
-computations over a run, use :mod:`roqsim.recording`:
+The file is one **mcap** (https://mcap.dev), profile ``roqsim``, so any mcap tool can open it, and the
+``state`` channel is the primary artifact: one message per sample holding **both clocks** -- ``t`` is
+simulated seconds and ``w`` is wall seconds *elapsed since the recording started*
+(``wall_clock_origin`` in the metadata names that zero) -- followed by the MuJoCo state vector as
+``float32``, and the viewer camera when one was tracked. ``w`` is deliberately not a Unix timestamp -- it
+is monotonic, so an NTP step mid-run cannot make it go backwards, and it keeps nanosecond resolution
+that a float64 holding 1.7e9 does not. Both are kept because neither is derivable from the other: their
+ratio is the run's real-time factor, which is exactly what varies. Use ``t`` to ask what the physics did
+and ``w`` to ask what the run cost -- a stall on a slow sensor, or the gap where a viewer sat paused,
+exists only in ``w``. For arbitrary computations over a run, use :mod:`roqsim.recording`:
 
 .. code-block:: python
 
    from roqsim.recording import open_recording
 
-   rec = open_recording("run.npz")
+   rec = open_recording("run.mcap")
    rec.real_time_factor            # simulated seconds per real second, over the whole recording
    for sample in rec.range(8.0, 20.0):
        sample.sim_time, sample.wall_time, sample.index, sample.data
@@ -515,51 +514,65 @@ through the environment, which both drivers honour:
 
 .. code-block:: bash
 
-   export ROQSIM_RECORD=run.npz              # same as --record, and an explicit flag still wins
+   export ROQSIM_RECORD=run.mcap             # same as --record, and an explicit flag still wins
    export ROQSIM_CAPTURE_FPS=25              # same as --capture-fps
-   export ROQSIM_CAPTURE_EXPORT_DIR=capture  # also write a browser run capture (below)
-   export ROQSIM_SIM_POSES=1                 # also stream sim_poses.csv (below)
+   export ROQSIM_RECORD_TRACKS='robot/**'    # same as --record-tracks (below)
+   export ROQSIM_RECORD_EXCLUDE='shelf'      # same as --record-exclude
 
 .. _sim-poses:
 
-The pose series
-~~~~~~~~~~~~~~~
+What the recording holds
+~~~~~~~~~~~~~~~~~~~~~~~~
 
-``ROQSIM_SIM_POSES`` streams a plain ``sim_poses.csv`` beside the recording: one row per sample per
-**named body** — robot bases, links, wheels, attached tools and workpieces, props and walkers — with
-the world pose as a **quaternion** and the world **twist** read from the solver via
-``mj_objectVelocity``:
+Beside the ``state`` channel the file carries three JSON channels a reader **without the model** can
+use -- ``roqsim health`` is one, a campaign's ingest is another -- each with one message per sample,
+stamped ``log_time`` = simulated time and ``publish_time`` = wall clock (epoch), and its schema in the
+file:
 
-.. code-block:: text
+``poses``
+   ``{"t", "w", "bodies": {name: [x, y, z, qx, qy, qz, qw, vx, vy, vz, wx, wy, wz]}}`` -- every
+   recorded **named body** -- robot bases, links, wheels, attached tools and workpieces, props and
+   walkers -- with the world pose as a **quaternion** and the world **twist** read from the solver
+   via ``mj_objectVelocity``. Every named body, and not only the ones parented to the world, because
+   what a trial is judged on is often welded below a robot -- a tool on a flange, a workpiece in a
+   gripper -- and a reader cannot know in advance which. Sites and unnamed bodies have no entry (the
+   run log counts the unnamed ones and names their parents); the ``state`` channel is the complete
+   state, from which those are derivable.
+``joints``
+   ``{"t", "w", "q": {joint: value}}`` -- every recorded hinge and slide joint, in radians or metres.
+``clock``
+   ``{"wall_ts", "sim_ts"}`` -- the pair a reader outside the process relates its own stamps to.
 
-   timestamp,wall_time,frame,position.x/y/z,orientation.x/y/z/w,twist.linear.x/y/z,twist.angular.x/y/z
+And two metadata records, each a JSON document under the key ``json``: ``roqsim.recording``, the
+provenance (world, overrides, the resolved component tree, actuator gains, endpoint rates, package
+versions, the state layout, the seed), written at the start and again at close; and
+``roqsim.entities``, the roster of what the pose entries *are* -- each entity's name, ``kind``,
+``body`` and whether it is currently ``present``, from the registry. A body name does not say whether
+it is a robot, a prop or a walker, and nothing recovers that from the model, so the roster is written
+again whenever it changes, and a reader takes the last one: a trial that spawns an obstacle mid-run
+is described by it rather than by the world it started in.
 
-Every named body, and not only the ones parented to the world, because what a trial is judged on is
-often welded below a robot — a tool on a flange, a workpiece in a gripper — and a reader cannot know in
-advance which. The price is rows: a manipulator world writes several times as many as a mobile one.
-Sites and unnamed bodies have no row (the run log counts the unnamed ones and names their parents);
-the recording itself is the complete state, from which those are derivable.
+Two reasons the pose channel exists rather than leaving callers to difference the state. A velocity
+obtained by differencing positions is only ever as good as the interval it is divided by, and a
+consumer reading poses off a *transport* is dividing by arrival times -- quantised by whatever gates
+the clock, jittered by delivery -- so a constant speed comes out alternating. And a **stepped** run
+publishes nothing at all, so this is the only pose series it has.
 
-Two reasons it exists rather than leaving callers to difference the recording. A velocity obtained by
-differencing positions is only ever as good as the interval it is divided by, and a consumer reading
-poses off a *transport* is dividing by arrival times — quantised by whatever gates the clock, jittered
-by delivery — so a constant speed comes out alternating. And a **stepped** run publishes nothing at
-all, so this is the only pose series it has.
+``t`` is exact simulated seconds. One convention worth knowing: ``mj_step`` integrates ``qpos`` and
+leaves ``xpos`` holding the pose from *before* that integration, so an entry is a coherent snapshot
+of ``t - dt`` carrying the label ``t`` -- deliberately the same one-step lag the ``ground_truth_pose``
+plugin publishes with, so the two describe the same instant. It cancels in every derivative.
 
-Beside it goes ``entities.json``, a one-line roster of what those rows *are* — each entity's name,
-``kind``, ``body`` and whether it is currently ``present``, from the registry. The pose record cannot
-carry ``kind``: a body name does not say whether it is a robot, a prop or a walker, and nothing
-recovers that from the model. It is rewritten whenever the roster changes, so a trial that spawns an
-obstacle mid-run is described by it rather than by the world it started in.
-
-``timestamp`` is exact simulated seconds. One convention worth knowing: ``mj_step`` integrates ``qpos``
-and leaves ``xpos`` holding the pose from *before* that integration, so a row is a coherent snapshot of
-``timestamp - dt`` carrying the label ``timestamp`` — deliberately the same one-step lag the
-``ground_truth_pose`` plugin publishes with, so the two describe the same instant. It cancels in every
-derivative.
-
-Like the clock map and unlike the ``.npz``, it is flushed per row, so a run killed outright still leaves
-everything up to the last sample.
+**Narrowing what the decoded channels carry.** A manipulator world writes an entry per sample for
+every link, which is more than most trials read. ``--record-tracks`` (``ROQSIM_RECORD_TRACKS``)
+keeps only what its patterns select and ``--record-exclude`` (``ROQSIM_RECORD_EXCLUDE``) removes
+what its patterns select, an exclude winning; both are comma-separated. A pattern is
+``<entity>/<body-or-joint>`` in the entity's own words (its spawn prefix removed) -- ``robot/**`` is
+everything of that entity, ``robot/*`` one name segment -- or a bare name as the compiled model
+spells it, which selects the body and the joint of that name alike. A pattern that matches nothing
+**fails the run's start**, naming the entities, bodies and joints that exist: a typo must not record
+a run that looks complete and lacks the one track the trial is judged on. The ``state`` and ``clock``
+channels are never narrowed.
 
 A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directory) or, failing that,
 ``OUTPUT_DIR`` (the job's), so a run's artifacts land beside its other results instead of
@@ -569,28 +582,13 @@ anchoring a per-run file there gives one path that each run of a sweep overwrite
 concern either way — the same footing as ``sim.headless``, which the world YAML rejects on purpose — so
 there is no route to it through the world.
 
-A recording also converts to a **browser run capture** — the motion half of replaying a run in a web
-viewer, alongside the geometry ``roqsim export web`` emits:
-
-.. code-block:: bash
-
-   roqsim export capture --state run.npz --out capture/
-
-It writes ``capture.json`` + ``capture.bin``: one track per joint value and one per body pose that
-actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
-without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
-where it is defined — and roqsim is one producer of it, the same relationship this package has with
-URDF and SRDF.
-
-A run stopped any of the normal ways writes its recording on the way out: closing the viewer window, one
-Ctrl+C, or a **SIGTERM** — which is how a *supervised* run ends, whether that is ``docker stop``, a
-container teardown, a scheduler eviction or a supervisor's timeout. Only ``SIGKILL`` loses it: an ``.npz``
-writes its index at the end, so there is nothing to read. Such a run leaves its ``<recording>.npz.part``
-sample stream behind, buffered up to whatever the kill interrupted; nothing reads it, and the archive's
-*absence* remains the signal that the run did not end on purpose.
-
-The recording is written before the capture is derived from it, so a problem with the browser artifact
-costs you the numbers as well.
+A run stopped any of the normal ways finishes its recording on the way out: closing the viewer
+window, one Ctrl+C, or a **SIGTERM** -- which is how a *supervised* run ends, whether that is ``docker
+stop``, a container teardown, a scheduler eviction or a supervisor's timeout. Finishing writes the
+file's **summary section**, which is what marks a run that ended on purpose. ``SIGKILL`` skips it and
+costs at most the open chunk -- under a second of the run -- because every chunk closed before the
+kill is already on disk: :func:`roqsim.recording.open_recording` reads such a file with the chunks it
+has, and its missing summary remains the signal that the run did not end on purpose.
 
 Exporting a model as one mesh
 -----------------------------
@@ -682,11 +680,12 @@ get wrong already reports itself.
    roqsim health <run-dir> --watch                     # follow a live run until something is wrong
    roqsim health <run-dir> --json                      # one document: findings, skips, and state
 
-It is a **separate process that reads the two records above**, and it changes nothing about a run. A
+It is a **separate process that reads the recording above**, and it changes nothing about a run. A
 check that lived inside the simulator would share the simulator's failure modes, and one that spoke
-over the ROS bridge could not diagnose a broken bridge; this reads files, so it can also say something
-true about a run that is wedged or already dead. The clock map answers checks 2 and 3, and
-``sim_poses.csv`` answers check 1.
+over the ROS bridge could not diagnose a broken bridge; this reads a file, so it can also say something
+true about a run that is wedged or already dead. The ``clock`` channel answers checks 2 and 3, and the
+``poses`` channel answers check 1; it follows the file as the recorder closes chunks, without needing
+the summary a finished file ends with.
 
 ===  =========================================================  =======
 #    check                                                      level
@@ -702,9 +701,9 @@ nobody reads. Exit status is ``0`` when nothing is wrong (warnings are still pri
 error-level finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point:
 a backgrounded command's output is invisible until it exits.
 
-**Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
-named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
-from the entity registry — name, ``kind``, ``body``, ``present`` — and check 1 watches the entities of
+**Which of those bodies is a robot comes from the roster.** The ``poses`` channel names every
+recorded body and cannot say which is which, so the recorder writes the ``roqsim.entities`` metadata
+from the entity registry -- name, ``kind``, ``body``, ``present`` -- and check 1 watches the entities of
 kind ``robot`` that are currently there. That is what makes one command correct for every world:
 a check whose names have to be passed per world is a check that is absent from the run that needed
 it. ``--robot`` remains as an **override**, for a run with no roster and for watching something the
@@ -720,9 +719,8 @@ The same roster is what lets ``--json``'s ``state`` block carry a ``kind`` per e
 record cannot: "the robot has not moved" and "the furniture has not moved" are different readings of
 the same row.
 
-**The precondition.** Both records exist only while a run is recording, so a run without
-``ROQSIM_RECORD`` (and ``ROQSIM_SIM_POSES`` for check 1) cannot be checked. That is reported and exits
-``2``; it never reads as health.
+**The precondition.** The recording exists only while a run is recording, so a run without
+``ROQSIM_RECORD`` cannot be checked. That is reported and exits ``2``; it never reads as health.
 
 **Who runs it, when a supervisor does.** A run harness executes this command itself, in the running
 container, on a bounded interval while somebody is watching the run — and reads ``--json``: the
@@ -731,19 +729,19 @@ what such a supervisor ends a run on. So the exit code and the document are a pu
 software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
 into a run's output by this: it is read on demand and answered.
 
-**What one check costs does not grow with the run.** Every check judges the newest minute, so each
-record is entered at the first row inside that window and the rows before it are never read; only
-what arrives afterwards is read incrementally, and the report notes how much of a long record was
-left unread. That is what makes it safe to run as a fresh process on every poll, inside the
+**What one check costs does not grow with the run.** Every check judges the newest minute, so the
+file is entered at the newest chunks that cover that window and the chunks before them are never
+decompressed; only what arrives afterwards is read incrementally, and the report notes how much of a
+long record was left unread. That is what makes it safe to run as a fresh process on every poll, inside the
 simulator's own container and memory budget: a reader that parsed a whole record each time would
 cost more on every poll for as long as the run lasted. A verdict is accordingly about the run *now*
 -- a robot that stood still earlier and has moved since is not reported.
 
 **Silence means different things live and after the fact**, which is why the two modes differ. Both
-records are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
+channels are sampled on *simulated*-time boundaries, so a frozen simulation writes nothing at all and
 the only evidence of a stall is that nothing arrives. ``--watch`` is watching a run it expects to
-continue, so that gap counts against it — and it stops without complaint when the ``.npz`` appears,
-since that file is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
+continue, so that gap counts against it -- and it stops without complaint when the recording gains its
+summary section, since that is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
 check has no such premise: it judges the span the record covers, because what happened after the last
 row is not in the file. Without that split, every finished run would be reported as a stall a minute
 after it ended.
@@ -756,11 +754,11 @@ sensors:
 
 .. code-block:: bash
 
-   roqsim state --state run.npz --check                       # what does this recording offer?
-   roqsim state --state run.npz --at 12.5 --body base_link     # one moment  -> JSON
-   roqsim state --state run.npz --body base_link --out b.csv   # whole run   -> CSV
-   roqsim state --state run.npz --joint 'arm_*' --from 8 --to 20 --out arm.csv
-   roqsim state --state run.npz --sensor front --out scan.npz  # the world's own lidar, re-run
+   roqsim state --state run.mcap --check                       # what does this recording offer?
+   roqsim state --state run.mcap --at 12.5 --body base_link     # one moment  -> JSON
+   roqsim state --state run.mcap --body base_link --out b.csv   # whole run   -> CSV
+   roqsim state --state run.mcap --joint 'arm_*' --from 8 --to 20 --out arm.csv
+   roqsim state --state run.mcap --sensor front --out scan.npz  # the world's own lidar, re-run
 
 ``--at`` snaps to the nearest recorded sample and tells you which one it used, so you can see it landed a
 few milliseconds off rather than assume it did not. Names accept globs, and a selector that matches
@@ -850,10 +848,10 @@ result directory, so the descriptor ships as an ordinary run artifact for web vi
 the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
-``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
-relative path anchored to the scenario's ``output_dir`` here, since scenario-execution passes one. That
-is what turns a run into something replayable: the descriptor above is the world's geometry, the
-recording is what moved in it, and the run capture is that motion in the form a browser reads.
+``ROQSIM_CAPTURE_FPS``, ``ROQSIM_RECORD_TRACKS``, ``ROQSIM_RECORD_EXCLUDE`` -- see
+:ref:`recording-a-run`), with a relative path anchored to the scenario's ``output_dir`` here, since
+scenario-execution passes one. That is what turns a run into something replayable: the descriptor
+above is the world's geometry, and the recording is what moved in it.
 
 What a scenario can ask the simulation
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

@@ -85,7 +85,7 @@ white noise on each reading, drawn per physics step. A white velocity error inte
 walk, so the pose spread grows with the square root of the distance driven and shrinks with the
 timestep; state the stddev together with the world's ``sim.timestep``. Everything downstream that
 consumes odometry sees it -- the ``odom`` endpoint, its TF, the ``RobotHandle`` -- and nothing that
-reports the truth does: the body's pose, ``sim_poses`` and a ground-truth pose plugin are exact.
+reports the truth does: the body's pose, the recording's ``poses`` channel and a ground-truth pose plugin are exact.
 Draws come from ``ctx.rng_for`` (``docs/architecture.rst`` §9.1), so a noisy run needs a seed and
 reproduces from it; with the block omitted nothing is drawn and the odometry is exact, as before.
 """

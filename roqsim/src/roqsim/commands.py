@@ -266,7 +266,6 @@ def export_group() -> None:
 
 
 export_group.add_command(tool("roqsim.export_web", "web"))
-export_group.add_command(tool("roqsim.export_capture", "capture"))
 export_group.add_command(tool("roqsim.export_urdf", "urdf"))
 export_group.add_command(tool("roqsim.export_srdf", "srdf"))
 export_group.add_command(tool("roqsim.export_mesh", "mesh"))

@@ -234,15 +234,7 @@ _FOREIGN = (".claude/skills", "robovast", "RoboVAST", "kubernetes", "Kubernetes"
 #: writer's output unreadable by the very consumer whose specification defines it. Keep this list
 #: short, per-line rather than per-file, and each entry justified -- an unexplained entry here is how
 #: the check decays into a convention.
-_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
-    # The wire identifier a consumer matches on, and the citation saying where that format is
-    # specified. Renaming either would not make this file standalone -- it would make its output
-    # unreadable, and leave a reader unable to find the spec it implements.
-    "roqsim/src/roqsim/export_capture.py": ('FORMAT = "robovast.run_capture"',
-                                            "The format is defined by the consumer that reads it"),
-    # Same: the pose table this writer fills in is somebody else's published contract.
-    "roqsim/src/roqsim/capture.py": ("pose-table contract",),
-}
+_FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {}
 
 
 def test_nothing_here_names_a_repository_that_may_not_exist():

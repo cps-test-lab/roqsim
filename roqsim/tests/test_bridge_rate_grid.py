@@ -272,7 +272,7 @@ def test_an_ungated_endpoint_is_recorded_at_the_world_s_step_rate():
 def test_the_realised_rate_reaches_a_recording(tmp_path):
     """The half that reaches a reader who never opens a container's log."""
     ctx, _ = _bound(30)
-    recorder = StateRecorder(ctx, tmp_path / "run.npz", snap_fps(25, _DT), world="w.yaml")
+    recorder = StateRecorder(ctx, tmp_path / "run.mcap", snap_fps(25, _DT), world="w.yaml")
     for _ in range(50):
         mujoco.mj_step(ctx.model, ctx.data)
         recorder.sample(ctx)
@@ -287,7 +287,7 @@ def test_a_run_with_no_bridge_records_no_rates(tmp_path):
     ctx = SimContext(config={})
     ctx.model = mujoco.MjModel.from_xml_string(_XML % _DT)
     ctx.data = mujoco.MjData(ctx.model)
-    recorder = StateRecorder(ctx, tmp_path / "run.npz", snap_fps(25, _DT), world="w.yaml")
+    recorder = StateRecorder(ctx, tmp_path / "run.mcap", snap_fps(25, _DT), world="w.yaml")
     for _ in range(50):
         mujoco.mj_step(ctx.model, ctx.data)
         recorder.sample(ctx)

@@ -17,9 +17,9 @@ every single step at ``dt=0.002``, the worst case there is -- costs about **5.5%
 overhead (~20 us: the float32 cast, the copy into the write buffer, the binding call). So lower the rate
 because the file is large, and know that only an every-step rate is measurable at all.
 
-A sample goes **straight to disk** (see :class:`_SampleStream`), which is a memory decision and not a
-speed one: measured against holding the run in lists, the loop cost is the same to within noise at both
-25 and 500 fps, while the footprint stops growing with the run's length.
+A sample goes **straight to the file** (see :class:`StateRecorder`): the recording is one mcap file,
+written chunk by chunk as the run proceeds, so the footprint does not grow with the run's length and
+a run that is killed keeps every chunk that was closed before the kill.
 
 For scale, the thing this design keeps *out* of the loop: one rendered frame is 2-6 ms depending on how
 much of the world is in shot (scene-geometry bound, so resolution barely matters). That is three orders
@@ -28,11 +28,9 @@ of magnitude more than a sample.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 import time
-import zipfile
+from collections.abc import Sequence
 from dataclasses import dataclass
 from fractions import Fraction
 from importlib import metadata
@@ -40,10 +38,27 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
-from numpy.lib import format as npy_format
 
 from . import keys
 from .kinematics import body_twist
+from .mcap_format import (
+    CHANNEL_CLOCK,
+    CHANNEL_JOINTS,
+    CHANNEL_POSES,
+    CHANNEL_STATE,
+    CHUNK_SECONDS,
+    FORMAT_VERSION,
+    JSON_CHANNELS,
+    META_ENTITIES,
+    META_RECORDING,
+    PROFILE,
+    ChunkedWriter,
+    RecordingError,
+    json_bytes,
+    ns,
+    recording_path,
+    register_channels,
+)
 from .rates import (
     SNAP_NOTABLE,
     SNAP_QUIET,
@@ -208,102 +223,31 @@ STATE_FIELDS = (
     "eq_active",
 )
 
-#: The recording's own format version, so a future change is refused by name rather than misread.
-#: Bumped when the provenance's shape changes. It is READ (see :meth:`Recording.describe`): written
-#: and checked nowhere, an unrecognised record would be silently mis-handled rather than refused.
-FORMAT_VERSION = 2
-
-#: Header of the streamed clock record, written beside the recording while the run proceeds.
-CLOCK_MAP_FIELDS = ("wall_ts", "sim_ts")
-
-#: Filename of that record, next to the ``.npz`` (``run.npz`` -> ``run.clock_map.csv``).
-CLOCK_MAP_SUFFIX = ".clock_map.csv"
-
 #: What ``w`` is measured from. **Elapsed seconds, never a Unix timestamp**: the origin is the moment
 #: this recorder was constructed, so the first sample is a few milliseconds rather than 1.7e9. Two
 #: reasons the epoch is the wrong choice here. A float64 holding 1.7e9 has ~0.2 us of resolution left,
 #: which is coarse against per-step costs measured in microseconds, whereas an elapsed value keeps
 #: nanoseconds all run. And ``perf_counter`` is *monotonic*: an NTP step or a DST change mid-run cannot
-#: make the column go backwards, which a wall calendar can. A run that needs to be placed on the
-#: calendar has the file's mtime and the campaign's own metadata for that.
+#: make the column go backwards, which a wall calendar can. The ``poses``, ``joints`` and ``clock``
+#: channels carry the epoch instead, because they exist for readers *outside* the process, who have
+#: calendar stamps of their own to relate to them; ``wall_start_epoch`` in the provenance ties the two.
 WALL_CLOCK_ORIGIN = "recorder start (elapsed seconds from time.perf_counter, monotonic)"
-
-#: Columns of the streamed pose record -- RoboVAST's pose-table contract, which is a published
-#: schema rather than a shared import (roqsim depends on nothing downstream). Long form: one row per
-#: body per sample, so a world that gains a body grows rows and not columns, and the table can be
-#: read with the same SQL whatever it contains.
-#:
-#: Orientation is a quaternion and only a quaternion. Euler angles are lossy the moment a body
-#: pitches or rolls -- a drone, a tilting arm, a robot on a ramp -- and yaw is a projection any
-#: consumer that wants it can take.
-SIM_POSE_FIELDS = (
-    "timestamp",
-    "wall_time",
-    "frame",
-    "position.x",
-    "position.y",
-    "position.z",
-    "orientation.x",
-    "orientation.y",
-    "orientation.z",
-    "orientation.w",
-    "twist.linear.x",
-    "twist.linear.y",
-    "twist.linear.z",
-    "twist.angular.x",
-    "twist.angular.y",
-    "twist.angular.z",
-)
-
-#: Filename of that record, beside the ``.npz`` rather than named after it. Deliberately NOT
-#: ``<recording>.sim_poses.csv`` the way the clock map is named: a consumer that ingests run
-#: directories names its table after the file stem, so ``run.sim_poses.csv`` arrives as
-#: ``run_sim_poses`` -- the recording's name leaking into an observable's. This file is the
-#: observable, so it is named for that and nothing else.
-SIM_POSE_FILENAME = "sim_poses.csv"
-
-#: Roster of what the pose record's rows *are*, written beside it. The record names bodies and
-#: cannot say which of them is a robot, which is a distinction only the entity registry holds -- so a
-#: consumer asking "did the robots move" would otherwise have to be handed the names per world, and a
-#: check that must be configured per world is one that is absent from the run that needed it.
-#:
-#: Written from the registry rather than derived from the model: ``kind`` is declared by whoever
-#: spawned the entity, and no amount of looking at bodies recovers it.
-ENTITIES_FILENAME = "entities.json"
 
 #: Camera-track width: type, fixedcamid, trackbodyid, lookat(3), distance, azimuth, elevation.
 CAMERA_WIDTH = 9
 
-#: Suffix of the live sample stream, appended to the recording's own name (``run.npz`` ->
-#: ``run.npz.part``). Beside the recording and not in a temp directory: a container's ``/tmp`` is
-#: often a tmpfs, so the one place a file written to spare RAM must not live is RAM. The name is
-#: deliberately clear of ``.csv`` and ``.jsonl`` (a campaign turns those into data tables, and a stem
-#: collision there is a hard error) and of :data:`CLOCK_MAP_SUFFIX`, which is globbed for.
-STREAM_SUFFIX = ".part"
+#: Decimals a pose, twist or joint value is written with in the JSON channels. Micrometres and
+#: microradians: below anything a trial is judged on, and a third of the text a full float costs.
+_JSON_DECIMALS = 6
 
-#: Write buffer for that stream, sized from both ends. Big enough that several records always fit --
-#: Python's 8 kB default cannot hold two of a mobile manipulator's, so it degenerates into a write per
-#: sample and measures 30% slower -- and small enough that what a SIGKILL throws away is seconds of a
-#: run rather than minutes: a megabyte of a small world's records is a *seven minute* recording that
-#: would have been lost entire. Measured identical in cost to a megabyte.
-_STREAM_BUFFER = 1 << 16
+#: MuJoCo joint types that reduce to one scalar: what the ``joints`` channel carries.
+_SCALAR_JOINTS = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
+
+#: The environment variables that narrow what the ``poses`` and ``joints`` channels carry.
+RECORD_TRACKS_VAR = "ROQSIM_RECORD_TRACKS"
+RECORD_EXCLUDE_VAR = "ROQSIM_RECORD_EXCLUDE"
 
 _PROVENANCE_PACKAGES = ("roqsim", "mujoco", "numpy")
-
-
-class RecordingError(RuntimeError):
-    """A recording cannot be written or read (see the message)."""
-
-
-def env_flag(name: str) -> bool:
-    """Read a capture on/off switch from the environment.
-
-    A *session* switch, like every other capture setting: set by whatever launched the run, never by
-    the world YAML. Anything but the explicit off-words counts as on, so ``=1``, ``=true`` and a bare
-    ``=`` -less presence all work and nobody has to guess the spelling.
-    """
-    value = os.environ.get(name)
-    return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
 
 
 def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
@@ -312,11 +256,11 @@ def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
     All of them rather than only those parented to the world: what a trial's success rule reads is
     often welded below a robot -- a tool on a flange, a workpiece in a gripper -- and a consumer
     cannot know in advance which one it will need. The price is rows, several times more on a
-    manipulator world than on a mobile one. The ``.npz`` remains the complete record (sites, and
-    anything between samples, are derivable only from it).
+    manipulator world than on a mobile one. The ``state`` channel remains the complete record (sites,
+    and anything between samples, are derivable only from it).
 
-    An unnamed body has no value for the ``frame`` column, so it is left out and reported instead:
-    a tool missing from the record then shows up in the run log rather than as an absent row.
+    An unnamed body has no key to be recorded under, so it is left out and reported instead: a tool
+    missing from the record then shows up in the run log rather than as an absent row.
     """
     out, skipped = [], []
     for bid in range(1, model.nbody):  # 0 is the world body itself
@@ -327,6 +271,22 @@ def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
             parent = int(model.body_parentid[bid])
             skipped.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, parent) or "world")
     return out, skipped
+
+
+def _scalar_joints(model) -> list[tuple[int, str, int]]:
+    """Every named hinge/slide joint as ``(id, name, qposadr)``, in model order.
+
+    An unnamed joint is skipped: the channel is keyed by name, so a value a reader cannot key onto
+    its joint is dead weight in the file.
+    """
+    out = []
+    for jid in range(model.njnt):
+        if int(model.jnt_type[jid]) not in _SCALAR_JOINTS:
+            continue
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, jid)
+        if name:
+            out.append((jid, name, int(model.jnt_qposadr[jid])))
+    return out
 
 
 def package_versions() -> dict:
@@ -345,131 +305,154 @@ def package_versions() -> dict:
     return out
 
 
-def _npz_path(path: str | Path) -> Path:
-    """The recording's path, carrying the ``.npz`` suffix ``np.savez`` appends on its own.
+# -- which bodies and joints are recorded ------------------------------------------------------------
 
-    The archive is written here by name, so the suffix has to be settled up front: what
-    :meth:`StateRecorder.close` returns, what the clock record is named after, and what the sample
-    stream is named after all have to agree with what lands on disk. Left to ``np.savez``,
-    ``--record out`` writes ``out.npz`` while ``close()`` hands back ``out``, a path that does not
-    exist -- and ``roqsim health`` looks for the archive belonging to a clock record by the
-    normalised name.
+
+def parse_patterns(value: str | Sequence[str] | None) -> tuple[str, ...]:
+    """A comma-separated string (the environment's spelling) or a sequence, as clean patterns."""
+    if value is None:
+        return ()
+    items = value.split(",") if isinstance(value, str) else [str(v) for v in value]
+    return tuple(item.strip() for item in items if item and item.strip())
+
+
+def _segments_match(pattern: list[str], key: list[str]) -> bool:
+    """Match ``/``-separated segments: ``*`` is one segment, ``**`` is one or more, else literal."""
+    if not pattern:
+        return not key
+    head, rest = pattern[0], pattern[1:]
+    if head == "**":
+        return any(_segments_match(rest, key[i:]) for i in range(1, len(key) + 1))
+    if not key:
+        return False
+    if head != "*" and head != key[0]:
+        return False
+    return _segments_match(rest, key[1:])
+
+
+def pattern_matches(pattern: str, key: str) -> bool:
+    """Whether a track pattern selects ``key`` (``<entity>/<local name>`` or a bare name)."""
+    return _segments_match(pattern.split("/"), key.split("/"))
+
+
+def _local_name(name: str, entity: str, prefix: str) -> str:
+    """A body's or joint's name in the entity's own words: its spawn prefix or ``<entity>/`` removed."""
+    if prefix and name.startswith(prefix):
+        return name[len(prefix) :]
+    if name.startswith(entity + "/"):
+        return name[len(entity) + 1 :]
+    return name
+
+
+def _entities_of(model, registry) -> list[tuple[str, str, set[int]]]:
+    """Every registered entity with a body in this model: ``(name, prefix, body ids in its subtree)``.
+
+    The prefix is the one its spawn plugin recorded in ``meta`` -- what turns ``robot/base_link`` in
+    the compiled model back into ``base_link``, so a pattern is written in the words a world document
+    uses rather than the ones the model happens to carry.
     """
-    path = Path(path)
-    return path if path.suffix == ".npz" else path.with_name(path.name + ".npz")
+    if registry is None:
+        return []
+    try:
+        entities = list(registry.all())
+    except Exception:  # noqa: BLE001 - a driver with no usable registry records unnamed tracks
+        return []
+    parents = [int(p) for p in model.body_parentid]
+
+    def under(bid: int, root: int) -> bool:
+        while bid > 0:
+            if bid == root:
+                return True
+            bid = parents[bid]
+        return False
+
+    out = []
+    for entity in entities:
+        if not entity.body:
+            continue
+        root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, str(entity.body))
+        if root < 0:
+            continue
+        meta = entity.meta if isinstance(getattr(entity, "meta", None), dict) else {}
+        subtree = {bid for bid in range(1, model.nbody) if under(bid, root)}
+        out.append((str(entity.name), str(meta.get("prefix") or ""), subtree))
+    return out
 
 
-class _SampleStream:
-    """The samples on disk while the run is still going -- the recording's live half.
+def select_tracks(
+    model,
+    registry,
+    tracks: str | Sequence[str] | None = None,
+    exclude: str | Sequence[str] | None = None,
+) -> tuple[list[tuple[int, str]], list[tuple[int, str, int]], list[str]]:
+    """The bodies and joints the ``poses`` and ``joints`` channels carry, and the unnamed bodies left out.
 
-    A raw stream of fixed-width records, appended as each is taken and packed into the ``.npz`` at
-    the end. Accumulating them in RAM instead costs memory linear in the run's *length*, peaking at
-    about twice the file size in the moment the whole run is materialised for the write. That memory
-    is anonymous, so a container under pressure can reclaim none of it: a long run either fits or is
-    OOM-killed. Streamed, the footprint is flat and what pages remain are file-backed and evictable.
+    Every named body and every named hinge or slide joint by default. ``tracks`` narrows that to what
+    its patterns select and ``exclude`` removes what its patterns select, an exclude winning over an
+    include. A pattern is ``<entity>/<body-or-joint>`` -- ``**`` for everything of that entity, ``*``
+    for one name segment -- or a bare name, which selects the body and the joint of that name alike.
 
-    Measured on 40 000 samples of a pedestrian world (58 MB of records): the loop's footprint does not
-    grow at all where lists add 61 MB to it, and peak RSS across the whole recording is 309 MB against
-    409 MB -- the remainder being the mapping and the archive's own write pages,
-    which are file-backed and so are the kernel's to reclaim rather than the run's to hold.
-
-    **Deliberately not flushed per sample.** The two CSVs beside it are, because they exist for
-    readers *outside* the process -- a health check tailing a live run. This file has one reader, and
-    it is :meth:`finish`. A run killed with SIGKILL still loses its recording, exactly as before: an
-    ``.npz`` writes its index at the end, so there was never anything to read. What buffering buys is
-    one ``write(2)`` per :data:`_STREAM_BUFFER` rather than one per sample.
-
-    A write failure **is** fatal here, unlike the two CSVs. This is the primary artifact, and a
-    recording quietly missing the samples that would not fit is indistinguishable from a shorter run.
+    A pattern that selects nothing **refuses**, naming the entities and the bodies and joints that
+    exist: a typo would otherwise record a run that looks complete and lacks the one track the trial
+    is judged on. The ``state`` and ``clock`` channels are never narrowed.
     """
+    bodies, skipped = _named_bodies(model)
+    joints = _scalar_joints(model)
+    includes, excludes = parse_patterns(tracks), parse_patterns(exclude)
+    if not includes and not excludes:
+        return bodies, joints, skipped
 
-    def __init__(self, path: Path, dtype: np.dtype) -> None:
-        self.path = path
-        self.dtype = dtype
-        self.count = 0
-        #: The record to fill before each :meth:`append` -- one array, refilled in place all run. The
-        #: stream owns it rather than taking one per call so that its *bytes* can be taken once, below:
-        #: building that memoryview per sample costs as much again as the write itself.
-        self.record = np.zeros(1, dtype=dtype)
-        self._bytes = self.record.data
-        self._file = None
-        self._final: np.ndarray | None = None
+    entities = _entities_of(model, registry)
+    # Every name a body or joint answers to: its own, and ``<entity>/<local>`` per entity it is under.
+    body_keys: dict[str, set[str]] = {name: {name} for _, name in bodies}
+    joint_keys: dict[str, set[str]] = {name: {name} for _, name, _ in joints}
+    for entity, prefix, subtree in entities:
+        for bid, name in bodies:
+            if bid in subtree:
+                body_keys[name].add(f"{entity}/{_local_name(name, entity, prefix)}")
+        for jid, name, _ in joints:
+            if int(model.jnt_bodyid[jid]) in subtree:
+                joint_keys[name].add(f"{entity}/{_local_name(name, entity, prefix)}")
 
-    def append(self) -> None:
-        """Append :attr:`record` as it currently stands.
-
-        Opened lazily on the first record, like the clock and pose records, so a recorder that never
-        samples leaves no file for an existence check to trip over.
-        """
-        try:
-            if self._file is None:
-                self.path.parent.mkdir(parents=True, exist_ok=True)
-                self._file = open(  # pylint: disable=consider-using-with
-                    self.path, "wb", buffering=_STREAM_BUFFER
-                )
-            # The record's own bytes, so a sample is a memcpy into the write buffer and nothing more.
-            self._file.write(self._bytes)
-        except OSError as err:
+    def selected(pattern: str) -> tuple[set[str], set[str]]:
+        hit_bodies = {
+            n for n, ks in body_keys.items() if any(pattern_matches(pattern, k) for k in ks)
+        }
+        hit_joints = {
+            n for n, ks in joint_keys.items() if any(pattern_matches(pattern, k) for k in ks)
+        }
+        if not hit_bodies and not hit_joints:
+            named = ", ".join(f"{n} (prefix {p!r})" if p else n for n, p, _ in entities)
             raise RecordingError(
-                f"{self.path}: the recording's samples could not be written ({err}). Unlike the "
-                "clock and pose records this is the recording itself, so the run stops here rather "
-                "than continuing toward an archive that would silently be missing samples."
-            ) from err
-        self.count += 1
+                f"record track pattern {pattern!r} matches no body and no joint of this world. "
+                f"Entities: {named or 'none registered'}. "
+                f"Bodies: {', '.join(n for _, n in bodies) or 'none'}. "
+                f"Joints: {', '.join(n for _, n, _ in joints) or 'none'}. A pattern is "
+                "<entity>/<body-or-joint> (** for everything of the entity, * for one name "
+                "segment) or a bare body or joint name."
+            )
+        return hit_bodies, hit_joints
 
-    def _map(self) -> np.ndarray | None:
-        """Map what is on disk, read-only. The *file* decides the length, not :attr:`count`.
+    keep_bodies = {n for _, n in bodies}
+    keep_joints = {n for _, n, _ in joints}
+    if includes:
+        keep_bodies, keep_joints = set(), set()
+        for pattern in includes:
+            hit_bodies, hit_joints = selected(pattern)
+            keep_bodies |= hit_bodies
+            keep_joints |= hit_joints
+    for pattern in excludes:
+        hit_bodies, hit_joints = selected(pattern)
+        keep_bodies -= hit_bodies
+        keep_joints -= hit_joints
+    return (
+        [(bid, n) for bid, n in bodies if n in keep_bodies],
+        [(jid, n, adr) for jid, n, adr in joints if n in keep_joints],
+        skipped,
+    )
 
-        A record torn in half by a kill mid-write is dropped rather than read as a sample of zeros.
-        """
-        n = self.path.stat().st_size // self.dtype.itemsize
-        if n == 0:
-            return None
-        return np.memmap(self.path, dtype=self.dtype, mode="r", shape=(n,))
 
-    def mapped(self) -> np.ndarray | None:
-        """Every record written so far. Valid both before and after :meth:`finish`.
-
-        Both, because the two drivers disagree on order: ``roqsim sim`` closes the recording and then
-        derives the run capture from it, while the scenario adapter derives first and closes last. So
-        this either hands back the mapping :meth:`finish` kept or flushes and maps the live file.
-        """
-        if self._final is not None:
-            return self._final
-        if self._file is None:
-            return None
-        self._file.flush()
-        return self._map()
-
-    def finish(self) -> np.ndarray | None:
-        """Close the stream and hand back everything in it. The file is gone when this returns.
-
-        The mapping deliberately outlives the file's *name*: POSIX keeps the inode alive until the
-        last reference to it is dropped, which is what ``tempfile.TemporaryFile`` is built on. That is
-        what lets ``replay()`` still work after ``close()`` while leaving no temporary file in the run
-        directory for a campaign to collect as an artifact.
-
-        Do not "tidy" this into a later unlink. Deferring it to the driver means the first call site
-        that forgets -- the scenario adapter tears a recorder down on a mid-run world rebuild, where
-        no driver ``finally`` is watching -- leaves a temp file in a *successful* run's output list.
-        Idempotent: every caller is a ``finally``.
-        """
-        if self._file is not None:
-            try:
-                self._file.close()
-            finally:
-                self._file = None
-        # The gate is :attr:`count`, not the file's existence: a stream left behind by an *earlier*
-        # run that was killed sits at exactly this path, and a run that ends before its first sample
-        # would otherwise pack that run's samples into this run's archive, under this run's
-        # provenance. It is left alone instead, to be truncated by the next run that does record.
-        if self._final is None and self.count:
-            self._final = self._map()
-            try:
-                self.path.unlink()
-            except OSError as err:  # a filesystem that will not unlink a mapped file
-                log.debug("recording: %s could not be removed (%s)", self.path, err)
-        return self._final
+# -- the provenance ----------------------------------------------------------------------------------
 
 
 def _actuator_record(ctx) -> dict:
@@ -496,31 +479,17 @@ def _endpoint_rate_record(ctx) -> list:
     return [dict(row) for row in rows]
 
 
-def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
-    """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
-
-    **Deflated at level 1**, which is the setting ``np.savez_compressed`` cannot express. The reason
-    to compress at all is not the float mantissas -- those really are incompressible noise, and
-    float32 has already dropped the worst of them -- it is that a state vector *repeats*: most of a
-    world stands still, so most of each record is the previous record. How much that is worth
-    therefore depends on the world, and on real recordings from this substrate it ranges from **70%**
-    of raw (a bare mobile robot, where nearly every number in the vector moves) to **11%** (a world of
-    pedestrians, whose seventeen mocap bodies apiece are mostly holding position). Level 1 gets the
-    same ratio as level 6 at roughly twice its throughput, which is worth having in a teardown that a
-    campaign's timeout may be about to escalate to SIGKILL.
-
-    Written a member at a time rather than through ``np.savez`` for two reasons: the level is ours to
-    pick, and *samples* may be a memmap, which ``write_array`` streams through in 16 MB chunks
-    instead of materialising. The layout is the ``.npz`` format exactly as :mod:`numpy.lib.format`
-    documents it -- one ``<key>.npy`` member per array -- so every existing reader is unaffected.
-    """
-    meta = np.array(json.dumps(provenance))
-    with zipfile.ZipFile(
-        path, "w", zipfile.ZIP_DEFLATED, allowZip64=True, compresslevel=1
-    ) as archive:
-        for name, array in (("meta.npy", meta), ("samples.npy", samples)):
-            with archive.open(name, "w", force_zip64=True) as member:
-                npy_format.write_array(member, array, allow_pickle=False)
+def _roster(registry) -> list[dict] | None:
+    """The entity registry as the ``roqsim.entities`` document, or ``None`` without a usable one."""
+    if registry is None:
+        return None
+    try:
+        return [
+            {"name": e.name, "kind": e.kind, "body": e.body, "present": bool(e.present)}
+            for e in registry.all()
+        ]
+    except Exception:  # noqa: BLE001 - a driver with no usable registry, not a failure
+        return None
 
 
 def decimated(rec, factor: int, out: str | Path) -> Path:
@@ -533,8 +502,9 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
     fraction of the rendering.
 
     That invariant is preserved here rather than traded away: the samples that remain are untouched
-    rows, so every frame drawn from the result is still a state the simulation had. What changes is
-    only how many of them there are, and the declared rate that says so.
+    messages, so every frame drawn from the result is still a state the simulation had. What changes
+    is only how many of them there are, and the declared rate that says so. The ``poses``, ``joints``
+    and ``clock`` messages of the kept samples travel with them.
 
     The rate stays exact because ``capture_fps`` is a ``[numerator, denominator]`` pair: 250 Hz
     decimated by 8 is ``[250, 8]``, i.e. 31.25 fps, not a rounded 31.
@@ -542,51 +512,79 @@ def decimated(rec, factor: int, out: str | Path) -> Path:
     factor = int(factor)
     if factor < 1:
         raise RecordingError(f"decimate factor must be 1 or more, got {factor}")
-    samples = rec.samples[::factor]
-    if len(samples) < 2:
+    kept = range(0, len(rec), factor)
+    if len(kept) < 2:
         raise RecordingError(
-            f"decimating {rec.path} by {factor} would leave {len(samples)} sample(s) of its "
+            f"decimating {rec.path} by {factor} would leave {len(kept)} sample(s) of its "
             f"{len(rec)}; a recording needs at least two to have a span."
         )
     num, den = rec.meta["capture_fps"]
-    meta = {**rec.meta, "capture_fps": [int(num), int(den) * factor]}
-    expected = record_dtype(int(rec.meta["state_size"]), "cam" in (samples.dtype.names or ()))
-    if samples.dtype != expected:
+    meta = {**rec.meta, "capture_fps": [int(num), int(den) * factor], "samples": len(kept)}
+    expected = record_dtype(int(rec.meta["state_size"]), rec.has_camera)
+    if rec.samples.dtype != expected:
         raise RecordingError(
-            f"{rec.path}: samples are {samples.dtype}, but its provenance describes {expected}."
+            f"{rec.path}: samples are {rec.samples.dtype}, but its provenance describes {expected}."
         )
-    out = _npz_path(out)
+    out = recording_path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    _write_archive(out, meta, np.ascontiguousarray(samples))
+    writer = ChunkedWriter(out)
+    try:
+        writer.start(PROFILE, library=_library())
+        writer.add_json_metadata(META_RECORDING, meta)
+        if rec.entities is not None:
+            writer.add_json_metadata(META_ENTITIES, {"entities": rec.entities})
+        channels = register_channels(writer)
+        state_times = rec.message_times(CHANNEL_STATE)
+        for index in kept:
+            log_time, publish_time = state_times[index]
+            writer.add_message(
+                channels[CHANNEL_STATE], log_time, rec.samples[index].tobytes(), publish_time
+            )
+            for topic, _name, _schema in JSON_CHANNELS:
+                message = rec.message(topic, index)
+                if message is not None:
+                    writer.add_message(
+                        channels[topic], message.log_time, message.data, message.publish_time
+                    )
+        writer.finish()
+    except BaseException:
+        writer.abandon()
+        raise
     return out
 
 
+def _library() -> str:
+    return f"roqsim {package_versions().get('roqsim', 'unknown')}"
+
+
 class StateRecorder:
-    """Sample MuJoCo state into a ``.npz`` while a run proceeds. A **driver** object, not a plugin.
+    """Sample MuJoCo state into an mcap file while a run proceeds. A **driver** object, not a plugin.
 
     Capture is a session concern, not an experiment one -- the same footing as ``sim.headless`` (which
     the world YAML explicitly rejects), ``--left-ui`` and ``--manual-control``. So this is constructed by
     a driver and ``sample``\\ d from the loop the driver already runs: no lifecycle hooks, nothing
     injected into a parsed world, and no second route through the world YAML.
 
-    Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step) plus a copy
-    into a write buffer. Everything expensive -- rebuilding the world, rendering, encoding -- happens
-    afterwards, from the file (see :mod:`roqsim.recording`).
+    Cost on the run is one ``mj_getState`` (~0.001 ms, about a fiftieth of a physics step), one
+    ``mj_objectVelocity`` per recorded body, and the JSON of the three decoded channels. Everything
+    expensive -- rebuilding the world, rendering, encoding -- happens afterwards, from the file (see
+    :mod:`roqsim.recording`).
 
-    **The samples live on disk, not in RAM**: each is appended to a :class:`_SampleStream` beside the
-    target as it is taken, and :meth:`close` packs that stream into the archive. So the run's memory
-    footprint does not grow with its length, which is what makes an hour-long recording a disk
-    decision rather than a memory one.
+    **One file, four channels, written as the run goes.** Every sample is one message on each of
+    ``state`` (the MuJoCo state vector, the primary artifact), ``poses`` (every recorded body's world
+    pose and twist), ``joints`` (every recorded scalar joint) and ``clock`` (the wall/sim pair a reader
+    outside the process relates its own stamps to). The provenance and the entity roster are metadata
+    records. The file is chunked and compressed, and a chunk is closed and flushed **at least once per
+    wall second** (:data:`roqsim.mcap_format.CHUNK_SECONDS`), so the run's memory does not grow with
+    its length and a hard kill loses at most the open chunk.
 
-    The archive itself is still written once, at :meth:`close`. Every stop that must work reaches it
-    through the driver's existing ``finally``: closing the viewer window drops ``viewer.is_running()``,
-    and Ctrl+C **or a supervisor's SIGTERM** is caught by ``_graceful_stop``, which sets ``QUITTING``
-    rather than raising. SIGTERM matters as much as Ctrl+C here, because it is how a supervised run ends
-    -- a container teardown, a ``docker stop``, an eviction, a campaign timeout -- and its default action
-    would kill the process with no ``finally`` at all. Only **SIGKILL** still loses the recording, since
-    an ``.npz`` is a zip whose index is written at the end; that is the accepted trade for a standard
-    container, and it is why the stream is buffered rather than flushed per sample. Such a run leaves
-    its ``.part`` stream behind, which nothing reads: the archive's *absence* is the signal.
+    Every stop that must work reaches :meth:`close` through the driver's existing ``finally``: closing
+    the viewer window drops ``viewer.is_running()``, and Ctrl+C **or a supervisor's SIGTERM** is caught
+    by ``_graceful_stop``, which sets ``QUITTING`` rather than raising. SIGTERM matters as much as
+    Ctrl+C here, because it is how a supervised run ends -- a container teardown, a ``docker stop``, an
+    eviction, a campaign timeout. ``close`` writes the summary section that marks a finished file;
+    **SIGKILL** skips it, and the file it leaves still opens with every closed chunk in it. Its missing
+    summary is what says the run did not end on purpose.
     """
 
     def __init__(
@@ -599,57 +597,50 @@ class StateRecorder:
         overrides: dict | None = None,
         config=None,
         camera: bool = False,
-        sim_poses: bool = False,
+        tracks: str | Sequence[str] | None = None,
+        exclude: str | Sequence[str] | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
-        self.path = _npz_path(path)
+        self.path = recording_path(path)
         self.rate = rate
         self.log = logger or log
         self._model = ctx.model
         self._size = mujoco.mj_stateSize(ctx.model, STATE_SPEC)
-        self._buf = np.empty(self._size)  # mj_getState needs float64; samples are cast on append
+        self._buf = np.empty(self._size)  # mj_getState needs float64; samples are cast on write
+        self._camera = bool(camera)
         # The record layout is decided here rather than at close: by then there is nothing left in
         # memory to infer it from.
-        self._stream = _SampleStream(
-            self.path.with_name(self.path.name + STREAM_SUFFIX),
-            record_dtype(self._size, camera),
-        )
+        self._record = np.zeros(1, dtype=record_dtype(self._size, camera))
         # Views onto the record's fields, taken once. Naming a field of a structured array builds a
-        # new view every time, which measured as much again as the write it feeds; through these, a
-        # sample is cheaper than a list append.
-        record = self._stream.record
-        self._t, self._w, self._s = record["t"], record["w"], record["s"]
-        self._cam = record["cam"] if camera else None
+        # new view every time, which measured as much again as the write it feeds.
+        self._t, self._w, self._s = self._record["t"], self._record["w"], self._record["s"]
+        self._cam = self._record["cam"] if camera else None
+        # The roster that says what the pose rows are. Held as a live reference to the registry, not
+        # a copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
+        # construction would describe a world the trial has since left.
+        self._registry = getattr(ctx, "entities", None)
+        # Which bodies and joints the decoded channels carry. Decided at construction, so a pattern
+        # that selects nothing fails the run's start rather than its analysis.
+        self._bodies, self._joints, self._skipped = select_tracks(
+            ctx.model, self._registry, tracks, exclude
+        )
+        #: Last roster written, so the record is rewritten when it changes and not once per sample.
+        self._entities_sig: tuple | None = None
+        self._ctx = ctx
+        self._writer: ChunkedWriter | None = None
+        self._channels: dict[str, int] = {}
+        self._count = 0
         # Span endpoints, kept because the closing log line reports them and nothing else remembers.
         self._first_t = self._last_t = 0.0
         self._first_w = self._last_w = 0.0
         self._next_due = 0.0
         self._closed = False
+        self._last_chunk = 0.0
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
         # started by F9 mid-session gets its own origin, which is what makes each take's real-time
         # factor its own rather than the session's.
         self._origin = time.perf_counter()
         self._wall_start_epoch = time.time()
-        # The clock record, streamed and flushed *per sample*. The .npz is written once, at close(),
-        # so a run killed by a timeout leaves none at all -- and that is exactly the run whose log
-        # somebody needs to place in time. This file survives, because every line is already on
-        # disk when the process dies; the sample stream is buffered instead, since it exists only to
-        # be packed at close and nobody tails it. Opened lazily on the first sample so a recorder
-        # that never samples leaves no empty file for an existence check to trip over.
-        self._clock_path = Path(str(self.path).removesuffix(".npz") + CLOCK_MAP_SUFFIX)
-        self._clock_file = None
-        # The pose record, streamed on the same terms and for the same reasons. Off unless a driver
-        # asks for it, because it is a second file per run and only a campaign wants one.
-        self._pose_path = (self.path.parent / SIM_POSE_FILENAME) if sim_poses else None
-        self._pose_file = None
-        self._pose_bodies, self._pose_skipped = _named_bodies(ctx.model) if sim_poses else ([], [])
-        # The roster that says what those rows are. Held as a live reference to the registry, not a
-        # copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
-        # construction would describe a world the trial has since left.
-        self._registry = getattr(ctx, "entities", None) if sim_poses else None
-        self._entities_path = (self.path.parent / ENTITIES_FILENAME) if sim_poses else None
-        #: Last roster written, so the file is rewritten when it changes and not once per sample.
-        self._entities_sig: tuple | None = None
         self._provenance = {
             "format_version": FORMAT_VERSION,
             # The seed belongs in the provenance because it is what makes a *sensor* replay exact: a
@@ -672,12 +663,12 @@ class StateRecorder:
             # an `actuators:` block that changes one joint leaves the rest reported by nothing. This
             # is the resolved table -- every actuator, its law, its gains, and whether the value came
             # from the model or from the world -- so a reader can state the gains a run used without
-            # opening the MJCF and re-deriving them. Additive: `Recording` reads `world_model` by
-            # name and ignores keys it does not know, so no FORMAT_VERSION bump.
+            # opening the MJCF and re-deriving them.
             "actuators": _actuator_record(ctx),
             # What each published endpoint went out at, requested and realised. A publish lands on a
             # physics step, so a rate that is not a whole number of steps is served at a neighbouring
-            # one; this is where that shows without reading a log. Additive, like `actuators`.
+            # one; this is where that shows without reading a log. Written again at close, since a
+            # bridge may bind after the first sample.
             "endpoint_rates": _endpoint_rate_record(ctx),
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
@@ -687,7 +678,10 @@ class StateRecorder:
             "capture_fps": [rate.fps.numerator, rate.fps.denominator],
             "capture_every_steps": rate.every,
             "timestep": float(ctx.model.opt.timestep),
-            "camera_track": bool(camera),
+            # Both spellings of the same fact: ``camera`` states the ``state`` message's layout
+            # beside ``state_size``/``state_fields``; ``camera_track`` is the name a reader asks by.
+            "camera": self._camera,
+            "camera_track": self._camera,
             "wall_clock_origin": WALL_CLOCK_ORIGIN,
             # The calendar instant ``w == 0`` corresponds to. ``w`` itself stays elapsed and
             # monotonic for the reasons WALL_CLOCK_ORIGIN gives -- nanosecond resolution, and
@@ -695,6 +689,11 @@ class StateRecorder:
             # stamps of its own to relate to it: a container log's lines, a rosbag's receive
             # times. One number completes the record; converting the column would break it.
             "wall_start_epoch": self._wall_start_epoch,
+            # What the decoded channels carry, so a reader can tell "not recorded" from "did not move".
+            "tracks": {
+                "bodies": [name for _, name in self._bodies],
+                "joints": [name for _, name, _ in self._joints],
+            },
             "model": {
                 "name": _model_name(ctx.model),
                 "nbody": int(ctx.model.nbody),
@@ -710,7 +709,37 @@ class StateRecorder:
 
     @property
     def frames(self) -> int:
-        return self._stream.count
+        return self._count
+
+    def _open(self) -> None:
+        """Create the file: header, provenance, roster, channels. On the first sample, not before.
+
+        Lazily, so a recorder that never samples leaves no file for an existence check to trip
+        over -- a run that ends before its first sample is due has nothing to say.
+        """
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        writer = ChunkedWriter(self.path)
+        try:
+            writer.start(PROFILE, library=_library())
+            writer.add_json_metadata(META_RECORDING, self._provenance)
+            self._channels = register_channels(writer)
+            # On disk before the first chunk closes: a reader can already see what the file is.
+            writer.flush()
+        except BaseException:
+            writer.abandon()
+            raise
+        self._writer = writer
+        self._last_chunk = time.perf_counter()
+        if self._skipped:
+            skipped = sorted(set(self._skipped))
+            self.log.info(
+                "recording: the poses channel carries %d named bodies; %d unnamed bodies have no "
+                "entry (under %s)",
+                len(self._bodies),
+                len(self._skipped),
+                ", ".join(skipped),
+            )
+        self._write_entities()
 
     def sample(self, ctx, cam=None) -> bool:
         """Take a sample if one is due. Cheap enough to call every step; returns whether it did.
@@ -733,132 +762,134 @@ class StateRecorder:
         # Stamped next to the state copy, so ``w`` says when this state was taken and not when the
         # step's bookkeeping around it finished.
         wall = time.perf_counter() - self._origin
+        sim = float(now)
         mujoco.mj_getState(ctx.model, ctx.data, self._buf, STATE_SPEC)
-        self._t[0] = now
+        self._t[0] = sim
         self._w[0] = wall
         # float64 -> float32 happens in the assignment, which is why there is no per-sample astype.
         self._s[0] = self._buf
         if self._cam is not None:
             self._cam[0] = _camera_row(cam)
-        self._stream.append()
-        if self._stream.count == 1:
-            self._first_t, self._first_w = float(now), wall
-        self._last_t, self._last_w = float(now), wall
-        self._write_clock_sample(wall, float(now))
-        self._write_sim_pose_sample(ctx, wall, float(now))
+        try:
+            if self._writer is None:
+                self._open()
+            self._write_sample(ctx, sim, wall)
+        except OSError as err:
+            raise RecordingError(
+                f"{self.path}: the recording could not be written ({err}). This is the recording "
+                "itself, so the run stops here rather than continuing toward a file that would "
+                "silently be missing samples."
+            ) from err
+        self._count += 1
+        if self._count == 1:
+            self._first_t, self._first_w = sim, wall
+        self._last_t, self._last_w = sim, wall
         return True
 
-    def _write_clock_sample(self, wall: float, sim: float) -> None:
-        """Append one ``(epoch wall, sim)`` pair to the streamed clock record.
+    def _write_sample(self, ctx, sim: float, wall: float) -> None:
+        """One message per channel for this sample, then the roster if it changed, then the chunk."""
+        writer = self._writer
+        epoch = self._wall_start_epoch + wall
+        log_time, publish_time = ns(sim), ns(epoch)
+        writer.add_message(
+            self._channels[CHANNEL_STATE], log_time, self._record.tobytes(), publish_time
+        )
+        writer.add_message(
+            self._channels[CHANNEL_POSES],
+            log_time,
+            json_bytes({"t": sim, "w": epoch, "bodies": self._pose_rows(ctx)}),
+            publish_time,
+        )
+        qpos = ctx.data.qpos
+        writer.add_message(
+            self._channels[CHANNEL_JOINTS],
+            log_time,
+            json_bytes(
+                {
+                    "t": sim,
+                    "w": epoch,
+                    "q": {
+                        name: round(float(qpos[adr]), _JSON_DECIMALS)
+                        for _, name, adr in self._joints
+                    },
+                }
+            ),
+            publish_time,
+        )
+        writer.add_message(
+            self._channels[CHANNEL_CLOCK],
+            log_time,
+            json_bytes({"wall_ts": epoch, "sim_ts": sim}),
+            publish_time,
+        )
+        self._write_entities()
+        # Judged against the clock now rather than the sample's stamp: on the first sample the file
+        # was opened between the two, and the reference was taken at the open.
+        now = time.perf_counter()
+        if now - self._last_chunk >= CHUNK_SECONDS:
+            writer.close_chunk()
+            self._last_chunk = now
 
-        Epoch here, not the elapsed ``w``: this file exists for readers *outside* the process, who
-        have calendar stamps of their own to relate to it and no way to learn this run's origin.
-        Never fatal -- a recording that cannot write its clock record is still a recording, and
-        failing the run over a diagnostic would be the wrong trade.
-        """
-        try:
-            if self._clock_file is None:
-                self._clock_path.parent.mkdir(parents=True, exist_ok=True)
-                self._clock_file = open(  # pylint: disable=consider-using-with
-                    self._clock_path, "w", encoding="utf-8", buffering=1
-                )
-                self._clock_file.write(",".join(CLOCK_MAP_FIELDS) + "\n")
-            self._clock_file.write(f"{self._wall_start_epoch + wall:.6f},{sim:.6f}\n")
-            self._clock_file.flush()
-        except OSError as err:
-            self.log.debug("recording: clock record not written (%s)", err)
-            self._clock_file = None
-
-    def _write_sim_pose_sample(self, ctx, wall: float, sim: float) -> None:
-        """Append this sample's world pose and twist, one row per named body.
-
-        Streamed and flushed per row for the reason :meth:`_write_clock_sample` gives, and one more:
-        this file is a *run's ground truth*, so it is exactly what somebody wants from the run that
-        died. It is also the only pose data a **stepped** run produces at all -- with no ROS there is
-        no rosbag and so no TF to derive poses from afterwards.
+    def _pose_rows(self, ctx) -> dict[str, list[float]]:
+        """This sample's world pose and twist, one row per recorded body.
 
         The velocities come from the solver rather than from differencing the positions, which is the
-        point of the file: a difference is only ever as good as the interval it is divided by, and an
-        arrival-time interval is not the interval the motion happened over.
+        point of the channel: a difference is only ever as good as the interval it is divided by, and
+        an arrival-time interval is not the interval the motion happened over. It is also the only
+        pose series a **stepped** run produces at all -- with no ROS there is no rosbag and so no TF
+        to derive poses from afterwards.
 
         One convention, stated because it is easy to get wrong and impossible to see: ``mj_step``
         integrates ``qpos`` and then leaves ``xpos`` holding the pose from *before* that integration,
         so the row is a coherent snapshot of ``sim - dt`` carrying the label ``sim``. That is
         deliberately the same one-step lag the ``ground_truth_pose`` plugin publishes with, so this
-        table and the TF one describe the same instant and any difference between them is transport
+        channel and the TF one describe the same instant and any difference between them is transport
         rather than convention. It cancels in every derivative.
         """
-        if self._pose_path is None:
-            return
-        try:
-            if self._pose_file is None:
-                self._pose_path.parent.mkdir(parents=True, exist_ok=True)
-                self._pose_file = open(  # pylint: disable=consider-using-with
-                    self._pose_path, "w", encoding="utf-8", buffering=1
-                )
-                self._pose_file.write(",".join(SIM_POSE_FIELDS) + "\n")
-                skipped = sorted(set(self._pose_skipped))
-                self.log.info(
-                    "recording: %s carries %d named bodies; %d unnamed bodies have no row%s",
-                    SIM_POSE_FILENAME,
-                    len(self._pose_bodies),
-                    len(self._pose_skipped),
-                    f" (under {', '.join(skipped)})" if skipped else "",
-                )
-            data = ctx.data
-            for bid, name in self._pose_bodies:
-                pos, quat = data.xpos[bid], data.xquat[bid]
-                twist = body_twist(ctx.model, data, bid)
-                self._pose_file.write(
-                    f"{sim:.6f},{self._wall_start_epoch + wall:.6f},{name},"
-                    # MuJoCo orders a quaternion (w, x, y, z); the contract orders it (x, y, z, w),
-                    # as ROS does. Reordered here rather than at the reader, once.
-                    f"{pos[0]:.6f},{pos[1]:.6f},{pos[2]:.6f},"
-                    f"{quat[1]:.6f},{quat[2]:.6f},{quat[3]:.6f},{quat[0]:.6f},"
-                    f"{twist.linear[0]:.6f},{twist.linear[1]:.6f},{twist.linear[2]:.6f},"
-                    f"{twist.angular[0]:.6f},{twist.angular[1]:.6f},{twist.angular[2]:.6f}\n"
-                )
-            self._pose_file.flush()
-        except OSError as err:
-            self.log.debug("recording: pose record not written (%s)", err)
-            self._pose_file = None
-        self._write_entities()
+        data = ctx.data
+        rows: dict[str, list[float]] = {}
+        r = _JSON_DECIMALS
+        for bid, name in self._bodies:
+            pos, quat = data.xpos[bid], data.xquat[bid]
+            twist = body_twist(ctx.model, data, bid)
+            rows[name] = [
+                round(float(pos[0]), r),
+                round(float(pos[1]), r),
+                round(float(pos[2]), r),
+                # MuJoCo orders a quaternion (w, x, y, z); the channel orders it (x, y, z, w), as
+                # ROS does. Reordered here rather than at the reader, once.
+                round(float(quat[1]), r),
+                round(float(quat[2]), r),
+                round(float(quat[3]), r),
+                round(float(quat[0]), r),
+                round(twist.linear[0], r),
+                round(twist.linear[1], r),
+                round(twist.linear[2], r),
+                round(twist.angular[0], r),
+                round(twist.angular[1], r),
+                round(twist.angular[2], r),
+            ]
+        return rows
 
     def _write_entities(self) -> None:
-        """Keep :data:`ENTITIES_FILENAME` matching the registry, rewriting it only on a change.
+        """Keep the ``roqsim.entities`` metadata matching the registry, writing it only on a change.
 
-        On the pose path because it exists for the pose record's reader, and rewritten on a change
-        because a run can spawn, remove or hide an entity -- a roster written once at the first
-        sample would describe the world the trial started in rather than the one it is in.
+        Rewritten on a change because a run can spawn, remove or hide an entity -- a roster written
+        once at the first sample would describe the world the trial started in rather than the one
+        it is in. A reader takes the last record of the name.
 
         The comparison is over the whole roster including ``present``, which costs an iteration of a
         registry holding tens of entities against a sample that has already copied the entire
-        physics state and formatted a row per body. Best-effort for the same reason the clock record
-        is: a run whose roster could not be written is still a run, and a recorder that raises here
-        would end it.
+        physics state and formatted a row per body.
         """
-        if self._registry is None or self._entities_path is None:
-            return
-        try:
-            roster = [
-                {"name": e.name, "kind": e.kind, "body": e.body, "present": bool(e.present)}
-                for e in self._registry.all()
-            ]
-        except Exception as err:  # noqa: BLE001 - a driver with no usable registry, not a failure
-            self.log.debug("recording: entity roster not read (%s)", err)
+        roster = _roster(self._registry)
+        if roster is None:
             self._registry = None
             return
         signature = tuple((e["name"], e["kind"], e["body"], e["present"]) for e in roster)
         if signature == self._entities_sig:
             return
-        try:
-            self._entities_path.parent.mkdir(parents=True, exist_ok=True)
-            self._entities_path.write_text(
-                json.dumps({"entities": roster}) + "\n", encoding="utf-8"
-            )
-        except OSError as err:
-            self.log.debug("recording: entity roster not written (%s)", err)
-            return
+        self._writer.add_json_metadata(META_ENTITIES, {"entities": roster})
         self._entities_sig = signature
 
     def on_reset(self) -> None:
@@ -874,20 +905,22 @@ class StateRecorder:
 
         The counterpart to :mod:`roqsim.recording` for a driver that still *has* the world: it restores
         each sample in place instead of rebuilding from the file, which is what lets a shutdown hook
-        derive something from the run (a browser run capture, say) without paying seconds for a
-        rebuild it does not need. The state layout stays known in exactly one module either way.
+        derive something from the run without paying seconds for a rebuild it does not need.
 
-        Reads the samples back through the stream's mapping rather than from memory, so it costs the
-        run no RAM and works either side of :meth:`close` -- the two drivers disagree on which comes
-        first (see :meth:`_SampleStream.mapped`).
+        Reads the samples back from the file, closing the open chunk first, so it works either side
+        of :meth:`close`.
 
         **Destructive and terminal**: it overwrites ``ctx.data`` sample by sample, so it belongs after
         the loop is done. One ``MjData`` is re-posed throughout, so a consumer that keeps values must
         copy them.
         """
-        samples = self._stream.mapped()
-        if samples is None:
+        if self._writer is None:
             return
+        if not self._closed:
+            self._writer.close_chunk()
+        from .recording import open_recording
+
+        samples = open_recording(self.path).samples
         buf = np.empty(self._size)
         for record in samples:
             t = float(record["t"])
@@ -898,23 +931,17 @@ class StateRecorder:
             yield t, ctx.data
 
     def close(self) -> Path | None:
-        """Write the recording and return its path, or ``None`` when there was nothing to write.
+        """Finish the recording and return its path, or ``None`` when there was nothing to write.
 
         Idempotent, because every call site is a ``finally`` and a driver may unwind more than once.
+        The provenance is written a second time here with what is only known at the end (the
+        endpoint rates a bridge bound after the start, the sample count and span); a reader takes
+        the last record.
         """
         if self._closed:
             return None
         self._closed = True
-        for attr in ("_clock_file", "_pose_file"):
-            handle = getattr(self, attr)
-            if handle is not None:
-                try:
-                    handle.close()
-                except OSError:
-                    pass
-                setattr(self, attr, None)
-        samples = self._stream.finish()
-        if samples is None:
+        if self._writer is None:
             # Nothing sampled: say so rather than leaving an empty file that passes an existence check.
             self.log.warning(
                 "recording: no samples taken, so %s was not written. The run ended before the first "
@@ -924,15 +951,24 @@ class StateRecorder:
                 self.rate.period,
             )
             return None
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        _write_archive(self.path, self._provenance, samples)
         sim_span = self._last_t - self._first_t
         wall_span = self._last_w - self._first_w
+        self._provenance["endpoint_rates"] = _endpoint_rate_record(self._ctx)
+        self._provenance["samples"] = self._count
+        self._provenance["span"] = [self._first_t, self._last_t]
+        try:
+            self._writer.add_json_metadata(META_RECORDING, self._provenance)
+            self._writer.finish()
+        except OSError as err:
+            self._writer.abandon()
+            raise RecordingError(
+                f"{self.path}: the recording could not be finished ({err})"
+            ) from err
         self.log.info(
             # Wall gets two decimals where sim gets one: a fast `--pacing asap` run finishes in
             # hundredths of a second, and "in 0.0 s wall" would report a real measurement as nothing.
             "recording: %d samples at %s fps (%.1f s of sim time in %.2f s wall, %s) -> %s",
-            self._stream.count,
+            self._count,
             float(self.rate.fps),
             sim_span,
             wall_span,
@@ -953,12 +989,13 @@ def _model_name(model) -> str:
 def record_dtype(state_size: int, camera: bool) -> np.dtype:
     """The structured record -- one row per sample: **both clocks**, the state, optionally the camera.
 
-    ``t`` is simulated seconds (MuJoCo's ``data.time``) and ``w`` is wall seconds elapsed since the
-    recorder started (:data:`WALL_CLOCK_ORIGIN`). Both, because neither answers the other's questions:
-    ``t`` is what the physics means and the only one a replay can be indexed by, while ``w`` is the only
-    one that shows what the run *cost* -- the real-time factor, a step that stalled on a slow sensor,
-    the gap where a viewer sat paused. Deriving ``w`` from ``t`` is impossible in either direction,
-    since the ratio is exactly the thing that varies.
+    Exactly the bytes of one ``state`` message, in order: ``t`` is simulated seconds (MuJoCo's
+    ``data.time``) and ``w`` is wall seconds elapsed since the recorder started
+    (:data:`WALL_CLOCK_ORIGIN`). Both, because neither answers the other's questions: ``t`` is what
+    the physics means and the only one a replay can be indexed by, while ``w`` is the only one that
+    shows what the run *cost* -- the real-time factor, a step that stalled on a slow sensor, the gap
+    where a viewer sat paused. Deriving ``w`` from ``t`` is impossible in either direction, since the
+    ratio is exactly the thing that varies.
 
     Both stay ``f8`` while the state is ``f4``: a float32 second degrades to ~1 ms of resolution within
     a couple of hours of run time, which would quantise away the millisecond differences ``w`` exists to
@@ -1083,7 +1120,7 @@ class TakeRecorder:
         return self._active is not None
 
     def _next_path(self) -> Path:
-        """``run.npz``, ``run-2.npz``, ... so a second take never overwrites the first."""
+        """``run.mcap``, ``run-2.mcap``, ... so a second take never overwrites the first."""
         self._take += 1
         if self._take == 1:
             return self._base

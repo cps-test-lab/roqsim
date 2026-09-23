@@ -248,7 +248,8 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
 
 * **target** — the same shapes as above (world / MJCF / model ref), plus a raw mesh. Optional when
   ``state`` is given, because a recording names the world it came from.
-* **state** / **at** — render a moment from a run recorded with ``roqsim sim --record``, at ``at``
+* **state** / **at** — render a moment from a run recorded with ``roqsim sim --record`` (an
+  ``.mcap`` file), at ``at``
   *simulated* seconds. It snaps to the nearest recorded sample and reports which one it used, so a
   caller sees it landed a few milliseconds off rather than assuming it did not. Omit ``at`` for the
   last sample.

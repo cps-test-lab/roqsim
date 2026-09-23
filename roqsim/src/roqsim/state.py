@@ -1,10 +1,10 @@
 """Get numbers out of a recording: poses, joints, contacts, MJCF sensors, and a world's own sensors.
 
-    roqsim state --state run.npz --at 12.5 --body base_link          # one moment  -> JSON
-    roqsim state --state run.npz --body base_link --out base.csv     # whole run   -> CSV
-    roqsim state --state run.npz --from 8 --to 20 --body 'tiago_*' --site grasp --out arm.csv
-    roqsim state --state run.npz --sensor front --out scan.npz       # a world's lidar, re-run
-    roqsim state --state run.npz --at 12.5 --contacts
+    roqsim state --state run.mcap --at 12.5 --body base_link          # one moment  -> JSON
+    roqsim state --state run.mcap --body base_link --out base.csv     # whole run   -> CSV
+    roqsim state --state run.mcap --from 8 --to 20 --body 'tiago_*' --site grasp --out arm.csv
+    roqsim state --state run.mcap --sensor front --out scan.npz       # a world's lidar, re-run
+    roqsim state --state run.mcap --at 12.5 --contacts
 
 The counterpart to ``roqsim render``: same recording, same :mod:`roqsim.recording` core -- so ``--at``,
 ``--from``/``--to``, the nearest-sample snapping and the provenance refusal are inherited, not

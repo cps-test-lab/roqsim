@@ -386,9 +386,9 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
   and the override document, which stay because they are what a reader needs to see how the run was
   asked for, and what an external consumer uses as world identity). Replay does not re-run the load
   path, so no later change to how an override resolves can make a recording rebuild a *different*
-  world while looking correct. ``format_version`` is **read**: a newer record is refused rather
-  than partly understood, and an older one still reads -- its samples, times and clock are intact --
-  but will not rebuild from overrides that would resolve differently today.
+  world while looking correct. ``format_version`` is **read**: a record of any other version is
+  refused by name rather than partly understood -- the versions before the mcap file were numpy
+  archives, and there is no reader for them.
 
 - **Loading stays tolerant; running does not.** A ref that will not import is recorded on
   ``SimConfig.unresolved`` and its entry is kept, unexpanded, so a scene-only consumer (``roqsim

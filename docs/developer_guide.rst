@@ -46,7 +46,7 @@ Golden rules
   *enum* on the left of ``==`` — which MuJoCo 3.12 answers ``False`` where 3.11 answered
   ``True``. A bare ``value == enum`` still works, so the break is silent and partial: the
   filter just returns nothing, and an arm reports no joints instead of raising. ``int()`` on
-  the model value (or plain-``int`` members, as in ``export_capture._SCALAR_JOINTS``) is
+  the model value (or plain-``int`` members, as in ``capture._SCALAR_JOINTS``) is
   correct on every version.
 
 Developer workflow

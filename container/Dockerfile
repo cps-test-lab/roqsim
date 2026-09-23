@@ -37,6 +37,8 @@ RUN pip install --no-cache-dir \
         "pyyaml>=6.0" \
         "click>=8.1" \
         "pillow>=9.0" \
+        "mcap>=1.2" \
+        "zstandard>=0.21" \
         "lxml>=4.0" \
         "py_trees>=2.2" \
         "trimesh>=3.20" \

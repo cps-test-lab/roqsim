@@ -8,8 +8,8 @@ camera maths). Same relationship ``roqsim.export_web`` has with ``roqsim export 
     roqsim render roqsim_scenes:depot --no-ceiling --out room.png
     roqsim render tiago_pick:tiago_pick --focus parcel --out parcel.png
     roqsim render prop.obj --out prop.png                        # a raw mesh, pre-finalization
-    roqsim render --state run.npz --from onset --out clip.mp4    # a run, the whole scene from above
-    roqsim render --state run.npz --camera-path orbit.yaml --overlay clock --out clip.mp4
+    roqsim render --state run.mcap --from onset --out clip.mp4    # a run, the whole scene from above
+    roqsim render --state run.mcap --camera-path orbit.yaml --overlay clock --out clip.mp4
 
 The positional argument takes the *same* shapes as ``roqsim sim`` (see :func:`roqsim.runner.config_for_input`)
 plus one more: a raw mesh. ``roqsim sim`` refuses meshes on purpose -- loose geometry is not something you
@@ -580,7 +580,7 @@ def render_target(
     if video and not state:
         raise RenderError(
             f"--out {out.name} is a video, which needs a recording to animate: pass "
-            "--state run.npz. A world on its own has exactly one frame."
+            "--state run.mcap. A world on its own has exactly one frame."
         )
     if not state and not target:
         raise RenderError(
