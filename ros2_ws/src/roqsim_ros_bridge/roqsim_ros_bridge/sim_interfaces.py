@@ -18,6 +18,11 @@ has run makes a paused simulator indistinguishable from a working one.
 
 Reuses the ``rclpy`` node created by :class:`~roqsim_ros_bridge.ros2_bridge.Ros2Bridge` when present
 (looked up on the blackboard under ``ros2_node``); otherwise creates and spins its own.
+
+Config::
+
+    sim_interfaces:
+      node_name: roqsim_interfaces   # name of its own node, when there is no bridge node to reuse
 """
 
 from __future__ import annotations

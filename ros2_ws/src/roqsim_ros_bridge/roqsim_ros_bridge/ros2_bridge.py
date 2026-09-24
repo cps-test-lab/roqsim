@@ -41,6 +41,15 @@ Config::
       strip_namespace: null    # namespace(s) to DROP from topics/frames so the served robot presents
                                # CLEAN local names (/odom, base_link) on its domain -- a name or list.
                                # Non-stripped owners (e.g. walkers) keep their prefixed frames.
+      frame_prefix: null       # prefix of every published frame id (default: `namespace`)
+      tf_namespace: ""         # publish TF on /<tf_namespace>/tf(_static) instead of the global /tf;
+                               # frame ids are unchanged (that is frame_prefix)
+      publish_static_tf: true  # publish producers' fixed sensor-mount transforms on /tf_static; turn
+                               # off when a robot_state_publisher over the URDF publishes them
+      merged_joint_states: auto  # auto, true, false or [{topic, owners}] -- see below
+      gt:                      # this sim as the ground-truth system (docs/ground_truth.rst)
+        prefix: ""             # prefix of every output topic, e.g. /gt
+        exempt: []             # output topics that keep their canonical name
 
 **The /clock grid must divide every gated publish period.** A subscriber running on sim time cannot
 resolve an event finer than the last ``/clock`` it received, so ``/clock``'s own period is the grid

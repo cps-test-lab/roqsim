@@ -11,6 +11,7 @@ Config (in addition to ``camera_common.CameraPlugin``'s)::
       clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
       clip_far: 100.0         # m
       depth_encoding: 32FC1   # or 16UC1 -- see below
+      depth_codec: png        # or rvl: the compressedDepth companion's codec (16UC1 only)
 
 **The two depth encodings, and why the choice exists.** ``self._depth`` is always float32 metres with
 ``inf`` for "no return": that is what a reprojection wants, and the point-cloud path consumes it

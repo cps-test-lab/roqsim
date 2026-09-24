@@ -35,6 +35,7 @@ entry sits rather than a config key::
       autostart: true         # false -> hold at the first point until started
       loop: false             # cycle the route forever rather than stopping at the last point
       arrival_radius: 0.25
+      radius: null            # m, footprint radius; null -> measured from its own geometry
 
       # -- what it does about what the plan did not contain -----------------------------------
       # Three independent capabilities, not a ladder. See AVOIDANCE_KEYS for why.

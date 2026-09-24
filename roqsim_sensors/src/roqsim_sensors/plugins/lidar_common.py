@@ -45,7 +45,31 @@ WORLD_FRAME = "world"
 
 
 class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
-    """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`."""
+    """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`.
+
+    Config -- the keys every ray-casting device reads; a device's own block adds its ray pattern
+    and states its defaults::
+
+        <plugin short name>:
+          namespace: ""            # transport scope (default: inherited from the entity)
+          site: <DEFAULT_SITE>     # site the rays are cast from
+          frame_id: null           # frame the payload is stamped in (default: `site`)
+          range_min: <DEFAULT_RANGE_MIN>
+          max_range: <DEFAULT_MAX_RANGE>
+          rate_hz: <DEFAULT_RATE_HZ>   # rays are cast (and published) at this rate
+          exclude_body: <DEFAULT_EXCLUDE_BODY>  # body the rays ignore: the device's own housing
+          range_stddev: 0.0        # Gaussian range sigma (m)
+          range_stddev_relative: 0.0   # sigma as a fraction of the distance, at and beyond
+                                   #   range_stddev_relative_from (0 = constant sigma)
+          range_stddev_relative_from: 0.0   # m; nearer than this the sigma is range_stddev
+          range_resolution: 0.0    # quantisation step of a published distance (m); 0 = continuous
+          dropout_percent: 0.0     # percent (0..100) of rays dropped at random, per scan
+          emit_static_tf: true     # publish the static mount TF; off when a robot_state_publisher
+                                   #   owns it
+          tf_parent: ""            # body that TF hangs from (default: see _mount_tf)
+          lazy: false              # neither cast nor publish while nothing subscribes
+          fault: {}                # optional: the values it takes while degraded
+    """
 
     parallel_safe = True  # post_step only reads data + writes its own payload buffer
 

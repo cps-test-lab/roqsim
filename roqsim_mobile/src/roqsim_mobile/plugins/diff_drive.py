@@ -18,6 +18,12 @@ sits rather than a config key::
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
+      left_actuators: null         # skid-steer: per-side lists instead of the singular keys (below)
+      right_actuators: null
+      left_joints: null
+      right_joints: null
+      slip_factor: 1.0             # skid-steer ICR slip compensation (1.0 = ideal diff-drive)
+      base_body: base_link         # body the wheel axes are read in, to derive their roll signs
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
       odom_rate_hz: 50.0           # publish rate of odom (and its TF) and joint_states
       stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)

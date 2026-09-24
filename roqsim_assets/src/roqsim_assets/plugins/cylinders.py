@@ -2,7 +2,9 @@
 
 The round sibling of :mod:`roqsim_assets.plugins.boxes`, and the same geometry as
 :mod:`roqsim_assets.plugins.cylinder`, declared as a *list* rather than as one plugin entry per
-cylinder::
+cylinder.
+
+Config::
 
     cylinders:
       name: clutter        # prefix for the generated entity names (default 'cylinders')
