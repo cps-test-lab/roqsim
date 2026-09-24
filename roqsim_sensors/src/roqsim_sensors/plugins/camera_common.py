@@ -31,7 +31,7 @@ import numpy as np
 
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
-from roqsim.rendering import FrameRenderer
+from roqsim.rendering import FrameRenderer, hold_gc
 
 # image_transport's own default, and what real camera drivers ship with. Stated here rather than
 # imported from the bridge: a sensor package must not depend on a transport backend (the endpoint
@@ -433,24 +433,27 @@ class CameraPlugin(Plugin):
             self._frames = FrameRenderer(
                 ctx.model, self._intr.width, self._intr.height, camera=self._cam_id
             )
-        r = self._frames.raw
-        r.disable_depth_rendering()
-        self._rgb = self._frames.render(ctx.data).copy()
-        if self._dist_map is not None:
-            # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy views of
-            # the SAME array, so warping downstream would either pay twice or warp twice. Depth is
-            # deliberately untouched -- a real RealSense publishes an already-rectified depth stream
-            # with D = 0, so distorting it would move the sim AWAY from the sensor.
-            import cv2
+        # One GL critical section for every pass off this renderer: see `hold_gc`.
+        with hold_gc():
+            r = self._frames.raw
+            r.disable_depth_rendering()
+            self._rgb = self._frames.render(ctx.data).copy()
+            if self._dist_map is not None:
+                # Here, not in the endpoint's read(): `image` and `image_compressed` are two lazy
+                # views of the SAME array, so warping downstream would either pay twice or warp
+                # twice. Depth is deliberately untouched -- a real RealSense publishes an
+                # already-rectified depth stream with D = 0, so distorting it would move the sim
+                # AWAY from the sensor.
+                import cv2
 
-            self._rgb = cv2.remap(
-                self._rgb,
-                self._dist_map[0],
-                self._dist_map[1],
-                cv2.INTER_LINEAR,
-                borderMode=cv2.BORDER_CONSTANT,
-            )
-        self._capture_extra(ctx, r)
+                self._rgb = cv2.remap(
+                    self._rgb,
+                    self._dist_map[0],
+                    self._dist_map[1],
+                    cv2.INTER_LINEAR,
+                    borderMode=cv2.BORDER_CONSTANT,
+                )
+            self._capture_extra(ctx, r)
 
     def _capture_extra(self, ctx: SimContext, renderer: mujoco.Renderer) -> None:
         """Hook for subclasses to capture additional passes (e.g. depth) off the same renderer."""

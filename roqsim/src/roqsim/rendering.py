@@ -12,6 +12,8 @@ from must not be mutated by another thread meanwhile.
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import logging
 import math
 import os
@@ -578,6 +580,27 @@ def _log_gl_once() -> None:
     check_bound_device(device)
 
 
+@contextlib.contextmanager
+def hold_gc():
+    """Keep the cyclic garbage collector out of a GL critical section.
+
+    A ``mujoco.Renderer`` is torn down in its ``__del__``, so an unreferenced one -- an engine a
+    test dropped, a camera whose plugin is gone -- is destroyed whenever the collector happens to
+    run. Its teardown makes its own context current and destroys it, leaving no context current;
+    a render interrupted by that (the collector can run at any allocation, and MuJoCo allocates
+    the output array between making its context current and drawing) draws into nothing and reads
+    back uninitialised memory, which surfaces as impossible pixel values. Holding the collector for
+    the few milliseconds of a render is what keeps the two apart.
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
+
+
 class FrameRenderer:
     """Owns a ``mujoco.Renderer`` and the camera it renders through.
 
@@ -655,7 +678,8 @@ class FrameRenderer:
         self._renderer.update_scene(data, self.camera, scene_option=self._vopt)
         if decorate is not None:
             decorate(self._renderer.scene)
-        return self._renderer.render()
+        with hold_gc():
+            return self._renderer.render()
 
     def move_camera(self, action: int, dx: float, dy: float) -> None:
         """Apply a mouse move to a free camera via MuJoCo's own handler.
@@ -732,4 +756,29 @@ class FrameRenderer:
         return int(geomid[0]), int(body_id), selpnt.copy()
 
     def close(self) -> None:
-        self._renderer.close()
+        """Free the renderer with ITS OWN context current, so its deletes hit its own objects.
+
+        ``mujoco.Renderer.close`` frees the GL context first and the ``MjrContext`` second, and
+        freeing the latter is a run of ``glDelete*`` calls that land in whatever context is current
+        at that moment. With more than one renderer alive that is the other renderer's context, and
+        GL object names are per context and start from one -- so the framebuffer and textures of a
+        live renderer are deleted in place of the dead one's, and it renders garbage from then on.
+        Freeing in the other order, under the dying context, is the fix; the ``getattr`` guards keep
+        this working against a MuJoCo that no longer exposes the two members or has fixed the order
+        itself. Idempotent, and also what ``__del__`` runs.
+        """
+        renderer, self._renderer = self._renderer, None
+        if renderer is None:
+            return
+        gl_context = getattr(renderer, "_gl_context", None)
+        mjr_context = getattr(renderer, "_mjr_context", None)
+        if gl_context is not None and mjr_context is not None:
+            gl_context.make_current()
+            mjr_context.free()
+            renderer._mjr_context = None
+        renderer.close()
+
+    def __del__(self) -> None:
+        # Attribute access can fail during interpreter shutdown; there is nothing to do then.
+        with contextlib.suppress(Exception):
+            self.close()
