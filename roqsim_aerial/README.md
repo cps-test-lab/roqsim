@@ -5,7 +5,7 @@ Aerial-vehicle plugins and models for [roqsim](../README.md).
 | | |
 | --- | --- |
 | Models | `crazyflie_2` — Bitcraze Crazyflie 2 nano quadrotor (MIT, from MuJoCo Menagerie)<br>`x500` — Holybro X500 V2 class 2 kg quad-X, four per-rotor actuators |
-| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments<br>`multirotor_motors` — normalized motor commands to rotor forces and yaw reaction torque<br>`px4_sitl` — MAVLink HIL bridge: roqsim as the physics behind PX4 SITL<br>`gnss` — local ENU to WGS84 fix, with bias, noise and a denial switch<br>`wind_field` — steady flow, 1-cosine gust, Dryden turbulence |
+| Plugins | `quadrotor_controller` — cascaded position + attitude control over collective thrust and three body moments<br>`multirotor_motors` — normalized motor commands to rotor forces and yaw reaction torque<br>`px4_sitl` — MAVLink HIL bridge: roqsim as the physics behind PX4 SITL<br>`wind_field` — steady flow, 1-cosine gust, Dryden turbulence |
 | Worlds | `crazyflie_2_demo.yaml` — takes off from the floor and holds 1 m<br>`x500_px4_demo.yaml` — an X500 waiting on TCP 4560 for PX4 SITL to fly it |
 
 ```bash

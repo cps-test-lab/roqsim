@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
-from roqsim_aerial.plugins.gnss import GnssHandle
+from roqsim_sensors.plugins.gnss import GnssHandle
 from roqsim_aerial.plugins.px4_sitl import (
     clamp_i16,
     MAV_MODE_FLAG_SAFETY_ARMED,

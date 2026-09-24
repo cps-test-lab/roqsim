@@ -14,7 +14,7 @@ interface this plugin speaks, and it is the only one that makes roqsim a first-c
 rather than a fork of PX4.
 
 What is therefore **in scope here**: producing the vehicle's sensed state (IMU, magnetometer,
-barometer, GNSS via the :mod:`roqsim_aerial.plugins.gnss` plugin), sending ground truth, receiving
+barometer, GNSS via the :mod:`roqsim_sensors.plugins.gnss` plugin), sending ground truth, receiving
 motor commands, and driving lockstep. What is **PX4's job and not ours**: mixing (PX4's airframe
 config decides which rotor is which -- the reason the x500 model's actuator order is load-bearing),
 attitude and position control, EKF2 state estimation, arming logic, failsafes, and the offboard

@@ -57,6 +57,7 @@ force_limit = "roqsim_sensors.plugins.force_limit:ForceLimitPlugin"
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
 # and attitude already; this makes them an observable with covariances, TF and a fault switch.
 imu = "roqsim_sensors.plugins.imu:ImuPlugin"
+gnss = "roqsim_sensors.plugins.gnss:GnssPlugin"
 
 # Bundled sensor models (e.g. d435), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]

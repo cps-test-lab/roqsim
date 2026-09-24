@@ -9,7 +9,7 @@ terms) across a campaign, which requires the receiver to be a plugin with its ow
 than a config block nested inside a bridge that a GNSS-free experiment would not load at all.
 
 So the receiver stands alone, publishes ``NavSatFix``, and puts a handle on the blackboard at
-``gnss:<robot>`` that :mod:`roqsim_aerial.plugins.px4_sitl` reads for ``HIL_GPS``.
+``gnss:<robot>`` that a flight-stack bridge (``roqsim_aerial``'s ``px4_sitl``) reads for ``HIL_GPS``.
 
 Config::
 

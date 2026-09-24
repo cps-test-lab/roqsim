@@ -375,7 +375,7 @@ NAVSAT_COVARIANCE_DIAGONAL_KNOWN = 2
 
 @converter("sensor_msgs.msg.NavSatFix")
 def fill_navsatfix(msg, payload, stamp: Time, hints: dict) -> None:
-    """A GNSS fix (the mapping ``roqsim_aerial.plugins.gnss.GnssPlugin.read_fix`` returns).
+    """A GNSS fix (the mapping ``roqsim_sensors.plugins.gnss.GnssPlugin.read_fix`` returns).
 
     ``valid`` decides the message's *status*, not whether it is sent: a receiver with no fix still
     publishes, with ``status.status = NO_FIX`` and an unknown covariance, which is what a real

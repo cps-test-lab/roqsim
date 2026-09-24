@@ -13,7 +13,7 @@ import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
-from roqsim_aerial.plugins.gnss import R_EARTH, GnssPlugin
+from roqsim_sensors.plugins.gnss import R_EARTH, GnssPlugin
 
 SCENE = """
 <mujoco model="gnss_test">
