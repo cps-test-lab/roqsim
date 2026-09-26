@@ -1059,3 +1059,14 @@ def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
     render.render_target(None, tmp_path / "a.png", size="64x48", state=npz)
     render.render_target(None, tmp_path / "b.png", size="64x48", state=npz, view=["azimuth=10"])
     assert seen == [True, False]
+
+
+def test_help_states_the_exit_status(capsys):
+    """A caller branches on the status, so --help names each one with the constant it comes from."""
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "exit status: 0 rendered" in out
+    for code in (render.EXIT_BAD_ARGS, render.EXIT_NO_GL, render.EXIT_PROVENANCE):
+        assert f"; {code} " in out
+    assert "MUJOCO_GL" in out

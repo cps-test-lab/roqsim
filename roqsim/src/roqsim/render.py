@@ -28,6 +28,13 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
+
+Exit status, distinct so a caller branches without matching on stderr text: ``0`` rendered (or, with
+``--check``, would render); ``2`` the request is wrong -- a bad flag or value, a target that does not
+resolve or load, a camera or entity the world does not have; ``3`` no offscreen GL context, and the
+message names the ``MUJOCO_GL`` backend to set; ``4`` the ``--state`` recording cannot be read or its
+world cannot be rebuilt from its provenance. Every non-zero status comes with one
+``roqsim render: ...`` line on stderr.
 """
 
 from __future__ import annotations
@@ -1241,7 +1248,13 @@ def _moment(text: str):
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim render", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim render",
+        description=__doc__.split("\n")[0],
+        epilog=f"exit status: 0 rendered; {EXIT_BAD_ARGS} a wrong request (flag, target, camera); "
+        f"{EXIT_NO_GL} no offscreen GL context (set MUJOCO_GL); {EXIT_PROVENANCE} the --state "
+        "recording cannot be read or its world rebuilt. Stdout is one JSON line on success.",
+    )
     parser.add_argument(
         "target",
         nargs="?",
