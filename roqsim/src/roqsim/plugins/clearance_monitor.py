@@ -79,6 +79,7 @@ import mujoco
 
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
+from ..presence import subtree_geom_ids
 
 _log = logging.getLogger(__name__)
 
@@ -149,11 +150,7 @@ class ClearanceMonitorPlugin(Plugin):
             # clean run and would quietly pass every trial in a campaign.
             raise RuntimeError(f"clearance_monitor: base body {body_name!r} not found")
 
-        subtree = [
-            gid
-            for gid in range(model.ngeom)
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), root)
-        ]
+        subtree = subtree_geom_ids(model, root)
         # Only geoms that can actually collide. `mj_geomDistance` is pure geometry and
         # ignores collision masks, so without this a render-only geom would be reported as
         # clearance to something the robot passes straight through -- and articulated
@@ -290,11 +287,3 @@ class ClearanceMonitorPlugin(Plugin):
             (int(model.geom_contype[a]) & int(model.geom_conaffinity[b]))
             or (int(model.geom_contype[b]) & int(model.geom_conaffinity[a]))
         )
-
-    @staticmethod
-    def _in_subtree(model, body_id: int, root: int) -> bool:
-        while body_id > 0:
-            if body_id == root:
-                return True
-            body_id = int(model.body_parentid[body_id])
-        return body_id == root

@@ -112,7 +112,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
-from roqsim.presence import ABSENT_GEOM_GROUP
+from roqsim.presence import ABSENT_GEOM_GROUP, subtree_body_ids
 
 from .camera_common import CameraPlugin, join_topic
 
@@ -374,7 +374,7 @@ class SegmentationCameraPlugin(CameraPlugin):
                 f"segmentation_camera[{self.label}]: entity {name!r} base body "
                 f"{entity.body!r} not found"
             )
-        return _subtree(m, root)
+        return subtree_body_ids(m, root)
 
     @staticmethod
     def _instance_root(m, body: int, matched: list[int]) -> int:
@@ -447,13 +447,3 @@ class SegmentationCameraPlugin(CameraPlugin):
                 )
             )
         return boxes
-
-
-def _subtree(m, root: int) -> list[int]:
-    """``root`` and every body descended from it."""
-    bodies = [root]
-    for body in range(root + 1, m.nbody):
-        # MuJoCo numbers a body after its parent, so one forward pass resolves descent.
-        if int(m.body_parentid[body]) in bodies:
-            bodies.append(body)
-    return bodies
