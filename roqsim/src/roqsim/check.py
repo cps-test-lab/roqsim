@@ -53,18 +53,32 @@ what it cannot do is fail to start, which is the failure worth catching before a
 thousand of them.
 
 **Warnings** are what the load found that does not stop a world from starting but is likely to make
-it misbehave -- each one ``{"check", "message", "hint"}``, and none of them clears ``ok``. The one
-check that produces them today is ``interpenetration``: the reset state puts two bodies inside one
+it misbehave -- each one ``{"check", "message", "hint"}``, and none of them clears ``ok``. One
+check that produces them is ``interpenetration``: the reset state puts two bodies inside one
 another deeper than the contact's tolerance (an arm's ``home`` that buries its tool in the table, a
 prop spawned into another), which the contact solver resolves on the first steps with forces large
 enough to fling them (:mod:`roqsim.interpenetration`). A warning rather than a problem because the
 world does start, the tolerance is a judgement rather than a rule, and an overlap can be deliberate;
-the run itself logs the same finding at reset, so it is in the run's record too.
+the run itself logs the same finding at reset, so it is in the run's record too. The others are the
+flex checks under ``derived`` below.
 
 The inventory it prints when there are no problems is the other half: the entities that registered,
-the endpoints they publish (with topics), and the model's own totals. That is what an agent or a
-person needs to write the next thing -- a scenario that drives ``robot``, a bridge that expects
-``scan`` -- without opening the world file and its manifests to work out what is in there.
+the endpoints they publish (with topics), the model's own totals, and each flex -- what it compiled
+into (dim, vertices, elements, ``dof`` mode, pins, parent body, entity, elastic, passive contact).
+That is what an agent or a person needs to write the next thing -- a scenario that drives ``robot``,
+a bridge that expects ``scan`` -- without opening the world file and its manifests to work out what
+is in there.
+
+``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
+elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
+it, and whether its contact ``solref`` is above the floor MuJoCo raises it to
+(:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the ``solref`` floor). The modes are
+the one costly computation here -- two passive-force evaluations per flex DOF and an eigen solve,
+seconds at most -- and a flex above :data:`roqsim.flex_modes.MODES_DOF_CAP` DOFs is reported
+without them rather than analysed at any cost. Two warnings come from it, for what such a world will
+do that its author probably did not intend: ``flex-damping`` (its damping is mostly the
+integrator's) and ``flex-solref`` (its contact stiffness is not the one that runs). A flex's warning
+also names the flex in an extra ``flex`` key.
 """
 
 from __future__ import annotations
@@ -86,11 +100,13 @@ def _problem(stage: str, message: str, hint: str | None = None) -> dict:
     return problem
 
 
-def _warning(check: str, message: str, hint: str | None = None) -> dict:
-    """A finding that does not clear ``ok``: ``{"check", "message", "hint"}``."""
+def _warning(check: str, message: str, hint: str | None = None, **extra) -> dict:
+    """A finding that does not clear ``ok``: ``{"check", "message", "hint"}``, plus any *extra* keys
+    a check adds for a caller that filters by them (a flex's warning names the flex in ``flex``)."""
     warning = {"check": check, "message": message}
     if hint:
         warning["hint"] = hint
+    warning.update(extra)
     return warning
 
 
@@ -98,9 +114,10 @@ def check_world(target: str) -> dict:
     """Load *target* as far as it goes and report what happened, as plain data.
 
     Returns ``{"target", "ok", "reached", "problems": [...], "warnings": [...], "world": {...},
-    "inputs": [...]}``. ``reached`` is the last stage that completed, so a caller can tell "the
-    config is wrong" from "the config is fine and the model does not compile" without parsing
-    messages. ``warnings`` never affect ``ok``.
+    "derived": {...}, "inputs": [...]}``. ``reached`` is the last stage that completed, so a caller
+    can tell "the config is wrong" from "the config is fine and the model does not compile" without
+    parsing messages. ``warnings`` never affect ``ok``: they are things a world that loads will do
+    that its author probably did not mean.
     """
     from roqsim.config import PluginError, load_config
 
@@ -112,6 +129,7 @@ def check_world(target: str) -> dict:
         "warnings": [],
         "inputs": [],
         "world": {},
+        "derived": {},
     }
 
     # -- resolve ---------------------------------------------------------------------------
@@ -191,6 +209,8 @@ def check_world(target: str) -> dict:
 
     try:
         report["world"] = _inventory(engine)
+        report["derived"], flex_warnings = _derive(engine)
+        report["warnings"].extend(_warning(**warning) for warning in flex_warnings)
         report["ok"] = True
     finally:
         _shutdown(engine)
@@ -278,6 +298,9 @@ def _inventory(engine) -> dict:
         }
         for entity in (ctx.entities.get(n) for n in ctx.entities.names())
     ]
+    from roqsim.flex_modes import describe_flexes
+
+    flexes = describe_flexes(model, {e["name"]: e["body"] for e in entities})
     return {
         "components": [
             {"address": spec.address, "ref": spec.ref, "enabled": spec.enabled}
@@ -292,6 +315,7 @@ def _inventory(engine) -> dict:
             "nu": int(model.nu),
             "nsensor": int(model.nsensor),
             "ncam": int(model.ncam),
+            "nflex": int(model.nflex),
             "timestep": float(model.opt.timestep),
             "gravity": [float(v) for v in model.opt.gravity],
         },
@@ -303,7 +327,35 @@ def _inventory(engine) -> dict:
         # Whether it was stated or chosen by `sim.integrator: auto`, and for auto, the flex that
         # decided it -- the reason a world that never named an integrator runs under `discrete`.
         "integrator_reason": engine.integrator.reason,
+        # What each flex compiled into: dim, vertices, elements, dof mode, pins, parent, entity,
+        # whether it is elastic and has passive contact. Fields only -- the costly half is _derive.
+        "flexes": flexes,
     }
+
+
+def _derive(engine) -> tuple[dict, list[dict]]:
+    """What the loaded world will *do*, worked out from the model without stepping it.
+
+    For each flex: its first elastic modes, the damping ratio each will ring down with at this
+    timestep and how much of it is the integrator's, and whether its contact ``solref`` is one MuJoCo
+    will actually use (:func:`roqsim.flex_modes.explain_flex`). The modes are the one costly thing
+    ``check`` does -- a finite-difference stiffness and an eigen solve per flex, seconds at most,
+    refused above :data:`roqsim.flex_modes.MODES_DOF_CAP` degrees of freedom -- and nothing but
+    ``check`` computes them.
+
+    Returns ``(derived, warnings)``. A warning names something a world that loads fine will do and
+    its author probably did not intend; it never makes the check fail.
+    """
+    from roqsim.flex_modes import explain_flex
+
+    model = engine.ctx.model
+    derived: dict = {"flexes": []}
+    warnings: list[dict] = []
+    for flex_id in range(model.nflex):
+        row, flex_warnings = explain_flex(model, flex_id)
+        derived["flexes"].append(row)
+        warnings.extend(flex_warnings)
+    return derived, warnings
 
 
 def _shutdown(engine) -> None:
@@ -351,6 +403,7 @@ def _render_text(report: dict) -> str:
         f"       timestep {model['timestep']}s, integrator {world['integrator']} "
         f"({world['integrator_reason']})"
     )
+    lines.extend(_render_flexes(world.get("flexes", []), report.get("derived", {})))
     if world["entities"]:
         lines.append("")
         lines.append("entities:")
@@ -364,6 +417,52 @@ def _render_text(report: dict) -> str:
             topic = endpoint["topic"] or endpoint["name"]
             lines.append(f"  {endpoint['direction']:3s} {topic:34s} {endpoint['type'] or ''}")
     return "\n".join(lines)
+
+
+def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
+    """The flex block of the text report: one line of what each is, two of what it will do."""
+    if not flexes:
+        return []
+    by_name = {row["name"]: row for row in derived.get("flexes", [])}
+    lines = ["", f"flexes ({len(flexes)}):"]
+    for flex in flexes:
+        count = f"{flex['vertices']} vertices, {flex['elements']} elements"
+        dof = flex["dof"] if flex["dof"] == "full" else f"{flex['dof']} ({flex['nodes']} nodes)"
+        owner = f" (entity {flex['entity']})" if flex["entity"] else ""
+        traits = [
+            "rigid" if flex["rigid"] else ("elastic" if flex["elastic"] else "not elastic"),
+            "passive contact" if flex["passive_contact"] else "no passive contact",
+        ]
+        lines.append(
+            f"  {flex['name']}  dim {flex['dim']}, {count}, dof {dof}, {flex['pinned']} pinned, "
+            f"on {flex['parent']}{owner}; {', '.join(traits)}"
+        )
+        row = by_name.get(flex["name"])
+        if row is None:
+            continue
+        modes = row.get("modes")
+        if modes is None:
+            lines.append(f"       modes not computed: {row.get('modes_skipped', '')}")
+        elif modes:
+            hz = ", ".join(f"{m['hz']:.3g}" for m in modes)
+            zeta = ", ".join(f"{m['zeta']:.3g}" for m in modes)
+            share = row.get("numerical_share")
+            numerical = (
+                f" (numerical share {share:.0%} at timestep {row['timestep']:g} s)"
+                if share is not None
+                else ""
+            )
+            lines.append(
+                f"       modes {hz} Hz; damping ratio {zeta} at damping {row['damping']:g} s"
+                f"{numerical}"
+            )
+        floor = row.get("solref_floor")
+        solref = " ".join(f"{v:g}" for v in row["solref"])
+        lines.append(
+            f"       contact solref {solref} ({row['solref_source']}), "
+            + (f"floor {floor:g} s" if floor is not None else "no floor (refsafe disabled)")
+        )
+    return lines
 
 
 def main(argv=None) -> int:

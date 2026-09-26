@@ -9,7 +9,9 @@ an ``<option>`` attribute the world may never have written, because roqsim set i
 **These rules are MuJoCo-version-sensitive.** Each was measured on MuJoCo 3.14.0, the range the
 packages pin (``>=3.14,<3.15``), and ``tests/test_flex_rules.py`` compiles every case and checks
 the verdict here against MuJoCo's own, so a MuJoCo that changes one fails that test rather than a
-run. Nothing else in roqsim encodes a flex rule; a change to one belongs here.
+run. Nothing else in roqsim encodes one of these rules; a change to one belongs here. A rule that
+only one consumer reads is stated in that consumer's module, named there rather than numbered, and
+pinned by that consumer's tests the same way.
 
 The rules, as measured on 3.14.0:
 
