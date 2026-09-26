@@ -42,7 +42,7 @@ side is named from ``contact.flex`` rather than by indexing the geom arrays with
 name the model's last geom).
 
 This module only reads; it never refuses. The engine logs what it finds at reset, and
-``roqsim check`` reports it as a warning.
+``roqsim check`` and ``roqsim scenes describe --entities`` report it as a warning.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ DEFAULT_TOLERANCE = 0.005
 #: rather than the world's own, so a zero-g world is judged by the same yardstick as any other.
 STANDARD_GRAVITY = 9.80665
 
-#: What to change, stated once for the engine's log line and for ``roqsim check``.
+#: What to change, stated once for the engine's log line and for every warning (:func:`as_warnings`).
 HINT = (
     "move the pose that places them there -- an arm's `home` (spawn_arm) or the model's keyframe, "
     "a robot's or a prop's spawn pose -- until they no longer overlap at reset; if the overlap is "
@@ -203,6 +203,12 @@ def summary(found: list[Interpenetration], limit: int = 3) -> str:
         "the start state interpenetrates, and the contact solver will push the bodies apart on "
         f"the first steps: {shown}{more}. Fix: {HINT}"
     )
+
+
+def as_warnings(found: list[Interpenetration]) -> list[dict]:
+    """*found* as ``roqsim check`` and ``roqsim scenes describe --entities`` report it: one
+    ``{"check": "interpenetration", "message", "hint"}`` per pair."""
+    return [{"check": "interpenetration", "message": f.describe(), "hint": HINT} for f in found]
 
 
 def _side(model, geom: int, flex: int, owner: dict[int, str], cache: dict) -> Side:

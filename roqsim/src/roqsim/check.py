@@ -202,10 +202,9 @@ def check_world(target: str) -> dict:
         _shutdown(engine)
         return report
     report["reached"] = "reset"
-    from roqsim.interpenetration import HINT
+    from roqsim.interpenetration import as_warnings
 
-    for found in engine.interpenetrations:
-        report["warnings"].append(_warning("interpenetration", found.describe(), hint=HINT))
+    report["warnings"].extend(as_warnings(engine.interpenetrations))
 
     try:
         report["world"] = _inventory(engine)
