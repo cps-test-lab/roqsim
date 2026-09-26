@@ -133,6 +133,7 @@ from .export_urdf import (
     round_trip_error,
     warn_on_unshippable_meshes,
 )
+from .presence import subtree_body_ids
 
 logger = logging.getLogger(__name__)
 
@@ -321,24 +322,6 @@ def _common_ancestor(model: mujoco.MjModel, bodies: set[int]) -> int:
     return common
 
 
-def _subtree(model: mujoco.MjModel, root: int) -> set[int]:
-    """``root`` and every body below it.
-
-    Asked of the arm's own root body rather than of a name prefix, because a prefix is optional: a
-    single-arm cell usually has none, and "every body" would then take a prop welded to a shelf or a
-    conveyor's coupled rollers for part of the robot.
-    """
-    out = {root}
-    for body in range(1, model.nbody):
-        cur = body
-        while cur > 0:
-            if cur == root:
-                out.add(body)
-                break
-            cur = int(model.body_parentid[cur])
-    return out
-
-
 def _endpoint(endpoints: list, arm: str, name: str):
     return next((e for e in endpoints if e.owner == arm and e.name == name), None)
 
@@ -481,9 +464,13 @@ def arm_facts(engine, arm: str | None = None) -> ArmFacts:
                 if j >= 0
             },
         )
+    # Asked of the arm's own root body rather than of a name prefix, because a prefix is optional: a
+    # single-arm cell usually has none, and "every body" would then take a prop welded to a shelf or
+    # a conveyor's coupled rollers for part of the robot.
+    arm_bodies = set(subtree_body_ids(model, root_body)) if root_body > 0 else set()
     facts.collapse = tuple(
         n[len(prefix) :] if prefix and n.startswith(prefix) else n
-        for n in infer_collapse(model, _subtree(model, root_body) if root_body > 0 else set())
+        for n in infer_collapse(model, arm_bodies)
     )
     return facts
 
