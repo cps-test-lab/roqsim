@@ -143,3 +143,14 @@ def test_registered_as_mcp_tool():
     mcp = create_server()
     tools = anyio.run(mcp.list_tools)
     assert "review_scene_by_human" in {t.name for t in tools}
+
+
+def test_the_server_instructions_state_what_the_tools_return():
+    """A client reads the instructions once and plans on them: a sketch that carries markers and
+    descriptions, and a review that can end in a neutral comment, must be said there."""
+    from roqsim_scene_builder.server import create_server
+
+    instructions = create_server().instructions or ""
+    assert "markers" in instructions
+    assert "description" in instructions
+    assert '"comment"' in instructions
