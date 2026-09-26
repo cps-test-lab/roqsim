@@ -72,8 +72,8 @@ is in there.
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
 it, whether the timestep resolves each mode, and whether its contact ``solref`` is above the floor
-MuJoCo raises it to (:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the resolution
-limit, the ``solref`` floor). The modes are
+MuJoCo raises it to (numerical damping under ``discrete`` and the resolution limit,
+:mod:`roqsim.flex_modes`; the ``solref`` floor, :mod:`roqsim.solref`). The modes are
 the one costly computation here -- two passive-force evaluations per flex DOF and an eigen solve,
 seconds at most -- and a flex above :data:`roqsim.flex_modes.MODES_DOF_CAP` DOFs is reported
 without them rather than analysed at any cost. Three warnings come from it, for what such a world
@@ -423,6 +423,8 @@ def _render_text(report: dict) -> str:
 
 def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
     """The flex block of the text report: one line of what each is, two of what it will do."""
+    from roqsim.solref import floor_text
+
     if not flexes:
         return []
     by_name = {row["name"]: row for row in derived.get("flexes", [])}
@@ -471,7 +473,13 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
         solref = " ".join(f"{v:g}" for v in row["solref"])
         lines.append(
             f"       contact solref {solref} ({row['solref_source']}), "
-            + (f"floor {floor:g} s" if floor is not None else "no floor (refsafe disabled)")
+            + (
+                f"floor {floor_text(floor)} s"
+                if floor is not None
+                else "no floor (direct form)"
+                if row["solref"][0] <= 0
+                else "no floor (refsafe disabled)"
+            )
         )
     return lines
 

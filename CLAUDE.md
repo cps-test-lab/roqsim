@@ -177,7 +177,9 @@ widen a family's dependencies to accommodate it.
   cleanly, so `shutdown` runs and files flush. Physics-thread only, like every other write on `ctx`.
 - Global contact tuning is `sim.contact_override` (`solref` / `solimp` / `friction`, MuJoCo's
   `o_*` overrides), validated at load time — global, and applied *before compile*, so it is in the
-  compiled model and in the run's provenance. Per-geom values belong in the model, not here. Changing
+  compiled model and in the run's provenance. Its `solref` is held to MuJoCo's floor for the
+  resolved integrator; that floor has one home, `roqsim.solref.solref_floor`, which every judgement
+  of a `solref` against the timestep reads. Per-geom values belong in the model, not here. Changing
   a value on NAMED objects, DURING a run, is the `model_override` plugin instead: aimed and triggered,
   where this key is neither. Do not add `opt.*` to that plugin's allowlist — one owner per knob.
   A flex's material stated from the world is `flex_material`, on the spec before compile: MuJoCo

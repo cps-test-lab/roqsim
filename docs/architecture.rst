@@ -275,15 +275,32 @@ A short vector is padded from MuJoCo's current value rather than zero-filled, so
 what sweeping one element means. Unknown keys and over-long vectors are rejected at config load, not
 at compile: a typo here is otherwise invisible.
 
-**The contact time constant has a floor at** ``2 * sim.timestep``, and it is the step that moves it.
-MuJoCo clamps a smaller one there and reports nothing, so at the default 2 ms step a world asking for
-0.5 ms, 1 ms or 2 ms gets 4 ms and a contact bit-identical in all three -- while its own configuration
-still reads 0.5 ms. A time constant below the floor is therefore refused, naming the floor that
-applies, because tightening a fit is exactly the reason to reach for this key and a silent clamp
-turns the attempt into a wrong conclusion about the solver. To go tighter, lower ``sim.timestep``:
-halving it halves the floor and roughly doubles the wall time. Only the positive form is a time
+**The contact time constant has a floor, and the integrator decides where it is.** With
+``refsafe`` on (MuJoCo's default) MuJoCo raises a stiffer ``solref`` to the floor and reports nothing,
+so a world asking for less gets the floor while its own configuration still reads the tighter value.
+A time constant below the floor is therefore refused, naming the floor and the rule that applies,
+because tightening a fit is exactly the reason to reach for this key and a silent clamp turns the
+attempt into a wrong conclusion about the solver. MuJoCo imposes it in two ways, measured on 3.14:
+
+* Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is raised to
+  ``2 * sim.timestep``. At a 2 ms step a world asking for 0.5 ms, 1 ms or 2 ms gets 4 ms and a contact
+  bit-identical in all three.
+* Under ``discrete`` -- which ``sim.integrator: auto`` picks for a world with an elastic flex -- the
+  time constant is left alone and the contact's *stiffness* is capped at what the step can resolve,
+  damping ratio kept. As a time constant that is ``timestep * sqrt(I) / (solimp[1] * dampratio)``,
+  with ``I`` the impedance at the contact's depth, which runs from ``solimp[0]`` to ``solimp[1]``;
+  the floor judged here takes the larger, so a value at or above it runs as stated at every depth.
+  At the default ``solimp`` and a damping ratio of 1 that is ``timestep / sqrt(0.95)``, about 1.03
+  steps, and it halves when the damping ratio doubles.
+
+The check runs after every plugin has built and the integrator is resolved, just before compile, and
+judges the ``o_solref`` the override puts in force against the ``o_solimp`` it puts in force -- stated
+or kept from the model. ``roqsim check`` warns about a flex's ``solref`` below the same floor
+(``flex-solref``), and the interpenetration tolerance raises a contact's time constant to it; all
+three read :func:`roqsim.solref.solref_floor`. To go tighter, lower ``sim.timestep``: the floor
+scales with it, and halving it roughly doubles the wall time. Only the standard form is a time
 constant -- a negative ``solref`` is MuJoCo's direct ``(-stiffness, -damping)`` parameterisation, to
-which no floor applies.
+which no floor applies, and with ``refsafe`` disabled there is none at all.
 
 Worth knowing before tuning for penetration: the floor is not usually what limits a fit. A 5 kg mass
 resting on a plate at the shipped defaults penetrates on the order of nanometres, four orders below
