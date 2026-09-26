@@ -77,6 +77,31 @@ def _takes_argv(main) -> bool:
     )
 
 
+def _input_errors() -> tuple[type[BaseException], ...]:
+    """The exceptions that mean "the input you named cannot be loaded", not "the tool is broken".
+
+    Imported only once a tool runs: the classes live beside the engine, and a listing must not pay
+    for them (see the module docstring).
+    """
+    from .capture import RecordingError
+    from .models import ModelError
+    from .plugin import PluginError
+
+    return (FileNotFoundError, PluginError, ModelError, RecordingError)
+
+
+def _sentence(err: BaseException) -> str:
+    """One line for an input error. An ``OSError`` reads as its reason and the path, not its errno."""
+    if isinstance(err, OSError) and err.filename is not None:
+        return f"{err.strerror or 'cannot read'}: {err.filename}"
+    return str(err)
+
+
+def _wants_traceback(args) -> bool:
+    """``-v``/``--verbose`` is every tool's "show me more" switch, so it is also the traceback's."""
+    return any(a in ("-v", "--verbose") for a in args)
+
+
 def summary_line(module: str) -> str:
     """The first line of a module's docstring: what a group listing shows for that tool."""
     doc = module_docstring(module).strip()
@@ -122,19 +147,33 @@ class ToolCommand(click.Command):
             sys.argv[0] = original
 
     def _run(self, args, ctx):
-        """Call the module's ``main`` with `args`, however it expects to receive them."""
+        """Call the module's ``main`` with `args`, however it expects to receive them.
+
+        An input the tool cannot load -- a world, model or recording that does not resolve, a file
+        that is not there -- is reported as one sentence naming the command and exits 1, where a
+        tool has not already said so itself. A traceback there sends the reader into the tool's
+        source to learn that a path was mistyped; ``-v`` keeps it, for the case where the missing
+        file is the tool's own fault.
+        """
         main = self._load().main
         with self._named(ctx):
-            # `main(argv)` is the convention, but a tool whose main() reads sys.argv directly is
-            # perfectly ordinary Python -- and a package outside this repo may well ship one. Give it
-            # the arguments the way it expects them rather than a TypeError traceback.
-            if _takes_argv(main):
-                return main(list(args))
-            original, sys.argv[1:] = sys.argv[1:], list(args)
             try:
-                return main()
-            finally:
-                sys.argv[1:] = original
+                # `main(argv)` is the convention, but a tool whose main() reads sys.argv directly is
+                # perfectly ordinary Python -- and a package outside this repo may well ship one.
+                # Give it the arguments the way it expects them rather than a TypeError traceback.
+                if _takes_argv(main):
+                    return main(list(args))
+                original, sys.argv[1:] = sys.argv[1:], list(args)
+                try:
+                    return main()
+                finally:
+                    sys.argv[1:] = original
+            except _input_errors() as err:
+                if _wants_traceback(args):
+                    raise
+                name = ctx.command_path if ctx else self.name
+                click.echo(f"{name}: {_sentence(err)}", err=True)
+                return 1
 
     def _forward(self, args):
         raise SystemExit(self._run(args, click.get_current_context(silent=True)))

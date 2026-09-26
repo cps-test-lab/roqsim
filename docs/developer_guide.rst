@@ -133,6 +133,12 @@ binary that does not exist.
 A tool that runs inside Blender is registered with ``tool(..., blender=True)``: it cannot be imported
 here, so the command locates ``blender`` and runs the module inside it.
 
+**An input the tool cannot load is one sentence, not a traceback.** Report the errors you understand
+yourself; where a world, model or recording does not resolve (``PluginError``, ``ModelError``,
+``RecordingError``) or a named file is not there (``FileNotFoundError``) and your ``main`` lets it
+through, the tree prints ``roqsim <group> <tool>: <reason>`` and exits 1. ``-v`` keeps the traceback, for
+the case where the missing file is the tool's own.
+
 Sensor coverage (analysis layer)
 --------------------------------
 

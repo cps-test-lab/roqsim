@@ -245,6 +245,60 @@ _FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
 }
 
 
+# -- an input the tool cannot load is one sentence, not a traceback ---------------------------------
+
+
+_FAKE_TOOL = """\
+# A tool that cannot load what it was given.
+def main(argv):
+    from roqsim.plugin import PluginError
+
+    if argv[0] == "missing":
+        raise FileNotFoundError(2, "No such file or directory", "nosuch.json")
+    if argv[0] == "unresolved":
+        raise PluginError("world ref 'nosuch:world' names no known 'roqsim.worlds' provider")
+    return 3
+"""
+
+
+@pytest.fixture
+def fake_tool(tmp_path, monkeypatch):
+    from roqsim.commands import tool
+
+    (tmp_path / "fake_tool_for_test.py").write_text(_FAKE_TOOL)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    return tool("fake_tool_for_test", "fake")
+
+
+def _exit_code(cmd, args) -> int:
+    with pytest.raises(SystemExit) as exc:
+        cmd.main(args=args, prog_name="roqsim scenes fake", standalone_mode=False)
+    return exc.value.code
+
+
+def test_a_missing_input_file_is_one_sentence_naming_the_command(fake_tool, capsys):
+    assert _exit_code(fake_tool, ["missing"]) == 1
+    assert capsys.readouterr().err == "roqsim scenes fake: No such file or directory: nosuch.json\n"
+
+
+def test_an_input_that_does_not_resolve_is_one_sentence(fake_tool, capsys):
+    assert _exit_code(fake_tool, ["unresolved"]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith("roqsim scenes fake: world ref 'nosuch:world' names no known")
+    assert "Traceback" not in err
+
+
+def test_verbose_keeps_the_traceback(fake_tool):
+    from roqsim.plugin import PluginError
+
+    with pytest.raises(PluginError):
+        fake_tool.main(args=["unresolved", "-v"], standalone_mode=False)
+
+
+def test_a_tools_own_exit_code_passes_through(fake_tool):
+    assert _exit_code(fake_tool, ["fine"]) == 3
+
+
 def test_nothing_here_names_a_repository_that_may_not_exist():
     """This tree is developed both on its own and nested inside a larger one.
 
