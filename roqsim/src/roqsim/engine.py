@@ -7,7 +7,7 @@ Lifecycle::
 
     setup()   -> build phase: plugin.build(spec) for all; spec.compile(); make data;
                  plugin.configure(ctx)
-    reset()   -> mj_resetData; plugin.on_reset(ctx)
+    reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
@@ -39,6 +39,7 @@ from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
+from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
@@ -138,6 +139,9 @@ class Engine:
         #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
         #: set by :meth:`setup`, before compile.
         self.integrator: IntegratorChoice | None = None
+        #: What the last :meth:`reset` left interpenetrating beyond tolerance, deepest first
+        #: (:mod:`roqsim.interpenetration`). Empty until a reset has run.
+        self.interpenetrations: list[Interpenetration] = []
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
         # perf_counter call (pre_step/post_step run once per plugin per physics step).
         self._profile = profile
@@ -369,6 +373,11 @@ class Engine:
 
         (The scenario-execution adapter maps injected scenario parameters onto ``params``; plugins
         read them from ``ctx`` / their own config. Kept simple here.)
+
+        The state it leaves is checked for bodies placed inside one another
+        (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
+        :attr:`interpenetrations` and logged as one WARNING naming the deepest pairs. Nothing is
+        refused, and the state is not touched.
         """
         self._require_setup()
         # Flush any pending commands so nothing targets the pre-reset state.
@@ -397,6 +406,12 @@ class Engine:
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,
         # contacts) must describe that state and not the one before the plugins ran.
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
+        # That state is what the trial starts from, so it is where an overlap the solver will blow
+        # apart on the first steps is visible -- and the run's own log is where it must be said,
+        # since what follows looks like a controller or protocol fault. Reported, never refused.
+        self.interpenetrations = interpenetrations(self.ctx.model, self.ctx.data, self.ctx.entities)
+        if self.interpenetrations:
+            self.logger.warning("%s", summary(self.interpenetrations))
         for gate in self.ctx.gates():
             gate.reset()
 

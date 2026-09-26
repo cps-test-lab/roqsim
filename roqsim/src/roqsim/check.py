@@ -28,7 +28,7 @@ loader would hit them::
     roqsim check worlds/depot_nav.yaml
     roqsim check roqsim_mobile:husky_demo --json
 
-Five stages, each of which can fail without the next being meaningless:
+Six stages, each of which can fail without the next being meaningless:
 
 ``resolve``
     the target names a world (a path, or a ``<package>:<world>`` ref that a provider answers).
@@ -44,10 +44,22 @@ Five stages, each of which can fail without the next being meaningless:
     every plugin resolves what it needs *in* the compiled model -- the body a sensor is mounted on,
     the actuator a controller drives. Most "it loaded and then died" failures are here, and they are
     exactly the ones a syntax check cannot see.
+``reset``
+    every plugin's ``on_reset`` runs, as it does before each trial, and leaves the state the trial
+    starts from: keyframes and home poses applied, props re-seated.
 
 What it does **not** do is step the simulation. A world that passes here can still behave wrongly;
 what it cannot do is fail to start, which is the failure worth catching before a campaign queues a
 thousand of them.
+
+**Warnings** are what the load found that does not stop a world from starting but is likely to make
+it misbehave -- each one ``{"check", "message", "hint"}``, and none of them clears ``ok``. The one
+check that produces them today is ``interpenetration``: the reset state puts two bodies inside one
+another deeper than the contact's tolerance (an arm's ``home`` that buries its tool in the table, a
+prop spawned into another), which the contact solver resolves on the first steps with forces large
+enough to fling them (:mod:`roqsim.interpenetration`). A warning rather than a problem because the
+world does start, the tolerance is a judgement rather than a rule, and an overlap can be deliberate;
+the run itself logs the same finding at reset, so it is in the run's record too.
 
 The inventory it prints when there are no problems is the other half: the entities that registered,
 the endpoints they publish (with topics), and the model's own totals. That is what an agent or a
@@ -64,7 +76,7 @@ from pathlib import Path
 
 #: Stage names, in the order they run. A problem in one does not stop the report; it stops that
 #: world from reaching the next stage, which is stated rather than implied by an empty section.
-STAGES = ("resolve", "inputs", "config", "build", "configure")
+STAGES = ("resolve", "inputs", "config", "build", "configure", "reset")
 
 
 def _problem(stage: str, message: str, hint: str | None = None) -> dict:
@@ -74,12 +86,21 @@ def _problem(stage: str, message: str, hint: str | None = None) -> dict:
     return problem
 
 
+def _warning(check: str, message: str, hint: str | None = None) -> dict:
+    """A finding that does not clear ``ok``: ``{"check", "message", "hint"}``."""
+    warning = {"check": check, "message": message}
+    if hint:
+        warning["hint"] = hint
+    return warning
+
+
 def check_world(target: str) -> dict:
     """Load *target* as far as it goes and report what happened, as plain data.
 
-    Returns ``{"target", "ok", "reached", "problems": [...], "world": {...}, "inputs": [...]}``.
-    ``reached`` is the last stage that completed, so a caller can tell "the config is wrong" from
-    "the config is fine and the model does not compile" without parsing messages.
+    Returns ``{"target", "ok", "reached", "problems": [...], "warnings": [...], "world": {...},
+    "inputs": [...]}``. ``reached`` is the last stage that completed, so a caller can tell "the
+    config is wrong" from "the config is fine and the model does not compile" without parsing
+    messages. ``warnings`` never affect ``ok``.
     """
     from roqsim.config import PluginError, load_config
 
@@ -88,6 +109,7 @@ def check_world(target: str) -> dict:
         "ok": False,
         "reached": None,
         "problems": [],
+        "warnings": [],
         "inputs": [],
         "world": {},
     }
@@ -153,6 +175,19 @@ def check_world(target: str) -> dict:
         _shutdown(engine)
         return report
     report["reached"] = "configure"
+
+    # -- reset: the state a trial starts from ------------------------------------------------
+    try:
+        engine.reset()
+    except Exception as exc:  # noqa: BLE001 - a plugin's on_reset failing is a trial that cannot start
+        report["problems"].append(_problem("reset", f"{type(exc).__name__}: {exc}"))
+        _shutdown(engine)
+        return report
+    report["reached"] = "reset"
+    from roqsim.interpenetration import HINT
+
+    for found in engine.interpenetrations:
+        report["warnings"].append(_warning("interpenetration", found.describe(), hint=HINT))
 
     try:
         report["world"] = _inventory(engine)
@@ -279,6 +314,15 @@ def _shutdown(engine) -> None:
         pass
 
 
+def _render_warnings(report: dict) -> list[str]:
+    lines = []
+    for warning in report.get("warnings", []):
+        lines.append(f"WARN  [{warning['check']}] {warning['message']}")
+        if warning.get("hint"):
+            lines.append(f"      hint: {warning['hint']}")
+    return lines
+
+
 def _render_text(report: dict) -> str:
     lines = [f"world: {report['target']}"]
     if report["problems"]:
@@ -294,7 +338,10 @@ def _render_text(report: dict) -> str:
 
     world = report["world"]
     model = world["model"]
-    lines.append("ok    loads, compiles, and every component resolved")
+    lines.append("ok    loads, compiles, every component resolved, and it resets")
+    if report.get("warnings"):
+        lines.append("")
+        lines.extend(_render_warnings(report))
     lines.append("")
     lines.append(
         f"model: {model['nbody']} bodies, {model['ngeom']} geoms, {model['njnt']} joints, "

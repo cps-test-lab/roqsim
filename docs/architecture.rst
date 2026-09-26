@@ -60,11 +60,13 @@ Full-run sequence:
 ::
 
    setup():   build(p0)…build(pN)  →  spec.compile()  →  MjData  →  configure(p0)…configure(pN)
-   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → gates.reset()
+   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → interpenetration check → gates.reset()
    step():    drain → pre_step(p0…pN) → mj_step → post_step(p0…pN) → publish_snapshot
    shutdown(): shutdown(pN)…shutdown(p0)   (best-effort; a failure is logged, others still run)
 
 Ordering rule: within a hook, plugins run in **YAML order**; ``shutdown`` runs in reverse. Cross-plugin dependencies are expressed by ordering + the blackboard, never by importing another plugin.
+
+**The start state is checked for interpenetration.** After the closing ``mj_forward`` of ``reset()``, ``data.contact`` describes the state the trial starts from — keyframes and ``home`` poses applied, props re-seated — and :func:`roqsim.interpenetration.interpenetrations` reads every contact MuJoCo acts on (``efc_address >= 0``) whose penetration ``-dist`` exceeds that contact's tolerance: the largest of 5 mm, its ``solimp`` width, and the depth at which its ``solref`` spring asks for one standard gravity (so a softer contact may sit deeper). Contacts between the same two sides fold into one finding; a side is a geom or, for a flex contact (``contact.geom == -1``), the flex named from ``contact.flex``; each side carries the entity whose body subtree holds it. The findings are kept in ``Engine.interpenetrations`` and logged as **one WARNING** naming the deepest three pairs and what to change (an arm's ``home``, a spawn pose). Nothing is refused: the overlap would otherwise be resolved on the first steps with contact forces that fling the bodies apart, and the run would fail later in a way that looks like a controller or protocol fault, so the finding is written where that run's log keeps it. A pair MuJoCo does not collide (``contype``/``conaffinity``, ``<exclude>``, parent-child filtering) exerts no force and is not reported, which is also how an intended overlap is declared. A geom that passes all the way through a thin one can get no contact from MuJoCo at all; the solver then does not act on it either, and it is not reported. ``roqsim check`` resets the world and reports the same findings as warnings.
 
 Reference implementation: ``roqsim/src/roqsim/engine.py``.
 

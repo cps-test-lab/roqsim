@@ -224,6 +224,15 @@ The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` 
 arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
 in its ``realsense_d435`` capture plugin.
 
+**Where a spawn puts things is checked at every reset.** An arm's ``home``, a model's keyframe, a
+robot's or a prop's ``pose`` -- once every plugin's ``on_reset`` has applied them, the engine reports
+any two bodies that start inside one another deeper than the contact's tolerance: one WARNING in the
+run's log naming both sides, the entity each belongs to and the depth, and the same finding as a
+``roqsim check`` warning. Left alone, the contact solver separates them on the first steps with
+forces that fling them, and the run fails later looking like a controller fault. Nothing is refused;
+an overlap that is meant is excluded from collision and is then not reported
+(:ref:`architecture §2 <2-lifecycle-reference>`).
+
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
 ``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the

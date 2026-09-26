@@ -224,11 +224,24 @@ exist is named rather than discovered by a run that dies quietly::
    roqsim check world.yaml
    roqsim check roqsim_mobile:husky_demo --json     # the same report, for a script
 
-It runs five stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure`` -- and says
-which one it reached, because "the config is wrong" and "the config is fine and the model refused the
-name a plugin asked for" send a reader to different files. It does not step the simulation: a world
+It runs six stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure``, ``reset`` --
+and says which one it reached, because "the config is wrong" and "the config is fine and the model
+refused the name a plugin asked for" send a reader to different files. ``reset`` runs every plugin's
+``on_reset`` and leaves the state a trial starts from. It does not step the simulation: a world
 that passes can still behave wrongly, but it cannot fail to *start*, which is the failure worth
 catching before a campaign queues a thousand of them.
+
+**Warnings** do not clear ``ok`` and do not change the exit code; ``--json`` lists them under
+``warnings`` as ``{"check", "message", "hint"}``. ``interpenetration`` is one: the reset state puts
+two bodies inside one another deeper than the contact's tolerance -- an arm's ``home`` that buries
+its tool in the table, a prop spawned into another -- which the contact solver would resolve on the
+first steps by flinging them apart. It names both sides, the entity each belongs to, and the depth::
+
+   WARN  [interpenetration] geom 'table_top' (entity 'table') and geom 'crate' (entity 'crate')
+         interpenetrate by 30.0 mm at reset (tolerance 5.0 mm, 4 contacts)
+
+A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
+collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
 With no problems it prints the inventory instead: the entities that registered, the endpoints they
 publish with their topics and types, and the model's totals. That is what the next thing gets written
