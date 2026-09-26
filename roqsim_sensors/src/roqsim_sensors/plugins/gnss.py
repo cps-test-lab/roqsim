@@ -265,7 +265,12 @@ class GnssPlugin(Plugin):
             return self._no_fix()
 
         pos = np.array(ctx.data.xpos[self._bid], dtype=float)  # world ENU, m
-        vel = np.array(ctx.data.cvel[self._bid][3:6], dtype=float)  # world ENU, m/s
+        # The body's own velocity, not `cvel`: that is expressed at the kinematic tree's subtree
+        # centre of mass, so on a turning vehicle it carries omega x (COM - antenna) as a phantom
+        # lateral velocity for every antenna that is not at the COM.
+        twist = np.zeros(6)
+        mujoco.mj_objectVelocity(ctx.model, ctx.data, mujoco.mjtObj.mjOBJ_BODY, self._bid, twist, 0)
+        vel = twist[3:6]  # world ENU, m/s
 
         sigma_h = float(self.cfg("horizontal_noise"))
         sigma_v = float(self.cfg("vertical_noise"))
