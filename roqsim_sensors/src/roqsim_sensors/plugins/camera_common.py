@@ -40,6 +40,10 @@ from roqsim.rendering import FrameRenderer, hold_gc
 DEFAULT_JPEG_QUALITY = 95
 
 
+#: Tolerance on a camera's period; see the same constant in lidar_common.
+_GATE_SLACK_S = 1e-9
+
+
 @dataclass
 class Intrinsics:
     """Pinhole camera intrinsics, shaped like a ``sensor_msgs/CameraInfo`` payload.
@@ -418,7 +422,10 @@ class CameraPlugin(Plugin):
         ]
 
     def _due(self, ctx: SimContext) -> bool:
-        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz:
+        # With slack, for the reason lidar_common's gate has it: accumulated float time falls a few
+        # ULPs short of a period that is a whole number of steps, and an exact comparison then
+        # captures one step late every other period.
+        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - _GATE_SLACK_S:
             return False
         gates = self._gate_endpoints()
         # `has_subscribers is None` = no introspection available (no bridge, or a backend that cannot

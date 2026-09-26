@@ -44,6 +44,11 @@ from ..live_config import FaultableSensorMixin
 WORLD_FRAME = "world"
 
 
+#: Tolerance on a sensor's period, so a period that is a whole number of physics steps fires on the
+#: step it names rather than the one after, when accumulated float time lands a few ULPs short.
+_GATE_SLACK_S = 1e-9
+
+
 class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     """Base for a ``post_step`` range sensor built on :func:`roqsim.raycast.cast`."""
 
@@ -337,7 +342,10 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         # Cast at the sensor's own rate, not every physics step; the endpoint reads the latest value.
-        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz:
+        # With slack, as the bridge's rate gate has: sim_time is accumulated float steps, and fifty
+        # of 0.002 fall a few ULPs short of 0.1, so an exact comparison fires a 10 Hz scanner one
+        # step late every other period -- a scan rate of 9.9 Hz with alternating spacing.
+        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz - _GATE_SLACK_S:
             return
         if (
             self.lazy
