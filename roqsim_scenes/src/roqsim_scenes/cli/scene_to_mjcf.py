@@ -355,7 +355,11 @@ def _add_prop(spec: mujoco.MjSpec, spec_str: str) -> str:
     g.name = name
     g.type = mujoco.mjtGeom.mjGEOM_MESH
     g.meshname = name
-    g.pos = [x - cx, y - cy, -zmin]  # footprint centred at (x, y), base on the floor
+    # Footprint centred at (x, y), base on the floor. The yaw turns the mesh about the GEOM origin,
+    # which is the OBJ's origin, not its footprint centre -- so the centre is rotated with it before
+    # it is subtracted, or an off-origin prop would land off (x, y) by its turned offset.
+    c, s_ = math.cos(yaw), math.sin(yaw)
+    g.pos = [x - (c * cx - s_ * cy), y - (s_ * cx + c * cy), -zmin]
     g.quat = [math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
     g.rgba = [0.62, 0.5, 0.38, 1.0]  # MuJoCo ignores OBJ .mtl; give the prop a neutral wood tone
     return name
