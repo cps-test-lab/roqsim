@@ -70,6 +70,26 @@ The Depot world (``roqsim_scenes:depot``) ships **open** (roofless) via the gene
 which is nav-neutral (the roof is above the 2D scan plane) but clears overhead sensor line-of-sight
 and top-down views. Set ``ceiling.keep: true`` for the roofed warehouse.
 
+Legged robots: the G1 and Spot
+------------------------------
+
+Two more launch files run the same nav2 stack (static ``map->odom``, no AMCL) on a legged base whose
+RL locomotion policy turns ``/cmd_vel`` into a gait. Each has its own world and nav2 params in the
+package (``worlds/g1_nav2.yaml`` + ``params/nav2_params_g1.yaml``, ``worlds/spot_nav2.yaml`` +
+``params/nav2_params_spot.yaml``) and takes ``world:=``, ``map:=``, ``params_file:=``,
+``use_sim_time:=`` and ``gui:=true`` (a MuJoCo viewer and rviz2):
+
+.. code-block:: bash
+
+   ros2 launch roqsim_nav2_example nav2_g1.launch.py     # Unitree G1
+   ros2 launch roqsim_nav2_example nav2_spot.launch.py   # Boston Dynamics Spot
+
+* ``nav2_g1.launch.py`` projects the head-mounted Livox Mid-360's point cloud into ``/scan`` with
+  ``pointcloud_to_laserscan``, which it needs installed (``ros-jazzy-pointcloud-to-laserscan``).
+* ``nav2_spot.launch.py`` needs the NVIDIA Spot policy, which is not committed: ``make venv`` fetches
+  it, ``python -m roqsim_quadruped.policy.fetch_policy`` does the same, or ``SPOT_POLICY_PATH`` names
+  one (see ``roqsim_quadruped/README.md``).
+
 The goal-reaching test
 ----------------------
 
