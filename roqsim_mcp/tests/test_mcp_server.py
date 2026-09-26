@@ -76,3 +76,20 @@ def test_get_plugin_details_unknown_name_is_error_not_an_exception():
     result = _run(_call())
     payload = json.loads(result.content[0].text)
     assert "error" in payload
+
+
+def test_the_server_tells_a_client_what_the_tools_are_for():
+    """The loop -- list, then detail, then write the ``use`` line -- is visible from no single tool,
+    so it is stated once at connect time, and it must name every tool it describes."""
+    server = create_server()
+    instructions = server.instructions or ""
+    assert instructions.strip(), "a client that connects is told nothing"
+    for tool in (
+        "list_plugins",
+        "get_plugin_details",
+        "list_models",
+        "get_model_details",
+        "list_worlds",
+    ):
+        assert tool in instructions
+    assert "`use`" in instructions
