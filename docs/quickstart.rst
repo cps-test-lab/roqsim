@@ -670,11 +670,11 @@ merely duplicated, which is the common reason a mesh that looks closed is not.
 Checking a run is healthy
 -------------------------
 
-Three things can go wrong with a run and raise no error anywhere: the simulation never starts
-stepping, it steps far slower than realtime, or a robot stands still for the whole trial. The process
-is up, the log is quiet and the exit status is 0, and the run produced nothing worth analysing.
-``roqsim health`` is the check for exactly those three, and nothing else — everything else a run can
-get wrong already reports itself.
+Four things can go wrong with a run and raise no error anywhere: the simulation never starts
+stepping, it stops stepping, it steps far slower than realtime, or a robot stands still for the whole
+trial. The process is up, the log is quiet and the exit status is 0, and the run produced nothing
+worth analysing. ``roqsim health`` is the check for exactly those four, and nothing else — everything
+else a run can get wrong already reports itself.
 
 .. code-block:: bash
 
@@ -685,22 +685,29 @@ get wrong already reports itself.
 It is a **separate process that reads the two records above**, and it changes nothing about a run. A
 check that lived inside the simulator would share the simulator's failure modes, and one that spoke
 over the ROS bridge could not diagnose a broken bridge; this reads files, so it can also say something
-true about a run that is wedged or already dead. The clock map answers checks 2 and 3, and
+true about a run that is wedged or already dead. The clock map answers checks 2, 3 and 4, and
 ``sim_poses.csv`` answers check 1.
 
-===  =========================================================  =======
-#    check                                                      level
-===  =========================================================  =======
-1    every watched robot moves ≥ 1 cm per 60 s of sim time      warn
-2    sim time starts advancing within 60 s                      error
-3    sim time advances ≥ 5 s per 60 s of wall time (0.083x)     error
-===  =========================================================  =======
+===  ==================  =============================================================  =======
+#    slug                check                                                          level
+===  ==================  =============================================================  =======
+1    ``robot-motion``    every watched robot moves ≥ 1 cm per 60 s of sim time          warn
+2    ``sim-time-start``  sim time starts advancing within 60 s                          error
+3    ``sim-time-stuck``  sim time advances again within max(60 s, 10× its row cadence)  error
+4    ``sim-time-rate``   sim time advances ≥ 5 s per 60 s of wall time (0.083x)         warn
+===  ==================  =============================================================  =======
 
 Check 1 is only a warning because a robot standing still is often correct — waiting on a pedestrian, a
 perception-only run, a manipulator-only phase — and a channel that interrupts healthy runs is one
-nobody reads. Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an
-error-level finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point:
-a backgrounded command's output is invisible until it exits.
+nobody reads. Check 4 is a warning for the same reason: **slow is not stopped.** A clock row is
+written per recorder sample on the simulated-time grid, so an expensive world — a deformable body at a
+sub-millisecond timestep — keeps writing rows at a few percent of realtime, just further apart, while
+a frozen one writes none. Check 3 reads the silence, measured against the run's own cadence so that a
+world whose rows are seconds apart is not failed for its ordinary pace; check 4 reads the pace.
+
+Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an error-level
+finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point: a
+backgrounded command's output is invisible until it exits.
 
 **Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
 named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
@@ -746,7 +753,11 @@ continue, so that gap counts against it — and it stops without complaint when 
 since that file is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
 check has no such premise: it judges the span the record covers, because what happened after the last
 row is not in the file. Without that split, every finished run would be reported as a stall a minute
-after it ended.
+after it ended. The cost is that **a one-shot check cannot see a run that stopped** — its rows simply
+end — so check 3 fires there only on rows that arrived without advancing sim time, which the recorder
+never writes. A supervisor polling a live run that has to catch a stop runs
+``roqsim health <run-dir> --watch --for <seconds> --json``: its first poll is judged against the wall
+clock, and ``--for`` bounds it to one pass or a few.
 
 Getting numbers out of a run
 ----------------------------
