@@ -214,6 +214,8 @@ names the same eye position and renders the identical image, it just no longer r
 from the scene". And F8 needs a world YAML to write into — a run started from an MJCF scene or a bare
 model reference has none, and says so rather than picking a file.
 
+.. _checking-a-world:
+
 Checking a world before running it
 ----------------------------------
 
@@ -224,16 +226,66 @@ exist is named rather than discovered by a run that dies quietly::
    roqsim check world.yaml
    roqsim check roqsim_mobile:husky_demo --json     # the same report, for a script
 
-It runs five stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure`` -- and says
-which one it reached, because "the config is wrong" and "the config is fine and the model refused the
-name a plugin asked for" send a reader to different files. It does not step the simulation: a world
+It runs six stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure``, ``reset`` --
+and says which one it reached, because "the config is wrong" and "the config is fine and the model
+refused the name a plugin asked for" send a reader to different files. ``reset`` runs every plugin's
+``on_reset`` and leaves the state a trial starts from. It does not step the simulation: a world
 that passes can still behave wrongly, but it cannot fail to *start*, which is the failure worth
 catching before a campaign queues a thousand of them.
+
+**Warnings** do not clear ``ok`` and do not change the exit code; ``--json`` lists them under
+``warnings`` as ``{"check", "message", "hint"}``. ``interpenetration`` is one: the reset state puts
+two bodies inside one another deeper than the contact's tolerance -- an arm's ``home`` that buries
+its tool in the table, a prop spawned into another -- which the contact solver would resolve on the
+first steps by flinging them apart. It names both sides, the entity each belongs to, and the depth::
+
+   WARN  [interpenetration] geom 'table_top' (entity 'table') and geom 'crate' (entity 'crate')
+         interpenetrate by 30.0 mm at reset (tolerance 5.0 mm, 4 contacts)
+
+A run logs the same finding as a WARNING at every reset. An overlap that is meant is excluded from
+collision (``contype``/``conaffinity`` or an ``<exclude>``), and is then not reported.
 
 With no problems it prints the inventory instead: the entities that registered, the endpoints they
 publish with their topics and types, and the model's totals. That is what the next thing gets written
 against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the
 world file and its manifests to work out what is in there.
+
+A world with a flex (MuJoCo's ``<flexcomp>``) gets two more things: what each flex compiled into, and
+what it will do -- worked out from the compiled model, before any step::
+
+   ok    loads, compiles, every component resolved, and it resets
+
+   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which ...
+         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = ...
+
+   model: 38 bodies, 1 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+          timestep 0.001s, integrator discrete (auto: flex 'blk' (elasticity))
+
+   flexes (1):
+     blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
+          modes 11.4, 13, 22.4 Hz; damping ratio 0.036, 0.0407, 0.0703 at damping 0 s (numerical share 100% at timestep 0.001 s)
+          contact solref 0.02 1 (flex), floor 0.001 s
+
+The **modes** are the flex's lowest elastic frequencies with everything else held, from a
+finite-difference stiffness and the mass matrix (:func:`roqsim.flex_modes.first_modes`); they match
+a free-vibration measurement within 1 %. The **damping ratio** of mode *i* under the ``discrete``
+integrator (the one ``sim.integrator: auto`` picks for an elastic flex) is ``(damping + timestep) *
+omega_i / 2`` while ``omega_i * timestep`` is small (within 4 % up to 0.23): the integrator damps as
+if ``<elasticity damping>`` were one timestep larger, so with no stated damping all of it is numerical
+and changes with ``sim.timestep``, and the integrator's share is at most half exactly when
+``sim.timestep`` is at or below the damping. The **contact floor** is the time constant MuJoCo
+raises a stiffer ``solref`` to: one timestep under ``discrete``, two under every other integrator.
+Both rules were measured on MuJoCo 3.14 and are stated in :mod:`roqsim.flex_modes`
+(``explain_flex``, ``solref_floor``).
+
+A ``WARN`` line names something a world that loads will do and its author probably did not mean --
+damping that is mostly the integrator's (``flex-damping``), a ``solref`` below the floor
+(``flex-solref``) -- and never makes the check fail. In ``--json`` they are the ``warnings`` list,
+each ``{"check", "message", "hint"}`` plus the ``flex`` it is about; the modes are under
+``derived.flexes``, and the inventory under ``world.flexes``. The modes are the one costly thing ``check`` computes (two
+passive-force evaluations per flex degree of freedom and an eigen solve: seconds at most); a flex
+above 2400 degrees of freedom is listed without them, with a hint -- a coarser grid, or
+``dof="quadratic"``/``"trilinear"``, which reduce a flex to 27 or 8 nodes.
 
 .. _recording-a-run:
 
@@ -670,11 +722,11 @@ merely duplicated, which is the common reason a mesh that looks closed is not.
 Checking a run is healthy
 -------------------------
 
-Three things can go wrong with a run and raise no error anywhere: the simulation never starts
-stepping, it steps far slower than realtime, or a robot stands still for the whole trial. The process
-is up, the log is quiet and the exit status is 0, and the run produced nothing worth analysing.
-``roqsim health`` is the check for exactly those three, and nothing else — everything else a run can
-get wrong already reports itself.
+Four things can go wrong with a run and raise no error anywhere: the simulation never starts
+stepping, it stops stepping, it steps far slower than realtime, or a robot stands still for the whole
+trial. The process is up, the log is quiet and the exit status is 0, and the run produced nothing
+worth analysing. ``roqsim health`` is the check for exactly those four, and nothing else — everything
+else a run can get wrong already reports itself.
 
 .. code-block:: bash
 
@@ -685,22 +737,29 @@ get wrong already reports itself.
 It is a **separate process that reads the two records above**, and it changes nothing about a run. A
 check that lived inside the simulator would share the simulator's failure modes, and one that spoke
 over the ROS bridge could not diagnose a broken bridge; this reads files, so it can also say something
-true about a run that is wedged or already dead. The clock map answers checks 2 and 3, and
+true about a run that is wedged or already dead. The clock map answers checks 2, 3 and 4, and
 ``sim_poses.csv`` answers check 1.
 
-===  =========================================================  =======
-#    check                                                      level
-===  =========================================================  =======
-1    every watched robot moves ≥ 1 cm per 60 s of sim time      warn
-2    sim time starts advancing within 60 s                      error
-3    sim time advances ≥ 5 s per 60 s of wall time (0.083x)     error
-===  =========================================================  =======
+===  ==================  =============================================================  =======
+#    slug                check                                                          level
+===  ==================  =============================================================  =======
+1    ``robot-motion``    every watched robot moves ≥ 1 cm per 60 s of sim time          warn
+2    ``sim-time-start``  sim time starts advancing within 60 s                          error
+3    ``sim-time-stuck``  sim time advances again within max(60 s, 10× its row cadence)  error
+4    ``sim-time-rate``   sim time advances ≥ 5 s per 60 s of wall time (0.083x)         warn
+===  ==================  =============================================================  =======
 
 Check 1 is only a warning because a robot standing still is often correct — waiting on a pedestrian, a
 perception-only run, a manipulator-only phase — and a channel that interrupts healthy runs is one
-nobody reads. Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an
-error-level finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point:
-a backgrounded command's output is invisible until it exits.
+nobody reads. Check 4 is a warning for the same reason: **slow is not stopped.** A clock row is
+written per recorder sample on the simulated-time grid, so an expensive world — a deformable body at a
+sub-millisecond timestep — keeps writing rows at a few percent of realtime, just further apart, while
+a frozen one writes none. Check 3 reads the silence, measured against the run's own cadence so that a
+world whose rows are seconds apart is not failed for its ordinary pace; check 4 reads the pace.
+
+Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an error-level
+finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point: a
+backgrounded command's output is invisible until it exits.
 
 **Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
 named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
@@ -746,7 +805,11 @@ continue, so that gap counts against it — and it stops without complaint when 
 since that file is written by ``close()`` and so means the run *ended* rather than stopped. A one-shot
 check has no such premise: it judges the span the record covers, because what happened after the last
 row is not in the file. Without that split, every finished run would be reported as a stall a minute
-after it ended.
+after it ended. The cost is that **a one-shot check cannot see a run that stopped** — its rows simply
+end — so check 3 fires there only on rows that arrived without advancing sim time, which the recorder
+never writes. A supervisor polling a live run that has to catch a stop runs
+``roqsim health <run-dir> --watch --for <seconds> --json``: its first poll is judged against the wall
+clock, and ``--for`` bounds it to one pass or a few.
 
 Getting numbers out of a run
 ----------------------------

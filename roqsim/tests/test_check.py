@@ -125,7 +125,8 @@ def test_json_is_the_same_report(tmp_path, capsys):
     pytest.importorskip("roqsim_sensors")
     assert main([str(_world(tmp_path, GOOD)), "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert payload["ok"] is True and payload["reached"] == "configure"
+    assert payload["ok"] is True and payload["reached"] == "reset"
+    assert payload["warnings"] == []
 
 
 def test_the_text_report_names_the_stages_it_did_not_reach(tmp_path, capsys):
@@ -190,3 +191,106 @@ def test_a_world_that_declares_gains_the_model_accepts_is_ok(tmp_path):
         str(_arm_world(tmp_path, "{control: impedance, stiffness: 2.0, damping: 0.02}", "ok.yaml"))
     )
     assert report["ok"] is True and report["problems"] == []
+
+
+# -- reset: the state a trial starts from ---------------------------------------------------------
+#
+# A world whose reset state puts one body inside another loads, compiles and resolves, and then
+# the contact solver flings the bodies apart on the first steps. `check` resets the world and names
+# the pair: a warning, since the world does start and an overlap can be deliberate.
+
+# A solid block rather than a thin top: a capsule that passes all the way through a thin box gets
+# no contact from MuJoCo at all, so the solver never acts on it and there is nothing to report.
+TABLE = """
+<mujoco><worldbody><body name="table">
+  <geom name="table_top" type="box" size=".4 .4 .2" pos="0 0 .2"/>
+</body></worldbody></mujoco>
+"""
+CRATE = """
+<mujoco><worldbody><body name="crate">
+  <geom name="crate" type="box" size=".05 .05 .05"/>
+</body></worldbody></mujoco>
+"""
+
+
+def _props_world(tmp_path, crate_z: float):
+    (tmp_path / "table.xml").write_text(TABLE, encoding="utf-8")
+    (tmp_path / "crate.xml").write_text(CRATE, encoding="utf-8")
+    return _world(
+        tmp_path,
+        f"""
+        sim: {{}}
+        components:
+          - spawn_model: {{model: table.xml, motion: static}}
+            name: table
+          - spawn_model: {{model: crate.xml, pose: {{position: {{x: 0, y: 0, z: {crate_z}}}}}}}
+            name: crate
+        """,
+    )
+
+
+def test_a_box_placed_into_a_table_is_a_warning_naming_both_and_the_depth(tmp_path):
+    report = check_world(str(_props_world(tmp_path, 0.42)))
+    assert report["ok"] is True, "the world starts; the overlap is a warning, not a problem"
+    assert report["reached"] == "reset"
+    (warning,) = report["warnings"]
+    assert set(warning) == {"check", "message", "hint"}
+    assert warning["check"] == "interpenetration"
+    assert "'table_top' (entity 'table')" in warning["message"]
+    assert "'crate' (entity 'crate')" in warning["message"]
+    assert "30.0 mm" in warning["message"]
+    assert "spawn pose" in warning["hint"]
+
+
+def test_a_box_resting_on_a_table_is_not_a_warning(tmp_path):
+    report = check_world(str(_props_world(tmp_path, 0.45)))
+    assert report["ok"] is True and report["warnings"] == []
+
+
+def test_an_arm_home_that_buries_the_arm_in_the_table_is_named(tmp_path, capsys):
+    """The arm stands on the table; its `home` folds the upper arm down through the top."""
+    pytest.importorskip("roqsim_manipulation_assets", reason="the ur5e model lives there")
+    (tmp_path / "table.xml").write_text(TABLE, encoding="utf-8")
+    world = _world(
+        tmp_path,
+        """
+        sim: {}
+        components:
+          - spawn_model: {model: table.xml, motion: static}
+            name: table
+          - spawn_arm: {model: ur5e, pos: [0, 0, 0.4], home: [0, 0.9, 0, 0, 0, 0]}
+            name: arm
+        """,
+    )
+    report = check_world(str(world))
+    assert report["ok"] is True and report["warnings"]
+    messages = [w["message"] for w in report["warnings"]]
+    into_table = [m for m in messages if "geom 'table_top' (entity 'table')" in m]
+    assert into_table, "the table is one side"
+    assert all("(entity 'arm')" in m and " mm at reset" in m for m in into_table)
+    assert all("(entity 'arm')" in m for m in messages), "every overlap here is the arm's"
+    assert "`home` (spawn_arm)" in report["warnings"][0]["hint"]
+
+    assert main([str(world)]) == 0, "a warning does not fail the check"
+    out = capsys.readouterr().out
+    assert "WARN  [interpenetration]" in out and "table_top" in out
+
+
+def test_a_plugin_whose_reset_fails_is_a_reset_problem(tmp_path):
+    (tmp_path / "boom.py").write_text(
+        textwrap.dedent(
+            """
+            from roqsim.plugin import Plugin
+
+            class Boom(Plugin):
+                def on_reset(self, ctx):
+                    raise RuntimeError("cannot re-home")
+            """
+        ),
+        encoding="utf-8",
+    )
+    report = check_world(str(_world(tmp_path, "sim: {}\ncomponents:\n  - boom.py:Boom: {}\n")))
+    assert report["ok"] is False
+    assert report["reached"] == "configure"
+    assert [p["stage"] for p in report["problems"]] == ["reset"]
+    assert "cannot re-home" in report["problems"][0]["message"]
