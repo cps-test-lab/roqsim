@@ -942,18 +942,23 @@ What a scenario can ask the simulation
 
    entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z, dwell: 8.0)
    entity_rotated(entities: ['crate'], angle: 0.5)
+   entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
    set_model_override(instance: 'grip_fault')            # ...and `active: false` restores it
 
 ``entity_moved`` / ``entity_rotated`` succeed once the named entities have been displaced (or turned)
 from where they were **when the action started** — net displacement, not path length, unlike
 ``osc.ros``'s ``odometry_distance_traveled``. ``set_model_override`` applies or restores a
 ``model_override`` fault (§9.2) and **fails the trial when the plugin reports the write changed
-nothing**, so a run cannot record an unfaulted outcome under a faulted label.
+nothing**, so a run cannot record an unfaulted outcome under a faulted label. ``entity_reports``
+succeeds once a value a plugin publishes about an entity -- ``<report>.<field>``, as the world names
+it -- compares as expected; it is how a scenario ends a run on a trial's outcome, with ``emit end``
+after it.
 
-All three work in a stepped run *and* in a ROS run, unedited: the transport is chosen from what the
+Each works in a stepped run *and* in a ROS run, unedited: the transport is chosen from what the
 runner offered. In-process they read ``MujocoSim.context`` (entity poses from ``data.xpos``, the fault
-through the ``model_override:<name>`` blackboard handle, writes queued with ``ctx.post``); over ROS they
-use ``simulation_interfaces/GetEntityState`` and ``<instance>/override``. Both are keyed on the same
+through the ``model_override:<name>`` blackboard handle, a report from its endpoint, writes queued with
+``ctx.post``); over ROS they use ``simulation_interfaces/GetEntityState``, ``<instance>/override`` and
+the endpoint map the bridge latches at ``roqsim/endpoints``. Both are keyed on the same
 **entity and instance names**, which is what makes one scenario serve both — see the package's README
 for why TF is deliberately not the ROS pose source. None of them can run under ``remote()``: a remote
 server is handed no simulation.

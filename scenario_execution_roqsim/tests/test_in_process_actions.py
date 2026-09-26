@@ -36,6 +36,7 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
     EntityNavigateStart,
 )
+from scenario_execution_roqsim.actions.entity_reports import EntityReports  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
@@ -1201,9 +1202,15 @@ def test_waiting_without_a_call_is_unchanged():
 def test_every_call_type_can_be_asked_why_it_is_waiting():
     """The contract is shared, so an action never has to know which kind of call it holds --
     and every call type has to answer."""
-    from scenario_execution_roqsim.access import NavCall, OverrideCall, SpawnCall, TeleportCall
+    from scenario_execution_roqsim.access import (
+        NavCall,
+        OverrideCall,
+        ReportCall,
+        SpawnCall,
+        TeleportCall,
+    )
 
-    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):
+    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall, ReportCall):
         assert hasattr(cls, "pending_reason"), cls.__name__
 
 
@@ -1284,3 +1291,273 @@ def test_delete_refuses_an_empty_entity_name(teleport_world):
     action.setup(simulation=sim, clock=clock)
     with pytest.raises(ActionError, match="empty"):
         action.execute(entity="")
+
+
+# -- entity_reports -------------------------------------------------------------------------------
+#
+# A plugin's report, read the way a scenario ends a run on a trial's outcome. The arm test is the
+# case the action exists for; the crate on the ramp is the same path with core plugins only.
+
+
+def _reports(sim, clock, **args):
+    full = {
+        "comparison_operator": "eq",
+        "dwell": 0.0,
+        "fail_if_bad_comparison": False,
+        **args,
+    }
+    return _start(EntityReports(), sim, clock, **full)
+
+
+def test_a_stepped_run_ends_when_the_arm_trips_its_force_limit_and_not_before(tmp_path):
+    """The idiom end to end on a real arm: `entity_reports(... 'force_limit.tripped' ...)` is what
+    a scenario waits on before `emit end`, so it must hold RUNNING for every step before the trip
+    and succeed on the tick after it -- read through the endpoint the plugin declared, which is the
+    one the ROS bridge publishes too."""
+    pytest.importorskip("roqsim_sensors", reason="force_limit is a roqsim_sensors plugin")
+    pytest.importorskip("roqsim_manipulation_assets", reason="the ur5e model")
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    settle = 0.05
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {"timestep": 0.002},
+                "components": [
+                    {
+                        "spawn_arm": {"model": "ur5e", "prefix": "ur5e_", "namespace": "ur5e"},
+                        "name": "ur5e",
+                        "components": [
+                            {"arm_controller": {}},
+                            {"force_torque": {"site": "fts_site", "frame": "world"}, "name": "ft"},
+                            # Any measured wrench exceeds 1 mN, so it trips on the first step past
+                            # the settle window: a moment the test knows in advance.
+                            {
+                                "roqsim_sensors.plugins.force_limit:ForceLimitPlugin": {
+                                    "ft": "ft",
+                                    "max_force": 0.001,
+                                    "settle_s": settle,
+                                    "stop_run": False,
+                                },
+                                "name": "safety",
+                            },
+                        ],
+                    }
+                ],
+            },
+            base_dir=tmp_path,
+        )
+    )
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    ctx, clock = engine.ctx, FakeClock()
+    action = _reports(
+        FakeSim(ctx), clock, entity="ur5e", report="force_limit.tripped", expected_value="True"
+    )
+    report = ctx.blackboard.get("force_limit:ur5e.safety")
+
+    ticks = 0
+    while action.update() is RUNNING:
+        assert not report().tripped, "RUNNING although the limit had already tripped"
+        engine.step()
+        clock.t = ctx.sim_time
+        ticks += 1
+        assert ticks < 200, "never tripped"
+    assert report().tripped
+    assert report().at_time >= settle, "and not before the moment it was configured to trip at"
+    assert ticks >= round(settle / 0.002), "so the action waited out every step before the trip"
+    assert "force_limit.tripped = True" in action.feedback_message
+
+
+@pytest.fixture
+def ramp_contact(world):
+    """`world`, plus a contact_monitor on the parcel: it falls onto the ramp in its first steps."""
+    from roqsim.plugins.contact_monitor import ContactMonitorPlugin
+
+    ctx, clock, sim = world
+    monitor = ContactMonitorPlugin({"ignore": [], "rate_hz": 500.0}, entity="parcel")
+    monitor.configure(ctx)
+    monitor.on_reset(ctx)
+    return ctx, clock, sim, monitor
+
+
+def test_a_bare_report_compares_the_field_its_publication_carries(ramp_contact):
+    """`report: 'contact'` means `contact.in_contact`: the field the ROS bridge publishes, so the
+    short form compares the same value on both transports."""
+    ctx, clock, sim, monitor = ramp_contact
+    action = _reports(sim, clock, entity="parcel", report="contact", expected_value="True")
+    assert action.update() is RUNNING, "falling, not yet touching"
+    for _ in range(500):
+        _step(ctx, clock, monitor)
+        if action.update() is SUCCESS:
+            break
+    assert action.status is not FAILURE
+    assert action.update() is SUCCESS
+    assert "parcel.contact.in_contact = True" in action.feedback_message
+
+
+def test_every_field_of_a_report_is_readable_in_process(ramp_contact):
+    """Not only the published one: a stepped run reads the report itself."""
+    ctx, clock, sim, monitor = ramp_contact
+    action = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="contact.first_time",
+        expected_value="0.0",
+        comparison_operator="gt",
+    )
+    assert action.update() is RUNNING, "first_time is -1.0 until the first contact"
+    for _ in range(500):
+        _step(ctx, clock, monitor)
+        if action.update() is SUCCESS:
+            break
+    assert action.update() is SUCCESS
+
+
+class _Outcome:
+    """A trial plugin's report, under the test's control."""
+
+    def __init__(self):
+        self.resolved = False
+        self.score = 0.0
+
+
+def _outcome_world(world):
+    ctx, clock, sim = world
+    outcome = _Outcome()
+    from roqsim.context import Endpoint
+
+    ctx.interface.add(
+        Endpoint(
+            name="trial",
+            direction="out",
+            owner="parcel",
+            read=lambda: outcome,
+            backend={"ros2": {"type": "std_msgs.msg.Bool", "field": "resolved"}},
+        )
+    )
+    return ctx, clock, sim, outcome
+
+
+def test_the_dwell_is_held_on_the_runners_clock_and_restarts_on_a_dip(world):
+    ctx, clock, sim, outcome = _outcome_world(world)
+    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True", dwell=1.0)
+    assert action.update() is RUNNING
+
+    outcome.resolved = True
+    clock.t = 10.0
+    assert action.update() is RUNNING
+    clock.t = 10.5
+    assert action.update() is RUNNING, "half the dwell is not the dwell"
+    outcome.resolved = False
+    assert action.update() is RUNNING
+    outcome.resolved = True
+    clock.t = 11.0
+    assert action.update() is RUNNING, "the dwell restarted at 11.0"
+    clock.t = 12.01
+    assert action.update() is SUCCESS
+
+
+def test_a_comparison_that_does_not_hold_waits_unless_told_to_fail(world):
+    ctx, clock, sim, outcome = _outcome_world(world)
+    patient = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="0.5",
+        comparison_operator="ge",
+    )
+    strict = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="0.5",
+        comparison_operator="ge",
+        fail_if_bad_comparison=True,
+    )
+    assert patient.update() is RUNNING
+    assert strict.update() is FAILURE
+    assert "trial.score = 0.0 (want >= 0.5)" in strict.feedback_message
+    outcome.score = 0.7
+    assert patient.update() is SUCCESS
+
+
+@pytest.mark.parametrize(
+    "entity,report,message",
+    [
+        ("nobody", "trial", r"no entity 'nobody' publishes a report\. .*parcel: trial"),
+        ("parcel", "verdict", r"publishes no report 'verdict'\. It publishes: trial"),
+        ("parcel", "trial.sucess", r"no field 'sucess'.*resolved, score"),
+    ],
+)
+def test_a_name_that_does_not_exist_raises_listing_what_does(world, entity, report, message):
+    """Authoring errors, so they raise -- and say what the world does offer, since the mistake is
+    almost always a near miss."""
+    _ctx, clock, sim, _outcome = _outcome_world(world)
+    action = _reports(sim, clock, entity=entity, report=report, expected_value="True")
+    with pytest.raises(ActionError, match=message):
+        action.update()
+
+
+def test_an_entity_with_no_report_is_told_apart_from_no_entity(world):
+    ctx, clock, sim = world
+    ctx.entities.add(Entity(name="crate_b", kind="object", body="crate_b"))
+    action = _reports(sim, clock, entity="crate_b", report="trial", expected_value="True")
+    with pytest.raises(ActionError, match="'crate_b' is an entity, but no plugin on it publishes"):
+        action.update()
+
+
+def test_a_bare_report_that_publishes_no_field_asks_for_one(world):
+    """A report with no published field has no short form; comparing the whole structure against a
+    literal would wait forever on a comparison that can never hold."""
+    ctx, clock, sim = world
+    from roqsim.context import Endpoint
+
+    ctx.interface.add(Endpoint(name="trial", direction="out", owner="parcel", read=_Outcome))
+    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True")
+    with pytest.raises(ActionError, match=r"name the one to compare.*resolved, score"):
+        action.update()
+
+
+def test_a_literal_that_cannot_be_compared_with_the_value_raises(world):
+    _ctx, clock, sim, _outcome = _outcome_world(world)
+    action = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="'high'",
+        comparison_operator="gt",
+    )
+    with pytest.raises(ActionError, match="cannot be compared"):
+        action.update()
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (dict(entity="", report="trial", expected_value="True"), "`entity` is empty"),
+        (dict(entity=None, report="trial", expected_value="True"), "`entity` is empty"),
+        (dict(entity="parcel", report="", expected_value="True"), "names no report"),
+        (dict(entity="parcel", report=".resolved", expected_value="True"), "names no report"),
+        (dict(entity="parcel", report="trial", expected_value="resolved"), "quoted inside"),
+        (dict(entity="parcel", report="trial", expected_value=None), "must be a string"),
+        (
+            dict(entity="parcel", report="trial", expected_value="1", comparison_operator="approx"),
+            "unknown `comparison_operator`",
+        ),
+        (dict(entity="parcel", report="trial", expected_value="1", dwell=-0.1), "must be >= 0"),
+    ],
+)
+def test_an_unusable_report_configuration_raises_at_execute(world, args, message):
+    _ctx, clock, sim = world
+    action = EntityReports()
+    action.setup(simulation=sim, clock=clock)
+    full = {"comparison_operator": "eq", "dwell": 0.0, "fail_if_bad_comparison": False, **args}
+    with pytest.raises(ActionError, match=message):
+        action.execute(**full)

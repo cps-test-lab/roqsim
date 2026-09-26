@@ -104,12 +104,13 @@ wheel install graph for deployments — it broke a campaign image build with `No
 found for roqsim_manipulation`. If a new robot does not fit an existing family, add a sibling; do not
 widen a family's dependencies to accommodate it.
 - `scenario_execution_roqsim/` — the OpenSCENARIO 2 vocabulary (`import osc.roqsim`): what a
-  scenario can ask a running simulation (`entity_moved`, `entity_rotated`) and what it can break in one
-  (`set_model_override`). **The only package here that may import `scenario_execution`**, and it must
-  never be imported by one that does not. Named for that project's convention (`scenario_execution_*`),
-  not ours, which is why the Makefile globs two name shapes. Depends on `roqsim` only. Each action works in
-  a stepped run and in a ROS run unedited — the transport is chosen from what the runner offered, and
-  the names it uses (entities, plugin instances) are identical on both.
+  scenario can ask a running simulation (`entity_moved`, `entity_rotated`, `entity_reports` -- a value a
+  plugin publishes) and what it can break in one (`set_model_override`). **The only package here that
+  may import `scenario_execution`**, and it must never be imported by one that does not. Named for
+  that project's convention (`scenario_execution_*`), not ours, which is why the Makefile globs two
+  name shapes. Depends on `roqsim` only. Each action works in a stepped run and in a ROS run
+  unedited — the transport is chosen from what the runner offered, and the names it uses (entities,
+  plugin instances) are identical on both.
 - `ros2_ws/src/roqsim_ros_bridge/` — colcon package: ROS 2 bridge + `simulation_interfaces` (plugins).
 - `ros2_ws/src/roqsim_nav2_example/` — colcon package: minimal nav2 example + headless goal test.
 - `ros2_ws/src/roqsim_create3_toolbox/` — colcon package: the Create 3 / TurtleBot 4 stack over the

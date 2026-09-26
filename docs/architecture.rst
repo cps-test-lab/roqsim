@@ -308,6 +308,23 @@ knows it is finished -- the goal was reached, the episode failed -- therefore pu
 observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
 condition on, and holds the robot idle until the scenario ends the run.
 
+For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
+outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
+plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
+bound on the trial:
+
+.. code-block:: text
+
+   scenario trial:
+       timeout(120s)
+       do serial:
+           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
+           emit end
+
+The report is addressed as the world names it -- the entity and the endpoint -- and read from the
+endpoint itself in a stepped run and through the bridge's endpoint map over ROS (§13), so one
+scenario ends the same way on either transport.
+
 The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
 with ``ctx.request_stop(reason)``: the driver polls ``ctx.stop_requested`` and leaves its loop
 cleanly, so ``shutdown`` still runs and files still flush, instead of the world being padded out to
@@ -856,6 +873,18 @@ namespace — how a robot manifest gives a second scanner the vendor's ``scan2``
 namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
+
+**The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
+``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
+it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefix. So the bridge says
+what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
+``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
+publishes by owner and name with the topic its publisher is on, the message type and the published
+``field`` (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its ``owner`` filter. The topic is
+read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
+a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
+``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
+report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as

@@ -1747,6 +1747,12 @@ an explicit failure condition as well as a success one (a trial that can only su
 success *rate*, it can only hang), and write the raw observable rather than the metric, because a
 force-energy definition belongs to the analysis where it can still be argued with.
 
+Publish the outcome as an ``out`` endpoint on the entity the trial is about, and the scenario
+conditions on it with ``entity_reports(entity: 'ur5e', report: 'trial.resolved', expected_value:
+'True')`` followed by ``emit end``, with a ``timeout`` as the bound. Give the endpoint a ``ros2``
+hint whose ``field`` is the outcome, as ``force_limit`` does with ``tripped``: that field is what
+travels over ROS and what a bare ``report: 'trial'`` compares, on both transports.
+
 Manipulation: what a grasping world needs
 -----------------------------------------
 

@@ -3,7 +3,7 @@
 
 """The ROS backend: the simulator is another container, so the world is a service graph.
 
-Nothing here is roqsim-specific except the fault endpoint. The pose comes from
+Nothing here is roqsim-specific except the fault endpoint and the endpoint map. The pose comes from
 ``simulation_interfaces/GetEntityState``, a standard service keyed on the ENTITY name -- the same name
 the in-process path resolves through ``ctx.entities`` -- so ``entity_moved`` works against any
 simulator that serves it, not only this one.
@@ -13,6 +13,14 @@ against the scenario node's namespace, which is what the bridge itself does with
 relative name is scoped, an absolute one is left alone -- ``ros2_bridge._resolve_topic``). So the
 default case needs no configuration, and a deployment that runs the bridge under a global namespace
 runs the scenario node under the same one, as any ROS system does.
+
+**A report is found through the bridge's endpoint map.** A scenario names a plugin's report as the
+world does -- entity and endpoint -- and the topic it travels on is whatever the bridge made of that
+after namespaces, ``topics:`` renames, ``strip_namespace`` and a ground-truth prefix. The bridge
+latches a map of exactly that at ``roqsim/endpoints`` in its namespace (``roqsim.bridge.ENDPOINT_MAP``),
+so this reads the map and subscribes to the topic it names, rather than re-deriving a name the bridge
+already resolved. Both subscriptions are made on first use, so a scenario that reads no report opens
+neither.
 
 **Nothing blocks.** Every call is ``call_async`` with a done callback, at most one in flight per
 target, following ``scenario_execution_ros.actions.ros_service_call``. A blocking call in a tick would
@@ -27,6 +35,9 @@ unit-testable in a plain venv.
 
 from __future__ import annotations
 
+import importlib
+import json
+
 import numpy as np
 
 from . import (
@@ -36,12 +47,18 @@ from . import (
     OverrideCall,
     OverrideOutcome,
     Pose,
+    ReportCall,
+    ReportReading,
     SpawnCall,
     SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
+    plain,
 )
+
+#: A report subscription that has not received a message yet.
+_NOTHING = object()
 
 
 def _also_carries(offered, kind: str = "services") -> str:
@@ -123,6 +140,151 @@ class _RosRoute(NavCall):
         return None
 
 
+class _EndpointMap:
+    """What the bridges in this namespace said they publish: ``(owner, name) -> entry``.
+
+    Filled from the latched map on the executor's thread and read on the tick's; each write is one
+    dict or list assignment, which the tick reads whole. More than one bridge may advertise here --
+    two transports split by owner -- so the maps are merged, and each one's ``owners`` filter is
+    kept: an entity absent from every map that serves it does not exist, while one no map serves may
+    still be advertised by a bridge that has not been heard from yet.
+    """
+
+    def __init__(self):
+        self.entries: dict[tuple[str, str], dict] = {}
+        #: One owner filter per map received; ``None`` is a bridge serving every owner.
+        self.scopes: list = []
+        self.error: str | None = None
+
+    def store(self, msg) -> None:
+        try:
+            doc = json.loads(msg.data)
+            entries = {(e["owner"], e["name"]): e for e in doc["endpoints"]}
+            scope = doc.get("owners")
+        except (ValueError, KeyError, TypeError) as err:
+            # Kept, not raised: an exception in a subscription callback stops the executor's spin
+            # thread, which silences every other subscription on the node as well.
+            self.error = f"the endpoint map is not the shape roqsim's bridge sends ({err})"
+            return
+        self.entries = {**self.entries, **entries}
+        self.scopes = [*self.scopes, scope]
+
+    @property
+    def received(self) -> bool:
+        return bool(self.scopes)
+
+    def serves(self, entity: str) -> bool:
+        """Whether some map received is from a bridge that would publish *entity*'s reports."""
+        return any(scope is None or entity in scope for scope in self.scopes)
+
+    def reports_of(self) -> dict[str, list[str]]:
+        offered: dict[str, list[str]] = {}
+        for owner, name in self.entries:
+            offered.setdefault(owner, []).append(name)
+        return offered
+
+
+class _LatestValue:
+    """The last value published on one report's topic."""
+
+    def __init__(self):
+        self.value = _NOTHING
+        self.subscription = None
+
+    def store(self, msg) -> None:
+        self.value = plain(msg.data)
+
+
+class _RosReport(ReportCall):
+    """A report read over ROS: find it in the endpoint map, then keep its topic's last value."""
+
+    def __init__(self, access: RosAccess, entity: str, report: str, field: str):
+        self._access = access
+        self._entity, self._report, self._field = entity, report, field
+        self._entry: dict | None = None
+
+    def poll(self) -> ReportReading | None:
+        access = self._access
+        emap = access._endpoint_map
+        if emap.error:
+            raise AccessError(emap.error)
+        if not emap.received:
+            return None
+        entry = emap.entries.get((self._entity, self._report))
+        if entry is None:
+            if emap.serves(self._entity):
+                raise AccessError(self._unknown(emap))
+            return None  # a bridge serving this entity may not have been heard from yet
+        published = str(entry.get("field") or "")
+        if self._field and self._field != published:
+            raise AccessError(self._unpublished(entry, published))
+        self._entry = entry
+        latest = access._subscribe(self._entity, self._report, entry)
+        if latest.value is _NOTHING:
+            return None
+        return ReportReading(latest.value, published, entry["topic"])
+
+    def _unknown(self, emap: _EndpointMap) -> str:
+        offered = emap.reports_of()
+        name = f"{self._entity}.{self._report}"
+        if self._entity in offered:
+            return (
+                f"the bridge publishes no report {name!r}. For {self._entity!r} it publishes: "
+                f"{', '.join(sorted(offered[self._entity]))}. A report with no ROS publication is "
+                "readable in a stepped run only."
+            )
+        listed = "; ".join(
+            f"{owner or '(no entity)'}: {', '.join(sorted(names))}"
+            for owner, names in sorted(offered.items())
+        )
+        return (
+            f"the bridge publishes no reports for an entity {self._entity!r}. The name is the "
+            f"world's `name:` for the entity the plugin watches. It publishes: {listed or '(none)'}."
+        )
+
+    def _unpublished(self, entry: dict, published: str) -> str:
+        where = f"(as {entry['type']} on {entry['topic']})"
+        name = f"{self._entity}.{self._report}"
+        if not published:
+            return (
+                f"over ROS {name} is one value with no fields {where}, so name none: "
+                f"report: '{self._report}'."
+            )
+        return (
+            f"over ROS {name} publishes only its field {published!r} {where}, so "
+            f"{self._field!r} cannot be read there. Compare report: '{self._report}.{published}' "
+            f"(or just '{self._report}'), or read {self._field!r} in a stepped run, where every "
+            "field of a report is readable."
+        )
+
+    def pending_reason(self) -> str | None:
+        access = self._access
+        emap = access._endpoint_map
+        if not emap.received:
+            return (
+                f"the simulator has not advertised its endpoint map at "
+                f"{access._resolved(access.ENDPOINT_MAP_TOPIC)!r}. A roqsim ROS bridge latches it "
+                "there when it starts, in its own namespace; a scenario node in another namespace "
+                "does not see it, and without it this waits until the scenario's own timeout"
+                + _also_carries(access._advertised_topics(), "topics")
+            )
+        if self._entry is None:
+            served = sorted({s for scope in emap.scopes if scope for s in scope})
+            return (
+                f"no bridge heard from so far serves entity {self._entity!r}; the ones that "
+                f"advertised serve: {', '.join(served) or '(none)'}"
+            )
+        topic = self._entry["topic"]
+        latest = access._report_values.get(topic)
+        if latest is not None and latest.value is _NOTHING:
+            try:
+                silent = access._node.count_publishers(topic) == 0
+            except Exception:  # noqa: BLE001 - a graph query that fails must not break the reason
+                silent = False
+            return f"no message on {topic} yet" + (", and nothing publishes it" if silent else "")
+        return None
+
+
 class RosAccess(WorldAccess):
     transport = "ROS"
 
@@ -133,6 +295,9 @@ class RosAccess(WorldAccess):
     #: Presence, in both directions. Same relative-naming rule.
     SPAWN_ENTITY_SERVICE = "spawn_entity"
     DELETE_ENTITY_SERVICE = "delete_entity"
+    #: Where the bridge latches what it publishes. ``roqsim.bridge.ENDPOINT_MAP``, repeated as a
+    #: literal so this module imports no simulator (a test pins that the two agree).
+    ENDPOINT_MAP_TOPIC = "roqsim/endpoints"
 
     def __init__(self, node):
         try:
@@ -181,6 +346,11 @@ class RosAccess(WorldAccess):
         #: entity -> (last known Pose | None, future in flight | None)
         self._poses: dict[str, Pose | None] = {}
         self._inflight: dict[str, object] = {}
+        # Reports: the bridge's endpoint map and one latest value per report topic, both
+        # subscribed on first use (see `entity_report`).
+        self._endpoint_map = _EndpointMap()
+        self._endpoint_map_sub = None
+        self._report_values: dict[str, _LatestValue] = {}
 
     def ready(self) -> bool:
         # True regardless of whether the simulator is up: an unavailable service is handled per call
@@ -232,6 +402,65 @@ class RosAccess(WorldAccess):
             # (w, x, y, z), matching MuJoCo's xquat order and the order the bridge fills it in.
             quat=np.array([q.w, q.x, q.y, q.z]),
         )
+
+    # -- reports ----------------------------------------------------------------------------------
+    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+        """Watch a report through the bridge's endpoint map. See the module docstring.
+
+        The map is subscribed here, once per access, latched: a scenario that asks for a report late
+        in a run still receives the map the bridge sent when it started.
+        """
+        if self._endpoint_map_sub is None:
+            from rclpy.qos import DurabilityPolicy, QoSProfile  # noqa: PLC0415
+            from std_msgs.msg import String  # noqa: PLC0415
+
+            qos = QoSProfile(depth=10, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+            self._endpoint_map_sub = self._node.create_subscription(
+                String,
+                self.ENDPOINT_MAP_TOPIC,
+                self._endpoint_map.store,
+                qos,
+                callback_group=self._group,
+            )
+        return _RosReport(self, entity, report, field)
+
+    def _subscribe(self, entity: str, report: str, entry: dict) -> _LatestValue:
+        """The last value on *entry*'s topic, subscribing to it the first time it is asked for."""
+        topic = entry["topic"]
+        latest = self._report_values.get(topic)
+        if latest is not None:
+            return latest
+        type_path = str(entry["type"])
+        module, _, name = type_path.rpartition(".")
+        try:
+            msg_type = getattr(importlib.import_module(module), name)
+        except (ImportError, AttributeError, ValueError) as err:
+            raise AccessError(
+                f"{entity}.{report} is published as {type_path}, which is not importable here "
+                f"({err}); the scenario side needs the message package the simulator publishes with."
+            ) from None
+        if "data" not in msg_type.get_fields_and_field_types():
+            raise AccessError(
+                f"{entity}.{report} is published as {type_path}, a structured message rather than "
+                "one value, and a report compares one value. Read it in a stepped run, where every "
+                "field is readable, or have its endpoint publish one field (a `field` hint on a "
+                "std_msgs type)."
+            )
+        latest = _LatestValue()
+        latest.subscription = self._node.create_subscription(
+            msg_type, topic, latest.store, 10, callback_group=self._group
+        )
+        self._report_values[topic] = latest
+        return latest
+
+    def _resolved(self, name: str) -> str:
+        try:
+            return self._node.resolve_topic_name(name)
+        except Exception:  # noqa: BLE001 - only used in a message
+            return name
+
+    def _advertised_topics(self):
+        return self._advertised(self._node.get_topic_names_and_types, "_topic_cache")
 
     # -- the fault ------------------------------------------------------------------------------
     #: How long a graph listing is reused. A pending reason is rebuilt on every tick the action
@@ -442,6 +671,14 @@ class RosAccess(WorldAccess):
         ]:
             try:
                 self._node.destroy_client(client)
+            except Exception:  # noqa: BLE001 - teardown never fails a scenario
+                pass
+        subscriptions = [latest.subscription for latest in self._report_values.values()]
+        for subscription in [self._endpoint_map_sub, *subscriptions]:
+            if subscription is None:
+                continue
+            try:
+                self._node.destroy_subscription(subscription)
             except Exception:  # noqa: BLE001 - teardown never fails a scenario
                 pass
 
