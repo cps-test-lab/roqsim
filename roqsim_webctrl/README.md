@@ -11,13 +11,14 @@ needs **no** new code; it just needs the plugin enabled in the deployment's `web
 This package ships that reusable fragment so any scene can include it without hand-authoring:
 
 ```yaml
-# web.yaml (any roqsim scene)
-components:
+# web.yaml (any roqsim scene) -- the fragment as shipped
+plugins:
   - id: sim-control
     placement: bottom-right
-    # steps: 10          # physics steps per single-step click (default 1)
-    # manySteps: 200     # physics steps per step-many click (default steps * 10)
-    # namespace: "/r1"   # only if the services are namespaced (e.g. per robot)
+    namespace: ""        # set only if the services are namespaced (e.g. per robot, "/r1")
+    steps: 10            # physics steps per single-step click (rso_web's default: 1)
+    manySteps: 200       # physics steps per step-many click (rso_web's default: steps * 10)
+    # clockTopic: /clock # the sim-time topic for the readout (global, not namespaced)
 ```
 
 The same fragment is available programmatically:
