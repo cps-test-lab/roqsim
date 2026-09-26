@@ -26,6 +26,7 @@ pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``get_entity_s
                                                                  entity NAME
 apply/restore fault ``F``    blackboard ``model_override:F``      ``F/override`` (``SetBool``)
 did it land                  ``read_state().verified``            the same service's reply
+stop requested               ``ctx.stop_requested``               -- (none; see ``ros.py``)
 time                         the runner's ``clock``               the runner's ``clock``
 ===========================  ==================================  ====================================
 
@@ -197,6 +198,18 @@ class NavCall(PendingCall):
         """Stop the mover. Idempotent -- an action's ``request_cancel`` may fire more than once."""
 
 
+@dataclass(frozen=True)
+class StopRequest:
+    """Whether something in the world has asked for the run to end (``ctx.request_stop``), and why.
+
+    ``reason`` is the first reason given -- a request is idempotent and the first one wins -- and may
+    be empty: a plugin is not obliged to give one.
+    """
+
+    requested: bool
+    reason: str = ""
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -295,6 +308,16 @@ class WorldAccess(ABC):
 
         Making an already-present entity present again is not an error: the caller asked for a
         state and got it.
+        """
+
+    @abstractmethod
+    def stop_request(self) -> StopRequest:
+        """Whether a plugin has asked the driver to end the run. Never blocks.
+
+        ``ctx.request_stop`` is how a trial that knows it is finished says so -- a goal reached, a
+        protective stop tripped. ``roqsim sim`` acts on it by leaving its loop; in a scenario-execution
+        run the scenario owns the loop, so the request only ends the run if the scenario waits on it.
+        Raises :class:`AccessError` where the transport has no way to learn of one.
         """
 
     def teardown(self) -> None:

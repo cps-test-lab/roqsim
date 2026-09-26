@@ -51,6 +51,7 @@ set_entity_state = "scenario_execution_roqsim.actions.set_entity_state:SetEntity
 spawn_entity = "scenario_execution_roqsim.actions.spawn_entity:SpawnEntity"
 set_model_override = "scenario_execution_roqsim.actions.set_model_override:SetModelOverride"
 set_sensor_override = "scenario_execution_roqsim.actions.set_sensor_override:SetSensorOverride"
+sim_stop_requested = "scenario_execution_roqsim.actions.sim_stop_requested:SimStopRequested"
 
 [tool.setuptools.packages.find]
 where = ["src"]

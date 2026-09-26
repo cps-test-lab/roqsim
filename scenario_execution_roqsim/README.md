@@ -1,12 +1,13 @@
 # scenario_execution_roqsim — what a scenario can ask an roqsim simulation
 
-The substrate's OpenSCENARIO 2 vocabulary. Three actions:
+The substrate's OpenSCENARIO 2 vocabulary. Among its actions:
 
 | action | succeeds when |
 | --- | --- |
 | `entity_moved(entities, threshold, mode, dwell, require)` | the named entities have been **displaced** from where they were when the action started |
 | `entity_rotated(entities, angle, dwell, require)` | ...have **turned** by an angle (geodesic, so axis-free) |
 | `set_model_override(instance, active, require_landed)` | a world's `model_override` fault has been applied (or restored) **and the plugin confirms it landed** |
+| `sim_stop_requested()` | a plugin has called `ctx.request_stop(reason)`; the reason is its feedback. **Stepped runner only** |
 
 ```
 import osc.roqsim
@@ -49,6 +50,26 @@ Two consequences, stated rather than hidden:
 `entity_moved` and `entity_rotated` therefore work against **any** simulator serving
 `simulation_interfaces`. `set_model_override` is roqsim-specific: the endpoint is that plugin's.
 
+`sim_stop_requested` is the exception to "both transports". A plugin's `ctx.request_stop` ends a
+`roqsim sim` run by itself, but in a stepped run the scenario owns the loop, so the request ends the
+run only where the scenario waits on it. The action stays RUNNING until the request, so it *is* the
+wait — invoke it, do not put it after `wait` (which takes an event condition and refuses an action):
+
+```
+do parallel:
+    serial:
+        run_the_trial()
+        emit end
+    serial:
+        sim_stop_requested()
+        emit end                # or `emit fail`, where a stop means a failed trial
+```
+
+Over ROS nothing carries the request — the bridge publishes no flag for it, and
+`get_simulation_state` reports run-control, which a request does not change — and the simulator
+there is `roqsim sim`, which ends the run on the request itself. So the ROS backend raises rather
+than let the action wait on something that can never arrive.
+
 ## Things that will bite
 
 - **These actions cannot run under `remote()`.** A remote server is handed neither `simulation` nor
@@ -71,7 +92,9 @@ Two consequences, stated rather than hidden:
 Copy the nearest existing one: an abstract method on `WorldAccess`, an implementation in each of
 `access/in_process.py` and `access/ros.py`, the action class, its entry point in
 [`pyproject.toml`](pyproject.toml) and its declaration in `lib_osc/roqsim.osc`. Both transports, or
-the scenario stops being portable between the two shapes.
+the scenario stops being portable between the two shapes. Where a transport genuinely cannot answer,
+its implementation raises `AccessError` naming why (`RosAccess.stop_request`) rather than being left
+out.
 
 **If the in-process side reaches a new blackboard key, pin it.** That key is published by a plugin
 in a package this one deliberately does not import (see below), so nothing in the build notices a

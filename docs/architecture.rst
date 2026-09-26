@@ -307,7 +307,14 @@ complete -- can say so with ``ctx.request_stop(reason)``. The standalone driver 
 Without it a world is padded out to a wall-clock ``--seconds``, guessed high enough for the slowest
 cell and then wasted on every faster one. It is a *request*: the engine does not
 act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
-stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
+stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins, and
+``Engine.reset`` clears it, because a request ends the trial it was made in.
+
+In a scenario-execution run the scenario owns the loop, so the request ends the run only where the
+scenario waits on it: ``sim_stop_requested()`` from ``osc.roqsim`` stays running until a request
+stands and then succeeds with its reason, and a ``parallel`` branch holding it followed by
+``emit end`` (or ``emit fail``) ends the scenario there. Stepped runner only -- over ROS nothing
+carries the request, and the simulator there is ``roqsim sim``, which ends the run on it by itself.
 
 Actuator overrides (``actuators:``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

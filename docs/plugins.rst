@@ -1647,10 +1647,12 @@ Three things decide whether such a world measures anything at all:
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
 ``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
-padded to a guessed ``--seconds``. Two rules are worth copying from a trial-protocol plugin: give it
-an explicit failure condition as well as a success one (a trial that can only succeed cannot produce a
-success *rate*, it can only hang), and write the raw observable rather than the metric, because a
-force-energy definition belongs to the analysis where it can still be argued with.
+padded to a guessed ``--seconds`` (in a scenario-execution run, where the scenario owns the loop, the
+scenario ends on it with ``osc.roqsim``'s ``sim_stop_requested()``). Two rules are worth copying from
+a trial-protocol plugin: give it an explicit failure condition as well as a success one (a trial that
+can only succeed cannot produce a success *rate*, it can only hang), and write the raw observable
+rather than the metric, because a force-energy definition belongs to the analysis where it can still be
+argued with.
 
 Manipulation: what a grasping world needs
 -----------------------------------------

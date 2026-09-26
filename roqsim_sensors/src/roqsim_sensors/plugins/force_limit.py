@@ -41,6 +41,7 @@ Config -- a component of the entity whose wrench is watched::
       settle_s: 0.0            # ignore the first seconds, while a reset transient decays
       latch: true              # once tripped, stay tripped until reset (a trial is failed, not un-failed)
       stop_run: true           # ask the driver to end the run, as a real stop ends the motion
+                               # (a scenario-execution run ends on it via `sim_stop_requested()`)
       release_controllers: true  # deactivate the controllers driving the arm, the way a stop does
       reports_as: protective_stop  # the word this robot's own interface uses
       rate_hz: 30.0

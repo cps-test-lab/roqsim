@@ -109,7 +109,8 @@ widen a family's dependencies to accommodate it.
   never be imported by one that does not. Named for that project's convention (`scenario_execution_*`),
   not ours, which is why the Makefile globs two name shapes. Depends on `roqsim` only. Each action works in
   a stepped run and in a ROS run unedited — the transport is chosen from what the runner offered, and
-  the names it uses (entities, plugin instances) are identical on both.
+  the names it uses (entities, plugin instances) are identical on both — except `sim_stop_requested`,
+  which only a stepped run needs and whose ROS side raises saying so.
 - `ros2_ws/src/roqsim_ros_bridge/` — colcon package: ROS 2 bridge + `simulation_interfaces` (plugins).
 - `ros2_ws/src/roqsim_nav2_example/` — colcon package: minimal nav2 example + headless goal test.
 - `ros2_ws/src/roqsim_create3_toolbox/` — colcon package: the Create 3 / TurtleBot 4 stack over the
@@ -171,7 +172,11 @@ widen a family's dependencies to accommodate it.
 - **End a trial with `ctx.request_stop(reason)`, not by padding `--seconds`.** A wall-clock limit has
   to be guessed high enough for the slowest cell and is then wasted on every faster one. It is a
   request, not a kill switch: the driver polls it and exits cleanly, so `shutdown` runs and files
-  flush, and an embedding driver may ignore it. Physics-thread only, like every other write on `ctx`.
+  flush, and an embedding driver may ignore it. Physics-thread only, like every other write on `ctx`;
+  a reset clears it. In a scenario-execution run the scenario owns the loop and ends on the request
+  only by waiting for it: invoke `sim_stop_requested()` (`osc.roqsim`; an action, not a `wait`
+  condition) in a `parallel` branch followed by `emit end`. Stepped runner only — over ROS the
+  simulator is `roqsim sim`, which ends the run on the request by itself.
 - Global contact tuning is `sim.contact_override` (`solref` / `solimp` / `friction`, MuJoCo's
   `o_*` overrides), validated at load time — global, and applied *before compile*, so it is in the
   compiled model and in the run's provenance. Per-geom values belong in the model, not here. Changing

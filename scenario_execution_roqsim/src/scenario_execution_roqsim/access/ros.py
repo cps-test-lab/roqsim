@@ -38,6 +38,7 @@ from . import (
     Pose,
     SpawnCall,
     SpawnOutcome,
+    StopRequest,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -430,6 +431,23 @@ class RosAccess(WorldAccess):
             self._result_ok,
             "spawn_entity",
             self._advertised_services,
+        )
+
+    def stop_request(self) -> StopRequest:
+        """Refused: nothing on the ROS graph carries ``ctx.request_stop``.
+
+        The bridge publishes no such flag, and ``get_simulation_state`` reports run-control
+        (playing, paused, stopped), which a stop request does not change. It does not need a
+        channel: under the ROS runner the simulator is ``roqsim sim``, which honours the request
+        itself -- it leaves its loop and exits, taking its node with it. A scenario that must end
+        on it runs in the stepped shape, where the request is readable in-process.
+        """
+        raise AccessError(
+            "a stop request (`ctx.request_stop`) cannot be observed over ROS: the bridge publishes "
+            "no topic or service carrying it, and `get_simulation_state` reports run-control, which "
+            "a stop request does not change. Under the ROS runner the simulator is `roqsim sim`, "
+            "which ends the run on the request by itself; waiting on it is for the stepped runner "
+            "(`--simulation roqsim.scenario_adapter:MujocoSim`), where the scenario owns the loop."
         )
 
     def teardown(self) -> None:

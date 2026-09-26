@@ -40,6 +40,7 @@ from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # no
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
+from scenario_execution_roqsim.actions.sim_stop_requested import SimStopRequested  # noqa: E402
 from scenario_execution_roqsim.actions.spawn_entity import SpawnEntity  # noqa: E402
 
 RUNNING = py_trees.common.Status.RUNNING
@@ -1284,3 +1285,56 @@ def test_delete_refuses_an_empty_entity_name(teleport_world):
     action.setup(simulation=sim, clock=clock)
     with pytest.raises(ActionError, match="empty"):
         action.execute(entity="")
+
+
+# -- sim_stop_requested ---------------------------------------------------------------------------
+def _stop_action(sim, clock):
+    """Set up only: the action takes no arguments, so it declares no ``execute``."""
+    action = SimStopRequested()
+    action.setup(simulation=sim, clock=clock)
+    return action
+
+
+def test_sim_stop_requested_runs_until_a_plugin_asks_and_reports_why(world):
+    """The scenario owns the loop in a stepped run, so a plugin's request ends the run only through
+    this: RUNNING until `ctx.request_stop`, then SUCCESS with the plugin's reason in the feedback."""
+    ctx, clock, sim = world
+    action = _stop_action(sim, clock)
+    assert action.update() is RUNNING
+    assert "no stop requested" in action.feedback_message
+    _step(ctx, clock, seconds=0.01)
+    assert action.update() is RUNNING
+    ctx.request_stop("protective_stop: force 51.2 N exceeds 40.0 N")
+    assert action.update() is SUCCESS
+    assert "protective_stop: force 51.2 N exceeds 40.0 N" in action.feedback_message
+
+
+def test_sim_stop_requested_says_so_when_the_request_gave_no_reason(world):
+    ctx, clock, sim = world
+    action = _stop_action(sim, clock)
+    ctx.request_stop()
+    assert action.update() is SUCCESS
+    assert "no reason given" in action.feedback_message
+
+
+def test_sim_stop_requested_waits_rather_than_building_a_world(world):
+    _ctx, clock, _sim = world
+
+    class NotBuilt:
+        context = None
+
+    action = _stop_action(NotBuilt(), clock)
+    assert action.update() is RUNNING
+    assert "simulation" in action.feedback_message
+
+
+def test_sim_stop_requested_raises_over_ros_rather_than_waiting_forever():
+    """Nothing on the ROS graph carries the request, so a wait on it could never end: an authoring
+    error, raised by name. ROS-free: the refusal needs no client."""
+    from scenario_execution_roqsim.access import ros as ros_access
+
+    access = object.__new__(ros_access.RosAccess)
+    action = SimStopRequested()
+    action._access, action._clock = access, FakeClock()
+    with pytest.raises(ActionError, match="cannot be observed over ROS"):
+        action.update()

@@ -26,6 +26,7 @@ from . import (
     Pose,
     SpawnCall,
     SpawnOutcome,
+    StopRequest,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
@@ -103,6 +104,14 @@ class InProcessAccess(WorldAccess):
             return None
         bid = self._body_id(ctx, name)
         return Pose(pos=np.array(ctx.data.xpos[bid]), quat=np.array(ctx.data.xquat[bid]))
+
+    def stop_request(self) -> StopRequest:
+        ctx = self._ctx()
+        if ctx is None:
+            raise AccessError("the world is not built yet; call ready() first")
+        # A read of two plain attributes, on the thread that steps: the stepped runner ticks the tree
+        # between steps, so the flag cannot change underneath it.
+        return StopRequest(bool(ctx.stop_requested), str(ctx.stop_reason or ""))
 
     def _body_id(self, ctx, name: str) -> int:
         key = (id(ctx.model), name)

@@ -438,7 +438,9 @@ class SimContext:
 
         Physics-thread only, like every other write on this object. The engine itself does not act
         on it -- an embedding driver (scenario-execution, a test harness) is free to ignore it and
-        keep stepping -- so it is a request, not a kill switch.
+        keep stepping -- so it is a request, not a kill switch. In a scenario-execution run a
+        scenario ends on it with ``osc.roqsim``'s ``sim_stop_requested()``. ``Engine.reset`` clears
+        it: a request ends the trial it was made in.
         """
         if not self.stop_requested:
             self.stop_requested = True

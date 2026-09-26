@@ -869,6 +869,7 @@ What a scenario can ask the simulation
    entity_moved(entities: ['parcel'], threshold: 0.05, mode: displacement_mode!z, dwell: 8.0)
    entity_rotated(entities: ['crate'], angle: 0.5)
    set_model_override(instance: 'grip_fault')            # ...and `active: false` restores it
+   sim_stop_requested()                                  # a plugin called ctx.request_stop
 
 ``entity_moved`` / ``entity_rotated`` succeed once the named entities have been displaced (or turned)
 from where they were **when the action started** — net displacement, not path length, unlike
@@ -876,8 +877,15 @@ from where they were **when the action started** — net displacement, not path 
 ``model_override`` fault (§9.2) and **fails the trial when the plugin reports the write changed
 nothing**, so a run cannot record an unfaulted outcome under a faulted label.
 
-All three work in a stepped run *and* in a ROS run, unedited: the transport is chosen from what the
-runner offered. In-process they read ``MujocoSim.context`` (entity poses from ``data.xpos``, the fault
+``sim_stop_requested`` succeeds once a plugin has called ``ctx.request_stop(reason)`` and reports the
+reason: the scenario owns the loop in a stepped run, so this is how the run ends when the trial says it
+is finished — invoked as an action in a ``parallel`` branch followed by ``emit end``, not after
+``wait``, which takes an event condition. It is the one action that is **stepped-only**: over ROS
+nothing carries the request, and the simulator there is ``roqsim sim``, which ends the run on it by
+itself, so asking raises.
+
+The other three work in a stepped run *and* in a ROS run, unedited: the transport is chosen from what
+the runner offered. In-process they read ``MujocoSim.context`` (entity poses from ``data.xpos``, the fault
 through the ``model_override:<name>`` blackboard handle, writes queued with ``ctx.post``); over ROS they
 use ``simulation_interfaces/GetEntityState`` and ``<instance>/override``. Both are keyed on the same
 **entity and instance names**, which is what makes one scenario serve both — see the package's README

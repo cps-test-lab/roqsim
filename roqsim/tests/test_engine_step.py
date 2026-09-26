@@ -29,6 +29,21 @@ def test_dummy_builds_nonempty_model_and_counts_hooks():
     assert engine.ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
 
 
+def test_a_stop_request_ends_with_its_trial():
+    """A reset starts a new trial, so a request from the previous one must not stand in it."""
+    engine = _dummy_engine(n=1)
+    engine.setup()
+    engine.reset()
+    engine.step()
+    engine.ctx.request_stop("goal reached")
+    assert engine.ctx.stop_requested and engine.ctx.stop_reason == "goal reached"
+    engine.reset()
+    assert not engine.ctx.stop_requested and engine.ctx.stop_reason == ""
+    engine.ctx.request_stop("second trial")
+    assert engine.ctx.stop_reason == "second trial", "a new trial's request is heard"
+    engine.shutdown()
+
+
 def test_timing_report_populated():
     engine = _dummy_engine(n=1, profile=True)
     engine.setup()

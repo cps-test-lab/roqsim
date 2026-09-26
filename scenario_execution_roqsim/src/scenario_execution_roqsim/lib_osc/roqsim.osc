@@ -173,3 +173,23 @@ action set_model_override:
     instance: string                                  # the world's instance, by its `name:`
     active: bool = true                               # true = apply the configured target, false = nominal
     require_landed: bool = true                       # fail the trial on a verdict of 'no_effect'
+
+action sim_stop_requested
+    # Succeed once something in the world has asked for the run to end -- a plugin calling
+    # `ctx.request_stop(reason)`: a trial protocol that resolved, a `force_limit` whose `stop_run`
+    # tripped. `roqsim sim` ends its own loop on that request; in a scenario-execution run the
+    # scenario owns the loop, so the request ends the run only where the scenario waits on it.
+    # The action IS the wait -- RUNNING until the request -- so it is invoked, not put after
+    # `wait` (which takes an event condition, and refuses an action):
+    #
+    #     do parallel:
+    #         serial:
+    #             ...                        # the trial
+    #             emit end
+    #         serial:
+    #             sim_stop_requested()
+    #             emit end                   # or `emit fail`, where a stop means a failed trial
+    #
+    # The request's reason is the action's feedback, so the run's tree snapshot says why it ended.
+    # STEPPED RUNNER ONLY: over ROS nothing carries the request -- the simulator there is
+    # `roqsim sim`, which ends the run on it by itself -- so this raises rather than waits forever.

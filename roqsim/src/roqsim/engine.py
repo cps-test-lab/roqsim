@@ -379,6 +379,11 @@ class Engine:
         # `rng_for` is keyed on simulated time, so without this every trial after the first
         # would replay the first one's noise exactly.
         self.ctx.episode += 1
+        # A stop request ends the trial it was made in. A driver that resets rather than exits -- the
+        # scenario adapter, between scenarios -- would otherwise start the next trial with the
+        # request already standing, and a scenario waiting on it would end that trial at once.
+        # Cleared before `on_reset`, so a plugin that asks during its own reset is still heard.
+        self.ctx.stop_requested, self.ctx.stop_reason = False, ""
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
         if params:

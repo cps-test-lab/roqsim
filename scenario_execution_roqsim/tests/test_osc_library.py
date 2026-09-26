@@ -35,6 +35,7 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
 )
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
+from scenario_execution_roqsim.actions.sim_stop_requested import SimStopRequested  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
 from scenario_execution_roqsim.get_osc_library import get_osc_library  # noqa: E402
 
@@ -67,6 +68,7 @@ def _entry_points(group):
             EntryPointStub(
                 "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
             ),
+            EntryPointStub("sim_stop_requested", SimStopRequested, "scenario_execution_roqsim"),
         ]
     return []
 
@@ -230,3 +232,30 @@ scenario test:
         entity_navigate_start(entity: 'cart')
 """
     )
+
+
+# -- sim_stop_requested --------------------------------------------------------------------------
+_STOP_SCENARIO = (
+    "import osc.roqsim\n"
+    "scenario test_stop:\n"
+    "    do parallel:\n"
+    "        serial:\n"
+    "            entity_moved(entities: ['parcel'], threshold: 0.05)\n"
+    "            emit end\n"
+    "        serial:\n"
+    "            {invocation}\n"
+    "            emit end\n"
+)
+
+
+def test_sim_stop_requested_parses_and_binds_to_its_action():
+    """No arguments; invoked as an action, it is itself the wait -- RUNNING until the request."""
+    tree = _build(_STOP_SCENARIO.format(invocation="sim_stop_requested()"))
+    assert len(_nodes(tree, SimStopRequested)) == 1
+
+
+def test_sim_stop_requested_is_an_action_and_not_a_wait_condition():
+    """`wait` takes an event condition, and the parser refuses an action there. Pinned so the docs
+    keep showing the form that runs rather than one that reads naturally and fails to parse."""
+    with pytest.raises(ValueError, match="Invalid event condition"):
+        _build(_STOP_SCENARIO.format(invocation="wait sim_stop_requested()"))
