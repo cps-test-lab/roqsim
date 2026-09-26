@@ -18,7 +18,7 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
 
    components:
      - floorplan:                       # (1) entry-point short name -- the ref *is* the key
-         size: 3.0
+         mesh: envs/x.stl
        name: ground                     # optional instance name (reserved sibling key)
      - "my_pkg.mod:MyPlugin": { ... }   # (2) importable module:Class (PYTHONPATH)
      - "./plugins/x.py:Foo": { ... }    # (3) path to a .py file (relative to this YAML)
@@ -85,8 +85,8 @@ callers never depend on list indices:
 
    from roqsim import load_config
 
-   cfg = load_config("world.yaml", {"sim": {"headless": False},
-                                    "plugins": {"floorplan": {"size": 4.0}}})
+   cfg = load_config("world.yaml", {"sim": {"pacing": "asap"},
+                                    "components": {"floorplan": {"floor": {"reflectance": 0.3}}}})
 
 Values deep-merge (scalars and lists replace). Overrides must be applied at load time -- the scene is
 compiled when the engine is built, so mutating a built ``SimConfig`` has no effect.
@@ -94,7 +94,7 @@ compiled when the engine is built, so mutating a built ``SimConfig`` has no effe
 The standalone runner exposes the same thing on the command line, where
 ``roqsim.overrides_from_dotlist`` parses the ``path=value`` form::
 
-   roqsim sim world.yaml --set components.floorplan.size=4.0
+   roqsim sim world.yaml --set components.floorplan.floor.reflectance=0.3
 
 ...and in a **file**, which is the same nested mapping kept somewhere a command line cannot keep
 it::
@@ -342,17 +342,18 @@ Extending another world
 ------------------------
 
 Overrides *modify* an existing world; ``extends`` *inherits* one. A world YAML may name a parent to
-inherit its ``sim`` block and ``plugins`` list, then add, remove, or modify elements:
+inherit its ``sim`` block and ``components`` list, then turn off, add, or modify elements:
 
 .. code-block:: yaml
 
    extends: roqsim_scenes:depot # a parent world YAML: "<package>:<world>" ref or a path
    sim:
      timestep: 0.001              # deep-merged over the parent's sim (child wins per key)
-   disable:                       # OPTIONAL: drop inherited plugins by name (needs ``extends``)
+   disable:                       # OPTIONAL: turn inherited entries off by label (needs ``extends``)
      - graspable_box
    components:                    # child entries are APPENDED after the (kept) parent entries
-     - spawn_robot: {model: oli, name: oli, prefix: oli_, pose: {position: {x: 13.2, y: 2.6}}}
+     - spawn_robot: {model: oli, prefix: oli_, pose: {position: {x: 13.2, y: 2.6}}}
+       name: oli
 
 The ``extends`` value resolves like ``sim.world`` -- a ``<package>:<world>`` ref against a registered
 ``roqsim.worlds`` provider (to that provider's ``<world>.yaml``), or a path relative to the child
@@ -362,10 +363,11 @@ parent's becomes an absolute path, and a package parent's becomes a ``<package>:
 installed, so a run's provenance rebuilds on any machine that has the package. Parent worlds may
 themselves ``extends`` (cycles are rejected).
 
-``disable`` selectors match a plugin's reserved ``name:`` **or** its config ``name`` field (e.g.
-``spawn_model: {name: graspable_box, ...}``); a selector that matches nothing is an error, not a
-silent no-op. There is no separate "modify" key -- to change an inherited plugin, ``disable`` it and
-re-add a tweaked copy in the child's ``plugins``.
+``disable`` selectors match an entry's label -- its reserved ``name:``, else its plugin ref -- and
+set ``enabled: false`` on it, so the entry stays in the document, addressable and in the run's
+record; a selector that matches nothing is an error, not a silent no-op. There is no separate
+"modify" key -- to change an inherited entry, override its keys, or ``disable`` it and add a tweaked
+copy under another label in the child's ``components``.
 
 Drawing on a render (``roqsim.render_overlays``)
 -------------------------------------------------
