@@ -285,13 +285,16 @@ def test_a_long_run_whose_robot_stopped_is_still_caught_from_the_window(tmp_path
 
 
 def test_a_long_run_whose_clock_wedged_is_still_caught_from_the_window(tmp_path, capsys):
-    """An hour at realtime, then sim time flat for two minutes while wall time went on."""
+    """An hour at realtime, then rows for two minutes whose sim time stands still.
+
+    The one stop a one-shot check can see, because the rows record it: they arrived, and sim time
+    did not advance in them."""
     now = time.time()
     running = [clock_line(now - 3720 + t, float(t)) for t in range(0, 3600)]
     wedged = [clock_line(now - 3720 + t, 3600.0) for t in range(3600, 3720)]
     write_run(tmp_path, running + wedged)
     assert health.main([str(tmp_path)]) == health.EXIT_FINDING
-    assert "sim-time-rate" in capsys.readouterr().out
+    assert "sim-time-stuck" in capsys.readouterr().out
 
 
 # -- check 2: sim time starts ------------------------------------------------------------------
@@ -336,7 +339,83 @@ def test_start_check_is_silent_when_no_record_has_appeared_yet():
     assert check.findings(now=100.0 + 30.0, origin=100.0) == []
 
 
-# -- check 3: sim time rate --------------------------------------------------------------------
+# -- check 3: sim time keeps advancing -----------------------------------------------------------
+
+
+def test_stuck_check_passes_a_run_whose_rows_keep_arriving():
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 121)])
+    assert check.findings(now=221.0, origin=100.0) == []
+
+
+def test_stuck_check_fires_when_rows_stop_arriving():
+    """A frozen simulation writes no clock rows; against the wall clock, the silence is the finding."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)])
+    assert check.findings(now=109.0 + 59.0, origin=100.0) == [], "within the floor"
+    findings = check.findings(now=109.0 + 61.0, origin=100.0)
+    assert [(f.level, f.check) for f in findings] == [(health.ERROR, "sim-time-stuck")]
+    assert "has not advanced for 61 s" in findings[0].detail
+
+
+def test_stuck_check_does_not_fire_on_an_expensive_world():
+    """A deformable body at a sub-millisecond step: a few percent of realtime, but a row arrives on
+    every sample -- it is slow, not stopped."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + 3.3 * i, 0.1 * i) for i in range(0, 200)])
+    last = 100.0 + 3.3 * 199
+    assert check.findings(now=last + 3.0, origin=100.0) == []
+
+
+def test_stuck_check_measures_silence_against_the_runs_own_cadence():
+    """Rows twenty seconds apart: a minute without one is three missed rows, not a stop."""
+    check = health.SimTimeStops(floor=60.0, factor=10.0)
+    check.update([health.ClockRow(100.0 + 20.0 * i, 0.1 * i) for i in range(0, 10)])
+    last = 100.0 + 20.0 * 9
+    assert check.limit() == pytest.approx(200.0)
+    assert check.findings(now=last + 150.0, origin=100.0) == []
+    assert [f.level for f in check.findings(now=last + 210.0, origin=100.0)] == [health.ERROR]
+
+
+def test_stuck_check_leaves_a_run_that_never_started_to_check_2():
+    """Before sim time has advanced once there is no cadence, and "never started" is check 2's."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0, 0.0)])
+    assert check.findings(now=1000.0, origin=100.0) == []
+
+
+def test_stuck_check_counts_a_row_that_does_not_advance_as_silence():
+    """A row whose sim time stood still says the writer is alive, not the simulation -- and it is
+    the only stop a one-shot check, whose "now" is the newest row, can see."""
+    check = health.SimTimeStops()
+    rows = [health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)]
+    rows += [health.ClockRow(110.0 + t, 9.0) for t in range(0, 90)]
+    check.update(rows)
+    findings = check.findings(now=rows[-1].wall_ts, origin=100.0)
+    assert [f.level for f in findings] == [health.ERROR]
+
+
+def test_stuck_check_is_not_tripped_by_a_reset():
+    """Sim time goes back at a reset; the loop is running, so it is progress."""
+    check = health.SimTimeStops()
+    splitter = health.SeriesSplitter()
+    rows = [health.ClockRow(100.0 + t, float(t)) for t in range(0, 60)]
+    rows += [health.ClockRow(160.0 + t, float(t)) for t in range(0, 60)]
+    for index, series in enumerate(splitter.split(rows)):
+        if index:
+            check.on_new_series()
+        check.update(series)
+    assert check.findings(now=220.0, origin=100.0) == []
+
+
+def test_stuck_check_reports_once():
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)])
+    assert len(check.findings(now=300.0, origin=100.0)) == 1
+    assert check.findings(now=400.0, origin=100.0) == []
+
+
+# -- check 4: sim time rate --------------------------------------------------------------------
 
 
 def test_rate_check_passes_a_realtime_run():
@@ -351,13 +430,20 @@ def test_rate_check_waits_for_a_full_window():
     assert check.findings(now=130.0, origin=100.0) == [], "never fail a run for its first minute"
 
 
-def test_rate_check_fires_on_a_wedged_run():
-    """Rows stop arriving; the window keeps sliding. Silence is what makes the rate fall."""
+def test_rate_check_warns_on_a_slow_run_whose_rows_keep_arriving():
+    """An expensive world at 3 % of realtime: worth saying, not worth ending the run over."""
     check = health.SimTimeRate(min_advance=5.0, window=60.0)
-    check.update([health.ClockRow(100.0 + t, t * 0.001) for t in range(0, 10)])
-    findings = check.findings(now=100.0 + 90.0, origin=100.0)
-    assert [f.level for f in findings] == [health.ERROR]
-    assert "last row" in findings[0].detail
+    check.update([health.ClockRow(100.0 + 3.3 * i, 0.1 * i) for i in range(0, 40)])
+    findings = check.findings(now=100.0 + 3.3 * 39, origin=100.0)
+    assert [(f.level, f.check) for f in findings] == [(health.WARN, "sim-time-rate")]
+    assert "0.030x realtime" in findings[0].detail
+
+
+def test_rate_check_leaves_silence_to_the_stuck_check():
+    """Rows stop arriving; the rate is measured between rows, so the stop is check 3's alone."""
+    check = health.SimTimeRate(min_advance=5.0, window=60.0)
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 61)])
+    assert check.findings(now=100.0 + 600.0, origin=100.0) == []
 
 
 def test_rate_check_is_not_fooled_by_a_reset(tmp_path):
@@ -540,7 +626,30 @@ def test_cli_exits_5_on_a_wedged_run(tmp_path, capsys):
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.001) for t in range(0, 10)])
     assert health.main([str(tmp_path), "--watch"]) == health.EXIT_FINDING
-    assert "sim-time-rate" in capsys.readouterr().out
+    assert "sim-time-stuck" in capsys.readouterr().out
+
+
+def test_cli_one_shot_cannot_see_a_run_that_stopped(tmp_path, capsys):
+    """The same silent record, one-shot: its rows end, and nothing in them says whether the run
+    ended or froze -- so it is not reported. A caller that must catch a stop runs --watch."""
+    now = time.time()
+    write_run(tmp_path, [clock_line(now - 300 + t, float(t)) for t in range(0, 10)])
+    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    capsys.readouterr()
+    code = health.main([str(tmp_path), "--watch", "--for", "0.01", "--poll", "0.01"])
+    assert code == health.EXIT_FINDING, "one bounded --watch pass judges against the wall clock"
+    assert "sim-time-stuck" in capsys.readouterr().out
+
+
+def test_cli_watch_does_not_end_an_expensive_world(tmp_path, capsys):
+    """A few percent of realtime with a row on every sample: a warning, and the watch goes on."""
+    now = time.time()
+    rows = [clock_line(now - 3.3 * (100 - i), 0.1 * i) for i in range(0, 100)]
+    write_run(tmp_path, rows)
+    code = health.main([str(tmp_path), "--watch", "--for", "0.05", "--poll", "0.01", "--json"])
+    assert code == health.EXIT_OK
+    payload = json.loads(capsys.readouterr().out)
+    assert [(f["level"], f["check"]) for f in payload["findings"]] == [("warn", "sim-time-rate")]
 
 
 def test_cli_one_shot_does_not_call_a_finished_run_stalled(tmp_path, capsys):
@@ -556,12 +665,14 @@ def test_cli_one_shot_does_not_call_a_finished_run_stalled(tmp_path, capsys):
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
-def test_cli_still_fails_a_run_that_was_slow_while_it_ran(tmp_path, capsys):
-    """One-shot judges the recorded span -- so a run that crawled is caught from the record alone."""
+def test_cli_still_reports_a_run_that_was_slow_while_it_ran(tmp_path, capsys):
+    """One-shot judges the recorded span -- so a run that crawled is seen from the record alone, and
+    reported as slow rather than failed."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.01) for t in range(0, 200)])
-    assert health.main([str(tmp_path)]) == health.EXIT_FINDING
-    assert "realtime" in capsys.readouterr().out
+    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    out = capsys.readouterr().out
+    assert "sim-time-rate" in out and "realtime" in out and out.startswith("warn")
 
 
 def test_watch_stops_without_complaint_when_the_recording_closes(tmp_path, capsys):
@@ -598,7 +709,7 @@ def test_cli_json_carries_the_findings(tmp_path, capsys):
     assert health.main([str(tmp_path), "--watch", "--json"]) == health.EXIT_FINDING
     payload = json.loads(capsys.readouterr().out)
     assert payload["exit"] == health.EXIT_FINDING
-    assert payload["findings"][0]["check"] == "sim-time-rate"
+    assert payload["findings"][0]["check"] == "sim-time-stuck"
 
 
 # -- the state block: where everything is, alongside what is wrong ---------------------------------

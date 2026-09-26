@@ -26,8 +26,10 @@ What travels, and what does not:
   pose says nothing a viewer can apply without its parent's).
 * **Pose tracks** -- world-frame ``(pos, wxyz quat)`` for every body whose ``xpos``/``xquat`` actually
   varies and that no joint track already explains: free-jointed bodies, mocap bodies (a walker's
-  bones), ball-jointed ones. Selected by *observation* rather than configuration, so a world that
-  gains a walker or a movable prop captures it with no config change.
+  bones), ball-jointed ones, and a flex's vertex or node bodies, whose slide joints are unnamed --
+  the tracks a flex's skin in the scene descriptor deforms from. Selected by *observation* rather
+  than configuration, so a world that gains a walker or a movable prop captures it with no config
+  change.
 * Static bodies are omitted -- the geometry already carries their rest pose, and a track per wall
   would dwarf the file.
 

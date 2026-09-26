@@ -787,3 +787,41 @@ def _recorded(tmp_path, model, data, *, fps: int, samples: int):
     path = tmp_path / f"src-{fps}-{samples}.npz"
     np.savez(path, meta=np.array(json.dumps(meta)), samples=rows)
     return open_recording(path)
+
+
+# A flex's vertex bodies are one row each per sample, and no success rule reads one by name: the pose
+# record leaves them out, keeps the body the flex hangs from, and says so once per flex.
+_FLEX_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <worldbody>
+    <body name="table" pos="0 0 .5">
+      <geom type="box" size=".1 .1 .01"/>
+      <flexcomp name="pad" type="grid" count="3 3 1" spacing=".05 .05 .05" dim="2" radius=".001"
+                pos="0 0 .05">
+        <edge equality="true"/><pin id="0 1 2"/>
+      </flexcomp>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_the_pose_record_leaves_a_flexs_own_bodies_out(tmp_path, caplog):
+    model = mujoco.MjModel.from_xml_string(_FLEX_XML)
+    data = mujoco.MjData(model)
+    ctx = _Ctx(model, data)
+    rate = snap_fps(1 / model.opt.timestep, model.opt.timestep)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", rate, sim_poses=True)
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            mujoco.mj_step(model, data)
+            rec.sample(ctx)
+    rec.close()
+
+    rows = [line.split(",") for line in (tmp_path / "sim_poses.csv").read_text().splitlines()[1:]]
+    # The pinned vertices sit on `table`, which stays; the six free vertices' bodies (pad_3..pad_8)
+    # are the flex's own.
+    assert {r[2] for r in rows} == {"table"}
+    assert "omits the 6 bodies of flex 'pad'" in caplog.text
+    assert "0 unnamed bodies have no row" in caplog.text
