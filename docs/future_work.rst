@@ -1,12 +1,12 @@
 Future work
 ===========
 
-A running list of design topics deferred from the current work. Recorded so the seams built now --
-the plugin lifecycle (:doc:`architecture`), the ``RenderService`` (§8), and the single-writer
-threading model (§7) -- are honoured when the work lands.
+A running list of design topics deferred from the current work. Recorded so the plugin lifecycle
+(:doc:`architecture`), the single-writer threading model (§7) and the planned ``RenderService`` (§8)
+are honoured when the work lands.
 
-The 3D human-review addon has its own roadmap (world-space dots via ray-cast, object picking,
-play/settle controls); it lives with that component under :doc:`scene_builder` › Roadmap.
+The 3D human-review addon has its own roadmap (a sketch-authored door hinge side, play/settle
+controls); it lives with that component under :doc:`scene_builder` › Roadmap.
 
 Off-thread (asynchronous) camera rendering
 ------------------------------------------
@@ -93,7 +93,8 @@ cached value when read again at the same ``sim_time``, recomputing only when the
 makes lazy reads inherently single-compute for **any** multi-consumer topology, keeps the rate-gating
 in one place (the bridge), and lets every producer keep a plain ``read()`` with no caching logic of
 its own. Small change local to ``context.Endpoint`` / ``BridgeBase``; the alternative (each producer
-re-adding its own cache) is exactly the eager-``post_step`` coupling this pattern removed.
+re-adding its own cache) is exactly the eager-``post_step`` coupling this pattern avoids.
+
 Plugin-declared viewer keys
 ---------------------------
 
