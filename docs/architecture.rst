@@ -619,7 +619,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §5 removed. Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 
@@ -658,8 +658,6 @@ go through it. Three things live there because they must be decided once:
    z-buffer, not a raycast.
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
-
-.. _92-physical-faults-impl:
 
 **Reaching a sensor's config from outside the world.** A sensor usually arrives from a model manifest -- ``spawn_robot: {model: turtlebot4}``
 brings the lidar with it -- so a world that only spawns a robot never names it. Two
@@ -705,6 +703,8 @@ consequences, and they differ:
    useful answer is both their addresses.
 
 **Proximity is a separate observable, and a separate plugin.** ``contact_monitor`` answers *did it touch*; ``clearance_monitor`` answers *how close did it come*. Contact is the honest failure criterion and a poor optimisation target -- a bit gives every non-touching configuration one score -- so the pair exists to supply a verdict and a gradient over one geometry, with one owner each. The distance is measured in the simulator rather than derived afterwards from recorded poses for three reasons that cannot be fixed downstream: the closest approach falls *between* pose samples, and the faster the pass the more is missed; a footprint radius would put a calibration constant between the geometry and the result, which is the objection §9.2 and the contact plugin both raise against proximity proxies; and an articulated obstacle's nearest part is a limb rather than its origin. ``mj_geomDistance`` measures the real shapes, so the limb is what it finds and names. Collision masks matter here and MuJoCo's distance query does not apply them: a render-only geom would otherwise be reported as clearance to something the robot passes straight through (a pedestrian model carries six of those beside fifteen solid ones), so candidates and watched geoms are filtered by MuJoCo's own pairing rule on both sides. It **never ends a trial** -- two plugins reporting one failure by different rules is how a trial starts disagreeing with itself, and a clearance threshold is exactly the tunable number the contact oracle avoids; a scenario that wants to stop on a near-miss reads the endpoint and decides, with the threshold stated in the experiment. Measuring is a distance query per geom pair, so ``compute_rate_hz`` (default 200) is decoupled from the publish rate: every physics step cost about a fifth of the step budget on a nav world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking pace.
+
+.. _92-physical-faults-impl:
 
 9.2 Physical faults (``model_override``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -892,7 +892,7 @@ matching-dtype numpy buffers (one C-level copy) instead of per-element Python lo
 backend (zenoh, zmq) is a new ``BridgeBase`` subclass + its own registry — robots and worlds are
 unchanged.
 
-.. _13-glossary--faq:
+.. _14-glossary--faq:
 
 14. Glossary & FAQ
 ------------------
