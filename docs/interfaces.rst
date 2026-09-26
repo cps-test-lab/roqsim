@@ -238,7 +238,7 @@ The other half of the same question, for a caller holding an *override* rather t
                            "components.robot.rplidar.lidar.max_range"]}],
     "addresses": ["robot", "robot.diff_drive", "robot.rplidar", "robot.rplidar.lidar",
                   "robot.oakd_camera"],
-    "entities": null, "flexes": null}
+    "entities": null, "flexes": null, "warnings": null}
 
 ``components`` reports every component that will **run** -- the document's own entries and everything its
 models' manifests contribute -- under the ``address`` an override names it by, with the dotted paths
@@ -265,6 +265,15 @@ that a scenario only drives entities the world has pays for it; one resolving pa
 nodes) are ``pinned`` to its ``parent`` body, the ``entity`` that body belongs to, and whether it is
 ``rigid``, ``elastic`` and has ``passive_contact``. Its modes and damping are ``roqsim check``'s, since
 they cost an eigen solve (:ref:`quickstart <checking-a-world>`).
+
+``warnings`` comes with ``--entities`` as well, because the build it rides on is then also **reset**,
+as a run does before each trial: it lists what the state a trial starts from holds that will not stop
+the world from loading but is likely to make a run misbehave, in ``roqsim check``'s
+``{"check", "message", "hint"}`` shape -- two bodies placed inside one another deeper than the
+contact's tolerance (``interpenetration``, :ref:`architecture §2 <2-lifecycle-reference>`). ``[]``
+is a start state with nothing to say and ``null`` one that was not reset. A plugin whose ``on_reset``
+raises leaves ``warnings`` ``null``, sets ``errors.reset`` and exits non-zero -- a world no trial of
+which can start -- while ``entities`` and ``flexes`` still answer.
 
 ``overridable`` answers the same question one layer down, for the model values a run can change while
 it is in progress (the ``model_override`` plugin, :ref:`architecture <92-physical-faults-impl>` §9.2)::
@@ -626,7 +635,8 @@ caller to send geometry that nothing can load.
 and from what ``GetEntities`` lists. Its pose does not move, which is the point — parking it out
 of sight leaves a free body accelerating under gravity for as long as it is away, so it comes
 back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the three model fields
-this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ignores
+this flips (on its geoms, and on a flex's own copies of them) and why the geom *group* is the one
+that matters: ``mj_multiRay`` ignores
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
 

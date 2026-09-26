@@ -132,6 +132,23 @@ def test_the_glob_is_what_bounds_the_answer(capsys, world):
     assert len(everything["geom"]) > len(one["geom"])
 
 
+def test_a_flex_is_an_overridable_target(capsys, tmp_path):
+    """model_override selects a flex by name, so the names and their live values are listed."""
+    (tmp_path / "flex.xml").write_text(
+        '<mujoco><worldbody><body name="holder" pos="0 0 .5">'
+        '<flexcomp name="beam" type="grid" count="3 2 2" spacing=".02 .02 .02" dim="3" mass=".05">'
+        '<elasticity young="1e5" damping="0.01"/><pin id="0"/></flexcomp>'
+        "</body></worldbody></mujoco>"
+    )
+    path = tmp_path / "flex.yaml"
+    path.write_text("sim: {world: flex.xml}\n")
+    targets = _describe(capsys, str(path), "--overridable", "beam")["overridable"]["targets"]
+    (beam,) = targets["flex"]
+    assert beam["name"] == "beam"
+    assert beam["flex_damping"] == pytest.approx(0.01)
+    assert {"flex_friction", "flex_solref", "flex_solimp"} <= set(beam)
+
+
 def test_asking_for_both_builds_the_world_once(capsys, world, monkeypatch):
     """Compiling is the expensive part, so --entities and --overridable must share one build."""
     builds = []
@@ -418,3 +435,56 @@ def test_flexes_are_listed_with_the_entities(capsys, tmp_path):
     (flex,) = _describe(capsys, str(world), "--entities")["flexes"]
     assert (flex["name"], flex["dim"], flex["vertices"], flex["pinned"]) == ("blk", 3, 27, 3)
     assert (flex["parent"], flex["dof"], flex["elastic"]) == ("holder", "full", True)
+
+
+# -- warnings: the state a trial starts from ----------------------------------------------------
+
+SUNK_CRATE = """
+<mujoco><worldbody>
+  <body name="table"><geom name="table_top" type="box" size=".4 .4 .2" pos="0 0 .2"/></body>
+  <body name="crate" pos="0 0 {z}"><freejoint/>
+    <geom name="crate" type="box" size=".05 .05 .05"/></body>
+</worldbody></mujoco>
+"""
+
+
+def _crate_world(tmp_path, z: float):
+    (tmp_path / "scene.xml").write_text(SUNK_CRATE.format(z=z))
+    world = tmp_path / "crate.yaml"
+    world.write_text("sim: {world: scene.xml}\ncomponents: []\n")
+    return world
+
+
+def test_warnings_come_with_the_entities(capsys, tmp_path):
+    """The reset that produces them rides on the build --entities already pays for."""
+    world = str(_crate_world(tmp_path, 0.45))
+    assert _describe(capsys, world)["warnings"] is None, "not reset, so nothing to say"
+    assert _describe(capsys, world, "--entities")["warnings"] == []
+
+
+def test_a_start_state_with_a_body_inside_another_is_a_warning(capsys, tmp_path):
+    """The same finding `roqsim check` reports, in its shape, and still a complete answer."""
+    (warning,) = _describe(capsys, str(_crate_world(tmp_path, 0.42)), "--entities")["warnings"]
+    assert set(warning) == {"check", "message", "hint"}
+    assert warning["check"] == "interpenetration"
+    assert "'table_top'" in warning["message"] and "'crate'" in warning["message"]
+    assert "30.0 mm" in warning["message"]
+
+
+def test_a_reset_failure_keeps_what_the_build_answered(capsys, tmp_path):
+    """A plugin whose on_reset raises is a world that cannot start a trial: named, not hidden."""
+    (tmp_path / "boom.py").write_text(
+        "from roqsim.plugin import Plugin\n\n"
+        "class Boom(Plugin):\n"
+        "    def on_reset(self, ctx):\n"
+        "        raise RuntimeError('cannot re-home')\n"
+    )
+    world = tmp_path / "boom.yaml"
+    world.write_text("sim: {}\ncomponents:\n  - dummy: {size: 0.3}\n    name: box_a\n  - boom.py:Boom: {}\n")
+    assert world_describe.main([str(world), "--entities"]) == 1, "a partial answer is not a success"
+    out = capsys.readouterr()
+    described = json.loads(out.out.splitlines()[-1])
+    assert described["entities"] == ["box_a"], "the build-fed half is still answered"
+    assert described["warnings"] is None
+    assert described["errors"] == {"reset": "cannot re-home"}
+    assert "cannot reset world" in out.err

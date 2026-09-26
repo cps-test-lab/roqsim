@@ -6,8 +6,8 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
 ## Layout
 - `roqsim/` — ROS-free core pip package (engine, plugin base, registry, config, drivers, the `roqsim`
   command tree in `commands.py`, and the URDF/SRDF/web exporters; the world-agnostic `dummy`,
-  `spawn_model`, `ceiling`, `contact_monitor`, `clearance_monitor`, `model_override` and `payload`
-  (carried mass on any robot's body) plugins; state recording and
+  `spawn_model`, `ceiling`, `contact_monitor`, `clearance_monitor`, `model_override`,
+  `flex_material` and `payload` (carried mass on any robot's body) plugins; state recording and
   `roqsim render` are driver-level, in `capture.py` / `recording.py` / `render.py`, not plugins). Sources in
   `roqsim/src/roqsim/`, tests in `roqsim/tests/`. Depends on no sibling — keep it that way.
   `health.py` (`roqsim health`) is not even driver-level: it is a **reader**, a separate process that
@@ -179,6 +179,8 @@ widen a family's dependencies to accommodate it.
   compiled model and in the run's provenance. Per-geom values belong in the model, not here. Changing
   a value on NAMED objects, DURING a run, is the `model_override` plugin instead: aimed and triggered,
   where this key is neither. Do not add `opt.*` to that plugin's allowlist — one owner per knob.
+  A flex's material stated from the world is `flex_material`, on the spec before compile: MuJoCo
+  bakes the Young's modulus into the compiled stiffness, so no run-time write can reach it.
 
 ## Tools
 - **Everything runnable is a subcommand of `roqsim`** — the simulator is `roqsim sim <world>`, and every

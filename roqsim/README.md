@@ -45,7 +45,11 @@ Five built-in plugins, all world-agnostic:
 - `model_override` — change named model values (friction, contact masks, actuator force limits, mass)
   while a run is in progress, on an external trigger, and restore them exactly. It is what makes "the
   gripper loses the object here" a property of the world rather than of whatever drives the robot.
-  Curated allowlist: fields MuJoCo cannot take at runtime are refused by name, with the reason.
+  Curated allowlist: fields MuJoCo cannot take at runtime are refused by name, with the reason. A
+  flex's damping, friction, solref and solimp are on it.
+- `flex_material` — a flex's material (Young's modulus, Poisson's ratio, damping, contact values)
+  from the world, for a flex whichever model declared it, so each value is a campaign factor. Set on
+  the spec before compile, since MuJoCo bakes the modulus into the compiled stiffness.
 
 ## Run it
 

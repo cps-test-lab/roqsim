@@ -590,7 +590,10 @@ Every named body, and not only the ones parented to the world, because what a tr
 often welded below a robot — a tool on a flange, a workpiece in a gripper — and a reader cannot know in
 advance which. The price is rows: a manipulator world writes several times as many as a mobile one.
 Sites and unnamed bodies have no row (the run log counts the unnamed ones and names their parents);
-the recording itself is the complete state, from which those are derivable.
+the recording itself is the complete state, from which those are derivable. Neither have the bodies a
+**flex** creates for its vertices or nodes (``block_0``, ``block_1``, ... of a ``<flexcomp>``): one row
+each per sample that no success rule reads by name. The run log names each flex left out; the body
+it is declared in keeps its row, and the recording and the run capture keep the rest.
 
 Two reasons it exists rather than leaving callers to difference the recording. A velocity obtained by
 differencing positions is only ever as good as the interval it is divided by, and a consumer reading
@@ -633,6 +636,14 @@ actually moved, each keyed by the name the scene descriptor uses, so the two art
 without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
 where it is defined — and roqsim is one producer of it, the same relationship this package has with
 URDF and SRDF.
+
+A **flex** needs nothing of its own in either artifact. ``export web`` draws it as a skin whose bones
+are the bodies its vertices follow — a solid by its boundary, a sheet from both sides, a line flex as a
+tube of its radius — and those bodies' pose tracks are what deform it in a replay. A
+``dof="quadratic"`` flex is the one approximation: nine nodes move a vertex on its face and a
+viewer's skinning takes four, so it is drawn from the four that weigh most — exact at rest and under
+affine deformation, approximate where the flex curves between nodes — and the export warns when it
+does this.
 
 A run stopped any of the normal ways writes its recording on the way out: closing the viewer window, one
 Ctrl+C, or a **SIGTERM** — which is how a *supervised* run ends, whether that is ``docker stop``, a

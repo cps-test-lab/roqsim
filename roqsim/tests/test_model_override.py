@@ -407,7 +407,7 @@ def test_the_catalog_documents_every_allowlisted_field():
     catalog = {row["field"]: row for row in field_catalog()}
     assert "geom_friction" in catalog and "body_mass" in catalog
     for field, row in catalog.items():
-        assert row["namespace"] in ("geom", "body", "actuator", "joint"), field
+        assert row["namespace"] in ("geom", "body", "actuator", "joint", "flex"), field
         assert row["write"] in ("live", "needs_setconst"), field
         for key in ("does", "caveats", "measured"):
             assert row[key].strip(), f"{field} has no {key}"

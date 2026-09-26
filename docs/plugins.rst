@@ -949,7 +949,47 @@ by name, with the reason and with what to use instead (for the globals, ``sim.co
 which is *global* and applies *before compile* — a different tool for a different job). The full
 allowlist, with what each field does and how it can silently do nothing, is in the plugin's own
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
-measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
+measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
+``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
+flex name; its Young's modulus is not, for the reason in the next section.
+
+A flex's material as a campaign factor
+--------------------------------------
+
+A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
+asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
+and ``flex_material`` states that in the world instead::
+
+   components:
+     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+       name: ur5e
+     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
+                       friction: 1.5, priority: 1}
+       name: pad_material
+
+Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.pad_material.young``. Three things to know:
+
+* **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
+  ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
+  run-time write could reach -- which is why the modulus is a build-time component and not a
+  ``model_override`` row. The contact values and the damping are compiled fields; setting them here
+  keeps one material in one block, and ``model_override`` can still change the four live ones
+  during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in
+  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
+  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
+  the component that brings the flex in -- below the arm, as here.
+* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
+  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
+  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
+  be set in the same block, so a shell can be made elastic here.
+
+Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
+with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
+``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
+in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+:mod:`roqsim.plugins._flex_material`.
 
 Perception ground truth
 -----------------------
@@ -1589,6 +1629,44 @@ node that publishes ``target_frame`` instead.
 
 ``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
 
+**A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
+setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
+closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
+(25 mm at 50 mm/s and the default ``kp`` of 2 /s), ``D v / C`` on a stiff axis of the compliance
+controller. ``feedforward`` (default ``auto``) commands the goal's own velocity alongside the
+correction, ``twist = v_goal + kp (x_goal - x)``, and damps the compliance law on velocity *relative*
+to the goal's; a zero-stiffness axis is under force control and is given nothing to follow.
+
+.. code:: yaml
+
+   - cartesian_admittance:
+       controller_type: cartesian_motion_controller
+       feedforward: auto          # auto | supplied | off
+       feedforward_window_s: 0.2  # goals further apart than this are not a stream
+
+``v_goal`` comes from one of two places, and which one is a choice about the caller:
+
+* **Supplied with the goal**, by an in-process caller that knows it:
+  ``CartesianHandle.set_goal(pos, quat, twist=[vx, vy, vz, wx, wy, wz])``, world frame. Used under
+  ``auto`` and ``supplied``. ``target_frame`` is a ``PoseStamped``, as on the real controller, so a
+  ROS client cannot supply one.
+* **Estimated from the stream**, under ``auto``, by differencing successive goals over sim time. Per
+  axis it takes the smaller of the last two arrival-to-arrival velocities where they agree in sign,
+  and zero where they do not, so a goal that *jumps* -- a new stationary goal, or one displaced goal
+  in a stream -- feeds nothing forward while a steady stream is fed forward in full. Goals further
+  apart than ``feedforward_window_s`` are waypoints rather than a stream and feed nothing forward;
+  a feedforward lapses once the next goal is half an interval overdue, so a stream that stops leaves
+  the arm to settle on its last goal.
+
+A goal commanded once, or re-sent unchanged, commands exactly what it did without a feedforward;
+``feedforward: off`` is the proportional-only law for a stream too. The twist is clamped to
+``max_linear_vel`` / ``max_angular_vel`` either way.
+
+**The lag is observable.** ``<controller>/tracking_error`` (``std_msgs/Float64``, metres) is how far
+the controlled site is from the pose it tracks -- the commanded ``target_frame`` or, before one, the
+pose the controller took the arm at. An in-process caller reads the full error, rotation included,
+and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
+
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
@@ -1623,7 +1701,7 @@ That division is the general one. The substrate owes a cell the *mechanism* — 
 wrench, close a Cartesian loop. What is being inserted into what, and what counts as having inserted
 it, is the experiment's to state.
 
-Three things decide whether such a world measures anything at all:
+Four things decide whether such a world measures anything at all:
 
 * **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
   from the body's children, so the tool must hang **below** it. A peg attached above the measurement
@@ -1653,6 +1731,12 @@ Three things decide whether such a world measures anything at all:
   than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
+* **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
+  probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
+  the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
+  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
+  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
+  docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
 outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
@@ -1771,6 +1855,34 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
+
+Manipulation: a prop or a tool that deforms
+-------------------------------------------
+
+A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
+model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
+``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
+needs (:mod:`roqsim.flex`). What the spawn adds around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
+  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
+  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, whose own value its contacts use.
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
+  under its own weight, as a real one on a still arm does.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
 
 Writing your own
 ----------------
