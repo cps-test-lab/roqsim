@@ -100,20 +100,32 @@ def _footprint(model, data, g):
             [[sx, sy, sz] for sx in (-s[0], s[0]) for sy in (-s[1], s[1]) for sz in (-s[2], s[2])]
         )
         W = corners @ R.T + p
-    elif t in (G.mjGEOM_CYLINDER, G.mjGEOM_CAPSULE, G.mjGEOM_SPHERE, G.mjGEOM_ELLIPSOID):
-        r = float(max(s[0], s[1])) if t == G.mjGEOM_ELLIPSOID else float(s[0])
-        if t == G.mjGEOM_CYLINDER:
-            half = float(s[1])
-        elif t == G.mjGEOM_CAPSULE:
-            half = float(s[1]) + r
-        elif t == G.mjGEOM_ELLIPSOID:
-            half = float(s[2])
-        else:  # sphere
-            half = r
+    elif t in (G.mjGEOM_CYLINDER, G.mjGEOM_CAPSULE, G.mjGEOM_SPHERE):
+        # Built from the geom's own axis, in the world: a cylinder or capsule lying on its side (a
+        # rail, a pipe, a beam placed by `fromto`) spans its length across the floor, and a footprint
+        # drawn in its local xy plane would be a sliver at its centre.
         ang = np.linspace(0.0, 2 * np.pi, _CIRCLE_SEG, endpoint=False)
-        circ = np.stack([r * np.cos(ang), r * np.sin(ang), np.zeros_like(ang)], 1)
-        W = circ @ R.T + p
-        return W[:, :2], float(p[2] - half), float(p[2] + half)
+        r = float(s[0])
+        half = 0.0 if t == G.mjGEOM_SPHERE else float(s[1])
+        ends = [p + R[:, 2] * half, p - R[:, 2] * half]
+        if t == G.mjGEOM_CYLINDER:
+            # The two end faces: circles of radius r about the axis, in the geom's frame.
+            ring = np.stack([r * np.cos(ang), r * np.sin(ang), np.zeros_like(ang)], 1) @ R.T
+            W = np.concatenate([ring + e for e in ends])
+            return W[:, :2], float(W[:, 2].min()), float(W[:, 2].max())
+        # Capsule and sphere: a sphere of radius r at each end, which projects to a disc.
+        disc = np.stack([r * np.cos(ang), r * np.sin(ang)], 1)
+        xy = np.concatenate([disc + e[:2] for e in ends])
+        zs = [e[2] for e in ends]
+        return xy, float(min(zs) - r), float(max(zs) + r)
+    elif t == G.mjGEOM_ELLIPSOID:
+        ang = np.linspace(0.0, 2 * np.pi, _CIRCLE_SEG, endpoint=False)
+        el = np.linspace(-np.pi / 2, np.pi / 2, 7)
+        a, e = np.meshgrid(ang, el)
+        unit = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], -1).reshape(
+            -1, 3
+        )
+        W = (unit * np.asarray(s[:3], dtype=float)) @ R.T + p
     else:
         return None, 0.0, 0.0
     return W[:, :2], float(W[:, 2].min()), float(W[:, 2].max())
