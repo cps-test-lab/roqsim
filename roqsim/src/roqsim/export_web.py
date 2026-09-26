@@ -20,6 +20,11 @@ Output (all in ``--out``):
                       relative to ``texturedir`` and so never resolve). Procedural textures have no
                       source image and are packed raw into scene.bin as a DataTexture instead
 
+Deformable geometry travels as **skins**: a MuJoCo ``<skin>`` as itself, and a **flex** (a
+``<flexcomp>``: a soft solid, a sheet, a cable) as a skin whose bones are the bodies its vertices
+follow (``roqsim.flex_skin``). A viewer that animates skins from bone poses therefore replays a flex's
+deformation from the run capture's pose tracks for those bodies, with no flex-specific code.
+
 What we deliberately do NOT export: lighting (the browser keeps its own three.js lights) and
 collision-only geoms (``geom_group == 3``). FK metadata (joint axis/anchor/qposadr) rides in
 scene.json so the browser animates the arm from ``/joint_states`` exactly as the URDF loader did.
@@ -37,7 +42,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import flex_skin, logging_setup
 from .config import (
     deep_merge,
     drop_transport_plugins,
@@ -189,7 +194,10 @@ def _export_joints(
                 "qposadr": qadr,
             }
         )
-        if jtype in ("hinge", "slide"):
+        # An unnamed joint has no key a viewer could look its value up by: every unnamed joint would
+        # share the key "", and the last one's value would seat them all. Left out, it rests at 0
+        # (the flex bind state below relies on that).
+        if jtype in ("hinge", "slide") and name:
             initial[name] = float(data.qpos[qadr])
     return joints, initial
 
@@ -348,6 +356,186 @@ def _export_skins(
     return skins, geoms, meshes
 
 
+#: Sides of the tube a line flex (``dim=1``) is drawn as.
+_TUBE_SIDES = 8
+
+_SCALAR_JOINT_TYPES = (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE))
+
+
+def _flex_bind_state(model: mujoco.MjModel, data: mujoco.MjData) -> mujoco.MjData:
+    """The state a flex skin binds at: the one the descriptor seats every body at before any track.
+
+    That is ``data`` (free bodies, mocap bodies and named joints, as :func:`_export_bodies` and
+    :func:`_export_joints` read them) with every unnamed hinge and slide joint at its reference
+    position -- where a viewer shows it, having no value for it. A flex's vertex bodies move on
+    unnamed slide joints, so its bind shape is the flex at rest on its posed parent, whatever it had
+    settled into in ``data``.
+    """
+    bind = mujoco.MjData(model)
+    bind.qpos[:] = data.qpos
+    bind.mocap_pos[:] = data.mocap_pos
+    bind.mocap_quat[:] = data.mocap_quat
+    for j in range(model.njnt):
+        if int(model.jnt_type[j]) in _SCALAR_JOINT_TYPES and not model.joint(j).name:
+            adr = int(model.jnt_qposadr[j])
+            bind.qpos[adr] = model.qpos0[adr]
+    mujoco.mj_kinematics(model, bind)
+    return bind
+
+
+def _tube(rig: flex_skin.FlexRig, edges: np.ndarray, radius: float):
+    """A line flex's edges as open tubes: vertices, triangles, and the flex vertex each one follows.
+
+    Each edge gets its own ring of :data:`_TUBE_SIDES` points at either end, placed around the edge's
+    rest direction and bound to the bones of the vertex at that end -- so a ring follows its vertex,
+    and keeps its rest orientation rather than turning with a bend.
+    """
+    theta = np.linspace(0.0, 2 * np.pi, _TUBE_SIDES, endpoint=False)
+    verts, tris, rows = [], [], []
+    for a, b in edges:
+        axis = rig.vert[b] - rig.vert[a]
+        length = np.linalg.norm(axis)
+        if length == 0.0:
+            continue
+        axis /= length
+        helper = np.eye(3)[int(np.argmin(np.abs(axis)))]
+        u = np.cross(axis, helper)
+        u /= np.linalg.norm(u)
+        w = np.cross(axis, u)
+        ring = radius * (np.cos(theta)[:, None] * u + np.sin(theta)[:, None] * w)
+        base = len(verts)
+        verts.extend(rig.vert[a] + ring)
+        verts.extend(rig.vert[b] + ring)
+        rows.extend([a] * _TUBE_SIDES + [b] * _TUBE_SIDES)
+        for i in range(_TUBE_SIDES):
+            j = (i + 1) % _TUBE_SIDES
+            a_i, a_j = base + i, base + j
+            b_i, b_j = a_i + _TUBE_SIDES, a_j + _TUBE_SIDES
+            # Counter-clockwise seen from outside: (u, w, axis) is right-handed.
+            tris.extend([(a_i, a_j, b_i), (a_j, b_j, b_i)])
+    return np.asarray(verts).reshape(-1, 3), np.asarray(tris).reshape(-1, 3), np.asarray(rows, int)
+
+
+def _flex_uv(model: mujoco.MjModel, flex: int, nvert: int) -> np.ndarray | None:
+    """The flex's texture coordinates when it has exactly one per vertex, else None."""
+    adr = int(model.flex_texcoordadr[flex])
+    if adr < 0:
+        return None
+    ends = [int(a) for a in model.flex_texcoordadr if int(a) > adr]
+    end = min(ends) if ends else int(model.nflextexcoord)
+    if end - adr != nvert:
+        return None
+    return model.flex_texcoord[adr:end]
+
+
+def _export_flexes(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    binw: _BinWriter,
+    mesh_base: int,
+    skin_base: int,
+    logger: logging.Logger,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Emit each drawn flex as a skin, in :func:`_export_skins`' format, so a viewer needs nothing new.
+
+    Returns ``(skins, geoms, meshes)`` to append after the skins. A flex's bones are the bodies its
+    vertices follow, with measured weights (:mod:`roqsim.flex_skin`), bound at
+    :func:`_flex_bind_state`. What is drawn:
+
+    * a solid (``dim=3``): its boundary triangles, ``flex_shell``, facing outward;
+    * a sheet (``dim=2``): its elements, twice -- once per side, over a second copy of the vertices,
+      because a viewer draws front faces only and a vertex shared by two opposite windings would get
+      a normal of zero;
+    * a line (``dim=1``): an open tube of ``flex_radius`` around each edge (:func:`_tube`).
+
+    Colour and material are ``flex_rgba`` / ``flex_matid``, and texture coordinates travel when the
+    flex has one per vertex. A flex in the collision group is skipped, as a geom is, and one whose
+    bones are not all named is skipped with a warning, since a viewer binds bones by name. Each skin
+    also carries a ``flex`` key naming the flex it draws, which a viewer may ignore.
+    """
+    skins: list[dict] = []
+    geoms: list[dict] = []
+    meshes: list[dict] = []
+    if not model.nflex:
+        return skins, geoms, meshes
+    bind = _flex_bind_state(model, data)
+    for f in range(model.nflex):
+        name = flex_skin.flex_name(model, f)
+        if int(model.flex_group[f]) == _COLLISION_GROUP:
+            continue
+        rig = flex_skin.rig(model, bind, f)
+        bone_names = [model.body(b).name for b in rig.bones]
+        if not all(bone_names):
+            logger.warning(
+                "flex %r not exported: it follows %d unnamed body/bodies, and a viewer binds a "
+                "skin's bones by name. Name the bodies (a <flexcomp> names its own).",
+                name,
+                sum(1 for n in bone_names if not n),
+            )
+            continue
+        dim = int(model.flex_dim[f])
+        faces = flex_skin.surface(model, f)
+        nvert = len(rig.vert)
+        rows = np.arange(nvert)  # the flex vertex each exported vertex follows
+        uv = _flex_uv(model, f, nvert)
+        if dim == 3:
+            verts = rig.vert
+        elif dim == 2:
+            verts = np.vstack([rig.vert, rig.vert])
+            faces = np.vstack([faces, faces[:, ::-1] + nvert])
+            rows = np.concatenate([rows, rows])
+            uv = None if uv is None else np.vstack([uv, uv])
+        else:
+            radius = float(model.flex_radius[f])
+            if radius <= 0.0:
+                logger.warning("flex %r not exported: a line flex of radius 0 has no surface", name)
+                continue
+            verts, faces, rows = _tube(rig, faces, radius)
+            uv = None
+        reduced = int(rig.reduced[np.unique(rows[np.unique(faces)])].sum())
+        if reduced:
+            logger.warning(
+                "flex %r: %d drawn vertices follow more than %d node bodies (dof=quadratic). Each is "
+                "drawn from its %d largest weights -- exact at rest and under any affine deformation, "
+                "approximate under curvature between nodes",
+                name,
+                reduced,
+                flex_skin.MAX_INFLUENCES,
+                flex_skin.MAX_INFLUENCES,
+            )
+        mesh_entry = {
+            "vert": binw.add(verts, np.float32),
+            "index": binw.add(faces, np.uint32),
+        }
+        if uv is not None:
+            mesh_entry["uv"] = binw.add(uv, np.float32)
+        skins.append(
+            {
+                "flex": name,
+                "bones": bone_names,
+                "bindpos": rig.bind_pos.tolist(),  # world bind pose
+                "bindquat": rig.bind_quat.tolist(),  # wxyz
+                "skinIndex": binw.add(rig.index[rows], np.uint16),
+                "skinWeight": binw.add(rig.weight[rows], np.float32),
+            }
+        )
+        geoms.append(
+            {
+                "body": 0,  # as for a skin: vertices and bind poses are world-frame
+                "type": "mesh",
+                "pos": [0.0, 0.0, 0.0],
+                "quat": [1.0, 0.0, 0.0, 0.0],
+                "size": [0.0, 0.0, 0.0],
+                "matid": int(model.flex_matid[f]),
+                "rgba": model.flex_rgba[f].tolist(),
+                "mesh": mesh_base + len(meshes),
+                "skin": skin_base + len(skins) - 1,
+            }
+        )
+        meshes.append(mesh_entry)
+    return skins, geoms, meshes
+
+
 def _write_texture(
     model: mujoco.MjModel, tid: int, out_name: str, out_dir: Path, binw: _BinWriter, max_dim: int
 ) -> dict:
@@ -487,6 +675,15 @@ def export_scene(
     meshes.extend(skin_meshes)
     geoms.extend(skin_geoms)
 
+    # Flexes (deformable bodies) have no mesh either: each is exported as one more skin, whose bones
+    # are the bodies its vertices follow, so a replay deforms it from their pose tracks.
+    flex_skins, flex_geoms, flex_meshes = _export_flexes(
+        model, data, binw, len(meshes), len(skins), logger
+    )
+    skins.extend(flex_skins)
+    meshes.extend(flex_meshes)
+    geoms.extend(flex_geoms)
+
     # Materials carry only their RGB-role texture (the loader ignores normal/other roles). Textures
     # are pruned to those an RGB role actually references, remapped to a dense 0..N-1 -- this drops
     # normal maps and any unused textures (often the bulk of a character/robot's texture payload).
@@ -531,13 +728,14 @@ def export_scene(
     (out_dir / "scene.json").write_text(json.dumps(scene, separators=(",", ":")))
     (out_dir / "scene.bin").write_bytes(binw.bytes())
     logger.info(
-        "exported %d bodies, %d joints, %d geoms, %d meshes, %d skins, %d materials, %d textures -> %s "
-        "(scene.bin %d KiB)",
+        "exported %d bodies, %d joints, %d geoms, %d meshes, %d skins (%d of them flexes), "
+        "%d materials, %d textures -> %s (scene.bin %d KiB)",
         len(scene["bodies"]),
         len(scene["joints"]),
         len(geoms),
         len(meshes),
         len(skins),
+        len(flex_skins),
         len(materials),
         len(textures),
         out_dir,
