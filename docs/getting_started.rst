@@ -8,13 +8,13 @@ Prerequisites
 
 * Linux with Python 3.10+ and ``git`` (MuJoCo is installed automatically into the venv).
 
-Five steps
-----------
+Three steps
+-----------
 
 .. code-block:: bash
 
    # 1. get the code
-   git clone <roqsim-repo-url>
+   git clone https://github.com/cps-test-lab/roqsim.git
    cd roqsim
 
    # 2. create the virtual environment and install everything
