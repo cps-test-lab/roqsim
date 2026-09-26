@@ -310,7 +310,7 @@ from any camera, at any resolution, as a still or a video — without re-running
 .. code-block:: bash
 
    roqsim sim world.yaml --record run.npz
-   roqsim sim world.yaml --record --capture-fps 10      # a slower rate, a smaller file
+   roqsim sim world.yaml --record run.npz --capture-fps 10   # a slower rate, a smaller file
 
    roqsim render --state run.npz --out last.png        # where it ended up
    roqsim render --state run.npz --at 12.5 --out t.png # one moment
@@ -633,7 +633,7 @@ A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directo
 wherever the launch left the working directory; otherwise it resolves against the working directory as
 usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
-concern either way — the same footing as ``sim.headless``, which the world YAML rejects on purpose — so
+concern either way — the same footing as ``sim.headless``, which a world YAML may not set (it is ignored, with a warning) — so
 there is no route to it through the world.
 
 A recording also converts to a **browser run capture** — the motion half of replaying a run in a web
@@ -941,7 +941,7 @@ the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
-relative path anchored to the scenario's ``output_dir`` here, since scenario-execution passes one. That
+relative path anchored to ``RUN_OUTPUT_DIR`` when it is set, else to the scenario's ``output_dir``. That
 is what turns a run into something replayable: the descriptor above is the world's geometry, the
 recording is what moved in it, and the run capture is that motion in the form a browser reads.
 
