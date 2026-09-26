@@ -168,10 +168,12 @@ widen a family's dependencies to accommodate it.
   it. A preview that only settles a world to look at it pins `roqsim.seed.PREVIEW_SEED`. Never
   inject a held generator where a draw is wanted — pass `lambda ...: ctx.rng_for(name)...` so each
   draw is keyed on the time it happens; a captured generator is the stateful stream this forbids.
-- **End a trial with `ctx.request_stop(reason)`, not by padding `--seconds`.** A wall-clock limit has
-  to be guessed high enough for the slowest cell and is then wasted on every faster one. It is a
-  request, not a kill switch: the driver polls it and exits cleanly, so `shutdown` runs and files
-  flush, and an embedding driver may ignore it. Physics-thread only, like every other write on `ctx`.
+- **A scenario ends its own run; `ctx.request_stop(reason)` ends a standalone one.** Under
+  scenario-execution the scenario owns when a run ends, and roqsim never ends it: a trial plugin
+  publishes its outcome as observable state (an endpoint, a blackboard value, an entity that moves)
+  and the scenario conditions on it. `roqsim sim` honours `ctx.request_stop`, so a hand-run trial
+  exits when it resolves instead of padding a guessed `--seconds`; the driver leaves its loop
+  cleanly, so `shutdown` runs and files flush. Physics-thread only, like every other write on `ctx`.
 - Global contact tuning is `sim.contact_override` (`solref` / `solimp` / `friction`, MuJoCo's
   `o_*` overrides), validated at load time — global, and applied *before compile*, so it is in the
   compiled model and in the run's provenance. Per-geom values belong in the model, not here. Changing

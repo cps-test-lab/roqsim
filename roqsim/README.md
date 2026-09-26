@@ -186,9 +186,10 @@ without replaying the stream that preceded it — and a sensor re-run from a rec
 noise the live run published. See the docstring on `SimContext.rng_for` for why a shared stateful
 generator cannot do this.
 
-`ctx.request_stop(reason)` ends a run when the trial is actually over, instead of padding it out to a
-wall-clock `--seconds` guessed high enough for the slowest cell. It is a request: `shutdown` still
-runs and files still flush, and an embedding driver may ignore it.
+Under scenario-execution the scenario owns when a run ends, and a trial publishes its outcome for the
+scenario to condition on. Standalone, `ctx.request_stop(reason)` ends a `roqsim sim` run when the
+trial is actually over, instead of padding it out to a wall-clock `--seconds` guessed high enough
+for the slowest cell; `shutdown` still runs and files still flush.
 
 ## Extend it
 
