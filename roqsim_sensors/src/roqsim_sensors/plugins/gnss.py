@@ -270,7 +270,7 @@ class GnssPlugin(Plugin):
         sigma_h = float(self.cfg("horizontal_noise"))
         sigma_v = float(self.cfg("vertical_noise"))
         sigma_vel = float(self.cfg("velocity_noise"))
-        rng = ctx.rng_for(f"gnss:{self.name}")
+        rng = ctx.rng_for(f"gnss:{self.address}")
 
         # Ornstein-Uhlenbeck bias. `a` is the fraction of the correlation that decays per UPDATE
         # (not per physics tick -- the bias only advances when the receiver reports), and the

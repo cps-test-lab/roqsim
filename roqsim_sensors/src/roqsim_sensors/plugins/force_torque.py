@@ -436,9 +436,10 @@ class ForceTorquePlugin(Plugin):
             force, torque = rot @ force, rot @ torque
         if self.noise_f or self.noise_t:
             # One generator per (sensor, step) -- counter-based, so every reader in this step draws the
-            # same wrench and the value is reproducible from a recording. Keyed with an `ft:` prefix so
-            # a lidar named `ft` cannot share the stream.
-            rng = self._ctx.rng_for(f"ft:{self.name}")
+            # same wrench and the value is reproducible from a recording. Keyed on the instance's
+            # address, not its name, so two arms' unnamed sensors draw independent streams; the `ft:`
+            # prefix keeps a lidar at the same address apart.
+            rng = self._ctx.rng_for(f"ft:{self.address}")
             if self.noise_f:
                 force = force + rng.normal(0.0, self.noise_f, 3)
             if self.noise_t:
