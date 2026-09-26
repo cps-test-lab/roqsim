@@ -14,8 +14,9 @@ roqsim sim roqsim_mobile_manipulation:tiago_pro_demo
 python -m pytest roqsim_mobile_manipulation/tests
 ```
 
-Each model ships one folder — `models/<name>/` holds its MJCF, `manifest.yaml`, licence, port log,
-thumbnail and its own `meshes/`. The port log beside a model is where every number in it comes from.
+Each model ships one folder — `models/<name>/` holds its MJCF, `<name>.manifest.yaml`, licence
+(`<name>_LICENSE`, the upstream it was ported from), thumbnail and its own `meshes/`. The comments in
+the MJCF and the manifest say where the load-bearing numbers come from.
 
 ## Why this package exists
 
@@ -37,8 +38,7 @@ provenance are all that ships here; what an experiment measures with them belong
 ## No new plugins, on purpose
 
 Both platforms are assembled from general-purpose plugins: `spawn_robot`, `diff_drive` /
-`omni_drive`, `arm_controller`, `lidar`. Each port log carries a "substrate extensions" table, and a
-composite robot that needs a *new* plugin would be evidence the composition mechanism is missing
+`omni_drive`, `arm_controller`, and `spawn_sensor` with its `lidar`. A composite robot that needs a *new* plugin would be evidence the composition mechanism is missing
 something rather than evidence of a hard robot.
 
 `tests/test_mounted_arm_composition.py` is what that claim is measured by: it bolts a stock `ur10e`
@@ -53,4 +53,4 @@ package may depend on.
 entity's prefix — which on a mobile manipulator includes the wheel motors. It then writes arm position
 targets into wheel drives that `diff_drive`/`omni_drive` own, and the robot simply will not drive.
 Both manifests name their `joints:` explicitly to prevent it, and both test suites assert the
-controllers hold disjoint actuator sets. Read the port logs before changing a manifest's `joints:`.
+controllers hold disjoint actuator sets. Read the manifest's comments before changing its `joints:`.
