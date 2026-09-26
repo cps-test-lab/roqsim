@@ -284,7 +284,8 @@ raises a stiffer ``solref`` to: two timesteps under every integrator but ``discr
 dampratio)`` at the default ``solimp`` -- about 1.03 steps at a damping ratio of 1. These rules were
 measured on MuJoCo 3.14; the damping and the resolution are stated in
 :func:`roqsim.flex_modes.explain_flex`, the floor in :func:`roqsim.solref.solref_floor`, which
-``sim.contact_override`` is held to as well.
+``sim.contact_override`` is held to as well; :ref:`deformable-bodies` in :doc:`plugins` measures them
+and says where each stops holding.
 
 The same block at a 4 ms step, with the damping raised to match it::
 

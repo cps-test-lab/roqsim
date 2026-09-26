@@ -955,45 +955,359 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
 ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
-flex name; its Young's modulus is not, for the reason in the next section.
+flex name; its Young's modulus is not, for the reason in :ref:`its material, as a world key <flex-material>`.
 
-A flex's material as a campaign factor
---------------------------------------
+.. _deformable-bodies:
 
-A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
-asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
-and ``flex_material`` states that in the world instead::
+Deformable bodies
+-----------------
+
+A soft block, a sheet, a cable or a compliant pad is a MuJoCo **flex**, and roqsim has no format of
+its own for one: it is written as MuJoCo's ``<flexcomp>`` in whichever MJCF owns it, and roqsim
+reads what that compiled into. This topic says where a flex can be written, what roqsim does for
+it, and what MuJoCo does with it that a world author has to know. Its snippets are two small
+models -- a soft block as a prop, and a pad as an arm's tool -- and a world that places both.
+
+Writing one
+~~~~~~~~~~~
+
+A 50 mm block of soft silicone is one ``<flexcomp>``, here in a model file ``block.xml`` of its
+own::
+
+   <mujoco>
+     <worldbody>
+       <body name="block">
+         <flexcomp name="block" type="grid" dim="3" count="5 5 5"
+                   spacing="0.0125 0.0125 0.0125" pos="0 0 0.027" mass="0.14" radius="0.002">
+           <edge equality="false"/>
+           <elasticity young="1e5" poisson="0.45" damping="0.001"/>
+           <contact solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2" friction="0.9" priority="1"
+                    selfcollide="none"/>
+         </flexcomp>
+       </body>
+     </worldbody>
+   </mujoco>
+
+What each value does, with the reason for the choice, is in the rest of this topic: a 5 x 5 x 5
+grid is 125 vertices; ``young`` and ``poisson`` are the material, which a world can restate
+(``flex_material``, below); ``damping`` is sized for a 1 ms step (numerical damping, below); the
+contact is stiffer than MuJoCo's default and carries a ``priority`` so that it is the one that runs
+(light vertices sink, and contact parameters mix, below); ``radius`` is the collision shell around
+each vertex, and the grid is raised by it so that the shell's bottom rests at the model's origin.
+
+A flex can be written in four places, and roqsim treats all four alike:
+
+* **an asset** placed with ``spawn_model`` -- a prop, like the block;
+* **an end effector** mounted with ``spawn_arm``'s ``end_effector:`` -- a tool, its vertices pinned
+  (``<pin>``) to a body of the tool model, like the pad below;
+* **the world MJCF** that ``sim.world`` names, compiled before any plugin builds;
+* **a plugin's** ``build``, which adds it to the spec like any other element.
+
+MuJoCo expands a ``<flexcomp>`` into bodies on three slide joints each, which carry the vertices,
+and the ``dof`` attribute decides how many there are:
+
+* ``full`` (the default): every vertex is a body -- 375 degrees of freedom for the block;
+* ``trilinear``: 8 nodes carry the flex and every vertex is interpolated from them (24);
+* ``quadratic``: 27 nodes (81).
+
+The two reduced modes compile only with ``selfcollide="none"``: MuJoCo 3.14 refuses
+``selfcollide="auto"`` under either ("trilinear interpolation cannot do self-collision"). A solid
+block cannot fold onto itself anyway, so stating ``none`` costs it nothing and keeps both modes
+open. ``roqsim check`` computes a flex's modes up to 2400 degrees of freedom and suggests a reduced
+mode above that; the web replay draws a ``quadratic`` flex approximately (below).
+
+**Elasticity is integrated only on a solid or an elastic shell.** ``young`` acts on a ``dim=3``
+flex, and on a ``dim=2`` flex whose ``elastic2d`` is not ``none``. On a ``dim=1`` cable, or on a
+shell left at ``elastic2d="none"`` (the default), it changes nothing: measured on MuJoCo 3.14, a
+pinned rope and a pinned sheet fall identically at 0, 1e4 and 1e7 Pa, where the same sheet at
+``elastic2d="both"`` holds its shape. A cable is made stiff with ``<edge stiffness>`` instead, and
+``flex_material`` refuses a modulus it would not read.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
+
+What roqsim does for it
+~~~~~~~~~~~~~~~~~~~~~~~
+
+**The integrator, and what it refuses.** ``sim.integrator: auto`` (the default) resolves after
+every plugin has built, so it sees a flex from any of the four places: to ``discrete`` for a flex
+whose elasticity MuJoCo integrates or that has passive contact, and to ``implicitfast`` otherwise.
+Before compile, roqsim refuses what such a flex cannot run under, naming the key to change:
+
+* a stated ``implicit`` or ``implicitfast`` (and, for passive contact, anything but ``discrete``);
+* ``sim.solver: pgs`` or ``sim.noslip_iterations`` above 0 -- MuJoCo supports neither with such a
+  flex under ``discrete``; ``newton`` (the default) and ``cg`` work;
+* a flex declared in a mocap body. A mocap body moves by having its frame replaced, which applies
+  no acceleration, so the flex would be carried rigidly and never deform. Declare it in a body that
+  follows the target through a weld, or on an arm's end effector.
+
+The rules, and the MuJoCo version they were measured on, are :mod:`roqsim.flex`'s; where they sit
+among the solver options is in :doc:`architecture` (§4, "Solver options").
+
+**A prop.** ``spawn_model`` places a model with a ``<flexcomp>`` like any other, and adds what the
+prop needs around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it (so ``SetEntityState`` has no ``base_joint`` to re-seat).
+  ``static`` and ``driven`` are refused for a flex nothing is pinned to -- welding the root would
+  hold none of it; ``<pin>`` the vertices that should be held. A flex pinned to a rigid body rides
+  that body's pose, whichever ``motion`` it has: the pad below, spawned ``static``, is a mat welded
+  where it is placed.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, where its contacts combine it with the other side's by priority (below).
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+
+**A tool.** ``spawn_arm``'s ``end_effector:`` mounts a model with a ``<flexcomp>`` pinned to one of
+its bodies, or written under its ``<worldbody>`` (moved into a body named after the file, so its
+pins hold on the mount). A 40 x 40 x 12 mm rubber pad on a rigid backing plate, ``pad.xml``, whose
+bottom vertex layer is pinned to the plate::
+
+   <mujoco>
+     <worldbody>
+       <body name="pad">
+         <geom name="plate" type="box" size="0.025 0.025 0.004" pos="0 0 0.004" mass="0.05"/>
+         <flexcomp name="pad" type="grid" dim="3" count="5 5 3" spacing="0.01 0.01 0.006"
+                   pos="0 0 0.0155" mass="0.02" radius="0.001">
+           <pin gridrange="0 0 0 4 4 0"/>
+           <edge equality="false"/>
+           <elasticity young="2e5" poisson="0.4" damping="0.001"/>
+           <contact solref="0.004 1" solimp="0.95 0.99 0.001 0.5 2" friction="0.9" priority="1"
+                    selfcollide="none"/>
+         </flexcomp>
+       </body>
+     </worldbody>
+   </mujoco>
+
+The plate is the model's root, so it is what the mount welds, and the pad faces away from the
+mounting site along its +z. The pinned layer sits half a millimetre more than the radius clear of
+the plate: an element holding a pinned vertex has that radius as its collision shell, and at
+exactly one radius it grazes the plate as the pad deforms. The vertices are not
+gravity-compensated: the arm holds its pose and the pad hangs under its own weight, as a real one on
+a still arm does. The tool is welded at the site the arm's manifest declares for one
+(``end_effector: {site: ...}``), and a world's own ``end_effector.site`` wins over it. Where the arm
+has a force/torque cut, that site is below it: the UR5e declares ``tool_site``, the outer face of
+its adapter stack below ``fts_site``, while its bare ``attachment_site`` is on the flange beside the
+stack, where a sensor at ``fts_site`` reads none of the tool. ``force_torque`` refuses a sensor on an
+arm whose mounted tool is outside the subtree it reads.
+
+.. _flex-material:
+
+**Its material, as a world key.** What an experiment on a flex varies is its material, and a value
+that lives only in the MJCF that declares the flex cannot be a campaign factor. ``flex_material``
+states it in the world instead. A world that mounts the pad on a UR5e and drops the block in front
+of it, with the block's modulus a world key (model paths resolve beside the world file)::
+
+   sim:
+     timestep: 0.001
 
    components:
-     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+     - spawn_arm:
+         model: ur5e
+         prefix: ur5e_
+         pos: [-0.25, 0.0, 0.0]
+         rpy: [0.0, 0.0, 3.14159265]
+         home: [-0.0671, -1.3800, 2.0314, -2.2222, -1.5708, -0.0671]
+         end_effector: {model: pad.xml}
        name: ur5e
-     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
-                       friction: 1.5, priority: 1}
-       name: pad_material
+     - spawn_model:
+         model: block.xml
+         pose: {position: {x: 0.25, y: 0.1, z: 0.05}}
+         motion: physics
+       name: block
+     - flex_material:
+         flex: block
+         young: 1.0e+5
+         poisson: 0.45
+       name: block_material
 
-Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
-parameter variation over ``components.pad_material.young``. Three things to know:
+Each key is then a sweep axis: ``--set components.block_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.block_material.young``. Four things to know:
 
 * **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
   ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
   run-time write could reach -- which is why the modulus is a build-time component and not a
   ``model_override`` row. The contact values and the damping are compiled fields; setting them here
   keeps one material in one block, and ``model_override`` can still change the four live ones
-  during a run.
-* **The flex is named as it compiles**, with the prefix of the model that brought it in
-  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
-  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
-  the component that brings the flex in -- below the arm, as here.
-* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
-  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
-  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
-  be set in the same block, so a shell can be made elastic here.
+  (``flex_damping``, ``flex_friction``, ``flex_solref``, ``flex_solimp``) during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in -- the pad
+  on the arm above is ``ur5e_pad``. A name that matches nothing is refused with the list of the
+  model's flexes, so the first run tells you the right one. Plugins build in YAML order, so it is
+  declared after the component that brings the flex in -- the spawn, or the arm whose
+  ``end_effector`` carries it.
+* **A key the flex would not read is refused**: a modulus on a cable, on a shell left at
+  ``elastic2d: none`` or on a rigid flex would run exactly as without it. ``elastic2d`` and
+  ``thickness`` can be set in the same block, so a shell can be made elastic here, and a flex made
+  elastic here is integrated under ``discrete`` when ``sim.integrator`` is ``auto``.
+* **Write an exponent as** ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string --
+  refused, with that fix.
 
-Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
-with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
-``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
-in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+The material's rules, and the MuJoCo version they were measured on, are in
 :mod:`roqsim.plugins._flex_material`.
+
+**Contacts are the flex's.** A contact with a flex carries ``geom = -1`` on the flex's side and the
+flex in ``contact.flex``. ``contact_monitor``, ``contact_impulse`` and ``contact_location`` read that
+side as the flex and attribute it to the entity that owns it (see *Navigation: detecting a
+collision*); ``roqsim check``'s interpenetration findings name it as ``flex '<name>'``.
+``contact_pair_override`` refuses a flex side, because a ``<pair>`` names two geoms and MuJoCo has
+none for a flex: a flex's contact is set on the flex (below). ``force_torque`` refuses a sensor a
+flex contact could reach unseen, unless the world states ``flex_reaction: excluded``: adding one at
+``fts_site`` to the arm above fails ``roqsim check`` with ``flex 'ur5e_pad' hangs below it, so
+every contact that flex makes would be missing`` (the pad is mounted below that site, so the
+sensor sees its weight; it would not see its contacts).
+
+**roqsim check explains each flex**, from the compiled model and before any step. On the world
+above::
+
+   WARN  [flex-timestep] flex 'ur5e_pad': mode 1 (135 Hz) is under-resolved by the timestep (omega * timestep = 0.85, above 0.3), and so are modes 2 and 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
+         hint: set sim.timestep <= 0.000325 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+   WARN  [flex-timestep] flex 'block': mode 3 (55.5 Hz) is under-resolved by the timestep (omega * timestep = 0.35, above 0.3); the damping ratio and frequency reported for it are not the ones that run: the discrete integrator distorts its dynamics, damping it less and ringing it slower than stated
+         hint: set sim.timestep <= 0.00086 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+
+   model: 186 bodies, 38 geoms, 531 joints, 6 actuators, 0 sensors, 1 cameras
+          timestep 0.001s, integrator discrete (auto: flex 'ur5e_pad' (elasticity), flex 'block' (elasticity))
+
+   flexes (2):
+     ur5e_pad  dim 3, 75 vertices, 192 elements, dof full, 25 pinned, on ur5e_pad (entity ur5e); elastic, no passive contact
+          modes 135*, 141*, 147* Hz; damping ratio 0.849*, 0.883*, 0.923* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.004 1 (flex), floor 0.00100504 s
+     block  dim 3, 125 vertices, 384 elements, dof full, 0 pinned, on block (entity block); elastic, no passive contact
+          modes 41.8, 41.8, 55.5* Hz; damping ratio 0.262, 0.262, 0.349* at damping 0.001 s (numerical share 50% at timestep 0.001 s)
+          * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.004 1 (flex), floor 0.00100504 s
+
+The integrator line says ``auto`` chose ``discrete`` and which flexes decided it. Each flex's first
+line is what it compiled into -- its pinned vertices, the body it is declared in and the entity that
+owns it; the second is its lowest elastic modes with everything else held, and the damping ratio
+each rings down with (the numerical-damping rule below); the last is its own contact ``solref``
+against the floor MuJoCo holds it to under this integrator (the ``solref`` floor, below: here
+``0.001 * sqrt(0.99) / 0.99`` at the flexes' ``solimp`` of 0.95 0.99 and damping ratio 1). A starred
+mode is one the timestep under-resolves (``omega * timestep`` above 0.3, the resolution limit
+below): its frequency and damping ratio are not the ones that run, the footnote line under the modes
+says so, and ``flex-timestep`` warns, with the ``sim.timestep`` that resolves every reported mode as
+its hint. Here the pad's three modes and the block's third are starred at the 1 ms step. At the
+default 2 ms step the same world also warns ``flex-damping``, because the integrator's share of the
+damping passes half::
+
+   WARN  [flex-damping] flex 'block': numerical damping is 67% of its damping (zeta_1 = 0.394, of which 0.262 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
+         hint: set sim.timestep <= 0.001 s (the flex's damping) to keep the integrator's share at most half, or raise <elasticity damping>
+
+(and the same for the pad, with every mode of both starred). The three flex warnings are
+``flex-damping``, ``flex-timestep`` and ``flex-solref`` (a contact time constant below the floor);
+none makes the check fail. In ``--json`` each mode carries ``omega_dt`` and ``resolved``, and each
+flex its ``max_timestep_resolved``; :doc:`quickstart` describes the report and its ``--json`` form.
+
+**Replay and recording.** ``roqsim export web`` draws each flex as a skin whose bones are the
+bodies its vertices follow (:mod:`roqsim.flex_skin`), so a replay deforms it from the run capture's
+pose tracks with no flex-specific code. A ``quadratic`` flex is drawn from the four nodes that weigh
+most for each vertex, where MuJoCo uses nine: exact at rest and under affine deformation,
+approximate where the flex curves between nodes, and the export warns. ``sim_poses.csv`` leaves out
+the vertex bodies (the run log names each flex left out); the recording and the run capture keep
+them.
+
+What MuJoCo does with it
+~~~~~~~~~~~~~~~~~~~~~~~~
+
+Each of these was measured on MuJoCo 3.14.0, the version range the packages pin, and "the block"
+and "the pad" are the two models above.
+
+**Numerical damping under** ``discrete``. The integrator damps each elastic mode as if the stated
+``<elasticity damping>`` were one timestep larger: mode *i* rings down with damping ratio ``(damping
++ timestep) * omega_i / 2``, of which ``timestep * omega_i / 2`` is the integrator's. With no stated
+damping all of it is numerical, and changes with ``sim.timestep``; the integrator's share is at most
+half exactly when ``sim.timestep`` is at or below the damping. The relation, and the frequency the
+check reports, hold while the timestep resolves the mode. As ``omega * timestep`` grows, the
+integrator damps the mode less and rings it slower than reported. Measured on a pinned block's first
+mode, read from its ring-down with the damping one timestep, the damping ratio falls short by 0.5 %
+at ``omega * timestep`` 0.1, 2 % at 0.2, 4.4 % at 0.3, 11 % at 0.5 and 23 % at 0.85, and the
+frequency by 0.5 %, 1.8 %, 3.8 %, 9 % and 20 %; at a fixed ``omega * timestep`` the shortfall grows
+with the damping ratio. On the block's first mode, at its own damping, the reported ratio held
+within 1 % at ``omega * timestep`` 0.13 and 3 % at 0.26, and 0.9 of it rang at 0.52. The pad's first
+mode is 135 Hz, so at a 1 ms step ``omega * timestep`` is 0.85: ``roqsim check`` reports a damping
+ratio of 0.85, and a ring-down measures 0.65: a stiff, light flex at a coarse step is less damped
+than reported. ``roqsim check`` therefore takes 0.3 as the resolution limit -- at or below it, a
+mode damped at a ratio up to 0.3 rings within 5 % of both figures -- and stars and warns about
+(``flex-timestep``) every reported mode above it. Only the reported modes are judged; a flex's
+higher modes ring faster still. A coarser grid does not lower the lowest modes; a softer material
+does, ``omega`` scaling with the square root of ``young``.
+
+**The** ``solref`` **floor.** With ``refsafe`` enabled (MuJoCo's default) a contact whose time
+constant is shorter than the step can resolve is silently held to a floor, and the integrator
+decides how. Under ``euler``, ``rk4``, ``implicit`` and ``implicitfast`` the time constant itself is
+raised to **two** timesteps: measured with a sphere resting on a plane at a 1 ms step, 0.5, 1 and 2
+ms rest identically. Under ``discrete`` the time constant is left alone and the contact's
+*stiffness* is capped at what the step can resolve, damping ratio kept -- as a time constant,
+``timestep * sqrt(I) / (solimp[1] * dampratio)`` with ``I`` the impedance at the contact's depth,
+which is about **1.03** timesteps at MuJoCo's default ``solimp`` and a damping ratio of 1, and
+halves when the damping ratio doubles: measured the same way, 0.5 and 1 ms rest at the same depth
+and 2 ms deeper. With ``refsafe`` disabled there is no floor. :func:`roqsim.solref.solref_floor` is
+the one statement of the rule; ``roqsim check`` prints each flex's floor beside its ``solref`` and
+warns (``flex-solref``) when the ``solref`` is below it, and ``sim.contact_override`` refuses a time
+constant below the same floor.
+
+**Light vertices sink.** MuJoCo scales a contact's softness to the mass of the body it acts on: the
+depth at rest depends on the load the contact carries relative to that mass, not on the load
+alone. A flex's bottom vertex is a light body carrying the weight of the column above it. Measured:
+the block at MuJoCo's default contact (``solref`` 0.02 s, ``solimp`` 0.9 0.95) sinks its bottom
+vertices 0.8 mm into a plane, seven times as deep as a rigid box of the same weight; the depth grew
+with the vertex layers stacked above (0.6, 0.7, 1.0 and 1.8 mm for 2, 3, 5 and 9 layers of a
+50 mm block) and did not change with the block's total mass (0.15 kg and 1.5 kg sank alike). The
+block's own stiffer ``solref``/``solimp``, made the contact's own by ``priority`` (next), brings it
+to 0.03 mm.
+
+**Contact parameters mix, unless a priority decides.** At equal ``priority`` MuJoCo averages the
+two sides' ``solref`` and ``solimp`` (weighted by ``solmix``, equal by default) and takes the larger
+friction; the side with the higher ``priority`` gives all three outright. Measured with the block on
+a plane left at the defaults: at equal priority its 0.004 s ran as 0.012 s and its friction 0.3 as
+the plane's 0.9; at ``priority="1"`` both were its own. Two flexes of equal priority, such as the
+block and the pad, average each other's. No ``<pair>`` can name a flex, so the flex's own
+``<contact>`` with a ``priority`` is the one place to set a flex's contact. ``roqsim check``'s
+``contact solref`` line and floor check read the flex's own value, not the mixed one.
+
+**Friction is soft, so a sustained load creeps.** MuJoCo's friction is a soft constraint: a
+tangential load held below the Coulomb limit slides slowly rather than not at all, and a flex's many
+light contacts show it. Measured with the block on a plane tilted below its friction angle
+(friction 0.9): at 15 degrees it crept 2.3 mm/s, at 30 degrees 9 mm/s, at MuJoCo's defaults
+(``impratio`` 1, pyramidal cone). ``sim.impratio: 10`` cut both tenfold, and an elliptic cone
+(``sim.cone: elliptic``) with it by another factor of two. A press is enough to show it: the block
+on a table, pressed from above by the pad on a UR5e whose stalled position servos are not exactly
+vertical, is loaded sideways at 2 to 9 % of the normal load, and at the defaults it walks 24 mm
+across the table in three seconds; with both settings, 3.5 mm, at about three times the cost of a
+step, and either alone leaves 16 to 17 mm. A world that holds a flex under a sustained load should
+state both. ``noslip_iterations``, the solver's own slip removal, is refused with such a flex under
+``discrete``.
+
+**A site force sensor sees a flex's weight but none of its contacts.** A contact with a flex acts
+on its vertices and is not among the external forces MuJoCo's site force/torque sensor accounts
+for. Measured: a rigid probe pressed into a block reads its weight minus the contact force against
+a rigid block, and its weight alone against a flex block that pushes back with 4.8 N. Everything
+else a flex does reaches the sensor -- its weight, its elastic reaction at rest and in motion, a
+force applied to a vertex. That is the measurement behind ``force_torque``'s refusal
+(:mod:`roqsim_sensors.plugins.force_torque`, "A flex the sensor cannot see").
+
+**Where a flex touches.** A contact names the flex's side by ``contact.flex`` and then either a
+vertex (``contact.vert``) or an element (``contact.elem``), never both. Measured on the block:
+against a plane every contact names a vertex (``vert >= 0``, ``elem == -1``); against a box, such as
+a table top, and against another flex every contact names an element (``vert == -1``,
+``elem >= 0``) -- a tetrahedron, whose four vertices include interior ones. So "which vertices are in
+contact" is not read off the contact list: take the flex's surface vertices within its collision
+radius (plus the contact's margin) of the other body, or near each ``contact.pos``.
+``model.flex_elem`` lists an element's vertices.
+
+**A stiff flex can leave the solve under-converged, and MuJoCo says so.** When a stiff flex meets a
+contact, MuJoCo may print ``Flex stiffness is too ill-conditioned for the effective-metric block
+preconditioner`` and ``Inertia matrix is too close to singular``, and carries on; roqsim does not
+intercept either. With the pad pressing the block, the block prints them as the pad lands from
+``young: 2.0e+5`` at a 1 ms step, and from ``5.0e+5`` even at 0.5 ms. A warned run at 2e5 Pa and
+1 ms matched the same run at 0.5 ms, which printed nothing, within 1 % in the block's deflection and
+2 % in the contact force. To trust a run that printed it, halve ``sim.timestep`` and compare.
 
 Perception ground truth
 -----------------------
@@ -1870,34 +2184,6 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
-
-Manipulation: a prop or a tool that deforms
--------------------------------------------
-
-A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
-model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto`` picks the integrator the flex
-needs (:mod:`roqsim.flex`). What the spawn adds around it:
-
-* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
-  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
-  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
-  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
-  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
-* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
-  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
-  that flex outright).
-* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
-  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
-  the flex, whose own value its contacts use.
-* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
-  lists its flexes in ``meta["flexes"]``.
-* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
-  under its own weight, as a real one on a still arm does.
-
-A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
-model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
-directories a manifest borrows through ``assets:`` are not searched for it.
 
 Writing your own
 ----------------

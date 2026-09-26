@@ -220,7 +220,9 @@ naming the key to change: a stated ``implicit``/``implicitfast`` (or, for passiv
 integrator but ``discrete``) with such a flex; ``solver: pgs`` or ``noslip_iterations`` above 0
 with one under ``discrete`` (MuJoCo supports neither there -- use ``newton`` or ``cg``); and a flex
 declared in a mocap body, which is carried rigidly and never deforms. The rules, and the MuJoCo
-version they were measured on, are in :mod:`roqsim.flex`.
+version they were measured on, are in :mod:`roqsim.flex`. How a flex is written, what else roqsim
+does for one, and what MuJoCo does with it -- numerical damping, contact softness, soft friction --
+are the :ref:`deformable-bodies` topic of :doc:`plugins`.
 
 **A grasping world must set ``noslip_iterations``.** MuJoCo defaults it to ``0``, which leaves friction contacts a residual tangential drift. Measured on the G1/Dex1 pick: a 0.5 kg parcel gripped at 20 N between two pads crept out of the jaws at **0.119 m/s** and was dropped within two seconds; with ``noslip_iterations: 10`` the creep is **0.0009 m/s** and the lift holds indefinitely — a 137× reduction. ``iterations`` and ``ls_iterations`` alone changed nothing measurable, because this is the solver's dedicated slip-removal pass rather than general convergence. The failure mode is worth knowing because it presents as *insufficient friction* and is not: sweeping the sliding coefficient from 0.4 to 3.0 moved the creep rate by 17%, while halving the payload moved it by 80×.
 
