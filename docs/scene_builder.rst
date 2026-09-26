@@ -16,6 +16,8 @@ MCP server exposes two native-window tools a *human* answers in —
   ``floorplan.json``, never an embedded copy), so ``roqsim scenes scene-to-floorplan``
   round-trips a scene back to its floorplan JSON by following that reference. The floorplan-level and
   per-room ``description``\ s ride in ``floorplan.json`` and can be edited there later with no re-bake.
+  The sketch states its ``schema`` (``1``; absent means 1), and ``floorplan-to-world`` refuses a newer
+  one, or a key it does not read at any level, naming the nearest known key, before it builds anything.
   See :ref:`sketch-floorplan-tool` below; the full authoring loop is the ``scene-update`` skill.
 
 — and one tool that needs neither a window nor a person:

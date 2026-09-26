@@ -1,7 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The 2D geometry of a floorplan sketch -- one answer, for everything that reads one.
 
-A floorplan JSON (metres, y-up: ``{comment, description, rooms, lines, doors, markers}``) is read by
+A floorplan JSON (metres, y-up: ``{schema, comment, description, rooms, lines, doors, markers}``;
+its schema and keys are :func:`check_sketch`'s) is read by
 several things that must agree about it: what builds the walls, what draws the plan view, what bakes
 a mesh. Where a doorway is has one answer, so the arithmetic lives here rather than in any of them
 -- an opening one cuts and another draws differently would make a preview lie about the world it
@@ -20,6 +21,67 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
+# --- the document ------------------------------------------------------------------------------
+
+#: The sketch schema this code reads. A sketch states its own with a top-level ``schema:``; absent
+#: means 1, the layout every sketch had before the stamp existed. Bumped when a key is renamed or
+#: changes meaning; a reader refuses a newer one rather than reading the keys that happen to overlap.
+SKETCH_SCHEMA = 1
+
+#: Every key a sketch carries, by level -- what the sketch window returns and the generator reads. A
+#: key outside these is refused: nothing reads it, so a misspelt ``width_m`` would otherwise build
+#: the default door while the file looks applied.
+SKETCH_KEYS = frozenset({"schema", "comment", "description", "rooms", "lines", "doors", "markers"})
+SKETCH_ITEM_KEYS = {
+    "rooms": frozenset({"id", "name", "line_ids", "description"}),
+    "lines": frozenset({"id", "x0_m", "y0_m", "x1_m", "y1_m"}),
+    "doors": frozenset({"id", "line_id", "t", "width_m", "height_m"}),
+    "markers": frozenset({"id", "x_m", "y_m", "comment", "in_room", "yaw_deg"}),
+}
+
+
+def stamp_sketch(sketch: dict) -> dict:
+    """*sketch* with ``schema`` first, as every writer emits it."""
+    return {"schema": SKETCH_SCHEMA, **{k: v for k, v in sketch.items() if k != "schema"}}
+
+
+def check_sketch(sketch: dict, where: str) -> int:
+    """Return the sketch's schema, refusing a newer one or a key no reader reads, at every level."""
+    if not isinstance(sketch, dict):
+        raise ValueError(f"{where}: a floorplan sketch is a mapping, not {type(sketch).__name__}")
+    schema = sketch.get("schema", 1)
+    if isinstance(schema, bool) or not isinstance(schema, int) or schema < 1:
+        raise ValueError(f"{where}: sketch schema {schema!r} is not a positive integer")
+    if schema > SKETCH_SCHEMA:
+        raise ValueError(
+            f"{where} is floorplan sketch schema {schema}; this roqsim reads up to "
+            f"{SKETCH_SCHEMA}. Read it with the version that wrote it."
+        )
+    _refuse_unknown(sketch, SKETCH_KEYS, where)
+    for level, known in SKETCH_ITEM_KEYS.items():
+        for i, item in enumerate(sketch.get(level) or []):
+            if not isinstance(item, dict):
+                raise ValueError(f"{where}: {level}[{i}] is not a mapping")
+            _refuse_unknown(item, known, f"{where}: {level}[{i}]")
+    return schema
+
+
+def _refuse_unknown(block: dict, known: frozenset, where: str) -> None:
+    unknown = sorted(set(block) - known, key=str)
+    if not unknown:
+        return
+    from difflib import get_close_matches
+
+    named = []
+    for key in unknown:
+        match = get_close_matches(str(key), sorted(known), n=1, cutoff=0.8)
+        named.append(f"{key!r} (did you mean {match[0]!r}?)" if match else repr(key))
+    raise ValueError(
+        f"{where}: unknown key(s) {', '.join(named)}; it takes {', '.join(sorted(known))}. "
+        f"Nothing reads any other key, so it would be ignored rather than applied."
+    )
+
 
 # --- walls and openings --------------------------------------------------------------------------
 

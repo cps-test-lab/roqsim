@@ -50,6 +50,7 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim.floorplan_geometry import check_sketch, stamp_sketch
 from roqsim_scenes import scene_mesh_io as mio
 
 # The wall/opening arithmetic is shared with the plan-view renderer (roqsim_scenes.floorplan_to_png), so it
@@ -432,6 +433,7 @@ def generate(
 
     import yaml
 
+    check_sketch(floorplan, "floorplan")
     lines = floorplan.get("lines") or []
     if len(lines) < 1:
         raise ValueError("floorplan has no wall lines to build")
@@ -451,7 +453,9 @@ def generate(
     _write_geometry(out_dir, bbox, wall_thickness, pieces, ceiling_h if ceiling else None)
     # The floorplan is the single source of truth: write it verbatim beside scene.json and reference
     # it (scene.json carries only the path, never a copy).
-    (out_dir / _FLOORPLAN_NAME).write_text(json.dumps(floorplan, indent=2), encoding="utf-8")
+    (out_dir / _FLOORPLAN_NAME).write_text(
+        json.dumps(stamp_sketch(floorplan), indent=2), encoding="utf-8"
+    )
     (out_dir / "scene.json").write_text(
         json.dumps(
             scene_manifest(
