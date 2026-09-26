@@ -1056,7 +1056,9 @@ turn poses back into effort, which is a fitted constant between the simulator an
 ``efficiency``, ``idle_w``, ``resistive_w_per_nm2`` and ``regenerative`` are the platform's own
 numbers; unset, the plugin reports mechanical work and nothing else. A state of charge exists only
 where a ``capacity_wh`` was given -- without one the fraction is reported as *unknown* rather than as
-a full battery.
+a full battery. Every one of those defaults is what an absent key means, so a misspelt one would
+report an energy figure that looks measured and assumes nothing: the plugin's keys are declared with
+``STRICT_KEYS``, and ``resistive_w_per_nm`` is refused with the key it meant.
 
 The per-actuator split is what makes the number usable on an arm. Each actuator's ``force *
 velocity`` is sorted into driving and driven *before* the sum, so one joint descending under gravity
@@ -1200,6 +1202,11 @@ It is opt-in: a plugin without a declaration is unchecked by it, and one with a 
 owns ``validate_config``. The schema covers what is the same everywhere; a rule only one plugin has
 (two lists the same length, a file that must exist, a cut that must be finite) stays where it
 belongs rather than growing the shared vocabulary.
+
+A key that takes more than one shape declares a tuple of types, as ``isinstance`` does:
+``Field((float, dict), minimum=0.0)`` is one coefficient or one per actuator, and is published as
+``"type": ["float", "dict"]``. The bound applies to the number; a mapping's entries stay with
+``validate_config``, which is the rule a schema cannot state for a shape it does not look inside.
 
 ``STRICT_KEYS = True`` adds the check nothing else can do -- an unknown key is a typo, and
 ``above_Z`` silently leaving the ceiling standing looks exactly like the plugin not working. It is
