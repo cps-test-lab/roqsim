@@ -265,6 +265,9 @@ def _inventory(engine) -> dict:
         "integrator": mujoco.mjtIntegrator(model.opt.integrator)
         .name.removeprefix("mjINT_")
         .lower(),
+        # Whether it was stated or chosen by `sim.integrator: auto`, and for auto, the flex that
+        # decided it -- the reason a world that never named an integrator runs under `discrete`.
+        "integrator_reason": engine.integrator.reason,
     }
 
 
@@ -297,7 +300,10 @@ def _render_text(report: dict) -> str:
         f"model: {model['nbody']} bodies, {model['ngeom']} geoms, {model['njnt']} joints, "
         f"{model['nu']} actuators, {model['nsensor']} sensors, {model['ncam']} cameras"
     )
-    lines.append(f"       timestep {model['timestep']}s, integrator {world['integrator']}")
+    lines.append(
+        f"       timestep {model['timestep']}s, integrator {world['integrator']} "
+        f"({world['integrator_reason']})"
+    )
     if world["entities"]:
         lines.append("")
         lines.append("entities:")

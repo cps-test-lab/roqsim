@@ -20,6 +20,7 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import PluginError
 
 
 def _opt(sim):
@@ -77,6 +78,6 @@ def test_medium_lands_in_the_run_record():
 
 
 def test_unknown_integrator_is_rejected():
-    # `integrator` is an enum, so a bad value fails loudly.
-    with pytest.raises(KeyError):
+    # `integrator` is an enum, so a bad value fails loudly -- at load, naming the key.
+    with pytest.raises(PluginError, match=r"sim\.integrator: unknown value 'verlet'"):
         _opt({"integrator": "verlet"})

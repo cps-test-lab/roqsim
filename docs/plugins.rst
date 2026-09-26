@@ -1649,7 +1649,10 @@ they cost something a navigation world should not pay:
    repetitions. Pair it with ``publish_tf: dynamic`` — nothing else publishes a movable body's pose.
    ``graspable_box`` is the reference prop, sized and contact-tuned for a parallel gripper.
 2. **Solver effort.** ``sim: {noslip_iterations: 10}``. Without it a firmly held object creeps out of
-   the jaws; see "Solver options" in ``architecture.rst`` for the measurements.
+   the jaws; see "Solver options" in ``architecture.rst`` for the measurements. A world with a flex
+   that has elasticity or passive contact cannot have it: such a flex runs under the ``discrete``
+   integrator, where MuJoCo supports no noslip pass, so roqsim refuses the combination before
+   compile (same section).
 3. **Scoped actuator ownership**, if the arm shares its entity with anything else. ``arm_controller``
    claims every joint actuator matching the entity prefix by default, which is right for a standalone
    arm and wrong for a humanoid or a mobile manipulator — it then also claims the legs or the wheels and

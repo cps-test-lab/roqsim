@@ -6,7 +6,8 @@ The YAML has two top-level sections::
       name: OpenSpace        # optional; viewer window title becomes "Roqsim: <name>"
       timestep: 0.004        # optional; else taken from the model
       pacing: realtime       # realtime | {factor: 4.0} | asap
-      integrator: rk4        # optional; euler | rk4 | implicit | implicitfast
+      integrator: auto       # optional; auto | euler | rk4 | implicit | implicitfast | discrete
+      solver: newton         # optional; newton | cg | pgs. Else MuJoCo's default (newton)
       density: 1.225         # optional; kg/m^3. MuJoCo's default is 0, i.e. a vacuum
       viscosity: 1.8e-5      # optional; Pa*s
       view:                  # optional initial viewer setup (windowed only; see viewer)
@@ -24,6 +25,15 @@ The YAML has two top-level sections::
         name: ground                              # reserved sibling key; identifies this instance
       - "my_pkg.mod:MyPlugin": { rays: 90 }       # a ref with a ':' MUST be a quoted key (see below)
       - "./plugins/custom.py:Foo": {}             # empty config; file refs are quoted too
+
+``timestep`` and ``integrator`` are applied to the model after every plugin's ``build`` hook and
+before compile. A stated ``timestep`` wins over one a plugin or the world MJCF set, and an unstated
+one keeps the model's. The integrator is always this key's, whatever a plugin or the MJCF wrote:
+``auto`` unless stated, resolved at that point once the model's flexes are known -- ``discrete`` for a model with a flex that has elasticity or passive contact, which MuJoCo
+refuses to compile under anything implicit, else ``implicitfast``. The resolved integrator is
+logged and recorded in the run's provenance. A stated integrator a flex cannot run under, ``solver:
+pgs`` or ``noslip_iterations`` above 0 alongside such a flex, and a flex attached to a mocap body
+are refused before compile, naming the key to change -- the rules are :mod:`roqsim.flex`'s.
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
 plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one), which
@@ -350,6 +360,10 @@ class SimConfig:
     unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
+    #: ``sim`` values the engine settled at setup where the document left the choice to it --
+    #: ``integrator``, which ``auto`` resolves once the model's flexes are known. Overlaid on ``sim``
+    #: in :meth:`as_record`, so a run's provenance states what ran rather than what was delegated.
+    resolved: dict = field(default_factory=dict)
 
     # -- the record a run leaves ---------------------------------------------------------------
 
@@ -359,10 +373,12 @@ class SimConfig:
         The RESOLVED tree, not the document plus the overrides that were applied to it. A recording
         that stored only the recipe had to re-run the whole load path to be replayed, which coupled
         replay to the override grammar: any change to it invalidated every recording ever made. What
-        ran is recorded outright, so rebuilding reads rather than re-interprets.
+        ran is recorded outright, so rebuilding reads rather than re-interprets. That includes the
+        ``sim`` values the engine resolved (:attr:`resolved`): ``integrator: auto`` is recorded as
+        the integrator it became.
         """
         return {
-            "sim": dict(self.sim),
+            "sim": {**self.sim, **self.resolved},
             "base_dir": str(self.base_dir),
             "components": [
                 {
@@ -1154,6 +1170,27 @@ def _validate_view(view) -> None:
 _CONTACT_OVERRIDE_WIDTHS = {"solref": 2, "solimp": 5, "friction": 5}
 
 
+#: The values ``sim.integrator`` accepts. ``auto`` (the default) lets the model decide: ``discrete``
+#: when it has a flex that needs it, else ``implicitfast`` (:mod:`roqsim.flex`). The rest are MuJoCo's
+#: integrators by the name its XML uses.
+SIM_INTEGRATORS = ("auto", "euler", "rk4", "implicit", "implicitfast", "discrete")
+
+#: The values ``sim.solver`` accepts: MuJoCo's constraint solvers by the name its XML uses.
+SIM_SOLVERS = ("pgs", "cg", "newton")
+
+
+def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
+    """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
+
+    The engine maps these names onto MuJoCo enums; without this an unknown one surfaced there as a
+    bare ``KeyError`` naming only the value, after every plugin had built.
+    """
+    if value is None:
+        return
+    if value not in allowed:
+        raise PluginError(f"sim.{key}: unknown value {value!r}; one of {', '.join(allowed)}")
+
+
 def _validate_seed(seed) -> None:
     """Reject a malformed ``sim.seed`` at load time.
 
@@ -1220,6 +1257,8 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         )
     _validate_view((raw.get("sim") or {}).get("view"))
     _validate_seed((raw.get("sim") or {}).get("seed"))
+    _validate_choice("integrator", (raw.get("sim") or {}).get("integrator"), SIM_INTEGRATORS)
+    _validate_choice("solver", (raw.get("sim") or {}).get("solver"), SIM_SOLVERS)
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
 
     component_assignments = [a for a in assignments if _is_component(a)]
