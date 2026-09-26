@@ -1580,6 +1580,44 @@ node that publishes ``target_frame`` instead.
 
 ``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
 
+**A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
+setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
+closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
+(25 mm at 50 mm/s and the default ``kp`` of 2 /s), ``D v / C`` on a stiff axis of the compliance
+controller. ``feedforward`` (default ``auto``) commands the goal's own velocity alongside the
+correction, ``twist = v_goal + kp (x_goal - x)``, and damps the compliance law on velocity *relative*
+to the goal's; a zero-stiffness axis is under force control and is given nothing to follow.
+
+.. code:: yaml
+
+   - cartesian_admittance:
+       controller_type: cartesian_motion_controller
+       feedforward: auto          # auto | supplied | off
+       feedforward_window_s: 0.2  # goals further apart than this are not a stream
+
+``v_goal`` comes from one of two places, and which one is a choice about the caller:
+
+* **Supplied with the goal**, by an in-process caller that knows it:
+  ``CartesianHandle.set_goal(pos, quat, twist=[vx, vy, vz, wx, wy, wz])``, world frame. Used under
+  ``auto`` and ``supplied``. ``target_frame`` is a ``PoseStamped``, as on the real controller, so a
+  ROS client cannot supply one.
+* **Estimated from the stream**, under ``auto``, by differencing successive goals over sim time. Per
+  axis it takes the smaller of the last two arrival-to-arrival velocities where they agree in sign,
+  and zero where they do not, so a goal that *jumps* -- a new stationary goal, or one displaced goal
+  in a stream -- feeds nothing forward while a steady stream is fed forward in full. Goals further
+  apart than ``feedforward_window_s`` are waypoints rather than a stream and feed nothing forward;
+  a feedforward lapses once the next goal is half an interval overdue, so a stream that stops leaves
+  the arm to settle on its last goal.
+
+A goal commanded once, or re-sent unchanged, commands exactly what it did without a feedforward;
+``feedforward: off`` is the proportional-only law for a stream too. The twist is clamped to
+``max_linear_vel`` / ``max_angular_vel`` either way.
+
+**The lag is observable.** ``<controller>/tracking_error`` (``std_msgs/Float64``, metres) is how far
+the controlled site is from the pose it tracks -- the commanded ``target_frame`` or, before one, the
+pose the controller took the arm at. An in-process caller reads the full error, rotation included,
+and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
+
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
