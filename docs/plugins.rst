@@ -1623,7 +1623,7 @@ That division is the general one. The substrate owes a cell the *mechanism* — 
 wrench, close a Cartesian loop. What is being inserted into what, and what counts as having inserted
 it, is the experiment's to state.
 
-Three things decide whether such a world measures anything at all:
+Four things decide whether such a world measures anything at all:
 
 * **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
   from the body's children, so the tool must hang **below** it. A peg attached above the measurement
@@ -1653,6 +1653,12 @@ Three things decide whether such a world measures anything at all:
   than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
+* **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
+  probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
+  the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
+  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
+  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
+  docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
 ``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
@@ -1769,6 +1775,34 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
+
+Manipulation: a prop or a tool that deforms
+-------------------------------------------
+
+A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
+model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
+``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
+needs (:mod:`roqsim.flex`). What the spawn adds around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
+  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
+  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, whose own value its contacts use.
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
+  under its own weight, as a real one on a still arm does.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
 
 Writing your own
 ----------------
