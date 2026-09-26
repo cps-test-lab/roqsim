@@ -40,12 +40,25 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import NamedTuple
 
 import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.plugin import Plugin
+
+
+class Progress(NamedTuple):
+    """How far the stage has run: arc length travelled and total (m), and whether it finished.
+
+    A structure rather than a bare tuple so the ``stage_progress`` endpoint can publish one field of
+    it on a ``std_msgs/Float64`` (the ``field`` hint), which cannot carry a tuple.
+    """
+
+    s: float
+    total: float
+    done: bool
 
 
 class PropTrajectoryPlugin(Plugin):
@@ -73,6 +86,8 @@ class PropTrajectoryPlugin(Plugin):
             errors.append("prop_trajectory: `units` must be 'mm' or 'm'")
         if float(config.get("speed", 0.03)) <= 0.0:
             errors.append("prop_trajectory: `speed` must be > 0")
+        if int(config.get("start_index", 0)) < 0:
+            errors.append("prop_trajectory: `start_index` must be >= 0 (a CSV row, counted from 0)")
         plate = config.get("plate", [0.07, 0.07, 0.006])
         if len(plate) != 3:
             errors.append("prop_trajectory: `plate` must be [hx, hy, hz]")
@@ -132,11 +147,25 @@ class PropTrajectoryPlugin(Plugin):
         arr = np.asarray(pts, dtype=float)
         if self.config.get("units", "mm") == "mm":
             arr /= 1000.0
-        arr = arr[self.start_index :] if self.start_index < len(arr) else arr[-2:]
+        if self.start_index > len(arr) - 2:
+            # Refused rather than clamped: starting on a different row is a different, translated
+            # path, and a stage that runs one nobody asked for is a different experiment.
+            raise RuntimeError(
+                f"prop_trajectory: start_index {self.start_index} leaves fewer than 2 of the "
+                f"{len(arr)} points in {path}; it must be at most {len(arr) - 2}"
+            )
+        arr = arr[self.start_index :]
         arr -= arr[0]  # the path starts at the origin, whatever row we began on
         arr[:, 0] = np.clip(arr[:, 0], -self.travel[0], self.travel[0])
         arr[:, 1] = np.clip(arr[:, 1], -self.travel[1], self.travel[1])
         seg = np.linalg.norm(np.diff(arr, axis=0), axis=1)
+        if float(seg.sum()) <= 0.0:
+            # A path of one repeated point (or one the travel limits collapsed) has no length to
+            # run, so it could never finish and a trial gated on `stage_progress` would wait for ever.
+            raise RuntimeError(
+                f"prop_trajectory: the path in {path} has zero length after start_index and the "
+                f"travel limits {self.travel}; the stage would never move or finish"
+            )
         self._pts = arr
         self._cum = np.concatenate([[0.0], np.cumsum(seg)])
 
@@ -223,14 +252,23 @@ class PropTrajectoryPlugin(Plugin):
                 namespace=self.config.get("namespace", ""),
                 read=self.read_progress,
                 rate_hz=30.0,
-                backend={"ros2": {"type": "std_msgs.msg.Float64", "topic": "stage_progress"}},
+                # The arc length travelled; a Float64 carries one number, not the whole Progress.
+                backend={
+                    "ros2": {
+                        "type": "std_msgs.msg.Float64",
+                        "field": "s",
+                        "topic": "stage_progress",
+                    }
+                },
             )
         )
         self.on_reset(ctx)
 
-    def read_progress(self):
+    def read_progress(self) -> Progress:
         """(arc length travelled [m], total path length [m], finished?)."""
-        return float(self._s), float(self._cum[-1] if len(self._cum) else 0.0), bool(self._done)
+        return Progress(
+            float(self._s), float(self._cum[-1] if len(self._cum) else 0.0), bool(self._done)
+        )
 
     def on_reset(self, ctx: SimContext) -> None:
         self._s = 0.0
