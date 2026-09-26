@@ -32,6 +32,7 @@ from fastmcp import FastMCP
 
 from roqsim.catalog import get_model_details, list_models, list_worlds
 from roqsim.introspection import get_plugin_details, list_plugins
+from roqsim_mcp.check import check_world
 
 #: Everything a caller needs to ask before writing a world: what plugins exist, what can be spawned,
 #: and what worlds are already there. Adding one is one line here, because each is already a plain
@@ -43,6 +44,9 @@ def create_server() -> FastMCP:
     mcp = FastMCP("roqsim")
     for fn in _TOOLS:
         mcp.tool()(fn)
+    # After writing a world, whether it loads -- the one tool here that builds something, which is
+    # why it is not a plain function of core's but a wrapper that runs it out of process.
+    mcp.tool()(check_world)
     return mcp
 
 

@@ -44,6 +44,7 @@ def test_every_tool_is_registered():
         "list_models",
         "get_model_details",
         "list_worlds",
+        "check_world",
     }
 
 
