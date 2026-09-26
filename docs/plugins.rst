@@ -1614,7 +1614,7 @@ That division is the general one. The substrate owes a cell the *mechanism* — 
 wrench, close a Cartesian loop. What is being inserted into what, and what counts as having inserted
 it, is the experiment's to state.
 
-Three things decide whether such a world measures anything at all:
+Four things decide whether such a world measures anything at all:
 
 * **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
   from the body's children, so the tool must hang **below** it. A peg attached above the measurement
@@ -1644,6 +1644,12 @@ Three things decide whether such a world measures anything at all:
   than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
+* **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
+  probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
+  the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
+  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
+  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
+  docstring.
 
 A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
 ``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
