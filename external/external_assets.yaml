@@ -12,7 +12,10 @@
 #   sources:      inputs to fetch; each: {url, path, [manual: true], [sha256]}
 #                 - manual: true  -> cannot be auto-downloaded (behind a portal / login); the runner
 #                                    errors with instructions if the file is not already at `path`.
-#                 - otherwise `url` is fetched to `path` (verified against sha256 if given).
+#                 - otherwise `url` is fetched to `path` and verified against `sha256`, which every
+#                   fetched source carries: a URL names a location, not a file, and a vendor that
+#                   replaces the CAD behind one would otherwise change every mesh regenerated from
+#                   it while the manifest said nothing had moved.
 #   convert:      {script, [pip_deps: [...]], [needs_blender: true]}  -- omit for download-only assets.
 #                 script is run with the tool venv's python:
 #                   <script> --sources <path...> --targets <path...> [--blender <path>]
@@ -52,8 +55,10 @@ resources:
   sources:
   - url: https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Samples/Policies/Spot_Policies/spot_policy.pt
     path: roqsim_quadruped/src/roqsim_quadruped/policy/spot_policy.pt
+    sha256: d95d675e8b080d5c84a2a2779d165ff7ecd3e34d24b233c083242e615a3d589a
   - url: https://omniverse-content-production.s3-us-west-2.amazonaws.com/Assets/Isaac/5.0/Isaac/Samples/Policies/Spot_Policies/spot_env.yaml
     path: roqsim_quadruped/src/roqsim_quadruped/policy/spot_env.yaml
+    sha256: 397440818604ca7cf0cb79c6012325f2bba292029ad0c2d5df5fd64b531d2dbc
   targets:
   - roqsim_quadruped/src/roqsim_quadruped/policy/spot_policy.pt
   - roqsim_quadruped/src/roqsim_quadruped/policy/spot_env.yaml
@@ -66,6 +71,7 @@ resources:
   sources:
   - url: https://www.zivid.com/hubfs/files/CAD/Zivid%203.stl?hsLang=en
     path: external/sources/zivid/zivid3.stl
+    sha256: 5112f43bf50c02d539fc3f79bdb66806615dc715b395376bba62885db186a305
   convert:
     script: external/convert/zivid_convert.py
     needs_blender: true
