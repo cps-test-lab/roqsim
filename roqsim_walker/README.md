@@ -31,7 +31,6 @@ roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
 components:
   - walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      name: pedestrian         # entity name
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
@@ -43,34 +42,41 @@ components:
         - [ 2.0,  2.0]
       loop: true               # cycle the patrol forever
       arrival_radius: 0.25
-      avoidance: false         # ORCA local avoidance (needs the [avoidance] extra)
-      robot_body: base_link    # body to yield to (default: the robot entity's base)
+      avoidance: false         # true: steer round others with the default local model (give_way)
       action_name: navigate_through_poses
-      orca:     {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
+      orca:     {radius: 0.26, max_speed: 1.6}   # the walker's disc and speed cap in avoidance
       planner:  {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion:   {walk: /abs/walk.npz}   # override a resolved locomotion clip
+    name: pedestrian           # the entry's label, and the walker's entity name
 ```
 
 ### Navigation layers
 
-| Layer | Module | What it does |
-|---|---|---|
-| Global plan | `nav/planner.py`, `nav/occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
-| Behaviour | `nav/behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
-| Local avoidance | `nav/controller.py` (ORCA) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
+Navigation is `roqsim_nav`'s: the walker hands its keys to a `navigator` component with the `walker`
+output, so these modules live there.
 
-Walls are read straight from the compiled model (`nav/obstacles.py`), so the planner and ORCA always
+| Layer | Module (`roqsim_nav`) | What it does |
+|---|---|---|
+| Global plan | `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
+| Behaviour | `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
+| Local avoidance | `avoidance/` (`give_way` default, `orca`) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
+
+Walls are read straight from the compiled model (`obstacles.py`), so the planner and ORCA always
 agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
 wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
 legs. A `floorplan` mesh adds its own walls the same way.
 
 ### Avoidance
 
-`avoidance: true` turns on ORCA for that walker. It needs the optional extra (built from source):
+`avoidance: true` turns on local avoidance for that walker with `roqsim_nav`'s default model,
+`give_way`, which is pure Python. To use ORCA instead, write a nested `navigator` with
+`avoidance: {steer: orca}`; that needs `rvo2`, built from source (an extra cannot express its build
+dependency, so it is two commands):
 
 ```bash
-pip install -e 'roqsim_walker[avoidance]'
+pip install Cython
+pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
 ```
 
 `rvo2` publishes no wheel, so the extra is a git direct reference and needs **git + a compiler**. Two
@@ -78,8 +84,8 @@ places that bites: a PyPI upload of this package cannot carry the extra (PyPI re
 metadata), and a wheel-only or air-gapped build — a campaign image — cannot resolve it. Install the
 base package in those, and enable avoidance only where the toolchain exists.
 
-Without `rvo2` installed the walker logs a warning once and navigates without collision avoidance.
-The shared ORCA simulation is created when *any* walker enables it; a walker with `avoidance: false`
+Asking for `orca` without `rvo2` installed is an `ImportError` naming the extra. The shared ORCA
+simulation is created when *any* walker enables it; a walker with `avoidance: false`
 still occupies an ORCA agent (so peers steer around it) but is never pushed off its own path.
 
 ### Goals at runtime
