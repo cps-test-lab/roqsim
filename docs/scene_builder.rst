@@ -5,8 +5,8 @@ Scene builder (human 2D floorplan + 3D review)
 MCP server exposes two native-window tools a *human* answers in —
 
 * ``review_scene_by_human`` — a **3D** window showing whatever ``roqsim`` can load; the human
-  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass or
-  Fail. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
+  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass,
+  Fail, or a neutral comment. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
   placement, a world under review.
 * ``sketch_floorplan_by_human`` — a **2D** top-view window for authoring a floorplan's walls; it
   returns a finished **structured sketch** (rooms + lines + doors) that the deterministic generator
@@ -24,7 +24,7 @@ MCP server exposes two native-window tools a *human* answers in —
   ``roqsim sim --record``, rendered headless. It is how an *agent* looks at a scene, where the two
   tools above are how it asks a *human* to. See :ref:`render-scene-tool` below.
 
-The sketch window is not the only source of that JSON. Two tools in ``roqsim_scenes`` produce the same
+The sketch window is not the only source of that JSON. Three tools in ``roqsim_scenes`` produce the same
 schema from something that already exists, leaving the generator downstream unchanged:
 
 * ``roqsim scenes mapimage-to-floorplan`` — when the layout exists only as a *picture* (an
@@ -37,8 +37,9 @@ schema from something that already exists, leaving the generator downstream unch
   be the former rather than inventing walls through them.
 * ``roqsim scenes dxf-to-floorplan`` — when the layout exists as a CAD drawing.
 
-Both emit axis-aligned walls only. A hand-drawn plan, or a world with diagonal walls, still belongs
-in the sketch window — the generator itself places a wall at any angle.
+The image and grid tools emit axis-aligned walls only; the DXF tool keeps each drawn LINE/LWPOLYLINE
+segment at its own angle. A hand-drawn plan still belongs in the sketch window — the generator itself
+places a wall at any angle.
 
 To *look* at a floorplan without opening a window — a review of what a sketch produced, or the layout an
 agent needs before placing anything — ``roqsim-floorplan-to-png`` (in ``roqsim_scenes``) renders it as a
@@ -102,7 +103,7 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail", "comment": str,
+    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": Enter-submitted note, neither
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
@@ -132,13 +133,13 @@ CLI (debugging)
     roqsim-scene-builder review-scene roqsim_assets:industrial_table -m "Right scale?"
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
-It prints the verdict JSON and exits **0** (pass), **1** (fail), **2** (no display / load error),
+It prints the verdict JSON and exits **0** (pass, or a neutral comment), **1** (fail), **2** (no display / load error),
 **3** (window closed without a verdict).
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —
 ``Q``/``E`` (or Page Up/Down) drop and rise, **Shift** is faster and **Ctrl** slower, the **wheel
-flies** forward/back along the view, and right-drag still pans. That is
+flies** forward/back along the view, and right-drag pans. That is
 how a building-sized world gets inspected from the inside instead of only circled from outside.
 ``W``/``S`` follow where you look (look down, fly down) while ``A``/``D`` stay level. The keys act
 while the pointer is over the 3D view — typing in the comment box stays text.
