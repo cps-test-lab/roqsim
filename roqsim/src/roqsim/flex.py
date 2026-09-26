@@ -9,7 +9,9 @@ an ``<option>`` attribute the world may never have written, because roqsim set i
 **These rules are MuJoCo-version-sensitive.** Each was measured on MuJoCo 3.14.0, the range the
 packages pin (``>=3.14,<3.15``), and ``tests/test_flex_rules.py`` compiles every case and checks
 the verdict here against MuJoCo's own, so a MuJoCo that changes one fails that test rather than a
-run. Nothing else in roqsim encodes a flex rule; a change to one belongs here.
+run. Nothing else in roqsim encodes one of these rules; a change to one belongs here. A rule that
+only one consumer reads is stated in that consumer's module, named there rather than numbered, and
+pinned by that consumer's tests the same way.
 
 The rules, as measured on 3.14.0:
 
@@ -45,11 +47,14 @@ to ``implicitfast`` otherwise, so a world without one runs exactly as it did bef
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import mujoco
 
 from .plugin import PluginError
+
+_log = logging.getLogger(__name__)
 
 #: The ``sim.integrator`` value that lets the model decide. The default.
 AUTO = "auto"
@@ -216,6 +221,10 @@ def entity_flex_ids(model: mujoco.MjModel, body_name: str) -> list[int]:
     neither one's, because a contact on it is not a contact of either. A flex declared in an
     entity's body, or in an arm's end effector, is that entity's: its vertex bodies are children of
     the body it is declared in, and its pinned vertices sit on that body.
+
+    A flex that only partly lies in the subtree is logged rather than counted, so the entity it
+    straddles says so when it is looked at: hiding a cloth pinned between two robots with one of
+    them would leave the other holding a flex nothing can see.
     """
     # Imported here so that presence, which hides an entity's flexes, may import this module.
     from .presence import entity_body_ids
@@ -223,10 +232,138 @@ def entity_flex_ids(model: mujoco.MjModel, body_name: str) -> list[int]:
     bodies = set(entity_body_ids(model, body_name))
     if not bodies:
         return []
-    return [f for f in range(model.nflex) if set(flex_dof_body_ids(model, f)) <= bodies]
+    flexes = []
+    for flex in range(model.nflex):
+        on = set(flex_dof_body_ids(model, flex))
+        inside = on & bodies
+        if not inside:
+            continue
+        if inside == on:
+            flexes.append(flex)
+        else:
+            _log.warning(
+                "flex %r sits partly in %r's subtree (%d of its %d bodies) and is not counted as "
+                "part of it: presence and anything else that works per entity leave it alone",
+                flex_label(model, flex),
+                body_name,
+                len(inside),
+                len(on),
+            )
+    return flexes
 
 
 def spec_flex_body_names(flex) -> list[str]:
     """The body names an ``MjSpec`` flex's degrees of freedom live on (rule 1's anchor bodies),
     for a check that must run before compile."""
     return _anchor_bodies(flex)
+
+
+# -------------------------------------------------------------------------------------------------
+# A flex inside a model a plugin attaches: a prop, an arm's tool
+# -------------------------------------------------------------------------------------------------
+#
+# A ``<flexcomp>`` expands, while MuJoCo parses the file, into one body per vertex (per node, under
+# ``dof="trilinear"``/``"quadratic"``) carrying three unnamed slide joints and an explicit mass, and
+# the flex itself, which names those bodies. A pinned vertex gets no body: the flex names the body
+# the ``<flexcomp>`` was declared in -- its *pin body* -- and keeps the vertex's position in that
+# body's frame. Three more MuJoCo 3.14.0 behaviours decide how a plugin that attaches such a model
+# treats it, each measured in ``tests/test_flex_models.py`` (6: ``roqsim_sensors``'
+# ``tests/test_force_torque_flex.py``):
+#
+# 4. **``MjSpec.attach`` silently drops a flex pinned to the attached model's world body.** A
+#    top-level ``<flexcomp>`` with a ``<pin>`` names ``world`` as its pin body, and the spec it is
+#    attached into has no flex at all. :func:`lift_top_level_flexes` gives it a body to be pinned to.
+# 5. **A mesh or gmsh ``<flexcomp>`` reads its ``file`` while the model is parsed**, against the
+#    model's own directory and ``<compiler meshdir>``, and leaves no mesh asset behind. So
+#    :func:`roqsim.models.apply_assets` never sees it, and the directories a manifest borrows
+#    through ``assets:`` are not searched: the file has to live beside the model.
+# 6. **A site force/torque sensor does not see a contact with a flex.** The contact acts on the
+#    flex's vertices and is not among the external forces MuJoCo's sensor pass
+#    (``mj_rnePostConstraint``) accounts for, so the sensor reads as though it were not there --
+#    whether the flex hangs below the sensor or the sensed tool presses into one. Everything else a
+#    flex does reaches the sensor: its weight, its elastic reaction (at rest, and in motion, where
+#    the reading matches the vertices' momentum balance step by step) and a force applied to a
+#    vertex body.
+
+
+def pin_bodies(spec: mujoco.MjSpec, flex) -> set[str]:
+    """The bodies *flex*'s pinned vertices sit on.
+
+    ``<flexcomp>`` declares every vertex body inside the body it is written in, which is also where
+    it puts a pinned vertex, so a pin body is an anchor that is the parent of another anchor. A flex
+    whose vertices all sit on one body is rigid, and that body is its pin body.
+    """
+    anchors = set(_anchor_bodies(flex))
+    if len(anchors) <= 1:
+        return anchors
+    pins = set()
+    for name in anchors:
+        body = spec.body(name)
+        parent = body.parent if body is not None else None
+        if parent is not None and parent.name in anchors:
+            pins.add(parent.name)
+    return pins
+
+
+def owned_bodies(spec: mujoco.MjSpec, flex) -> list[str]:
+    """The bodies that carry *flex*'s own degrees of freedom: its vertex (or node) bodies.
+
+    Not its pin bodies, which carry pinned vertices but belong to the model around the flex.
+    """
+    pins = pin_bodies(spec, flex)
+    return [name for name in dict.fromkeys(_anchor_bodies(flex)) if name not in pins]
+
+
+def flex_is_free(spec: mujoco.MjSpec, flex) -> bool:
+    """Whether *flex* is held by nothing: it has vertex bodies and no vertex pinned to a body."""
+    return bool(owned_bodies(spec, flex)) and not pin_bodies(spec, flex)
+
+
+def _declared_at_top(spec: mujoco.MjSpec, flex) -> bool:
+    if "world" in _anchor_bodies(flex):
+        return True
+    for name in owned_bodies(spec, flex):
+        body = spec.body(name)
+        if body is not None and body.parent is not None and body.parent.name == "world":
+            return True
+    return False
+
+
+def lift_top_level_flexes(child: mujoco.MjSpec, root_name: str) -> mujoco.MjSpec:
+    """*child*, with everything under its world body moved into one static body, if it has a flex there.
+
+    A ``<flexcomp>`` written directly under ``<worldbody>`` leaves a model with no body of its own:
+    its vertex bodies are top-level, so the first of them would pass for the model's root, and a
+    pinned one names ``world``, which ``MjSpec.attach`` drops with the flex (rule 4 above). The
+    returned spec holds a body named *root_name* at the origin, with no joint, carrying what the
+    world body carried; a ``world`` pin now names that body, which is where the pinned vertices
+    were. A model with no such flex is returned unchanged, so nothing else gains a body.
+
+    Call it after :func:`roqsim.models.apply_assets` -- the returned spec is built in memory and
+    knows no model directory.
+    """
+    if not any(_declared_at_top(child, flex) for flex in child.flexes):
+        return child
+    if child.body(root_name) is not None:
+        raise PluginError(
+            f"a <flexcomp> under <worldbody> needs a body to be attached in, and {root_name!r}, "
+            "the name it would get, is already a body of this model. Declare the flexcomp inside a "
+            "<body> of its own."
+        )
+    outer = mujoco.MjSpec()
+    root = outer.worldbody.add_body(name=root_name)
+    outer.attach(child, prefix="", frame=root.add_frame())
+    for flex in outer.flexes:
+        flex.vertbody = [root_name if name == "world" else name for name in flex.vertbody]
+        flex.nodebody = [root_name if name == "world" else name for name in flex.nodebody]
+    return outer
+
+
+def flex_collides(model: mujoco.MjModel, flex_id: int) -> bool:
+    """Whether flex *flex_id* takes part in contacts at all (a nonzero ``contype`` or ``conaffinity``)."""
+    return bool(int(model.flex_contype[flex_id]) or int(model.flex_conaffinity[flex_id]))
+
+
+def flex_label(model: mujoco.MjModel, flex_id: int) -> str:
+    """Flex *flex_id*'s name, or ``#<id>`` for an unnamed one."""
+    return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex_id) or f"#{flex_id}"

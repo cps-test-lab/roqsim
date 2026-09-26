@@ -1,16 +1,25 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
-"""Check a run for the three faults a simulation can have while still looking alive.
+"""Check a run for the faults a simulation can have while still looking alive.
 
     roqsim health <run-dir> --robot base_link           # what the run looks like right now
     roqsim health <run-dir> --robot base_link --watch   # keep checking until something is wrong
     roqsim health --clock run.clock_map.csv --poses sim_poses.csv --watch
 
-Three checks, and deliberately no more, because each is a fault that raises **no error anywhere**: a
-simulation that never starts stepping, one that steps far slower than realtime, and a robot that
-stands still for a simulated minute. A run with any of them looks healthy to every other signal --
-the process is up, the log is quiet, the exit status is 0 -- while producing nothing worth
-analysing. Everything else a run can get wrong already reports itself.
+Four checks, and deliberately no more, because each is a fault that raises **no error anywhere**: a
+simulation that never starts stepping, one that stops stepping, one that steps far slower than
+realtime, and a robot that stands still for a simulated minute. A run with any of them looks healthy
+to every other signal -- the process is up, the log is quiet, the exit status is 0 -- while
+producing nothing worth analysing. Everything else a run can get wrong already reports itself.
+
+**Stopped and slow are different findings.** Clock rows are written once per recorder sample on the
+*simulated*-time grid, so a slow world still writes them, just further apart in wall time, while a
+frozen one writes none. Check 3 (``sim-time-stuck``, an error) reads the second: no row has advanced
+sim time for longer than the run's own recent cadence can explain. Check 4 (``sim-time-rate``, a
+warning) reads the first: rows keep arriving, but sim time advances below a floor. An expensive world
+-- a deformable body at a sub-millisecond timestep -- legitimately runs at a few percent of realtime,
+and a check that ended it for that would end every such experiment; a run that stopped is ended on
+check 3 whatever its speed was.
 
 **A separate process, on purpose.** These checks are not a plugin and hold nothing inside the
 simulator: a health check that ran in the simulated process would share the process's failure modes,
@@ -22,7 +31,7 @@ can say something true about a run that is wedged, and about one that is already
 ===========================  ===================================  ==========================
 file                         columns used                         serves
 ===========================  ===================================  ==========================
-``*.clock_map.csv``          ``wall_ts`` (epoch), ``sim_ts``      checks 2 and 3
+``*.clock_map.csv``          ``wall_ts`` (epoch), ``sim_ts``      checks 2, 3 and 4
 ``sim_poses.csv``            ``timestamp``, ``frame``, position   check 1
 ===========================  ===================================  ==========================
 
@@ -42,12 +51,17 @@ for "it stopped" is that nothing arrives. Silence is therefore counted against a
 there is reason to think it is still alive**:
 
 * ``--watch`` is that reason -- it is watching a run it expects to continue -- so wall time keeps
-  advancing while the record does not, and a wedge is caught. It stops without complaint when the
-  recording's ``.npz`` appears, because that file is written by ``close()`` and so means the run
-  ended on purpose rather than stopped dead.
+  advancing while the record does not, and a stop is caught by check 3. It stops without complaint
+  when the recording's ``.npz`` appears, because that file is written by ``close()`` and so means
+  the run ended on purpose rather than stopped dead.
 * a one-shot check has no such premise: it is handed a directory and asked what is in it. It judges
   the span the record actually covers, because what happened after the last row is not something the
   file can say. Otherwise every finished run would be reported as a stall a minute after it ended.
+  **So a one-shot check cannot see a simulation that stopped**: the rows end, and nothing in the file
+  says whether the run ended or froze. Check 3 fires there only on what the rows themselves record
+  -- rows whose sim time does not advance -- which the recorder never writes. A caller polling a live
+  run that has to catch a stop runs ``--watch``, bounded with ``--for`` when it wants one pass: the
+  first poll is judged against the wall clock.
 
 Either way a message states what was *observed* -- how long since the last row, and where -- and
 never asserts a cause.
@@ -83,6 +97,7 @@ import argparse
 import json
 import logging
 import math
+import statistics
 import sys
 import time
 from collections import deque
@@ -109,9 +124,19 @@ MOTION_WINDOW_S = 60.0
 #: Check 2: how long sim time may take to start advancing.
 START_TIMEOUT_S = 60.0
 
-#: Check 3: the slowest a run may advance sim time and still be worth waiting for -- 5 s of sim per
-#: 60 s of wall, i.e. 0.083x realtime. Far below any usable run, so this fires on a wedge and not on
-#: a merely expensive world.
+#: Check 3: how long sim time may stand still before the run is reported as stopped -- this many
+#: seconds of wall time, or :data:`STUCK_FACTOR` times the median wall interval between the run's
+#: last :data:`STUCK_CADENCE_ROWS` advancing clock rows, whichever is longer. The floor keeps a fast
+#: run from being failed for one slow step; the factor keeps a slow world, whose rows are seconds
+#: apart, from being failed for its ordinary cadence.
+STUCK_FLOOR_S = 60.0
+STUCK_FACTOR = 10.0
+STUCK_CADENCE_ROWS = 32
+
+#: Check 4: the slowest a run may advance sim time before it is reported as slow -- 5 s of sim per
+#: 60 s of wall, i.e. 0.083x realtime. A **warning**: an expensive world runs below it legitimately
+#: and keeps writing rows, so it is worth saying and not worth ending a run over. A run that stopped
+#: is check 3's, and is an error.
 MIN_SIM_ADVANCE_S = 5.0
 RATE_WINDOW_S = 60.0
 
@@ -458,7 +483,7 @@ class SeriesSplitter:
     while the wall column deliberately keeps climbing ("real time did not restart"). A campaign
     resets between repetitions, so this is the common case and not an edge one.
 
-    Measuring across that boundary is how a healthy run gets failed: check 3 differences the first
+    Measuring across that boundary is how a healthy run gets failed: check 4 differences the first
     and last sim stamp in its window, and a window spanning a reset sees a full minute of progress
     as zero or negative advance. So the boundary restarts the checks rather than being averaged
     through. The carry-over matters -- a reset usually falls *between* two polls, not inside one
@@ -540,13 +565,98 @@ class SimTimeStarts:
         ]
 
 
-class SimTimeRate:
-    """Check 3: sim time advances at least ``min_advance`` per ``window`` of wall time.
+class SimTimeStops:
+    """Check 3: sim time keeps advancing, judged against the run's own cadence.
 
-    Wall time comes from this process's clock rather than from the newest row, which is what makes a
-    silent record count against the run: if rows stop arriving, the measured advance stops while the
-    window keeps sliding, and the rate falls. Judged only once a full window of history exists, so a
-    run is never failed for the first minute of its life.
+    A clock row is written per recorder sample on the simulated-time grid, so a running simulation
+    writes rows however slowly it steps and a frozen one writes none. The finding is therefore
+    *silence*: no row has advanced sim time for longer than :meth:`limit` -- the floor, or
+    ``factor`` times the median wall interval between the recent advancing rows, whichever is
+    longer. Measured against the run's own cadence because a fixed limit is wrong for one kind of
+    world or the other: a minute is an eternity for a realtime run and ten rows for a world whose
+    rows are six seconds apart.
+
+    ``now`` is what the silence is measured to, so the mode decides what this can see (see the
+    module docstring): against the wall clock (``--watch``) a record that stops arriving is caught;
+    against the newest row (one-shot) only rows that arrived without advancing sim time can be, which
+    the recorder never writes. A row that does not advance sim time is therefore counted as silence
+    rather than as progress -- it says the writer is alive, not that the simulation is.
+
+    Armed once sim time has advanced at least once: before that the question is check 2's, and a
+    single row has no cadence to judge against.
+    """
+
+    slug = "sim-time-stuck"
+
+    def __init__(
+        self,
+        floor: float = STUCK_FLOOR_S,
+        factor: float = STUCK_FACTOR,
+        history: int = STUCK_CADENCE_ROWS,
+    ) -> None:
+        self.floor = floor
+        self.factor = factor
+        self._intervals: deque[float] = deque(maxlen=history)
+        self._last: ClockRow | None = None  # the newest row that advanced sim time
+        self._reset = False
+        self._armed = False
+        self._reported = False
+
+    def on_new_series(self) -> None:
+        """A reset proves the loop is running: the next row is progress, though sim time went back.
+
+        Its wall interval is not added to the cadence -- a reset is not a sample period.
+        """
+        self._reset = True
+
+    def update(self, rows: list[ClockRow]) -> None:
+        for row in rows:
+            if self._last is None or self._reset:
+                self._armed = self._armed or self._reset
+                self._last, self._reset = row, False
+            elif row.sim_ts > self._last.sim_ts + SERIES_EPS:
+                self._intervals.append(row.wall_ts - self._last.wall_ts)
+                self._last, self._armed = row, True
+
+    def cadence(self) -> float | None:
+        """Median wall seconds between the recent advancing rows; ``None`` before there are two."""
+        return statistics.median(self._intervals) if self._intervals else None
+
+    def limit(self) -> float:
+        cadence = self.cadence()
+        return self.floor if cadence is None else max(self.floor, self.factor * cadence)
+
+    def findings(self, now: float, origin: float) -> list[Finding]:
+        if self._reported or not self._armed or self._last is None:
+            return []
+        quiet = now - self._last.wall_ts
+        limit = self.limit()
+        if quiet <= limit:
+            return []
+        self._reported = True
+        cadence = self.cadence()
+        usual = f"rows arrived every {cadence:.2f} s before that" if cadence is not None else ""
+        return [
+            Finding(
+                ERROR,
+                self.slug,
+                f"sim time has not advanced for {quiet:.0f} s of wall time, since sim "
+                f"{self._last.sim_ts:.2f} s; "
+                + (f"{usual}, so " if usual else "")
+                + f"the limit was {limit:.0f} s",
+            )
+        ]
+
+
+class SimTimeRate:
+    """Check 4: sim time advances at least ``min_advance`` per ``window`` of wall time.
+
+    Measured between the recorder's own rows -- over the newest ``window`` of wall time the record
+    covers, anchored on the last row before it -- and not up to ``now``. That keeps silence out of
+    this check: a record that stops arriving leaves the measured rate where it was, and the stop is
+    check 3's. What remains is a run whose rows keep arriving but carry little sim time each, which
+    is an expensive world as often as a broken one, so it is a warning. Judged only once the rows
+    span a full window, so a run is never reported for the first minute of its life.
     """
 
     slug = "sim-time-rate"
@@ -569,27 +679,27 @@ class SimTimeRate:
     def findings(self, now: float, origin: float) -> list[Finding]:
         if self._reported or not self._rows:
             return []
+        latest = self._rows[-1]
         # Keep one row from before the window as the anchor: the advance is measured across the
         # whole window, so dropping every older row would shorten it to the newest arrivals.
-        cutoff = now - self.window
+        cutoff = latest.wall_ts - self.window
         while len(self._rows) >= 2 and self._rows[1].wall_ts <= cutoff:
             self._rows.popleft()
-        anchor, latest = self._rows[0], self._rows[-1]
-        span = now - anchor.wall_ts
+        anchor = self._rows[0]
+        span = latest.wall_ts - anchor.wall_ts
         if span < self.window:
             return []
         advance = latest.sim_ts - anchor.sim_ts
         if advance / span >= self.min_advance / self.window:
             return []
         self._reported = True
-        quiet = now - latest.wall_ts
         return [
             Finding(
-                ERROR,
+                WARN,
                 self.slug,
                 f"sim time advanced {advance:.2f} s over {span:.0f} s of wall time "
-                f"({advance / span:.3f}x realtime, floor {self.min_advance / self.window:.3f}x); "
-                f"last row {quiet:.0f} s ago",
+                f"({advance / span:.3f}x realtime, floor {self.min_advance / self.window:.3f}x) "
+                f"across {len(self._rows)} clock rows",
             )
         ]
 
@@ -601,7 +711,8 @@ class RobotMoves:
     waiting on a pedestrian, a perception-only run, a manipulator-only phase -- and a channel that
     interrupts healthy runs is one nobody reads.
 
-    Measured in *sim* time, so a slow run is not also reported as a stuck one; check 3 owns that.
+    Measured in *sim* time, so a slow run is not also reported as a still robot; checks 3 and 4 own
+    that.
     """
 
     slug = "robot-motion"
@@ -757,7 +868,7 @@ class Report:
 
 
 class Monitor:
-    """The three checks over one source, polled until something is wrong or the caller stops."""
+    """The four checks over one source, polled until something is wrong or the caller stops."""
 
     def __init__(
         self, source: FileSource, robots: list[str], origin: float, no_robots: str = ""
@@ -765,7 +876,7 @@ class Monitor:
         self.source = source
         self.origin = origin
         self.report = Report()
-        self.clock_checks = [SimTimeStarts(), SimTimeRate()]
+        self.clock_checks = [SimTimeStarts(), SimTimeStops(), SimTimeRate()]
         self.motion = RobotMoves(robots)
         self.robots = robots
         self._clock_series = SeriesSplitter()
@@ -851,7 +962,7 @@ class Monitor:
         sample and not an interpolation to the instant of the call.
 
         ``rate`` is sim seconds per wall second over the rows read of the current series -- the
-        same quantity check 3 judges, reported rather than judged, so a caller can see 0.05x without
+        same quantity check 4 judges, reported rather than judged, so a caller can see 0.05x without
         having to infer it from a finding. Absent when the window is too short to divide.
 
         ``kind`` is added by the caller from the recorder's roster when there is one (see
