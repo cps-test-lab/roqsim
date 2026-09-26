@@ -73,6 +73,15 @@ serial path if a parallel run ever looks flaky:
    make test JOBS=1           # serial; the fallback when a parallel run looks wrong
    make test-roqsim_sensors   # just one package, for the edit/run loop
 
+Branches
+~~~~~~~~
+
+``main`` is what the current release's users run. ``next`` collects the changes for the next
+minor release that a user of the current one cannot take yet -- a change to a recording format,
+say -- so ``main`` stays compatible with what is released. CI tests a pull request into either
+branch and every push to either; images are published from ``main`` and release tags only
+(:doc:`installation`). ``next`` lands on ``main`` with that release.
+
 .. _adding-a-tool:
 
 Adding a tool
