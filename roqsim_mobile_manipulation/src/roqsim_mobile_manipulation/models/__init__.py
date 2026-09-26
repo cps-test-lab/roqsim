@@ -25,18 +25,3 @@ MODELS_DIR = Path(__file__).parent
 #: them ``<model>/meshes/<file>``. Getting this wrong is silent: MuJoCo does not error on an
 #: unresolvable mesh path, so the robot loses its geometry rather than failing to compile.
 MESHES_DIR = MODELS_DIR
-
-
-def model_path(name: str) -> Path:
-    """Resolve a bundled model file (accepts a bare name like ``frankie`` or a filename)."""
-    p = Path(name)
-    if p.is_absolute() and p.exists():
-        return p
-    for candidate in (
-        MODELS_DIR / name,
-        MODELS_DIR / f"{name}.xml",
-        MODELS_DIR / name / f"{name}.xml",
-    ):
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(f"model {name!r} not found under {MODELS_DIR}")
