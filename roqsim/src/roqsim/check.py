@@ -81,6 +81,10 @@ will do that its author probably did not intend: ``flex-damping`` (its damping i
 integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
 ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
 stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
+
+Exit status: ``0`` when the world loads (``ok`` is true; warnings do not change it), ``1`` when any
+stage reported a problem, including a target that names no world. The report itself is on stdout in
+both cases, so a caller branches on the status and reads the JSON for what went wrong.
 """
 
 from __future__ import annotations
@@ -480,6 +484,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
+        epilog="exit status: 0 the world loads (warnings do not change it); 1 a stage reported a "
+        "problem, including a target that names no world. The report is on stdout either way.",
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
     parser.add_argument("--json", action="store_true", help="report as JSON rather than as text")
