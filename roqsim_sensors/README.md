@@ -99,7 +99,7 @@ beside it — the same layout `roqsim_manipulation_assets` and `roqsim_assets` u
 `roqsim.models.resolve_model` accepts directly. Adding or removing a sensor is one `mv`, and its licence
 sidecar travels with the mesh it covers. Three of the nineteen have meshes that are **generated, not
 committed** (`mid360`, `zivid`, `robin_w1g` — vendor CAD with unclear redistribution terms; see
-`external/external_assets.yaml` and run `make external-convert`), which is the other reason the files
+`external/external_assets.yaml` and run `make external-resources`), which is the other reason the files
 are grouped per device rather than pooled: nothing in a shared `meshes/` said which files a fresh
 clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, the mesh resolution and the
 `package-data` globs.

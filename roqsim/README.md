@@ -35,8 +35,8 @@ Five built-in plugins, all world-agnostic:
 - `dummy` — adds one free-floating box and counts its own hook invocations on the blackboard. It
   validates the framework end-to-end with no assets at all, which is what the test suite asserts on.
 - `spawn_model` — place any `roqsim.models` entry in a world as a prop.
-- `ceiling` — a `with_ceiling` switch that *deletes* every geom lying entirely above a height cut at
-  build time. Hiding it is not enough: contact still happens, and a roof made transparent to open the
+- `ceiling` — with `keep: false`, *deletes* every geom lying entirely above `above_z` (default 2.5 m)
+  at build time. Hiding it is not enough: contact still happens, and a roof made transparent to open the
   view stops being a roof for the lidar too — `mj_ray` skips a geom exactly when its resolved alpha is
   0, so "invisible" and "unsensed" are the same setting and neither can be had alone. Deletion is what
   lets an overhead sensor and a top-down view see in while everything else keeps its physics.
