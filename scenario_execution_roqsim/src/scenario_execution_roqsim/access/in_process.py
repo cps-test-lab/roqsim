@@ -13,6 +13,8 @@ and the ROS bridge's own service handler takes the identical path.
 
 from __future__ import annotations
 
+import dataclasses
+
 import numpy as np
 
 from roqsim.placement import PLACEABLE_MODES_HINT, base_joint_of, place_body
@@ -24,14 +26,107 @@ from . import (
     OverrideCall,
     OverrideOutcome,
     Pose,
+    ReportCall,
+    ReportReading,
     SpawnCall,
     SpawnOutcome,
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
+    plain,
+    published_field,
 )
 
 _MISSING = object()
+
+#: What a report's published value may be when the endpoint names no field: one plain value.
+_SCALARS = (bool, int, float, str, np.generic)
+
+
+def _fields_of(payload) -> list[str]:
+    """The named fields of a report, for a refusal that lists what can be asked for."""
+    if dataclasses.is_dataclass(payload):
+        return [f.name for f in dataclasses.fields(payload)]
+    if hasattr(payload, "_fields"):  # a namedtuple
+        return list(payload._fields)
+    try:
+        return sorted(k for k in vars(payload) if not k.startswith("_"))
+    except TypeError:  # a tuple, an array, a number: no names to offer
+        return []
+
+
+def _report_endpoint(ctx, entity: str, report: str):
+    """The ``out`` endpoint *entity* declared as *report*, or an AccessError listing the ones it did."""
+    try:
+        ep = ctx.interface.find(entity, report)
+    except LookupError as err:
+        raise AccessError(str(err)) from None
+    if ep is not None and ep.direction == "out" and ep.read is not None:
+        return ep
+    offered: dict[str, list[str]] = {}
+    for e in ctx.interface.by_direction("out"):
+        if e.read is not None:
+            offered.setdefault(e.owner, []).append(e.name)
+    if entity in offered:
+        raise AccessError(
+            f"entity {entity!r} publishes no report {report!r}. It publishes: "
+            f"{', '.join(sorted(offered[entity]))}."
+        )
+    what = (
+        f"{entity!r} is an entity, but no plugin on it publishes a report"
+        if ctx.entities.get(entity) is not None
+        else f"no entity {entity!r} publishes a report"
+    )
+    listed = "; ".join(
+        f"{owner or '(no entity)'}: {', '.join(sorted(names))}"
+        for owner, names in sorted(offered.items())
+    )
+    raise AccessError(
+        f"{what}. A report is an endpoint a plugin declares on the entity it watches, addressed by "
+        f"that entity's `name:`. This world publishes: {listed or '(none)'}."
+    )
+
+
+class _InProcessReport(ReportCall):
+    """A report read straight from its endpoint, resolved again on every poll.
+
+    Resolved every time rather than held: a reset that rebuilds the world replaces the plugins and
+    their endpoints, and a held endpoint would go on reading the torn-down one. ``read()`` runs on
+    the physics thread, which in the stepped shape is the thread that ticks the tree.
+    """
+
+    def __init__(self, access: InProcessAccess, entity: str, report: str, field: str):
+        self._access = access
+        self._entity, self._report, self._field = entity, report, field
+
+    def poll(self) -> ReportReading | None:
+        ctx = self._access._ctx()
+        if ctx is None:
+            return None
+        ep = _report_endpoint(ctx, self._entity, self._report)
+        payload = ep.read()
+        if payload is None:  # the producer has nothing to report yet
+            return None
+        name = f"{self._entity}.{self._report}"
+        field = self._field or published_field(ep.backend)
+        if not field:
+            if isinstance(payload, _SCALARS):
+                return ReportReading(plain(payload), "", "in-process")
+            fields = _fields_of(payload)
+            raise AccessError(
+                f"{name} publishes no single field (its endpoint names none for ROS), so name the "
+                f"one to compare: report: '{self._report}.<field>', with <field> one of: "
+                f"{', '.join(fields) if fields else '(none -- a ' + type(payload).__name__ + ')'}."
+            )
+        try:
+            value = getattr(payload, field)
+        except AttributeError:
+            fields = _fields_of(payload)
+            raise AccessError(
+                f"{name} has no field {field!r}. Its {type(payload).__name__} has: "
+                f"{', '.join(fields) if fields else '(no named fields)'}."
+            ) from None
+        return ReportReading(plain(value), field, "in-process")
 
 
 def _unplaceable(name, joint_name) -> str:
@@ -117,6 +212,10 @@ class InProcessAccess(WorldAccess):
             except LookupError_ as err:
                 raise AccessError(str(err)) from None
         return self._bids[key]
+
+    # -- reports ----------------------------------------------------------------------------------
+    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+        return _InProcessReport(self, entity, report, field)
 
     # -- the fault ------------------------------------------------------------------------------
     def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:

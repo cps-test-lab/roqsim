@@ -228,6 +228,24 @@ class InterfaceRegistry:
     def by_direction(self, direction: str) -> list[Endpoint]:
         return [e for e in self._endpoints if e.direction == direction]
 
+    def find(self, owner: str, name: str) -> Endpoint | None:
+        """The endpoint *owner* declared as *name*, or ``None`` if it declared none.
+
+        ``(owner, name)`` is how a consumer outside the world addresses one endpoint -- a name alone
+        repeats across entities (every monitored arm has a ``force_limit``). Where one entity
+        declares a name more than once, as a robot with several arm controllers does with
+        ``joint_states`` (each scoped by its own namespace), the pair cannot tell them apart, and
+        this raises rather than returning whichever was registered first.
+        """
+        found = [e for e in self._endpoints if e.owner == owner and e.name == name]
+        if len(found) > 1:
+            scopes = ", ".join(repr(e.namespace) for e in found)
+            raise LookupError(
+                f"entity {owner!r} declares {len(found)} endpoints named {name!r} (namespaces "
+                f"{scopes}), so (entity, name) does not identify one of them"
+            )
+        return found[0] if found else None
+
 
 class Gate:
     """A named barrier condition used by the foreseen synchronous/lockstep mode.

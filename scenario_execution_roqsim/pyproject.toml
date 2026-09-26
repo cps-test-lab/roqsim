@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scenario_execution_roqsim"
 version = "0.1.0"
-description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion and inject a physical fault, from a stepped or a ROS run."
+description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion, read what its plugins report and inject a physical fault, from a stepped or a ROS run."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -38,11 +38,13 @@ test = ["pytest>=7.0", "mujoco>=3.14,<3.15"]
 [project.entry-points."scenario_execution.osc_libraries"]
 roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
 
-# The actions. Entry-point names are GLOBAL across every installed package -- scenario-execution errors
-# with "More than one plugin is found" on a collision -- so they are prefixed by what they act on
-# (`entity_`, `model_`) rather than by a verb.
+# The actions. An invocation binds to the implementation from the package whose library declared the
+# action, so a name shared with another installed package (`spawn_entity`) is not a collision; two
+# imported libraries declaring one name are refused at parse time. The `entity_` prefix names what an
+# action acts on.
 [project.entry-points."scenario_execution.actions"]
 entity_moved = "scenario_execution_roqsim.actions.entity_moved:EntityMoved"
+entity_reports = "scenario_execution_roqsim.actions.entity_reports:EntityReports"
 entity_rotated = "scenario_execution_roqsim.actions.entity_rotated:EntityRotated"
 entity_navigate = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigate"
 entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigateStart"

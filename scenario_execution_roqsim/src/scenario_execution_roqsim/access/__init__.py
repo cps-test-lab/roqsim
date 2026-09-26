@@ -26,6 +26,8 @@ pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``get_entity_s
                                                                  entity NAME
 apply/restore fault ``F``    blackboard ``model_override:F``      ``F/override`` (``SetBool``)
 did it land                  ``read_state().verified``            the same service's reply
+report ``R`` of ``X``        ``ctx.interface.find(X, R)``        the bridge's endpoint map, then
+                             ``.read()``, any field              ``R``'s topic; its published field
 time                         the runner's ``clock``               the runner's ``clock``
 ===========================  ==================================  ====================================
 
@@ -43,7 +45,10 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over ROS a pose is a service round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A dwell
-shorter than one tick means "the first tick past the threshold" on both paths.
+shorter than one tick means "the first tick past the threshold" on both paths. And a plugin's report
+travels over ROS as the one field its endpoint publishes, so the other fields of a report are
+readable in a stepped run only -- asked for over ROS, they are refused by name rather than read as
+something else.
 """
 
 from __future__ import annotations
@@ -197,6 +202,50 @@ class NavCall(PendingCall):
         """Stop the mover. Idempotent -- an action's ``request_cancel`` may fire more than once."""
 
 
+@dataclass(frozen=True)
+class ReportReading:
+    """The value a plugin's report holds now, and which field of it that is.
+
+    ``field`` is the field that was read: the one the scenario named, or for a bare report the one
+    its endpoint publishes (``""`` where the publication is the whole payload, a plain number or
+    flag). ``source`` says where it was read from, for a message.
+    """
+
+    value: object
+    field: str
+    source: str
+
+
+class ReportCall(PendingCall):
+    """A report being watched. ``poll()`` returns the current :class:`ReportReading`, or ``None``
+    while no value is known yet -- over ROS, before the map or the first message has arrived."""
+
+    @abstractmethod
+    def poll(self) -> ReportReading | None: ...
+
+
+def plain(value):
+    """A report value as the Python value a literal compares against.
+
+    A NumPy scalar becomes its Python scalar and an array (or a ROS ``array.array``) a list, so
+    ``expected_value: 'True'`` or ``'[0.0, 1.0]'`` compares by value, not by NumPy's element-wise
+    rules -- an array compared with ``==`` is an array, whose truth is an error.
+    """
+    if isinstance(value, np.generic):
+        return value.item()
+    tolist = getattr(value, "tolist", None)
+    return tolist() if callable(tolist) else value
+
+
+def published_field(backend: dict) -> str:
+    """The field of a report its ROS publication carries (the ``field`` hint), ``""`` for all of it.
+
+    What a bare ``report: '<endpoint>'`` means on both transports, so the short form compares the
+    same value in a stepped run as over ROS.
+    """
+    return str((backend.get("ros2") or {}).get("field") or "")
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -295,6 +344,20 @@ class WorldAccess(ABC):
 
         Making an already-present entity present again is not an error: the caller asked for a
         state and got it.
+        """
+
+    @abstractmethod
+    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+        """Watch one value a plugin publishes: field *field* of *entity*'s endpoint *report*.
+
+        Addressed as the world names it -- the entity that owns the endpoint and the endpoint's name
+        (``'ur5e'``, ``'force_limit'``), never a topic. An empty *field* means the one the
+        endpoint's ROS publication carries (``LimitReport.tripped`` for ``force_limit``), so the
+        short form compares one value on both transports. In-process every field of the report is
+        readable; over ROS only the published one travels, and another is refused naming it.
+
+        Raises :class:`AccessError`, from this call or from ``poll()``, for an entity, report or
+        field that does not exist, listing what does -- over ROS once the bridge's map has said so.
         """
 
     def teardown(self) -> None:

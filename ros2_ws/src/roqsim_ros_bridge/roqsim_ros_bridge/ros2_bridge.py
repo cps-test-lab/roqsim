@@ -19,6 +19,13 @@ Two things are ROS-intrinsic rather than robot endpoints and stay built in: ``/c
 the sim's time source; every other node runs with ``use_sim_time:=true``) and the dynamic ``tf``
 (odom->base_link), which is derived from an ``odom`` endpoint whose hint sets ``emit_tf``.
 
+It also says what it publishes: a latched (transient-local) ``std_msgs/String`` at
+``roqsim/endpoints`` in the node's namespace carries, as JSON, every output it bound keyed by
+``(owner, name)`` with its fully resolved topic, message type and published field. That is what lets a
+scenario address a plugin's report by the names the world gives it (``entity_reports`` in
+``osc.roqsim``) and still land on the right topic after namespaces, ``topics:`` renames,
+``strip_namespace`` and a ``gt`` prefix -- see ``_advertise_endpoint_map``.
+
 Concurrency (see roqsim docs/architecture.rst §7): an ``rclpy`` MultiThreadedExecutor spins on a
 worker thread; inbound subscriptions decode to a neutral payload and marshal the write onto the
 physics thread via ``ctx.post``. Publishing happens in ``post_step`` on the physics thread (rclpy
@@ -69,6 +76,7 @@ it; a list of ``{topic, owners}`` states the groups outright. See ``_joint_state
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 from dataclasses import dataclass
@@ -82,10 +90,11 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile
 from rosgraph_msgs.msg import Clock as ClockMsg
+from std_msgs.msg import String
 from tf2_msgs.msg import TFMessage
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
-from roqsim.bridge import BridgeBase, _RateGate
+from roqsim.bridge import ENDPOINT_MAP, BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
 from roqsim_ros_bridge.actions import get_action_handler
 from roqsim_ros_bridge.extensions import load_extensions
@@ -300,6 +309,7 @@ class Ros2Bridge(BridgeBase):
         # (topic, type, endpoint, role) of every topic endpoint, for the peer-type check in _tick.
         self._peer_checks: list[tuple[str, str, Any, str]] = []
         self._peer_gate = _RateGate(1.0)
+        self._endpoint_map_pub = None
 
     def _eff_ns(self, ep) -> str:
         """The endpoint's effective namespace for topic/frame scoping — ``""`` if it is stripped."""
@@ -312,6 +322,36 @@ class Ros2Bridge(BridgeBase):
         self._snap_clock_gate(ctx)
         self._warn_on_clock_aliasing(ctx)
         self._setup_merged_joint_states(ctx)
+        self._advertise_endpoint_map()
+
+    def _advertise_endpoint_map(self) -> None:
+        """Publish :meth:`~roqsim.bridge.BridgeBase.endpoint_map` once, latched, at ``ENDPOINT_MAP``.
+
+        Relative, so it lands in this node's namespace -- where a scenario node in the same
+        deployment finds it without configuration, as it finds ``get_entity_state``. Latched
+        (transient-local), because every reader subscribes after the bridge came up: a scenario that
+        asks for a report minutes into a run must still receive the map sent at start-up. It is sent
+        once because it cannot change; the endpoint set is closed when the bridge binds.
+
+        Each topic is the one the bound PUBLISHER reports (``topic_name``), not a re-derivation of
+        it, so the map is exact by construction: the node namespace, the endpoint's own namespace, an
+        absolute ``topics:`` override, ``strip_namespace``, the ``gt`` prefix and any ROS remapping
+        are all already in it.
+        """
+        qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
+        self._endpoint_map_pub = self._node.create_publisher(String, ENDPOINT_MAP, qos)
+        self._endpoint_map_pub.publish(
+            String(data=json.dumps(self.endpoint_map(self._describe_output), sort_keys=True))
+        )
+
+    def _describe_output(self, out) -> dict:
+        """Where and how one bound output travels: its resolved topic, type and published field."""
+        hints = out.endpoint.backend[self.BACKEND]
+        return {
+            "topic": out.handle.publisher.topic_name,
+            "type": hints["type"],
+            "field": hints.get("field"),
+        }
 
     def _snap_clock_gate(self, ctx) -> None:
         """Put ``/clock``'s own rate on the physics grid, like every other publication's.

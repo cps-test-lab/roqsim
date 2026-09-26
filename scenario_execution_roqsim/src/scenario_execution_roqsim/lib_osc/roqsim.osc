@@ -18,6 +18,10 @@ import osc.types  # pose_3d / velocity_6d, for set_entity_state
 # different QUESTIONS, not two levels of one factor.
 enum displacement_mode: [ distance, planar, x, y, z ]
 
+# How a report's value is compared with `expected_value`: the `operator` module's six, spelled as
+# `osc.ros` spells them for `check_data`, so an argument reads the same in both libraries.
+enum comparison_operator: [ lt, le, eq, ne, ge, gt ]
+
 # How a list of entities is quantified. `all` because that is how the rest of the vocabulary reads a
 # list (`wait_for_topics(topics: [...])` waits for all of them); `any` is a genuinely different
 # instrument -- "did anything on this table get knocked over".
@@ -51,6 +55,33 @@ action entity_rotated:
     angle: float                                      # radians, magnitude, 0 < angle <= pi
     dwell: float = 0.0
     require: entity_quantifier = entity_quantifier!all
+
+action entity_reports:
+    # Succeed once a value a PLUGIN publishes about an entity compares as expected -- how a scenario
+    # reads a trial's outcome, and so how it ends a run on one:
+    #
+    #     entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
+    #     emit end
+    #
+    # A report is an endpoint the plugin declares on the entity it watches (`force_limit`, `contact`,
+    # a trial plugin's own), addressed as the world names it -- never as a topic. `report` is
+    # '<report>.<field>'; a bare '<report>' means the field its ROS publication carries
+    # (`force_limit` -> `tripped`), so the short form compares the same value on both transports.
+    # In a stepped run every field of a report is readable; over ROS only the published one travels
+    # (found through the bridge's endpoint map), and another is refused by name.
+    #
+    # The comparison is `check_data`'s: `expected_value` is a Python literal (a string is quoted
+    # inside the string: "'resolved'"), and `fail_if_bad_comparison` fails the action on the first
+    # comparison that does not hold instead of waiting. Bound the wait with a `timeout`.
+    entity: string                                    # the entity that owns the report -- the world's
+                                                      # `name:` for it
+    report: string                                    # '<report>.<field>', or '<report>' for the
+                                                      # field it publishes
+    expected_value: string                            # a Python literal, read with ast.literal_eval
+    comparison_operator: comparison_operator = comparison_operator!eq
+    dwell: time = 0s                                  # SIM time the comparison must hold,
+                                                      # continuously. 0 = fire on the first match.
+    fail_if_bad_comparison: bool = false              # FAILURE, not RUNNING, when a comparison fails
 
 action entity_navigate:
     # Send an entity somewhere, and succeed when it gets there. The mover is the SIMULATOR's -- a
