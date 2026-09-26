@@ -238,9 +238,11 @@ The ``render_scene`` tool
 
 .. code-block:: text
 
-    render_scene(target: str = "", state: str = "", at: float | None = None, out: str = "",
-                 size: str = "960x540", view: list[str] | None = None, focus: str = "",
-                 camera: str = "", no_ceiling: bool = False, inline: bool = False) -> dict
+    render_scene(target: str = "", state: str = "", at: float | str | None = None, out: str = "",
+                 size: str = "960x540", view: list[str] | None = None,
+                 focus: list[str] | None = None, camera: str = "", no_ceiling: bool = False,
+                 geomgroup: list[int] | None = None, set: list[str] | None = None,
+                 inline: bool = False) -> dict
 
 The one tool here with **no window and no human**: it renders and returns where the picture is. Use it
 for "does this world look right", "where did the robot end up", "what did the run look like at
@@ -249,7 +251,8 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
 * **target** — the same shapes as above (world / MJCF / model ref), plus a raw mesh. Optional when
   ``state`` is given, because a recording names the world it came from.
 * **state** / **at** — render a moment from a run recorded with ``roqsim sim --record``, at ``at``
-  *simulated* seconds. It snaps to the nearest recorded sample and reports which one it used, so a
+  *simulated* seconds or at a named moment (``"onset"``, where the run first moves, or
+  ``"onset+2.5"``). It snaps to the nearest recorded sample and reports which one it used, so a
   caller sees it landed a few milliseconds off rather than assuming it did not. Omit ``at`` for the
   last sample.
 * **view** / **focus** / **camera** — ``KEY=VALUE`` overrides in the world's own ``sim.view``
@@ -257,6 +260,8 @@ t = 12.5"; ``review_scene_by_human`` is for when a *person* must judge.
   frame on, searching for a clear line of sight (what you want indoors); or a fixed MJCF ``<camera>``
   to look through. ``camera`` owns its pose, so it excludes the other two.
 * **no_ceiling** — drop a roofed world's ceiling to look into it from above.
+* **geomgroup** / **set** — draw only these geom groups (``[3]`` is the collision model alone,
+  ``[2, 3]`` the collider over the visual mesh), and world overrides as ``PATH=VALUE`` strings.
 * **out** / **size** / **inline** — where to write the PNG (default a temp file), ``WxH``, and
   whether to return the image itself.
 
@@ -270,7 +275,8 @@ appear in the conversation itself -- it comes back as an image content block bes
 which stays the result's structured content; the default costs about forty tokens.
 
 CLI: this is ``roqsim render`` — the tool shells out to it rather than importing it (see *Internals*),
-so every flag above is that command's own.
+so every flag above is that command's own. Video (``--from``/``--to``, ``--camera-path``,
+``--overlay``) stays on the CLI: a clip is a file to watch, not a picture to look at here.
 
 Internals
 ---------

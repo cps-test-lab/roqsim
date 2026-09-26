@@ -82,8 +82,10 @@ def test_flags_are_forwarded(fake_rst, tmp_path, world):
         out=str(tmp_path / "x.png"),
         size="640x360",
         view=["elevation=-85", "distance=40"],
-        focus="robot",
+        focus=["robot", "parcel"],
         no_ceiling=True,
+        geomgroup=[2, 3],
+        set=["components.floorplan.size=4.0", "sim.seed=3"],
     )
     argv = fake_rst["argv"]
     assert "--size" in argv and "640x360" in argv
@@ -91,8 +93,42 @@ def test_flags_are_forwarded(fake_rst, tmp_path, world):
         "elevation=-85",
         "distance=40",
     ]
-    assert "--focus" in argv and "robot" in argv
+    assert argv[argv.index("--focus") + 1 : argv.index("--focus") + 3] == ["robot", "parcel"]
     assert "--no-ceiling" in argv
+    assert argv[argv.index("--geomgroup") + 1] == "2,3"
+    assert [argv[i + 1] for i, a in enumerate(argv) if a == "--set"] == [
+        "components.floorplan.size=4.0",
+        "sim.seed=3",
+    ]
+
+
+def test_a_single_focus_string_is_one_name(fake_rst, tmp_path, world):
+    scene_render.render_scene(world, out=str(tmp_path / "x.png"), focus="robot")
+    argv = fake_rst["argv"]
+    assert argv[argv.index("--focus") + 1] == "robot"
+    assert "r" not in argv, "a string was spread into its characters"
+
+
+@pytest.mark.parametrize("moment", ["onset", "onset+2.5", "onset-1"])
+def test_a_named_moment_reaches_the_renderer_unchanged(fake_rst, tmp_path, moment):
+    """`roqsim render --at` takes `onset` and an offset from it; the tool must not narrow that to a
+    number, or an agent cannot ask for the moment a run starts moving."""
+    recording = tmp_path / "run.npz"
+    recording.write_bytes(b"x")
+    scene_render.render_scene(state=str(recording), at=moment, out=str(tmp_path / "x.png"))
+    argv = fake_rst["argv"]
+    assert argv[argv.index("--at") + 1] == moment
+
+
+def test_the_tool_schema_takes_a_named_moment_and_a_focus_list():
+    """What an MCP client can send is the advertised schema, not the Python signature."""
+    from fastmcp.tools import FunctionTool
+
+    tool = FunctionTool.from_function(scene_render.render_scene)
+    props = tool.parameters["properties"]
+    assert {"type": "string"} in props["at"]["anyOf"]
+    assert {"type": "array", "items": {"type": "string"}} in props["focus"]["anyOf"]
+    assert {"geomgroup", "set"} <= set(props)
 
 
 def test_recording_flags_are_forwarded(fake_rst, tmp_path):
