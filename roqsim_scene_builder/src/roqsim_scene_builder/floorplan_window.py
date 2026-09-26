@@ -40,6 +40,7 @@ import copy
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -790,8 +791,10 @@ def run_window(
     # here rather than imported because ``roqsim.viewer`` imports MuJoCo at module level, and this is
     # the one window that never needs it. A one-line env check is not worth that import.
     if not os.environ.get("DISPLAY"):
+        # On stderr: it is what the MCP tool relays when the window produced no result.
         print(
             "roqsim-scene-builder: no DISPLAY -- the floorplan-sketch window needs a graphical session.",
+            file=sys.stderr,
             flush=True,
         )
         return 2
