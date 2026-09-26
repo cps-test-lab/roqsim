@@ -15,6 +15,22 @@ from .engine import CoverageResult
 from .sampling import cluster_gaps
 
 
+def normalise_target(target: dict | None) -> dict:
+    """The coverage target in the form :func:`build_report` reads: ``{"metric", "k", "value"}``.
+
+    ``frac`` is the spelling the CLI's ``--target k=1,frac=0.95`` and the plugin's ``target:`` both
+    take; ``value`` is accepted too. Empty -> no target. Both front doors go through here, so a
+    ``frac`` is never dropped on one of them and ``target_met`` judged against the default 1.0.
+    """
+    if not target:
+        return {}
+    return {
+        "metric": "fraction_covered",
+        "k": int(target.get("k", 1)),
+        "value": float(target.get("frac", target.get("value", 1.0))),
+    }
+
+
 def build_report(
     result: CoverageResult,
     *,

@@ -619,3 +619,18 @@ def test_manifest_fov_near_matches_the_capture_plugin(name):
     if clip_near is None:
         pytest.skip(f"{name}: {ref} has no depth clip")
     assert fov["near"] == pytest.approx(clip_near)
+
+
+# -- target spelling ---------------------------------------------------------------------------------
+
+
+def test_probe_target_frac_is_the_value_build_report_reads():
+    """The plugin's ``target: {k, frac}`` -- the spelling coverage.rst and the CLI use -- must reach
+    ``build_report`` as its ``value``, or ``target_met`` is judged against the default 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    cls = resolve_plugin("sensor_coverage_probe", None)
+    probe = cls({"target": {"k": 2, "frac": 0.6}})
+    assert probe.target == {"metric": "fraction_covered", "k": 2, "value": 0.6}
+    assert probe.target == parse_target("k=2,frac=0.6")
+    assert cls({}).target == {}

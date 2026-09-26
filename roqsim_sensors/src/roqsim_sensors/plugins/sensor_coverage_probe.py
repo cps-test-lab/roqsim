@@ -45,7 +45,7 @@ from ..coverage import sampling
 from ..coverage.adapters import PlacedSensor, build_fov
 from ..coverage.catalog import placed_from_proposal
 from ..coverage.engine import coverage
-from ..coverage.report import build_report
+from ..coverage.report import build_report, normalise_target
 
 
 class SensorCoverageProbePlugin(Plugin):
@@ -55,7 +55,7 @@ class SensorCoverageProbePlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensors = self.config.get("sensors", "auto")
         self.camera_far = float(self.config.get("camera_far", 10.0))
-        self.target = self.config.get("target", {})
+        self.target = normalise_target(self.config.get("target"))
         sample = self.config.get("sample", {}) or {}
         self.sample_volume = bool(sample.get("volume", True))
         self.sample_objects = bool(sample.get("objects", True))
