@@ -1131,6 +1131,11 @@ class TakeRecorder:
     def sample(self, ctx, cam=None) -> bool:
         return self._active.sample(ctx, cam=cam) if self._active is not None else False
 
+    def on_reset(self) -> None:
+        """Restart the running take's schedule; nothing to do between takes."""
+        if self._active is not None:
+            self._active.on_reset()
+
     def close(self) -> list[Path]:
         """Finalise whatever is running and return every take written. Idempotent."""
         self.stop()

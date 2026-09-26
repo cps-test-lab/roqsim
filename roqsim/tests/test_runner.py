@@ -440,3 +440,63 @@ def test_a_headless_run_does_no_key_work(tmp_path, monkeypatch):
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1)
     assert called == []
+
+
+# -- a reset restarts the recording ---------------------------------------------------------------
+
+
+def _free_ball_scene(tmp_path):
+    scene = tmp_path / "ball.xml"
+    scene.write_text(
+        "<mujoco><option timestep='0.002'/><worldbody>"
+        "<geom type='plane' size='1 1 .1'/>"
+        "<body pos='0 0 1'><freejoint/><geom type='sphere' size='.1'/></body>"
+        "</worldbody></mujoco>"
+    )
+    return scene
+
+
+def test_a_control_plane_reset_restarts_the_recording(tmp_path):
+    """After a reset the recorder samples from the new episode's first step, not from where the
+    previous one left off: sim time went back to zero, so a schedule that stayed put would wait
+    for it to catch up and record nothing of the episode's start."""
+    from roqsim.capture import StateRecorder, snap_fps
+    from roqsim.clock import Pacer
+    from roqsim.engine import Engine
+
+    cfg = runner.config_for_input(str(_free_ball_scene(tmp_path)))
+    engine = Engine(cfg)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    rate = snap_fps(25, engine.dt)
+    recorder = StateRecorder(engine.ctx, tmp_path / "run.npz", rate, world="w")
+    pacer = Pacer.from_config("asap", engine.dt)
+    try:
+        runner._run_headless(engine, pacer, 1000, recorder)  # 2 s of sim time
+        before = recorder.frames
+        assert before == 50
+        engine.ctx.control.request_reset()
+        runner._run_headless(engine, pacer, rate.every, recorder)  # one capture period
+        assert engine.ctx.sim_time < 0.1, "the reset put sim time back"
+        assert recorder.frames == before + 1, "the new episode's first sample was taken"
+    finally:
+        recorder.close()
+        engine.shutdown()
+
+
+def test_a_take_recorder_forwards_a_reset_to_its_running_take():
+    from roqsim.capture import TakeRecorder
+
+    class _Take:
+        resets = 0
+
+        def on_reset(self):
+            self.resets += 1
+
+    rec = TakeRecorder.__new__(TakeRecorder)
+    rec._active = None
+    rec.on_reset()  # nothing recording: nothing to restart
+    rec._active = _Take()
+    rec.on_reset()
+    assert rec._active.resets == 1
