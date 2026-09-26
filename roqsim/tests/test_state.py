@@ -54,7 +54,7 @@ def recording(tmp_path, monkeypatch):
     )
     from roqsim.runner import run
 
-    out = tmp_path / "run.npz"
+    out = tmp_path / "run.mcap"
     run(
         str(world),
         headless=True,

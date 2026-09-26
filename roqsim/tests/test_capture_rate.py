@@ -357,7 +357,7 @@ def test_takes_are_numbered_so_a_second_never_overwrites_the_first(tmp_path):
     import mujoco
 
     ctx, rate = _ctx_and_rate()
-    takes = TakeRecorder(ctx, tmp_path / "run.npz", rate, world="w")
+    takes = TakeRecorder(ctx, tmp_path / "run.mcap", rate, world="w")
     for _ in range(2):
         takes.start()
         for _ in range(60):
@@ -365,21 +365,15 @@ def test_takes_are_numbered_so_a_second_never_overwrites_the_first(tmp_path):
             takes.sample(ctx)
         takes.stop()
     written = takes.close()
-    assert [p.name for p in written] == ["run.npz", "run-2.npz"]
+    assert [p.name for p in written] == ["run.mcap", "run-2.mcap"]
     assert all(p.exists() for p in written)
-    # Each take streams its samples to its own file and packs them away when it stops, so a session
-    # of takes leaves the archives and nothing else.
-    assert sorted(p.name for p in tmp_path.iterdir()) == [
-        "run-2.clock_map.csv",
-        "run-2.npz",
-        "run.clock_map.csv",
-        "run.npz",
-    ]
+    # Each take is one file, so a session of takes leaves the recordings and nothing else.
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["run-2.mcap", "run.mcap"]
 
 
 def test_toggle_alternates(tmp_path):
     ctx, rate = _ctx_and_rate()
-    takes = TakeRecorder(ctx, tmp_path / "r.npz", rate, world="w")
+    takes = TakeRecorder(ctx, tmp_path / "r.mcap", rate, world="w")
     assert takes.recording is False
     takes.toggle()
     assert takes.recording is True
@@ -389,7 +383,7 @@ def test_toggle_alternates(tmp_path):
 
 def test_stopping_with_nothing_recording_is_harmless(tmp_path):
     ctx, rate = _ctx_and_rate()
-    takes = TakeRecorder(ctx, tmp_path / "r.npz", rate, world="w")
+    takes = TakeRecorder(ctx, tmp_path / "r.mcap", rate, world="w")
     takes.stop()  # must not raise
     assert takes.close() == []
 
@@ -399,7 +393,7 @@ def test_close_finalises_a_running_take(tmp_path):
     import mujoco
 
     ctx, rate = _ctx_and_rate()
-    takes = TakeRecorder(ctx, tmp_path / "r.npz", rate, world="w")
+    takes = TakeRecorder(ctx, tmp_path / "r.mcap", rate, world="w")
     takes.start()
     for _ in range(60):
         mujoco.mj_step(ctx.model, ctx.data)
@@ -410,5 +404,5 @@ def test_close_finalises_a_running_take(tmp_path):
 
 def test_sampling_before_a_take_starts_is_a_noop(tmp_path):
     ctx, rate = _ctx_and_rate()
-    takes = TakeRecorder(ctx, tmp_path / "r.npz", rate, world="w")
+    takes = TakeRecorder(ctx, tmp_path / "r.mcap", rate, world="w")
     assert takes.sample(ctx) is False

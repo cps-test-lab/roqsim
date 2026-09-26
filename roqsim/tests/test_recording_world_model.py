@@ -27,7 +27,9 @@ WORLD = {
 
 def test_the_record_holds_what_ran_not_what_was_asked_for():
     """The manifest's components are in it, and the document never named them."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(
+        WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}}
+    )
     record = cfg.as_record()
     by_address = {c["address"]: c for c in record["components"]}
     assert "robot.rplidar.lidar" in by_address
@@ -36,7 +38,9 @@ def test_the_record_holds_what_ran_not_what_was_asked_for():
 
 def test_rebuilding_reads_the_tree_rather_than_re_resolving():
     """No document, no overrides, no resolution -- and the same components."""
-    cfg = load_config_from_dict(WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}})
+    cfg = load_config_from_dict(
+        WORLD, overrides={"components": {"robot.rplidar.lidar": {"rays": 720}}}
+    )
     rebuilt = SimConfig.from_record(cfg.as_record())
     assert [s.address for s in rebuilt.plugins] == [s.address for s in cfg.plugins]
     assert [s.enabled for s in rebuilt.plugins] == [s.enabled for s in cfg.plugins]
@@ -62,18 +66,17 @@ def test_a_newer_record_is_refused_rather_than_partly_read(tmp_path):
     """It was written to a contract this code has not seen; the keys that happen to overlap would
     give a plausible-looking answer about something else."""
     meta = _rec({"format_version": FORMAT_VERSION + 1})
-    with pytest.raises(RecordingError, match="reads up to"):
-        Recording(tmp_path / "x.npz", meta, np.zeros((1, 1), dtype=np.float32))
+    with pytest.raises(RecordingError, match=f"this roqsim reads v{FORMAT_VERSION}"):
+        Recording(tmp_path / "x.mcap", meta, np.zeros((1, 1), dtype=np.float32))
 
 
-def test_an_older_record_still_reads_but_will_not_rebuild(tmp_path):
-    """Its samples, times and clock are all still there -- only the part that would re-resolve an
-    override against a world is refused, and it says how to get a picture anyway."""
-    meta = _rec({"format_version": 1})
-    rec = Recording(tmp_path / "x.npz", meta, np.zeros((2, 1), dtype=np.float32))
-    assert len(rec) == 2
-    with pytest.raises(RecordingError, match="pass the world explicitly"):
-        rec.build()
+@pytest.mark.parametrize("version", [1, 2])
+def test_an_older_record_has_no_reader(tmp_path, version):
+    """Formats 1 and 2 were numpy archives with their own layout; there is no reader for them here,
+    and a file claiming one is refused by name rather than read with the keys that overlap."""
+    meta = _rec({"format_version": version})
+    with pytest.raises(RecordingError, match="no reader"):
+        Recording(tmp_path / "x.mcap", meta, np.zeros((2, 1), dtype=np.float32))
 
 
 def test_the_provenance_carries_the_resolved_actuator_table(tmp_path):
@@ -104,7 +107,7 @@ def test_the_provenance_carries_the_resolved_actuator_table(tmp_path):
     try:
         engine.setup()
         recorder = StateRecorder(
-            engine.ctx, tmp_path / "run.npz", snap_fps(30, 0.002), config=cfg, world="w"
+            engine.ctx, tmp_path / "run.mcap", snap_fps(30, 0.002), config=cfg, world="w"
         )
         actuators = recorder._provenance["actuators"]
         assert "robot" in actuators
@@ -113,9 +116,7 @@ def test_the_provenance_carries_the_resolved_actuator_table(tmp_path):
         assert all(row["d"] == 12.0 and row["source"] == "shared" for row in rows)
         # Prefixed, so a reader can line the table up against the compiled model's actuators.
         names = {row["name"] for row in rows}
-        assert names == {
-            engine.ctx.model.actuator(i).name for i in range(engine.ctx.model.nu)
-        }
+        assert names == {engine.ctx.model.actuator(i).name for i in range(engine.ctx.model.nu)}
     finally:
         engine.shutdown()
 
@@ -130,7 +131,7 @@ def test_a_world_that_declares_no_gains_still_records_what_ran(tmp_path):
     try:
         engine.setup()
         recorder = StateRecorder(
-            engine.ctx, tmp_path / "run.npz", snap_fps(30, 0.002), config=cfg, world="w"
+            engine.ctx, tmp_path / "run.mcap", snap_fps(30, 0.002), config=cfg, world="w"
         )
         rows = recorder._provenance["actuators"]["robot"]
         assert rows and all(row["source"] == "model" for row in rows)
@@ -138,7 +139,7 @@ def test_a_world_that_declares_no_gains_still_records_what_ran(tmp_path):
         engine.shutdown()
 
 
-def test_the_added_key_needs_no_format_bump():
-    """`Recording` reads `world_model` by name and ignores keys it does not know, so a reader made
-    before the actuator table exists still opens a recording that has one."""
-    assert FORMAT_VERSION == 2
+def test_the_format_is_the_mcap_one():
+    """`Recording` reads `world_model` by name and ignores keys it does not know; the version moves
+    only when the file's shape does, and the shape is the mcap layout of format 3."""
+    assert FORMAT_VERSION == 3

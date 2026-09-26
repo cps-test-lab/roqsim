@@ -1,6 +1,6 @@
 """Replay a recorded run in the viewer window, and write down the moments worth drawing.
 
-``roqsim sim run.npz`` watches a recording in the window a live run uses: the same free camera, the
+``roqsim sim run.mcap`` watches a recording in the window a live run uses: the same free camera, the
 same flight keys, the same visualization toggles. Nothing is simulated -- each frame is a state
 restored out of the recording through :mod:`roqsim.recording`, so what the window shows is what
 happened, not a re-run of it.
@@ -37,6 +37,7 @@ from pathlib import Path
 from . import keys as keybind
 from . import overlay
 from .key_state import KeyState
+from .mcap_format import RECORDING_SUFFIX
 from .playback import Timeline
 from .recording import open_recording
 from .shots import append_shot, read_shots, shot_document
@@ -441,10 +442,10 @@ def is_recording(target: str) -> bool:
     """True when ``target`` names a run recording, which is what selects the replay path.
 
     The extension decides, as it does for ``roqsim render``'s output and for a mesh target: a
-    recording is the only ``.npz`` anything hands ``roqsim sim``, and one that is not a roqsim
+    recording is the only ``.mcap`` anything hands ``roqsim sim``, and one that is not a roqsim
     recording is refused by name when it is opened rather than guessed at here.
     """
-    return Path(target).suffix.lower() == ".npz"
+    return Path(target).suffix.lower() == RECORDING_SUFFIX
 
 
 def run_replay(

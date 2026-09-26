@@ -432,7 +432,7 @@ def a_recording(tmp_path, monkeypatch):
     scene.write_text(_SMOKE_XML.replace("<worldbody>", '<option timestep="0.002"/>\n  <worldbody>'))
     from roqsim.runner import run
 
-    out = tmp_path / "run.npz"
+    out = tmp_path / "run.mcap"
     run(str(scene), headless=True, pacing="asap", seconds=2.0, record=str(out), capture_fps=25)
     return str(scene), out
 
@@ -451,7 +451,7 @@ def test_at_needs_a_recording(tmp_path, monkeypatch):
 def test_at_and_a_range_are_mutually_exclusive(tmp_path, monkeypatch):
     monkeypatch.setenv("MUJOCO_GL", "egl")
     with pytest.raises(render.RenderError, match="one or the other"):
-        render.render_target(None, tmp_path / "x.png", state="r.npz", at=1.0, start=0.0)
+        render.render_target(None, tmp_path / "x.png", state="r.mcap", at=1.0, start=0.0)
 
 
 def test_camera_cannot_combine_with_view_or_focus(tmp_path, monkeypatch):
@@ -469,26 +469,26 @@ def test_nothing_to_render_is_named(tmp_path, monkeypatch):
 
 def test_the_world_target_is_optional_with_state(a_recording, tmp_path):
     """The provenance names the world, so a caller need not repeat what the file already knows."""
-    _scene, npz = a_recording
-    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=npz)
+    _scene, recording = a_recording
+    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=recording)
     assert record["rendered"] and record["sample_index"] >= 0
 
 
 def test_at_reports_which_sample_it_landed_on(a_recording, tmp_path):
-    _scene, npz = a_recording
-    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=npz, at=1.0)
+    _scene, recording = a_recording
+    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=recording, at=1.0)
     assert record["requested_at"] == 1.0
     assert abs(record["at_error"]) <= 0.02 + 1e-9  # within one 25 fps period
     assert record["sim_time"] == pytest.approx(1.0, abs=0.02)
 
 
 def test_state_without_at_renders_the_last_sample(a_recording, tmp_path):
-    _scene, npz = a_recording
-    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=npz)
+    _scene, recording = a_recording
+    record = render.render_target(None, tmp_path / "o.png", size="120x90", state=recording)
     assert record["requested_at"] is None and record["at_error"] is None
     from roqsim.recording import open_recording
 
-    assert record["sample_index"] == len(open_recording(npz)) - 1
+    assert record["sample_index"] == len(open_recording(recording)) - 1
 
 
 def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp_path):
@@ -499,9 +499,13 @@ def test_view_overrides_the_baseline_when_replaying_a_recording(a_recording, tmp
     handed on the flag is accepted and silently does nothing -- the worst shape a bug can take,
     because the render succeeds and only the framing is wrong.
     """
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     record = render.render_target(
-        None, tmp_path / "o.png", size="120x90", state=npz, view=["distance=1.25", "elevation=-25"]
+        None,
+        tmp_path / "o.png",
+        size="120x90",
+        state=recording,
+        view=["distance=1.25", "elevation=-25"],
     )
     assert record["camera"]["distance"] == pytest.approx(1.25)
     assert record["camera"]["elevation"] == pytest.approx(-25)
@@ -511,12 +515,12 @@ def test_view_is_partial_when_replaying_too(a_recording, tmp_path):
     """One stated key must not reset the others -- the same rule a live render follows. The
     baseline a stated key merges over is the world's own sim.view (here: MuJoCo's default), so two
     partial views share every key neither states."""
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     only_azimuth = render.render_target(
-        None, tmp_path / "a.png", size="120x90", state=npz, view=["azimuth=80"]
+        None, tmp_path / "a.png", size="120x90", state=recording, view=["azimuth=80"]
     )
     only_elevation = render.render_target(
-        None, tmp_path / "b.png", size="120x90", state=npz, view=["elevation=-25"]
+        None, tmp_path / "b.png", size="120x90", state=recording, view=["elevation=-25"]
     )
     assert only_elevation["camera"]["elevation"] == pytest.approx(-25)
     assert only_elevation["camera"]["distance"] == pytest.approx(only_azimuth["camera"]["distance"])
@@ -525,9 +529,9 @@ def test_view_is_partial_when_replaying_too(a_recording, tmp_path):
 def test_out_of_range_at_is_refused(a_recording, tmp_path):
     from roqsim.recording import RecordingError
 
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     with pytest.raises(RecordingError, match="outside this recording"):
-        render.render_target(None, tmp_path / "o.png", size="120x90", state=npz, at=999.0)
+        render.render_target(None, tmp_path / "o.png", size="120x90", state=recording, at=999.0)
 
 
 def test_a_replay_with_no_camera_frames_the_whole_scene(a_recording, tmp_path):
@@ -537,14 +541,14 @@ def test_a_replay_with_no_camera_frames_the_whole_scene(a_recording, tmp_path):
     from roqsim.recording import open_recording
     from roqsim.rendering import scene_camera
 
-    _scene, npz = a_recording
-    replay = render.render_target(None, tmp_path / "b.png", size="120x90", state=npz)
-    rec = open_recording(npz)
+    _scene, recording = a_recording
+    replay = render.render_target(None, tmp_path / "b.png", size="120x90", state=recording)
+    rec = open_recording(recording)
     model, _ctx = rec.build()
     expected = render._camera_record(scene_camera(model, rec.at(None).data, aspect=120 / 90))
     assert replay["camera"] == expected
     stated = render.render_target(
-        None, tmp_path / "c.png", size="120x90", state=npz, view=["azimuth=10"]
+        None, tmp_path / "c.png", size="120x90", state=recording, view=["azimuth=10"]
     )
     assert stated["camera"]["azimuth"] == 10.0
 
@@ -553,17 +557,19 @@ def test_a_video_has_one_frame_per_sample(a_recording, tmp_path):
     """The invariant that makes --fps safe: it changes the declared rate, never which samples are used."""
     from roqsim.recording import open_recording
 
-    _scene, npz = a_recording
-    samples = len(open_recording(npz))
+    _scene, recording = a_recording
+    samples = len(open_recording(recording))
     for kwargs in ({}, {"speed": 4.0}, {"fps": "100"}):
         out = tmp_path / f"v{len(kwargs)}{kwargs.get('fps', '')}.webm"
-        record = render.render_target(None, out, size="96x64", state=npz, **kwargs)
+        record = render.render_target(None, out, size="96x64", state=recording, **kwargs)
         assert record["frames"] == samples, f"{kwargs} changed the frame count"
 
 
 def test_speed_is_reported(a_recording, tmp_path):
-    _scene, npz = a_recording
-    record = render.render_target(None, tmp_path / "v.webm", size="96x64", state=npz, speed=4.0)
+    _scene, recording = a_recording
+    record = render.render_target(
+        None, tmp_path / "v.webm", size="96x64", state=recording, speed=4.0
+    )
     assert record["speed"] == 4.0
     assert record["declared_fps"] == pytest.approx(100.0)
 
@@ -668,8 +674,8 @@ def test_progress_survives_an_unknown_total(monkeypatch, caplog):
 def test_frames_in_range_counts_the_samples(a_recording):
     from roqsim.recording import open_recording
 
-    _scene, npz = a_recording
-    rec = open_recording(npz)
+    _scene, recording = a_recording
+    rec = open_recording(recording)
     assert render._frames_in_range(rec, None, None) == len(rec)
     assert render._frames_in_range(rec, 0.0, 0.5) < len(rec)
 
@@ -678,18 +684,18 @@ def test_the_last_sample_default_is_announced(a_recording, tmp_path, caplog):
     """ "The last sample" is a choice the caller did not make, so it must not be silent."""
     import logging as logging_mod
 
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     with caplog.at_level(logging_mod.INFO):
-        render.render_target(None, tmp_path / "o.png", size="64x48", state=npz)
+        render.render_target(None, tmp_path / "o.png", size="64x48", state=recording)
     assert "LAST" in caplog.text and "--at" in caplog.text
 
 
 def test_an_explicit_at_is_not_announced(a_recording, tmp_path, caplog):
     import logging as logging_mod
 
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     with caplog.at_level(logging_mod.INFO):
-        render.render_target(None, tmp_path / "o.png", size="64x48", state=npz, at=0.5)
+        render.render_target(None, tmp_path / "o.png", size="64x48", state=recording, at=0.5)
     assert "LAST" not in caplog.text
 
 
@@ -881,16 +887,16 @@ def a_yawing_recording(tmp_path, monkeypatch):
     scene.write_text(_YAWING_XML)
     from roqsim.runner import run
 
-    out = tmp_path / "spin.npz"
+    out = tmp_path / "spin.mcap"
     run(str(scene), headless=True, pacing="asap", seconds=1.0, record=str(out), capture_fps=25)
     return out
 
 
-def _azimuths(npz, view, path=None):
+def _azimuths(recording, view, path=None):
     """The chase camera's azimuth at each sample, through the same object a video uses."""
     from roqsim.recording import open_recording
 
-    rec = open_recording(npz)
+    rec = open_recording(recording)
     model, ctx = rec.build()
     # As _render_recording merges them: --view keys over the world's own sim.view.
     world_view = {**(rec.view or {}), **render.view_overrides(view)["sim"]["view"]}
@@ -934,7 +940,7 @@ def test_a_path_orbits_a_chase_camera_through_its_offset(a_yawing_recording):
 
 def test_a_still_through_a_path_is_the_frame_a_video_would_draw(a_recording, tmp_path):
     """`--at` with a path is how a path is checked before a whole clip is spent on it."""
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     path = {
         "keyframes": [
             {"t": 0, "distance": 1.0, "azimuth": 10},
@@ -942,7 +948,12 @@ def test_a_still_through_a_path_is_the_frame_a_video_would_draw(a_recording, tmp
         ]
     }
     still = render.render_target(
-        None, tmp_path / "s.png", size="96x64", state=npz, at=1.0, camera_path=json.dumps(path)
+        None,
+        tmp_path / "s.png",
+        size="96x64",
+        state=recording,
+        at=1.0,
+        camera_path=json.dumps(path),
     )
     assert still["camera"]["distance"] == pytest.approx(2.0, abs=0.05)
     assert still["camera"]["azimuth"] == pytest.approx(30.0, abs=1.0)
@@ -968,13 +979,13 @@ def test_check_reports_the_resolved_keyframes(a_recording, tmp_path, monkeypatch
         )
 
     monkeypatch.setattr(motion, "motion_onset", fake_onset)
-    _scene, npz = a_recording
+    _scene, recording = a_recording
     path = {"keyframes": [{"t": "onset", "azimuth": 0}, {"t": "onset+0.5", "azimuth": 90}]}
     record = render.render_target(
         None,
         tmp_path / "v.webm",
         size="96x64",
-        state=npz,
+        state=recording,
         start="onset-0.1",
         stop="onset+1",
         camera_path=json.dumps(path),
@@ -994,7 +1005,7 @@ def test_a_path_needs_a_recording_and_refuses_a_fixed_camera(tmp_path, monkeypat
         render.render_target("w.yaml", tmp_path / "x.png", camera_path=path)
     with pytest.raises(render.RenderError, match="cannot move it"):
         render.render_target(
-            None, tmp_path / "x.png", state="r.npz", camera="cam", camera_path=path
+            None, tmp_path / "x.png", state="r.mcap", camera="cam", camera_path=path
         )
 
 
@@ -1004,7 +1015,7 @@ def test_a_malformed_path_is_a_render_error(tmp_path, monkeypatch):
         render.render_target(
             None,
             tmp_path / "x.png",
-            state="r.npz",
+            state="r.mcap",
             camera_path='{"keyframes": [{"t": 0, "zoom": 1}]}',
         )
 
@@ -1012,16 +1023,16 @@ def test_a_malformed_path_is_a_render_error(tmp_path, monkeypatch):
 def test_moments_are_accepted_wherever_a_time_is(tmp_path, monkeypatch):
     monkeypatch.setenv("MUJOCO_GL", "egl")
     with pytest.raises(render.RenderError, match="neither a time"):
-        render.render_target(None, tmp_path / "x.png", state="r.npz", at="five seconds")
+        render.render_target(None, tmp_path / "x.png", state="r.mcap", at="five seconds")
 
 
 def test_a_video_with_an_overlay_keeps_its_frame_count(a_recording, tmp_path):
     from roqsim.recording import open_recording
 
-    _scene, npz = a_recording
-    samples = len(open_recording(npz))
+    _scene, recording = a_recording
+    samples = len(open_recording(recording))
     record = render.render_target(
-        None, tmp_path / "o.webm", size="96x64", state=npz, overlays=["clock"]
+        None, tmp_path / "o.webm", size="96x64", state=recording, overlays=["clock"]
     )
     assert record["frames"] == samples and record["overlays"] == ["clock"]
 
@@ -1029,7 +1040,7 @@ def test_a_video_with_an_overlay_keeps_its_frame_count(a_recording, tmp_path):
 def test_an_unknown_overlay_fails_before_the_world_is_built(tmp_path, monkeypatch):
     monkeypatch.setenv("MUJOCO_GL", "egl")
     with pytest.raises(render.RenderError, match="nothing installed registers it"):
-        render.render_target(None, tmp_path / "x.png", state="r.npz", overlays=["nope"])
+        render.render_target(None, tmp_path / "x.png", state="r.mcap", overlays=["nope"])
 
 
 def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
@@ -1042,12 +1053,19 @@ def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
     world.write_text("sim: {name: roofed}\ncomponents:\n  - ceiling: {}\n")
     from roqsim.runner import run
 
-    npz = tmp_path / "roofed.npz"
+    recording = tmp_path / "roofed.mcap"
     try:
-        run(str(world), headless=True, pacing="asap", seconds=0.2, record=str(npz), capture_fps=25)
+        run(
+            str(world),
+            headless=True,
+            pacing="asap",
+            seconds=0.2,
+            record=str(recording),
+            capture_fps=25,
+        )
     except Exception as err:  # noqa: BLE001 - the mobile package with `floorplan` may be absent
         pytest.skip(f"no roofed world to record here: {err}")
-    assert open_recording(npz).has_ceiling
+    assert open_recording(recording).has_ceiling
     seen = []
     real_build = render.build_target
 
@@ -1056,6 +1074,8 @@ def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
         return real_build(*args, **kwargs)
 
     monkeypatch.setattr(render, "build_target", spy)
-    render.render_target(None, tmp_path / "a.png", size="64x48", state=npz)
-    render.render_target(None, tmp_path / "b.png", size="64x48", state=npz, view=["azimuth=10"])
+    render.render_target(None, tmp_path / "a.png", size="64x48", state=recording)
+    render.render_target(
+        None, tmp_path / "b.png", size="64x48", state=recording, view=["azimuth=10"]
+    )
     assert seen == [True, False]

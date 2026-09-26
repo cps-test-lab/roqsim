@@ -41,7 +41,7 @@ def test_pacer_factor_parsing():
 # requested rate, which against a live stack is worse than being slow. Counting it is what
 # stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
 # minutes reports nothing until its job deadline kills it, and the shortfall has to be
-# reconstructed from run.clock_map.csv afterwards.
+# reconstructed from the recording's clock channel afterwards.
 
 
 def test_pacer_reports_no_shortfall_when_it_keeps_up():
