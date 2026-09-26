@@ -38,6 +38,11 @@ Usage::
         --world-out ../src/roqsim_scenes/worlds/myroom.yaml \\
         --markers-map markers.json          # {"1": "industrial_table",
                                             #  "2": {"model": "single_bed", "yaw_deg": 180}}
+
+Exit status: ``0`` and one line naming the world and the scene dir written; ``2`` and one
+``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a floorplan or
+map file that is missing or is not JSON, a floorplan with no walls, a marker without a model, a
+door on a line that is not there. A caller in a loop greps that line; it does not read a traceback.
 """
 
 from __future__ import annotations
@@ -493,7 +498,11 @@ def generate(
     return world_out
 
 
-def main(argv: list | None = None) -> None:
+#: Exit status when an input is wrong; distinct from a crash's ``1`` so a caller can tell the two apart.
+EXIT_BAD_INPUT = 2
+
+
+def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(description="Generate a roqsim world from a floorplan.")
     ap.add_argument(
         "--floorplan", required=True, help="floorplan JSON from sketch_floorplan_by_human"
@@ -548,31 +557,46 @@ def main(argv: list | None = None) -> None:
     )
     args = ap.parse_args(argv)
 
-    floorplan = json.loads(Path(args.floorplan).read_text(encoding="utf-8"))
-    markers_map = (
-        json.loads(Path(args.markers_map).read_text(encoding="utf-8")) if args.markers_map else {}
-    )
-    markers_map = {str(k): v for k, v in markers_map.items()}
-    doors_map = (
-        json.loads(Path(args.doors_map).read_text(encoding="utf-8")) if args.doors_map else {}
-    )
-    doors_map = {str(k): v for k, v in doors_map.items()}
+    # Every way an input can be wrong ends here as one line and a distinct exit status, because the
+    # caller is usually a loop -- the scene-update skill, a script -- that greps stderr and branches
+    # on the status. A traceback names the same fault and is neither.
+    try:
+        floorplan = _read_json(args.floorplan, "floorplan")
+        markers_map = _read_json(args.markers_map, "markers map") if args.markers_map else {}
+        doors_map = _read_json(args.doors_map, "doors map") if args.doors_map else {}
+        out = generate(
+            floorplan,
+            Path(args.out_dir),
+            args.scene_name,
+            Path(args.world_out),
+            {str(k): v for k, v in markers_map.items()},
+            args.ceiling_h,
+            args.wall_thickness,
+            args.opening_h,
+            {str(k): v for k, v in doors_map.items()},
+            ceiling=args.ceiling,
+            bake_config=Path(args.bake_config) if args.bake_config else None,
+        )
+    except (KeyError, ValueError, OSError) as err:
+        # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
+        message = err.args[0] if isinstance(err, KeyError) and err.args else err
+        print(f"roqsim scenes floorplan-to-world: {message}", file=sys.stderr)
+        return EXIT_BAD_INPUT
+    print(f"wrote world {out} (scene dir {Path(args.out_dir)})")
+    return 0
 
-    out = generate(
-        floorplan,
-        Path(args.out_dir),
-        args.scene_name,
-        Path(args.world_out),
-        markers_map,
-        args.ceiling_h,
-        args.wall_thickness,
-        args.opening_h,
-        doors_map,
-        ceiling=args.ceiling,
-        bake_config=Path(args.bake_config) if args.bake_config else None,
-    )
-    print(f"wrote world {out}")
+
+def _read_json(path: str, what: str) -> dict:
+    """A JSON document from *path*, or a ``ValueError`` saying which input is missing or not JSON."""
+    try:
+        text = Path(path).read_text(encoding="utf-8")
+    except OSError as err:
+        raise ValueError(f"{what} {path!r} cannot be read: {err.strerror or err}") from None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"{what} {path!r} is not JSON: {err}") from None
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
