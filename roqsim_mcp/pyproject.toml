@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_mcp"
 version = "0.1.0"
-description = "Standalone MCP server exposing roqsim.introspection (the roqsim.plugins registry) as tools, for a client with no roqsim knowledge of its own."
+description = "Standalone MCP server exposing roqsim.introspection (the roqsim.plugins registry) and roqsim.catalog (the model and world catalogs) as tools, for a client with no roqsim knowledge of its own."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
