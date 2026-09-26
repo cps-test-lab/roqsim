@@ -75,7 +75,12 @@ dependencies, and the generated target paths — and driven by:
    make external-sync-gitignore       # rewrite the managed .gitignore block from the manifest
    make add-external-resource ARGS="--name X --source URL::PATH[::manual] --target PATH ..."
 
-Two resources are declared today, spanning the two shapes the schema supports:
+Every source the runner fetches itself is pinned by ``sha256`` and verified after download, so a
+regenerated asset is the same asset: a URL names a location, and a vendor that replaces the CAD
+behind one would otherwise change every mesh derived from it in silence. A ``manual`` source (behind a
+portal) is placed by hand and carries no pin until it is.
+
+Four resources are declared today; these two span the two shapes the schema supports:
 
 ``livox_mid360_meshes``
    Two Livox STEP files (placed under ``external/sources/livox/``) are tessellated with Open CASCADE
