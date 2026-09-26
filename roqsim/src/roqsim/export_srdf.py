@@ -312,8 +312,13 @@ def _sample_matrix(
         mujoco.mj_collision(model, data)
         seen = set()
         for c in range(data.ncon):
-            a = _body_of_geom(model, data.contact[c].geom1)
-            b = _body_of_geom(model, data.contact[c].geom2)
+            g1, g2 = int(data.contact[c].geom1), int(data.contact[c].geom2)
+            if g1 < 0 or g2 < 0:
+                # A flex side (geom -1): a flex is not a link, and MoveIt has no pair to disable.
+                # Looked up as a geom, -1 would read the model's last geom and its body.
+                continue
+            a = _body_of_geom(model, g1)
+            b = _body_of_geom(model, g2)
             if a in links and b in links and (k := key(a, b)) is not None:
                 seen.add(k)
         for k in seen:

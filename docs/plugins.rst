@@ -582,6 +582,13 @@ Two things are worth knowing before reaching for a proximity check instead:
 * **A latched report is a failed trial.** With ``latch: true`` (the default) the report stays true
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
+* **A flex is a side like a geom.** A MuJoCo ``<flexcomp>`` touches things through its vertices and
+  elements, not through geoms, and MuJoCo reports its side of a contact with geom id ``-1``. The
+  watched set holds the flexes the entity owns -- those whose vertex (or node) bodies all lie in its
+  subtree, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
+  watchable, ``ignore`` may name a flex, and the report names a flex side ``flex:<name>[v<i>]`` (or
+  ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
+  flex contact a collision of the model's last geom.
 
 **Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
 *controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
@@ -669,6 +676,13 @@ two geoms that were deliberately non-colliding *makes them collide*. Two boxes w
 ``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
 declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
 
+**A side cannot be a flex.** A ``<pair>`` names two geoms and MuJoCo has none for a flex, so a
+flex's contacts keep the combination rule whatever is declared. A side that is one -- a ``geom:``
+naming a flex, or an ``entity`` / ``body`` whose subtree owns a collidable flex -- is refused rather
+than paired geom by geom, since the flex is often the very part that touches. Set a flex's contact
+on the flex itself instead: ``<contact friction="..." priority="..."/>`` in its ``<flexcomp>``, where
+a higher ``priority`` than the other side makes its friction the contact's outright.
+
 Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
 sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
 than resolved -- MuJoCo keeps both and uses one, and which is not something a world should have to
@@ -729,8 +743,9 @@ Four things about it:
   samples it would decimate are the integral.
 * **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
   implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
-  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
-  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
+  every contact with exactly one side in the watched subtree (a geom, or a flex the entity owns) and
+  neither side in ``ignore`` / ``ignore_prefixes`` -- so they cannot disagree about which contacts
+  they describe. ``contact_location`` and ``bumper`` resolve it too. Their
   ``ignore`` lists should agree for the same reason clearance's should.
 * **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
   ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral

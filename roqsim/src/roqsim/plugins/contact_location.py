@@ -23,8 +23,8 @@ Config::
       # declaring it at the top of a document is refused (`requires_owner`).
       body: ""               # base body override; default: the entity's registered base body
       namespace: ""          # transport scope for the endpoint
-      ignore: [floor]        # geom NAMES that never count (default: ['floor'])
-      ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
+      ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
+      ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       merge_radius: 0.02     # m; contacts closer than this count as one sensing area
       frame: base            # 'base' -> report in the watched body's frame; 'world' -> world frame
@@ -40,6 +40,11 @@ backend hint publishes the centre as a ``geometry_msgs/PointStamped`` on ``conta
 **Read it through the blackboard, not the endpoint, inside a control loop.** The endpoint is
 rate-limited for logging; ``ctx.blackboard.get(f"contact_location:{address}")`` returns a callable
 giving the current reading, the same convention ``contact_monitor`` and ``force_torque`` use.
+
+Which contacts: the ones ``contact_monitor`` counts, by the same
+:class:`roqsim.contact_scope.ContactScope` -- exactly one side in the watched subtree (a geom, or a
+flex the entity owns), neither side in ``ignore``. A reading and a verdict over one geometry then
+cannot disagree about which contacts they describe.
 
 Cost. The per-step work is a vectorised pass over ``data.contact`` -- a mask lookup per contact and
 an xor -- and a contact force query only for the handful that survive it. That matters because a
@@ -63,6 +68,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from ..contact_scope import ContactScope, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 
@@ -112,8 +118,7 @@ class ContactLocationPlugin(Plugin):
         # contact per step is exactly the kind of cost this plugin must not add.
         self._force_scratch = np.zeros(6)
         self._ctx: SimContext | None = None
-        self._watched: np.ndarray | None = None  # per-geom mask; see configure()
-        self._ignored: np.ndarray | None = None
+        self._scope: ContactScope | None = None  # the shared contact rule; see configure()
         self._root = -1
         self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, 0.0)
 
@@ -138,45 +143,21 @@ class ContactLocationPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
-        prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
-        body_name = (
-            (prefix + self.body)
-            if self.body
-            else (entity.body if entity and entity.body else prefix + "base_link")
+        # Which contacts are this entity's: contact_monitor's rule, resolved by the same code, so
+        # "where" and "whether" are about the same contacts. It fails loudly on a body that does not
+        # resolve or watches nothing: a sensor watching nothing reports "no contact" forever, which
+        # a controller cannot distinguish from open space and would drive straight through.
+        self._scope = resolve_contact_scope(
+            model,
+            entity,
+            plugin="contact_location",
+            body=self.body,
+            ignore=self.ignore,
+            ignore_prefixes=self.ignore_prefixes,
         )
-        self._root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body_name)
-        if self._root < 0:
-            # Fail loudly: a sensor watching nothing reports "no contact" forever, which a
-            # controller cannot distinguish from open space and would drive straight through.
-            raise RuntimeError(f"contact_location: base body {body_name!r} not found")
-
-        # Boolean masks indexed by geom id, not Python sets: the per-step filter is then one
-        # vectorised lookup over the contact array instead of a membership test per contact.
-        self._watched = np.zeros(model.ngeom, dtype=bool)
-        for gid in range(model.ngeom):
-            if self._in_subtree(model, int(model.geom_bodyid[gid]), self._root):
-                self._watched[gid] = True
-        if not self._watched.any():
-            raise RuntimeError(
-                f"contact_location: body {body_name!r} and its subtree carry no geoms to watch"
-            )
-
-        self._ignored = np.zeros(model.ngeom, dtype=bool)
-        for gid in range(model.ngeom):
-            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
-            if name in self.ignore or any(name.startswith(p) for p in self.ignore_prefixes):
-                self._ignored[gid] = True
-        missing = [
-            n for n in self.ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
-        ]
-        if missing:
-            # Not fatal, never silent: an unmatched ignore entry is how the ground plane starts
-            # reading as a permanent contact under the robot.
-            _log.warning(
-                "contact_location: ignore entry has no matching geom: %s", ", ".join(missing)
-            )
+        self._root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, self._scope.body)
 
         ctx.blackboard.set(f"contact_location:{self.address}", self.read_state)
         ctx.interface.add(
@@ -195,26 +176,12 @@ class ContactLocationPlugin(Plugin):
                 },
             )
         )
-        _log.info(
-            "contact_location: watching %d geoms of %r in the %s frame, ignoring %d",
-            int(self._watched.sum()),
-            body_name,
-            self.frame,
-            int(self._ignored.sum()),
-        )
+        _log.info("contact_location: reporting in the %s frame", self.frame)
 
     def read_state(self) -> ContactLocation:
         """The current reading. A callable, not the dataclass: ``post_step`` REPLACES it each step,
         so a consumer holding the object would read one frozen step forever."""
         return self._reading
-
-    @staticmethod
-    def _in_subtree(model, body: int, root: int) -> bool:
-        while body > 0:
-            if body == root:
-                return True
-            body = int(model.body_parentid[body])
-        return body == root
 
     def on_reset(self, ctx: SimContext) -> None:
         self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, 0.0)
@@ -229,21 +196,10 @@ class ContactLocationPlugin(Plugin):
                 return
             self._accum = 0.0
 
-        n = data.ncon
-        if n == 0:
-            self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, float(data.time))
-            return
-
-        # Filter the whole contact array at once. A world's contacts are dominated by pairs the
-        # robot is not in -- props resting on the floor, a crowd's feet -- and touching each of
-        # them from Python costs more than the physics step that produced them. `data.contact` is
-        # a struct of arrays, so the geom test is two mask lookups and an xor.
-        con = data.contact
-        g1, g2 = con.geom1[:n], con.geom2[:n]
-        w1, w2 = self._watched[g1], self._watched[g2]
-        # Exactly one side watched: neither is nothing to do with us, both is a self-contact.
-        keep = (w1 ^ w2) & ~(self._ignored[g1] | self._ignored[g2])
-        idx = np.flatnonzero(keep)
+        # Filter the whole contact array at once, through the shared scope. A world's contacts are
+        # dominated by pairs the robot is not in -- props resting on the floor, a crowd's feet --
+        # and touching each of them from Python costs more than the physics step that produced them.
+        idx = self._scope.indices(data)
 
         if idx.size and self.min_force > 0:
             # Only now, and only for the handful that survived: this is a C call per contact.
@@ -260,7 +216,7 @@ class ContactLocationPlugin(Plugin):
             return
         # `.tolist()` once, rather than iterating the array: looping a numpy array yields a numpy
         # scalar per element, and at these sizes that conversion is most of the remaining cost.
-        points = con.pos[idx].tolist()
+        points = data.contact.pos[idx].tolist()
 
         # Merge solver contacts a real sensing area could not tell apart. MuJoCo often solves
         # several contacts across one flat face touching another; a skin with 2 cm taxels reports

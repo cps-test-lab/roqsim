@@ -12,7 +12,8 @@ about where the footprint ends.
 What counts as a collision is defined by exclusion, not by enumeration: every contact involving one
 of the watched entity's bodies counts, EXCEPT contacts against a geom in ``ignore`` (by default the
 ground plane, which a wheeled robot touches continuously by design). Listing what a robot may touch
-is short and stable; listing what it may not is neither.
+is short and stable; listing what it may not is neither. A MuJoCo flex is a side like a geom: one the
+entity owns is watched, and ``ignore`` may name one (see :mod:`roqsim.contact_scope`).
 
 Config::
 
@@ -21,8 +22,8 @@ Config::
       # declaring it at the top of a document is refused (`requires_owner`).
       body: ""               # base body override; default: the entity's registered base body
       namespace: ""          # transport scope for the endpoint
-      ignore: [floor]        # geom NAMES that never count as a collision (default: ['floor'])
-      ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
+      ignore: [floor]        # geom or flex NAMES that never count as a collision (default: ['floor'])
+      ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       latch: true            # once true, stay true until on_reset (a trial is failed, not un-failed)
       reset_on_spawn: true   # spawning the watched entity restarts the report (see below)
@@ -30,14 +31,16 @@ Config::
 
 Endpoint ``contact`` (out) reads a :class:`ContactReport`:
 ``(in_contact, first_time, count, geom_a, geom_b)`` -- ``first_time`` is the simulation time of the
-first qualifying contact since reset (``-1.0`` if none), and ``geom_a``/``geom_b`` name the geoms of
-that first contact, so a failure is attributable rather than just flagged. The ROS 2 backend hint
+first qualifying contact since reset (``-1.0`` if none), and ``geom_a``/``geom_b`` name the two sides
+of that first contact, so a failure is attributable rather than just flagged -- a geom by its name, a
+flex as ``flex:<name>[v<i>]`` with the vertex that touched. The ROS 2 backend hint
 publishes ``in_contact`` as a ``std_msgs/Bool`` on ``collision`` (relative, so it is scoped by the
 entity's namespace: two namespaced robots get ``/a/collision`` and ``/b/collision``); a bridge that
 wants the detail reads the fields directly.
 
 The watched set is the entity's **kinematic subtree**: for a mobile base that is the chassis plus its
-wheels, so a wheel clipping a box counts exactly as much as the bumper does.
+wheels, so a wheel clipping a box counts exactly as much as the bumper does -- and a flex whose
+vertices all hang in that subtree, such as a soft pad on an arm's end effector.
 
 **When the trial spawns the watched entity.** ``reset_on_spawn`` (default true) restarts the
 report when the watched entity GAINS PRESENCE. An entity that has just been spawned has no
@@ -69,7 +72,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from ..contact_scope import ContactScope, resolve_contact_scope
+from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 
@@ -83,7 +86,7 @@ class ContactReport:
     in_contact: bool
     first_time: float  # sim time of the first qualifying contact since reset; -1.0 if none
     count: int  # qualifying contacts in the most recent step
-    geom_a: str  # geoms of the FIRST qualifying contact ("" until one happens)
+    geom_a: str  # sides of the FIRST qualifying contact ("" until one happens); see side_name
     geom_b: str
 
 
@@ -210,18 +213,13 @@ class ContactMonitorPlugin(Plugin):
         # must reject numerical grazing, an integral must not.
         for index in self._scope.indices(data):
             i = int(index)
-            c = data.contact[i]
-            g1, g2 = int(c.geom1), int(c.geom2)
             if self.min_force > 0:
                 mujoco.mj_contactForce(model, data, i, force)
                 if abs(float(force[0])) < self.min_force:
                     continue
             hits += 1
             if first is None:
-                first = (
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g1) or f"geom{g1}",
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g2) or f"geom{g2}",
-                )
+                first = contact_side_names(model, data.contact[i])
 
         if hits and self._report.first_time < 0.0:
             self._report = ContactReport(True, float(data.time), hits, first[0], first[1])

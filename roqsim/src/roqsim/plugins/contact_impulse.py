@@ -56,8 +56,8 @@ Config::
       # declaring it at the top of a document is refused (`requires_owner`).
       body: ""               # base body override; default: the entity's registered base body
       namespace: ""          # transport scope for the endpoint
-      ignore: [floor]        # geom NAMES that never count (default: ['floor'])
-      ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
+      ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
+      ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
       reset_on_spawn: true   # spawning the watched entity restarts the integral
       rate_hz: 30.0          # endpoint publish rate -- of the RUNNING TOTAL, not of the integrand
 
@@ -65,9 +65,9 @@ Endpoint ``contact_impulse`` (out) reads a :class:`ContactImpulseReport`:
 ``(impulse_ns, peak_normal_n, contact_time_s, normal_n, count, peak_time, peak_geom_a,
 peak_geom_b)``. The three totals run from the last reset; ``normal_n`` and ``count`` are the current
 step's, so the report says what it is integrating as well as what it has integrated. ``peak_time``
-is the sim time of the largest single-step load (``-1.0`` if nothing was touched) and the two geom
-names are that step's strongest single contact, so a severity figure is attributable rather than
-merely large.
+is the sim time of the largest single-step load (``-1.0`` if nothing was touched) and the two
+``peak_geom`` names are the sides of that step's strongest single contact, so a severity figure is
+attributable rather than merely large -- a geom by its name, a flex as ``flex:<name>[v<i>]``.
 
 ``contact_time_s`` is the time a qualifying contact **existed**, which is ``contact_monitor``'s
 notion of touching and is longer than the time force was transmitted: MuJoCo goes on listing a pair
@@ -108,7 +108,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from ..contact_scope import ContactScope, resolve_contact_scope
+from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 
@@ -261,18 +261,13 @@ class ContactImpulsePlugin(Plugin):
         hits = 0
         for i in self._scope.indices(data):
             # Only for the handful the scope kept: this is a C call per contact.
-            contact = data.contact[int(i)]
             mujoco.mj_contactForce(model, data, int(i), self._force_scratch)
             normal = abs(float(self._force_scratch[0]))
             total += normal
             hits += 1
             if normal > strongest:
                 strongest = normal
-                g1, g2 = int(contact.geom1), int(contact.geom2)
-                geoms = (
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g1) or f"geom{g1}",
-                    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g2) or f"geom{g2}",
-                )
+                geoms = contact_side_names(model, data.contact[int(i)])
 
         report = self._report
         impulse = report.impulse_ns

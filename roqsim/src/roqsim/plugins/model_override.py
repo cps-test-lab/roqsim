@@ -94,6 +94,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from ..contact_scope import side_name
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids
@@ -687,20 +688,28 @@ class ModelOverridePlugin(Plugin):
         want = max(float(target.target[0][0]), MJMINMU)
         selected = set(target.ids)
         for i in range(ctx.data.ncon):
+            # A flex side has geom -1, which is never a selected id, so membership needs no guard;
+            # naming the other side does, since -1 looked up as a geom is the model's last one.
             c = ctx.data.contact[i]
             if int(c.geom1) not in selected and int(c.geom2) not in selected:
                 continue
             applied = float(c.friction[0])
             if not np.isclose(applied, want, rtol=0.05, atol=2 * MJMINMU):
-                other = int(c.geom2) if int(c.geom1) in selected else int(c.geom1)
-                name = (
-                    mujoco.mj_id2name(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, other) or f"geom{other}"
+                other = 1 if int(c.geom1) in selected else 0
+                name = side_name(
+                    ctx.model, c.geom[other], c.flex[other], c.vert[other], c.elem[other]
+                )
+                fix = (
+                    "Set that flex's own friction or priority (its <contact> in the MJCF): a flex "
+                    "is not a geom this plugin can select"
+                    if int(c.geom[other]) < 0
+                    else "Select it too, or select it instead"
                 )
                 return (
                     NO_EFFECT,
                     f"contact friction is {applied:.4g}, not {want:.4g}: {name} governs this pair "
                     "(higher priority, or equal priority and higher friction -- MuJoCo takes the "
-                    "element-wise maximum). Select it too, or select it instead",
+                    f"element-wise maximum). {fix}",
                 )
         return LANDED, f"contact friction is {want:.4g}"
 
