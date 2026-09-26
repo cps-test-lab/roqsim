@@ -62,8 +62,8 @@ Config::
 
 **Why it provides the world.** ``sim.world`` builds a floor; a terrain that let one be built would
 put a plane through its own hills. Declaring ``provides_world`` is how the ``floorplan`` plugin
-already says the same thing, and the engine then skips the world definition and warns if one was also
-asked for.
+says the same thing, and the engine then skips the world definition and refuses a world that also sets
+``sim.world``.
 
 **Contact against a height field is against its triangles**, not a smoothed surface, so the sample
 spacing is the resolution of every wheel and foot interaction: 96 samples over 20 m is a 21 cm grid,

@@ -20,7 +20,6 @@ Config::
       scale: 1.0                     # uniform geometric scale factor (see below)
       motion: physics                # who owns the pose: physics (default; a movable body),
                                      #   static (welded scenery), driven (a plugin writes it)
-      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
       present: true                  # false: compiled in, but absent until it is spawned
       mass: 0.5                      # override the total mass (kg): root-body geoms + flex vertices
       friction: [1.2, 0.005, 0.0001] # override root-body geom and flex friction (or a single sliding val)
@@ -38,9 +37,8 @@ masses in proportion, keeping the mass distribution of a multi-geom prop; ``fric
 sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
 has nothing to scale, rather than silently doing nothing.
 
-A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
-a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
-two non-default ones.
+A prop is in one of three states, named by ``motion``: a **free** body physics moves (``physics``,
+the default), **welded** scenery (``static``), or a **mocap** body some plugin drives (``driven``).
 
 ``motion: driven`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
 it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
