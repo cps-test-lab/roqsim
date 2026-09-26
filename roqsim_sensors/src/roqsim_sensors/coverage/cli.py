@@ -14,6 +14,12 @@ Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Exampl
 
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
+
+Exit status: ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the report written; ``2`` and
+one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong -- a world that does not
+exist or does not load, a placements file that is missing, not JSON or not a list, an unknown sensor
+type or region. The agent driving the propose -> evaluate -> refine loop greps that line; a traceback
+means a crash, not a refused input.
 """
 
 from __future__ import annotations
@@ -80,10 +86,18 @@ def parse_target(text: str | None) -> dict:
 
 
 def _read_placements(path: str) -> list[dict]:
-    obj = json.loads(Path(path).read_text())
+    """The placements file, or a ``ValueError`` naming it when it is missing, not JSON or not a list."""
+    try:
+        text = Path(path).read_text()
+    except OSError as err:
+        raise ValueError(f"placements {path!r} cannot be read: {err.strerror or err}") from None
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"placements {path!r} is not JSON: {err}") from None
     placements = obj["placements"] if isinstance(obj, dict) else obj
     if not isinstance(placements, list):
-        raise SystemExit(f"{path}: expected a list of placements or {{'placements': [...]}}")
+        raise ValueError(f"{path}: expected a list of placements or {{'placements': [...]}}")
     return placements
 
 
@@ -365,9 +379,25 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
+#: Exit status when an input is wrong; distinct from a crash's ``1`` so a caller can tell the two apart.
+EXIT_BAD_INPUT = 2
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    # Everything a wrong input raises on the way in -- a world that does not resolve or load, a
+    # placements file that is missing or malformed, an unknown sensor type or region -- ends here as one
+    # line and a distinct exit status. The caller is a loop that greps stderr; a traceback is neither.
+    from roqsim.models import ModelError
+    from roqsim.plugin import PluginError
+
+    try:
+        return args.func(args)
+    except (PluginError, ModelError, KeyError, ValueError, OSError) as err:
+        # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
+        message = err.args[0] if isinstance(err, KeyError) and err.args else err
+        print(f"roqsim sensors coverage: {message}", file=sys.stderr)
+        return EXIT_BAD_INPUT
 
 
 if __name__ == "__main__":
