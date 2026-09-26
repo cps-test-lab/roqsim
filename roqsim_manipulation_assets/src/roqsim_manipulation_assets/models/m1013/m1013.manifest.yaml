@@ -5,3 +5,7 @@
 # out, set `spawn_arm` config `default_plugins: false`.
 components:
   - arm_controller: {}   # the home keyframe target keeps the plugin/model defaults
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The flange.
+end_effector:
+  site: attachment_site
