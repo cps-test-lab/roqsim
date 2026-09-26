@@ -15,7 +15,7 @@ requires-python = ">=3.10"
 # what keeps the dependency acyclic.
 dependencies = [
     "roqsim",
-    "mujoco>=3.0",   # obstacles.py reads wall footprints straight off the compiled model
+    "mujoco>=3.14,<3.15",   # obstacles.py reads wall footprints straight off the compiled model
     "numpy>=1.24",
     "py_trees>=2.2", # the navigate / stuck-recovery behaviour tree
 ]

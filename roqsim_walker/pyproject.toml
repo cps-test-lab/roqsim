@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 dependencies = [
     "roqsim",
     "roqsim_nav",   # the shared navigator: plan, follow, avoid; this package supplies the body
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
     "py_trees>=2.2",   # the navigate / stuck-recovery behaviour tree
     "trimesh>=3.20",   # loads the CARLA character OBJ per material group (skinning)

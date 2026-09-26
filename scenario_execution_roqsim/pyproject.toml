@@ -32,7 +32,7 @@ dependencies = [
 # `pip install -e .[osc]` is a no-op wherever scenario-execution is already importable, and a clear
 # failure where it is not. See the note above for why it cannot be a hard dependency.
 osc = ["scenario_execution"]
-test = ["pytest>=7.0", "mujoco>=3.0"]
+test = ["pytest>=7.0", "mujoco>=3.14,<3.15"]
 
 # The OSC library, so `import osc.roqsim` resolves. The entry-point NAME is what a scenario imports.
 [project.entry-points."scenario_execution.osc_libraries"]

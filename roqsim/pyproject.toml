@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse

@@ -27,7 +27,7 @@ dependencies = [
     "roqsim_mobile",        # spawn_robot + diff_drive (Frankie) / omni_drive (TIAGo Pro)
     "roqsim_manipulation",  # arm_controller -- the shared limb controller both platforms' arms use
     "roqsim_manipulation_assets",  # Frankie borrows roqsim's own Panda meshes rather than shipping a copy
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
 ]
 

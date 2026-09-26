@@ -27,7 +27,7 @@ requires-python = ">=3.10"
 dependencies = [
     "roqsim",
     "roqsim_sensors",
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
 ]
 
