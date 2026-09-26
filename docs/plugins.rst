@@ -1761,6 +1761,34 @@ What the substrate owes such a cell is the arm, the sensing, the control law and
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
 
+Manipulation: a prop or a tool that deforms
+-------------------------------------------
+
+A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
+model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
+``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
+needs (:mod:`roqsim.flex`). What the spawn adds around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
+  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
+  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, whose own value its contacts use.
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
+  under its own weight, as a real one on a still arm does.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
+
 Writing your own
 ----------------
 

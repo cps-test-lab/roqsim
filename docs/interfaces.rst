@@ -619,7 +619,8 @@ caller to send geometry that nothing can load.
 and from what ``GetEntities`` lists. Its pose does not move, which is the point — parking it out
 of sight leaves a free body accelerating under gravity for as long as it is away, so it comes
 back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the three model fields
-this flips and why the geom *group* is the one that matters: ``mj_multiRay`` ignores
+this flips (on its geoms, and on a flex's own copies of them) and why the geom *group* is the one
+that matters: ``mj_multiRay`` ignores
 ``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
 an absent obstacle a perfectly good lidar return.
 
