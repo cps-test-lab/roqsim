@@ -185,12 +185,14 @@ def _overridable_targets(ctx, pattern: str) -> dict:
         "body": mujoco.mjtObj.mjOBJ_BODY,
         "actuator": mujoco.mjtObj.mjOBJ_ACTUATOR,
         "joint": mujoco.mjtObj.mjOBJ_JOINT,
+        "flex": mujoco.mjtObj.mjOBJ_FLEX,
     }
     counts = {
         "geom": ctx.model.ngeom,
         "body": ctx.model.nbody,
         "actuator": ctx.model.nu,
         "joint": ctx.model.njnt,
+        "flex": ctx.model.nflex,
     }
 
     targets: dict[str, list[dict]] = {}

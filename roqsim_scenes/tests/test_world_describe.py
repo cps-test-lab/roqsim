@@ -132,6 +132,23 @@ def test_the_glob_is_what_bounds_the_answer(capsys, world):
     assert len(everything["geom"]) > len(one["geom"])
 
 
+def test_a_flex_is_an_overridable_target(capsys, tmp_path):
+    """model_override selects a flex by name, so the names and their live values are listed."""
+    (tmp_path / "flex.xml").write_text(
+        '<mujoco><worldbody><body name="holder" pos="0 0 .5">'
+        '<flexcomp name="beam" type="grid" count="3 2 2" spacing=".02 .02 .02" dim="3" mass=".05">'
+        '<elasticity young="1e5" damping="0.01"/><pin id="0"/></flexcomp>'
+        "</body></worldbody></mujoco>"
+    )
+    path = tmp_path / "flex.yaml"
+    path.write_text("sim: {world: flex.xml}\n")
+    targets = _describe(capsys, str(path), "--overridable", "beam")["overridable"]["targets"]
+    (beam,) = targets["flex"]
+    assert beam["name"] == "beam"
+    assert beam["flex_damping"] == pytest.approx(0.01)
+    assert {"flex_friction", "flex_solref", "flex_solimp"} <= set(beam)
+
+
 def test_asking_for_both_builds_the_world_once(capsys, world, monkeypatch):
     """Compiling is the expensive part, so --entities and --overridable must share one build."""
     builds = []

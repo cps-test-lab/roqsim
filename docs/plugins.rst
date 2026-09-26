@@ -949,7 +949,47 @@ by name, with the reason and with what to use instead (for the globals, ``sim.co
 which is *global* and applies *before compile* — a different tool for a different job). The full
 allowlist, with what each field does and how it can silently do nothing, is in the plugin's own
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
-measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
+measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
+``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
+flex name; its Young's modulus is not, for the reason in the next section.
+
+A flex's material as a campaign factor
+--------------------------------------
+
+A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
+asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
+and ``flex_material`` states that in the world instead::
+
+   components:
+     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+       name: ur5e
+     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
+                       friction: 1.5, priority: 1}
+       name: pad_material
+
+Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.pad_material.young``. Three things to know:
+
+* **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
+  ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
+  run-time write could reach -- which is why the modulus is a build-time component and not a
+  ``model_override`` row. The contact values and the damping are compiled fields; setting them here
+  keeps one material in one block, and ``model_override`` can still change the four live ones
+  during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in
+  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
+  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
+  the component that brings the flex in -- below the arm, as here.
+* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
+  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
+  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
+  be set in the same block, so a shell can be made elastic here.
+
+Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
+with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
+``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
+in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+:mod:`roqsim.plugins._flex_material`.
 
 Perception ground truth
 -----------------------
