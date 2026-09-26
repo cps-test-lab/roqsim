@@ -294,3 +294,44 @@ def test_a_plugin_whose_reset_fails_is_a_reset_problem(tmp_path):
     assert report["reached"] == "configure"
     assert [p["stage"] for p in report["problems"]] == ["reset"]
     assert "cannot re-home" in report["problems"][0]["message"]
+
+
+def _transport_class():
+    """A transport plugin whose configure would wait for a peer that a check never starts."""
+    from roqsim.plugin import Plugin
+
+    class Link(Plugin):
+        transport_only = True
+
+        def validate_config(self, config):
+            return [] if config.get("port", 1) > 0 else ["'port' must be > 0"]
+
+        def configure(self, ctx):
+            raise RuntimeError("no peer connected within 60 s")
+
+    return Link
+
+
+Link = _transport_class()
+
+
+def test_a_transport_plugin_is_validated_and_not_started(tmp_path):
+    pytest.importorskip("roqsim_mobile")
+    world = GOOD + f"""
+      - "{__name__}:Link": {{port: 4560}}
+    """
+    report = check_world(str(_world(tmp_path, world)))
+    assert report["ok"] is True, report["problems"]
+    assert report["reached"] == STAGES[-1]
+    assert any(w["check"] == "transport" and "Link" in w["message"] for w in report["warnings"])
+
+
+def test_a_transport_plugins_bad_config_is_still_a_config_problem(tmp_path):
+    world = f"""
+    sim: {{}}
+    components:
+      - "{__name__}:Link": {{port: -1}}
+    """
+    report = check_world(str(_world(tmp_path, world)))
+    assert report["ok"] is False and report["reached"] == "resolve"
+    assert any("port" in p["message"] for p in report["problems"])
