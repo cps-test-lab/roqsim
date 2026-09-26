@@ -50,6 +50,7 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 # The wall/opening arithmetic is shared with the plan-view renderer (roqsim_scenes.floorplan_to_png), so it
@@ -179,7 +180,7 @@ def scene_manifest(
     }
     if floorplan_ref is not None:
         manifest["floorplan"] = floorplan_ref
-    return manifest
+    return scene_manifest_format.stamp(manifest)
 
 
 def _view(bbox: tuple[float, float, float, float]) -> dict:
