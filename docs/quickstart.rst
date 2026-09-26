@@ -270,17 +270,29 @@ The **modes** are the flex's lowest elastic frequencies with everything else hel
 finite-difference stiffness and the mass matrix (:func:`roqsim.flex_modes.first_modes`); they match
 a free-vibration measurement within 1 %. The **damping ratio** of mode *i* under the ``discrete``
 integrator (the one ``sim.integrator: auto`` picks for an elastic flex) is ``(damping + timestep) *
-omega_i / 2`` while ``omega_i * timestep`` is small (within 4 % up to 0.23): the integrator damps as
-if ``<elasticity damping>`` were one timestep larger, so with no stated damping all of it is numerical
-and changes with ``sim.timestep``, and the integrator's share is at most half exactly when
-``sim.timestep`` is at or below the damping. The **contact floor** is the time constant MuJoCo
-raises a stiffer ``solref`` to: one timestep under ``discrete``, two under every other integrator.
-Both rules were measured on MuJoCo 3.14 and are stated in :mod:`roqsim.flex_modes`
-(``explain_flex``, ``solref_floor``).
+omega_i / 2``: the integrator damps as if ``<elasticity damping>`` were one timestep larger, so with
+no stated damping all of it is numerical and changes with ``sim.timestep``, and the integrator's
+share is at most half exactly when ``sim.timestep`` is at or below the damping. That ratio, and the
+frequency, hold while the timestep **resolves** the mode: at ``omega_i * timestep`` up to 0.3 a mode
+damped at a ratio up to 0.3 rings within 5 % of both. Beyond it the run damps the mode less and
+rings it slower than reported -- with the damping one timestep, by 11 % and 9 % at 0.5, and at 0.85
+a reported ratio of 0.85 rings down at 0.65 -- so the report stars that mode's figures
+(``resolved: false`` in ``--json``) and warns. The **contact floor** is the time constant MuJoCo raises a stiffer ``solref`` to: one
+timestep under ``discrete``, two under every other integrator. These rules were measured on MuJoCo
+3.14 and are stated in :mod:`roqsim.flex_modes` (``explain_flex``, ``solref_floor``).
+
+The same block at a 4 ms step, with the damping raised to match it::
+
+   WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved by the timestep (omega * timestep = 0.33, above 0.3), and so is mode 3; ...
+         hint: set sim.timestep <= 0.00213 s to bring omega * timestep to 0.3 or below for every reported mode, or lower ...
+
+          modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562* at damping 0.004 s (numerical share 50% at timestep 0.004 s)
+          * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
 
 A ``WARN`` line names something a world that loads will do and its author probably did not mean --
-damping that is mostly the integrator's (``flex-damping``), a ``solref`` below the floor
-(``flex-solref``) -- and never makes the check fail. In ``--json`` they are the ``warnings`` list,
+damping that is mostly the integrator's (``flex-damping``), a mode the timestep under-resolves
+(``flex-timestep``, whose hint names the ``sim.timestep`` that resolves every reported mode), a
+``solref`` below the floor (``flex-solref``) -- and never makes the check fail. In ``--json`` they are the ``warnings`` list,
 each ``{"check", "message", "hint"}`` plus the ``flex`` it is about; the modes are under
 ``derived.flexes``, and the inventory under ``world.flexes``. The modes are the one costly thing ``check`` computes (two
 passive-force evaluations per flex degree of freedom and an eigen solve: seconds at most); a flex

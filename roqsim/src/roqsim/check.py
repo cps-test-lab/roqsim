@@ -71,14 +71,16 @@ is in there.
 
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
-it, and whether its contact ``solref`` is above the floor MuJoCo raises it to
-(:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the ``solref`` floor). The modes are
+it, whether the timestep resolves each mode, and whether its contact ``solref`` is above the floor
+MuJoCo raises it to (:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the resolution
+limit, the ``solref`` floor). The modes are
 the one costly computation here -- two passive-force evaluations per flex DOF and an eigen solve,
 seconds at most -- and a flex above :data:`roqsim.flex_modes.MODES_DOF_CAP` DOFs is reported
-without them rather than analysed at any cost. Two warnings come from it, for what such a world will
-do that its author probably did not intend: ``flex-damping`` (its damping is mostly the
-integrator's) and ``flex-solref`` (its contact stiffness is not the one that runs). A flex's warning
-also names the flex in an extra ``flex`` key.
+without them rather than analysed at any cost. Three warnings come from it, for what such a world
+will do that its author probably did not intend: ``flex-damping`` (its damping is mostly the
+integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
+ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
+stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
 """
 
 from __future__ import annotations
@@ -336,7 +338,8 @@ def _derive(engine) -> tuple[dict, list[dict]]:
     """What the loaded world will *do*, worked out from the model without stepping it.
 
     For each flex: its first elastic modes, the damping ratio each will ring down with at this
-    timestep and how much of it is the integrator's, and whether its contact ``solref`` is one MuJoCo
+    timestep and how much of it is the integrator's, whether the timestep resolves each mode well
+    enough for those figures to hold, and whether its contact ``solref`` is one MuJoCo
     will actually use (:func:`roqsim.flex_modes.explain_flex`). The modes are the one costly thing
     ``check`` does -- a finite-difference stiffness and an eigen solve per flex, seconds at most,
     refused above :data:`roqsim.flex_modes.MODES_DOF_CAP` degrees of freedom -- and nothing but
@@ -443,8 +446,10 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
         if modes is None:
             lines.append(f"       modes not computed: {row.get('modes_skipped', '')}")
         elif modes:
-            hz = ", ".join(f"{m['hz']:.3g}" for m in modes)
-            zeta = ", ".join(f"{m['zeta']:.3g}" for m in modes)
+            # A mode the timestep under-resolves is starred: its figures are not the ones that run.
+            star = ["*" if m.get("resolved") is False else "" for m in modes]
+            hz = ", ".join(f"{m['hz']:.3g}{s}" for m, s in zip(modes, star, strict=True))
+            zeta = ", ".join(f"{m['zeta']:.3g}{s}" for m, s in zip(modes, star, strict=True))
             share = row.get("numerical_share")
             numerical = (
                 f" (numerical share {share:.0%} at timestep {row['timestep']:g} s)"
@@ -455,6 +460,13 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
                 f"       modes {hz} Hz; damping ratio {zeta} at damping {row['damping']:g} s"
                 f"{numerical}"
             )
+            if any(star):
+                from roqsim.flex_modes import MAX_OMEGA_DT
+
+                lines.append(
+                    f"       * under-resolved (omega * timestep above {MAX_OMEGA_DT:g}): a run "
+                    "damps and rings a starred mode differently -- see the flex-timestep warning"
+                )
         floor = row.get("solref_floor")
         solref = " ".join(f"{v:g}" for v in row["solref"])
         lines.append(
