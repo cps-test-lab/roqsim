@@ -121,6 +121,14 @@ def test_the_exit_code_is_the_verdict(tmp_path, capsys):
     assert "FAIL" in capsys.readouterr().out
 
 
+def test_help_states_the_exit_status(capsys):
+    """A caller in a loop branches on the status, so --help says what 0 and 1 mean."""
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = capsys.readouterr().out
+    assert "exit status" in out and "0 the world loads" in out and "1 a stage reported" in out
+
+
 def test_json_is_the_same_report(tmp_path, capsys):
     pytest.importorskip("roqsim_sensors")
     assert main([str(_world(tmp_path, GOOD)), "--json"]) == 0
