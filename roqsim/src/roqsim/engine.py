@@ -390,8 +390,9 @@ class Engine:
         self.ctx.episode += 1
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
-        if params:
-            self.ctx.blackboard.set("reset_params", params)
+        # Set on every reset, empty when none were given: a trial's parameters describe that trial,
+        # and a reset without any must not leave the previous trial's where a plugin reads them.
+        self.ctx.blackboard.set("reset_params", dict(params))
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned

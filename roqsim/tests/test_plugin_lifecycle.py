@@ -67,3 +67,16 @@ def test_step_before_setup_raises():
     engine = Engine(cfg)
     with pytest.raises(RuntimeError):
         engine.step()
+
+
+def test_a_reset_without_params_clears_the_previous_trials():
+    """``reset_params`` describes the trial being started; a reset that passes none must not leave
+    the previous trial's parameters for a plugin to read."""
+    cfg = load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]})
+    engine = Engine(cfg)
+    engine.setup()
+    engine.reset(speed=0.5)
+    assert engine.ctx.blackboard.get("reset_params") == {"speed": 0.5}
+    engine.reset()
+    assert engine.ctx.blackboard.get("reset_params") == {}
+    engine.shutdown()
