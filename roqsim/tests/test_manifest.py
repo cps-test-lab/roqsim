@@ -11,8 +11,11 @@ exercise the manifest logic in isolation without registering a roqsim.models pro
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
-from roqsim.config import PluginSpec
+import pytest
+
+from roqsim.config import PluginError, PluginSpec
 from roqsim.manifest import expand_manifest, load_manifest
 
 
@@ -198,3 +201,43 @@ def test_a_model_shipping_two_of_a_kind_keeps_both(tmp_path):
 
 def test_load_manifest_missing_returns_empty(tmp_path):
     assert load_manifest(tmp_path / "nope.xml") == []
+
+
+def test_refuses_a_top_level_key_nothing_reads(tmp_path):
+    """A misspelt key would otherwise load as a manifest without it -- `frame:` for `frames:` is a
+    model with no frames, and nothing says so until a mount cannot find one."""
+    model = _write_model(
+        tmp_path,
+        "cam",
+        """
+        frame: [{name: optical, parent: link, pos: [0, 0, 0], rpy: [0, 0, 0]}]
+        components:
+          - arm_controller: {}
+        """,
+    )
+    with pytest.raises(PluginError, match=r"unknown key\(s\) 'frame' \(did you mean 'frames'\?\)"):
+        load_manifest(Path(model))
+
+
+def test_refuses_an_unknown_key_without_guessing_a_far_one(tmp_path):
+    model = _write_model(tmp_path, "cam", "banana: 1\ncomponents: []\n")
+    with pytest.raises(PluginError, match=r"unknown key\(s\) 'banana'\. A manifest carries"):
+        load_manifest(Path(model))
+
+
+def test_every_known_key_loads(tmp_path):
+    """The allowlist names what the readers consume, so a manifest using all of it is not refused."""
+    model = _write_model(
+        tmp_path,
+        "dev",
+        """
+        assets: roqsim_sensors
+        fov: {near: 0.1, far: 5.0}
+        frames: []
+        frame_id: optical
+        license: []
+        components:
+          - arm_controller: {}
+        """,
+    )
+    assert [list(e) for e in load_manifest(Path(model))] == [["arm_controller"]]

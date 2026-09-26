@@ -298,7 +298,10 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   being run rather than to something included in it.
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
-  plugins (same shape as a world's ``components:``); the entity name is filled in for you, and each
+  plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
+  ``assets``, ``fov``, ``frames``, ``frame_id`` and ``license`` and nothing else: a key outside that
+  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
   prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
