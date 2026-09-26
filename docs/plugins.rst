@@ -1654,9 +1654,11 @@ Three things decide whether such a world measures anything at all:
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
 
-A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
-``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
-padded to a guessed ``--seconds``. Two rules are worth copying from a trial-protocol plugin: give it
+A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
+outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
+standalone under ``roqsim sim`` it also calls ``ctx.request_stop()``, so a hand-run trial ends when
+it resolves instead of being padded to a guessed ``--seconds`` (see :ref:`architecture`, "Who ends a
+run"). Two rules are worth copying from a trial-protocol plugin: give it
 an explicit failure condition as well as a success one (a trial that can only succeed cannot produce a
 success *rate*, it can only hang), and write the raw observable rather than the metric, because a
 force-energy definition belongs to the analysis where it can still be argued with.

@@ -299,17 +299,21 @@ facets.
 often runs at zero g deliberately: a simulated force-torque sensor is not tared, so with gravity on
 every wrench sample carries a constant tool-weight bias that a force-energy metric is dominated by.
 
-Ending a run from a plugin (``ctx.request_stop``)
-'''''''''''''''''''''''''''''''''''''''''''''''''
+Who ends a run (``ctx.request_stop`` and the scenario)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''
 
-A trial that knows it is finished -- the goal was reached, the episode failed, the recording is
-complete -- can say so with ``ctx.request_stop(reason)``. The standalone driver polls
-``ctx.stop_requested`` and leaves its loop cleanly, so ``shutdown`` still runs and files still flush.
+Under scenario-execution the scenario owns when a run ends: it ends it with ``emit end`` after a
+condition it watches or a sim-time bound, and roqsim never ends a scenario run. A trial plugin that
+knows it is finished -- the goal was reached, the episode failed -- therefore publishes that as
+observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
+condition on, and holds the robot idle until the scenario ends the run.
 
-Without it a world is padded out to a wall-clock ``--seconds``, guessed high enough for the slowest
-cell and then wasted on every faster one. It is a *request*: the engine does not
-act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
-stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
+The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
+with ``ctx.request_stop(reason)``: the driver polls ``ctx.stop_requested`` and leaves its loop
+cleanly, so ``shutdown`` still runs and files still flush, instead of the world being padded out to
+a wall-clock ``--seconds`` guessed high enough for the slowest cell. The engine itself does not act
+on the request, and the scenario adapter does not read it. Physics-thread only, like every other
+write on ``SimContext``; the first reason wins.
 
 Actuator overrides (``actuators:``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

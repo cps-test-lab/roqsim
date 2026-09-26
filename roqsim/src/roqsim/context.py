@@ -316,11 +316,11 @@ class SimContext:
 
         self.control = RunControl()
 
-        # End-of-run request. A trial that knows it is finished -- the goal was reached, the episode
-        # failed, the recording is complete -- should be able to say so, rather than the world being
-        # padded out to a wall-clock `--seconds` that has to be guessed high enough for the slowest
-        # cell and is then wasted on every faster one. The driver polls `stop_requested` and exits
-        # its loop cleanly, so `shutdown` still runs and files still flush.
+        # End-of-run request, for the standalone driver: a trial run by `roqsim sim` that knows it is
+        # finished says so, rather than the world being padded out to a wall-clock `--seconds`
+        # guessed high enough for the slowest cell. `roqsim sim` polls `stop_requested` and exits its
+        # loop cleanly, so `shutdown` still runs and files still flush. Under scenario-execution the
+        # scenario owns the end of the run and nothing reads this.
         self.stop_requested: bool = False
         self.stop_reason: str = ""
 
@@ -434,11 +434,12 @@ class SimContext:
 
     # -- snapshots ----------------------------------------------------------------------------
     def request_stop(self, reason: str = "") -> None:
-        """Ask the driver to end the run after this step. Idempotent; the first reason wins.
+        """Ask the standalone driver to end the run after this step. Idempotent; the first reason wins.
 
-        Physics-thread only, like every other write on this object. The engine itself does not act
-        on it -- an embedding driver (scenario-execution, a test harness) is free to ignore it and
-        keep stepping -- so it is a request, not a kill switch.
+        `roqsim sim` honours it. Under scenario-execution the scenario owns when a run ends and the
+        adapter does not read it, so a trial that must end a scenario run publishes its outcome for
+        the scenario to condition on. The engine itself does not act on it -- a request, not a kill
+        switch. Physics-thread only, like every other write on this object.
         """
         if not self.stop_requested:
             self.stop_requested = True
