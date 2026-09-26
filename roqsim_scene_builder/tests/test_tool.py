@@ -10,6 +10,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from roqsim_scene_builder.floorplan_sketch import sketch_floorplan_by_human
 from roqsim_scene_builder.scene_review import review_scene_by_human
 
 from roqsim_scene_builder import window_runner
@@ -143,3 +144,24 @@ def test_registered_as_mcp_tool():
     mcp = create_server()
     tools = anyio.run(mcp.list_tools)
     assert "review_scene_by_human" in {t.name for t in tools}
+
+
+@pytest.mark.parametrize(
+    ("call", "default"),
+    [
+        (lambda **kw: review_scene_by_human("roqsim_scenes:depot", **kw), "960x720"),
+        (lambda **kw: sketch_floorplan_by_human(**kw), "760x760"),
+    ],
+)
+def test_window_size_reaches_the_window_with_the_clis_default(monkeypatch, call, default):
+    """The CLI's --size is reachable from the tool, and an omitted size is the CLI's own default."""
+    seen: dict = {}
+    monkeypatch.setattr(
+        window_runner.subprocess,
+        "Popen",
+        lambda cmd, **kw: seen.__setitem__("cmd", cmd) or _FakePopen(cmd, behaviour="pass", **kw),
+    )
+    call()
+    assert seen["cmd"][seen["cmd"].index("--size") + 1] == default
+    call(size="1280x800")
+    assert seen["cmd"][seen["cmd"].index("--size") + 1] == "1280x800"
