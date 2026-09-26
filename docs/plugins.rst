@@ -599,8 +599,25 @@ Two things are worth knowing before reaching for a proximity check instead:
   ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
   flex contact a collision of the model's last geom.
 
-**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
-*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
+The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
+failure is attributable rather than merely flagged.
+
+Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
+contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
+unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
+with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
+to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
+"did anything hit something" signal but tells you nothing about which robot — and one monitor's
+``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
+
+.. note::
+
+   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
+   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
+   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
+   contact makes "wait for any message" look correct; it is not portable.
+
+**Where is it touching me?** ``contact_location`` is the one a *controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
 replaced every step and reports the region being touched — its centre in the robot's own frame, and
 whether that region is a point or a line::
 
@@ -623,10 +640,11 @@ Three things about it:
   there for logging against a map.
 * **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
   logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
-  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
-  use, and the one a per-step control law needs.
+  current reading at full step rate — the same convention ``contact_monitor``
+  (``contact:{address}``) and ``force_torque`` (``ft:{label}``) use, and the one a per-step control
+  law needs.
 
-**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+**Which switch?** ``bumper`` is the one a base's *safety stack* reads. A real bumper
 is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
 a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
 zone is its own ``bool`` endpoint under ``bumper/<zone>``::
@@ -729,6 +747,12 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
+distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
+world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
+pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
+``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
@@ -778,8 +802,8 @@ neither plugin keeps a contact the other has forgotten). A trial that touched no
 ``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
 against are read in-process.
 
-**Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
-guards an assumption the other two take for granted. A trial that drives something around a floor
+**Is it still standing on the floor at all?** ``upright_monitor`` guards an assumption the other
+observation plugins take for granted. A trial that drives something around a floor
 assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
 producing positions, distances and clearances about a body lying on its side or airborne, all of
 them plausible, none of them about the trial anyone designed::
@@ -813,30 +837,6 @@ Three things about it:
   driven prop and a walker, and nothing that moves them needs to know it exists.
 * **Nothing infers that an entity should be upright.** A quadruped mid-gait, a banking drone and an
   arm's wrist all leave the plane on purpose. It watches what somebody nested it under.
-
-``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
-distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
-world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
-pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
-``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
-
-The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
-failure is attributable rather than merely flagged.
-
-Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
-contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
-unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
-with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
-to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
-"did anything hit something" signal but tells you nothing about which robot — and one monitor's
-``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
-
-.. note::
-
-   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
-   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
-   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
-   contact makes "wait for any message" look correct; it is not portable.
 
 What a robot carries
 --------------------
@@ -1038,7 +1038,7 @@ unlabelled geom, so it is refused at load.
 What a run cost
 ---------------
 
-``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+``energy_monitor`` is the observation plugin that watches effort rather than geometry: it meters the
 actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
 a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
 analysis fits::
@@ -1089,8 +1089,8 @@ forces -- the effort metric a paper falls back on where its platform's electrica
 published, accumulated here at the physics rate rather than at whatever rate ``/joint_states`` was
 published at.
 
-Which actuators count is derived, not configured: every actuator driving a body of the robot's
-kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
+Which actuators count is derived by default (``actuators:`` narrows it to named ones): every
+actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
 joint does not need the world edited. An entity with no actuators is an error, because a meter
 reading zero forever looks exactly like a robot that costs nothing to drive.
 
