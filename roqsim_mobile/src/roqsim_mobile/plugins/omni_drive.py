@@ -12,6 +12,7 @@ sits rather than a config key::
     omni_drive:
       namespace: ""                 # transport scope (default: inherited from spawn_robot)
       base_joint: base_free         # the base's free joint
+      base_body: base_link          # body the wheel axes are read in, to derive their roll signs
       vx_actuator: base_vx          # planar drive actuators (see "Planar drive" below)
       vy_actuator: base_vy
       wz_actuator: base_wz

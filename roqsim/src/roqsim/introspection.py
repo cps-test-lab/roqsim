@@ -22,6 +22,9 @@ Two public entry points: a one-liner list, full detail on request.
 * :func:`get_plugin_details` -- one plugin's full detail, including its ``Config::``
   block parsed into structured fields.
 
+And one check that the detail is complete: :func:`undeclared_config_reads`, the keys a plugin reads
+that its published entry does not list.
+
 The doc-extraction helpers here (:func:`_own_or_module_doc`, :func:`_summary_and_config`,
 :func:`_flags`, :func:`_dist_name`) are the same ones the Sphinx ``.. roqsim-plugins::``
 directive (``docs/_ext/plugin_docs.py``) uses to build its documentation page -- moved
@@ -37,10 +40,12 @@ have its JSON output parsed by a caller on the host::
 
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import re
 import sys
+import textwrap
 
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
@@ -76,6 +81,9 @@ _CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
 # ("<plugin short name>:"). All three are skipped rather than parsed, so the keys underneath are
 # read at the level they are written.
 _CONFIG_WRAPPER_RE = re.compile(r"^\s+-?\s*(?:[A-Za-z_]\w*|<[^>]+>):\s*(?:#\s*(.*))?$")
+# A YAML sequence item ("- {id: 0, x0_m: 0.0}"), which a block writes under a key that takes a list
+# to show one example entry. It is the value of that key, not a key of its own.
+_SEQUENCE_ITEM_RE = re.compile(r"^\s+-(?:\s|$)")
 
 
 def _config_header_span(lines: list[str]) -> tuple[int, int] | None:
@@ -151,6 +159,18 @@ def _dist_name(ep) -> str:
     return dist.name if dist is not None else "unknown"
 
 
+def _block_resumes(rest: list[str], base: int) -> bool:
+    """Whether the block goes on after a blank line: the next text is still indented at its keys.
+
+    A blank line groups a long block into sections; the prose after a block sits at the docstring's
+    own margin, shallower than any key, so a blank line followed by that ends it.
+    """
+    for ln in rest:
+        if ln.strip():
+            return len(ln) - len(ln.lstrip()) >= base
+    return False
+
+
 def _parse_config_block(doc: str) -> list[dict]:
     """Parse a docstring's ``Config::`` block into structured fields.
 
@@ -164,11 +184,14 @@ def _parse_config_block(doc: str) -> list[dict]:
     reported itself and then its children, each under the dotted path a world YAML writes it
     at (``sample.resolution``). The world YAML nests, so a reader that stopped at the first
     nested key described the plugin's first few options and silently omitted the rest.
+    A sequence item under such a key (``lines:`` over ``- {id: 0, ...}``) is an example of
+    its value and is skipped the same way.
 
-    The block ends at the first blank line, or the first line that is neither a field, a
-    nested key, nor a comment continuation, encountered *after* at least one field -- which
-    keeps the trailing prose paragraphs common after a ``Config::`` block from being read as
-    more fields.
+    The block ends at a blank line followed by text shallower than its keys, or at the first
+    line that is neither a field, a nested key, nor a comment continuation, encountered *after*
+    at least one field -- which keeps the trailing prose paragraphs common after a ``Config::``
+    block from being read as more fields, while a blank line that only groups the block's keys
+    into sections does not end it.
     """
     lines = doc.splitlines()
     span = _config_header_span(lines)
@@ -196,9 +219,9 @@ def _parse_config_block(doc: str) -> list[dict]:
     #: (indent, key) of each mapping currently open, so a nested key is reported under the
     #: dotted path a world YAML would actually write it at.
     open_maps: list[tuple[int, str]] = []
-    for ln in body:
+    for i, ln in enumerate(body):
         if not ln.strip():
-            if in_block:
+            if in_block and not _block_resumes(body[i + 1 :], base):
                 break
             continue
         comment_only = _COMMENT_ONLY_RE.match(ln)
@@ -215,21 +238,16 @@ def _parse_config_block(doc: str) -> list[dict]:
             if not in_block and _CONFIG_WRAPPER_RE.match(ln):
                 continue
             break
+        if open_maps and indent >= open_maps[-1][0] and _SEQUENCE_ITEM_RE.match(ln):
+            # An example item of the list the open key takes ("lines:" over "- {id: 0, ...}",
+            # indented or not, as YAML allows both): part of that key's value, so the keys after
+            # it are still the plugin's.
+            continue
         while open_maps and indent <= open_maps[-1][0]:
             open_maps.pop()
         prefix = "".join(f"{key}." for _, key in open_maps)
-        match = _CONFIG_FIELD_RE.match(ln)
-        if match:
-            name, example, comment = match.groups()
-            fields.append(
-                {
-                    "name": prefix + name,
-                    "example": example.strip(),
-                    "doc": comment.strip() if comment else None,
-                }
-            )
-            in_block = True
-            continue
+        # A nested key first: "floor:   # appearance" also fits the field pattern, with its
+        # comment read as the value, and would leave the keys under it outside any mapping.
         nested = _CONFIG_NEST_RE.match(ln)
         if nested:
             name, comment = nested.groups()
@@ -241,6 +259,18 @@ def _parse_config_block(doc: str) -> list[dict]:
                 }
             )
             open_maps.append((indent, name))
+            in_block = True
+            continue
+        match = _CONFIG_FIELD_RE.match(ln)
+        if match:
+            name, example, comment = match.groups()
+            fields.append(
+                {
+                    "name": prefix + name,
+                    "example": example.strip(),
+                    "doc": comment.strip() if comment else None,
+                }
+            )
             in_block = True
             continue
         if in_block:
@@ -288,6 +318,48 @@ def list_plugins() -> dict:
     return {"items": items}
 
 
+#: The key :class:`~roqsim.plugin.Plugin` reads on every plugin that registers an entity.
+_PRESENT_FIELD = {
+    "name": "present",
+    "example": "true",
+    "doc": "whether the entity this entry registers is perceivable from the first step",
+}
+
+
+def _parameters(cls) -> list[dict]:
+    """The ``Config::`` fields of *cls* and of every plugin base it inherits keys from.
+
+    A base documents the keys it reads once, for all its subclasses (``camera_common.CameraPlugin``
+    under every camera), and a subclass's own block then lists only what it adds. A subclass reads
+    the inherited keys all the same, so a catalog that stopped at the subclass's own block would
+    publish a camera without its ``width`` or ``rate_hz``. The subclass's own entry for a key wins
+    over a base's, since it is the more specific statement of the default.
+
+    ``present`` is read by :class:`~roqsim.plugin.Plugin` itself, for exactly the plugins that
+    register an entity (:meth:`~roqsim.plugin.Plugin.validate_presence`), so it is published for
+    those from that declaration rather than from each one's docstring.
+    """
+    from roqsim.plugin import Plugin
+
+    fields: list[dict] = []
+    seen_names: set[str] = set()
+    seen_docs: set[str] = set()
+    for klass in inspect.getmro(cls):
+        if klass is Plugin or not (klass is cls or issubclass(klass, Plugin)):
+            continue
+        doc = _own_or_module_doc(klass)
+        if not doc or doc in seen_docs:
+            continue
+        seen_docs.add(doc)
+        for field in _parse_config_block(doc):
+            if field["name"] not in seen_names:
+                seen_names.add(field["name"])
+                fields.append(field)
+    if getattr(cls, "provides_entity", False) and "present" not in seen_names:
+        fields.append(dict(_PRESENT_FIELD))
+    return fields
+
+
 def _declared_schema(cls) -> list[dict] | None:
     """The plugin's own ``CONFIG_SCHEMA``, published -- or ``None`` when it declares none.
 
@@ -308,9 +380,9 @@ def get_plugin_details(name: str) -> dict:
     """One plugin's full detail, or an error if *name* isn't a registered ``roqsim.plugins`` entry.
 
     Returns ``{name, kind: "plugin", doc, parameters, flags, package, class}`` where
-    ``parameters`` is :func:`_parse_config_block`'s output (empty if the plugin has
-    no ``Config::`` block, whether because it takes no config or because nobody
-    wrote one) -- or ``{"error": "..."}``.
+    ``parameters`` is the ``Config::`` block parsed by :func:`_parse_config_block`, the plugin's
+    own and each plugin base's it inherits (:func:`_parameters`) -- empty if none of them has
+    one, whether because it takes no config or because nobody wrote one -- or ``{"error": "..."}``.
 
     A plugin that declares :data:`roqsim.plugin.Plugin.CONFIG_SCHEMA` also gets ``schema``: the same
     keys with their TYPES, defaults, units and bounds, which is what a caller generating a world
@@ -336,7 +408,7 @@ def get_plugin_details(name: str) -> dict:
         "name": ep.name,
         "kind": "plugin",
         "doc": " ".join(line.strip() for line in summary_lines) or None,
-        "parameters": _parse_config_block(doc),
+        "parameters": _parameters(cls),
         "flags": _flags(cls),
         "package": _dist_name(ep),
         "class": ep.value,
@@ -346,6 +418,86 @@ def get_plugin_details(name: str) -> dict:
         details["schema"] = schema
         details["strict_keys"] = bool(getattr(cls, "STRICT_KEYS", False))
     return details
+
+
+def _is_config(node, *, in_init: bool) -> bool:
+    """``self.config``, or -- inside ``__init__``, where it is the same mapping -- ``config``."""
+    if isinstance(node, ast.Attribute):
+        return (
+            node.attr == "config" and isinstance(node.value, ast.Name) and node.value.id == "self"
+        )
+    return in_init and isinstance(node, ast.Name) and node.id == "config"
+
+
+def _literal(node) -> str | None:
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def config_reads(cls) -> set[str]:
+    """The config keys *cls* and its plugin bases read by literal name, from their source.
+
+    A read is ``self.config.get("k")``, ``self.config["k"]`` or ``"k" in self.config``, and the same
+    on ``config`` inside ``__init__``, which is handed the component's mapping before it is stored.
+    ``config`` anywhere else -- ``validate_config``'s argument -- is not read: a key named there may
+    be one the plugin refuses. A key reached
+    through an alias or a computed name is not found -- this is a lower bound on what a plugin
+    reads, which is what checking its published keys against needs.
+    """
+    from roqsim.plugin import Plugin
+
+    keys: set[str] = set()
+    for klass in inspect.getmro(cls):
+        if klass is Plugin or not (klass is cls or issubclass(klass, Plugin)):
+            continue
+        try:
+            tree = ast.parse(textwrap.dedent(inspect.getsource(klass)))
+        except (OSError, TypeError):
+            continue
+        for func in ast.walk(tree):
+            if not isinstance(func, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            in_init = func.name == "__init__"
+            for node in ast.walk(func):
+                key = None
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Attribute)
+                    and node.func.attr in ("get", "pop", "setdefault")
+                    and _is_config(node.func.value, in_init=in_init)
+                    and node.args
+                ):
+                    key = _literal(node.args[0])
+                elif isinstance(node, ast.Subscript) and _is_config(node.value, in_init=in_init):
+                    key = _literal(node.slice)
+                elif (
+                    isinstance(node, ast.Compare)
+                    and len(node.ops) == 1
+                    and isinstance(node.ops[0], (ast.In, ast.NotIn))
+                    and _is_config(node.comparators[0], in_init=in_init)
+                ):
+                    key = _literal(node.left)
+                if key is not None:
+                    keys.add(key)
+    return keys
+
+
+def undeclared_config_reads(cls) -> list[str]:
+    """The keys *cls* reads (:func:`config_reads`) that its published catalog entry does not list.
+
+    What a caller learns from :func:`get_plugin_details` is all it has to go on: a key the plugin
+    reads but does not publish looks, from outside, like a key the plugin ignores. A key roqsim
+    lets any component carry (:data:`roqsim.schema.INJECTED_KEYS`) is known without being listed,
+    and a key with a leading underscore is the plugin's own bookkeeping rather than a setting.
+    """
+    from roqsim.schema import INJECTED_KEYS
+
+    published = {field["name"].split(".", 1)[0] for field in _parameters(cls)}
+    published |= {field["name"] for field in _declared_schema(cls) or []}
+    return sorted(
+        key
+        for key in config_reads(cls)
+        if key not in published and key not in INJECTED_KEYS and not key.startswith("_")
+    )
 
 
 # ── Module CLI (python -m roqsim.introspection <subcommand>) ─────────────────────

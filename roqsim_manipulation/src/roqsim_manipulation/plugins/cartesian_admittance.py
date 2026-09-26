@@ -97,6 +97,8 @@ ownership is where the entry sits rather than a config key::
       max_linear_vel: 0.1      # m/s, clamp on the commanded twist MAGNITUDE
       max_angular_vel: 1.0     # rad/s
       ik_damping: 0.01         # damped-least-squares lambda
+      pose_rate_hz: 50.0       # publish rate of <controller>/current_pose
+      law: admittance          # older spelling of controller_type -- see below
 
 ``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``:
 ``position`` is the motion controller, and ``admittance`` is the force controller, or the compliance

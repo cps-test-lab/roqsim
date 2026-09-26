@@ -1154,17 +1154,30 @@ not read is a plugin that publicly takes no configuration::
            resolution: 0.25         # nested keys are published as sample.resolution
    """
 
-Four things the readers rely on:
+What the readers rely on:
 
 * **The block opens with a line beginning** ``Config`` **and ending** ``::``. Qualify it freely
   ("Config (in addition to ``lidar_common``'s ...)::") and let the qualifier wrap over up to three
-  lines -- but the ``::`` must arrive, or there is no block.
-* **One key per line, as** ``name: example``. The example is documentation, not a parsed value.
+  lines -- but the ``::`` must arrive, or there is no block. Only the first such block is read,
+  so every key goes in it rather than in a second example further down.
+* **One key per line, as** ``name: example``. The example is documentation, not a parsed value. A
+  key that takes a list may show an item under it (``- {id: 0, ...}``).
 * **Nest as the world YAML nests.** A key opening a mapping is published under the dotted path a
   world writes it at, so the block and the YAML have one shape rather than two.
+* **A blank line may group the keys**, as long as the next line is indented as a key. Prose back at
+  the docstring's margin ends the block.
 * **Put it on the MODULE, not the class.** A class docstring that merely points at the module
   ("See the module docstring.") is ignored in favour of the module's, but a class that documents
   different keys than its module will publish its own.
+* **A base documents what it reads once.** A plugin also publishes the block of every plugin base
+  it inherits from (``camera_common.CameraPlugin``, ``lidar_common.RayCastSensorPlugin``), keyed by
+  ``<plugin short name>:``; the subclass's own entry for a shared key wins. ``present`` is
+  published for every plugin that registers an entity, since the base class reads it.
+
+**Every key a plugin reads is in its block.** A key read but not listed looks, to a caller checking
+a world against the catalog, like a key the plugin ignores. ``undeclared_config_reads`` in
+:mod:`roqsim.introspection` finds the keys a plugin reads by name (``self.config.get("k")`` and
+the like) that it does not publish, and a test holds every installed plugin to an empty answer.
 
 Prefer the declaration below wherever the keys have types, bounds or units worth checking: prose
 cannot be validated, so it drifts, and this block is read by a caller writing a world.

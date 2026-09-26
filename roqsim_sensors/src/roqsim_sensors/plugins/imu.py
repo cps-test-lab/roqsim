@@ -78,7 +78,8 @@ Config::
       body: ""                  # body the IMU is bolted to; default: the entity's registered base body
       site: ""                  # measure at an EXISTING site instead (then `body`/`pos`/`rpy` are unused)
       pos: [0.0, 0.0, 0.0]      # mount offset in the body frame (m)
-      rpy: [0.0, 0.0, 0.0]      # mount orientation, fixed-axis XYZ (rad); or `quat: [w, x, y, z]`
+      rpy: [0.0, 0.0, 0.0]      # mount orientation, fixed-axis XYZ (rad)
+      quat: null                # ...or as [w, x, y, z]; not together with `rpy`
       frame_id: imu_link        # the frame the reading is stamped in (default: '<label>_link')
       topic: imu/data           # the endpoint's RELATIVE topic, so a device can match its driver's
                                 #   layout (the D435i's IMU is `camera/imu`); `topics: {imu: /abs}`

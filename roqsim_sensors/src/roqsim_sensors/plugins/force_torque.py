@@ -34,6 +34,7 @@ sits rather than a config key::
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
       rate_hz: 100.0            # endpoint publish rate
+      controller_name: null     # the ros2_control broadcaster it lists as (default: <name>_broadcaster)
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
       flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
