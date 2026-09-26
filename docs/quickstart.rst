@@ -647,7 +647,10 @@ It writes ``capture.json`` + ``capture.bin``: one track per joint value and one 
 actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
 without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
 where it is defined — and roqsim is one producer of it, the same relationship this package has with
-URDF and SRDF.
+URDF and SRDF. Both files state what they are: ``capture.json`` carries the consumer's
+``format``/``version`` pair, and ``scene.json`` carries roqsim's own (``roqsim.web_scene``, version
+1), so a viewer can refuse a descriptor written to a contract it has not seen rather than draw it
+wrong, and can tell it from the ``roqsim_scenes`` scene manifest that shares its file name.
 
 A **flex** needs nothing of its own in either artifact. ``export web`` draws it as a skin whose bones
 are the bodies its vertices follow — a solid by its boundary, a sheet from both sides, a line flex as a

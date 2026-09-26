@@ -13,7 +13,9 @@ Usage::
     roqsim export web --mjcf  path/to/model.xml  --out /tmp/scene/
 
 Output (all in ``--out``):
-  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin)
+  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin),
+                      headed by ``format``/``version`` (:data:`FORMAT`, :data:`FORMAT_VERSION`) so a
+                      reader can refuse a descriptor written to a contract it has not seen
   - ``scene.bin``  -- concatenated Float32/Uint32/Uint8 buffers referenced by byte offset + count
   - ``tex_<i>.png``-- one PNG per *image* texture: copied verbatim when the MJCF's recorded path
                       resolves, else re-encoded from the compiled pixels (a baked scene's paths are
@@ -52,6 +54,16 @@ from .config import (
     world_sources,
 )
 from .engine import Engine
+
+#: What ``scene.json`` declares itself to be. The other ``scene.json`` in this tree -- a
+#: ``roqsim_scenes`` scene manifest, a bill of meshes and bounds -- shares the file name and nothing
+#: else, and a reader given the wrong one otherwise finds out from a missing key deep in a loader.
+FORMAT = "roqsim.web_scene"
+#: The descriptor's format version. Bumped when a key changes MEANING, never when one is added: a
+#: reader takes what it knows by name, so an additive key (``skins`` arrived that way) costs nothing,
+#: while a changed one would be read with confidence and drawn wrong. A reader refuses a version
+#: above the one it implements, and reads an absent stamp as version 1.
+FORMAT_VERSION = 1
 
 # MuJoCo joint types (mjtJoint) -> the string the web loader switches on.
 _JOINT_TYPE = {
@@ -708,6 +720,8 @@ def export_scene(
     joints, initial_joints = _export_joints(model, data)
 
     scene = {
+        "format": FORMAT,
+        "version": FORMAT_VERSION,
         "up": "z",  # MuJoCo is Z-up (like ROS); the web wrapper group rotates it into three's Y-up
         "bodies": _export_bodies(model, data),
         "joints": joints,
