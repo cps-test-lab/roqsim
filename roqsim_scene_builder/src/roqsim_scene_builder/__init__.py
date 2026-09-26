@@ -3,10 +3,10 @@
 Exposes an MCP server (:func:`roqsim_scene_builder.server.create_server`) with three tools over
 whatever ``roqsim`` can load:
 
-* :func:`sketch_floorplan_by_human` -- a 2D top-view window where a human draws a floorplan's walls
-  and returns a structured sketch;
+* :func:`sketch_floorplan_by_human` -- a 2D top-view window where a human draws a floorplan's walls,
+  places door openings and prop markers, and returns a structured sketch;
 * :func:`review_scene_by_human` -- a native MuJoCo 3D window (walk/look, comment dots, prop moves)
-  that blocks until a human returns a verdict;
+  that blocks until a human returns a verdict: pass, fail, or a neutral comment;
 * :func:`render_scene` -- no window and no human: a PNG of a world, a model, or a moment from a
   recorded run.
 

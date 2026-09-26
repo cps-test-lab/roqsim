@@ -16,7 +16,8 @@ Eyes on an roqsim scene: two native windows a human answers in, and one headless
 yourself.
 
 Use review_scene_by_human to open a MuJoCo scene (world, MJCF, or model reference) in a 3D window
-where a human can look around and drop comment dots, and block until they return a pass/fail verdict.
+where a human can look around and drop comment dots, and block until they answer: a pass or fail
+verdict, or a neutral "comment" (Enter in the comment box) that is a note without a call.
 With Move Objects mode on, the human can also grab a spawn_model prop and drag it across the floor
 (Shift-drag to rotate); the new poses come back under "moves" for the caller to write into the world.
 
@@ -28,9 +29,11 @@ up", "what did the run look like at t=12.5"; review_scene_by_human is for when a
 
 Use sketch_floorplan_by_human to open a 2D top-view window where a human draws the WALLS of a
 floorplan (freehand strokes are straightened into lines immediately) and returns a finished,
-structured sketch in metres: rooms (closed loops, nameable) + lines (independent wall segments with
-stable ids) + door openings. Props are not placed there -- they come from comment dots in the 3D
-review. The returned sketch feeds the deterministic world generator (`roqsim scenes floorplan-to-world`)
+structured sketch in metres: rooms (closed loops, nameable, each with an optional description) + lines
+(independent wall segments with stable ids) + door openings + markers (prop points the human drops in
+Mark mode, named by their comment, with a heading only when one was dragged) + a floorplan-level
+description of what the space is for. Props can also come later from comment dots in the 3D review.
+The returned sketch feeds the deterministic world generator (`roqsim scenes floorplan-to-world`)
 directly; the tool captures human intent, it does not build the world.
 """
 

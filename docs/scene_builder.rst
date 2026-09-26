@@ -5,11 +5,12 @@ Scene builder (human 2D floorplan + 3D review)
 MCP server exposes two native-window tools a *human* answers in —
 
 * ``review_scene_by_human`` — a **3D** window showing whatever ``roqsim`` can load; the human
-  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass or
-  Fail. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
+  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass,
+  Fail, or a neutral comment (Enter in the comment box: a note without a call). Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
   placement, a world under review.
 * ``sketch_floorplan_by_human`` — a **2D** top-view window for authoring a floorplan's walls; it
-  returns a finished **structured sketch** (rooms + lines + doors) that the deterministic generator
+  returns a finished **structured sketch** (rooms + lines + doors + prop markers, plus free-text
+  descriptions) that the deterministic generator
   ``roqsim scenes floorplan-to-world`` turns into a world. The floorplan is the single
   source of truth: the generator writes it to the scene's ``floorplan.json`` and the generated
   ``scene.json`` only **references** it (its ``floorplan`` field is the relative path
@@ -102,7 +103,7 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail", "comment": str,
+    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": a neutral note, no call
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
@@ -148,7 +149,8 @@ the geom/body it hit and is drawn as a colour-coded marker **sphere in the 3D sc
 camera (moves, zooms, occludes) rather than floating as a 2D overlay. **Hold that second click and drag** to give the dot a heading
 (``yaw_deg``), drawn as an arrow on the ground plane; a plain double-click leaves it headingless.
 Each dot gets a comment field and a ✕ to remove it (the rest renumber). Type an overall comment,
-then Pass or Fail.
+then Pass or Fail -- or press Enter in the comment box (with text) for a neutral ``"comment"``
+verdict, a note without a call.
 
 Toggle the **Move Objects** button (its hover tooltip carries the hint) to reposition props instead of
 annotating: left-press a ``spawn_model`` prop and drag it — the prop's own mesh follows the cursor on
