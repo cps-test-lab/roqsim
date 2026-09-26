@@ -108,7 +108,7 @@ you redistribute**. The authoritative records are the `THIRD_PARTY.md` file in e
 | Apache-2.0 | LimX Oli, Panda, OpenManipulator-X, TurtleBot 3/4, Tiago Pro, Husarion ROSbot and Panther, Doosan M1013, Maker's Pet oomwoo! One and Mini |
 | MPL-2.0 | AgiBot G2 meshes — file-level copyleft, the notice travels with the files |
 | MIT | Frankie, Crazyflie 2 (MuJoCo Menagerie), RT Corporation Raspberry Pi Mouse, LGDXRobot2, Neobotix MPO-700 / MPO-500 / MP-400 |
-| CC0-1.0 | surface textures (ambientCG, Poly Haven) |
-| CC-BY-4.0 | the warehouse scene (Gazebo Fuel), pedestrian characters and locomotion clips (CARLA, Fuel) |
+| CC0-1.0 | surface textures (ambientCG, Poly Haven), the MaleVisitorWalk character (Fuel) |
+| CC-BY | the warehouse scene and the FemaleVisitorWalk character (Gazebo Fuel), locomotion clips (CARLA), the door, office table and trolley wheel props (Sketchfab) |
 
 Nothing under a non-commercial (`CC-*-NC`) or no-derivatives (`CC-*-ND`) license is included.

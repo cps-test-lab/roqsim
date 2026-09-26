@@ -108,6 +108,18 @@ CC-BY 4.0  --  ATTRIBUTION REQUIRED ON REDISTRIBUTION
 
   MaleVisitorWalk character is CC0 1.0 (Open Robotics) and requires no attribution.
 
+  Props from Sketchfab, CC Attribution (see each model's CREDITS.txt in
+  roqsim_assets/src/roqsim_assets/models/):
+      door, door_frame, door_glass
+          "WHITE AND BLACK WOODEN DOOR LOW POLY" by oobexr (https://sketchfab.com/oobexr)
+          https://sketchfab.com/3d-models/white-and-black-wooden-door-low-poly-f7e91629cc574a42a60e6c78e6b05e6a
+      office_table
+          "Office_Table" by Art_bravado (https://sketchfab.com/Art_bravado)
+          https://sketchfab.com/3d-models/office-table-c5e2ec3f92aa4e9fbc1826f5ef0abf28
+      trolley_wheel (also the casters of humanoid_gantry)
+          "Hard Surface Study (Trolley Wheel)" by WizBeatrix (https://sketchfab.com/WizBeatrix)
+          https://sketchfab.com/3d-models/hard-surface-study-trolley-wheel-e9d511f7e4bd407d90c5a40ffe243170
+
 --------------------------------------------------------------------------------
 NVIDIA asset license  --  NOT redistributed
 --------------------------------------------------------------------------------
