@@ -67,7 +67,9 @@ experiments without being a special case.
 
 ## Grippers are interchangeable
 
-`spawn_arm`'s `end_effector:` welds any gripper here onto any arm's `attachment_site`, and the
+`spawn_arm`'s `end_effector:` welds any gripper here onto any arm, at the site the arm's manifest
+declares (`end_effector: {site: ...}`): the flange's `attachment_site`, or on the `ur5e` the
+`tool_site` past its force/torque stack, so a sensor at its `fts_site` reads the tool. The
 gripper's own manifest supplies the gripper half of `arm_controller`'s config — so swapping hands is
 one line of world YAML. See the model's MJCF for the measurements behind the PG+70's
 constants, and note both grippers are driven through a **tendon**: a non-joint transmission is what

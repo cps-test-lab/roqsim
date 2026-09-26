@@ -1703,11 +1703,16 @@ it, is the experiment's to state.
 
 Four things decide whether such a world measures anything at all:
 
-* **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
-  from the body's children, so the tool must hang **below** it. A peg attached above the measurement
-  site produces a wrench that is identically zero — which looks like a well-behaved controller, not
-  like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut) and ``tool_site`` (the attach
-  point, further out) so the two cannot be confused.
+* **Where the sensor cuts.** A site force sensor reads the wrench the site's body receives from its
+  parent -- that body and everything below it -- so the tool must hang **below** it. A tool on any
+  other branch contributes nothing: no weight, no push, no contact, which looks like a well-behaved
+  controller, not like a broken world. The ``ur5e`` model ships ``fts_site`` (the cut, on its
+  sensor stack ``tool0``) and ``tool_site`` (the stack's outer face, further out), and its manifest
+  declares ``tool_site`` as where ``spawn_arm``'s ``end_effector:`` mounts a tool by default -- its
+  bare ``attachment_site`` is on the flange *beside* the stack, where a tool reads as 0 N at
+  ``fts_site``. Every arm model with a free mount declares its site the same way
+  (``end_effector: {site: ...}`` in its manifest), and ``force_torque`` refuses a sensor on an arm
+  whose mounted tool is outside the subtree it reads -- see that plugin's docstring.
 * **Gravity and tool mass.** With gravity on and a realistically-massed tool, any metric that
   integrates force is dominated by the tool's own weight. Zeroing is a command, as it is on real
   hardware: ``force_torque`` exposes a ``tare`` service (``std_srvs/Trigger``, the analogue of a
@@ -1867,7 +1872,7 @@ Manipulation: a prop or a tool that deforms
 
 A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
 model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
+``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto`` picks the integrator the flex
 needs (:mod:`roqsim.flex`). What the spawn adds around it:
 
 * **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
