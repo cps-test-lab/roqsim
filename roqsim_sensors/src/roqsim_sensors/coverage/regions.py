@@ -22,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim.floorplan_geometry import room_polygons
+
 
 @dataclass
 class Region:
@@ -107,50 +109,19 @@ def load_regions(spec) -> list[Region]:
 
 
 def regions_from_sketch(sketch, *, bridge: float = 1.6) -> list[Region]:
-    """Reconstruct one :class:`Region` per named room from a scene-builder sketch.
+    """One :class:`Region` per named room of a scene-builder sketch.
 
-    The sketch stores rooms as unordered wall-segment id lists (``line_ids`` into ``lines`` of
-    ``{x0_m, y0_m, x1_m, y1_m}``), so this chains the segments end-to-end into a closed loop, bridging
-    gaps up to ``bridge`` metres (door openings leave the wall in two pieces). A room whose walls will
-    not chain into >= 3 vertices is skipped rather than yielding a bogus polygon.
+    The rooms are chained from their unordered wall segments by
+    :func:`roqsim.floorplan_geometry.room_polygons`, which is what the scene tools read the same
+    sketch with, so a room here is the room the floorplan draws; ``bridge`` is the gap in metres a
+    chain may cross (a doorway leaves a wall in two pieces).
     """
     if isinstance(sketch, (str, Path)):
         sketch = json.loads(Path(sketch).read_text())
-    lines = {line["id"]: line for line in sketch.get("lines", [])}
-    out: list[Region] = []
-    for room in sketch.get("rooms", []):
-        segs = [
-            (
-                np.array([line["x0_m"], line["y0_m"]], dtype=np.float64),
-                np.array([line["x1_m"], line["y1_m"]], dtype=np.float64),
-            )
-            for lid in room.get("line_ids", [])
-            if (line := lines.get(lid)) is not None
-        ]
-        if len(segs) < 3:
-            continue
-        used = [False] * len(segs)
-        chain = [segs[0][0], segs[0][1]]
-        used[0] = True
-        for _ in range(len(segs) - 1):
-            cur = chain[-1]
-            best_i, best_end, best_d = -1, None, bridge
-            for i, (a, b) in enumerate(segs):
-                if used[i]:
-                    continue
-                for p, q in ((a, b), (b, a)):
-                    d = float(np.linalg.norm(cur - p))
-                    if d < best_d:
-                        best_i, best_end, best_d = i, q, d
-            if best_i < 0:
-                break
-            used[best_i] = True
-            chain.append(best_end)
-        if len(chain) >= 3:
-            out.append(
-                Region(name=str(room.get("name", room.get("id", "room"))), polygon=np.array(chain))
-            )
-    return out
+    return [
+        Region(name=room.name, polygon=np.asarray(room.polygon, dtype=np.float64))
+        for room in room_polygons(sketch, bridge=bridge)
+    ]
 
 
 def select(regions: list[Region], names) -> list[Region]:
