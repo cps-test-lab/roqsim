@@ -15,6 +15,7 @@
 
   <exec_depend>rclpy</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>tf2_msgs</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>nav_msgs</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
@@ -32,6 +33,8 @@
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>trajectory_msgs</exec_depend>
   <exec_depend>ackermann_msgs</exec_depend>
+  <!-- Detection2DArray / Detection3DArray, imported at the first publish of a detector endpoint. -->
+  <exec_depend>vision_msgs</exec_depend>
 
   <!-- roqsim is a plain pip package (not a ROS package); install it into the
        same environment (pip install -e .). It is intentionally not a ROS dep. -->
