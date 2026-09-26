@@ -308,12 +308,23 @@ class Engine:
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
 
-        for plugin in self.plugins:
-            self._timed(plugin, "configure", plugin.configure, self.ctx)
-            # After configure, because the entity has to be registered before its presence can
-            # be set; here rather than inside each plugin so that a plugin registering an entity
-            # gets the world's `present:` honoured by declaring that it registers one.
-            plugin.apply_declared_presence(self.ctx)
+        # A configure that fails leaves the plugins before it holding what configure opens -- a
+        # spin thread, a file, a node -- and the driver never receives an engine to shut down, so
+        # the failing setup shuts them down itself, in reverse order as a shutdown is. The failing
+        # plugin is included: it may have opened its resources before the line that raised. Only
+        # here, not for the build loop: nothing is open before configure.
+        configured: list[Plugin] = []
+        try:
+            for plugin in self.plugins:
+                configured.append(plugin)
+                self._timed(plugin, "configure", plugin.configure, self.ctx)
+                # After configure, because the entity has to be registered before its presence can
+                # be set; here rather than inside each plugin so that a plugin registering an entity
+                # gets the world's `present:` honoured by declaring that it registers one.
+                plugin.apply_declared_presence(self.ctx)
+        except BaseException:
+            self._shutdown_plugins(configured, "after a configure failed")
+            raise
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -427,15 +438,22 @@ class Engine:
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
 
     def shutdown(self) -> None:
-        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest)."""
+        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).
+
+        A no-op before :meth:`setup` completed: a setup that failed in configure has already shut
+        down what it configured, and nothing else is open.
+        """
         if not self._setup_done:
             return
-        for plugin in reversed(self.plugins):
+        self._shutdown_plugins(self.plugins, "")
+        self._setup_done = False
+
+    def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
+        for plugin in reversed(plugins):
             try:
                 self._timed(plugin, "shutdown", plugin.shutdown, self.ctx)
             except Exception:
-                self.logger.exception("plugin %s shutdown failed", plugin.name)
-        self._setup_done = False
+                self.logger.exception("plugin %s shutdown failed %s", plugin.name, why)
 
     # -- introspection ------------------------------------------------------------------------
     @property
