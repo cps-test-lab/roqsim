@@ -25,12 +25,38 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from roqsim.models import RetiredModel
+
 MODELS_DIR = Path(__file__).parent
 MESHES_DIR = MODELS_DIR
 
 
+def _vendor_link(new: str) -> RetiredModel:
+    return RetiredModel(
+        plugin="spawn_sensor",
+        renamed_to=new,
+        because=(
+            "when its mount frame became the vendor link (it was a display convention pointing "
+            "the lens along +y)"
+        ),
+        then=(
+            "Update the name, and re-express this mount's pos/rpy against the vendor link; see "
+            "roqsim_sensors/README.md."
+        ),
+    )
+
+
+#: Model names this provider retired, refused by :func:`roqsim.models.resolve_model` with the name
+#: that replaced them. An entry is deleted once downstream has moved.
+RETIRED_MODELS = {
+    "d415": _vendor_link("realsense_d415"),
+    "d435": _vendor_link("realsense_d435"),
+    "d455": _vendor_link("realsense_d455"),
+}
+
+
 def model_path(name: str) -> Path:
-    """Resolve a bundled model file (accepts a bare name like ``d435`` or a filename)."""
+    """Resolve a bundled model file (accepts a bare name like ``realsense_d435`` or a filename)."""
     p = Path(name)
     if p.is_absolute() and p.exists():
         return p

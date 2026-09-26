@@ -17,7 +17,12 @@ from roqsim.frames import (
     static_transforms,
     substitute,
 )
-from roqsim.manifest import expand_manifest, manifest_frame_id, manifest_frames
+from roqsim.manifest import (
+    expand_manifest,
+    manifest_device_name,
+    manifest_frame_id,
+    manifest_frames,
+)
 from roqsim.plugin import PluginError
 
 
@@ -139,8 +144,20 @@ def test_manifest_frame_id_is_the_vendor_default_and_refuses_a_template(tmp_path
     assert manifest_frame_id(_write(tmp_path, "components: []\n")) is None
     assert manifest_frame_id(tmp_path / "absent.xml") is None
     for bad in ("frame_id: '{frame_id}'\n", "frame_id: ''\n", "frame_id: [a]\n"):
-        with pytest.raises(PluginError, match="no placeholder"):
+        with pytest.raises(PluginError, match="only placeholder may be"):
             manifest_frame_id(_write(tmp_path, bad))
+    # The vendor macro's `name` is the one thing a default frame name may leave to the mount.
+    templated = "frame_id: '{device_name}_color_optical_frame'\n"
+    assert manifest_frame_id(_write(tmp_path, templated)) == "{device_name}_color_optical_frame"
+
+
+def test_manifest_device_name_is_the_vendor_macro_default_and_refuses_a_template(tmp_path):
+    assert manifest_device_name(_write(tmp_path, "device_name: camera\n")) == "camera"
+    assert manifest_device_name(_write(tmp_path, "components: []\n")) is None
+    assert manifest_device_name(tmp_path / "absent.xml") is None
+    for bad in ("device_name: '{device_name}'\n", "device_name: ''\n", "device_name: [a]\n"):
+        with pytest.raises(PluginError, match="no placeholder"):
+            manifest_device_name(_write(tmp_path, bad))
 
 
 def test_expand_manifest_substitutes_into_nested_configs_and_refuses_unknown(tmp_path):
