@@ -8,30 +8,37 @@ roqsim consists of multiple packages:
   fiducial markers).
 * ``roqsim_assets`` — the prop library (furniture, containers, fittings) and the scene tools.
 * ``roqsim_scenes`` — baked MJCF scenes and the world/floorplan generators.
-* ``roqsim_mobile`` — wheeled **bases**: floorplan, ``spawn_robot``, diff-drive, omni-drive, and the
-  base models (TurtleBot 3/4, Husky, Jackal).
+* ``roqsim_mobile`` — wheeled **bases**: floorplan, ``spawn_robot``, diff-drive, omni-drive,
+  Ackermann drive, and the base models (TurtleBot 3/4, Husky, Jackal, Warthog and more; see
+  :doc:`models`).
 * ``roqsim_manipulation`` — manipulator **plugins** (``spawn_arm``, ``arm_controller``,
   ``cartesian_admittance``); ``roqsim_manipulation_assets`` — the arm and gripper **models**.
 * ``roqsim_mobile_manipulation`` — robots that are a base **and** an arm (``frankie``, ``tiago_pro``);
   the one package depending on both families.
-* ``roqsim_humanoid`` / ``roqsim_quadruped`` — legged robot families; ``roqsim_walker`` — kinematic
-  pedestrians (dynamic obstacles, not a robot family).
+* ``roqsim_humanoid`` / ``roqsim_quadruped`` — legged robot families; ``roqsim_aerial`` — aerial
+  vehicles and their controllers; ``roqsim_walker`` — kinematic pedestrians (dynamic obstacles, not a
+  robot family).
+* ``roqsim_nav`` — 2D navigation (A\* over the model's walls, a behaviour tree, the ``navigator``
+  plugin), shared by robots, props and walkers.
+* ``roqsim_mcp`` — an MCP server over the plugin, model and world catalogs (``roqsim mcp serve``).
 * ``roqsim_scene_builder`` / ``roqsim_webctrl`` — the human-in-the-loop scene windows and the web control UI.
 * ``scenario_execution_roqsim`` — the OpenSCENARIO 2 vocabulary (``import osc.roqsim``): what a
   scenario can ask a running simulation and what it can break in one. Named for
   scenario-execution's own convention rather than ours, because that is the project it plugs into.
-* ``ros2_ws/`` — colcon packages: ``roqsim_ros_bridge`` (the ROS 2 bridge) and
-  ``roqsim_nav2_example`` (a nav2 example + test).
+* ``ros2_ws/`` — colcon packages: ``roqsim_ros_bridge`` (the ROS 2 bridge), ``roqsim_nav2_example``
+  (a nav2 example + test), ``roqsim_create3_toolbox`` (the Create 3 / TurtleBot 4 stack, see
+  :doc:`create3_stack`), ``roqsim_nav_ros`` with its ``roqsim_nav_interfaces``, and
+  ``roqsim_walker_ros``.
 
-Install what you need: every family package pulls its own dependencies, and none of them depends on
-another family. ``make venv`` installs them all in editable mode.
+Install what you need: every package pulls its own dependencies, and ``make venv`` installs them all
+in editable mode.
 
 The Makefile (recommended)
 --------------------------
 
 .. code-block:: bash
 
-   make venv     # create .venv and install both packages + docs/format tooling
+   make venv     # create .venv and install every package + test/docs/format tooling
    make help     # list all targets
 
 The virtual environment is created with ``--system-site-packages`` **on purpose**: when you later
@@ -75,13 +82,19 @@ dependencies, and the generated target paths — and driven by:
    make external-sync-gitignore       # rewrite the managed .gitignore block from the manifest
    make add-external-resource ARGS="--name X --source URL::PATH[::manual] --target PATH ..."
 
-Two resources are declared today, spanning the two shapes the schema supports:
+Four resources are declared, spanning the shapes the schema supports:
 
 ``livox_mid360_meshes``
-   Two Livox STEP files (placed under ``external/sources/livox/``) are tessellated with Open CASCADE
-   (``cascadio``) and processed in Blender into the housing / dome / FOV meshes. Its sources are
-   ``manual`` — they sit behind Livox's product page — so the runner tells you where to put the file
+   The Livox Mid-360 STEP assembly (placed under ``external/sources/livox/``) is tessellated with Open
+   CASCADE (``cascadio``) and processed in Blender into the housing and dome meshes. Its source is
+   ``manual`` — it sits behind Livox's product page — so the runner tells you where to put the file
    rather than downloading it.
+
+``seyond_robin_w1g_meshes``
+   The Seyond Robin W1G housing, the same shape: a ``manual`` STEP source converted into a mesh.
+
+``zivid_xl250_meshes``
+   The Zivid 3 XL250 housing and FOV frustum, converted from an STL the runner downloads itself.
 
 ``spot_locomotion_policy``
    The NVIDIA-licensed Boston Dynamics Spot policy (``spot_policy.pt`` + ``spot_env.yaml``). A
