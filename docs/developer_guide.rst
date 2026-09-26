@@ -83,13 +83,15 @@ a path or which package a tool lives in:
 
 .. code-block:: bash
 
-   roqsim --help                       # the groups, one per package that ships tools
+   roqsim --help                       # the core commands, then one group per package that ships tools
    roqsim scenes --help                # one line per tool in that group
    roqsim scenes sdf-to-scene --help   # that tool's own options
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
 
-Two tools are top-level rather than in a group, because they are the two verbs the substrate exists for:
-``roqsim sim`` runs a world and ``roqsim render`` draws one. Everything else is ``roqsim <group> <tool>``.
+The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
+draws one, and ``state``, ``check``, ``health``, ``catalog`` and ``plugins`` read a world, a run or the
+registries; the core's exporters are the ``roqsim export`` group. Every package tool is
+``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 
 **Write it standalone, then link it in — in the same commit.**
 
