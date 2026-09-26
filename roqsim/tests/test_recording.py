@@ -354,7 +354,9 @@ def test_a_stream_left_by_an_earlier_run_is_not_adopted(tmp_path, moving):
     model, data = moving
     _record(tmp_path, model, data)  # a complete earlier run
     stale = tmp_path / ("run.npz" + STREAM_SUFFIX)
-    stale.write_bytes(b"\x00" * (record_dtype(mujoco.mj_stateSize(model, STATE_SPEC), False).itemsize * 3))
+    stale.write_bytes(
+        b"\x00" * (record_dtype(mujoco.mj_stateSize(model, STATE_SPEC), False).itemsize * 3)
+    )
     (tmp_path / "run.npz").unlink()
 
     ctx = _Ctx(model, data)
@@ -683,7 +685,9 @@ def test_the_pose_record_carries_every_named_body_not_only_roots(tmp_path, caplo
     data = mujoco.MjData(model)
     ctx = _Ctx(model, data)
     rec = StateRecorder(
-        ctx, tmp_path / "run.npz", snap_fps(1 / model.opt.timestep, model.opt.timestep),
+        ctx,
+        tmp_path / "run.npz",
+        snap_fps(1 / model.opt.timestep, model.opt.timestep),
         sim_poses=True,
     )
     with caplog.at_level(logging.INFO):
@@ -825,3 +829,26 @@ def test_the_pose_record_leaves_a_flexs_own_bodies_out(tmp_path, caplog):
     assert {r[2] for r in rows} == {"table"}
     assert "omits the 6 bodies of flex 'pad'" in caplog.text
     assert "0 unnamed bodies have no row" in caplog.text
+
+
+def test_every_sample_lands_on_the_capture_grid_over_a_long_run(tmp_path, moving):
+    """The gate must not slip a step when accumulated float time falls a hair short of the due time.
+
+    ``data.time`` is dt added once per step and the due time is the period added once per sample,
+    and the two roundings drift apart: after some seconds the step whose time IS the due time reads
+    a few 1e-15 below it. A gate with a 1e-12 tolerance then skips that step and samples the next,
+    one dt late, for the rest of the run. The first sample is taken at the first step; every later one
+    must be taken a whole number of ``every`` steps after it.
+    """
+    model, data = moving
+    mujoco.mj_resetData(model, data)
+    ctx = _Ctx(model, data)
+    rate = snap_fps(25, model.opt.timestep)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", rate, world="w")
+    off_grid = []
+    for step in range(1, 15_001):  # 30 s of sim time at dt=0.002
+        mujoco.mj_step(model, data)
+        if rec.sample(ctx) and (step - 1) % rate.every != 0:
+            off_grid.append((step, float(data.time)))
+    rec.close()
+    assert not off_grid, f"{len(off_grid)} samples taken a step late, first at {off_grid[:2]}"
