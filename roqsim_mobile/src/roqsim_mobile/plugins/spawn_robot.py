@@ -245,6 +245,17 @@ class SpawnRobotPlugin(Plugin):
         apply_gravity_compensation(child, self.actuator_table)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
+        # Geoms the model's contact <pair>s name but do not own: the world's, which the model
+        # expects to find by name -- in every model here, the ground, called `floor`.
+        own = {g.name for g in child.geoms}
+        self._world_pair_geoms = sorted(
+            {
+                n
+                for pair in child.pairs
+                for n in (pair.geomname1, pair.geomname2)
+                if n and n not in own
+            }
+        )
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other
         # name in it, and a mount declared after this robot can hang from it.
         where = f"spawn_robot {self.robot_name} ({self.config['model']})"
@@ -254,6 +265,27 @@ class SpawnRobotPlugin(Plugin):
         add_frame_sites(child, self.frames, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
+
+    def _refuse_a_missing_pair_geom(self, ctx: SimContext) -> None:
+        """Refuse a world that lacks a geom the model's contact pairs name.
+
+        A wheeled model tunes its wheel-ground contact with ``<pair geom2="floor" ...>``. When the
+        world's ground has another name MuJoCo compiles the robot WITHOUT those pairs, and says
+        nothing: the robot drives on default contact parameters, a different robot from the one the
+        model describes.
+        """
+        missing = [
+            n
+            for n in getattr(self, "_world_pair_geoms", [])
+            if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
+        ]
+        if missing:
+            raise RuntimeError(
+                f"spawn_robot ({self.robot_name}): model {self.config['model']!r} tunes its contact "
+                f"with the world's geom(s) {missing} through <pair>s, and this world has no geom of "
+                f"that name, so MuJoCo would drop those pairs without a word. Name the world's "
+                f"ground geom {missing[0]!r} (the built-in world and `floorplan` do)."
+            )
 
     def _resolve_base_body(self, ctx: SimContext) -> str:
         """The robot's root body: ``<prefix>base_link`` if the model has one, else the body owning
@@ -280,6 +312,7 @@ class SpawnRobotPlugin(Plugin):
         )
 
     def configure(self, ctx: SimContext) -> None:
+        self._refuse_a_missing_pair_geom(ctx)
         base_body = self._resolve_base_body(ctx)
         ctx.entities.add(
             Entity(
