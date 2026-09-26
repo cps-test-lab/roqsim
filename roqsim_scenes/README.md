@@ -292,7 +292,9 @@ building its own `scene.yaml` beside its `floorplan.json` when its surfaces diff
 — carpet instead of plaster underfoot, a raw concrete soffit — instead of repainting the look every
 other generated room inherits. It is authored, so a rebake reads it and never overwrites it. A
 `materials` entry takes `texture` / `rgba` / `physical_size` / `reflectance` / `emission` (the last is
-what keeps a soffit, which faces away from every lamp below it, from rendering near-black).
+what keeps a soffit, which faces away from every lamp below it, from rendering near-black). The bake
+refuses a key it does not read, at the top level and inside `floor`, `light` and each material, with
+the nearest known one named: a misspelt key would otherwise bake the default in its place.
 
 Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a marker id to the model
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
