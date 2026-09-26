@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import os
 import re
 import subprocess
@@ -71,6 +72,23 @@ def _format_license(text: str) -> str:
     return "  license:\n" + body
 
 
+def _download(url: str, dst: Path) -> None:
+    """Fetch *url* to *dst*: the whole file, or nothing.
+
+    The bytes land in a sibling ``.part`` file and take the destination's name only once the transfer
+    has completed, so a transfer that breaks off leaves nothing at ``dst``. A truncated file left
+    there would pass the "already have it" check on the next run -- for a source without a
+    ``sha256`` there is nothing else to tell it from a whole one -- and the conversion would then run
+    on half a mesh.
+    """
+    part = dst.with_name(dst.name + ".part")
+    try:
+        urllib.request.urlretrieve(url, part)  # noqa: S310 (declared http(s) source)
+        os.replace(part, dst)
+    finally:
+        part.unlink(missing_ok=True)
+
+
 def _fetch(res: dict, force: bool = False) -> bool:
     """Fetch/verify a resource's sources.
 
@@ -96,8 +114,8 @@ def _fetch(res: dict, force: bool = False) -> bool:
         dst.parent.mkdir(parents=True, exist_ok=True)
         print(f"  fetch   {src['url']} -> {src['path']}")
         try:
-            urllib.request.urlretrieve(src["url"], dst)  # noqa: S310 (declared http(s) source)
-        except (urllib.error.URLError, OSError) as exc:
+            _download(src["url"], dst)
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
             if optional:
                 print(f"  skip (optional): could not fetch {src['path']} ({exc})")
                 return False
