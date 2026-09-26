@@ -138,8 +138,10 @@ Besides assets, the package ships a few reusable scene plugins (registered in th
   hits anything — no map file, no wall list, works in whatever geometry the world contains. Mocap
   rather than free-jointed on purpose: physics must not shove aside the obstacle that exists to
   obstruct, and a commanded motion should define the experiment rather than fight the solver. The
-  `random_walk` seed is **required** (an unseeded obstacle is not reproducible) and `on_reset`
-  re-seats the box *and* re-seeds it, so repetition N of a campaign cell never inherits N-1's state.
+  walk draws every heading through `ctx.rng_for`, so it follows the run's seed and episode like
+  any other draw: a run replays from its recorded seed, and each repetition in one process walks its
+  own path. The `random_walk` seed is **required** and selects this mover's stream within the run's
+  seed; `on_reset` re-seats the box, so repetition N of a campaign cell never inherits N-1's state.
   Use `walker` (in `roqsim_walker`) when the mover should be a pedestrian; use this when the paper says
   "a box crosses the corridor at v m/s".
 - **`prop_trajectory`** — an XY **stage** that carries a prop along a path read from a 2-column CSV
