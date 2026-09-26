@@ -9,7 +9,7 @@ what a caller holding an override needs to know::
      "components": [{"address": "robot.lidar", "ref": "lidar",
                      "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
-     "entities": null, "flexes": null,
+     "entities": null, "flexes": null, "warnings": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
      "dropped_transport": [], "errors": null}
@@ -39,6 +39,15 @@ the model: which entities exist is settled at compile time (roqsim never recompi
 caller checking that a scenario only drives entities the world actually has pays for it; one
 resolving paths does not. **Flexes** come with them, from the same compile and for the same reason:
 one row per flex (:func:`roqsim.flex_modes.describe_flexes`), ``null`` without the flag.
+
+**Warnings** come with them too. ``--entities`` also resets the world, as a run does before each
+trial, so the answer is about the state a trial starts from: ``warnings`` lists what that state holds
+that will not stop the world from loading but is likely to make a run misbehave, in ``roqsim check``'s
+``{"check", "message", "hint"}`` shape -- two bodies placed inside one another
+(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`). ``[]`` is a start state with
+nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises is a world that
+cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, with the build-fed keys
+still filled.
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
 the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
@@ -148,7 +157,7 @@ def _overridable_fields() -> list:
 
 @contextmanager
 def _built(config):
-    """The world's compiled context, for the questions that need one. One build serves them all.
+    """The world's compiled engine, for the questions that need one. One build serves them all.
 
     Imported here rather than at module scope: describing a world's *paths* must not pay for
     importing the engine, and these are the only branches that need it.
@@ -158,7 +167,7 @@ def _built(config):
     engine = Engine(config, preview=True)
     engine.setup()
     try:
-        yield engine.ctx
+        yield engine
     finally:
         engine.shutdown()
 
@@ -330,7 +339,8 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--entities",
         action="store_true",
-        help="also list the entities the world compiles (builds the model)",
+        help="also list the entities the world compiles, and what its reset state warns about "
+        "(builds and resets the model)",
     )
     parser.add_argument(
         "--overridable",
@@ -409,6 +419,8 @@ def main(argv=None) -> int:
         "entities": None,
         # Built with the entities, from the same compile: what each flex compiled into.
         "flexes": None,
+        # What the reset the entities come with found in the start state -- see the module docstring.
+        "warnings": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.
         "overridable": {"fields": _overridable_fields(), "targets": None},
@@ -430,8 +442,10 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
         # ONE build, however many of these were asked for: compiling this world is the expensive part.
+        stage = "build"
         try:
-            with _built(config) as ctx:
+            with _built(config) as engine:
+                ctx = engine.ctx
                 if args.entities:
                     result["entities"] = sorted(ctx.entities.names())
                     result["flexes"] = _flexes(ctx)
@@ -439,11 +453,19 @@ def main(argv=None) -> int:
                     result["overridable"]["targets"] = _overridable_targets(ctx, args.overridable)
                 if args.body_tree:
                     result["body_tree"] = _body_tree(ctx, args.body_tree)
+                if args.entities:
+                    # Last, so everything above describes the model as compiled: a reset moves the
+                    # state to where a trial starts, which is what the warnings are about.
+                    from roqsim.interpenetration import as_warnings
+
+                    stage = "reset"
+                    engine.reset()
+                    result["warnings"] = as_warnings(engine.interpenetrations)
         except Exception as err:  # noqa: BLE001
-            # The half that needed no build is still worth having, so the reply is printed with the
-            # reason attached -- and the exit code still says it is not a whole answer.
-            print(f"cannot build world {world}: {err}", file=sys.stderr)
-            result["errors"] = {"build": str(err)}
+            # The half that needed no build (or no reset) is still worth having, so the reply is
+            # printed with the reason attached -- and the exit code still says it is not whole.
+            print(f"cannot {stage} world {world}: {err}", file=sys.stderr)
+            result["errors"] = {stage: str(err)}
             print(json.dumps(result))
             return 1
 
