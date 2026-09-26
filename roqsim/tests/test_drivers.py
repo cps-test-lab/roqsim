@@ -138,3 +138,38 @@ def test_scenario_adapter_lifecycle(tmp_path: Path):
     assert counts["pre_step"] == 7
     sim.shutdown()
     assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
+    tmp_path: Path, monkeypatch
+):
+    """The recording is flushed before the engine is torn down, so a close that raises (a disk that
+    filled up) must not also cost the plugins their shutdown -- the CSV a scoring plugin writes
+    there, and a transport thread that keeps the process alive."""
+    import pytest
+
+    from roqsim.capture import RecordingError
+
+    class _Rec:
+        frames = 0
+
+        def __init__(self, ctx, path, rate, **kw):
+            pass
+
+        def sample(self, *a, **k):
+            return False
+
+        def close(self):
+            raise RecordingError("disk full")
+
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim.step()
+    ctx = sim.context
+    with pytest.raises(RecordingError, match="disk full"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None
