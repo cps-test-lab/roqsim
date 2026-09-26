@@ -69,8 +69,12 @@ def manifest_frame_id(model_file: Path) -> str | None:
     A mount that sets no ``frame_id`` of its own takes this one, and it is what a device manifest's
     ``{frame_id}`` placeholders are filled with then. ``None`` when there is no manifest or the
     vendor names no default -- a device whose frame name is always its integrator's choice -- so
-    such a mount must name the frame itself. A value that is not a plain frame name raises: a
-    default that is itself a template would reach a TF tree as a literal brace.
+    such a mount must name the frame itself.
+
+    The one placeholder it may carry is ``{device_name}`` (:func:`manifest_device_name`): a vendor
+    macro that prefixes every link with its ``name`` parameter names its optical frame
+    ``<name>_..._optical_frame``, and the mount fills it in. Any other placeholder raises, since it
+    would reach a TF tree as a literal brace.
     """
     path = manifest_path(model_file)
     if not path.exists():
@@ -79,9 +83,34 @@ def manifest_frame_id(model_file: Path) -> str | None:
     value = data.get("frame_id")
     if value is None:
         return None
-    if not isinstance(value, str) or not value or "{" in value or "}" in value:
+    bare = value.replace("{device_name}", "") if isinstance(value, str) else value
+    if not isinstance(value, str) or not value or "{" in bare or "}" in bare:
         raise PluginError(
             f"manifest {path}: 'frame_id' is the vendor's default scan-frame name, a non-empty "
+            f"string whose only placeholder may be '{{device_name}}' -- got {value!r}"
+        )
+    return value
+
+
+def manifest_device_name(model_file: Path) -> str | None:
+    """The ``device_name:`` a device model's manifest declares: the vendor macro's default ``name``.
+
+    A vendor description that instantiates a device through a macro prefixes each link it creates
+    with the macro's ``name`` parameter (``camera_link``, ``camera_color_optical_frame``). The
+    manifest spells those frames ``{device_name}_link``, and a mount that sets no ``device_name`` of
+    its own takes this default. ``None`` when there is no manifest or it declares none. A value that
+    is not a plain name raises.
+    """
+    path = manifest_path(model_file)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text()) or {}
+    value = data.get("device_name")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value or "{" in value or "}" in value:
+        raise PluginError(
+            f"manifest {path}: 'device_name' is the vendor macro's default 'name', a non-empty "
             f"string with no placeholder -- got {value!r}"
         )
     return value
