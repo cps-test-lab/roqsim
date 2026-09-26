@@ -698,6 +698,11 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--collision", default="visual", choices=["visual"], help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     args.scene_name = args.scene_name or Path(args.out_dir).name
+    if not Path(args.world).is_file():
+        # Checked here rather than left to the XML parser, whose OSError for a missing file is a
+        # traceback through lxml that never says "no such file".
+        print(f"roqsim scenes sdf-to-scene: no such SDF world: {args.world}", file=sys.stderr)
+        return 1
 
     try:
         Importer(args).run()
