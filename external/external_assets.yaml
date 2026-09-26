@@ -12,7 +12,8 @@
 #   sources:      inputs to fetch; each: {url, path, [manual: true], [sha256]}
 #                 - manual: true  -> cannot be auto-downloaded (behind a portal / login); the runner
 #                                    errors with instructions if the file is not already at `path`.
-#                 - otherwise `url` is fetched to `path` (verified against sha256 if given).
+#                 - otherwise `url` is fetched to `path` (verified against sha256 if given); a
+#                   transfer that breaks off leaves nothing at `path`, so the next run fetches again.
 #   convert:      {script, [pip_deps: [...]], [needs_blender: true]}  -- omit for download-only assets.
 #                 script is run with the tool venv's python:
 #                   <script> --sources <path...> --targets <path...> [--blender <path>]
