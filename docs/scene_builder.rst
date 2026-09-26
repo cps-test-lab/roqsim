@@ -103,7 +103,7 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": Enter-submitted note, neither
+    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": a note, neither pass nor fail
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
