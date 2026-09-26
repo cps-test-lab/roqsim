@@ -496,3 +496,10 @@ def test_a_mover_does_not_wait_before_it_has_ever_been_blocked(tmp_path):
             assert not probe.blocked, "it held despite never having been blocked"
     finally:
         engine.shutdown()
+
+
+@pytest.mark.parametrize("key", ["height", "blockage_radius"])
+def test_zero_is_the_documented_default_for(key):
+    """The navigator's config block spells the default as 0; validation must accept it."""
+    assert CautionProbe.validate({key: 0}) == []
+    assert CautionProbe.validate({key: -0.1}) != []

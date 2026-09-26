@@ -165,9 +165,14 @@ class CautionProbe:
     def validate(cfg: dict | None) -> list[str]:
         cfg = cfg or {}
         errors = []
-        for key in ("lookahead", "width", "rays", "height", "blockage_radius"):
+        for key in ("lookahead", "width", "rays"):
             if key in cfg and float(cfg[key]) <= 0:
                 errors.append(f"'avoidance.{key}' must be > 0")
+        # 0 is the documented spelling of "the default" for these two (see the navigator's config
+        # block and `attach`), so only a negative value is refused.
+        for key in ("height", "blockage_radius"):
+            if key in cfg and float(cfg[key]) < 0:
+                errors.append(f"'avoidance.{key}' must be >= 0 (0 selects the default)")
         for key in ("clear_time", "forget_after", "yield_time"):
             if key in cfg and float(cfg[key]) < 0:
                 errors.append(f"'avoidance.{key}' must be >= 0")
