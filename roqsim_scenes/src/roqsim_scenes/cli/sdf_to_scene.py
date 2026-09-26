@@ -556,10 +556,18 @@ class Importer:
             self.textures.add(dst.name)
         return rel
 
-    def _model(self, model, parent: np.ndarray, name_prefix: str, model_dir: Path) -> None:
+    def _model(
+        self, model, parent: np.ndarray, name_prefix: str, model_dir: Path, *, placed=False
+    ) -> None:
+        """Import one ``<model>`` at *parent*.
+
+        ``placed`` is an ``<include>`` that states its own ``<pose>``: SDF has that pose REPLACE the
+        included model's top-level one rather than compose with it -- the model file's pose is its
+        author's default placement, not an offset.
+        """
         prev = getattr(self, "_current_model_dir", None)
         self._current_model_dir = model_dir
-        world_model = parent @ _pose_of(model)
+        world_model = parent if placed else parent @ _pose_of(model)
         # Names come from `name_prefix`, not from the SDF's own <model name>: nesting and repeated
         # includes make the latter ambiguous, and the prefix is what --no-collide matches against.
         for link in _kids(model, "link"):
@@ -586,9 +594,12 @@ class Importer:
             sdf_file = cands[0]
         root = etree.parse(str(sdf_file)).getroot()
         world_inc = parent @ _pose_of(inc)
+        placed = _kid(inc, "pose") is not None
         for model in [c for c in root.iter() if _ln(c) == "model"]:
             if _ln(model.getparent()) == "sdf":  # top-level models only; nesting handled in _model
-                self._model(model, world_inc, _slug_prefix(name_prefix, name), model_dir)
+                self._model(
+                    model, world_inc, _slug_prefix(name_prefix, name), model_dir, placed=placed
+                )
 
     # ---------------- entry
 
