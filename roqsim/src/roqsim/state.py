@@ -162,16 +162,23 @@ def mjcf_sensor_columns(model, data, names: list[str]) -> dict:
 
 
 def contact_rows(model, data) -> list[dict]:
-    """Every current contact: the geom pair, where it is, and how hard. One row per contact."""
+    """Every current contact: its two sides, where it is, and how hard. One row per contact.
+
+    A side is a geom or a flex. ``geom1``/``geom2`` name the geom (its id where it has no name) and
+    are ``None`` on a flex side, where ``flex1``/``flex2`` name the flex and ``vert1``/``vert2`` or
+    ``elem1``/``elem2`` give the vertex or element that touched, indices local to the flex; each is
+    ``None`` where it does not apply. A flex side carries ``geom = -1`` in MuJoCo's contact, and
+    naming that id would name the model's last geom.
+    """
     rows = []
     force = np.zeros(6)
     for i in range(data.ncon):
         con = data.contact[i]
         mujoco.mj_contactForce(model, data, i, force)
-        rows.append(
+        sides = [_contact_side(model, con, k) for k in (0, 1)]
+        row = {f"{key}{k + 1}": side[key] for key in _SIDE_KEYS for k, side in enumerate(sides)}
+        row.update(
             {
-                "geom1": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom1) or con.geom1,
-                "geom2": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom2) or con.geom2,
                 "pos.x": float(con.pos[0]),
                 "pos.y": float(con.pos[1]),
                 "pos.z": float(con.pos[2]),
@@ -179,7 +186,26 @@ def contact_rows(model, data) -> list[dict]:
                 "force.normal": float(force[0]),
             }
         )
+        rows.append(row)
     return rows
+
+
+_SIDE_KEYS = ("geom", "flex", "vert", "elem")
+
+
+def _contact_side(model, con, k: int) -> dict:
+    """Side *k* of one contact as ``geom``/``flex``/``vert``/``elem``, ``None`` where it does not apply."""
+    geom = int(con.geom[k])
+    if geom >= 0:
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
+        return {"geom": name or geom, "flex": None, "vert": None, "elem": None}
+    flex, vert, elem = int(con.flex[k]), int(con.vert[k]), int(con.elem[k])
+    return {
+        "geom": None,
+        "flex": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex) or flex,
+        "vert": vert if vert >= 0 else None,
+        "elem": elem if elem >= 0 else None,
+    }
 
 
 def _rpy(quat) -> tuple[float, float, float]:

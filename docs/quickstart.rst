@@ -762,6 +762,10 @@ sensors:
    roqsim state --state run.npz --joint 'arm_*' --from 8 --to 20 --out arm.csv
    roqsim state --state run.npz --sensor front --out scan.npz  # the world's own lidar, re-run
 
+``--contacts`` lists every contact at that moment with its two sides — ``geom1``/``geom2`` for a
+geom, ``flex1``/``flex2`` with ``vert1``/``vert2`` or ``elem1``/``elem2`` for a flex — its position
+and its normal force.
+
 ``--at`` snaps to the nearest recorded sample and tells you which one it used, so you can see it landed a
 few milliseconds off rather than assume it did not. Names accept globs, and a selector that matches
 nothing is an error naming the near misses — never an empty column.

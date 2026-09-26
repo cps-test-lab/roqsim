@@ -29,6 +29,16 @@ extent of an entity everywhere else in the substrate; what this module adds is t
 per-step filter, and failing loudly where a mistyped body would otherwise leave a meter watching
 nothing and reporting a clean run forever.
 
+**A contact side is a geom or a flex.** A contact involving a MuJoCo flex carries ``geom = -1`` on
+the flex's side and the flex's id in ``contact.flex`` (the vertex in ``contact.vert``, or the
+element in ``contact.elem``). Indexing a per-geom mask with that ``-1`` reads the model's *last*
+geom, so a flex touching anything would be attributed to whatever geom happened to be compiled
+last. The scope therefore carries a mask per flex beside the mask per geom, and reads each side
+from the one that side is: its geom where ``geom >= 0``, else its flex. The flexes an entity owns
+are :func:`roqsim.flex.entity_flex_ids` -- those whose DOF bodies all lie in its subtree -- so an
+entity that is only a flex is watchable, and ``ignore`` may name a flex as well as a geom.
+:func:`side_name` names a side for a report, a flex side as ``flex:<name>[v<i>]``.
+
 What it deliberately does not decide: a force threshold. ``contact_monitor`` applies its own
 ``min_force`` to the contacts this returns, because a verdict must reject numerical grazing and an
 integral must not.
@@ -43,6 +53,7 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
+from .flex import entity_flex_ids
 from .presence import entity_geom_ids
 
 _log = logging.getLogger(__name__)
@@ -50,23 +61,76 @@ _log = logging.getLogger(__name__)
 _NO_CONTACTS = np.zeros(0, dtype=np.int64)
 
 
+def side_mask(
+    geom: np.ndarray, flex: np.ndarray, geom_mask: np.ndarray, flex_mask: np.ndarray
+) -> np.ndarray:
+    """Per contact side, the value of the mask for what that side IS: its geom, else its flex.
+
+    *geom* and *flex* are a step's ``contact.geom`` / ``contact.flex`` (``(n, 2)``, or any equal
+    shape). A side with ``geom >= 0`` is that geom; a side with ``geom == -1`` is the flex in the
+    same slot. Two boolean-indexed gathers rather than one lookup, so a ``-1`` never reaches a mask
+    as an index -- numpy would read it as the last entry. A side that names neither a geom nor a
+    flex is not a contact MuJoCo produces, and raises rather than being read as anything.
+    """
+    if not flex_mask.size:
+        # A model without a flex, where every side is a geom: one lookup is the whole filter.
+        return geom_mask[geom]
+    is_geom = geom >= 0
+    out = np.empty(geom.shape, dtype=bool)
+    out[is_geom] = geom_mask[geom[is_geom]]
+    flexes = flex[~is_geom]
+    if flexes.size and int(flexes.min()) < 0:
+        raise RuntimeError("a contact side names neither a geom nor a flex")
+    out[~is_geom] = flex_mask[flexes]
+    return out
+
+
+def side_name(model, geom: int, flex: int, vert: int = -1, elem: int = -1) -> str:
+    """One side of a contact, named for a report.
+
+    A geom by its name (``geom<id>`` when it has none); a flex as ``flex:<name>``, with the vertex
+    (``[v<i>]``) or element (``[e<i>]``) that touched, indices local to the flex. An unnamed flex
+    is ``flex:#<id>``. Pass a side's ``contact.geom``, ``.flex``, ``.vert`` and ``.elem`` entries.
+    """
+    geom, flex, vert, elem = int(geom), int(flex), int(vert), int(elem)
+    if geom >= 0:
+        return mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom) or f"geom{geom}"
+    if flex < 0:
+        raise ValueError("a contact side names neither a geom nor a flex")
+    name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex) or f"#{flex}"
+    where = f"[v{vert}]" if vert >= 0 else f"[e{elem}]" if elem >= 0 else ""
+    return f"flex:{name}{where}"
+
+
+def contact_side_names(model, contact) -> tuple[str, str]:
+    """Both sides of one ``data.contact[i]``, named by :func:`side_name`."""
+    geom, flex, vert, elem = contact.geom, contact.flex, contact.vert, contact.elem
+    return (
+        side_name(model, geom[0], flex[0], vert[0], elem[0]),
+        side_name(model, geom[1], flex[1], vert[1], elem[1]),
+    )
+
+
 @dataclass(frozen=True)
 class ContactScope:
-    """The watched entity's geoms, the ignored ones, and the filter both are for."""
+    """The watched entity's geoms and flexes, the ignored ones, and the filter they are for."""
 
     body: str  # the resolved base body, for log lines and error messages
     watched: np.ndarray  # per-geom mask: in the watched entity's subtree
     ignored: np.ndarray  # per-geom mask: never counts
+    watched_flex: np.ndarray  # per-flex mask: owned by the watched entity
+    ignored_flex: np.ndarray  # per-flex mask: never counts
 
-    def qualifying(self, geom1: np.ndarray, geom2: np.ndarray) -> np.ndarray:
+    def qualifying(self, geom: np.ndarray, flex: np.ndarray) -> np.ndarray:
         """Mask over a step's contacts: exactly one side watched, neither side ignored.
 
-        Equal sides are either a pair the entity is not in at all or a self-contact, and neither is
-        an external collision.
+        *geom* and *flex* are ``(n, 2)``: ``data.contact.geom[:n]`` and ``data.contact.flex[:n]``.
+        Equal sides are either a pair the entity is not in at all or a self-contact -- a flex
+        touching itself included -- and neither is an external collision.
         """
-        return (self.watched[geom1] ^ self.watched[geom2]) & ~(
-            self.ignored[geom1] | self.ignored[geom2]
-        )
+        watched = side_mask(geom, flex, self.watched, self.watched_flex)
+        ignored = side_mask(geom, flex, self.ignored, self.ignored_flex)
+        return (watched[:, 0] ^ watched[:, 1]) & ~(ignored[:, 0] | ignored[:, 1])
 
     def indices(self, data) -> np.ndarray:
         """Indices into ``data.contact`` of this step's qualifying contacts, ascending.
@@ -80,7 +144,7 @@ class ContactScope:
         if not n:
             return _NO_CONTACTS
         con = data.contact
-        return np.flatnonzero(self.qualifying(con.geom1[:n], con.geom2[:n]))
+        return np.flatnonzero(self.qualifying(con.geom[:n], con.flex[:n]))
 
 
 def resolve_base_body(entity, body: str = "") -> str:
@@ -108,8 +172,10 @@ def resolve_contact_scope(
     """Resolve the watched subtree and the ignore list into masks, or fail loudly.
 
     *plugin* names the caller in the errors and the log line, since what a missing body means is
-    the caller's story. Raises :class:`RuntimeError` where the base body does not resolve or its
-    subtree carries no geoms: a meter watching nothing reports a clean run forever, which is
+    the caller's story. The watched set is the subtree's geoms and the flexes it owns
+    (:func:`roqsim.flex.entity_flex_ids`); *ignore* and *ignore_prefixes* match geom and flex names
+    alike. Raises :class:`RuntimeError` where the base body does not resolve or its subtree carries
+    neither a geom nor a flex: a meter watching nothing reports a clean run forever, which is
     indistinguishable from a trial that touched nothing and would be averaged in as one.
     """
     ignore = list(ignore)
@@ -119,27 +185,51 @@ def resolve_contact_scope(
 
     watched = np.zeros(model.ngeom, dtype=bool)
     watched[entity_geom_ids(model, body_name)] = True
-    if not watched.any():
-        raise RuntimeError(f"{plugin}: body {body_name!r} and its subtree carry no geoms to watch")
+    watched_flex = np.zeros(model.nflex, dtype=bool)
+    watched_flex[entity_flex_ids(model, body_name)] = True
+    if not watched.any() and not watched_flex.any():
+        raise RuntimeError(
+            f"{plugin}: body {body_name!r} and its subtree carry no geoms or flexes to watch"
+        )
 
-    ignored = np.zeros(model.ngeom, dtype=bool)
-    for gid in range(model.ngeom):
-        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, gid) or ""
-        if name in ignore or any(name.startswith(p) for p in ignore_prefixes):
-            ignored[gid] = True
+    def _ignored(kind, count: int) -> np.ndarray:
+        mask = np.zeros(count, dtype=bool)
+        for i in range(count):
+            name = mujoco.mj_id2name(model, kind, i) or ""
+            if name in ignore or any(name.startswith(p) for p in ignore_prefixes):
+                mask[i] = True
+        return mask
 
-    missing = [n for n in ignore if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0]
+    ignored = _ignored(mujoco.mjtObj.mjOBJ_GEOM, model.ngeom)
+    ignored_flex = _ignored(mujoco.mjtObj.mjOBJ_FLEX, model.nflex)
+
+    missing = [
+        n
+        for n in ignore
+        if mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
+        and mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_FLEX, n) < 0
+    ]
     if missing:
         # Not fatal (a world may legitimately have no `floor` geom), but never silent: an unmatched
         # ignore entry is how a ground plane starts counting as a collision, and how the weight a
         # robot rests on it with becomes the largest impulse of the trial.
-        _log.warning("%s: ignore entry has no matching geom: %s", plugin, ", ".join(missing))
+        _log.warning(
+            "%s: ignore entry has no matching geom or flex: %s", plugin, ", ".join(missing)
+        )
 
     _log.info(
-        "%s: watching %d geoms of %r, ignoring %d",
+        "%s: watching %d geoms and %d flexes of %r, ignoring %d geoms and %d flexes",
         plugin,
         int(watched.sum()),
+        int(watched_flex.sum()),
         body_name,
         int(ignored.sum()),
+        int(ignored_flex.sum()),
     )
-    return ContactScope(body=body_name, watched=watched, ignored=ignored)
+    return ContactScope(
+        body=body_name,
+        watched=watched,
+        ignored=ignored,
+        watched_flex=watched_flex,
+        ignored_flex=ignored_flex,
+    )

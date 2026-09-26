@@ -187,3 +187,46 @@ def _refuse_mocap_parent(spec: mujoco.MjSpec) -> None:
                         "mocap target through a weld equality, or an arm's end effector."
                     )
                 body = body.parent
+
+
+# -- which entity a flex belongs to -----------------------------------------------------------------
+#
+# Ownership rather than an integrator rule, and read off the COMPILED model: a contact observable
+# resolves its entity after compile, when the flex's vertices have become bodies with ids.
+
+
+def flex_dof_body_ids(model: mujoco.MjModel, flex: int) -> list[int]:
+    """The bodies flex *flex*'s degrees of freedom live on: its nodes where it has any, else its
+    vertices -- the compiled counterpart of the anchor bodies rule 1 reads off the spec.
+
+    A pinned vertex lives on the body the flex is declared in, so that body is among them.
+    """
+    nodes = int(model.flex_nodenum[flex])
+    if nodes:
+        start = int(model.flex_nodeadr[flex])
+        return [int(b) for b in model.flex_nodebodyid[start : start + nodes]]
+    start, count = int(model.flex_vertadr[flex]), int(model.flex_vertnum[flex])
+    return [int(b) for b in model.flex_vertbodyid[start : start + count]]
+
+
+def entity_flex_ids(model: mujoco.MjModel, body_name: str) -> list[int]:
+    """Every flex that belongs to the subtree of *body_name*: all of its DOF bodies lie in it.
+
+    **All**, not any: a flex strung between two entities -- a cable from a robot to a wall -- is
+    neither one's, because a contact on it is not a contact of either. A flex declared in an
+    entity's body, or in an arm's end effector, is that entity's: its vertex bodies are children of
+    the body it is declared in, and its pinned vertices sit on that body.
+    """
+    # Imported here so that presence, which hides an entity's flexes, may import this module.
+    from .presence import entity_body_ids
+
+    bodies = set(entity_body_ids(model, body_name))
+    if not bodies:
+        return []
+    return [f for f in range(model.nflex) if set(flex_dof_body_ids(model, f)) <= bodies]
+
+
+def spec_flex_body_names(flex) -> list[str]:
+    """The body names an ``MjSpec`` flex's degrees of freedom live on (rule 1's anchor bodies),
+    for a check that must run before compile."""
+    return _anchor_bodies(flex)
