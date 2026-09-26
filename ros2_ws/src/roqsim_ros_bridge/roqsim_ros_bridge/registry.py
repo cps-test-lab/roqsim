@@ -513,6 +513,64 @@ def fill_battery_state(msg, payload, stamp: Time, hints: dict) -> None:
     # payload in process, or the plugin's blackboard reader.
 
 
+def _status_value(value) -> str:
+    """One reading as the string a ``diagnostic_msgs/KeyValue`` carries.
+
+    ``repr`` for a float rather than a rounded format: the value is read back out of a recording and
+    compared with a threshold, so it round-trips exactly, and a cutoff reads as ``inf`` rather than
+    as a large number that looks measured. Booleans are the lowercase spelling every parser already
+    takes, instead of Python's ``True``.
+    """
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return repr(value)
+    return str(value)
+
+
+@converter("diagnostic_msgs.msg.DiagnosticStatus")
+def fill_diagnostic_status(msg, payload, stamp: Time, hints: dict) -> None:
+    """A whole structured report, as the named readings a recording can hold side by side.
+
+    The counterpart of the ``field`` hint (:func:`get_converter`) for a producer whose report does
+    not reduce to one number: ``fields`` names the payload attributes to publish, in order, and each
+    becomes one ``KeyValue`` keyed by the attribute's own name. A string field and a flag reach a
+    recorded table that way, which no primitive topic can carry and no reduction over a published
+    series can reconstruct. Which fields those are stays with the plugin that owns the payload, so
+    this converter knows no producer's attribute names -- the same door serves any report.
+
+    ``level`` is always ``OK``: these are readings, and a level above it would be a verdict about
+    them, which is a threshold the experiment states rather than the substrate. ``name`` and
+    ``hardware_id`` come from hints, so a consumer can tell two monitors of one world apart.
+    """
+    from diagnostic_msgs.msg import DiagnosticStatus, KeyValue
+
+    fields = hints.get("fields")
+    if not fields:
+        raise TypeError(
+            "diagnostic_msgs.msg.DiagnosticStatus needs a 'fields' backend hint naming the payload "
+            "attributes to publish; without one the message would carry no readings at all"
+        )
+    values = []
+    for field_name in fields:
+        try:
+            value = getattr(payload, field_name)
+        except AttributeError:
+            # Loudly, and the way the reflective path does it: an empty reading in a recorded
+            # table is indistinguishable from one the trial never produced.
+            raise TypeError(
+                f"backend hint fields entry {field_name!r} for "
+                f"'diagnostic_msgs.msg.DiagnosticStatus' is not an attribute of "
+                f"{type(payload).__name__}"
+            ) from None
+        values.append(KeyValue(key=str(field_name), value=_status_value(value)))
+    msg.level = DiagnosticStatus.OK
+    msg.name = str(hints.get("name", ""))
+    msg.message = str(hints.get("message", ""))
+    msg.hardware_id = str(hints.get("hardware_id", ""))
+    msg.values = values
+
+
 @converter("sensor_msgs.msg.JointState")
 def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     # (names, positions, velocities[, efforts]). Effort is optional so the wheel/locomotion producers
