@@ -28,6 +28,9 @@ Measured against MuJoCo 3.11.0:
   kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that
   renders big and collides as if small. Refused; change size in ``build``.
 * ``geom_friction`` and the two contact masks are live and reverse exactly.
+* A flex's ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are live (measured
+  on MuJoCo 3.14.0) -- damping only on a flex compiled with some, and refused otherwise. Its Young's
+  modulus is not a compiled field at all; the ``flex_material`` plugin sets it before compile.
 
 Three refusals are *decisions*, not safety, and are listed so they read as chosen:
 
@@ -60,7 +63,7 @@ Config::
     model_override:
       overrides:                       # one or more; each names a field, a selection and a target
         - field: geom_friction         # must be on the allowlist (see `field_catalog`)
-          select: [pad_left, pad_right]  # names in the field's own namespace (geom/body/actuator/joint)
+          select: [pad_left, pad_right]  # names in the field's namespace (geom/body/actuator/joint/flex)
           bodies: []                   # ...or every geom of these bodies' subtrees (geom fields only)
           entity: ""                   # ...or an entity's body subtree (geom fields only)
           to: 0.0                      # scalar (broadcast) or the field's full row
@@ -98,6 +101,7 @@ from ..contact_scope import side_name
 from ..context import Endpoint, SimContext
 from ..plugin import Plugin
 from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids
+from ._flex_material import refuse_damping_from_zero
 
 _log = logging.getLogger(__name__)
 
@@ -140,6 +144,7 @@ _OBJ = {
     "body": mujoco.mjtObj.mjOBJ_BODY,
     "actuator": mujoco.mjtObj.mjOBJ_ACTUATOR,
     "joint": mujoco.mjtObj.mjOBJ_JOINT,
+    "flex": mujoco.mjtObj.mjOBJ_FLEX,
 }
 
 #: v1 is exactly what has been measured. Everything else is refused, so no row here is a guess.
@@ -221,6 +226,63 @@ _ALLOWED: dict[str, FieldSpec] = {
                 "1 -> 20 kg left the mass matrix at 1.0 until mj_setConst, after which "
                 "acceleration under 100 N was -4.81 m/s^2, i.e. correct for 20 kg"
             ),
+        ),
+        # The flex rows were measured on MuJoCo 3.14.0 (tests/test_flex_material.py). A flex's
+        # Young's modulus and Poisson's ratio are not here: MuJoCo bakes them into the compiled
+        # stiffness, so they are set before compile by the flex_material plugin (_flex_material,
+        # "baked at compile").
+        FieldSpec(
+            "flex_damping",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does=(
+                "a flex's stiffness-proportional damping (s). Raising it makes the flex ring down "
+                "faster; lowering it lets a deformation oscillate longer."
+            ),
+            caveats=(
+                "Refused for a flex compiled with damping 0: MuJoCo builds what damping acts "
+                "through only for a flex compiled with some, so the write would act in part. "
+                "Compile it with a non-zero damping (its MJCF, or flex_material) first."
+            ),
+            measured=(
+                "a cantilever written 0.001 -> 0.01 s at run time moved as the one compiled with "
+                "0.01 s, to 1e-9 m; over a compiled 0 the same write barely changed the ringing"
+            ),
+        ),
+        FieldSpec(
+            "flex_friction",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the friction of a flex's contacts (slide, spin, roll). Lowering it makes it slip.",
+            caveats=(
+                "Combined with the other side's friction as for geoms: the higher `priority` wins, "
+                "and at equal priority the element-wise MAXIMUM -- so lowering the flex cannot bring "
+                "a contact below its partner's value. Verified by reading the row back only."
+            ),
+            measured="a soft block on a floor tilted ~24 deg crept 18 mm in 1 s at 1.0, slid 1.5 m at 0.1",
+        ),
+        FieldSpec(
+            "flex_solref",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the contact solver reference of a flex's contacts; a longer time constant is softer.",
+            caveats=(
+                "Mixed with the other side's by solmix unless one side has the higher priority. "
+                "Verified by reading the row back only."
+            ),
+            measured="a resting soft block sank 8.7 mm deeper at a 0.08 s time constant than at 0.02 s",
+        ),
+        FieldSpec(
+            "flex_solimp",
+            "flex",
+            LIVE,
+            _BY_MODEL,
+            does="the contact impedance of a flex's contacts; a lower dmin/dmax is softer.",
+            caveats="As flex_solref. Verified by reading the row back only.",
+            measured="a resting soft block sank 8.8 mm deeper at impedance 0.1..0.2 than at 0.9..0.95",
         ),
     )
 }
@@ -467,6 +529,8 @@ class ModelOverridePlugin(Plugin):
         ids = self._select(ctx, where, spec, entry)
         if spec.namespace == "geom":
             self._check_geoms(where, model, ids)
+        if spec.field == "flex_damping":
+            refuse_damping_from_zero(model, ids, entry["to"], where)
 
         rows = getattr(model, spec.field)
         nominal = np.array(rows[ids], copy=True)
