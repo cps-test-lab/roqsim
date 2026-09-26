@@ -30,18 +30,3 @@ from pathlib import Path
 
 MODELS_DIR = Path(__file__).parent
 MESHES_DIR = MODELS_DIR
-
-
-def model_path(name: str) -> Path:
-    """Resolve a bundled model file (accepts a bare name like ``turtlebot4`` or a filename)."""
-    p = Path(name)
-    if p.is_absolute() and p.exists():
-        return p
-    for candidate in (
-        MODELS_DIR / name,
-        MODELS_DIR / f"{name}.xml",
-        MODELS_DIR / name / f"{name}.xml",
-    ):
-        if candidate.is_file():
-            return candidate
-    raise FileNotFoundError(f"model {name!r} not found under {MODELS_DIR}")
