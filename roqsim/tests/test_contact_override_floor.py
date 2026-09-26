@@ -4,13 +4,16 @@
 
 """``sim.contact_override.solref``: the floor MuJoCo enforces without saying so.
 
-A contact time constant below ``2 * timestep`` is clamped there by the solver. Nothing reports it:
+Under every integrator but ``discrete`` -- here MuJoCo's default ``Euler``, and the ``implicitfast``
+``sim.integrator: auto`` picks for a world without a flex -- a contact time constant below
+``2 * timestep`` is clamped there by the solver. Nothing reports it:
 the world records the value it asked for, the model compiles, the run finishes, and the contact
 behaves as though the floor had been requested. A world tightening a fit that way reads the tighter
 number back out of its own configuration and concludes the solver does not respond to tuning.
 
 The first test measures the clamp rather than asserting it from the docs, so the refusal below stays
 tied to MuJoCo's actual behaviour and a version that moved the floor would show up here first.
+The floor under each integrator, ``discrete`` included, is ``tests/test_solref_floor.py``'s.
 """
 
 from __future__ import annotations

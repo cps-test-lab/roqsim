@@ -147,3 +147,68 @@ must stay out of the container image.
 
 **Either way the geom walk, the frame composition and the primitive tessellation in
 ``roqsim/export_mesh.py`` are the input**, so this is an added writer rather than a second exporter.
+
+Deformable bodies: conveniences over ``<flexcomp>``
+---------------------------------------------------
+
+**Context.** A flex is written as MuJoCo's own ``<flexcomp>`` wherever a model lives, and roqsim
+adds what it has to around it: the integrator and the refusals, a flex as a prop or a tool, its
+material as a world key (``flex_material``), flex-aware contacts, the ``roqsim check`` report and
+the web replay (:ref:`deformable-bodies` in :doc:`plugins`). Everything an experiment on one needs
+can be stated with that, in the experiment's own models and world, with no code of its own.
+
+**Gap.** Six things are left to MuJoCo's own vocabulary or to the world author, each of which a
+further experiment could turn into a repeated hand-written step. None is built, because each is
+cheaper to design against the second experiment that needs it than to guess from the first; each
+item names the evidence that would justify it.
+
+**Proposed fixes, each with its trigger.**
+
+1. **A** ``soft_body`` **plugin** that generates the ``<flexcomp>`` from a few world keys -- shape,
+   resolution, material, parent frame, a pinned face. MuJoCo bakes a flexcomp's lattice at
+   compile, so today a body's size or discretisation is fixed by its MJCF, and sweeping either
+   needs one asset per level. Built from keys, both become campaign factors like the material.
+   *Trigger:* an experiment that sweeps a soft body's size or its discretisation.
+2. **Material presets**: named rows with physical values and their sources, listed by
+   ``roqsim catalog materials`` and an MCP ``list_materials``, and accepted by ``flex_material``.
+   *Trigger:* choosing a material by kind ("silicone, Shore 00-30") rather than by the values a
+   paper states.
+3. **Named vertex groups**: selectors over a flex's rest positions (``face``, ``plane``, ``box``,
+   ``near``, and their combinations) that name a set of vertices once, for an observation to read
+   and for ``<pin>`` to hold. Today a pinned set is MuJoCo's grid ranges or vertex ids, and a
+   measured part of a flex is an index list in the experiment's own code. *Trigger:* a second
+   experiment that measures part of a flex -- a face's displacement, a region's contact.
+4. **A** ``damping_ratio`` **key** on ``flex_material``, converted to ``<elasticity damping>`` so
+   that the first mode rings at the stated ratio: ``damping = 2 * zeta / omega_1 - timestep``, with
+   ``omega_1`` from :func:`roqsim.flex_modes.first_modes` and the timestep term removing the
+   ``discrete`` integrator's numerical share. It inherits that rule's limit: it holds while the
+   timestep resolves the mode (``omega_1 * timestep`` at most 0.3, where ``roqsim check`` starts
+   warning ``flex-timestep``), and the key has to refuse, or warn, beyond it. *Trigger:* a second
+   paper that states a damping ratio rather than a damping time.
+5. **A** ``flex_monitor`` **observation plugin** publishing a flex's state as endpoints: its
+   vertices, the centroids of named groups, the largest vertex speed, edge strain, whether every
+   vertex is finite, and contact aggregates against named geoms or entities -- with "vertices in
+   contact" taken from surface vertices near an element contact, since a contact with a solid names
+   an element rather than a vertex. *Trigger:* a second experiment that reads a flex's state or its
+   contacts during a run.
+6. **A reduced-dof default.** A measured study of ``dof`` in ``full``, ``quadratic`` and
+   ``trilinear``: first frequencies, static deflection, contact penetration, the outcome metric of
+   an example task, and wall time; where ``quadratic`` holds within a stated tolerance,
+   ``roqsim check`` recommends it for a flex above some size. A ``full`` grid has three degrees of
+   freedom per vertex where the reduced modes have 24 or 81 in all, and they require
+   ``selfcollide="none"``. *Trigger:* a flex sweep whose cost bounds how many cells it can run.
+
+**Consequences / open questions.**
+
+- *One source of a flex.* A ``soft_body`` plugin would be a fifth place a flex can come from, and
+  ``flex_material``, ``roqsim check`` and the replay would have to see it exactly as they see a
+  ``<flexcomp>`` -- which they do if the plugin writes a ``<flexcomp>`` into the spec rather than
+  building a flex of its own.
+- *Presets are data with provenance.* A material row is only as good as its source, and a preset
+  that silently replaced a paper's stated values would move an experiment's result; presets
+  would have to be something a world names, never a default.
+- *Groups before monitors.* Items 3 and 5 share their selectors, and a monitor reading groups by
+  index would have to be migrated once groups exist, so the groups come first.
+- *A recommendation needs the study.* Item 6 changes what ``roqsim check`` advises, which is only
+  as sound as the measurement behind it, and a reduced mode that holds for a block may not for a
+  sheet or a cable.
