@@ -12,3 +12,7 @@ components:
   # `attachment_site`, which follows the Menagerie convention (z out of the flange) and so needs no
   # rotation on attach.
   - arm_controller: {}   # the home keyframe target keeps the plugin/model defaults
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The flange.
+end_effector:
+  site: attachment_site

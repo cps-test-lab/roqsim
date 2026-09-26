@@ -16,3 +16,8 @@ components:
   # experiment. A world that wants it adds:
   #
   #     realsense_d435: {arm: omx, depth: true, points: true}
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. The tool point
+# between the welded fingers.
+end_effector:
+  site: attachment_site

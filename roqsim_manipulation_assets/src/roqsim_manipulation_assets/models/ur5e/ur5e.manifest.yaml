@@ -10,3 +10,10 @@
 # the experiment. The arm ships the `fts_site` to measure at -- a world adds `force_torque`.
 components:
   - arm_controller: {}   # the home target keeps the plugin/model defaults
+
+# Where spawn_arm's `end_effector:` welds a tool when the world names no `site:`. Not the bare
+# flange: `attachment_site` is on wrist_3_link, beside the FT stack (`tool0`) rather than under it,
+# so a tool welded there would be invisible to a force_torque at `fts_site`. `tool_site` is the
+# stack's outer face, below the cut.
+end_effector:
+  site: tool_site
