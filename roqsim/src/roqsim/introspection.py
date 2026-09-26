@@ -355,7 +355,7 @@ def main(argv=None):
     import argparse  # pylint: disable=import-outside-toplevel
 
     parser = argparse.ArgumentParser(
-        prog="python -m roqsim.introspection",
+        prog="roqsim plugins",
         description="JSON introspection of the roqsim.plugins registry.",
     )
     sub = parser.add_subparsers(dest="command", required=True)

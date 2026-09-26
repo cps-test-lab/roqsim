@@ -161,6 +161,18 @@ def test_no_command_dumps_its_whole_docstring_into_help(helps):
     )
 
 
+def test_every_usage_line_names_the_command_the_user_types(helps):
+    """argparse takes its program name from argv[0], which the tree sets to the command path; a
+    parser that names its own `prog` -- or runs in another interpreter -- has to say the same thing,
+    or its usage line sends the reader off to spell an invocation that does not exist."""
+    wrong = {
+        path: out.splitlines()[:2]
+        for path, out in helps.items()
+        if f"usage: roqsim {path}" not in out.lower()
+    }
+    assert not wrong, f"these usage lines do not name `roqsim <path>`: {wrong}"
+
+
 def test_every_command_has_a_one_line_summary(tree):
     """The listing line comes from the docstring's first line, so that line has a job to do."""
     bad = {}
