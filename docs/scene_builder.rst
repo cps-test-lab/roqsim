@@ -102,13 +102,15 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail", "comment": str,
+    {"verdict": "pass" | "fail" | "comment", "comment": str,
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
      "moves": [{"entity": "industrial_table_1", "model": "industrial_table",
                 "pos": [10.4, 1.15, 0.0], "yaw_deg": 90.0}]}   # props dragged in Move-Objects mode; [] if none
 
+``"comment"`` is the neutral verdict: Enter in the comment box with text submits a note without a
+pass/fail call (the CLI exits 0 for it, as for a pass).
 Each annotation is a dot the human dropped on a surface: ``world`` is the 3D hit point and
 ``target`` names the geom/body it landed on (``null`` if none). ``yaw_deg`` (heading about +Z,
 0 = +x, CCW) is present only when the human dragged a direction while placing the dot — take it as
