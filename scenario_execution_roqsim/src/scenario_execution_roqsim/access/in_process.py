@@ -174,9 +174,12 @@ class InProcessAccess(WorldAccess):
 
     def __init__(self, sim):
         self._sim = sim
-        #: body id per (compiled model, name). The model is part of the key because a scenario that
-        #: resets with different `world_overrides` gets a NEW model, in which ids are not stable.
-        self._bids: dict[tuple[int, str], int] = {}
+        #: body id per name, valid for :attr:`_bids_model` only. A scenario that resets with different
+        #: `world_overrides` gets a NEW model, in which ids are not stable, so the cache is dropped
+        #: when the model changes. Compared by identity against a held reference, not by `id()`: a
+        #: freed model's `id()` may be reused by the next one, which would hand back its ids.
+        self._bids: dict[str, int] = {}
+        self._bids_model = None
 
     # -- the world ------------------------------------------------------------------------------
     def _ctx(self):
@@ -200,7 +203,9 @@ class InProcessAccess(WorldAccess):
         return Pose(pos=np.array(ctx.data.xpos[bid]), quat=np.array(ctx.data.xquat[bid]))
 
     def _body_id(self, ctx, name: str) -> int:
-        key = (id(ctx.model), name)
+        if ctx.model is not self._bids_model:
+            self._bids, self._bids_model = {}, ctx.model
+        key = name
         if key not in self._bids:
             # Imported HERE rather than at module scope: importing `roqsim.lookup` pulls in MuJoCo, and
             # the behaviour tree is built before any world is compiled. Same reason the actions

@@ -1561,3 +1561,36 @@ def test_an_unusable_report_configuration_raises_at_execute(world, args, message
     full = {"comparison_operator": "eq", "dwell": 0.0, "fail_if_bad_comparison": False, **args}
     with pytest.raises(ActionError, match=message):
         action.execute(**full)
+
+
+# -- a rebuilt world ------------------------------------------------------------------------------
+
+
+def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatch):
+    """A reset with other `world_overrides` compiles a new model, in which body ids differ. The
+    body-id cache must notice even when the new model happens to get the old one's `id()` -- which
+    CPython hands out again once an object is freed. That reuse is forced here by making every
+    `id()` the module takes the same."""
+    from scenario_execution_roqsim.access import in_process
+    from scenario_execution_roqsim.access.in_process import InProcessAccess
+
+    monkeypatch.setattr(in_process, "id", lambda _obj: 1, raising=False)
+
+    def ctx_for(xml):
+        model = mujoco.MjModel.from_xml_string(xml)
+        ctx = SimContext(config={})
+        ctx.model, ctx.data = model, mujoco.MjData(model)
+        mujoco.mj_forward(model, ctx.data)
+        ctx.entities.add(Entity(name="parcel", kind="object", body="crate"))
+        return ctx
+
+    crate = "<body name='crate' pos='{x} 0 1'><freejoint/><geom type='box' size='.1 .1 .1'/></body>"
+    other = "<body name='other' pos='5 5 1'><freejoint/><geom type='box' size='.1 .1 .1'/></body>"
+    first = ctx_for(f"<mujoco><worldbody>{crate.format(x=0)}</worldbody></mujoco>")
+    # Rebuilt with a body ahead of the crate, so the crate's id is not the one it had.
+    second = ctx_for(f"<mujoco><worldbody>{other}{crate.format(x=2)}</worldbody></mujoco>")
+    sim = FakeSim(first)
+    access = InProcessAccess(sim)
+    assert access.entity_pose("parcel").pos[0] == pytest.approx(0.0)
+    sim.context = second
+    assert access.entity_pose("parcel").pos[0] == pytest.approx(2.0)
