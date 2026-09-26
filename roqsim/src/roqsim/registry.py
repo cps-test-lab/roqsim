@@ -16,30 +16,15 @@ is treated as a file path when it exists on disk, else as a module path. Failure
 
 from __future__ import annotations
 
-import functools
 import importlib
 import importlib.util
 import sys
-from importlib import metadata
 from pathlib import Path
 
+from .entry_points import entry_points as _entry_points
 from .plugin import Plugin, PluginError
 
 ENTRY_POINT_GROUP = "roqsim.plugins"
-
-
-@functools.cache
-def _entry_points(group: str):
-    """Return entry points for ``group`` across Python versions.
-
-    Cached for the process lifetime: one scan walks every installed distribution (~30 ms in a
-    system-site-packages venv) and a large world resolves hundreds of refs, which made the scan
-    the dominant load cost. Packages installed mid-run are not a supported scenario.
-    """
-    eps = metadata.entry_points()
-    if hasattr(eps, "select"):  # Python 3.10+
-        return tuple(eps.select(group=group))
-    return tuple(eps.get(group, ()))  # pragma: no cover - legacy
 
 
 def _load_from_entry_point(name: str) -> type[Plugin] | None:
