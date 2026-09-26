@@ -685,72 +685,85 @@ def run(
         raise
     if profile:
         print(engine.format_load_report(), file=sys.stderr)
-    engine.reset()
+    # Everything between setup and the loop can raise -- a plugin's on_reset, a capture rate this
+    # world cannot hold, a recording path that cannot be written -- and the engine is set up by
+    # then, so its plugins hold what configure opened: a transport's spin thread, a file. Only a
+    # shutdown releases them. Without this a failed reset left the process hanging on a bridge
+    # thread behind its traceback, and the loading window open.
+    try:
+        engine.reset()
 
-    dt = engine.dt
-    pacer = Pacer.from_config(pacing if pacing is not None else cfg.pacing, dt)
-    pacer.reset()
+        dt = engine.dt
+        pacer = Pacer.from_config(pacing if pacing is not None else cfg.pacing, dt)
+        pacer.reset()
 
-    if seconds is not None:
-        steps_from_seconds = int(round(seconds / dt))
-        max_steps = steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
+        if seconds is not None:
+            steps_from_seconds = int(round(seconds / dt))
+            max_steps = (
+                steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
+            )
 
-    if video and not record:
-        # A recording is how a video is made, so --video needs one; put it beside the video by default
-        # rather than inventing a second convention for where it lives.
-        record = str(Path(video).with_suffix(".npz"))
+        if video and not record:
+            # A recording is how a video is made, so --video needs one; put it beside the video by default
+            # rather than inventing a second convention for where it lives.
+            record = str(Path(video).with_suffix(".npz"))
 
-    # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
-    # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
-    # to add --record to without editing a launch file that two backends share. Recording is a session
-    # concern -- the same footing as `sim.headless`, which the world YAML rejects on purpose -- so the
-    # environment is the right channel, and it is the one the scenario adapter already uses.
-    # An explicit flag always wins.
-    if record is None:
-        record = os.environ.get("ROQSIM_RECORD") or None
-        if record:
-            record = str(_session_path(record))
-    if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
-        capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
+        # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
+        # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
+        # to add --record to without editing a launch file that two backends share. Recording is a session
+        # concern -- the same footing as `sim.headless`, which the world YAML rejects on purpose -- so the
+        # environment is the right channel, and it is the one the scenario adapter already uses.
+        # An explicit flag always wins.
+        if record is None:
+            record = os.environ.get("ROQSIM_RECORD") or None
+            if record:
+                record = str(_session_path(record))
+        if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
+            capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
 
-    # The rate is checked against the *compiled* timestep, which is the only authority: a world can
-    # inherit it from a baked MJCF rather than declaring it in `sim:`.
-    rate = snap_fps(capture_fps, dt)
-    if record or not headless:
-        rate.report(engine.logger or log)
+        # The rate is checked against the *compiled* timestep, which is the only authority: a world can
+        # inherit it from a baked MJCF rather than declaring it in `sim:`.
+        rate = snap_fps(capture_fps, dt)
+        if record or not headless:
+            rate.report(engine.logger or log)
 
-    # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
-    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
-    # kills F9: the window goes on setting the flag on an object the loop no longer holds.
-    recorder = None
-    if headless:
-        if record:
-            recorder = StateRecorder(
+        # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
+        # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
+        # kills F9: the window goes on setting the flag on an object the loop no longer holds.
+        recorder = None
+        if headless:
+            if record:
+                recorder = StateRecorder(
+                    engine.ctx,
+                    record,
+                    rate,
+                    world=target,
+                    overrides=overrides,
+                    config=engine.config,
+                    camera=False,
+                    sim_poses=env_flag("ROQSIM_SIM_POSES"),
+                    logger=engine.logger or log,
+                )
+        else:
+            # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
+            # run. It costs nothing until a take starts -- recording is a memcpy.
+            recorder = TakeRecorder(
                 engine.ctx,
-                record,
+                record or _DEFAULT_RECORD,
                 rate,
                 world=target,
                 overrides=overrides,
                 config=engine.config,
-                camera=False,
-                sim_poses=env_flag("ROQSIM_SIM_POSES"),
+                camera=True,
                 logger=engine.logger or log,
             )
-    else:
-        # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
-        # run. It costs nothing until a take starts -- recording is a memcpy.
-        recorder = TakeRecorder(
-            engine.ctx,
-            record or _DEFAULT_RECORD,
-            rate,
-            world=target,
-            overrides=overrides,
-            config=engine.config,
-            camera=True,
-            logger=engine.logger or log,
-        )
-        if record:
-            recorder.start()
+            if record:
+                recorder.start()
+    except BaseException:
+        if loading_view is not None:
+            close_viewer(loading_view)
+        engine.shutdown()
+        raise
 
     # The handlers stay installed across the teardown, not just the loop: the flush is the part that must
     # survive a signal, and restoring the defaults first would mean a SIGTERM arriving during
@@ -788,18 +801,27 @@ def run(
             # signal, which the escalation counter reads as insisting -- and an interrupt raised in
             # here does not end a run early, it ends it *without its results*: the capture, and the
             # CSV a scoring plugin writes in shutdown(), are both produced below this line.
+            #
+            # The shutdown is a `finally` of its own: a recording that cannot be written (a disk
+            # that filled up before close) must still leave the plugins shut down, or the CSV a
+            # scoring plugin writes there is lost with the recording and a bridge thread keeps the
+            # process alive.
             with _deaf_to_stop_signals(engine.logger or log):
-                written = recorder.close() if recorder is not None else None
-                _export_capture_at_exit(engine, recorder, target, overrides, engine.logger or log)
-                # Once, here, because every stop that matters reaches this block and because the
-                # fact is about the whole run. Silent unless the run genuinely failed its rate:
-                # the line's presence is the signal, so it must not appear on healthy runs.
-                _pacing = pacer.report_line()
-                if _pacing:
-                    (engine.logger or log).warning("%s", _pacing)
-                if profile:
-                    print(engine.format_timing(), file=sys.stderr)
-                engine.shutdown()
+                try:
+                    written = recorder.close() if recorder is not None else None
+                    _export_capture_at_exit(
+                        engine, recorder, target, overrides, engine.logger or log
+                    )
+                    # Once, here, because every stop that matters reaches this block and because the
+                    # fact is about the whole run. Silent unless the run genuinely failed its rate:
+                    # the line's presence is the signal, so it must not appear on healthy runs.
+                    _pacing = pacer.report_line()
+                    if _pacing:
+                        (engine.logger or log).warning("%s", _pacing)
+                    if profile:
+                        print(engine.format_timing(), file=sys.stderr)
+                finally:
+                    engine.shutdown()
 
     # After the loop and after shutdown: the render is outside the measurement window entirely, which is
     # what lets --video cost the run nothing. Not in the finally, so an exception that ended the run is
