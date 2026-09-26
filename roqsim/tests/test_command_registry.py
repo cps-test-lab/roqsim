@@ -165,10 +165,15 @@ def test_every_usage_line_names_the_command_the_user_types(helps):
     """argparse takes its program name from argv[0], which the tree sets to the command path; a
     parser that names its own `prog` -- or runs in another interpreter -- has to say the same thing,
     or its usage line sends the reader off to spell an invocation that does not exist."""
+    # The launcher's own spelling is fine too: under `python -m roqsim.commands` (which is how the
+    # helps here are captured) argv[0] is that, and a parser naming `roqsim <path>` outright is right
+    # under either launcher.
     wrong = {
         path: out.splitlines()[:2]
         for path, out in helps.items()
-        if f"usage: roqsim {path}" not in out.lower()
+        if not re.search(
+            rf"usage: (roqsim|python -m roqsim\.commands) {re.escape(path)}(\s|$)", out.lower()
+        )
     }
     assert not wrong, f"these usage lines do not name `roqsim <path>`: {wrong}"
 
