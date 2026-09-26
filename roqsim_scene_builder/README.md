@@ -80,4 +80,4 @@ context is held in the long-lived server — and needs no display at all. Offscr
 `egl` backend by default (override with `MUJOCO_GL`, e.g. `osmesa` on a GPU-less host).
 
 The floorplan authoring loop (2D sketch → generate → 3D review, until pass) is the `scene-update`
-skill. See `roqsim/docs/scene_builder.rst` for the full contract and internals.
+skill. See `docs/scene_builder.rst` for the full contract and internals.
