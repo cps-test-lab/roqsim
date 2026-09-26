@@ -145,8 +145,9 @@ from roqsim.flex import entity_flex_ids, flex_label, lift_top_level_flexes
 from roqsim.manifest import expand_manifest, load_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
-from ._arm import prefixed_joints, rpy_to_quat
+from ._arm import prefixed_joints
 
 # Per-model defaults so a world only needs `{model: ...}`. Keyed by model file stem.
 _DEFAULT_BASE_BODY = {

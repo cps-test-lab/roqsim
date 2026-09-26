@@ -22,8 +22,9 @@ import numpy as np
 
 from roqsim.context import RobotHandle
 from roqsim.kinematics import body_twist
+from roqsim.pose import yaw_of
 
-from ..control import LAWS, yaw_from_quat
+from ..control import LAWS
 from . import NavOutput, OutputUnavailable
 
 
@@ -95,7 +96,7 @@ class DriveOutput(NavOutput):
         """
         data = ctx.data
         x, y = float(data.xpos[self._bid][0]), float(data.xpos[self._bid][1])
-        return x, y, yaw_from_quat(data.xquat[self._bid])
+        return x, y, yaw_of(data.xquat[self._bid])
 
     def twist(self, ctx):
         """Ground-truth :class:`~roqsim.kinematics.Twist`, for a caller that wants what the base is
