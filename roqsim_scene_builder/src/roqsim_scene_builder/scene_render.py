@@ -51,13 +51,15 @@ def _rst() -> str:
 def render_scene(
     target: str = "",
     state: str = "",
-    at: float | None = None,
+    at: float | str | None = None,
     out: str = "",
     size: str = "960x540",
     view: list[str] | None = None,
-    focus: str = "",
+    focus: list[str] | None = None,
     camera: str = "",
     no_ceiling: bool = False,
+    geomgroup: list[int] | None = None,
+    set: list[str] | None = None,  # named for the CLI's --set, which it forwards
     inline: bool = False,
 ) -> dict | ToolResult:
     """Render a world, model or recorded moment to a PNG and return where it is.
@@ -72,9 +74,10 @@ def render_scene(
             because a recording names the world it came from.
         state: a recording written by ``roqsim sim --record``. With this, the image is a moment from that
             run rather than the world's initial state.
-        at: which moment, in *simulated* seconds. Snaps to the nearest recorded sample and reports which
-            one it used, so a caller can see it landed a few milliseconds off rather than assume it did
-            not. Omit to get the last sample -- "what did this run end up looking like".
+        at: which moment: *simulated* seconds, or a named moment -- ``"onset"`` (where the run first
+            moves) or ``"onset+2.5"`` / ``"onset-1"``. Snaps to the nearest recorded sample and reports
+            which one it used, so a caller can see it landed a few milliseconds off rather than assume
+            it did not. Omit to get the last sample -- "what did this run end up looking like".
         out: where to write the PNG. Defaults to a temp file, whose path comes back in the result.
         size: ``WxH``. Smaller is cheaper to look at: 640x360 is roughly 310 image tokens against 700
             for 960x540.
@@ -82,12 +85,16 @@ def render_scene(
             (``lookat``, ``distance``, ``azimuth``, ``elevation``, ``track``, ``follow_heading``). Each
             key given replaces just that one, so ``["elevation=-85"]`` looks down without disturbing the
             rest. A vector is written comma- or space-separated: ``["lookat=-3.2 -1.3 1.9"]``.
-        focus: an entity or body to frame on, searching for a viewpoint with a clear line of sight --
-            which is what you want indoors, where a wall is usually between the default camera and the
-            thing you care about.
+        focus: entities or bodies to frame on (one or several), searching for a viewpoint with a clear
+            line of sight -- which is what you want indoors, where a wall is usually between the default
+            camera and the thing you care about.
         camera: render through a fixed MJCF ``<camera>`` (what a robot's own camera sees). Owns its pose,
             so it cannot be combined with ``view``/``focus``.
         no_ceiling: drop a roofed world's ceiling, to look into it from above.
+        geomgroup: draw only these geom groups. A model shows group 2 (visual meshes) and collides
+            group 3 (physics primitives), which MuJoCo does not draw: ``[3]`` is the collider alone,
+            ``[2, 3]`` the collider over the mesh.
+        set: world overrides as ``PATH=VALUE`` strings, e.g. ``["components.floorplan.size=4.0"]``.
         inline: return the image itself so it appears in the conversation, instead of only its path.
             Costs the image's tokens; the default costs about forty.
 
@@ -122,11 +129,16 @@ def render_scene(
     if view:
         argv += ["--view", *view]
     if focus:
-        argv += ["--focus", focus]
+        # A bare string is one name, not a sequence of characters.
+        argv += ["--focus", *([focus] if isinstance(focus, str) else focus)]
     if camera:
         argv += ["--camera", camera]
     if no_ceiling:
         argv.append("--no-ceiling")
+    if geomgroup:
+        argv += ["--geomgroup", ",".join(str(int(g)) for g in geomgroup)]
+    for override in set or []:
+        argv += ["--set", override]
 
     env = dict(os.environ)
     env.setdefault("MUJOCO_GL", _DEFAULT_GL)

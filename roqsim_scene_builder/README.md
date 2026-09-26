@@ -64,9 +64,10 @@ sketch_floorplan_by_human(message="", initial=None, timeout_s=None, title="") ->
         "markers": [{"id", "x_m","y_m", "comment", "in_room", "yaw_deg"?}]}  # props; in_room computed,
                                                                    # yaw_deg only if a heading was dragged
 
-render_scene(target="", state="", at=None, out="", size="960x540", view=None, focus="",
-             camera="", no_ceiling=False, inline=False) -> dict
-    # state/at: a moment from an `roqsim sim --record` recording, in simulated seconds (nearest sample)
+render_scene(target="", state="", at=None, out="", size="960x540", view=None, focus=None,
+             camera="", no_ceiling=False, geomgroup=None, set=None, inline=False) -> dict
+    # state/at: a moment from an `roqsim sim --record` recording, in simulated seconds or "onset[+N]"
+    # geomgroup: [3] = the collision model alone; set: ["PATH=VALUE", ...] world overrides
     # view: KEY=VALUE camera overrides; a vector is comma- or space-separated, "lookat=-3.2 -1.3 1.9"
     -> {"path", "width", "height", "camera", "nbody", "ngeom"}
        # + {"sim_time", "sample_index", "requested_at", "at_error"} when rendering from a recording
