@@ -10,8 +10,10 @@ CC-BY-SA** (redistributable *with* attribution). Nothing under non-commercial (C
 no-derivatives (CC-*-ND) terms is added — the same bar as `roqsim_assets`.
 
 **Every locomotion clip in `models/anims/` is CC-BY, so attribution is a condition of
-redistribution, not a courtesy.** They derive from CARLA. Keep this file (or an equivalent notice)
-with any redistribution of the package or its assets.
+redistribution, not a courtesy.** They derive from CARLA. Each clip set's folder carries a
+`CREDITS.txt` with that attribution, and the wheel ships both those files and this one (in its
+`dist-info/licenses/`). Keep this file (or an equivalent notice) with any redistribution of the
+package or its assets.
 
 ## CARLA — *all* locomotion clips (committed, CC-BY 4.0)
 
