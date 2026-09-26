@@ -477,7 +477,50 @@ def run_state(
     decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    rec = open_recording(state)
+    # Closed on every way out: a replayed sensor holds what a live one holds (a camera's renderer),
+    # and only the plugins' shutdown releases it -- see :meth:`roqsim.recording.Recording.close`.
+    with open_recording(state) as rec:
+        return _state_of(
+            rec,
+            target,
+            bodies=bodies,
+            sites=sites,
+            joints=joints,
+            mjcf_sensors=mjcf_sensors,
+            sensors=sensors,
+            twist=twist,
+            contacts=contacts,
+            at=at,
+            start=start,
+            stop=stop,
+            out=out,
+            check=check,
+            onset=onset,
+            onset_select=onset_select,
+            decimate=decimate,
+        )
+
+
+def _state_of(
+    rec,
+    target: str | None,
+    *,
+    bodies,
+    sites,
+    joints,
+    mjcf_sensors,
+    sensors,
+    twist: bool,
+    contacts: bool,
+    at: float | None,
+    start: float | None,
+    stop: float | None,
+    out: str | Path | None,
+    check: bool,
+    onset: bool,
+    onset_select: str,
+    decimate: int | None,
+) -> dict:
     out_path = Path(out) if out and str(out) != "-" else None
 
     # Both of these answer from the samples alone, so they are handled before the world is rebuilt:
