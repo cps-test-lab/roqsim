@@ -596,9 +596,10 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   subscribed to ``/odom`` — and because it buys nothing for a cheap payload. Set on the camera plugins'
   ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points``.
 
-Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. For a
-second robot add another with ``namespace: robot2``: it serves that robot's endpoints and prefixes
-its topics/frames (``/robot2/...``). See :doc:`architecture` for how the bridge machinery works.
+Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. One
+bridge serves every robot: give each spawn its own ``namespace:`` and its topics and frames land
+under ``/<namespace>/...`` (see :doc:`architecture` §13, *Namespacing*, for the bridge's own
+``namespace`` and its ``owner`` filter).
 
 ``RobotHandle(name, drive(vx, vy, w), read_odom() -> (x, y, yaw, vx, vy, w))`` remains the uniform way
 a controller exposes a robot to *in-process* consumers (teleop, the standalone driver).

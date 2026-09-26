@@ -1,6 +1,6 @@
-# TurtleBot 4 + ROS 2 bridge — the Milestone 1 use case (driven via /cmd_vel, nav2-ready).
+# TurtleBot 4 + ROS 2 bridge, driven via /cmd_vel and nav2-ready.
 #
-#   ros2 run roqsim_ros roqsim_bridge --world <this file>
+#   ros2 run roqsim_ros_bridge roqsim_bridge --world <this file>
 #   # then, in another sourced shell:
 #   ros2 topic echo /odom        ros2 topic echo /scan
 #   ros2 topic pub /cmd_vel geometry_msgs/Twist '{linear: {x: 0.2}, angular: {z: 0.3}}'
@@ -20,8 +20,9 @@ components:
 
   # The bridge reads the robot's declared endpoints (cmd_vel in; odom+tf, scan, joint_states out)
   # from ctx.interface -- topics/types/frames/rates are declared on the robot, not configured here.
-  # Single robot => bare topics (/cmd_vel, /odom, ...). For a second robot add another ros2_bridge
-  # with `namespace: robot2`, which serves that robot and prefixes its topics/frames (/robot2/...).
+  # Single robot => bare topics (/cmd_vel, /odom, ...). For a second robot give each spawn_robot its
+  # own `namespace:`; this one bridge then serves both under /<namespace>/... A bridge's own
+  # `namespace` is a global prefix over every endpoint it serves.
   - ros2_bridge: {}
 
   - sim_interfaces: {}
