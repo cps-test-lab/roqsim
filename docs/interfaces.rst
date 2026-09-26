@@ -47,7 +47,11 @@ Stating a joint's gains (``actuators:``)
 A spawn plugin's ``actuators:`` block says what law the model's joints run under, and with which
 gains, without editing the shared model file. Start from the names it keys on::
 
-   roqsim catalog model ur5e     # lists the actuators, and the joint each drives
+   roqsim scenes describe roqsim_manipulation_assets:ur10e_demo --overridable 'ur10e_*'
+       # overridable.targets.actuator: every actuator, with the spawn's prefix (ur10e_wrist_3)
+
+The ``each:`` keys are the model's own names, without the prefix (``wrist_3``); they are the
+``<actuator>`` names in the MJCF that ``roqsim catalog model <model>`` locates.
 
 Then state the law once, and only what differs per actuator:
 
