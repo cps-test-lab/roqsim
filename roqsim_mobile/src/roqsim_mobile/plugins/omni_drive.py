@@ -87,7 +87,8 @@ the motive force: at the model's wheel friction they transmit almost nothing. Ea
 is derived from its joint axis in the base frame at configure time rather than hardcoded, because
 which way "positive" spins depends on how the source URDF mirrored that wheel.
 
-**Odometry.** Integrated from the base's **achieved** twist, so a base held against a wall reports no progress.
+**Odometry.** Integrated from the base's **achieved** twist, in the odom frame -- the pose the base
+was spawned at, as ``diff_drive`` reports it -- so a base held against a wall reports no progress.
 Note the consequence: with no wheel slip in the model, wheel-encoder odometry and ground truth
 coincide by construction. This port therefore cannot be used to study odometry drift -- a
 skid-steer's characteristic error source is absent here by design, not by accident.
@@ -159,7 +160,7 @@ class OmniDrivePlugin(Plugin):
 
         self._target = np.zeros(3)  # commanded body-frame [vx, vy, wz], clipped
         self._cmd = np.zeros(3)  # ramped body-frame command actually written
-        self._odom = np.zeros(6)  # x, y, yaw, vx, vy, wz  (pose world, twist body)
+        self._odom = np.zeros(6)  # x, y, yaw, vx, vy, wz  (pose in the odom frame, twist body)
         self._jpos = np.zeros(len(self._js_names))
         self._jvel = np.zeros(len(self._js_names))
         # resolved in configure()
@@ -464,9 +465,13 @@ class OmniDrivePlugin(Plugin):
         vx_b = c * vx_w + s * vy_w
         vy_b = -s * vx_w + c * vy_w
 
+        # The odom frame is the spawn pose: the body twist is integrated through the ODOM yaw, as
+        # diff_drive does. Integrating the world-frame velocity here while the yaw started at zero
+        # would report a base spawned facing +y as strafing when it drives forward.
         o = self._odom
-        o[0] += vx_w * ctx.dt
-        o[1] += vy_w * ctx.dt
+        co, so = np.cos(o[2]), np.sin(o[2])
+        o[0] += (co * vx_b - so * vy_b) * ctx.dt
+        o[1] += (so * vx_b + co * vy_b) * ctx.dt
         o[2] = (o[2] + wz * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4], o[5] = vx_b, vy_b, wz
 
