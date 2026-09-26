@@ -27,7 +27,10 @@ from roqsim.config import load_config, load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.models import resolve_model
 
-WORLD = Path(__file__).resolve().parents[1] / "src/roqsim_aerial/worlds/crazyflie_2_demo.yaml"
+WORLD = (
+    Path(__file__).resolve().parents[1]
+    / "src/roqsim_aerial/worlds/crazyflie_2_demo.yaml"
+)
 
 #: From MuJoCo Menagerie @ da76818e, which took them from the Crazyflie datasheet and MIT's system
 #: identification. Not measured from our model -- that would make the test tautological.
@@ -43,12 +46,13 @@ def _model():
 
 
 def _flown(world=None):
-    engine = Engine(
-        load_config(WORLD) if world is None else load_config_from_dict(world, base_dir=WORLD.parent)
-    )
+    engine = Engine(load_config(WORLD) if world is None
+                    else load_config_from_dict(world, base_dir=WORLD.parent))
     engine.setup()
     engine.reset()
-    controller = next(p for p in engine.plugins if type(p).__name__ == "QuadrotorControllerPlugin")
+    controller = next(
+        p for p in engine.plugins if type(p).__name__ == "QuadrotorControllerPlugin"
+    )
     return engine, controller
 
 
@@ -88,13 +92,8 @@ def test_moment_authority_is_tuned():
     """
     model = _model()
     gears = [
-        abs(
-            float(
-                model.actuator_gear[mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)][
-                    3 + i
-                ]
-            )
-        )
+        abs(float(model.actuator_gear[mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_ACTUATOR, name)][3 + i]))
         for i, name in enumerate(("x_moment", "y_moment", "z_moment"))
     ]
     assert gears == pytest.approx(np.array(MOMENT_GEARS), rel=1e-6)
@@ -115,13 +114,11 @@ def test_demo_world_asks_for_air():
 def test_warns_in_a_vacuum(caplog):
     world = {
         "sim": {},  # deliberately no physics block
-        "components": [
-            {
-                "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_"},
-                "name": "drone",
-                "components": [{"quadrotor_controller": {}}],
-            }
-        ],
+        "components": [{
+            "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_"},
+            "name": "drone",
+            "components": [{"quadrotor_controller": {}}],
+        }],
     }
     with caplog.at_level(logging.WARNING):
         engine, _ = _flown(world)
@@ -151,9 +148,7 @@ def test_translates_to_setpoint(target):
         controller.set_target(*target)
         pos = _fly(engine, controller, 10.0)
         error = np.linalg.norm(pos - np.array(target))
-        assert error < 0.05, (
-            f"settled {error:.3f} m from {target}, at {tuple(round(v, 3) for v in pos)}"
-        )
+        assert error < 0.05, f"settled {error:.3f} m from {target}, at {tuple(round(v,3) for v in pos)}"
     finally:
         engine.shutdown()
 
