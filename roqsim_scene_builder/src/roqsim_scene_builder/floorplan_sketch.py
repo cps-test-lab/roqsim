@@ -22,6 +22,7 @@ def sketch_floorplan_by_human(
     initial: dict | None = None,
     timeout_s: float | None = None,
     title: str = "",
+    size: str = "760x760",
 ) -> dict:
     """Ask a human to author a 2D floorplan in a native top-view window; return the structured sketch.
 
@@ -102,6 +103,7 @@ def sketch_floorplan_by_human(
             ``description`` seeds the scene-description box. Its top-level ``comment`` is ignored (the
             human's comment box always opens empty).
         timeout_s: seconds to wait for a sketch before raising ``TimeoutError`` (default 600).
+        size: the canvas size in pixels, ``WxH`` (default ``760x760``), as the CLI's ``--size``.
 
     Returns:
         ``{"comment": str, "description"?: str, "rooms": [...], "lines": [...], "doors": [...],
@@ -123,7 +125,7 @@ def sketch_floorplan_by_human(
         TimeoutError: if no sketch arrives within the timeout.
         RuntimeError: if the window closed without sending or failed to start.
     """
-    extra: list[str] = ["--message", message]
+    extra: list[str] = ["--message", message, "--size", size]
     if title:
         extra += ["--title", title]
 

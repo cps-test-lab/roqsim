@@ -84,7 +84,7 @@ The ``review_scene_by_human`` tool
 
     review_scene_by_human(target: str, message: str = "", settle_steps: int = 0,
                           timeout_s: float | None = None, title: str = "",
-                          focus_object: str = "") -> dict
+                          focus_object: str = "", size: str = "960x720") -> dict
 
 * **target** — world / MJCF / model reference (above). A path to a missing file fails loudly.
 * **title** — a short heading atop the panel in a larger font (the *what* under review). Optional.
@@ -99,6 +99,7 @@ The ``review_scene_by_human`` tool
   model preview for a bare model ref, otherwise the world's ``sim.view`` or MuJoCo's default. An
   unknown name is not an error: it warns and falls back to the automatic camera.
 * **timeout_s** — seconds to wait for a verdict before ``TimeoutError`` (default 600).
+* **size** — the 3D view in pixels, ``WxH`` (default ``960x720``), the CLI's ``--size``.
 
 Returns::
 
@@ -168,7 +169,8 @@ The ``sketch_floorplan_by_human`` tool
 .. code-block:: text
 
     sketch_floorplan_by_human(message: str = "", initial: dict | None = None,
-                              timeout_s: float | None = None, title: str = "") -> dict
+                              timeout_s: float | None = None, title: str = "",
+                              size: str = "760x760") -> dict
 
 A 2D top-view window with five modes — **draw** a wall (either **drag** freehand, straightened into
 lines the instant the pencil lifts, or **click** a start point then **click** the end for one
