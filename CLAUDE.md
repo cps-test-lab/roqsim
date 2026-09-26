@@ -26,7 +26,9 @@ first** — it is the source of truth for architecture, the plugin lifecycle, an
   own housing (`exclude_body: mount`; the OS32C's is primitives from its data sheet, no mesh being
   redistributable) live there, and a robot mounts one from its manifest with a nested `spawn_sensor`
   at the vendor's parent frame and joint origin, overriding a value only where its vendor
-  configuration differs.
+  configuration differs. The RealSense cameras (`realsense_d415`/`realsense_d435`/`realsense_d455`)
+  follow the same law: `mount` is the vendor `camera_link`, and each publishes its vendor frame chain;
+  a retired model name (`d435`) is refused at load naming its replacement.
 - `roqsim_mobile/` — mobile-robot plugins + assets (floorplan, spawn_robot, diff_drive, omni_drive,
   wheeled base models, and demo worlds). Depends on `roqsim` + `roqsim_sensors`. Wheeled
   **bases only**.

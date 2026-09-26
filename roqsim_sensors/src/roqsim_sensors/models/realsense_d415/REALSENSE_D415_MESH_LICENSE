@@ -1,4 +1,4 @@
-The visual mesh roqsim_sensors/models/d415/meshes/d415.obj is converted (STL -> OBJ, decimated to
+The visual mesh roqsim_sensors/models/realsense_d415/meshes/d415.obj is converted (STL -> OBJ, decimated to
 ~12.7k triangles for real-time rendering, shipped in metres) from d415.stl in:
 
     https://github.com/IntelRealSense/realsense-ros
@@ -22,6 +22,8 @@ The mesh keeps the source's native frame -- x = the ~99 mm long bar the lenses a
 y = height ~23 mm, z = depth ~20 mm with +z the lens face's outward normal -- the same convention as
 the d435 and d455 meshes, so no reorientation was applied.
 
-The `d415_color` camera pose baked into roqsim_sensors/models/d415/d415.xml is placed on the front lens
-face in that mesh-local frame; its `fovy` is the D415 colour vertical FOV from the datasheet, not a
-value measured off the mesh.
+Every pose in roqsim_sensors/models/realsense_d415/realsense_d415.xml and in the `frames:` block of
+realsense_d415.manifest.yaml -- the mesh in camera_link, the `d415_color` camera at the colour
+optical frame, the depth frames -- is read from the same repository's
+realsense2_description/urdf/_d415.urdf.xacro by external/convert/build_realsense_devices.py, not
+measured off the mesh. The camera's `fovy` is the D415 colour vertical FOV from the datasheet.

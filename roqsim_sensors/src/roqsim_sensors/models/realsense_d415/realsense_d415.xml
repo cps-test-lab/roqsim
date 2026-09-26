@@ -1,0 +1,31 @@
+<mujoco model="realsense_d415">
+  <!--
+    Intel RealSense D415: visual mesh + a colour camera, mounted by `spawn_sensor` at the
+    vendor joint origin of `<name>_link`. Written by external/convert/build_realsense_devices.py from
+    realsense2_description/urdf/_d415.urdf.xacro @ realsense-ros 53169f3 (tag 4.56.1);
+    see REALSENSE_D415_MESH_LICENSE.
+
+    The `mount` body IS `camera_link`: x forward (the lens normal), y left, z up. The mesh keeps
+    its own axes and carries the vendor mesh-in-link origin as its pose; the front plate and the
+    collision box were measured on the converted mesh and ride the same pose. `d415_color` is
+    the vendor `camera_color_optical_frame`, turned into MuJoCo's camera convention (looks down -z,
+    +y up). The manifest's `frames:` publishes the vendor chain from this body.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <mesh name="d415_mesh" file="d415.obj"/>
+    <material name="d415_body" rgba="0.75 0.75 0.77 1" specular="0.4" shininess="0.3"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <geom name="d415_visual" type="mesh" mesh="d415_mesh" material="d415_body"
+            pos="0.00987 -0.02 0" quat="0.5 0.5 0.5 0.5" contype="0" conaffinity="0"/>
+      <geom name="d415_collision" type="box" pos="-0.00013 -0.02 0" quat="0.5 0.5 0.5 0.5"
+            size="0.0495 0.0115 0.01" group="3"/>
+      <camera name="d415_color" pos="0 0.015 0" xyaxes="0 -1 0 0 0 1"
+              fovy="42.5" resolution="640 480"/>
+    </body>
+  </worldbody>
+</mujoco>

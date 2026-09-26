@@ -1,11 +1,11 @@
 """The D435i's integrated IMU: it arrives with the model, where the vendor says it sits.
 
-Two things are pinned here that no reader can check by eye. The mount pose in
-``d435.manifest.yaml`` is re-derived from the published ``realsense2_description`` constants -- and
-so is the ``d435_color`` camera pose the model carries, which is what shows the same
-transform chain reproduces a number nobody is arguing about. And a device on a fixed mount must read
-1 g: MuJoCo computes no acceleration for a body welded to the world, so without the plugin's
-closed-form branch a tripod-mounted camera would report free fall forever.
+The mount is the vendor ``camera_link``, so the vendor's own extrinsics hold as written: the IMU is
+the gyro optical frame of the manifest's ``frames:`` chain, and ``d435_color`` is the colour optical
+frame. Both are checked here against the published ``realsense2_description`` constants, so a chain
+that drifted from the vendor would fail. And a device on a fixed mount must read 1 g: MuJoCo
+computes no acceleration for a body welded to the world, so without the plugin's closed-form branch
+a tripod-mounted camera would report free fall forever.
 """
 
 from __future__ import annotations
@@ -22,12 +22,11 @@ from roqsim.engine import Engine
 
 # -- the vendor's own numbers, and only these ------------------------------------------------
 # realsense2_description/urdf/_d435.urdf.xacro
-D435_ZERO_DEPTH_TO_GLASS = 4.2e-3
-D435_GLASS_TO_FRONT = 0.1e-3
-D435_CAM_DEPTH_PY = 0.0175
 D435_CAM_DEPTH_TO_COLOR_OFFSET = 0.015
 # realsense2_description/urdf/_d435i_imu_modules.urdf.xacro -- accel and gyro frames are co-located
 D435I_IMU_XYZ = (-0.01174, -0.00552, 0.0051)
+# Every optical joint of the macro: rpy (-pi/2, 0, -pi/2) from its parent frame.
+OPTICAL_RPY = (-math.pi / 2, 0.0, -math.pi / 2)
 
 
 def _rot(roll: float, pitch: float, yaw: float) -> np.ndarray:
@@ -39,24 +38,17 @@ def _rot(roll: float, pitch: float, yaw: float) -> np.ndarray:
     return mat.reshape(3, 3)
 
 
-def _link_to_mesh(p_link) -> np.ndarray:
-    """A point in ``camera_link`` expressed in the frame this MJCF's ``mount`` body uses.
-
-    The mesh is placed in ``camera_link`` at ``(zero_depth_to_glass + glass_to_front, -cam_depth_py,
-    0)`` with ``rpy = (pi/2, 0, pi/2)``, and this model's body-local axes are the mesh's own -- so the
-    inverse of that placement is the whole conversion.
-    """
-    offset = np.array([D435_ZERO_DEPTH_TO_GLASS + D435_GLASS_TO_FRONT, -D435_CAM_DEPTH_PY, 0.0])
-    return _rot(math.pi / 2, 0.0, math.pi / 2).T @ (np.asarray(p_link, dtype=float) - offset)
-
-
 def _spawn(*, overrides=None):
     cfg = load_config_from_dict(
         {
             "sim": {},
             "components": [
                 {
-                    "spawn_sensor": {"model": "d435", "prefix": "d435_", "pos": [1.0, 0.0, 0.5]},
+                    "spawn_sensor": {
+                        "model": "realsense_d435",
+                        "prefix": "d435_",
+                        "pos": [1.0, 0.0, 0.5],
+                    },
                     "name": "cam",
                 }
             ],
@@ -75,33 +67,37 @@ def _imu(engine) -> ImuPlugin | None:
     return next((p for p in engine.plugins if isinstance(p, ImuPlugin)), None)
 
 
+def _in_mount(model, data, site_or_cam_pos, site_or_cam_mat):
+    """A world pose expressed in the ``d435_mount`` body (the vendor ``camera_link``)."""
+    mount = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_mount")
+    r = data.xmat[mount].reshape(3, 3)
+    return r.T @ (site_or_cam_pos - data.xpos[mount]), r.T @ site_or_cam_mat.reshape(3, 3)
+
+
 # -- provenance ------------------------------------------------------------------------------
 
 
-def test_the_manifest_pose_is_the_vendors_extrinsic_put_through_the_models_own_transform():
+def test_the_imu_is_the_vendors_gyro_optical_frame_in_camera_link():
     engine = _spawn()
-    plugin = _imu(engine)
-    assert plugin is not None, "the d435 manifest must ship the D435i's IMU"
-    assert np.allclose(plugin.config["pos"], _link_to_mesh(D435I_IMU_XYZ), atol=1e-5)
-
-
-def test_the_same_chain_reproduces_the_camera_pose_the_model_already_had():
-    """The check that makes the one above worth trusting: a number nobody derived for this test."""
-    model = _spawn().ctx.model
-    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "d435_d435_color")
-    assert cam >= 0
-    expected = _link_to_mesh([0.0, D435_CAM_DEPTH_TO_COLOR_OFFSET, 0.0])
-    assert np.allclose(model.cam_pos[cam], expected, atol=1e-6)
-
-
-def test_the_site_is_built_on_the_mount_at_that_offset():
-    engine = _spawn()
-    model = engine.ctx.model
+    model, data = engine.ctx.model, engine.ctx.data
     site = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, _imu(engine)._resolved_site)
     assert site >= 0
     body = int(model.site_bodyid[site])
     assert mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) == "d435_mount"
-    assert np.allclose(model.site_pos[site], _link_to_mesh(D435I_IMU_XYZ), atol=1e-5)
+    pos, rot = _in_mount(model, data, data.site_xpos[site], data.site_xmat[site])
+    assert np.allclose(pos, D435I_IMU_XYZ, atol=1e-9)
+    assert np.allclose(rot, _rot(*OPTICAL_RPY), atol=1e-9)
+
+
+def test_the_colour_camera_is_the_vendors_colour_optical_frame():
+    """MuJoCo's camera looks down -z with +y up, the optical frame down +z with +y down."""
+    engine = _spawn()
+    model, data = engine.ctx.model, engine.ctx.data
+    cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "d435_d435_color")
+    assert cam >= 0
+    pos, rot = _in_mount(model, data, data.cam_xpos[cam], data.cam_xmat[cam])
+    assert np.allclose(pos, [0.0, D435_CAM_DEPTH_TO_COLOR_OFFSET, 0.0], atol=1e-9)
+    assert np.allclose(rot @ np.diag([1.0, -1.0, -1.0]), _rot(*OPTICAL_RPY), atol=1e-9)
 
 
 def test_the_reported_frame_is_the_optical_one_the_driver_stamps():
@@ -113,6 +109,15 @@ def test_the_reported_frame_is_the_optical_one_the_driver_stamps():
     assert hints["topic"] == "camera/imu"
     assert hints["frame_id"] == "camera_imu_optical_frame"
     assert endpoint.lazy is True
+
+
+def test_the_imu_frame_is_published_on_the_chain():
+    engine = _spawn()
+    frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
+    links = {(t["parent"], t["child"]) for t in frames.backend["ros2"]["static_tf"]}
+    assert ("camera_link", "camera_gyro_frame") in links
+    assert ("camera_gyro_frame", "camera_gyro_optical_frame") in links
+    assert ("camera_gyro_optical_frame", "camera_imu_optical_frame") in links
 
 
 # -- what it reports -------------------------------------------------------------------------

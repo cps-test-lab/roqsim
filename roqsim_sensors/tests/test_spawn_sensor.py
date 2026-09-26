@@ -1,4 +1,4 @@
-"""spawn_sensor: mounts the d435 model at a pose and auto-brings its capture plugin via manifest."""
+"""spawn_sensor: mounts the realsense_d435 model at a pose and auto-brings its capture plugin."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ def _world(**spawn_config):
         "sim": {},
         "plugins": [
             {
-                "spawn_sensor": {"model": "d435", **spawn_config},
+                "spawn_sensor": {"model": "realsense_d435", **spawn_config},
                 "name": "d435",
             },
         ],
@@ -39,8 +39,8 @@ def test_manifest_auto_brings_realsense_d435_capture():
     rgb = _endpoint(engine, "image").read()
     assert rgb.shape == (480, 640, 3) and rgb.dtype == np.uint8
     assert _endpoint(engine, "camera_info") is not None
-    # The d435 manifest asks for colour only: depth/points are opt-in per world, so a plain
-    # `spawn_sensor: {model: d435}` must not start paying for a 307k-point cloud.
+    # The realsense_d435 manifest asks for colour only: depth/points are opt-in per world, so a plain
+    # `spawn_sensor: {model: realsense_d435}` must not start paying for a 307k-point cloud.
     assert _endpoint(engine, "depth") is None
     assert _endpoint(engine, "points") is None
 
@@ -179,7 +179,7 @@ def test_manifest_fov_angles_match_capture_plugin_defaults():
 
 
 def test_show_fov_on_a_camera_model_synthesises_a_frustum():
-    # The d435 ships no _fov mesh, but it has a camera, so show_fov synthesises a translucent frustum.
+    # The realsense_d435 ships no _fov mesh, but it has a camera, so show_fov synthesises a frustum.
     import mujoco
 
     engine = Engine(_world(show_fov=True, fov_alpha=0.2, fov_range=1.5))
@@ -275,9 +275,9 @@ def test_fov_near_beyond_range_is_rejected():
     plugin = SpawnSensorPlugin()
     assert any(
         "fov_near" in e
-        for e in plugin.validate_config({"model": "d435", "fov_near": 2.0, "fov_range": 1.5})
+        for e in plugin.validate_config({"model": "realsense_d435", "fov_near": 2.0, "fov_range": 1.5})
     )
-    assert any("fov_near" in e for e in plugin.validate_config({"model": "d435", "fov_near": -0.1}))
+    assert any("fov_near" in e for e in plugin.validate_config({"model": "realsense_d435", "fov_near": -0.1}))
 
 
 def test_fov_near_without_show_fov_is_inert():
@@ -301,25 +301,25 @@ def test_mount_pose_places_the_camera_in_the_world():
     engine.reset()
     cam_id = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_CAMERA, "d435_color")
     assert cam_id >= 0
-    forward = -engine.ctx.data.cam_xmat[cam_id].reshape(3, 3)[:, 2]
-    # The standalone mounts look along +y by default (horizontal, toward a wall); roll 180 deg about
-    # x flips that view direction to world -y (and the up vector to -z).
-    assert np.allclose(forward, [0.0, -1.0, 0.0], atol=1e-6)
+    rot = engine.ctx.data.cam_xmat[cam_id].reshape(3, 3)
+    # The mount is the vendor camera_link, whose x is the lens normal: a roll of 180 deg about that
+    # axis keeps the view along world +x and turns the image upside down.
+    assert np.allclose(-rot[:, 2], [1.0, 0.0, 0.0], atol=1e-6)
+    assert np.allclose(rot[:, 1], [0.0, 0.0, -1.0], atol=1e-6)
 
 
-@needs_zivid
-def test_standalone_camera_mounts_share_the_horizontal_look_convention():
-    """All standalone camera mounts look +y (horizontal, toward a wall) with +z up at rpy [0,0,0].
+def test_a_realsense_mount_is_the_vendor_camera_link():
+    """At rpy [0, 0, 0] a RealSense mount is camera_link: the lens looks along +x with +z up.
 
-    Locks the shared convention so a model can't silently drift back to looking straight up (+z),
-    which is what a bare optical-frame mount does in a Z-up world (see the model header comments)."""
+    The mount pose is the vendor joint origin, so the frame it is stated in must be the vendor's;
+    a model that pre-rotated its mount into a display convention would publish a TF chain from a
+    body that is not the link it names."""
     import mujoco
 
     for model, camera in (
-        ("d435", "d435_color"),
-        ("d415", "d415_color"),
-        ("d455", "d455_color"),
-        ("zivid", "zivid_color"),
+        ("realsense_d435", "d435_color"),
+        ("realsense_d415", "d415_color"),
+        ("realsense_d455", "d455_color"),
     ):
         cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": model}, "name": model}]}
         engine = Engine(load_config_from_dict(cfg))
@@ -329,8 +329,24 @@ def test_standalone_camera_mounts_share_the_horizontal_look_convention():
         cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, camera)
         rot = engine.ctx.data.cam_xmat[cid].reshape(3, 3)
         forward, up = -rot[:, 2], rot[:, 1]
-        assert np.allclose(forward, [0.0, 1.0, 0.0], atol=1e-6), f"{model} view dir {forward}"
+        assert np.allclose(forward, [1.0, 0.0, 0.0], atol=1e-6), f"{model} view dir {forward}"
         assert np.allclose(up, [0.0, 0.0, 1.0], atol=1e-6), f"{model} up {up}"
+
+
+@needs_zivid
+def test_the_zivid_mount_keeps_its_horizontal_look_convention():
+    """The Zivid ships no ROS description, so it has no vendor link: it looks +y with +z up."""
+    import mujoco
+
+    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "zivid"}, "name": "zivid"}]}
+    engine = Engine(load_config_from_dict(cfg))
+    engine.setup()
+    engine.reset()
+    m = engine.ctx.model
+    cid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, "zivid_color")
+    rot = engine.ctx.data.cam_xmat[cid].reshape(3, 3)
+    assert np.allclose(-rot[:, 2], [0.0, 1.0, 0.0], atol=1e-6)
+    assert np.allclose(rot[:, 1], [0.0, 0.0, 1.0], atol=1e-6)
 
 
 # -- FOV occlusion (always on): camera cone clipped against world geometry ----------------------------
@@ -353,8 +369,11 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
         "plugins": [
             {
                 "spawn_sensor": {
-                    "model": "d435",
-                    "pos": [0.0, 0.0, 1.0],  # mount looks along +y (toward the wall) at rpy 0
+                    "model": "realsense_d435",
+                    # camera_link yawed +90 deg, so the lens looks along +y (toward the wall); the
+                    # offset puts the colour lens on the y axis at x = 0, as the old test had it.
+                    "pos": [-0.0175, -0.0043, 1.0],
+                    "rpy": [0.0, 0.0, 1.5707963268],
                     "show_fov": True,
                     "fov_near": 0.2,
                     "fov_range": 3.0,
@@ -441,9 +460,9 @@ def test_fov_rays_config_validation():
 
     plugin = SpawnSensorPlugin()
     assert any(
-        "fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [1, 4]})
+        "fov_rays" in e for e in plugin.validate_config({"model": "realsense_d435", "fov_rays": [1, 4]})
     )
-    assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
+    assert any("fov_rays" in e for e in plugin.validate_config({"model": "realsense_d435", "fov_rays": [8]}))
 
 
 def test_lidar_sector_is_clipped_by_the_walls():
@@ -511,7 +530,7 @@ class _LitBox(Plugin):
 def _lens_world(intrinsics, *, width, height, prefix="cam_", name="cam", scene=False, **spawn):
     entries = [{f"{__name__}:_LitBox": {}}] if scene else []
     entries.append({
-        "spawn_sensor": {"model": "d435", "prefix": prefix, **spawn,
+        "spawn_sensor": {"model": "realsense_d435", "prefix": prefix, **spawn,
                          **({"intrinsics": intrinsics} if intrinsics else {})},
         "name": name,
         "components": [{"realsense_d435": {"width": width, "height": height}}],
@@ -565,10 +584,10 @@ def test_two_mounts_of_one_model_carry_two_different_lenses():
     cfg = load_config_from_dict({
         "sim": {},
         "components": [
-            {"spawn_sensor": {"model": "d435", "prefix": "one_", "intrinsics": _CAM1},
+            {"spawn_sensor": {"model": "realsense_d435", "prefix": "one_", "intrinsics": _CAM1},
              "name": "one",
              "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
-            {"spawn_sensor": {"model": "d435", "prefix": "two_", "pos": [1, 0, 0],
+            {"spawn_sensor": {"model": "realsense_d435", "prefix": "two_", "pos": [1, 0, 0],
                               "intrinsics": _CAM4},
              "name": "two",
              "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
@@ -604,11 +623,12 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
 
     def column_profile(cx):
         lens = {"fx": f, "fy": f, "cx": cx, "cy": height / 2, "width": width, "height": height}
-        # The yaw is what puts the red box in frame, and the measurement is only the box's: with the
-        # camera facing anywhere else the profile is the room, whose shading carries no feature to
-        # correlate, and the lag it reports means nothing.
+        # The pose is what puts the red box in frame (camera_link facing +x, the colour lens on the
+        # x axis), and the measurement is only the box's: with the camera facing anywhere else the
+        # profile is the room, whose shading carries no feature to correlate, and the lag it
+        # reports means nothing.
         engine = Engine(_lens_world(lens, width=width, height=height, scene=True,
-                                    pos=[0, 0, 0.5], rpy=[0, 0, -1.5707963]))
+                                    pos=[-0.0043, 0.0175, 0.5], rpy=[0, 0, 0]))
         engine.setup()
         engine.reset()
         engine.step()
@@ -659,7 +679,7 @@ def test_a_half_stated_lens_is_refused(block, expected):
     """Partial or misspelled is refused, never quietly completed from the model's own defaults."""
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
-    errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": block})
+    errors = SpawnSensorPlugin(None).validate_config({"model": "realsense_d435", "intrinsics": block})
     assert any(expected in e for e in errors), errors
 
 
@@ -670,7 +690,7 @@ def test_a_lens_without_its_resolution_is_refused():
     from roqsim_sensors.plugins.spawn_sensor import SpawnSensorPlugin
 
     lens = {k: v for k, v in _CAM1.items() if k not in ("width", "height")}
-    errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": lens})
+    errors = SpawnSensorPlugin(None).validate_config({"model": "realsense_d435", "intrinsics": lens})
     assert any("width" in e and "height" in e for e in errors), errors
 
 
@@ -769,7 +789,7 @@ def _arm_world(**spawn_config):
         "sim": {},
         "components": [
             {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
-            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+            {"spawn_sensor": {"model": "realsense_d435", "attach_to": "wrist_3_link",
                               "attach_prefix": "ur10e_", **spawn_config},
              "name": "eye"},
         ],
@@ -819,7 +839,7 @@ def test_a_carrier_that_is_not_in_the_scene_is_refused_by_name():
     engine = Engine(load_config_from_dict({
         "sim": {},
         "components": [
-            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+            {"spawn_sensor": {"model": "realsense_d435", "attach_to": "wrist_3_link",
                               "attach_prefix": "ur10e_"}, "name": "eye"},
             {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
         ],
