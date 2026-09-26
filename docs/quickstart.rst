@@ -214,6 +214,8 @@ names the same eye position and renders the identical image, it just no longer r
 from the scene". And F8 needs a world YAML to write into — a run started from an MJCF scene or a bare
 model reference has none, and says so rather than picking a file.
 
+.. _checking-a-world:
+
 Checking a world before running it
 ----------------------------------
 
@@ -247,6 +249,43 @@ With no problems it prints the inventory instead: the entities that registered, 
 publish with their topics and types, and the model's totals. That is what the next thing gets written
 against -- a scenario that drives ``robot``, a bridge that expects ``scan`` -- without opening the
 world file and its manifests to work out what is in there.
+
+A world with a flex (MuJoCo's ``<flexcomp>``) gets two more things: what each flex compiled into, and
+what it will do -- worked out from the compiled model, before any step::
+
+   ok    loads, compiles, every component resolved, and it resets
+
+   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which ...
+         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = ...
+
+   model: 38 bodies, 1 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+          timestep 0.001s, integrator discrete (auto: flex 'blk' (elasticity))
+
+   flexes (1):
+     blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
+          modes 11.4, 13, 22.4 Hz; damping ratio 0.036, 0.0407, 0.0703 at damping 0 s (numerical share 100% at timestep 0.001 s)
+          contact solref 0.02 1 (flex), floor 0.001 s
+
+The **modes** are the flex's lowest elastic frequencies with everything else held, from a
+finite-difference stiffness and the mass matrix (:func:`roqsim.flex_modes.first_modes`); they match
+a free-vibration measurement within 1 %. The **damping ratio** of mode *i* under the ``discrete``
+integrator (the one ``sim.integrator: auto`` picks for an elastic flex) is ``(damping + timestep) *
+omega_i / 2`` while ``omega_i * timestep`` is small (within 4 % up to 0.23): the integrator damps as
+if ``<elasticity damping>`` were one timestep larger, so with no stated damping all of it is numerical
+and changes with ``sim.timestep``, and the integrator's share is at most half exactly when
+``sim.timestep`` is at or below the damping. The **contact floor** is the time constant MuJoCo
+raises a stiffer ``solref`` to: one timestep under ``discrete``, two under every other integrator.
+Both rules were measured on MuJoCo 3.14 and are stated in :mod:`roqsim.flex_modes`
+(``explain_flex``, ``solref_floor``).
+
+A ``WARN`` line names something a world that loads will do and its author probably did not mean --
+damping that is mostly the integrator's (``flex-damping``), a ``solref`` below the floor
+(``flex-solref``) -- and never makes the check fail. In ``--json`` they are the ``warnings`` list,
+each ``{"check", "message", "hint"}`` plus the ``flex`` it is about; the modes are under
+``derived.flexes``, and the inventory under ``world.flexes``. The modes are the one costly thing ``check`` computes (two
+passive-force evaluations per flex degree of freedom and an eigen solve: seconds at most); a flex
+above 2400 degrees of freedom is listed without them, with a hint -- a coarser grid, or
+``dof="quadratic"``/``"trilinear"``, which reduce a flex to 27 or 8 nodes.
 
 .. _recording-a-run:
 

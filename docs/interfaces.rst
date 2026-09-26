@@ -229,7 +229,7 @@ The other half of the same question, for a caller holding an *override* rather t
 
    roqsim scenes describe worlds/turtlebot_nav2.yaml
    {"world": "...", "packaged": false, "inputs": [...],
-    "plugins": [{"address": "robot", "ref": "spawn_robot", "name": "robot",
+    "components": [{"address": "robot", "ref": "spawn_robot", "name": "robot",
                  "entity": null, "enabled": true, "origin": "document",
                  "paths": ["components.robot.model", "components.robot.pos"]},
                 {"address": "robot.rplidar.lidar", "ref": "lidar", "name": null,
@@ -238,16 +238,16 @@ The other half of the same question, for a caller holding an *override* rather t
                            "components.robot.rplidar.lidar.max_range"]}],
     "addresses": ["robot", "robot.diff_drive", "robot.rplidar", "robot.rplidar.lidar",
                   "robot.oakd_camera"],
-    "entities": null}
+    "entities": null, "flexes": null}
 
-``plugins`` reports every component that will **run** -- the document's own entries and everything its
+``components`` reports every component that will **run** -- the document's own entries and everything its
 models' manifests contribute -- under the ``address`` an override names it by, with the dotted paths
 into its config that already exist. ``origin`` says which of the two a component came from.
 
 ``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
 sweep key against it before spending an image pull. Note the world above declares one entry and gets
 three more from the turtlebot4's manifest -- those three are the ones a sweep is most likely to
-want, and they used not to appear here at all.
+want.
 
 A path not listed is not necessarily wrong (a plugin may accept a key its world leaves at the
 default), so a caller reports an unlisted *path* as unverifiable. What the list does settle is the
@@ -258,6 +258,13 @@ image pull.
 model. There is no cheaper way to ask: which entities exist is settled at compile time, since roqsim
 never recompiles mid-run -- ``SpawnEntity`` makes a declared entity present, it adds none. A caller checking
 that a scenario only drives entities the world has pays for it; one resolving paths does not.
+
+``flexes`` comes from the same compile, so it is ``null`` without ``--entities`` too: one row per flex
+(MuJoCo's ``<flexcomp>``) saying what it compiled into -- ``dim``, ``vertices``, ``elements``, the
+``dof`` mode (``full``/``trilinear``/``quadratic``) and its ``nodes``, how many of its vertices (or
+nodes) are ``pinned`` to its ``parent`` body, the ``entity`` that body belongs to, and whether it is
+``rigid``, ``elastic`` and has ``passive_contact``. Its modes and damping are ``roqsim check``'s, since
+they cost an eigen solve (:ref:`quickstart <checking-a-world>`).
 
 ``overridable`` answers the same question one layer down, for the model values a run can change while
 it is in progress (the ``model_override`` plugin, :ref:`architecture <92-physical-faults-impl>` §9.2)::
@@ -308,13 +315,13 @@ render`` and the exporters -- and since the ROS bridge ships in a colcon package
 environment cannot resolve it at all, so requiring it would fail a describe over plugins that
 contribute no geometry. Only *identified* transport goes (:func:`roqsim.config.drop_transport`, never the lenient
 ``drop_transport_plugins``): a misspelt geometry plugin has to stay fatal, because dropping it would
-leave an entity missing from a list a caller reads as complete. The bridge is still in ``plugins``,
-so ``plugins.ros2_bridge.*`` remains a checkable override.
+leave an entity missing from a list a caller reads as complete. The bridge is still in ``components``,
+so ``components.ros2_bridge.*`` remains a checkable override.
 
 When only the build fails, the reply is still printed -- with ``errors.build`` set and the build-fed
 keys left ``null``::
 
-   {"plugins": [...], "entities": null, "dropped_transport": [],
+   {"components": [...], "entities": null, "dropped_transport": [],
     "errors": {"build": "mesh not found: ..."}}
 
 A caller keeps the half that cost nothing (which plugin keys exist) instead of losing the lot. **The

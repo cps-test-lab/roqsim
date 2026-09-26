@@ -9,7 +9,7 @@ what a caller holding an override needs to know::
      "components": [{"address": "robot.lidar", "ref": "lidar",
                      "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
-     "entities": null,
+     "entities": null, "flexes": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
      "dropped_transport": [], "errors": null}
@@ -37,7 +37,8 @@ and the schedule.
 the model: which entities exist is settled at compile time (roqsim never recompiles mid-run, and
 ``simulation_interfaces`` serves no ``SpawnEntity``), so there is no cheaper way to ask. A
 caller checking that a scenario only drives entities the world actually has pays for it; one
-resolving paths does not.
+resolving paths does not. **Flexes** come with them, from the same compile and for the same reason:
+one row per flex (:func:`roqsim.flex_modes.describe_flexes`), ``null`` without the flag.
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
 the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
@@ -296,6 +297,19 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
     return results
 
 
+def _flexes(ctx) -> list[dict]:
+    """Each flex the world compiles, as ``roqsim check`` lists it: dim, vertex and element counts,
+    dof mode, pins, parent body, owning entity, elastic, passive contact.
+
+    Fields of the compiled model only; the modes and damping ``roqsim check`` derives from them cost
+    an eigen solve per flex and stay there.
+    """
+    from roqsim.flex_modes import describe_flexes
+
+    bodies = {name: ctx.entities.get(name).body for name in ctx.entities.names()}
+    return describe_flexes(ctx.model, bodies)
+
+
 def _plain(value):
     """A numpy row as JSON: a list for a vector, a number for a scalar."""
     if getattr(value, "ndim", 0):
@@ -391,6 +405,8 @@ def main(argv=None) -> int:
         # caller looking for a mistake that is not there.
         "addresses": sorted(spec.address for spec in config.plugins),
         "entities": None,
+        # Built with the entities, from the same compile: what each flex compiled into.
+        "flexes": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.
         "overridable": {"fields": _overridable_fields(), "targets": None},
@@ -416,6 +432,7 @@ def main(argv=None) -> int:
             with _built(config) as ctx:
                 if args.entities:
                     result["entities"] = sorted(ctx.entities.names())
+                    result["flexes"] = _flexes(ctx)
                 if args.overridable:
                     result["overridable"]["targets"] = _overridable_targets(ctx, args.overridable)
                 if args.body_tree:

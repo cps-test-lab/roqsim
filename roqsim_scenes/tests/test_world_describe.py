@@ -402,3 +402,19 @@ def test_a_component_is_reported_under_one_name(capsys, robot_world):
     plugins = _describe(capsys, str(robot_world))["components"]
     assert all("key" not in p for p in plugins)
     assert all(p["address"] for p in plugins)
+
+
+def test_flexes_are_listed_with_the_entities(capsys, tmp_path):
+    """From the same compile as the entities, and absent without it."""
+    (tmp_path / "block.xml").write_text(
+        '<mujoco><worldbody><body name="holder" pos="0 0 .3">'
+        '<flexcomp name="blk" type="grid" count="3 3 3" spacing=".02 .02 .02" dim="3" mass=".1" '
+        'radius=".002"><elasticity young="1e5"/><pin id="0 3 6"/>'
+        '<contact selfcollide="none"/></flexcomp></body></worldbody></mujoco>'
+    )
+    world = tmp_path / "flex.yaml"
+    world.write_text("sim: {world: block.xml}\ncomponents: []\n")
+    assert _describe(capsys, str(world))["flexes"] is None
+    (flex,) = _describe(capsys, str(world), "--entities")["flexes"]
+    assert (flex["name"], flex["dim"], flex["vertices"], flex["pinned"]) == ("blk", 3, 27, 3)
+    assert (flex["parent"], flex["dof"], flex["elastic"]) == ("holder", "full", True)
