@@ -133,7 +133,7 @@ Single world YAML, two sections; ``plugins`` order = execution order:
      timestep: 0.004        # optional; else from the model
      pacing: realtime       # realtime | {factor: 4.0} | asap        [planned: honoured by runner]
      world: empty_room      # built-in name OR a path to an MJCF file; default empty_room (see below)
-     integrator: implicitfast  # euler | rk4 | implicit | implicitfast
+     integrator: auto       # auto (default) | euler | rk4 | implicit | implicitfast | discrete
      noslip_iterations: 10  # solver effort; see "Solver options" below
      sync: {enabled: false} # foreseen lockstep mode (§10); inert
 
@@ -203,6 +203,22 @@ Solver options (``sim.solver`` and friends)
 '''''''''''''''''''''''''''''''''''''''''''
 
 ``sim`` carries five optional passthroughs to MuJoCo's ``<option>``: ``solver`` (``newton``/``cg``/``pgs``), ``iterations``, ``ls_iterations``, ``noslip_iterations`` and ``impratio``. Each is left at MuJoCo's default unless a world sets it, because the right value is a property of the *experiment*, not of the framework: a navigation world wants the cheapest solve that keeps wheels stable, a manipulation world needs contacts that hold.
+
+The integrator is ``sim.integrator``. Its default, ``auto``, resolves after every plugin's ``build``
+and before compile: to ``discrete`` for a model with a flex that has elasticity or passive contact,
+which MuJoCo refuses to compile under ``implicit``/``implicitfast``, and to ``implicitfast`` for any
+other model -- the integrator every world ran under before ``auto`` existed, and the one the
+velocity-servo wheel drives need for stability. The choice and the flex that decided it are logged,
+recorded in the run's provenance (``world_model.sim.integrator``) and printed by ``roqsim check``. A
+stated integrator is applied at the same point, so neither a plugin nor the world MJCF can set it; a
+stated ``sim.timestep`` likewise wins over theirs.
+
+A flex also constrains the rest of this block, and roqsim refuses the combinations before compile,
+naming the key to change: a stated ``implicit``/``implicitfast`` (or, for passive contact, any
+integrator but ``discrete``) with such a flex; ``solver: pgs`` or ``noslip_iterations`` above 0
+with one under ``discrete`` (MuJoCo supports neither there -- use ``newton`` or ``cg``); and a flex
+declared in a mocap body, which is carried rigidly and never deforms. The rules, and the MuJoCo
+version they were measured on, are in :mod:`roqsim.flex`.
 
 **A grasping world must set ``noslip_iterations``.** MuJoCo defaults it to ``0``, which leaves friction contacts a residual tangential drift. Measured on the G1/Dex1 pick: a 0.5 kg parcel gripped at 20 N between two pads crept out of the jaws at **0.119 m/s** and was dropped within two seconds; with ``noslip_iterations: 10`` the creep is **0.0009 m/s** and the lift holds indefinitely — a 137× reduction. ``iterations`` and ``ls_iterations`` alone changed nothing measurable, because this is the solver's dedicated slip-removal pass rather than general convergence. The failure mode is worth knowing because it presents as *insufficient friction* and is not: sweeping the sliding coefficient from 0.4 to 3.0 moved the creep rate by 17%, while halving the payload moved it by 80×.
 

@@ -13,7 +13,7 @@ A single file defines the world *and* the plugin pipeline. Plugin order is execu
    sim:
      timestep: 0.004        # optional; else taken from the model
      pacing: realtime       # realtime | asap | {factor: 4.0}   (standalone only)
-     integrator: implicitfast   # euler | rk4 | implicit | implicitfast (default)
+     integrator: auto       # auto (default) | euler | rk4 | implicit | implicitfast | discrete
      dedup_assets: true     # default; merge identical attached prop assets before compile
 
    components:

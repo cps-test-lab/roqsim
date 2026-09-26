@@ -38,6 +38,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
+from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
@@ -54,6 +55,9 @@ _INTEGRATORS = {
     "rk4": mujoco.mjtIntegrator.mjINT_RK4,
     "implicit": mujoco.mjtIntegrator.mjINT_IMPLICIT,
     "implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
+    # What a flex with elasticity or passive contact requires; ``sim.integrator: auto`` picks it for
+    # such a model (see :mod:`roqsim.flex`).
+    "discrete": mujoco.mjtIntegrator.mjINT_DISCRETE,
 }
 
 #: Constraint solvers, for ``sim.solver``. Newton converges in far fewer iterations than PGS/CG and is
@@ -131,6 +135,9 @@ class Engine:
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
+        #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
+        #: set by :meth:`setup`, before compile.
+        self.integrator: IntegratorChoice | None = None
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
         # perf_counter call (pre_step/post_step run once per plugin per physics step).
         self._profile = profile
@@ -223,12 +230,19 @@ class Engine:
                     removed["textures_removed"],
                 )
 
-        # Apply configured physics options before compile. Default to implicitfast, which the
-        # velocity-servo wheel drives need for stability (Euler blows them up).
+        # Apply configured physics options before compile, and after every build hook: a stated
+        # `sim.timestep` wins over whatever a plugin or the world MJCF wrote, and the integrator is
+        # always `sim.integrator`'s.
         if self.config.timestep is not None:
             spec.option.timestep = self.config.timestep
-        integrator = self.config.sim.get("integrator", "implicitfast")
-        spec.option.integrator = _INTEGRATORS[integrator]
+        # After the builds because a plugin may be what adds the flex that decides it. `auto` (the
+        # default) is implicitfast for a model without a flex that needs discrete -- what the
+        # velocity-servo wheel drives need for stability (Euler blows them up) -- and discrete for
+        # one with such a flex, which MuJoCo refuses to compile under anything implicit.
+        self.integrator = resolve_integrator(self.config.sim.get("integrator", AUTO), spec)
+        spec.option.integrator = _INTEGRATORS[self.integrator.resolved]
+        self.config.resolved["integrator"] = self.integrator.resolved
+        self.logger.info("integrator: %s (%s)", self.integrator.resolved, self.integrator.reason)
 
         # Solver effort, left at MuJoCo's defaults unless a world asks for more. A contact-rich world
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
@@ -268,6 +282,9 @@ class Engine:
             # world key rather than something baked into every model that might be used that way.
             spec.option.gravity = [float(v) for v in gravity]
         self._apply_contact_override(spec)
+        # Last, once every option it reads is final: the solver rule depends on the solver and
+        # noslip settings, whichever of the world MJCF or `sim` stated them.
+        check_flex_options(spec, self.integrator)
 
         # Name the model so the viewer never shows MuJoCo's default "MuJoCo Model" title: prefer the
         # world's `sim.name`, else keep a meaningful baked name, else "Roqsim".
