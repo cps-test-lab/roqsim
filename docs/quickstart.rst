@@ -253,18 +253,19 @@ world file and its manifests to work out what is in there.
 A world with a flex (MuJoCo's ``<flexcomp>``) gets two more things: what each flex compiled into, and
 what it will do -- worked out from the compiled model, before any step::
 
+   world: world.yaml
    ok    loads, compiles, every component resolved, and it resets
 
-   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which ...
-         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = ...
+   WARN  [flex-damping] flex 'blk': numerical damping is 100% of its damping (zeta_1 = 0.036, of which 0.036 is the discrete integrator's timestep * omega / 2), so its ringing changes with sim.timestep
+         hint: state <elasticity damping> (a time, s) and keep sim.timestep at or below it: zeta_i = (damping + timestep) * omega_i / 2, with omega_1 = 71.92 rad/s
 
-   model: 38 bodies, 1 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+   model: 38 bodies, 0 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
           timestep 0.001s, integrator discrete (auto: flex 'blk' (elasticity))
 
    flexes (1):
      blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
           modes 11.4, 13, 22.4 Hz; damping ratio 0.036, 0.0407, 0.0703 at damping 0 s (numerical share 100% at timestep 0.001 s)
-          contact solref 0.02 1 (flex), floor 0.001 s
+          contact solref 0.02 1 (flex), floor 0.00102598 s
 
 The **modes** are the flex's lowest elastic frequencies with everything else held, from a
 finite-difference stiffness and the mass matrix (:func:`roqsim.flex_modes.first_modes`); they match
@@ -277,17 +278,30 @@ frequency, hold while the timestep **resolves** the mode: at ``omega_i * timeste
 damped at a ratio up to 0.3 rings within 5 % of both. Beyond it the run damps the mode less and
 rings it slower than reported -- with the damping one timestep, by 11 % and 9 % at 0.5, and at 0.85
 a reported ratio of 0.85 rings down at 0.65 -- so the report stars that mode's figures
-(``resolved: false`` in ``--json``) and warns. The **contact floor** is the time constant MuJoCo raises a stiffer ``solref`` to: one
-timestep under ``discrete``, two under every other integrator. These rules were measured on MuJoCo
-3.14 and are stated in :mod:`roqsim.flex_modes` (``explain_flex``, ``solref_floor``).
+(``resolved: false`` in ``--json``) and warns. The **contact floor** is the time constant MuJoCo
+raises a stiffer ``solref`` to: two timesteps under every integrator but ``discrete``; under
+``discrete`` it caps the stiffness instead, which is ``timestep * sqrt(solimp[1]) / (solimp[1] *
+dampratio)`` at the default ``solimp`` -- about 1.03 steps at a damping ratio of 1. These rules were
+measured on MuJoCo 3.14; the damping and the resolution are stated in
+:func:`roqsim.flex_modes.explain_flex`, the floor in :func:`roqsim.solref.solref_floor`, which
+``sim.contact_override`` is held to as well.
 
 The same block at a 4 ms step, with the damping raised to match it::
 
-   WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved by the timestep (omega * timestep = 0.33, above 0.3), and so is mode 3; ...
-         hint: set sim.timestep <= 0.00213 s to bring omega * timestep to 0.3 or below for every reported mode, or lower ...
+   world: world.yaml
+   ok    loads, compiles, every component resolved, and it resets
 
+   WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved by the timestep (omega * timestep = 0.33, above 0.3), and so is mode 3; the damping ratio and frequency reported for them are not the ones that run: the discrete integrator distorts their dynamics, damping them less and ringing them slower than stated
+         hint: set sim.timestep <= 0.00213 s to bring omega * timestep to 0.3 or below for every reported mode, or lower the frequencies with a softer material (omega scales with the square root of <elasticity young>)
+
+   model: 38 bodies, 0 geoms, 108 joints, 0 actuators, 0 sensors, 0 cameras
+          timestep 0.004s, integrator discrete (auto: flex 'blk' (elasticity))
+
+   flexes (1):
+     blk  dim 3, 45 vertices, 96 elements, dof full, 9 pinned, on holder; elastic, no passive contact
           modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562* at damping 0.004 s (numerical share 50% at timestep 0.004 s)
           * under-resolved (omega * timestep above 0.3): a run damps and rings a starred mode differently -- see the flex-timestep warning
+          contact solref 0.02 1 (flex), floor 0.00410392 s
 
 A ``WARN`` line names something a world that loads will do and its author probably did not mean --
 damping that is mostly the integrator's (``flex-damping``), a mode the timestep under-resolves

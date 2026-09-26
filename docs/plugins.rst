@@ -673,7 +673,11 @@ contact it takes part in and never a statement about one of them. Two consequenc
   value is a floor on both.
 
 An explicit pair carries its own friction and wins over the combination rule, which is MuJoCo's own
-answer and what this plugin declares. Each side is named independently as an ``entity``, a ``body``
+answer and what this plugin declares. Its ``solref``, like every contact's, is subject to MuJoCo's
+floor for the integrator the world runs under (:func:`roqsim.solref.solref_floor`: two steps, or
+about one under ``discrete``, depending on the damping ratio and ``solimp``). ``sim.contact_override``
+refuses a time constant below it and ``roqsim check`` warns about a flex's; a pair's is passed
+through as stated, because the plugin builds before the integrator is resolved. Each side is named independently as an ``entity``, a ``body``
 or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
 is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
 subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
