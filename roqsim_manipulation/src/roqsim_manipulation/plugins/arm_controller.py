@@ -654,6 +654,10 @@ class ArmControllerPlugin(Plugin):
             _, jid = by_name[jn]
             ctx.data.qpos[m.jnt_qposadr[jid]] = float(ang)
             self._target[jn] = float(ang)
+        # The stance is state the hooks after this one read in the same reset -- a Cartesian
+        # controller anchors on the tool's pose -- so the kinematics are brought up to date here,
+        # not left to the engine's closing forward pass, which runs after every plugin's on_reset.
+        mujoco.mj_forward(m, ctx.data)
 
     def set_targets(self, names, positions) -> None:
         for n, p in zip(names, positions, strict=False):  # tolerate external/partial input
