@@ -1,23 +1,8 @@
-"""Shared helpers for the manipulator plugins (joint/actuator discovery, pose math)."""
+"""Shared helpers for the manipulator plugins (joint/actuator discovery)."""
 
 from __future__ import annotations
 
-import math
-
 import mujoco
-
-
-def rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
 
 
 def prefixed_joints(model, prefix: str) -> list[int]:

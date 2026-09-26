@@ -76,6 +76,7 @@ import yaml
 from roqsim.context import Endpoint, RobotHandle, SimContext
 from roqsim.plugin import Plugin
 from roqsim.policy import ObservationState, PolicySpec
+from roqsim.pose import yaw_of
 
 from ..policy import DEFAULT_CONFIG, DEFAULT_POLICY, find_spec
 
@@ -374,8 +375,7 @@ class G1LocomotionPlugin(Plugin):
             return self._cmd
 
         x, y, _ = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = float(np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+        yaw = yaw_of(d.xquat[self._base_bid])
         if self._hold is None:
             self._hold = np.array([x, y, yaw], dtype=np.float32)
             return self._cmd
@@ -406,8 +406,7 @@ class G1LocomotionPlugin(Plugin):
         # base height (the G1 pelvis stands ~0.7 m up; the bridge tf/odom carry it, nav2 stays 2D).
         d = self._ctx.data
         x, y, z = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
+        yaw = yaw_of(d.xquat[self._base_bid])
         vgx, vgy = d.qvel[self._base_dadr : self._base_dadr + 2]
         c, s = np.cos(yaw), np.sin(yaw)
         return (

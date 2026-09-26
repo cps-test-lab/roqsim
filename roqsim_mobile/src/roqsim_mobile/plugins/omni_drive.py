@@ -102,6 +102,7 @@ import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import yaw_of
 
 WHEEL_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
 
@@ -385,8 +386,7 @@ class OmniDrivePlugin(Plugin):
         self._odom[:] = 0.0
 
     def _yaw(self, d) -> float:
-        qw, qx, qy, qz = d.qpos[self._qadr + 3 : self._qadr + 7]
-        return float(np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz)))
+        return yaw_of(d.qpos[self._qadr + 3 : self._qadr + 7])
 
     def pre_step(self, ctx: SimContext) -> None:
         if ctx.manual_control:

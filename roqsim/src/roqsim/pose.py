@@ -195,3 +195,13 @@ def yaw_of(quat) -> float:
     """
     w, x, y, z = (float(c) for c in quat)
     return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def yaw_to_quat(yaw: float) -> list[float]:
+    """``[w, x, y, z]`` for a heading: the rotation about z by ``yaw`` radians.
+
+    The inverse of :func:`yaw_of` for a flat pose, and the same convention as :func:`rpy_to_quat`
+    with roll and pitch at zero -- kept as its own function because a planar consumer (a mocap
+    body that only turns, a navigator's target) states a heading and nothing else.
+    """
+    return [math.cos(yaw / 2.0), 0.0, 0.0, math.sin(yaw / 2.0)]
