@@ -272,6 +272,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         # sim_time restarts at 0 on reset; clear the gate so the first post-reset step casts again.
         self._last_cast = float("-inf")
+        # And the payload with it: read before that cast, the endpoint answers "nothing yet" rather
+        # than the previous trial's last scan, as the cameras do.
+        self._payload_value = None
         # And back to nominal: a fault applied in one trial must not survive into the next of the
         # same process, or the control cell silently becomes a faulted one.
         self.on_reset_fault()
