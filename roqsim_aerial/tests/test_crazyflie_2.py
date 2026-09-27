@@ -163,3 +163,18 @@ def test_reset_returns_to_spawn():
         assert np.allclose(np.array(controller.read_state()[:3]), 0.0, atol=1e-6)
     finally:
         engine.shutdown()
+
+
+def test_a_configured_body_that_does_not_resolve_is_refused():
+    """A misspelt ``body:`` stops the run instead of flying the thrust actuator's body."""
+    world = {
+        "sim": {"density": 1.225, "viscosity": 1.8e-5},
+        "components": [{
+            "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_"},
+            "name": "drone",
+            "components": [{"quadrotor_controller": {"body": "no_such_body"}}],
+        }],
+    }
+    with pytest.raises(RuntimeError, match="no_such_body"):
+        engine, _ = _flown(world)
+        engine.shutdown()
