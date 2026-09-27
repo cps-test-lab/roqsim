@@ -109,6 +109,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 
 WHEEL_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
@@ -130,9 +131,8 @@ class OmniDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
-        #: Watchdog: a command older than this stops the base; 0 = hold the last command forever.
-        self.cmd_vel_timeout = float(self.config.get("cmd_vel_timeout", 0.0))
-        self._last_cmd = float("-inf")  # sim time of the last drive(); -inf until one arrives
+        #: ``cmd_vel_timeout``: a command older than this stops the base; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
         self._ctx: SimContext | None = None
         self._act_names = (
             self.config.get("vx_actuator", "base_vx"),
@@ -211,8 +211,7 @@ class OmniDrivePlugin(Plugin):
             errors.append("'steer_actuators' without 'steer_joints' -- give both or neither")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, wz]")
-        if float(config.get("cmd_vel_timeout", 0.0)) < 0:
-            errors.append("'cmd_vel_timeout' must be >= 0 (0 = no watchdog)")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -378,7 +377,7 @@ class OmniDrivePlugin(Plugin):
                 vx *= self.max_combined / speed
                 vy *= self.max_combined / speed
         self._target[:] = (vx, vy, float(np.clip(w, -self.max_w, self.max_w)))
-        self._last_cmd = self._ctx.sim_time if self._ctx is not None else 0.0
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
         x, y, yaw, vx, vy, w = self._odom
@@ -399,7 +398,7 @@ class OmniDrivePlugin(Plugin):
         self._target[:] = 0.0
         self._cmd[:] = 0.0
         self._odom[:] = 0.0
-        self._last_cmd = float("-inf")
+        self.watchdog.clear()
         # The reset pose, not the previous episode's last one, until the first step.
         self._read_joints(ctx.model, ctx.data)
 
@@ -418,7 +417,7 @@ class OmniDrivePlugin(Plugin):
             return  # the viewer's sliders own the actuators this run
         if "test_cmd" in self.config:
             self.drive(*(float(v) for v in self.config["test_cmd"]))
-        if self.cmd_vel_timeout > 0.0 and ctx.sim_time - self._last_cmd > self.cmd_vel_timeout:
+        if self.watchdog.expired(ctx):
             # The watchdog: the last command has expired, so the target is a stop, reached
             # through the ramp below like any other command.
             self._target[:] = 0.0

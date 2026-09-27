@@ -607,8 +607,9 @@ class Ros2Bridge(BridgeBase):
         emit_tf = bool(hints.get("emit_tf", False))
         if emit_tf and self._tf is None:
             self._tf = self._make_tf_broadcaster(static=False)
-        # Carry the namespace-derived frame prefix into the converter so frame ids are namespaced
-        # (empty when this endpoint's namespace is stripped, so its frames are clean, e.g. base_link).
+        # Carry the namespace-derived frame prefix into the converter so a robot's frame ids are
+        # namespaced (empty when this endpoint's namespace is stripped, so its frames are clean, e.g.
+        # base_link). Global frames stay bare (frames.GLOBAL_FRAMES).
         frame_prefix = _join_ns(self._frame_prefix, self._eff_ns(ep))
         hints = {**hints, "frame_prefix": frame_prefix}
         # A producer may ship a fixed sensor-mount transform (base -> its frame) as plain numbers;
@@ -748,12 +749,24 @@ class Ros2Bridge(BridgeBase):
     def _now(self, t: float):
         return reg.to_time_msg(t)
 
+    def post_step(self, ctx) -> None:
+        """Advance ``/clock`` to this step, THEN publish what the step produced.
+
+        Every output of a step is stamped with its sim time, so the clock has to be there first: a
+        subscriber that received a scan stamped ahead of its own clock sees a message from the
+        future -- tf2 extrapolation errors, a message filter that drops it, a costmap that discards
+        the scan as newer than any transform it can look up.
+        """
+        if self._ready and not self._shutting_down():
+            t = ctx.sim_time
+            if self._clock_pub is not None and self._clock_gate.due(t):
+                self._clock_msg.clock = self._now(t)
+                self._clock_pub.publish(self._clock_msg)
+        super().post_step(ctx)
+
     def _tick(self, ctx, t: float, stamp) -> None:
         if self._shutting_down():
             return
-        if self._clock_pub is not None and self._clock_gate.due(t):
-            self._clock_msg.clock = stamp
-            self._clock_pub.publish(self._clock_msg)
         if self._merged_joint_states:
             self._publish_merged_joint_states(stamp, t)
         if self._peer_gate.due(t):

@@ -142,6 +142,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import SimContext
+from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
 logger = logging.getLogger(__name__)
@@ -579,7 +580,7 @@ class Px4SitlPlugin(Plugin):
         adr, dim = self._sensor_adr["quat_sensor"]
         quat = np.array(data.sensordata[adr : adr + dim], dtype=float)
         pos_enu = np.array(data.xpos[self._bid], dtype=float)
-        vel_enu = np.array(data.cvel[self._bid][3:6], dtype=float)
+        vel_enu = np.array(body_twist(ctx.model, data, self._bid).linear, dtype=float)
         return gyro_flu, accel_flu, quat, pos_enu, vel_enu
 
     def _send_sensors(self, ctx: SimContext) -> None:
