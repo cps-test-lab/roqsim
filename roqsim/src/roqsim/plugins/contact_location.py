@@ -185,6 +185,8 @@ class ContactLocationPlugin(Plugin):
 
     def on_reset(self, ctx: SimContext) -> None:
         self._reading = ContactLocation(False, "none", 0.0, 0.0, 0.0, 0.0, 0, 0.0)
+        # The decimation phase starts with the episode, so every trial is evaluated on the same steps.
+        self._accum = 0.0
 
     def post_step(self, ctx: SimContext) -> None:
         data, model = ctx.data, ctx.model
