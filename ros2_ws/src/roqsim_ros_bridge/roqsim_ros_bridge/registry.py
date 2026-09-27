@@ -28,6 +28,7 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
 from . import image_codec
+from .frames import namespaced
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
@@ -129,13 +130,8 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     return Quaternion(z=math.sin(yaw * 0.5), w=math.cos(yaw * 0.5))
 
 
-def namespaced(prefix: str, name: str) -> str:
-    """Prefix a frame id with the bridge namespace so multi-robot TF trees stay unique."""
-    return f"{prefix}/{name}" if prefix else name
-
-
 def frame(hints: dict, key: str, default: str) -> str:
-    """Frame id from a hint, prefixed by the bridge namespace so multi-robot TF trees stay unique."""
+    """Frame id from a hint, prefixed by the bridge namespace unless global (see :mod:`.frames`)."""
     return namespaced(hints.get("frame_prefix", ""), hints.get(key, default))
 
 
