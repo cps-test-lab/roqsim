@@ -194,7 +194,9 @@ class ContactLocationPlugin(Plugin):
         # Decimate the whole computation, not just the publish. See `compute_rate_hz`.
         if self._period > 0.0:
             self._accum += model.opt.timestep
-            if self._accum < self._period:
+            # A thousandth of a step short still counts: float drift in the summed timesteps would
+            # otherwise push a period the timestep divides to the step after it.
+            if self._accum < self._period - 1e-3 * model.opt.timestep:
                 return
             self._accum = 0.0
 

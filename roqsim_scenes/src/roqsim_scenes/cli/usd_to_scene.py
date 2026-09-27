@@ -116,7 +116,11 @@ def main() -> None:
         )
         entries.append({"name": slug, "mesh": rel, "rgba": _rgba(obj), "collide": True})
 
+    # The stamp of roqsim_scenes.scene_manifest, written literally: this runs under Blender's own
+    # Python, which cannot import the package. A test keeps the two equal.
     manifest = {
+        "format": "roqsim_scenes.scene_manifest",
+        "version": 1,
         "name": args.scene_name,
         "source": os.path.basename(args.input_usd),
         "unit_scale": args.unit_scale,

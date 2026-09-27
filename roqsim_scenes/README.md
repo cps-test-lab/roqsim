@@ -31,6 +31,11 @@ sdf_to_scene.py   (Gazebo/Ignition SDF → the same)         ← venv (fetches +
 scene_to_mjcf.py  (scene.json + scene.yaml → <name>.xml)   ← venv (has mujoco)
 ```
 
+Every importer stamps its `scene.json` with `"format": "roqsim_scenes.scene_manifest"` and a
+`"version"` (`roqsim_scenes.scene_manifest`); an unstamped one is version 1. Every reader (the bake,
+`scene-to-map`, `scene-to-floorplan`) refuses another format by name — the web descriptor
+`roqsim export web` writes is also a `scene.json` — and a version newer than it reads.
+
 A world that is **generated rather than authored** takes a different route. Its input is a 2D
 occupancy grid — no source file, no meshes to convert, pin or hull — and there are two ways down from
 it, because "occupancy grid" covers two different things:
