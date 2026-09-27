@@ -211,6 +211,8 @@ def _load_world(
             )
         elif gtype in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
             r, hz = float(size[0]), float(size[1])
+            if gtype == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                hz += r  # the end caps: a prism to the tips, since a map is a floor-plane footprint
             n = 16
             ang = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
             ring = np.stack([r * np.cos(ang), r * np.sin(ang)], axis=1)
