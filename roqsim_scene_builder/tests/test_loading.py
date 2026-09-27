@@ -106,3 +106,28 @@ def test_scene_window_selects_the_gl_backend_before_importing_mujoco():
         check=True,
     )
     assert proc.stdout.strip().splitlines()[-1] != "glfw"
+
+
+def test_a_load_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkeypatch):
+    """The ``dummy`` plugin counts its own shutdowns."""
+    from roqsim_scene_builder.scene_window import load_engine
+
+    from roqsim.engine import Engine
+
+    seen: list[Engine] = []
+    setup = Engine.setup
+
+    def recording_setup(self):
+        seen.append(self)
+        setup(self)
+
+    def fails(self, **params):
+        raise RuntimeError("injected after setup")
+
+    monkeypatch.setattr(Engine, "setup", recording_setup)
+    monkeypatch.setattr(Engine, "reset", fails)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    with pytest.raises(RuntimeError, match="injected"):
+        load_engine(str(world))
+    assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]

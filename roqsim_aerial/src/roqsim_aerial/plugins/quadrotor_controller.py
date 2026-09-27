@@ -63,6 +63,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
 logger = logging.getLogger(__name__)
@@ -284,8 +285,9 @@ class QuadrotorControllerPlugin(Plugin):
         model, data = ctx.model, ctx.data
         pos = np.array(data.xpos[self._bid])
         rot = np.array(data.xmat[self._bid]).reshape(3, 3)
-        vel = np.array(data.cvel[self._bid][3:6])
-        omega = rot.T @ np.array(data.cvel[self._bid][0:3])
+        twist = body_twist(model, data, self._bid)
+        vel = np.array(twist.linear)
+        omega = rot.T @ np.array(twist.angular)
 
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         self._state = (*pos, *vel, yaw, float(omega[2]))
