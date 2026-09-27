@@ -1378,22 +1378,24 @@ A velocity command: odometry and the watchdog
 ---------------------------------------------
 
 Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
-``diff_drive``, ``omni_drive`` and ``ackermann_drive``. Both are in :mod:`roqsim.odometry`, for a
-plugin of your own to keep too.
+``diff_drive``, ``omni_drive``, ``ackermann_drive`` and ``spot_locomotion``. Both are in
+:mod:`roqsim.odometry`, for a plugin of your own to keep too.
 
 **Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
 first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
 as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from zero, so its
-odometry drifts as wheel odometry does. The true pose is not in ``odom``: it is the
+odometry drifts as wheel odometry does. A legged controller reads its base pose from the simulator
+and states it relative to the spawn pose, so its odometry is exact, and its ``z`` stays the base
+height, so ``base_link`` stands where the robot does. The true pose is not in ``odom``: it is the
 ``ground_truth_pose`` plugin (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
 only for a robot spawned at the map origin facing ``+x``.
 
 **A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once
-the last one is older, the robot stops, through the same limits as any command to zero. ``0``, the
-default, holds a command until the next one, because an in-process driver sets a twist once and
-steps; a world that runs a real stack sets the stack's value (``ros2_control``'s
-``diff_drive_controller`` ships 0.5 s). Reset clears the command and its stamp, so no trial starts
-with the last one's.
+the last one is older, the robot stops, through the same limits as any command to zero; a
+locomotion policy is given a zero command and walks to a stop. ``0``, the default, holds a command
+until the next one, because an in-process driver sets a twist once and steps; a world that runs a
+real stack sets the stack's value (``ros2_control``'s ``diff_drive_controller`` ships 0.5 s). Reset
+clears the command and its stamp, so no trial starts with the last one's.
 
 Manipulation: an arm on a linear axis
 -------------------------------------
