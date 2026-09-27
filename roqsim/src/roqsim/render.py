@@ -27,7 +27,8 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 ``--overlay`` paints insets on the frames (:mod:`roqsim.render_overlays`).
 
 ``--set`` and ``--override`` are ``roqsim sim``'s own options (:mod:`roqsim.override_options`), so a
-world is rendered as the run with those overrides would build it.
+world is rendered as the run with those overrides would build it. With ``--state`` they may set only
+``sim.view``: the recorded world is rebuilt from its provenance, and any other key is refused.
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
@@ -57,7 +58,7 @@ import numpy as np
 
 from . import exit_status, logging_setup
 from .capture import CaptureError
-from .config import _VIEW_KEYS, PluginError, overrides_from_dotlist
+from .config import _VIEW_KEYS, PluginError, assignments_from_mapping, overrides_from_dotlist
 from .exit_status import NO_GL
 from .models import ModelError
 from .override_options import add_override_options, overrides_from_options
@@ -631,6 +632,19 @@ def render_target(
             raise RenderError(
                 "--camera renders through a fixed MJCF camera, which owns its own pose, so a "
                 "--camera-path cannot move it. Use --view or --focus for the base camera."
+            )
+    if state and overrides:
+        # A recording's model is the one its provenance names, so only the camera can be changed
+        # over it (see _render_recording). Anything else would be accepted and do nothing.
+        ignored = sorted(
+            ".".join(a.path)
+            for a in assignments_from_mapping(overrides)
+            if a.path[:2] != ("sim", "view")
+        )
+        if ignored:
+            raise RenderError(
+                f"--state rebuilds the recorded world from its provenance, so an override other "
+                f"than sim.view cannot change it: {', '.join(ignored)}."
             )
     # Built before any world compiles: a misspelt overlay fails in milliseconds, not after the build.
     try:
