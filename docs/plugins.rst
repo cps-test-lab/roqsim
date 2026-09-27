@@ -581,7 +581,7 @@ contact against a geom outside its ``ignore`` list::
      components:
        - contact_monitor: {ignore: [floor], min_force: 1.0}
 
-Two things are worth knowing before reaching for a proximity check instead:
+Three things are worth knowing before reaching for a proximity check instead:
 
 * **Define the exception, not the rule.** A wheeled robot is in permanent, intended contact with the
   ground, so the plugin's contract is "everything counts except what you list". Listing what a robot
@@ -617,9 +617,10 @@ to its own robot. Un-namespaced, two monitors publish on one ``/collision``, whi
    fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
    contact makes "wait for any message" look correct; it is not portable.
 
-**Where is it touching me?** ``contact_location`` is the one a *controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
-replaced every step and reports the region being touched — its centre in the robot's own frame, and
-whether that region is a point or a line::
+**Where is it touching me?** ``contact_location`` is the one a *controller* reads.
+``contact_monitor`` latches a verdict for the end of a trial; this one is replaced every step and
+reports the region being touched — its centre in the robot's own frame, and whether that region is a
+point or a line::
 
    - spawn_robot: {model: ridgeback}
      name: robot
@@ -748,10 +749,10 @@ Three things about it:
   decides — with the threshold then stated in the experiment, where it belongs.
 
 ``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
-distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
-world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
-pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
-``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
+distance query per geom pair, a real share of the step budget if done every physics step, while
+200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
+``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
+rather than offering a number that looks measured.
 
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
@@ -803,8 +804,8 @@ neither plugin keeps a contact the other has forgotten). A trial that touched no
 against are read in-process.
 
 **Is it still standing on the floor at all?** ``upright_monitor`` guards an assumption the other
-observation plugins take for granted. A trial that drives something around a floor
-assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
+observation plugins take for granted. A trial that drives something around a floor assumes
+throughout that the thing is on the floor -- and when that breaks, the run does not. It keeps
 producing positions, distances and clearances about a body lying on its side or airborne, all of
 them plausible, none of them about the trial anyone designed::
 
@@ -819,7 +820,7 @@ model that was wrong, and fixing the model is the experiment's job -- ``roqsim_w
 pedestrian is the answer for pedestrians, a low centre of mass or a planar joint for anything
 hand-rolled. What the substrate owes is that nobody finds out from the results.
 
-Three things about it:
+Four things about it:
 
 * **Both thresholds are departures, not limits.** ``max_rise_m`` is symmetric, because a body
   sinking through the floor has left the plane exactly as much as one taking off. ``max_tilt_deg``
@@ -1090,9 +1091,10 @@ published, accumulated here at the physics rate rather than at whatever rate ``/
 published at.
 
 Which actuators count is derived by default (``actuators:`` narrows it to named ones): every
-actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
-joint does not need the world edited. An entity with no actuators is an error, because a meter
-reading zero forever looks exactly like a robot that costs nothing to drive.
+actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on
+this robot's bill and a model that gains a joint does not need the world edited. An entity with no
+actuators is an error, because a meter reading zero forever looks exactly like a robot that costs
+nothing to drive.
 
 **It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
