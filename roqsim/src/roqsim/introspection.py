@@ -356,7 +356,7 @@ def main(argv=None):
     import argparse  # pylint: disable=import-outside-toplevel
 
     parser = argparse.ArgumentParser(
-        prog="python -m roqsim.introspection",
+        prog="roqsim plugins",
         description="JSON introspection of the roqsim.plugins registry.",
         epilog=exit_status.epilog(
             exit_status.BAD_INPUT, note="2 includes `describe` naming no registered plugin."
