@@ -88,6 +88,11 @@ will do that its author probably did not intend: ``flex-damping`` (its damping i
 integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
 ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
 stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
+
+Exit status (``roqsim.exit_status``): ``0`` when the world loads (``ok`` is true; warnings do not
+change it), ``2`` when the target names no world, ``5`` when a later stage reported a problem. The
+report itself is on stdout in every case, so a caller branches on the status and reads the JSON for
+what went wrong. An override that cannot be read is ``2`` with no report: no world was checked.
 """
 
 from __future__ import annotations
@@ -96,6 +101,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from . import exit_status
 
 #: Stage names, in the order they run. A problem in one does not stop the report; it stops that
 #: world from reaching the next stage, which is stated rather than implied by an empty section.
@@ -498,6 +505,13 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 is a target that names no world, and 5 a problem at any later stage; the "
+            "report is on stdout either way. An override that cannot be read is 2 with no report. "
+            "Warnings do not change the status.",
+        ),
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
     # `roqsim sim`'s own --set/--override, so the world checked is the one that run would build.
@@ -513,14 +527,14 @@ def main(argv=None) -> int:
     try:
         overrides = overrides_from_options(args)
     except PluginError as err:
-        # An override file that cannot be read is a command line that cannot be acted on, not a
-        # verdict on the world: exit 2, as argparse does, so 0 and 1 keep meaning "a report is on
-        # stdout".
-        print(f"roqsim check: {err}", file=sys.stderr)
-        return 2
+        # An override file that cannot be read is the caller's input, not a verdict on the world.
+        return exit_status.fail("roqsim check", err)
     report = check_world(args.world, overrides)
     print(json.dumps(report, indent=2) if args.json else _render_text(report))
-    return 0 if report["ok"] else 1
+    if report["ok"]:
+        return exit_status.OK
+    # A target that names no world is the caller's input, not a finding about a world.
+    return exit_status.BAD_INPUT if report["reached"] is None else exit_status.FINDING
 
 
 if __name__ == "__main__":

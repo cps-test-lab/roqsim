@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import http.client
 import os
 import re
 import subprocess
@@ -71,6 +72,20 @@ def _format_license(text: str) -> str:
     return "  license:\n" + body
 
 
+def _download(url: str, dst: Path) -> None:
+    """Fetch *url* to *dst*: the whole file, or nothing.
+
+    The bytes land in a sibling ``.part`` file renamed to ``dst`` once complete: a source without a
+    ``sha256`` is judged present by existing alone, so a truncated file must never sit at ``dst``.
+    """
+    part = dst.with_name(dst.name + ".part")
+    try:
+        urllib.request.urlretrieve(url, part)  # noqa: S310 (declared http(s) source)
+        os.replace(part, dst)
+    finally:
+        part.unlink(missing_ok=True)
+
+
 def _fetch(res: dict, force: bool = False) -> bool:
     """Fetch/verify a resource's sources.
 
@@ -96,8 +111,8 @@ def _fetch(res: dict, force: bool = False) -> bool:
         dst.parent.mkdir(parents=True, exist_ok=True)
         print(f"  fetch   {src['url']} -> {src['path']}")
         try:
-            urllib.request.urlretrieve(src["url"], dst)  # noqa: S310 (declared http(s) source)
-        except (urllib.error.URLError, OSError) as exc:
+            _download(src["url"], dst)
+        except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
             if optional:
                 print(f"  skip (optional): could not fetch {src['path']} ({exc})")
                 return False
@@ -137,7 +152,13 @@ def _convert(res: dict, force: bool = False) -> None:
     if conv.get("needs_blender"):
         cmd += ["--blender", os.environ.get("BLENDER", "blender")]
     print(f"  convert -> {', '.join(res['targets'])}")
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except BaseException:
+        # A conversion that fails or is interrupted may have written some targets part-way.
+        for t in res["targets"]:
+            _resolve(t).unlink(missing_ok=True)
+        raise
     missing = [t for t in res["targets"] if not _resolve(t).exists()]
     if missing:
         sys.exit(f"  conversion did not produce: {', '.join(missing)}")

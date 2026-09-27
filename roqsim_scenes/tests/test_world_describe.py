@@ -12,6 +12,7 @@ from contextlib import contextmanager
 
 import pytest
 
+from roqsim import exit_status
 from roqsim_scenes.cli import world_describe
 
 
@@ -80,12 +81,12 @@ def test_inputs_are_reported_too(capsys, world):
 
 
 def test_a_missing_world_fails_rather_than_reporting_nothing(capsys, tmp_path):
-    assert world_describe.main([str(tmp_path / "nope.yaml")]) == 1
+    assert world_describe.main([str(tmp_path / "nope.yaml")]) == exit_status.BAD_INPUT
     assert "does not exist" in capsys.readouterr().err
 
 
 def test_an_unresolvable_package_ref_names_itself(capsys):
-    assert world_describe.main(["no_such_pkg:world"]) == 1
+    assert world_describe.main(["no_such_pkg:world"]) == exit_status.BAD_INPUT
     assert "no_such_pkg:world" in capsys.readouterr().err
 
 
@@ -310,7 +311,10 @@ def test_an_overrides_file_that_is_not_there_is_named(capsys, tmp_path):
     """Describing the base world instead would answer a question nobody asked."""
     world = tmp_path / "w.yaml"
     world.write_text("plugins: []\n")
-    assert world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")]) == 1
+    assert (
+        world_describe.main([str(world), "--override", str(tmp_path / "nope.yaml")])
+        == exit_status.BAD_INPUT
+    )
     assert "does not exist" in capsys.readouterr().err
 
 
@@ -320,7 +324,7 @@ def test_an_override_naming_no_plugin_is_still_refused(capsys, tmp_path):
     world.write_text("plugins:\n- boxes: {instances: []}\n")
     overrides = tmp_path / "ov.yaml"
     overrides.write_text("plugins:\n  boxesTYPO:\n    instances: []\n")
-    assert world_describe.main([str(world), "--override", str(overrides)]) == 1
+    assert world_describe.main([str(world), "--override", str(overrides)]) == exit_status.BAD_INPUT
     assert "matches no component" in capsys.readouterr().err
 
 
@@ -333,7 +337,7 @@ def test_a_misspelt_geometry_plugin_still_fails_loudly(capsys, tmp_path):
     """
     path = tmp_path / "typo.yaml"
     path.write_text("plugins:\n- dummmy:\n    size: 0.3\n  name: box_a\n")
-    assert world_describe.main([str(path), "--entities"]) == 1
+    assert world_describe.main([str(path), "--entities"]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "dummmy" in out.err
     assert json.loads(out.out.splitlines()[-1])["errors"]["build"]
@@ -348,7 +352,7 @@ def test_a_build_failure_keeps_the_half_that_needed_no_build(capsys, dummy_world
         yield  # pragma: no cover - unreachable, and what makes this a context manager
 
     monkeypatch.setattr(world_describe, "_built", explode)
-    assert world_describe.main([str(dummy_world), "--entities"]) == 1, (
+    assert world_describe.main([str(dummy_world), "--entities"]) == exit_status.BAD_INPUT, (
         "a partial answer is not a success"
     )
     out = capsys.readouterr()
@@ -367,7 +371,7 @@ def test_a_world_that_cannot_load_reports_why(capsys, tmp_path):
     """
     bad = tmp_path / "bad.yaml"
     bad.write_text("extends: ./nowhere.yaml\nplugins: []\n")
-    assert world_describe.main([str(bad)]) == 1
+    assert world_describe.main([str(bad)]) == exit_status.BAD_INPUT
     out = capsys.readouterr()
     assert "cannot load world" in out.err
     # Unlike a build failure there is no half to hand back: nothing was resolved.
@@ -481,7 +485,9 @@ def test_a_reset_failure_keeps_what_the_build_answered(capsys, tmp_path):
     )
     world = tmp_path / "boom.yaml"
     world.write_text("sim: {}\ncomponents:\n  - dummy: {size: 0.3}\n    name: box_a\n  - boom.py:Boom: {}\n")
-    assert world_describe.main([str(world), "--entities"]) == 1, "a partial answer is not a success"
+    assert world_describe.main([str(world), "--entities"]) == exit_status.BAD_INPUT, (
+        "a partial answer is not a success"
+    )
     out = capsys.readouterr()
     described = json.loads(out.out.splitlines()[-1])
     assert described["entities"] == ["box_a"], "the build-fed half is still answered"
