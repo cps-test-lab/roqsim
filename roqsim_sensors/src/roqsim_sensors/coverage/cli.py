@@ -14,6 +14,12 @@ Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Exampl
 
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
+
+Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the
+report written; ``2`` and one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong
+-- a world that does not exist or does not load, a placements file that is missing, not JSON or not
+a list, an unknown sensor type or region. The agent driving the propose -> evaluate -> refine loop
+greps that line; a traceback means a crash, not a refused input.
 """
 
 from __future__ import annotations
@@ -24,6 +30,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+from roqsim import exit_status
 
 from . import catalog as catalog_mod
 from .adapters import build_fov
@@ -80,10 +88,18 @@ def parse_target(text: str | None) -> dict:
 
 
 def _read_placements(path: str) -> list[dict]:
-    obj = json.loads(Path(path).read_text())
+    """The placements file, or a ``ValueError`` naming it when it is missing, not JSON or not a list."""
+    try:
+        text = Path(path).read_text()
+    except OSError as err:
+        raise ValueError(f"placements {path!r} cannot be read: {err.strerror or err}") from None
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError as err:
+        raise ValueError(f"placements {path!r} is not JSON: {err}") from None
     placements = obj["placements"] if isinstance(obj, dict) else obj
     if not isinstance(placements, list):
-        raise SystemExit(f"{path}: expected a list of placements or {{'placements': [...]}}")
+        raise ValueError(f"{path}: expected a list of placements or {{'placements': [...]}}")
     return placements
 
 
@@ -334,7 +350,9 @@ def _add_common_sampling(sp):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0], epilog=exit_status.epilog(exit_status.BAD_INPUT)
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("catalog", help="print the sensor catalog as JSON")
@@ -367,7 +385,17 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    # A wrong input ends here as one line and exit 2 (see the module docstring).
+    from roqsim.models import ModelError
+    from roqsim.plugin import PluginError
+
+    try:
+        return args.func(args)
+    except (PluginError, ModelError, KeyError, ValueError, OSError) as err:
+        # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
+        message = err.args[0] if isinstance(err, KeyError) and err.args else err
+        print(f"roqsim sensors coverage: {message}", file=sys.stderr)
+        return exit_status.BAD_INPUT
 
 
 if __name__ == "__main__":
