@@ -108,7 +108,8 @@ embedding driver that varies the world per run writes exactly this document besi
 Both flags are repeatable and compose, later winning, so a saved set plus one ad-hoc tweak is
 ``--override debug.yaml --set sim.pacing=asap``. Every command that answers about the world a run
 would load takes the same pair, merged by the same function (``roqsim.override_options``):
-``roqsim sim``, ``roqsim check``, ``roqsim export web`` and ``roqsim scenes describe``.
+``roqsim sim``, ``roqsim check``, ``roqsim render``, ``roqsim export web`` and ``roqsim scenes
+describe``.
 
 Driven from scenario-execution, ``MujocoSim`` takes the nested dict as a ``world_overrides``
 parameter -- naturally an OSC struct, which the framework passes as a nested dict -- and (re)builds

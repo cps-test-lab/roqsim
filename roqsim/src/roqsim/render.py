@@ -26,6 +26,9 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 (:class:`_VideoCamera`); ``--camera-path`` moves it along keyframes (:mod:`roqsim.camera_path`) and
 ``--overlay`` paints insets on the frames (:mod:`roqsim.render_overlays`).
 
+``--set`` and ``--override`` are ``roqsim sim``'s own options (:mod:`roqsim.override_options`), so a
+world is rendered as the run with those overrides would build it.
+
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
 """
@@ -49,6 +52,7 @@ from . import logging_setup
 from .capture import CaptureError
 from .config import _VIEW_KEYS, PluginError, overrides_from_dotlist
 from .models import ModelError
+from .override_options import add_override_options, overrides_from_options
 from .recording import RecordingError
 from .rendering import FrameRenderer, GLBackendError, check_gl_backend, focus_camera
 from .viewer import GL_HELP, DisplayError
@@ -1277,13 +1281,8 @@ def main(argv: list | None = None) -> int:
         action="store_true",
         help="shorthand for --set components.ceiling.keep=false, to look into a roofed world",
     )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        metavar="PATH=VALUE",
-        help="override a world value, e.g. --set components.floorplan.size=4.0 (repeatable)",
-    )
+    # `roqsim sim`'s own --set/--override, so the picture is of the world that run would build.
+    add_override_options(parser)
     parser.add_argument(
         "--check",
         action="store_true",
@@ -1386,7 +1385,7 @@ def main(argv: list | None = None) -> int:
             focus=args.focus,
             camera=args.camera,
             no_ceiling=args.no_ceiling,
-            overrides=overrides_from_dotlist(args.overrides),
+            overrides=overrides_from_options(args),
             check=args.check,
             state=args.state,
             at=args.at,
