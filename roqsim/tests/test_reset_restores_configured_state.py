@@ -317,10 +317,7 @@ CASES: dict[str, Case] = {
     "flex_material": Case(_flex_world),
     "heightfield": _static({"heightfield": {"size": [4.0, 4.0], "resolution": 32, "seed": 3}}),
     # mobile
-    "diff_drive": Case(
-        lambda _: _mobile(),
-        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
-    ),
+    "diff_drive": Case(lambda _: _mobile()),
     "spawn_robot": Case(lambda _: _mobile()),
     "omni_drive": Case(
         lambda _: _world(_robot("lgdxrobot2")),
