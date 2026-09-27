@@ -80,6 +80,20 @@ def test_a_wrench_carries_the_frame_it_was_resolved_in():
     assert msg.header.frame_id == "tool0"
 
 
+def test_a_namespaced_wrench_in_the_world_frame_names_world():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "world", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "world"
+
+
+def test_a_namespaced_wrench_in_a_robot_frame_is_prefixed():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "tool0", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "ur5e/tool0"
+
+
 def test_a_commanded_wrench_decodes_to_the_readers_own_shape():
     msg = _WrenchMsg()
     msg.wrench.force.x, msg.wrench.force.z = 1.5, -8.0
