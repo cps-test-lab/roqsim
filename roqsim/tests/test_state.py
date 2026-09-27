@@ -328,8 +328,7 @@ def test_a_replayed_sensor_carries_the_recorded_seed(recording):
 
 
 def test_a_selected_sensor_whose_replay_fails_is_refused_not_written_stale(recording, monkeypatch):
-    """A sensor whose ``post_step`` raises on a restored sample still holds the previous sample's
-    value. Writing it would put a reading under a moment it was not taken at, so the selection is
+    """A sensor whose ``post_step`` raises still holds the previous sample's value, so it is
     refused, naming the sensor and the error."""
     from roqsim.registry import resolve_plugin
 

@@ -377,11 +377,8 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
 
 
 def _refuse_stale(rec, endpoints, sample) -> None:
-    """Raise when a selected sensor's plugin failed on this sample, instead of writing its value.
-
-    Its endpoint still holds what the previous sample computed, so a row would carry a reading the
-    world never produced at this moment, under this moment's timestamp.
-    """
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
     stale = rec.failed_endpoints(endpoints) if endpoints else {}
     if stale:
         detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))

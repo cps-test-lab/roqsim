@@ -81,9 +81,8 @@ class Recording:
         self._buf: np.ndarray | None = None
         self._view: dict | None = None
         self._run_sensors = False
-        #: Plugins whose ``post_step`` raised on the latest restore, with the error. What a replayed
-        #: endpoint of theirs holds is the previous sample's value, so a caller reading one has to be
-        #: told rather than handed it (:meth:`failed_endpoints`).
+        #: Plugins whose ``post_step`` raised on the latest restore, with the error; their endpoints
+        #: still hold the previous sample's values (:meth:`failed_endpoints`).
         self.replay_failures: list[tuple[object, Exception]] = []
         self._warned: set[int] = set()
 
@@ -394,9 +393,8 @@ class Recording:
             try:
                 plugin.post_step(ctx)
             except Exception as err:  # noqa: BLE001 - one broken sensor must not stop the rest
-                # Not fatal here, because most plugins are not what the caller asked for. Not
-                # silent either: every endpoint this plugin feeds still holds the previous sample's
-                # value. A caller that reads one asks `failed_endpoints`, and it raises there.
+                # Not fatal here: most plugins are not what the caller asked for. A caller reading
+                # a selected endpoint asks `failed_endpoints`.
                 self.replay_failures.append((plugin, err))
                 if id(plugin) not in self._warned:
                     self._warned.add(id(plugin))
@@ -414,9 +412,7 @@ class Recording:
         restore -- whose value is therefore the previous sample's, not this one's.
 
         An endpoint is attributed to a plugin when its ``read`` is bound to that plugin or closes
-        over it, which is how every producer in the tree registers one. A failing plugin none of the
-        given endpoints can be attributed to has been logged by :meth:`_drive_sensors` and is not
-        reported here.
+        over it.
         """
         out: dict[str, str] = {}
         for plugin, err in self.replay_failures:
