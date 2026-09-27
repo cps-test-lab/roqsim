@@ -686,10 +686,8 @@ def run(
     if profile:
         print(engine.format_load_report(), file=sys.stderr)
     # Everything between setup and the loop can raise -- a plugin's on_reset, a capture rate this
-    # world cannot hold, a recording path that cannot be written -- and the engine is set up by
-    # then, so its plugins hold what configure opened: a transport's spin thread, a file. Only a
-    # shutdown releases them. Without this a failed reset left the process hanging on a bridge
-    # thread behind its traceback, and the loading window open.
+    # world cannot hold, a recording path that cannot be written -- while the plugins hold what
+    # configure opened (a transport's spin thread, a file), so a failure here shuts the engine down.
     try:
         engine.reset()
 
@@ -802,10 +800,8 @@ def run(
             # here does not end a run early, it ends it *without its results*: the capture, and the
             # CSV a scoring plugin writes in shutdown(), are both produced below this line.
             #
-            # The shutdown is a `finally` of its own: a recording that cannot be written (a disk
-            # that filled up before close) must still leave the plugins shut down, or the CSV a
-            # scoring plugin writes there is lost with the recording and a bridge thread keeps the
-            # process alive.
+            # The shutdown is a `finally` of its own, so a recording that cannot be written still
+            # leaves the plugins shut down and their shutdown output written.
             with _deaf_to_stop_signals(engine.logger or log):
                 try:
                     written = recorder.close() if recorder is not None else None
