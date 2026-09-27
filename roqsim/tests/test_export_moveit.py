@@ -18,6 +18,7 @@ import mujoco
 import pytest
 import yaml
 
+from roqsim import exit_status
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_moveit import (
@@ -245,6 +246,13 @@ def _run_cli(tmp_path, world: dict, *extra):
     return code, out
 
 
+def _refused(capsys, tmp_path, world: dict, *extra) -> str:
+    """Run the CLI on a request it must refuse, and return what it said on stderr."""
+    code, _out = _run_cli(tmp_path, world, *extra)
+    assert code == exit_status.BAD_INPUT
+    return capsys.readouterr().err
+
+
 _WORLD = {
     "sim": {},
     "plugins": [
@@ -333,14 +341,15 @@ def test_a_welded_arm_gets_no_virtual_joint_and_plans_in_its_root_link(tmp_path)
     assert srdf.find("virtual_joint") is None
 
 
-def test_a_tip_that_is_not_a_link_is_refused(tmp_path):
+def test_a_tip_that_is_not_a_link_is_refused(tmp_path, capsys):
     """``export srdf`` alone accepts this and move_group then loads and never plans -- the failure
     that hangs rather than erroring. Owning both files is what makes it checkable."""
-    with pytest.raises(SystemExit, match="not a link in the URDF"):
-        _run_cli(tmp_path, _WORLD, "--arm-tip", "no_such_link")
+    assert "not a link in the URDF" in _refused(
+        capsys, tmp_path, _WORLD, "--arm-tip", "no_such_link"
+    )
 
 
-def test_a_world_with_no_arm_says_so(tmp_path):
+def test_a_world_with_no_arm_says_so(tmp_path, capsys):
     world = {
         "sim": {},
         "plugins": [
@@ -353,11 +362,10 @@ def test_a_world_with_no_arm_says_so(tmp_path):
             }
         ],
     }
-    with pytest.raises(SystemExit, match="follow_joint_trajectory"):
-        _run_cli(tmp_path, world)
+    assert "follow_joint_trajectory" in _refused(capsys, tmp_path, world)
 
 
-def test_two_arms_must_be_disambiguated(tmp_path):
+def test_two_arms_must_be_disambiguated(tmp_path, capsys):
     world = {
         "sim": {},
         "plugins": [
@@ -365,8 +373,7 @@ def test_two_arms_must_be_disambiguated(tmp_path):
             {"spawn_arm": {"model": "ur5e", "prefix": "b_", "pos": [1, 0, 0]}, "name": "b"},
         ],
     }
-    with pytest.raises(SystemExit, match="--arm"):
-        _run_cli(tmp_path, world)
+    assert "--arm" in _refused(capsys, tmp_path, world)
 
 
 # -- two arms in one configuration ---------------------------------------------------------------
@@ -514,16 +521,18 @@ def test_the_collision_matrix_covers_pairs_ACROSS_the_arms(dual):
     assert {d.get("reason") for d in cross} <= {"Never", "Always", "Adjacent"}
 
 
-def test_an_arm_whose_joints_are_not_prefixed_is_refused(tmp_path):
+def test_an_arm_whose_joints_are_not_prefixed_is_refused(tmp_path, capsys):
     """Those names reach /joint_states and a trajectory point, so the description cannot rename
     them -- both arms would command `shoulder_pan_joint` and each would answer for the other."""
-    with pytest.raises(SystemExit, match="joint_prefix"):
-        _run_cli(tmp_path, _dual_world(joint_prefix=False), "--arm", "left,right")
+    assert "joint_prefix" in _refused(
+        capsys, tmp_path, _dual_world(joint_prefix=False), "--arm", "left,right"
+    )
 
 
-def test_a_flag_that_names_one_robot_is_refused_for_a_pair(tmp_path):
-    with pytest.raises(SystemExit, match="--collapse names one robot"):
-        _run_cli(tmp_path, _dual_world(), "--arm", "left,right", "--collapse", "base_mount")
+def test_a_flag_that_names_one_robot_is_refused_for_a_pair(tmp_path, capsys):
+    assert "--collapse names one robot" in _refused(
+        capsys, tmp_path, _dual_world(), "--arm", "left,right", "--collapse", "base_mount"
+    )
 
 
 def test_one_arm_still_gets_the_group_called_arm(tmp_path):
@@ -598,9 +607,10 @@ def test_a_joint_space_only_pipeline_says_so_in_the_file(tmp_path):
     assert "pose target" in text
 
 
-def test_a_repeated_pipeline_name_is_refused(tmp_path):
-    with pytest.raises(SystemExit, match="repeats"):
-        _run_cli(tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,ompl")
+def test_a_repeated_pipeline_name_is_refused(tmp_path, capsys):
+    assert "repeats" in _refused(
+        capsys, tmp_path, _WORLD, "--tip-site", "pinch", "--pipelines", "ompl,ompl"
+    )
 
 
 # -- the one file whose content is not an answer --------------------------------------------------

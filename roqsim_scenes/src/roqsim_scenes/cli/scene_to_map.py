@@ -156,19 +156,20 @@ def _load_world(
             "spelling if you expected one.",
             file=sys.stderr,
         )
-    engine = Engine(cfg, preview=True)
-    engine.setup()
-    engine.reset()
-    model, data = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(model, data)
+    # The model and data outlive the plugins: the slice reads only them.
+    with Engine(cfg, preview=True) as engine:
+        engine.reset()
+        model, data = engine.ctx.model, engine.ctx.data
+        mujoco.mj_forward(model, data)
 
-    # ...but NOT the robot. A map is the environment; the robot is what moves through it. Compiling the
-    # world puts the robot at its spawn pose, so without this its chassis and wheels rasterise into a
-    # blob of permanent occupancy exactly where every trial begins -- AMCL then localises against a
-    # phantom obstacle at the start, and a planner refuses to leave. Worse, `--free-from` is documented
-    # as "normally the robot's start", so the flood fill is seeded ON the blob and the damage looks like
-    # a slightly small free area rather than a bug.
-    skip = _robot_geoms(model, engine.ctx)
+        # ...but NOT the robot. A map is the environment; the robot is what moves through it.
+        # Compiling the world puts the robot at its spawn pose, so without this its chassis and
+        # wheels rasterise into a blob of permanent occupancy exactly where every trial begins --
+        # AMCL then localises against a phantom obstacle at the start, and a planner refuses to
+        # leave. Worse, `--free-from` is documented as "normally the robot's start", so the flood
+        # fill is seeded ON the blob and the damage looks like a slightly small free area rather
+        # than a bug.
+        skip = _robot_geoms(model, engine.ctx)
 
     out: list[tuple[np.ndarray, np.ndarray]] = []
     hulls: list[list[tuple[np.ndarray, np.ndarray]]] = []

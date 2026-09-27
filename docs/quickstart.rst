@@ -225,6 +225,14 @@ exist is named rather than discovered by a run that dies quietly::
 
    roqsim check world.yaml
    roqsim check roqsim_mobile:husky_demo --json     # the same report, for a script
+   roqsim check world.yaml --override run.overrides.yaml --set sim.timestep=0.001
+
+``--set`` and ``--override`` are ``roqsim sim``'s own options, applied by the same loader, so the
+world checked is the one a run with those overrides builds -- a campaign's obstacles and plugin
+settings included. An override addressing a component the world does not have is a ``config``
+problem, as it is when a run loads it. The report names the merged overrides (``overrides`` in
+``--json``, ``{}`` for none), so a caller can tell which world was checked; an override file that
+cannot be read exits 2 with no report.
 
 It runs six stages -- ``resolve``, ``inputs``, ``config``, ``build``, ``configure``, ``reset`` --
 and says which one it reached, because "the config is wrong" and "the config is fine and the model
