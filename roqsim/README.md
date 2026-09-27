@@ -59,8 +59,9 @@ roqsim sim world.yaml --headless --pacing asap --steps 1000 --profile
 roqsim sim world.yaml --seed 7 --record run.npz --video run.webm
 ```
 
-`roqsim` is the only name to know: `roqsim --help` lists the groups (one per installed package that ships
-tools), `roqsim <group> --help` gives one line per tool, and `roqsim <group> <tool> --help` is that tool's
+`roqsim` is the only name to know: `roqsim --help` lists the core's commands (`sim`, `render`, `check`
+and the rest) and a group per installed package that ships tools, `roqsim <group> --help` gives one
+line per tool, and `roqsim <group> <tool> --help` is that tool's
 own options. `python -m pydoc <module>` has the reasoning behind one.
 
 A world is one YAML file — a `sim:` block of run-level settings and a `components:` list, where each

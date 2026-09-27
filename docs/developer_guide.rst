@@ -83,7 +83,7 @@ a path or which package a tool lives in:
 
 .. code-block:: bash
 
-   roqsim --help                       # the core commands, then one group per package that ships tools
+   roqsim --help                       # the core's commands and a group per package with tools
    roqsim scenes --help                # one line per tool in that group
    roqsim scenes sdf-to-scene --help   # that tool's own options
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
