@@ -505,3 +505,29 @@ def test_a_tf_parent_that_is_not_a_body_is_refused():
     engine = Engine(_housed_world(site="lidar", exclude_body="housing", tf_parent="chassis"))
     with pytest.raises(RuntimeError, match="tf_parent 'chassis' not found"):
         engine.setup()
+
+
+def test_a_rate_the_timestep_divides_casts_on_every_period():
+    """10 Hz on a 2 ms step is every fiftieth step. The sim clock is a float sum of timesteps, so
+    the step a period after the last cast can read a hair short of it; the gate must take it.
+
+    Observed at the lazy check, which is the first thing past the rate gate: it records the step
+    and stands in for the cast by moving ``_last_cast``.
+    """
+    from types import SimpleNamespace
+
+    plugin = LidarPlugin({"rate_hz": 10.0, "lazy": True})
+    ctx = SimpleNamespace(sim_time=0.0, dt=0.002)
+    passed = []
+
+    def gate_passed():
+        passed.append(round(ctx.sim_time / ctx.dt))
+        plugin._last_cast = ctx.sim_time
+        return False
+
+    plugin._endpoint = SimpleNamespace(has_subscribers=gate_passed)
+    for _ in range(5000):  # 10 s
+        ctx.sim_time += ctx.dt
+        plugin.post_step(ctx)
+    gaps = {b - a for a, b in zip(passed, passed[1:], strict=False)}
+    assert gaps == {50}, f"cast spacing in steps: {sorted(gaps)}"
