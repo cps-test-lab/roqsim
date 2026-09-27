@@ -127,8 +127,8 @@ def geom_surface(trimesh, model, data, gid: int):
         mesh = trimesh.creation.cylinder(radius=float(size[0]), height=2 * float(size[1]))
     elif kind == mujoco.mjtGeom.mjGEOM_CAPSULE:
         mesh = trimesh.creation.capsule(radius=float(size[0]), height=2 * float(size[1]))
-        # Centred on the geom origin as MuJoCo has it, whichever convention this trimesh builds in:
-        # some releases build the capsule from the origin up, current ones about it.
+        # Centred on the geom origin as MuJoCo has it. Within the pinned trimesh range, one version
+        # builds the capsule from the origin up and another about it, so centre it on its bounds.
         mesh.apply_translation(-mesh.bounds.mean(axis=0))
     elif kind == mujoco.mjtGeom.mjGEOM_MESH:
         i = model.geom_dataid[gid]
