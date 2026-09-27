@@ -79,5 +79,5 @@ Both need a graphical session. `render_scene` is out-of-process for a different 
 context is held in the long-lived server — and needs no display at all. Offscreen frames use MuJoCo's
 `egl` backend by default (override with `MUJOCO_GL`, e.g. `osmesa` on a GPU-less host).
 
-The floorplan authoring loop (2D sketch → generate → 3D review, until pass) is the `scene-update`
-skill. See `docs/scene_builder.rst` for the full contract and internals.
+The floorplan authoring loop is `sketch_floorplan_by_human` → `roqsim scenes floorplan-to-world` →
+`review_scene_by_human`, repeated until the review passes. See `docs/scene_builder.rst` for the full contract and internals.

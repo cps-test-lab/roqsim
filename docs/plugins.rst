@@ -145,7 +145,8 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
    of a link in the chain has to agree on one topic. Note this scopes the TF *topics* only — frame ids
-   (``map``, ``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed.
+   (``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed. The
+   global frames ``world`` and ``map`` are never namespaced.
    Setting the bridge's ``namespace`` does **not** do this: tf2_ros's broadcasters hardwire the
    absolute ``/tf``, which is exactly why this option exists.
 
