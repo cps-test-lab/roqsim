@@ -536,8 +536,6 @@ KNOWN_DEFECTS: dict[str, str] = {
         name: "_jpos/_jvel serve the previous trial's last joint state until the first step"
         for name in ("diff_drive", "omni_drive", "ackermann_drive")
     },
-    "joint_state_publisher": "has no on_reset, so it serves the previous trial's last joint state "
-    "until the first step",
     **{
         name: "_payload_value serves the previous trial's last scan until the first cast"
         for name in _RAY_SENSORS
