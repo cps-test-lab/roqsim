@@ -614,8 +614,10 @@ class WalkerController:
         # The physics loop calls us every step (~500 Hz); decimate the whole walker pipeline to
         # _UPDATE_HZ by accumulating elapsed time and only doing the real work once a full period
         # has built up. Mocap bodies hold their last pose in between (~16 ms at 60 Hz).
+        # A thousandth of a step short still counts: float drift in the summed timesteps would
+        # otherwise push a period the timestep divides to the step after it.
         self._accum += dt
-        if self._accum < self._period:
+        if self._accum < self._period - 1e-3 * dt:
             return
         step_dt = self._accum
         self._accum = 0.0
