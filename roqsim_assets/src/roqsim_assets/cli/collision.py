@@ -40,7 +40,7 @@ Usage::
     roqsim assets collision diff office_table --tol 5      # a tighter question
     roqsim assets collision diff office_table --json       # machine-readable
 
-Exits non-zero when anything is FAIL, so an agent or a CI step fails loudly rather than reading past
+Exits ``5`` (``roqsim.exit_status``) when anything is FAIL or ERROR, so an agent or a CI step fails loudly rather than reading past
 it. To SEE what a verdict is talking about, render the two halves against each other::
 
     roqsim render office_table --geomgroup 2,3 --out check.png
@@ -59,6 +59,8 @@ from pathlib import Path
 
 import mujoco
 import numpy as np
+
+from roqsim import exit_status
 
 #: Default agreement required between the two surfaces, in metres. A costmap cell in the navigation
 #: worlds here is 50 mm, so 10 mm is well inside the resolution any consumer of this geometry has.
@@ -812,6 +814,11 @@ def main(argv: list | None = None) -> int:
         prog="roqsim assets collision",
         description=__doc__.split("\n")[0],
         parents=[common],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is a FAIL or ERROR verdict for any model checked.",
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -851,7 +858,7 @@ def main(argv: list | None = None) -> int:
     if args.command == "diff":
         report = diff(args.model, tol=tol, samples=args.samples, seed=args.seed)
         print(json.dumps(report, indent=2)) if as_json else print_diff(report)
-        return 1 if report["verdict"] in ("FAIL", "ERROR") else 0
+        return exit_status.FINDING if report["verdict"] in ("FAIL", "ERROR") else exit_status.OK
 
     if args.command == "propose":
         draft = propose(args.model, res=args.res / 1000, max_geoms=args.max_geoms, seed=args.seed)
@@ -865,7 +872,8 @@ def main(argv: list | None = None) -> int:
         )
     rows = [audit_one(ref, tol, args.seed) for ref in models]
     print(json.dumps(rows, indent=2)) if as_json else print_audit(rows, tol)
-    return 1 if any(r["verdict"] in ("FAIL", "ERROR") for r in rows) else 0
+    failed = any(r["verdict"] in ("FAIL", "ERROR") for r in rows)
+    return exit_status.FINDING if failed else exit_status.OK
 
 
 if __name__ == "__main__":

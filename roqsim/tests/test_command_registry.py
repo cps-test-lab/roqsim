@@ -235,6 +235,8 @@ def test_the_listing_is_fast(tree):
 # -- one exit-status table ------------------------------------------------------------------------
 #: Every tool whose --help must state its exit statuses. Its epilog comes from roqsim.exit_status.
 _STATES_ITS_EXIT_STATUS = {
+    "assets collision",
+    "assets inspect-prop",
     "sim",
     "render",
     "state",

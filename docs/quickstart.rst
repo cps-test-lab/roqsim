@@ -865,8 +865,9 @@ does not exist or does not load, a flag or value that cannot be honoured. ``4`` 
 *exists* and cannot be read (a run killed before it closed the archive) or whose world cannot be
 rebuilt from its provenance; a recording path that names nothing is a ``2``. ``5`` is a verdict:
 ``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
-an exporter's ``--check`` finding its output off its source. ``1`` is never returned on purpose, so it
-always means the tool itself broke. Every other status comes with its reason: a line on stderr
+an exporter's ``--check`` finding its output off its source, an asset check (``roqsim assets
+collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpose, so it always means
+the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 
 The scene-builder windows (``roqsim builder``) are the one exception: they return a person's
