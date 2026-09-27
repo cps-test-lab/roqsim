@@ -319,3 +319,17 @@ def test_a_bundled_blueprint_is_not_shadowed_by_a_foreign_one(tmp_path, monkeypa
     )
     spec = blueprint.resolve_walker("MaleVisitorWalk")
     assert str(bundled) in spec["mesh"], "the bundled blueprint must win its own name"
+
+
+# -- avoidance ---------------------------------------------------------------------------------------
+def test_avoidance_without_rvo2_refuses_to_build(monkeypatch):
+    """`avoidance: true` with no rvo2 is an error naming the package and its install, not a walker
+    that quietly navigates without avoidance."""
+    import sys
+
+    from roqsim_walker.nav.controller import WalkerController
+
+    monkeypatch.setitem(sys.modules, "rvo2", None)  # makes `import rvo2` raise ImportError
+    controller = WalkerController.__new__(WalkerController)
+    with pytest.raises(ImportError, match=r"'rvo2'.*roqsim_walker\[avoidance\]"):
+        controller._build_orca(robot_radius=0.25)

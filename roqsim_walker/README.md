@@ -42,7 +42,7 @@ components:
         - [ 2.0,  2.0]
       loop: true               # cycle the patrol forever
       arrival_radius: 0.25
-      avoidance: false         # ORCA local avoidance (needs the [avoidance] extra)
+      avoidance: false         # true -> the shared local model steers it (never stops it)
       robot_body: base_link    # body to yield to (default: the robot entity's base)
       action_name: navigate_through_poses
       orca:     {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
@@ -58,29 +58,28 @@ components:
 |---|---|---|
 | Global plan | `roqsim_nav`'s `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
 | Behaviour | `roqsim_nav`'s `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
-| Local avoidance | `nav/controller.py` (ORCA) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
+| Local avoidance | `roqsim_nav`'s `avoidance/` | Steers around the robot, other movers and mocap props; walls are static obstacles |
 
-Walls are read straight from the compiled model (`roqsim_nav`'s `obstacles.py`), so the planner and ORCA always
-agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
+Walls are read straight from the compiled model (`roqsim_nav`'s `obstacles.py`), so the planner and the local
+model always agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
 wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
 legs. A `floorplan` mesh adds its own walls the same way.
 
 ### Avoidance
 
-`avoidance: true` turns on ORCA for that walker. It needs the optional extra (built from source):
+`avoidance: true` lets the world's shared local model steer the walker; it never makes it stop. The
+model is `roqsim_nav`'s default, `give_way`, which is pure Python. For ORCA, or for a pedestrian that
+also stops, give it a `navigator` with `avoidance: {steer: orca}` or `{stop: true}` (see
+`roqsim_nav/README.md`). `orca` needs `rvo2`:
 
 ```bash
-pip install -e 'roqsim_walker[avoidance]'
+pip install 'roqsim_nav[avoidance]'
 ```
 
 `rvo2` publishes no wheel, so the extra is a git direct reference and needs **git + a compiler**. Two
-places that bites: a PyPI upload of this package cannot carry the extra (PyPI rejects direct-URL
-metadata), and a wheel-only or air-gapped build — a campaign image — cannot resolve it. Install the
-base package in those, and enable avoidance only where the toolchain exists.
-
-Without `rvo2` installed the walker logs a warning once and navigates without collision avoidance.
-The shared ORCA simulation is created when *any* walker enables it; a walker with `avoidance: false`
-still occupies an ORCA agent (so peers steer around it) but is never pushed off its own path.
+places that bites: a PyPI upload cannot carry the extra (PyPI rejects direct-URL metadata), and a
+wheel-only or air-gapped build cannot resolve it. A world that names `orca` without `rvo2` installed
+fails at load, naming the package.
 
 ### Goals at runtime
 

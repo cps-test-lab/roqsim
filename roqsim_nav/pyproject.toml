@@ -28,16 +28,14 @@ dependencies = [
 # cycle confined to the extra; the runtime graph above stays a tree.
 test = ["pytest>=7.0", "roqsim_mobile", "roqsim_walker", "roqsim_assets"]
 # ORCA local collision avoidance: the `orca` model of the world-level `avoidance:` plugin. Built from
-# source (Cython), so it is opt-in -- without it a navigator follows its planned path without
-# yielding, and logs why.
+# source (Cython), so it is opt-in -- a world that names `orca` without it fails at load.
 #
 # This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
 # publishes no wheel, so the alternatives are vendoring the Cython source or having no ORCA at all.
 # Two consequences a downstream consumer has to plan for, because pip does not warn about either:
 # PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
 # with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
-# air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
-# degrades to planned paths without local avoidance and logs why, it does not fail.
+# air-gapped build will not have. Install the base package there, and use a pure-Python model.
 #
 # It gates the `orca` model ONLY: this package stays wheel-installable, and a world using a
 # pure-Python avoidance model needs no toolchain at all.

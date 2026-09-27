@@ -24,8 +24,8 @@ Each walker is a kinematic articulated **humanoid** (a flat set of mocap bodies,
 
 **Avoidance** is per-walker (``avoidance: true``). The shared ORCA sim is built when *any* walker
 enables it; a walker with ``avoidance: false`` still occupies an ORCA agent (so others steer around
-it) but integrates its own preferred velocity directly instead of ORCA's. With no ``rvo2`` installed
-every walker falls back to plain path following without collision avoidance.
+it) but integrates its own preferred velocity directly instead of ORCA's. A walker that enables it
+needs ``rvo2`` (the ``avoidance`` extra); without it the controller refuses to build.
 
 **Routes.** A walker patrols its configured ``waypoints`` until :meth:`set_route` supplies a goal
 route (from an interface such as nav2's ``NavigateThroughPoses``). The route overrides the patrol;
@@ -471,7 +471,6 @@ class WalkerController:
         self._sim = None
         self._robot_agent = None
         self._obstacle_agents = []  # (orca agent, body id) for mocap props
-        self._warned = False
         # Decimate the whole pipeline to this rate. Runs no faster than the viewer needs it: a walker
         # publishes its bones at 30 Hz, so a higher rate just computes frames that are dropped before
         # publish. Overridable per-world via the ``update_hz`` config (default keeps the 60 Hz look).
@@ -492,12 +491,12 @@ class WalkerController:
     def _build_orca(self, robot_radius):
         try:
             import rvo2
-        except ImportError:
-            logger.warning(
-                "walker: avoidance requested but 'rvo2' is not installed; walkers navigate "
-                "WITHOUT collision avoidance. Install with: pip install 'roqsim_walker[avoidance]'"
-            )
-            return  # fallback handled in update()
+        except ImportError as exc:
+            raise ImportError(
+                "walker: `avoidance: true` needs the 'rvo2' package, which is not installed. It "
+                "publishes no wheel and is built from source (needs git and a compiler): "
+                "pip install 'roqsim_walker[avoidance]'"
+            ) from exc
         dt = float(self.model.opt.timestep)
         self._sim = rvo2.PyRVOSimulator(dt, 4.0, 10, 3.0, 2.0, 0.26, 1.5)
         for st in self._states:
@@ -621,9 +620,6 @@ class WalkerController:
         t = float(self.data.time)
 
         if self._sim is None:
-            if not self._warned and any(st.avoid for st in self._states):
-                logger.warning("rvo2 unavailable; walkers navigate WITHOUT collision avoidance")
-                self._warned = True
             for st in self._states:
                 pref = self._navigate(st, t)
                 animate(self.data, st, st.pos + pref * step_dt, step_dt)
