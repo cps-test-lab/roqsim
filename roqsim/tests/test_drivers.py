@@ -138,3 +138,29 @@ def test_scenario_adapter_lifecycle(tmp_path: Path):
     assert counts["pre_step"] == 7
     sim.shutdown()
     assert sim._engine is None
+
+
+def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
+    """A relative ``ROQSIM_SCENE_EXPORT_DIR`` is anchored to the run, not the campaign root.
+
+    scenario-execution's ``output_dir`` is shared by every run of a sweep, so a descriptor anchored
+    there is overwritten by each run in turn; ``RUN_OUTPUT_DIR`` wins, as it does for a recording.
+    """
+    world = _write_world(tmp_path)
+    run_dir, root = tmp_path / "cfg" / "0", tmp_path / "campaign"
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(run_dir))
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (run_dir / "scene" / "scene.json").is_file()
+    assert not (root / "scene").exists()
+
+    # Without a per-run directory the scenario's own output_dir is the fallback.
+    monkeypatch.delenv("RUN_OUTPUT_DIR")
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (root / "scene" / "scene.json").is_file()
