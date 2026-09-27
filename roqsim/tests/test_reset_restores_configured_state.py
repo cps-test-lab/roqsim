@@ -296,11 +296,7 @@ CASES: dict[str, Case] = {
     "clearance_monitor": Case(lambda _: _mobile({"clearance_monitor": {}})),
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
-    "joint_state_publisher": Case(
-        lambda _: _mobile({"joint_state_publisher": {}}),
-        defect="has no on_reset, so it serves the previous trial's last joint state until the first "
-        "step",
-    ),
+    "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
     "payload": Case(lambda _: _mobile({"payload": {"mass": 0.5}})),
     "model_override": Case(
