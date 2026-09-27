@@ -171,3 +171,21 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
         sim.shutdown()
     assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
     assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_viewer_cannot_close(tmp_path: Path):
+    """A viewer whose close raises still leaves the engine shut down."""
+
+    class _Viewer:
+        def close(self):
+            raise RuntimeError("GL context lost")
+
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim._viewer = _Viewer()
+    ctx = sim.context
+    with pytest.raises(RuntimeError, match="GL context lost"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None and sim._viewer is None
