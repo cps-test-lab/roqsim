@@ -206,6 +206,29 @@ def test_check_lists_the_worlds_sensors_and_their_kinds(recording):
     assert set(record["sensors"].values()) <= {st.KIND_SCALAR, st.KIND_ARRAY, st.KIND_IMAGE}
 
 
+def test_closing_a_recording_shuts_its_rebuilt_world_down(recording, monkeypatch):
+    """A replayed sensor holds what a live one holds; only the plugins' shutdown releases it."""
+    rec = open_recording(recording)
+    _, ctx = rec.build()
+    shut = []
+    monkeypatch.setattr(ctx.engine, "shutdown", lambda: shut.append(True))
+    rec.close()
+    rec.close()  # idempotent: the second call has nothing left to shut down
+    assert shut == [True]
+    assert rec.build()[0] is not None  # a closed recording can be rebuilt
+
+
+def test_run_state_closes_the_recording_on_every_way_out(recording, monkeypatch):
+    from roqsim.recording import Recording
+
+    closed = []
+    monkeypatch.setattr(Recording, "close", lambda self: closed.append(self))
+    st.run_state(recording, check=True)
+    with pytest.raises(st.StateError):
+        st.run_state(recording, sensors=["nosuch"], at=1.0)
+    assert len(closed) == 2
+
+
 def test_an_undeclared_sensor_errors_and_lists_what_the_world_has(recording):
     with pytest.raises(st.StateError) as err:
         st.run_state(recording, sensors=["nosuch"], at=1.0)
@@ -322,3 +345,59 @@ def test_a_replayed_sensor_carries_the_recorded_seed(recording):
     rec = open_recording(recording)
     _model, ctx = rec.build()
     assert ctx.seed == 7
+
+
+# -- a replayed sensor that fails ------------------------------------------------------------------
+
+
+def test_a_selected_sensor_whose_replay_fails_is_refused_not_written_stale(recording, monkeypatch):
+    """A sensor whose ``post_step`` raises still holds the previous sample's value, so it is
+    refused, naming the sensor and the error."""
+    from roqsim.registry import resolve_plugin
+
+    sensor = next(iter(st.run_state(recording, check=True)["sensors"]))
+    lidar = resolve_plugin("lidar")
+    calls = {"n": 0}
+    real = lidar.post_step
+
+    def flaky(self, ctx):
+        calls["n"] += 1
+        if calls["n"] > 1:  # the first restore computes a value; every later one fails
+            raise RuntimeError("replay broke")
+        real(self, ctx)
+
+    monkeypatch.setattr(lidar, "post_step", flaky)
+    with pytest.raises(st.StateError) as err:
+        st.run_state(recording, sensors=[sensor], at=1.0)
+    assert sensor in str(err.value) and "replay broke" in str(err.value)
+
+
+def test_a_failing_plugin_nobody_selected_is_warned_about_not_fatal(recording, monkeypatch, caplog):
+    import logging
+
+    from roqsim.registry import resolve_plugin
+
+    def broken(self, ctx):
+        raise RuntimeError("x")
+
+    monkeypatch.setattr(resolve_plugin("lidar"), "post_step", broken)
+    with caplog.at_level(logging.WARNING, logger="roqsim.recording"):
+        record = st.run_state(recording, joints=["j"], at=1.0)
+    assert record["values"], "the joint the caller asked for is still reported"
+    assert any("post_step raised" in r.getMessage() for r in caplog.records)
+
+
+def test_a_sensor_whose_producer_is_unknown_is_refused_while_a_plugin_fails(recording, monkeypatch):
+    """An endpoint whose ``read`` cannot be traced to any plugin may be the failing one's."""
+    from roqsim import recording as recording_module
+    from roqsim.registry import resolve_plugin
+
+    sensor = next(iter(st.run_state(recording, check=True)["sensors"]))
+    monkeypatch.setattr(recording_module, "_reads_from", lambda read, plugin: False)
+
+    def broken(self, ctx):
+        raise RuntimeError("replay broke")
+
+    monkeypatch.setattr(resolve_plugin("lidar"), "post_step", broken)
+    with pytest.raises(st.StateError, match="producer is not known.*replay broke"):
+        st.run_state(recording, sensors=[sensor], at=1.0)

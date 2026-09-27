@@ -376,6 +376,18 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
     }
 
 
+def _refuse_stale(rec, endpoints, sample) -> None:
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
+    stale = rec.failed_endpoints(endpoints) if endpoints else {}
+    if stale:
+        detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))
+        raise StateError(
+            f"at t={sample.sim_time:.3f} s the replay could not compute {detail}. Its value would be "
+            "the previous sample's, so nothing is written for it."
+        )
+
+
 def _row(model, sample, chosen, endpoints, twist: bool = False) -> dict:
     # Both clocks lead every row: a series is often read to ask what the run *cost* at some point in it
     # (a controller stalling, a sensor going expensive), and that question is unanswerable from sim time.
@@ -477,7 +489,49 @@ def run_state(
     decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    rec = open_recording(state)
+    # Closed on every way out, so a replayed camera's renderer is released (Recording.close).
+    with open_recording(state) as rec:
+        return _state_of(
+            rec,
+            target,
+            bodies=bodies,
+            sites=sites,
+            joints=joints,
+            mjcf_sensors=mjcf_sensors,
+            sensors=sensors,
+            twist=twist,
+            contacts=contacts,
+            at=at,
+            start=start,
+            stop=stop,
+            out=out,
+            check=check,
+            onset=onset,
+            onset_select=onset_select,
+            decimate=decimate,
+        )
+
+
+def _state_of(
+    rec,
+    target: str | None,
+    *,
+    bodies,
+    sites,
+    joints,
+    mjcf_sensors,
+    sensors,
+    twist: bool,
+    contacts: bool,
+    at: float | None,
+    start: float | None,
+    stop: float | None,
+    out: str | Path | None,
+    check: bool,
+    onset: bool,
+    onset_select: str,
+    decimate: int | None,
+) -> dict:
     out_path = Path(out) if out and str(out) != "-" else None
 
     # Both of these answer from the samples alone, so they are handled before the world is rebuilt:
@@ -556,6 +610,7 @@ def run_state(
                 len(rec),
                 sample.sim_time,
             )
+        _refuse_stale(rec, endpoints, sample)
         record = {**rec.at_record(at, sample), "header": header}
         if contacts:
             record["contacts"] = contact_rows(model, sample.data)
@@ -565,6 +620,7 @@ def run_state(
     rows, times, walls = [], [], []
     array_series: dict[str, list] = {}
     for sample in rec.range(start, stop):
+        _refuse_stale(rec, endpoints, sample)
         times.append(sample.sim_time)
         walls.append(sample.wall_time)
         if any(endpoint_kind(e) == KIND_ARRAY for e in endpoints):

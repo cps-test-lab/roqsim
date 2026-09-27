@@ -310,7 +310,7 @@ from any camera, at any resolution, as a still or a video — without re-running
 .. code-block:: bash
 
    roqsim sim world.yaml --record run.npz
-   roqsim sim world.yaml --record --capture-fps 10      # a slower rate, a smaller file
+   roqsim sim world.yaml --record run.npz --capture-fps 10   # a slower rate, a smaller file
 
    roqsim render --state run.npz --out last.png        # where it ended up
    roqsim render --state run.npz --at 12.5 --out t.png # one moment
@@ -567,11 +567,14 @@ computations over a run, use :mod:`roqsim.recording`:
 
    from roqsim.recording import open_recording
 
-   rec = open_recording("run.npz")
-   rec.real_time_factor            # simulated seconds per real second, over the whole recording
-   for sample in rec.range(8.0, 20.0):
-       sample.sim_time, sample.wall_time, sample.index, sample.data
-       ...          # any numpy/mujoco computation over a real restored state
+   with open_recording("run.npz") as rec:
+       rec.real_time_factor        # simulated seconds per real second, over the whole recording
+       for sample in rec.range(8.0, 20.0):
+           sample.sim_time, sample.wall_time, sample.index, sample.data
+           ...      # any numpy/mujoco computation over a real restored state
+
+The ``with`` closes the rebuilt world's plugins on the way out (``rec.close()`` does the same): a
+replayed camera holds an offscreen renderer exactly as a live one does, and only its shutdown releases it.
 
 ``--record`` is for a run you launch yourself. A run launched *for* you — an orchestrator starting this
 world through a ROS launch file, where the command line belongs to that file — asks for the same thing
@@ -633,7 +636,7 @@ A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directo
 wherever the launch left the working directory; otherwise it resolves against the working directory as
 usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
-concern either way — the same footing as ``sim.headless``, which the world YAML rejects on purpose — so
+concern either way — the same footing as ``sim.headless``, which a world YAML ignores with a warning — so
 there is no route to it through the world.
 
 A recording also converts to a **browser run capture** — the motion half of replaying a run in a web
@@ -647,7 +650,10 @@ It writes ``capture.json`` + ``capture.bin``: one track per joint value and one 
 actually moved, each keyed by the name the scene descriptor uses, so the two artifacts address each other
 without either knowing about MuJoCo. The format is the consumer's — whichever tool replays these is
 where it is defined — and roqsim is one producer of it, the same relationship this package has with
-URDF and SRDF.
+URDF and SRDF. Both files state what they are: ``capture.json`` carries the consumer's
+``format``/``version`` pair, and ``scene.json`` carries roqsim's own (``roqsim.web_scene``, version
+1), so a viewer can refuse a descriptor written to a contract it has not seen rather than draw it
+wrong, and can tell it from the ``roqsim_scenes`` scene manifest that shares its file name.
 
 A **flex** needs nothing of its own in either artifact. ``export web`` draws it as a skin whose bones
 are the bodies its vertices follow — a solid by its boundary, a sheet from both sides, a line flex as a
@@ -868,6 +874,9 @@ columns, a scan becomes an ``.npz`` array, and an image is refused with a pointe
 (the recording carries the run's seed), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.
+A selected sensor whose plugin raises while re-running on a sample is refused, naming it and the
+error, rather than written with the value it held from the sample before; another plugin that raises
+is logged as a warning and does not stop the rest.
 
 Rendering a picture
 -------------------
@@ -934,14 +943,13 @@ The adapter can also leave a browser scene descriptor next to the run: set
 ``ROQSIM_SCENE_EXPORT_DIR`` and every (re)built world is exported as ``scene.json`` +
 ``scene.bin`` (+ textures) into that directory after ``reset()`` — the same format
 ``roqsim export web`` produces, but of the *exact* simulated world (``world_overrides``
-included), captured at its true initial pose. A relative path resolves against the scenario's
-``output_dir`` (which scenario-execution passes to ``setup()``; under a run harness that is the run's
-result directory, so the descriptor ships as an ordinary run artifact for web viewers), falling back to
+included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
+is set, else to the scenario's ``output_dir`` (which scenario-execution passes to ``setup()``), else to
 the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
-relative path anchored to the scenario's ``output_dir`` here, since scenario-execution passes one. That
+relative path anchored to ``RUN_OUTPUT_DIR`` when it is set, else to the scenario's ``output_dir``. That
 is what turns a run into something replayable: the descriptor above is the world's geometry, the
 recording is what moved in it, and the run capture is that motion in the form a browser reads.
 
