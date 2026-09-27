@@ -1567,10 +1567,8 @@ def test_an_unusable_report_configuration_raises_at_execute(world, args, message
 
 
 def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatch):
-    """A reset with other `world_overrides` compiles a new model, in which body ids differ. The
-    body-id cache must notice even when the new model happens to get the old one's `id()` -- which
-    CPython hands out again once an object is freed. That reuse is forced here by making every
-    `id()` the module takes the same."""
+    """A reset with other `world_overrides` compiles a new model with other body ids; the cache must
+    notice even when the new model gets the freed one's `id()`, which is forced here."""
     from scenario_execution_roqsim.access import in_process
     from scenario_execution_roqsim.access.in_process import InProcessAccess
 

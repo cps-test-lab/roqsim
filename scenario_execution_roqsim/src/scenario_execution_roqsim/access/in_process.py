@@ -174,10 +174,9 @@ class InProcessAccess(WorldAccess):
 
     def __init__(self, sim):
         self._sim = sim
-        #: body id per name, valid for :attr:`_bids_model` only. A scenario that resets with different
-        #: `world_overrides` gets a NEW model, in which ids are not stable, so the cache is dropped
-        #: when the model changes. Compared by identity against a held reference, not by `id()`: a
-        #: freed model's `id()` may be reused by the next one, which would hand back its ids.
+        #: body id per name, valid for :attr:`_bids_model` only: a reset with other `world_overrides`
+        #: compiles a new model with other ids. The model is held, not its `id()`, which a freed
+        #: model may pass on to the next one.
         self._bids: dict[str, int] = {}
         self._bids_model = None
 
@@ -205,18 +204,17 @@ class InProcessAccess(WorldAccess):
     def _body_id(self, ctx, name: str) -> int:
         if ctx.model is not self._bids_model:
             self._bids, self._bids_model = {}, ctx.model
-        key = name
-        if key not in self._bids:
+        if name not in self._bids:
             # Imported HERE rather than at module scope: importing `roqsim.lookup` pulls in MuJoCo, and
             # the behaviour tree is built before any world is compiled. Same reason the actions
             # compare the plugin's verdict strings by value instead of importing its constants.
             from roqsim.lookup import LookupError_, resolve_body_id
 
             try:
-                self._bids[key] = resolve_body_id(ctx, name, what="entity")
+                self._bids[name] = resolve_body_id(ctx, name, what="entity")
             except LookupError_ as err:
                 raise AccessError(str(err)) from None
-        return self._bids[key]
+        return self._bids[name]
 
     # -- reports ----------------------------------------------------------------------------------
     def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
