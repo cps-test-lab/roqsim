@@ -85,9 +85,8 @@ _CONES = {
 #:
 #: They are here for FIDELITY first. A published model that enables MuJoCo's global override has to be
 #: reproducible as published, and these three are the values such a model states — and often the ones
-#: it randomizes, since the flag makes them the only contact parameters in play. One corpus
-#: reconstruction turns on exactly that, and its spec records the flag as REQUIRED for the three to
-#: have any effect at all. That a sweep over them is then an ordinary campaign factor, needing no
+#: it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+#: three have no effect at all. That a sweep over them is then an ordinary campaign factor, needing no
 #: bespoke plugin and no hand-edited MJCF per cell, is the second reason rather than the first.
 #:
 #: GLOBAL, and BEFORE COMPILE — both halves load-bearing. Per-geom ``solref``/``solimp`` stay where

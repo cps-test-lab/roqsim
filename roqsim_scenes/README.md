@@ -264,8 +264,8 @@ the reader onto `ezdxf`.
 
 Rooms and doors are left empty on purpose: open the result in the scene-builder's 2D window
 (`sketch_floorplan_by_human`, `initial=…`) to name rooms, add door openings and tweak walls, then run
-`floorplan_to_world.py` on the finished `floorplan.json` to bake the world (see the `scene-update`
-skill for the full human-in-the-loop flow):
+`roqsim scenes floorplan-to-world` on the finished `floorplan.json` to bake the world, then review it
+with `review_scene_by_human` (`docs/scene_builder.rst`):
 
 ```
 roqsim scenes floorplan-to-world \
