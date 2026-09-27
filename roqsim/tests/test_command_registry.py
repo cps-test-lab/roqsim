@@ -362,6 +362,11 @@ def test_a_missing_input_exits_with_the_one_bad_input_code(tree, tmp_path):
 #: headless or windowed, and where the container runs is not its business.
 _FOREIGN = (".claude/skills", "robovast", "RoboVAST", "kubernetes", "Kubernetes")
 
+#: The same argument for instructions addressed to tooling that ships elsewhere: an agent skill by any
+#: name, and the gap records of an experiment specification. Matched as a class, so a renamed skill
+#: is still caught; a reader of this tree can follow only roqsim's own commands and docs.
+_FOREIGN_PATTERNS = (re.compile(r"\bskills?\b"), re.compile(r"resolution_attempt|\bspec gaps?\b"))
+
 #: Lines allowed to spell a foreign name, and why. The rule above is about a path, an instruction or
 #: a stack this project does not belong to; an identifier for a format someone else SPECIFIES is
 #: none of those. It resolves fine in a bare clone, and renaming it to avoid the word would make this
@@ -461,6 +466,9 @@ def test_nothing_here_names_a_repository_that_may_not_exist():
             for token in _FOREIGN:
                 if token in line:
                     offenders.append(f"{rel}:{number} names {token!r}")
+            for pattern in _FOREIGN_PATTERNS:
+                if match := pattern.search(line):
+                    offenders.append(f"{rel}:{number} names {match.group()!r}")
     assert not offenders, (
         "these files assume a surrounding repository that a standalone clone does not have:\n  "
         + "\n  ".join(offenders)
