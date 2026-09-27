@@ -43,8 +43,12 @@ heading, ``z`` the altitude as in the world, tilt kept; its twist is in the body
 ``nav_msgs/Odometry`` states it. ``read_state`` is the world-frame truth. ``cmd_vel_timeout`` applies
 to the velocity command (``drive``): once it is stale the drone brakes to a stop at its altitude
 setpoint and then holds the position where it stopped, a hover. A position setpoint (``target``,
-``cmd_pos``, world frame) does not expire, since holding one already is a hover. Reset clears both
-commands.
+``cmd_pos``) does not expire, since holding one already is a hover. Reset clears both commands.
+
+**A position setpoint is read in the frame it names.** ``cmd_pos`` carries a frame: ``odom`` is the
+spawn frame above (``z`` the altitude), ``world`` or ``map`` is the world, and so is an empty
+frame; the configured ``target`` is a world position. Any other frame is refused by name rather
+than flown to as if it were one of these. A yaw is read in the same frame as the position.
 
 **The moment actuators carry a negative gear**, so a positive ``ctrl`` produces a *negative* body
 moment. The sign is read from the model at configure time rather than hardcoded -- it is upstream's
@@ -91,6 +95,9 @@ _DEFAULTS = {
     "kp_att": [0.0096, 0.0096, 0.0038],
     "kd_att": [0.00086, 0.00086, 0.00051],
 }
+
+#: Frame names a position setpoint may carry for the world; empty is an unstamped setpoint.
+_WORLD_FRAMES = ("", "world", "map")
 
 #: m/s: below this horizontal speed a drone braking on a stale command holds where it is.
 _HOVER_SPEED = 0.05
@@ -218,7 +225,7 @@ class QuadrotorControllerPlugin(Plugin):
                 # heading out of the commanded orientation is a setpoint for it. The projection is
                 # here, with the consumer that wants it, rather than in the decoder -- a Cartesian
                 # controller subscribing to the same type needs the full orientation.
-                write=lambda p: self.set_target(*p[0], _yaw_of(p[1]) if len(p) > 1 else None),
+                write=self._write_pose,
                 backend={"ros2": {"type": "geometry_msgs.msg.PoseStamped", "topic": "cmd_pos"}},
             )
         )
@@ -235,12 +242,28 @@ class QuadrotorControllerPlugin(Plugin):
 
     # -- commands ----------------------------------------------------------------------------
 
-    def set_target(self, x, y, z, yaw=None) -> None:
-        """Position setpoint in the world frame; ``yaw`` keeps the current heading if omitted."""
+    def set_target(self, x, y, z, yaw=None, frame: str = "world") -> None:
+        """Position setpoint in ``frame`` (see the module docstring); ``yaw`` keeps the current
+        heading if omitted."""
+        if frame == "odom":
+            x, y, z = self._odom_frame.world_position((x, y, z))
+            if yaw is not None:
+                yaw = self._odom_frame.world_yaw(yaw)
+        elif frame not in _WORLD_FRAMES:
+            raise ValueError(
+                f"quadrotor_controller ({self.robot}): a position setpoint in frame {frame!r} is "
+                f"refused; it takes 'odom' (the spawn frame) or 'world'/'map'"
+            )
         self._target = np.array([float(x), float(y), float(z)])
         self._vel_cmd = None
         if yaw is not None:
             self._yaw = float(yaw)
+
+    def _write_pose(self, payload) -> None:
+        """``cmd_pos``: ``(position, quaternion[, frame_id])``."""
+        yaw = _yaw_of(payload[1]) if len(payload) > 1 else None
+        frame = payload[2] if len(payload) > 2 else ""
+        self.set_target(*payload[0], yaw, frame=frame)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """:class:`RobotHandle` contract: body-frame planar velocity, altitude held.

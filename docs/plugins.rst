@@ -1397,8 +1397,10 @@ clears the command and its stamp, so no trial starts with the last one's.
 **A quadrotor, in three dimensions.** ``quadrotor_controller``'s ``odom`` is 6-DOF in the same frame:
 x and y from the spawn point along the spawn heading, ``z`` the altitude, tilt kept, and the twist
 in the body frame. A stale velocity command brakes the drone at its altitude setpoint and then holds
-where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``, world frame) does not
-expire, since holding one already is a hover.
+where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``) does not expire, since
+holding one already is a hover. ``cmd_pos`` is read in the frame its header names: ``odom`` is this
+spawn frame, ``world`` or ``map`` (or no frame) the world, and any other frame is refused. The
+configured ``target`` is a world position.
 
 Manipulation: an arm on a linear axis
 -------------------------------------
