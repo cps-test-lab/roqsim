@@ -81,6 +81,11 @@ will do that its author probably did not intend: ``flex-damping`` (its damping i
 integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
 ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
 stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
+
+Exit status (``roqsim.exit_status``): ``0`` when the world loads (``ok`` is true; warnings do not
+change it), ``2`` when the target names no world, ``5`` when a later stage reported a problem. The
+report itself is on stdout in every case, so a caller branches on the status and reads the JSON for
+what went wrong.
 """
 
 from __future__ import annotations
