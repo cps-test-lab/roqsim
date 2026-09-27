@@ -55,6 +55,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import errno
 import logging
 import sys
 import xml.etree.ElementTree as ET
@@ -682,6 +683,8 @@ def main(argv: list | None = None) -> int:
         # the SPEC: MuJoCo fixes what can collide at compile time, so a model whose robot geoms are
         # masked apart (the usual `contype=2 / conaffinity=1`) can never be made to self-collide
         # afterwards. This is a sampling model, not a simulation one.
+        if not Path(args.mjcf).is_file():
+            raise FileNotFoundError(errno.ENOENT, "no such MJCF", args.mjcf)
         spec = mujoco.MjSpec.from_file(str(Path(args.mjcf)))
         changed = unmask_self_collision(spec)
         log.info("enabled self-collision on %d geoms for sampling", changed)

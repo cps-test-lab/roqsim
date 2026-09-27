@@ -27,6 +27,7 @@ paper's actual provenance claim.
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -196,6 +197,9 @@ def write_lock(path: Path, assets: list[Asset], world: str | None = None) -> Non
 def _world_uris(world: Path) -> list[str]:
     from lxml import etree
 
+    if not world.is_file():
+        # lxml's OSError for a missing file is not a FileNotFoundError and never says so.
+        raise FileNotFoundError(errno.ENOENT, "no such SDF world", str(world))
     tree = etree.parse(str(world))
     return sorted(
         {e.text.strip() for e in tree.iter() if _tag(e) == "uri" and e.text and _is_fuel(e.text)}

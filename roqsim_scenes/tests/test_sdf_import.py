@@ -254,6 +254,6 @@ def test_a_missing_world_file_is_one_sentence(tmp_path, capsys):
 
     missing = tmp_path / "nosuch.sdf"
     rc = sdf_to_scene.main(["--world", str(missing), "--out-dir", str(tmp_path / "scene")])
-    assert rc == 1
+    assert rc == 2
     err = capsys.readouterr().err
     assert "no such SDF world" in err and str(missing) in err and "Traceback" not in err

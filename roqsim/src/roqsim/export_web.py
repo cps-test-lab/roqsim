@@ -35,6 +35,7 @@ scene.json so the browser animates the arm from ``/joint_states`` exactly as the
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import shutil
@@ -760,6 +761,10 @@ def export_scene(
 
 def _compile_from_mjcf(path: Path) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
     """Compile a bare MJCF file directly (no plugins / world YAML). Initial state is the model default."""
+    if not path.is_file():
+        # MuJoCo reports a missing file as a ValueError from its XML parser; this one the command
+        # tree reports as a missing input.
+        raise FileNotFoundError(errno.ENOENT, "no such MJCF", str(path))
     model = mujoco.MjSpec.from_file(str(path)).compile()
     return model, mujoco.MjData(model), {}
 

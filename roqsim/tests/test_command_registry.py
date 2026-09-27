@@ -252,6 +252,8 @@ _STATES_ITS_EXIT_STATUS = {
     "scenes inputs",
     "scenes floorplan-to-world",
     "scenes fuel-fetch",
+    "scenes scene-to-floorplan",
+    "scenes sdf-to-scene",
     "sensors coverage",
 }
 
@@ -289,12 +291,22 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
         "catalog": ["model", "nope_xyz"],
         "plugins": ["describe", "nope_xyz"],
         "export web": ["--world", f"{nope}.yaml", "--out", str(root / "web")],
+        "export web --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "web")],
         "export capture": ["--state", f"{nope}.npz", "--out", str(root / "cap")],
         "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],
+        "export urdf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.urdf")],
+        "export srdf --mjcf": [
+            "--mjcf", f"{nope}.xml", "--urdf", f"{nope}.urdf", "--out", str(root / "x.srdf"),
+            "--name", "x", "--arm-base", "a", "--arm-tip", "b", "--gripper-joint", "g",
+            "--gripper-open", "0", "--gripper-close", "1",
+        ],
         "export mesh": ["--world", f"{nope}.yaml", "--out", str(root / "x.stl")],
         "export moveit": ["--world", f"{nope}.yaml", "--out", str(root / "moveit")],
         "scenes describe": [f"{nope}.yaml"],
         "scenes inputs": [f"{nope}.yaml"],
+        "scenes fuel-fetch": ["--world", f"{nope}.sdf"],
+        "scenes sdf-to-scene": ["--world", f"{nope}.sdf", "--out-dir", str(root / "sdf")],
+        "scenes scene-to-floorplan": ["--scene", nope],
         "scenes floorplan-to-world": [
             "--floorplan", f"{nope}.json", "--out-dir", str(root / "scene"),
             "--world-out", str(root / "w.yaml"), "--scene-name", "x",
@@ -315,7 +327,7 @@ def test_a_missing_input_exits_with_the_one_bad_input_code(tree, tmp_path):
     }
 
     def run(case: str) -> tuple[int, str]:
-        path = case.removesuffix(" --state").split()
+        path = [word for word in case.split() if not word.startswith("--")]
         out = subprocess.run(
             [sys.executable, "-m", "roqsim.commands", *path, *cases[case]],
             capture_output=True,
