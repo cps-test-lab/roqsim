@@ -1,8 +1,7 @@
 """Frankie (Panda + Omron LD-60) verification battery — mobile-manipulator port.
 
-Follows robot-porting's `references/mobile_manipulator.md`: the base battery (A static, B drive) plus
-the arm battery (E), run through the REAL plugins so the model, its manifest config and the two
-controllers are verified together. The point of the split-controller check is that `diff_drive` and
+The base battery (A static, B drive) plus the arm battery (E), run through the REAL plugins so the
+model, its manifest config and the two controllers are verified together. The point of the split-controller check is that `diff_drive` and
 `arm_controller` own disjoint actuators — if `arm_controller` ever grabs the wheel motors, the robot
 stops driving, and that failure is silent in a plain "does it compile" test.
 
@@ -209,7 +208,7 @@ def test_a3_mount_transform_matches_source_urdf(rig):
 def test_a4_footprint_matches_declared_box(rig):
     """The simulated chassis footprint equals the URDF's declared collision box in x/y.
 
-    Planner-facing and simulated footprints must agree (robot-porting Step 5). Height deliberately
+    Planner-facing and simulated footprints must agree. Height deliberately
     differs: the box is raised clear of the wheels — see the port log.
     """
     model, _, *_ = rig
