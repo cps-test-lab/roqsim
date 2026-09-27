@@ -15,7 +15,7 @@ What makes SDF worlds different from USD: **they usually contain no geometry**. 
 world is a bill of materials of ``<include><uri>`` entries pointing into a model registry, with only
 ``<pose>`` pinned locally. So this tool spends most of its effort resolving and pinning assets
 (``fuel_fetch``), then composing the SDF pose tree (world -> include -> model -> link -> visual) into
-the flat world-space that ``scene.json`` expects.
+the flat world-space that ``scene.json`` expects. An include's pose replaces the included model's own.
 
 Deliberately mechanical. Everything here is determinate: parse, resolve, compose, tessellate, write.
 The judgement calls -- which world maps to which paper scene, whether a missing asset is link rot or
@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
@@ -42,6 +43,8 @@ from pathlib import Path
 import numpy as np
 from lxml import etree
 
+from roqsim import exit_status
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 from . import fuel_fetch
@@ -112,8 +115,55 @@ def _text(el, name: str, default: str | None = None) -> str | None:
     return k.text.strip() if k is not None and k.text else default
 
 
+# The frames a `<pose relative_to>` may name that are the one the pose is composed onto anyway: the
+# enclosing model, or the world at world level.
+_PARENT_FRAMES = ("", "__model__", "world")
+
+
 def _pose_of(el) -> np.ndarray:
-    return mio.pose_to_matrix(_text(el, "pose"))
+    """*el*'s ``<pose>`` as a 4x4 in its parent's frame.
+
+    Reads ``degrees="true"`` and ``rotation_format="quat_xyzw"``. A pose ``relative_to`` any other
+    frame needs the model's frame graph, which this importer does not build, so it raises rather
+    than composing the pose onto the parent.
+    """
+    pose = _kid(el, "pose")
+    if pose is None or not (pose.text or "").strip():
+        return np.eye(4)
+    rel = pose.get("relative_to", "").strip()
+    if rel not in _PARENT_FRAMES:
+        raise fuel_fetch.FuelError(
+            f"<{_ln(el)} name='{el.get('name')}'> has a <pose relative_to='{rel}'>; only poses "
+            "relative to the parent frame are supported"
+        )
+    fmt = pose.get("rotation_format", "euler_rpy").strip()
+    v = [float(x) for x in pose.text.split()]
+    if fmt == "quat_xyzw":
+        if len(v) != 7:
+            raise fuel_fetch.FuelError(f"a quat_xyzw <pose> takes 7 values, got {pose.text!r}")
+        m = np.eye(4)
+        m[:3, 3] = v[:3]
+        m[:3, :3] = _quat_xyzw_to_matrix(*v[3:])
+        return m
+    if fmt != "euler_rpy":
+        raise fuel_fetch.FuelError(f"<pose rotation_format='{fmt}'> is not an SDF rotation format")
+    if pose.get("degrees", "false").strip().lower() in ("true", "1"):
+        v[3:6] = [math.radians(a) for a in v[3:6]]
+    return mio.pose_to_matrix(" ".join(str(x) for x in v))
+
+
+def _quat_xyzw_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    if n == 0:
+        raise fuel_fetch.FuelError("a quat_xyzw <pose> has a zero quaternion")
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
 
 
 def _slug(name: str, used: set[str]) -> str:
@@ -556,10 +606,23 @@ class Importer:
             self.textures.add(dst.name)
         return rel
 
-    def _model(self, model, parent: np.ndarray, name_prefix: str, model_dir: Path) -> None:
+    def _model(
+        self, model, parent: np.ndarray, name_prefix: str, model_dir: Path, *, placed=False
+    ) -> None:
+        """Import one ``<model>`` at *parent*.
+
+        ``placed`` is an ``<include>`` that states its own ``<pose>``: SDF has that pose REPLACE the
+        included model's top-level one rather than compose with it -- the model file's pose is its
+        author's default placement, not an offset.
+        """
+        if model.get("placement_frame"):
+            raise fuel_fetch.FuelError(
+                f"model '{model.get('name')}' sets placement_frame, which this importer does not "
+                "support: its pose would be applied to the model frame instead"
+            )
         prev = getattr(self, "_current_model_dir", None)
         self._current_model_dir = model_dir
-        world_model = parent @ _pose_of(model)
+        world_model = parent if placed else parent @ _pose_of(model)
         # Names come from `name_prefix`, not from the SDF's own <model name>: nesting and repeated
         # includes make the latter ambiguous, and the prefix is what --no-collide matches against.
         for link in _kids(model, "link"):
@@ -576,6 +639,11 @@ class Importer:
         uri = _text(inc, "uri")
         if not uri:
             raise fuel_fetch.FuelError("<include> without <uri>")
+        if _kid(inc, "placement_frame") is not None:
+            raise fuel_fetch.FuelError(
+                f"<include> of {uri} sets <placement_frame>, which this importer does not support: "
+                "its pose would be applied to the model frame instead"
+            )
         name = inc.get("name") or _text(inc, "name") or uri.rstrip("/").split("/")[-1]
         model_dir = self._model_dir(uri)
         sdf_file = model_dir / "model.sdf"
@@ -586,9 +654,12 @@ class Importer:
             sdf_file = cands[0]
         root = etree.parse(str(sdf_file)).getroot()
         world_inc = parent @ _pose_of(inc)
+        placed = _kid(inc, "pose") is not None
         for model in [c for c in root.iter() if _ln(c) == "model"]:
             if _ln(model.getparent()) == "sdf":  # top-level models only; nesting handled in _model
-                self._model(model, world_inc, _slug_prefix(name_prefix, name), model_dir)
+                self._model(
+                    model, world_inc, _slug_prefix(name_prefix, name), model_dir, placed=placed
+                )
 
     # ---------------- entry
 
@@ -629,6 +700,7 @@ class Importer:
             manifest["ground_z"] = round(self.ground_z, 6)
         out = Path(self.args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
+        manifest = scene_manifest_format.stamp(manifest)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
         if self.args.lock and self.assets:
@@ -653,7 +725,13 @@ def _slug_prefix(prefix: str, name: str) -> str:
 
 
 def main(argv: list | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a Fuel model the world names that did not resolve.",
+        ),
+    )
     ap.add_argument("--world", type=Path, required=True, help="the SDF world file")
     ap.add_argument(
         "--out-dir", type=Path, required=True, help="scene dir to write (scene.json + meshes/)"
@@ -698,6 +776,11 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--collision", default="visual", choices=["visual"], help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     args.scene_name = args.scene_name or Path(args.out_dir).name
+    if not Path(args.world).is_file():
+        # Checked here rather than left to the XML parser, whose OSError for a missing file is a
+        # traceback through lxml that never says "no such file".
+        print(f"roqsim scenes sdf-to-scene: no such SDF world: {args.world}", file=sys.stderr)
+        return exit_status.BAD_INPUT
 
     try:
         Importer(args).run()
@@ -707,8 +790,8 @@ def main(argv: list | None = None) -> int:
             f"the spec's gap record. Do not substitute a lookalike asset.",
             file=sys.stderr,
         )
-        return 2
-    return 0
+        return exit_status.BAD_INPUT
+    return exit_status.OK
 
 
 if __name__ == "__main__":

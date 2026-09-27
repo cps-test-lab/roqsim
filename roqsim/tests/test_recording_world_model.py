@@ -76,6 +76,16 @@ def test_an_older_record_still_reads_but_will_not_rebuild(tmp_path):
         rec.build()
 
 
+def test_a_record_with_no_format_version_reads_as_the_first(tmp_path):
+    """No stamp is format 1 -- the shape before components were addressed by path -- so it reads,
+    and it is refused where it would be rebuilt from overrides, exactly like a stamped v1."""
+    meta = {"world": "w.yaml"}
+    rec = Recording(tmp_path / "x.npz", meta, np.zeros((2, 1), dtype=np.float32))
+    assert len(rec) == 2
+    with pytest.raises(RecordingError, match="pass the world explicitly"):
+        rec.build()
+
+
 def test_the_provenance_carries_the_resolved_actuator_table(tmp_path):
     """What the joints RAN under, beside what the world declared.
 

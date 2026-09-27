@@ -29,6 +29,8 @@ import os
 import sys
 from dataclasses import dataclass
 
+from roqsim.floorplan_geometry import stamp_sketch
+
 # $INSUNITS code -> metres-per-unit. The values we can convert unambiguously;
 # 0 (unitless) and anything unlisted force an explicit --scale.
 _INSUNITS_TO_M = {
@@ -244,7 +246,7 @@ def dxf_to_sketch(
         {"id": i + 1, "x0_m": s.x0, "y0_m": s.y0, "x1_m": s.x1, "y1_m": s.y1}
         for i, s in enumerate(segs)
     ]
-    sketch = {"comment": "", "rooms": [], "lines": lines, "doors": [], "markers": []}
+    sketch = stamp_sketch({"comment": "", "rooms": [], "lines": lines, "doors": [], "markers": []})
 
     xs = [c for s in segs for c in (s.x0, s.x1)]
     ys = [c for s in segs for c in (s.y0, s.y1)]
