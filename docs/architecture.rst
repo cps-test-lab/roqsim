@@ -127,13 +127,13 @@ Config (``config.py``)
 4. Config & registry
 --------------------
 
-Single world YAML, two sections; ``plugins`` order = execution order:
+Single world YAML, two sections; ``components`` order = execution order:
 
 .. code:: yaml
 
    sim:
      timestep: 0.004        # optional; else from the model
-     pacing: realtime       # realtime | {factor: 4.0} | asap        [planned: honoured by runner]
+     pacing: realtime       # realtime | {factor: 4.0} | asap
      world: empty_room      # built-in name OR a path to an MJCF file; default empty_room (see below)
      integrator: auto       # auto (default) | euler | rk4 | implicit | implicitfast | discrete
      noslip_iterations: 10  # solver effort; see "Solver options" below
@@ -171,7 +171,7 @@ The static environment the robots/props stand in — ground + lighting — is a 
 
 - ``sim.world`` is either a built-in world name or a **path to an MJCF file**. The only built-in is ``empty_room`` (a checker ground plane named ``floor``, a ceiling light, and four perimeter walls — a bounded, lit room); unset ⇒ ``empty_room``. A value that ends in ``.xml``/``.mjcf`` or contains a path separator is loaded as the base scene (``MjSpec.from_file``, resolved relative to the world YAML) — e.g. a baked scene like ``depot/depot.xml`` (see ``roqsim_scenes``). Anything that is neither the built-in nor a resolvable file is a fail-fast error.
 - The engine builds/loads the world into the ``MjSpec`` **before** any plugin ``build``, so plugins attach onto it.
-- A scene plugin that builds its **own** ground+lighting sets the class attribute ``provides_world = True`` (the mobile ``floorplan``, which also adds lidar walls). When such a plugin is present the engine **skips** the world definition; if ``sim.world`` was *also* set explicitly the engine logs a warning and lets the plugin win. So ``floorplan`` is the mobile scene, ``sim.world`` is the fixed-cell default, and they never double up the floor.
+- A scene plugin that builds its **own** ground+lighting sets the class attribute ``provides_world = True`` (the mobile ``floorplan``, which also adds lidar walls). When such a plugin is present the engine **skips** the world definition; a world that *also* sets ``sim.world``, or carries two such plugins, is refused with a ``PluginError`` naming both (``Engine._check_one_world``). So ``floorplan`` is the mobile scene, ``sim.world`` is the fixed-cell default, and they never double up the floor.
 
 Policy specs (``roqsim.policy``)
 ''''''''''''''''''''''''''''''''
