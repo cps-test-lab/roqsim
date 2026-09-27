@@ -111,7 +111,9 @@ plugin config -- because flattening one onto argv loses it to quoting and word s
 also how a saved override set is reused, and how a run's own settings are replayed afterwards: an
 embedding driver that varies the world per run writes exactly this document beside the results.
 Both flags are repeatable and compose, later winning, so a saved set plus one ad-hoc tweak is
-``--override debug.yaml --set sim.pacing=asap``.
+``--override debug.yaml --set sim.pacing=asap``. Every command that answers about the world a run
+would load takes the same pair, merged by the same function (``roqsim.override_options``):
+``roqsim sim``, ``roqsim check``, ``roqsim export web`` and ``roqsim scenes describe``.
 
 Driven from scenario-execution, ``MujocoSim`` takes the nested dict as a ``world_overrides``
 parameter -- naturally an OSC struct, which the framework passes as a nested dict -- and (re)builds
@@ -304,7 +306,8 @@ decides whether overriding *this* side of a contact does anything at all.
 
 Both halves come from one build when both flags are given: compiling the world is the expensive part.
 
-``--override FILE`` applies an override tree first, the same file ``roqsim sim --override`` takes.
+``--override FILE`` applies an override tree first, and ``--set PATH=VALUE`` a value over it --
+``roqsim sim``'s own options, both repeatable.
 It is what makes the build-fed halves answer about the world a *run* would load rather than the one
 the file declares: which entities a world compiles depends on its plugins' config, so a caller whose
 obstacles come from its own overrides sees none of them without it. Here ``world.yaml`` declares an

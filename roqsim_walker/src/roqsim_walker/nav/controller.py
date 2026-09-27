@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
+from roqsim.kinematics import body_twist
 from roqsim_nav import obstacles
 from roqsim_nav.behavior import NavCore, NavParams, build_tree
 from roqsim_nav.grid import build_grid
@@ -613,8 +614,10 @@ class WalkerController:
         # The physics loop calls us every step (~500 Hz); decimate the whole walker pipeline to
         # _UPDATE_HZ by accumulating elapsed time and only doing the real work once a full period
         # has built up. Mocap bodies hold their last pose in between (~16 ms at 60 Hz).
+        # A thousandth of a step short still counts: float drift in the summed timesteps would
+        # otherwise push a period the timestep divides to the step after it.
         self._accum += dt
-        if self._accum < self._period:
+        if self._accum < self._period - 1e-3 * dt:
             return
         step_dt = self._accum
         self._accum = 0.0
@@ -733,6 +736,5 @@ class WalkerController:
     def _robot_state(self):
         bid = self._robot_bid
         pos = self.data.xpos[bid]
-        vel = np.zeros(6)
-        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, bid, vel, 0)
-        return float(pos[0]), float(pos[1]), float(vel[3]), float(vel[4])
+        vel = body_twist(self.model, self.data, bid).linear
+        return float(pos[0]), float(pos[1]), float(vel[0]), float(vel[1])

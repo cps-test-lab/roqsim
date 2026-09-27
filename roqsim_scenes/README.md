@@ -177,10 +177,11 @@ roqsim scenes scene-to-mjcf --scene <name> \
     --prop path/to/prop.obj,12.9,10.4
 ```
 
-`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor). Textures resolve
-via `roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
-`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on a
-UV'd mesh).
+`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor, turned YAW
+radians about its footprint centre, as a world's `pose:` reads its `yaw`). Textures resolve via
+`roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
+`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on
+a UV'd mesh).
 
 **Collision** is convex per object by default (`collision: convex`); walls/columns/doors are near-convex
 so their hulls are exact, a concave prop collides as its filled hull. `collision: none` makes the scene
@@ -263,8 +264,8 @@ the reader onto `ezdxf`.
 
 Rooms and doors are left empty on purpose: open the result in the scene-builder's 2D window
 (`sketch_floorplan_by_human`, `initial=…`) to name rooms, add door openings and tweak walls, then run
-`floorplan_to_world.py` on the finished `floorplan.json` to bake the world (see the `scene-update`
-skill for the full human-in-the-loop flow):
+`roqsim scenes floorplan-to-world` on the finished `floorplan.json` to bake the world, then review it
+with `review_scene_by_human` (`docs/scene_builder.rst`):
 
 ```
 roqsim scenes floorplan-to-world \
