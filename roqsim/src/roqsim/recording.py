@@ -33,6 +33,7 @@ import mujoco
 import numpy as np
 
 from .capture import STATE_SPEC, RecordingError, record_dtype
+from .document import check_version
 
 log = logging.getLogger(__name__)
 
@@ -64,16 +65,16 @@ class Recording:
     def __init__(self, path: Path, meta: dict, samples: np.ndarray) -> None:
         self.path = path
         self.meta = meta
-        # A NEWER record is refused outright: it was written to a contract this code has not seen,
-        # and reading it with the keys that happen to overlap produces a plausible-looking answer
-        # about something else. An OLDER one still reads -- its samples, times and clock are all
-        # there -- and is refused only where it would be REBUILT (see `build`).
-        version = int(meta.get("format_version") or 1)
-        if version > self.READER_VERSION:
-            raise RecordingError(
-                f"{path} was written with recording format v{version}; this roqsim reads up to "
-                f"v{self.READER_VERSION}. Read it with the version that wrote it, or re-record."
-            )
+        # A newer record is refused here; an older one still reads, and is refused only where it
+        # would be rebuilt (see `build`).
+        self._version = check_version(
+            meta,
+            "format_version",
+            reads=self.READER_VERSION,
+            document="recording format",
+            where=str(path),
+            error=RecordingError,
+        )
         self._samples = samples
         self._model: mujoco.MjModel | None = None
         self._ctx = None
@@ -229,7 +230,7 @@ class Recording:
         if self._model is not None:
             return self._model, self._ctx
 
-        if int(self.meta.get("format_version") or 1) < self.READER_VERSION and target is None:
+        if self._version < self.READER_VERSION and target is None:
             raise RecordingError(
                 f"{self.path} predates components being addressed by path, so the overrides it "
                 f"carries would resolve differently against this world -- a run rebuilt from them "
