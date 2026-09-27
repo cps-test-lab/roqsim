@@ -75,10 +75,8 @@ def _split_ref(ref: str) -> tuple[str, str]:
 
 
 #: Modules loaded from plugin files, keyed by resolved path, with the ``(mtime_ns, size)`` they were
-#: loaded at. One world load resolves a ref several times (expansion, ownership, instantiation), and
-#: each execution of the file would run its module-level code again and hand out a different class
-#: object than the one checked a moment earlier. A file changed on disk is loaded afresh, which is
-#: what a long-lived process reloading an edited world needs.
+#: loaded at: one world load resolves a ref several times, and each must return the same class. A
+#: file changed on disk is loaded afresh.
 _FILE_MODULES: dict[Path, tuple[tuple[int, int], object]] = {}
 
 
