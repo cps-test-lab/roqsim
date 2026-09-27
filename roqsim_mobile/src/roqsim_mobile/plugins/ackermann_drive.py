@@ -454,9 +454,7 @@ class AckermannDrivePlugin(Plugin):
         o[2] = (o[2] + w * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4] = v, w
 
-        for k, jid in enumerate(self._steer_jid + self._drive_jid):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)
 
     def read_odom(self):
         x, y, yaw, v, w = self._odom
@@ -473,3 +471,11 @@ class AckermannDrivePlugin(Plugin):
         # An Ackermann command belongs to the episode that sent it, as a twist does.
         self._steer_cmd = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._steer_jid + self._drive_jid):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
