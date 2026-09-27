@@ -10,8 +10,8 @@ Each walker is a kinematic articulated **humanoid** (a flat set of mocap bodies,
 * **Nav root** -- three sub-layers, slow to fast:
 
   - **global plan** -- A* on an occupancy grid rasterized from the model's wall geoms
-    (:mod:`~roqsim_walker.nav.planner`) routes a wall-safe path between the walker's goals;
-  - **behaviour** -- a py-trees tree (:mod:`~roqsim_walker.nav.behavior`) follows that path,
+    (:mod:`roqsim_nav.planner`) routes a wall-safe path between the walker's goals;
+  - **behaviour** -- a py-trees tree (:mod:`roqsim_nav.behavior`) follows that path,
     advances goals, and runs a *stuck recovery* (back up, then replan) when progress stalls;
   - **local avoidance** -- ORCA turns the behaviour's preferred velocity into a collision-free one.
     The **robot is inserted as a non-yielding agent** (its ORCA state is overwritten from ground
