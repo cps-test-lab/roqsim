@@ -703,7 +703,7 @@ def run(
     # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
     # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
     # to add --record to without editing a launch file that two backends share. Recording is a session
-    # concern -- the same footing as `sim.headless`, which the world YAML rejects on purpose -- so the
+    # concern -- the same footing as `sim.headless`, which a world YAML ignores with a warning -- so the
     # environment is the right channel, and it is the one the scenario adapter already uses.
     # An explicit flag always wins.
     if record is None:
