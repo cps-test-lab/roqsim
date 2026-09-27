@@ -255,9 +255,8 @@ replace every contact's own parameters::
 
 They are here for **fidelity** first. A published model that enables MuJoCo's global override has to
 be reproducible as published, and these three are the values such a model states -- and often the ones
-it randomizes, since the flag makes them the only contact parameters in play. One corpus
-reconstruction turns on exactly that, and its spec records the flag as *required* for the three to
-have any effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
+it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+three have no effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
 bespoke plugin and no hand-edited MJCF per cell, the same reason ``spawn_model``'s
 ``mass``/``friction`` exist -- is the second reason rather than the first.
 

@@ -174,8 +174,8 @@ roqsim sensors coverage greedy \               # deterministic max-coverage base
     --world <w> --target k=1,frac=0.9 --types livox_mid360,oakd_camera --mount-z 3.0 --out run/
 ```
 
-The agent workflow (evaluate → read `report.json` gaps → refine placements → repeat) is described in the
-`sensor-coverage` skill.
+To refine a layout: evaluate, read the gaps in `report.json`, adjust the placements, repeat
+(`docs/coverage.rst`).
 
 ## Test
 
