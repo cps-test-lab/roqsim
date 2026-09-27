@@ -347,24 +347,19 @@ CASES: dict[str, Case] = {
     ),
     # manipulation
     "spawn_arm": Case(lambda _: _arm()),
-    "arm_controller": Case(
-        lambda _: _arm(),
-        use=(_switch_every_controller,),
-        defect="on_reset does not restore the controller's configured activity (_active and its "
-        "state in the controller registry)",
-    ),
+    "arm_controller": Case(lambda _: _arm(), use=(_switch_every_controller,)),
     "force_torque": Case(lambda _: _arm()),
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller, _set_law),
         defect="on_reset does not restore _active, the target wrench (w_d) or the law (law, "
-        "controller_type, _uses_*) a trial set; nor does arm_controller restore its own activity",
+        "controller_type, _uses_*) a trial set",
     ),
     "force_limit": Case(
         # Low enough to trip within the trial, which is what a trial does with it.
         lambda _: _arm({"force_limit": {"ft": "ft", "max_force": 0.001}, "name": "safety"}),
-        defect="a trip outlives its trial: the controllers it released stay inactive, and "
-        "Engine.reset never clears the stop it requested (ctx.stop_requested)",
+        defect="a trip outlives its trial: Engine.reset never clears the stop it requested "
+        "(ctx.stop_requested)",
     ),
     # sensors
     "lidar": Case(lambda _: _mobile(), defect=_STALE_SCAN),
@@ -529,6 +524,10 @@ EXEMPT: dict[str, dict[str | None, str]] = {
     "px4_sitl": {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
         "keeps its link, arming and last controls across the episode boundary to match it",
+    },
+    "arm_controller": {
+        "_registered.transitions": "the registry's transition log, which a bridge announces by "
+        "position, so it runs for the whole process"
     },
     "g1_locomotion": {
         "_obs": "the policy's input buffer, rebuilt in full before every policy call"
