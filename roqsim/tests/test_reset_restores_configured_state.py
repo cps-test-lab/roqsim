@@ -534,7 +534,7 @@ KNOWN_DEFECTS: dict[str, str] = {
     "the planner stay the previous trial's until the first tick",
     **{
         name: "_jpos/_jvel serve the previous trial's last joint state until the first step"
-        for name in ("diff_drive", "omni_drive", "ackermann_drive")
+        for name in ("omni_drive", "ackermann_drive")
     },
     "joint_state_publisher": "has no on_reset, so it serves the previous trial's last joint state "
     "until the first step",

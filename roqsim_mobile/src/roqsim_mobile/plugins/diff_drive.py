@@ -360,6 +360,14 @@ class DiffDrivePlugin(Plugin):
         self._cmd_wl = self._cmd_wr = 0.0
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
         self._last_cmd = float("-inf")
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._jid_l + self._jid_r):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
 
     def pre_step(self, ctx: SimContext) -> None:
         if ctx.manual_control:
@@ -421,8 +429,4 @@ class DiffDrivePlugin(Plugin):
         o[1] += v * np.sin(o[2]) * ctx.dt
         o[2] = (o[2] + w * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4] = v, w
-        # Wheel joint state for the joint_states endpoint: written in place so read() is zero-copy.
-        jids = self._jid_l + self._jid_r
-        for k, jid in enumerate(jids):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)
