@@ -619,3 +619,10 @@ def test_manifest_fov_near_matches_the_capture_plugin(name):
     if clip_near is None:
         pytest.skip(f"{name}: {ref} has no depth clip")
     assert fov["near"] == pytest.approx(clip_near)
+
+
+def test_regions_from_a_sketch_it_cannot_read_are_refused():
+    from roqsim_sensors.coverage.regions import regions_from_sketch
+
+    with pytest.raises(ValueError, match="floorplan sketch version 99"):
+        regions_from_sketch({"version": 99, "rooms": [], "lines": []})

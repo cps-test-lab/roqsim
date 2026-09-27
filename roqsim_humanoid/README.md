@@ -91,8 +91,3 @@ Dynamics are unaffected: MuJoCo builds the **convex hull** of a mesh for collisi
 does not change contact behaviour — the locomotion policy walks identically (re-verified after
 decimation). To regenerate at a different cap, re-run the Decimate pass over the upstream STLs from
 the source in `THIRD_PARTY.md`.
-
-## Large files (git-lfs)
-
-The STL meshes and `motion.pt` are tracked with git-lfs (see `.gitattributes`). Run
-`git lfs install` once before cloning/pulling this package's assets.

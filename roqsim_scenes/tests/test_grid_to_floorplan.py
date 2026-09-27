@@ -56,7 +56,7 @@ def test_origin_places_the_grids_bottom_left_corner():
 def test_emitted_keys_are_the_sketch_windows_keys():
     """floorplan_to_world.py must not be able to tell a generated plan from a drawn one."""
     plan = g2f.to_floorplan([("h", 0, 0, 4)], 10, CELL)
-    assert set(plan) == {"lines", "doors", "rooms", "markers"}
+    assert set(plan) == {"version", "lines", "doors", "rooms", "markers"}
     assert set(plan["lines"][0]) == {"id", "x0_m", "y0_m", "x1_m", "y1_m"}
 
 
