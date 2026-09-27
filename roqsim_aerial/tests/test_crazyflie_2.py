@@ -179,3 +179,18 @@ def test_reset_forgets_a_commanded_target():
         assert pos[2] == pytest.approx(1.0, abs=0.05)
     finally:
         engine.shutdown()
+
+
+def test_a_configured_body_that_does_not_resolve_is_refused():
+    """A misspelt ``body:`` stops the run instead of flying the thrust actuator's body."""
+    world = {
+        "sim": {"density": 1.225, "viscosity": 1.8e-5},
+        "components": [{
+            "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_"},
+            "name": "drone",
+            "components": [{"quadrotor_controller": {"body": "no_such_body"}}],
+        }],
+    }
+    with pytest.raises(RuntimeError, match="no_such_body"):
+        engine, _ = _flown(world)
+        engine.shutdown()
