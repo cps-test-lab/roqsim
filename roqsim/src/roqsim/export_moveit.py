@@ -124,7 +124,7 @@ from pathlib import Path
 import mujoco
 import yaml
 
-from . import logging_setup, planning_scene
+from . import exit_status, logging_setup, planning_scene
 from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
 from .export_urdf import (
     UrdfExporter,
@@ -1083,6 +1083,11 @@ def main(argv: list | None = None) -> int:
         prog="roqsim export moveit",
         description="Generate a complete MoveIt 2 configuration for an arm, or for a cell's arms "
         "together, from a roqsim world.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is --check finding the URDF's kinematics off the MJCF's by more than --tolerance.",
+        ),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
@@ -1206,7 +1211,7 @@ def main(argv: list | None = None) -> int:
         # Every ValueError raised here describes a configuration that would be WRONG -- a chain that
         # spans the wrong joints, a tip link nothing contains, a home the simulator disagrees with.
         # Those are answers to the operator, not bugs, so they read as a message not a traceback.
-        raise SystemExit(f"roqsim export moveit: {err}") from err
+        return exit_status.fail("roqsim export moveit", err)
 
 
 def _run(args, log) -> int:
@@ -1522,7 +1527,7 @@ def _run(args, log) -> int:
                 where,
                 args.tolerance,
             )
-            return 1
+            return exit_status.FINDING
         log.info("FK round trip: %.3e m worst error (at %r)", err, where)
 
     if args.manifest:
@@ -1533,7 +1538,7 @@ def _run(args, log) -> int:
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
         log.info("wrote source manifest (%d files) to %s", len(sources), args.manifest)
-    return 0
+    return exit_status.OK
 
 
 def _last_link_of_chain(urdf_root: ET.Element, arm_base: str, joints: list[str]) -> str:
