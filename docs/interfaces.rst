@@ -113,7 +113,11 @@ embedding driver that varies the world per run writes exactly this document besi
 Both flags are repeatable and compose, later winning, so a saved set plus one ad-hoc tweak is
 ``--override debug.yaml --set sim.pacing=asap``. Every command that answers about the world a run
 would load takes the same pair, merged by the same function (``roqsim.override_options``):
-``roqsim sim``, ``roqsim check``, ``roqsim export web`` and ``roqsim scenes describe``.
+``roqsim sim``, ``roqsim check``, ``roqsim scenes describe``, ``roqsim export web``, ``urdf``,
+``srdf``, ``mesh`` and ``moveit``, and ``roqsim sensors coverage``. Where one of them is given a bare
+MJCF or a model instead of a world, it refuses ``--set``, ``--override`` and the other options that
+act on a world's plugins (``--skip-plugins``, ``--settle-steps``) with exit status 2, rather than
+exporting geometry the caller believes was overridden.
 
 Driven from scenario-execution, ``MujocoSim`` takes the nested dict as a ``world_overrides``
 parameter -- naturally an OSC struct, which the framework passes as a nested dict -- and (re)builds

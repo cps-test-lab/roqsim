@@ -52,7 +52,11 @@ from .config import (
     world_sources,
 )
 from .engine import Engine
-from .override_options import add_override_options, overrides_from_options
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 #: What ``scene.json`` declares itself to be. The other ``scene.json`` in this tree -- a
 #: ``roqsim_scenes`` scene manifest, a bill of meshes and bounds -- shares the file name and nothing
@@ -864,23 +868,14 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
-    world_only = [
-        flag
-        for flag, given in (
-            ("--set", args.overrides),
-            ("--override", args.override_files),
-            ("--skip-plugins", args.skip_plugins),
-            ("--settle-steps", args.settle_steps),
-        )
-        if given
-    ]
-    if args.mjcf and world_only:
-        # Refused rather than ignored: an export that dropped them would be geometry the caller
-        # believes is overridden, pruned or settled and is not. parser.error exits 2, the
-        # bad-input code.
-        parser.error(
-            f"{', '.join(world_only)} act on a world YAML's plugins and its reset, and --mjcf "
-            "compiles a bare MJCF with neither -- export the world with --world instead"
+    if args.mjcf:
+        # Refused rather than ignored: the export would be geometry the caller believes is
+        # overridden, pruned or settled and is not.
+        refuse_world_options(
+            parser,
+            args,
+            "--mjcf compiles a bare MJCF with no plugins and no reset -- export the world with "
+            "--world instead",
         )
 
     logging_setup.configure(verbose=args.verbose)

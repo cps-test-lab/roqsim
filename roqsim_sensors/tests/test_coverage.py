@@ -675,3 +675,60 @@ def test_regions_from_a_sketch_it_cannot_read_are_refused():
 
     with pytest.raises(ValueError, match="floorplan sketch version 99"):
         regions_from_sketch({"version": 99, "rooms": [], "lines": []})
+
+
+_BOX = "<mujoco><worldbody><body name='box'><geom type='box' size='.1 .1 .1'/></body></worldbody></mujoco>"
+
+
+@pytest.mark.parametrize("cmd", ["estimate", "greedy"])
+@pytest.mark.parametrize("form", ["set", "override"])
+def test_an_override_reaches_the_world_coverage_compiles(tmp_path, monkeypatch, cmd, form):
+    """`--set`/`--override` are `roqsim sim`'s, so coverage is measured on the world a run builds."""
+    from roqsim_sensors.coverage import cli
+
+    from roqsim.engine import Engine
+
+    class Compiled(Exception):
+        pass
+
+    seen, setup = [], Engine.setup
+
+    def spy(self, *a, **kw):
+        setup(self, *a, **kw)
+        seen.append(self.ctx.model.opt.timestep)
+        raise Compiled
+
+    monkeypatch.setattr(Engine, "setup", spy)
+    (tmp_path / "box.xml").write_text(_BOX)
+    world = tmp_path / "world.yaml"
+    world.write_text(
+        "sim: {timestep: 0.002}\ncomponents:\n"
+        "  - spawn_model: {model: box.xml, motion: static}\n    name: box\n"
+    )
+    if form == "set":
+        flags = ["--set", "sim.timestep=0.0005"]
+    else:
+        (tmp_path / "run.yaml").write_text("sim: {timestep: 0.0005}\n")
+        flags = ["--override", str(tmp_path / "run.yaml")]
+    argv = [cmd, "--world", str(world), "--out", str(tmp_path / "run"), *flags]
+    if cmd == "estimate":
+        argv += ["--placements", str(tmp_path / "p.json")]
+    with pytest.raises(Compiled):
+        cli.main(argv)
+    assert seen == [0.0005]
+
+
+@pytest.mark.parametrize("flags", [["--set", "sim.timestep=0.001"], ["--override", "run.yaml"]])
+def test_an_override_with_an_mjcf_world_is_refused_by_name(tmp_path, capsys, flags):
+    from roqsim_sensors.coverage import cli
+
+    (tmp_path / "w.xml").write_text(_BOX)
+    (tmp_path / "p.json").write_text("[]")
+    argv = _estimate_argv(tmp_path, str(tmp_path / "w.xml"), str(tmp_path / "p.json"))
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([*argv, *flags])
+    assert exit_info.value.code == exit_status.BAD_INPUT
+    assert f"{flags[0]} acts on a world YAML, and --world names a bare MJCF" in (
+        capsys.readouterr().err
+    )
+    assert not (tmp_path / "run").exists()

@@ -133,6 +133,11 @@ from .export_urdf import (
     round_trip_error,
     warn_on_unshippable_meshes,
 )
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1091,7 +1096,10 @@ def main(argv: list | None = None) -> int:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="a bare MJCF file")
+    source.add_argument(
+        "--mjcf",
+        help="not supported: the controller and gripper configuration come from a world's plugins",
+    )
     parser.add_argument("--out", required=True, help="output DIRECTORY for the generated files")
     parser.add_argument(
         "--arm",
@@ -1199,8 +1207,13 @@ def main(argv: list | None = None) -> int:
         "--tolerance", type=float, default=1e-6, help="--check: max allowed FK error in metres"
     )
     parser.add_argument("--skip-plugins", default="", help="extra plugin names/refs to drop")
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        refuse_world_options(
+            parser, args, "--mjcf is a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_moveit")
@@ -1225,7 +1238,7 @@ def _run(args, log) -> int:
             "world the simulation runs, which is what makes the export match the simulated scene."
         )
 
-    cfg = load_config(args.world)
+    cfg = load_config(args.world, overrides_from_options(args) or None)
     transport, unavailable = drop_transport_plugins(cfg)
     if transport:
         log.info("skipping transport plugins: %s", ", ".join(transport))

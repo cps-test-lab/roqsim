@@ -67,6 +67,11 @@ import mujoco
 import numpy as np
 
 from . import exit_status, logging_setup
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -613,7 +618,11 @@ def main(argv: list | None = None) -> int:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="a bare MJCF file")
+    source.add_argument(
+        "--mjcf",
+        help="a bare MJCF file (compiled directly, with no plugins, so --set, --override and "
+        "--skip-plugins are refused with it)",
+    )
     parser.add_argument("--urdf", required=True, help="the URDF `roqsim export urdf` produced")
     parser.add_argument("--out", required=True, help="output .srdf path")
     parser.add_argument("--name", required=True, help="robot name (must match the URDF's)")
@@ -669,8 +678,13 @@ def main(argv: list | None = None) -> int:
         help="extra plugin names/refs to drop before compiling; transport/bridge plugins are always "
         "dropped (they contribute no geometry)",
     )
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        refuse_world_options(
+            parser, args, "--mjcf compiles a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_srdf")
@@ -694,7 +708,7 @@ def main(argv: list | None = None) -> int:
         # cannot be cleared on this path. `collision_matrix` refuses a masked model rather than
         # producing an SRDF that silently disables self-collision checking -- export a robot's
         # description from its MJCF (`--mjcf`) instead, which is where a robot description belongs.
-        model, _d, _v = _compile_from_world(args.world, skip, {}, log)
+        model, _d, _v = _compile_from_world(args.world, skip, overrides_from_options(args), log)
 
     links = links_from_urdf(model, Path(args.urdf), args.strip)
     if not links:
