@@ -92,9 +92,14 @@ class Recording:
 
         A replayed camera holds an offscreen renderer that only its ``shutdown`` releases; one left
         to interpreter exit is torn down after the GL backend is gone. A no-op before :meth:`build`.
+
+        The replay failures and the plugins already warned about belong to the closed world: a
+        rebuilt one's plugin can reuse a closed one's ``id``, and would not be warned about.
         """
         engine = getattr(self._ctx, "engine", None)
         self._model, self._ctx, self._data, self._buf, self._view = None, None, None, None, None
+        self.replay_failures = []
+        self._warned.clear()
         if engine is not None:
             engine.shutdown()
 
