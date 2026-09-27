@@ -78,6 +78,17 @@ class SpawnFrame:
         a = yaw_of(quat) - self._yaw
         return math.atan2(math.sin(a), math.cos(a))
 
+    def world_position(self, pos) -> tuple[float, float, float]:
+        """A position in this frame, in the world: the inverse of :meth:`position`."""
+        c, s = math.cos(self._yaw), math.sin(self._yaw)
+        x, y = float(pos[0]), float(pos[1])
+        return (self._x + c * x - s * y, self._y + s * x + c * y, float(pos[2]))
+
+    def world_yaw(self, yaw: float) -> float:
+        """A heading in this frame, in the world."""
+        a = float(yaw) + self._yaw
+        return math.atan2(math.sin(a), math.cos(a))
+
     def orientation(self, quat) -> tuple[float, float, float, float]:
         """A world ``(w, x, y, z)`` orientation in this frame, tilt kept."""
         h = -0.5 * self._yaw

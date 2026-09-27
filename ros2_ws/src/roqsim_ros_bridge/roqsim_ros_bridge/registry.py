@@ -745,18 +745,21 @@ def decode_ackermann_stamped(msg) -> tuple[float, float]:
 
 
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...]]:
-    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz)``, in MuJoCo's quaternion order.
+def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...], str]:
+    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz, frame_id)``, in MuJoCo's
+    quaternion order.
 
     The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
     division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
     every consumer of the type, and a Cartesian controller commanded to hold its tool upright needs
-    exactly the part that would have been thrown away.
+    exactly the part that would have been thrown away. The frame is passed on for the same reason:
+    only the consumer knows which frames it can read a pose in.
     """
     q = msg.pose.orientation
     return (
         (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
         (q.w, q.x, q.y, q.z),
+        msg.header.frame_id,
     )
 
 

@@ -509,8 +509,9 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "_registered.transitions": "the registry's transition log, which a bridge announces by "
         "position, so it runs for the whole process"
     },
-    "g1_locomotion": {
-        "_obs": "the policy's input buffer, rebuilt in full before every policy call"
+    **{
+        name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
+        for name in ("g1_locomotion", "spot_locomotion")
     },
     "navigator": {
         "_radius": _MEASURED_ONCE,
