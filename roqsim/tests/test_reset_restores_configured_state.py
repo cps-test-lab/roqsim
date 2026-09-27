@@ -538,10 +538,6 @@ KNOWN_DEFECTS: dict[str, str] = {
     },
     "joint_state_publisher": "has no on_reset, so it serves the previous trial's last joint state "
     "until the first step",
-    **{
-        name: "_payload_value serves the previous trial's last scan until the first cast"
-        for name in _RAY_SENSORS
-    },
 }
 
 
