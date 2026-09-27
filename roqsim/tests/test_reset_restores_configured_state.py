@@ -270,9 +270,6 @@ def _spot_policy() -> Path:
     return Path(roqsim_quadruped.__file__).parent / "policy" / "spot_policy.pt"
 
 
-_STALE_SCAN = "_payload_value serves the previous trial's last scan until the first cast"
-
-
 def _static(*components: dict, **sim) -> Case:
     return Case(lambda _tmp: _world(*components, **sim))
 
@@ -349,16 +346,14 @@ CASES: dict[str, Case] = {
         "(ctx.stop_requested)",
     ),
     # sensors
-    "lidar": Case(lambda _: _mobile(), defect=_STALE_SCAN),
-    "range_sensor": Case(lambda _: _world(_robot("turtlebot4")), defect=_STALE_SCAN),
+    "lidar": Case(lambda _: _mobile()),
+    "range_sensor": Case(lambda _: _world(_robot("turtlebot4"))),
     "imu": Case(lambda _: _mobile({"imu": {}})),
     "gnss": Case(lambda _: _mobile({"gnss": {"datum": {"lat": 47.4, "lon": 8.5, "alt": 400.0}}})),
     "ground_truth_pose": Case(lambda _: _mobile({"ground_truth_pose": {}})),
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
-    "livox_mid360": Case(lambda _: _sensor("mid360"), defect=_STALE_SCAN),
-    "seyond_robin_w1g": Case(
-        lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}}), defect=_STALE_SCAN
-    ),
+    "livox_mid360": Case(lambda _: _sensor("mid360")),
+    "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
     "oakd_camera": Case(lambda _: _sensor("oakd")),
     "realsense_d415": Case(lambda _: _sensor("d415")),
     "realsense_d435": Case(lambda _: _sensor("d435")),
