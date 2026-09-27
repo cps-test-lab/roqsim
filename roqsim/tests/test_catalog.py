@@ -219,7 +219,7 @@ def test_the_cli_exits_nonzero_when_a_model_does_not_compile(tmp_path, capsys):
         '<mujoco><asset><mesh name="m" file="absent.obj"/></asset>'
         '<worldbody><geom type="mesh" mesh="m"/></worldbody></mujoco>'
     )
-    assert main(["model", str(model)]) == 1
+    assert main(["model", str(model)]) == exit_status.BAD_INPUT
     assert "error" in json.loads(capsys.readouterr().out)["names"]
 
 
