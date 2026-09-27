@@ -362,3 +362,19 @@ def test_a_failing_plugin_nobody_selected_is_warned_about_not_fatal(recording, m
         record = st.run_state(recording, joints=["j"], at=1.0)
     assert record["values"], "the joint the caller asked for is still reported"
     assert any("post_step raised" in r.getMessage() for r in caplog.records)
+
+
+def test_a_sensor_whose_producer_is_unknown_is_refused_while_a_plugin_fails(recording, monkeypatch):
+    """An endpoint whose ``read`` cannot be traced to any plugin may be the failing one's."""
+    from roqsim import recording as recording_module
+    from roqsim.registry import resolve_plugin
+
+    sensor = next(iter(st.run_state(recording, check=True)["sensors"]))
+    monkeypatch.setattr(recording_module, "_reads_from", lambda read, plugin: False)
+
+    def broken(self, ctx):
+        raise RuntimeError("replay broke")
+
+    monkeypatch.setattr(resolve_plugin("lidar"), "post_step", broken)
+    with pytest.raises(st.StateError, match="producer is not known.*replay broke"):
+        st.run_state(recording, sensors=[sensor], at=1.0)

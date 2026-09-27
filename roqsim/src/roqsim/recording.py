@@ -412,15 +412,23 @@ class Recording:
         restore -- whose value is therefore the previous sample's, not this one's.
 
         An endpoint is attributed to a plugin when its ``read`` is bound to that plugin or closes
-        over it.
+        over it. While any plugin failed, an endpoint attributed to no plugin at all is reported
+        too, since nothing shows its producer was not among them.
         """
+        if not self.replay_failures:
+            return {}
         out: dict[str, str] = {}
         for plugin, err in self.replay_failures:
             for endpoint in endpoints:
                 if _reads_from(endpoint.read, plugin):
-                    out[endpoint.name] = (
-                        f"{getattr(plugin, 'address', type(plugin).__name__)}.post_step raised: {err}"
-                    )
+                    out[endpoint.name] = f"{_label(plugin)}.post_step raised: {err}"
+        engine = getattr(self._ctx, "engine", None)
+        plugins = list(engine.plugins) if engine is not None else []
+        failed = ", ".join(f"{_label(p)} ({e})" for p, e in self.replay_failures)
+        for endpoint in endpoints:
+            if endpoint.name in out or any(_reads_from(endpoint.read, p) for p in plugins):
+                continue
+            out[endpoint.name] = f"its producer is not known, and these raised: {failed}"
         return out
 
     def at(self, when: float | None = None) -> Sample:
@@ -458,6 +466,10 @@ class Recording:
             "requested_at": None if when is None else round(float(when), 6),
             "at_error": None if when is None else round(sample.sim_time - float(when), 6),
         }
+
+
+def _label(plugin) -> str:
+    return getattr(plugin, "address", type(plugin).__name__)
 
 
 def _reads_from(read, plugin) -> bool:
