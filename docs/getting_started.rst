@@ -37,7 +37,7 @@ No display? Run it headless
 
 ``roqsim_mobile:turtlebot4_demo`` is a world resolved by name from an installed package; a path to a
 world YAML works just as well. ``roqsim`` is the only command name to learn — ``roqsim --help`` lists the
-groups, one per installed package that ships tools.
+core commands and one group per installed package that ships tools.
 
 Where to next
 -------------

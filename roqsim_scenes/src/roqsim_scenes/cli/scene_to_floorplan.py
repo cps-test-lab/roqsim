@@ -23,6 +23,8 @@ import argparse
 import json
 from pathlib import Path
 
+from roqsim_scenes import scene_manifest
+
 
 def floorplan_of(scene_dir: Path) -> dict:
     """The floorplan JSON for ``scene_dir``: follow ``scene.json``'s ``"floorplan"`` reference.
@@ -37,6 +39,7 @@ def floorplan_of(scene_dir: Path) -> dict:
         raise ValueError(f"{scene_dir} has no scene.json; it is not a roqsim scene directory.")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    scene_manifest.check(manifest, manifest_path)
     ref = manifest.get("floorplan")
     if not isinstance(ref, str):
         raise ValueError(
