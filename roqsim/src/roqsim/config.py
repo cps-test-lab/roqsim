@@ -83,6 +83,7 @@ from typing import Any
 
 import yaml
 
+from .document import check_version
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -587,37 +588,21 @@ def _apply_disable(plugins: list, selectors: list) -> list:
     return out
 
 
-#: The world document format this roqsim reads. A document states its own with a top-level
-#: ``format:``; absent means 1, the format every world written before the stamp existed is in. A
-#: format above this one is refused rather than read with the keys that happen to overlap: it was
-#: written to a contract this code has not seen, and a world that loads anyway runs a different
-#: experiment while looking correct. Bumped when a key is renamed, moved or changes meaning -- not
-#: when one is added, since an added key a reader does not know is already refused by name.
-WORLD_FORMAT = 1
-_FORMAT_KEY = "format"
+#: The world document version this roqsim reads, stated with a top-level ``version:`` (absent is 1).
+#: Bumped when a key is renamed, moved or changes meaning, not when one is added.
+WORLD_VERSION = 1
+_VERSION_KEY = "version"
 
 
-def _check_world_format(raw: dict, where: str) -> dict:
-    """Refuse a document written to a newer (or no valid) format; return it without the stamp.
+def _check_world_version(raw: dict, where: str) -> dict:
+    """Refuse a document stating a newer or malformed version; return it without the stamp.
 
-    The stamp is consumed here and not passed on, so nothing downstream of inheritance has to know
-    it exists -- the merged document a chain resolves to is in this roqsim's format by construction.
+    The stamp is not passed on, so nothing after inheritance sees it.
     """
-    if _FORMAT_KEY not in raw:
-        return raw
-    version = raw[_FORMAT_KEY]
-    if isinstance(version, bool) or not isinstance(version, int) or version < 1:
-        raise PluginError(
-            f"{where}: 'format: {version!r}' is not a world format; it is a positive integer "
-            f"(this roqsim reads up to {WORLD_FORMAT}), or absent for format 1."
-        )
-    if version > WORLD_FORMAT:
-        raise PluginError(
-            f"{where} is written in world format {version}; this roqsim reads up to "
-            f"{WORLD_FORMAT}. Load it with the roqsim version that wrote it, or one that reads "
-            f"format {version}."
-        )
-    return {k: v for k, v in raw.items() if k != _FORMAT_KEY}
+    check_version(
+        raw, _VERSION_KEY, reads=WORLD_VERSION, document="world", where=where, error=PluginError
+    )
+    return {k: v for k, v in raw.items() if k != _VERSION_KEY}
 
 
 def _resolve_inheritance(
@@ -629,12 +614,12 @@ def _resolve_inheritance(
     the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
 
-    Every document in the chain passes through here, so this is where its ``format:`` is checked
-    (:data:`WORLD_FORMAT`): a parent written to a newer format is refused like a leaf would be.
+    Every document in the chain passes through here, so each one's ``version:`` is checked
+    (:data:`WORLD_VERSION`), a parent's like a leaf's.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
-    raw = _check_world_format(raw, where)
+    raw = _check_world_version(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
     if ext is None:
