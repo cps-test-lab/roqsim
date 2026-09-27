@@ -63,6 +63,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
 logger = logging.getLogger(__name__)
@@ -139,14 +140,17 @@ class QuadrotorControllerPlugin(Plugin):
         # already prefixed; a config `body:` is in the model's own namespace and takes the prefix.
         configured = self.config.get("body")
         body = (prefix + str(configured)) if configured else (entity.body if entity else None)
-        self._bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body) if body else -1
-        if self._bid < 0:
-            # Fall back to the body owning the thrust actuator's site, which is where the force is
-            # applied and therefore the body being flown by construction. Still earns its place: a
-            # drone declared without spawn_robot (a bare MJCF world, a test harness) has an entity
-            # with no body at all, and the actuator's site names the flown body without being told.
+        if body:
+            # A named body that does not resolve is an error, not a cue to fly another one.
+            self._bid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, body)
+        elif self._aid_thrust >= 0:
+            # No body named anywhere: a drone declared without spawn_robot (a bare MJCF world, a
+            # test harness) has an entity with no body. The thrust actuator's site is where the
+            # force is applied and therefore on the body being flown.
             site = model.actuator_trnid[self._aid_thrust, 0]
             self._bid = int(model.site_bodyid[site]) if site >= 0 else -1
+        else:
+            self._bid = -1
 
         missing = [
             name
@@ -158,7 +162,7 @@ class QuadrotorControllerPlugin(Plugin):
         ]
         if missing or self._bid < 0:
             raise RuntimeError(
-                f"quadrotor_controller: could not resolve {missing or 'the drone body'} "
+                f"quadrotor_controller: could not resolve {missing or f'the drone body {body!r}'} "
                 f"for robot {self.robot!r}"
             )
 
@@ -281,8 +285,9 @@ class QuadrotorControllerPlugin(Plugin):
         model, data = ctx.model, ctx.data
         pos = np.array(data.xpos[self._bid])
         rot = np.array(data.xmat[self._bid]).reshape(3, 3)
-        vel = np.array(data.cvel[self._bid][3:6])
-        omega = rot.T @ np.array(data.cvel[self._bid][0:3])
+        twist = body_twist(model, data, self._bid)
+        vel = np.array(twist.linear)
+        omega = rot.T @ np.array(twist.angular)
 
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         self._state = (*pos, *vel, yaw, float(omega[2]))
