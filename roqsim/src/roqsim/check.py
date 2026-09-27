@@ -91,6 +91,7 @@ what went wrong.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
@@ -179,49 +180,45 @@ def check_world(target: str) -> dict:
         return report
     report["reached"] = "config"
 
-    try:
-        engine.setup()
-    except Exception as exc:  # noqa: BLE001 - any plugin's failure is this command's finding
-        # Which half of setup() failed, asked of the context rather than guessed: `build` hooks and
-        # the compile happen before there is a model, `configure` after. Reporting the wrong one
-        # sends a reader to the wrong file -- an unresolvable site is a name that does not exist in
-        # a model that compiled fine.
-        stage = "configure" if getattr(engine.ctx, "model", None) is not None else "build"
-        report["problems"].append(
-            _problem(
-                stage,
-                f"{type(exc).__name__}: {exc}",
-                hint=(
-                    "a plugin refused what the compiled model offers -- check the names it resolves "
-                    "(bodies, sites, actuators) against `roqsim catalog model <model>`"
-                    if stage == "configure"
-                    else None
-                ),
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(engine)
+        except Exception as exc:  # noqa: BLE001 - any plugin's failure is this command's finding
+            # Which half of setup() failed, asked of the context rather than guessed: `build` hooks and
+            # the compile happen before there is a model, `configure` after. Reporting the wrong one
+            # sends a reader to the wrong file -- an unresolvable site is a name that does not exist in
+            # a model that compiled fine.
+            stage = "configure" if getattr(engine.ctx, "model", None) is not None else "build"
+            report["problems"].append(
+                _problem(
+                    stage,
+                    f"{type(exc).__name__}: {exc}",
+                    hint=(
+                        "a plugin refused what the compiled model offers -- check the names it resolves "
+                        "(bodies, sites, actuators) against `roqsim catalog model <model>`"
+                        if stage == "configure"
+                        else None
+                    ),
+                )
             )
-        )
-        _shutdown(engine)
-        return report
-    report["reached"] = "configure"
+            return report
+        report["reached"] = "configure"
 
-    # -- reset: the state a trial starts from ------------------------------------------------
-    try:
-        engine.reset()
-    except Exception as exc:  # noqa: BLE001 - a plugin's on_reset failing is a trial that cannot start
-        report["problems"].append(_problem("reset", f"{type(exc).__name__}: {exc}"))
-        _shutdown(engine)
-        return report
-    report["reached"] = "reset"
-    from roqsim.interpenetration import as_warnings
+        # -- reset: the state a trial starts from ------------------------------------------------
+        try:
+            engine.reset()
+        except Exception as exc:  # noqa: BLE001 - a plugin's on_reset failing is a trial that cannot start
+            report["problems"].append(_problem("reset", f"{type(exc).__name__}: {exc}"))
+            return report
+        report["reached"] = "reset"
+        from roqsim.interpenetration import as_warnings
 
-    report["warnings"].extend(as_warnings(engine.interpenetrations))
+        report["warnings"].extend(as_warnings(engine.interpenetrations))
 
-    try:
         report["world"] = _inventory(engine)
         report["derived"], flex_warnings = _derive(engine)
         report["warnings"].extend(_warning(**warning) for warning in flex_warnings)
         report["ok"] = True
-    finally:
-        _shutdown(engine)
     return report
 
 
@@ -365,14 +362,6 @@ def _derive(engine) -> tuple[dict, list[dict]]:
         derived["flexes"].append(row)
         warnings.extend(flex_warnings)
     return derived, warnings
-
-
-def _shutdown(engine) -> None:
-    """Release whatever the partial setup took (a renderer's GL context, a file, a node)."""
-    try:
-        engine.shutdown()
-    except Exception:  # noqa: BLE001 - teardown of a half-built world is best effort
-        pass
 
 
 def _render_warnings(report: dict) -> list[str]:

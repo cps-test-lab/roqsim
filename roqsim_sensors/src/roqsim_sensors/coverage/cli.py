@@ -65,11 +65,11 @@ def load_world(world: str):
     # for a filename and errors.
     ref = resolve_world_yaml_ref(world) if (not p.exists() and ":" in world) else None
     cfg = load_config(ref or (str(p) if p.exists() else world))
-    engine = Engine(cfg, preview=True)
-    engine.setup()
-    ctx = engine.ctx
-    mujoco.mj_forward(ctx.model, ctx.data)
-    return ctx.model, ctx.data
+    # The model and data outlive the plugins: coverage reads only them.
+    with Engine(cfg, preview=True) as engine:
+        ctx = engine.ctx
+        mujoco.mj_forward(ctx.model, ctx.data)
+        return ctx.model, ctx.data
 
 
 # -- shared helpers ----------------------------------------------------------------------------------
