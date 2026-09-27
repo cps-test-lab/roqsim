@@ -23,6 +23,7 @@ import mujoco
 import numpy as np
 
 from . import raycast
+from .exit_status import NO_GL
 from .presence import ABSENT_GEOM_GROUP
 
 _logger = logging.getLogger(__name__)
@@ -404,6 +405,8 @@ def focus_camera(
 
 class GLBackendError(RuntimeError):
     """MuJoCo bound a GL backend that cannot render here (see :func:`check_gl_backend`)."""
+
+    exit_status = NO_GL
 
 
 def bound_gl_backend() -> str:

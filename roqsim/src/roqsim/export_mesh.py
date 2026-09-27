@@ -63,7 +63,7 @@ from xml.sax.saxutils import escape, quoteattr
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 
 logger = logging.getLogger(__name__)
 
@@ -688,6 +688,7 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export mesh",
         description="Export a model as one merged mesh in a chosen body's frame (STL/OBJ/PLY).",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--model", help="model reference (name, package:name, or path to an MJCF)")
@@ -764,7 +765,7 @@ def main(argv: list | None = None) -> int:
             out.name,
             ", ".join(sorted(_FORMATS)),
         )
-        return 2
+        return exit_status.BAD_INPUT
 
     if args.model:
         from .models import apply_assets, resolve_model
@@ -801,7 +802,7 @@ def main(argv: list | None = None) -> int:
         exporter.collect()
     except MeshExportError as exc:
         log.error("%s", exc)
-        return 1
+        return exit_status.BAD_INPUT
 
     name = (args.prefix or label).strip("_") or label
     mesh = exporter.merge(_UNITS[args.units])
@@ -906,7 +907,7 @@ def main(argv: list | None = None) -> int:
         sources = inputs if inputs is not None else [str(p) for p in world_sources(args.world)]
         Path(args.manifest).parent.mkdir(parents=True, exist_ok=True)
         Path(args.manifest).write_text(json.dumps({"inputs": sources}, indent=2), encoding="utf-8")
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

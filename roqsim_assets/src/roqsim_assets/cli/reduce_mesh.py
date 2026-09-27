@@ -22,9 +22,11 @@ Use ``--scale`` if the source is not in metres (glTF is usually metres; many CAD
 from __future__ import annotations
 
 import argparse
+import errno
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 try:
     import bpy  # available only when running inside Blender
@@ -89,6 +91,8 @@ def _parse(argv: list[str]) -> argparse.Namespace:
 
 
 def _run_outside_blender(args: argparse.Namespace) -> None:
+    if not Path(args.input).is_file():
+        raise FileNotFoundError(errno.ENOENT, "no such mesh", args.input)
     exe = blender_exe(args.blender)
     if exe is None:
         sys.exit(
@@ -107,7 +111,8 @@ def _run_outside_blender(args: argparse.Namespace) -> None:
         passthrough.append("--no-materials")
     if args.split_materials:
         passthrough.append("--split-materials")
-    cmd = [exe, "--background", "--python", __file__, "--", *passthrough]
+    # Blender exits 0 when the script raises, unless told otherwise.
+    cmd = [exe, "--background", "--python-exit-code", "1", "--python", __file__, "--", *passthrough]
     print("+", " ".join(cmd))
     raise SystemExit(subprocess.run(cmd).returncode)
 

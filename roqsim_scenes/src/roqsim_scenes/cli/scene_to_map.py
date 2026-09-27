@@ -36,11 +36,20 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim_scenes import scene_manifest
+
 _OCC, _FREE, _UNKNOWN = 0, 254, 205
 
 
+def _read_manifest(scene_dir: Path) -> dict:
+    path = scene_dir / "scene.json"
+    manifest = json.loads(path.read_text())
+    scene_manifest.check(manifest, path)
+    return manifest
+
+
 def _load_scene(scene_dir: Path) -> list[tuple[np.ndarray, np.ndarray]]:
-    manifest = json.loads((scene_dir / "scene.json").read_text())
+    manifest = _read_manifest(scene_dir)
     out = []
     # Every object, collidable or not -- the same rule as the world path (`_load_world`). A 2D
     # costmap is built from what the lidar returns, and the raycaster hits a visual-only mesh as
@@ -355,7 +364,7 @@ def main(argv: list | None = None) -> int:
             args.world, hull_at=args.scan_height if args.collision_hulls else None
         )
     else:
-        manifest = json.loads((args.scene / "scene.json").read_text())
+        manifest = _read_manifest(args.scene)
         lo = np.array(manifest["bounds_min"][:2])
         hi = np.array(manifest["bounds_max"][:2])
         geometry = _load_scene(args.scene)
