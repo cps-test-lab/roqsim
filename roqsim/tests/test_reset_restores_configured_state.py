@@ -530,8 +530,6 @@ KNOWN_DEFECTS: dict[str, str] = {
     "(law, controller_type, _uses_*) a trial set; nor does arm_controller restore its own activity",
     "force_limit": "a trip outlives its trial: the controllers it released stay inactive, and "
     "Engine.reset never clears the stop it requested (ctx.stop_requested)",
-    "navigator": "_commanded survives the reset, and the handle's pose, the core's per-tick inputs and "
-    "the planner stay the previous trial's until the first tick",
     **{
         name: "_jpos/_jvel serve the previous trial's last joint state until the first step"
         for name in ("diff_drive", "omni_drive", "ackermann_drive")
