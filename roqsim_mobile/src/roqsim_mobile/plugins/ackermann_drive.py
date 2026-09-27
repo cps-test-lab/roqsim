@@ -110,6 +110,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
@@ -141,9 +142,8 @@ class AckermannDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
-        #: Watchdog: a command older than this stops the car; 0 = hold the last command forever.
-        self.cmd_vel_timeout = float(self.config.get("cmd_vel_timeout", 0.0))
-        self._last_cmd = float("-inf")  # sim time of the last command; -inf until one arrives
+        #: ``cmd_vel_timeout``: a command older than this stops the car; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
         self._ctx: SimContext | None = None
 
         self._target_v = 0.0
@@ -198,8 +198,7 @@ class AckermannDrivePlugin(Plugin):
                 errors.append(f"'{key}' is required: name the model's two, left then right")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
-        if float(config.get("cmd_vel_timeout", 0.0)) < 0:
-            errors.append("'cmd_vel_timeout' must be >= 0 (0 = no watchdog)")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     # -- lifecycle ----------------------------------------------------------------------------
@@ -339,7 +338,7 @@ class AckermannDrivePlugin(Plugin):
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(w)
         self._steer_cmd = None  # a twist states a curvature; the angle is derived from it again
-        self._stamp_command()
+        self.watchdog.stamp(self._ctx)
 
     def steer(self, delta: float, speed: float) -> None:
         """Ackermann target: the centre (bicycle) steering angle, and a speed.
@@ -357,10 +356,7 @@ class AckermannDrivePlugin(Plugin):
         self._steer_cmd = float(np.clip(delta, -self.max_steer, self.max_steer))
         self._target_v = float(np.clip(speed, -self.max_v, self.max_v))
         self._target_w = 0.0
-        self._stamp_command()
-
-    def _stamp_command(self) -> None:
-        self._last_cmd = self._ctx.sim_time if self._ctx is not None else 0.0
+        self.watchdog.stamp(self._ctx)
 
     def steer_angles(self, delta: float) -> tuple[float, float]:
         """(left, right) wheel angles for a centre (bicycle) angle -- the geometry the linkage does.
@@ -389,7 +385,7 @@ class AckermannDrivePlugin(Plugin):
         if "test_cmd" in self.config:
             v, w = self.config["test_cmd"]
             self.drive(float(v), 0.0, float(w))
-        if self.cmd_vel_timeout > 0.0 and ctx.sim_time - self._last_cmd > self.cmd_vel_timeout:
+        if self.watchdog.expired(ctx):
             # The watchdog: the last command has expired, so the car ramps to a stop.
             self._target_v = self._target_w = 0.0
 
@@ -469,7 +465,7 @@ class AckermannDrivePlugin(Plugin):
         self._target_v = self._target_w = 0.0
         self._cmd_v = 0.0
         self._steer = 0.0
-        self._last_cmd = float("-inf")
+        self.watchdog.clear()
         # An Ackermann command belongs to the episode that sent it, as a twist does.
         self._steer_cmd = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
