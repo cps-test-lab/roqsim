@@ -303,14 +303,21 @@ class MujocoSim(_Base):
         The single point where the live model dies -- on shutdown *and* on a mid-session rebuild -- so
         it is where a recording has to be flushed. Doing it in ``shutdown`` alone would lose a
         recording whenever a scenario reset with different ``world_overrides``.
+
+        The engine is shut down whatever the flush or the viewer's close raises, so the plugins
+        release what configure opened and write their shutdown output.
         """
-        self._finish_recording()
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        if self._engine is not None:
-            self._engine.shutdown()
-            self._engine = None
+        try:
+            self._finish_recording()
+        finally:
+            try:
+                if self._viewer is not None:
+                    viewer, self._viewer = self._viewer, None
+                    viewer.close()
+            finally:
+                if self._engine is not None:
+                    engine, self._engine = self._engine, None
+                    engine.shutdown()
 
     def _ensure_built(self) -> Engine:
         if self._engine is None:
@@ -321,14 +328,12 @@ class MujocoSim(_Base):
         """Write the browser scene descriptor of the just-built world, when requested.
 
         Opt-in via the ``ROQSIM_SCENE_EXPORT_DIR`` environment variable: when set, the compiled
-        world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory --
-        a relative path resolves against the scenario's ``output_dir`` (passed to ``setup()`` by
-        the runner; under a run harness that is the run's result directory, so the exact simulated scene,
-        world_overrides included, ships as a run artifact for browser viewers), falling back to the
-        process cwd when the runner provides none. Called after ``engine.reset()`` so mocap-driven
-        bodies (walkers) and re-seated robot bases are captured at their true initial pose; the
-        forward pass propagates the re-posed mocap into ``data.xpos`` first (mirrors
-        ``export_web._compile_from_world``).
+        world is exported as ``scene.json``/``scene.bin`` (+ textures) into that directory -- a
+        relative path is resolved by :meth:`_resolve_out`, like the recording, so the exact simulated
+        scene, world_overrides included, ships as a run artifact for browser viewers. Called after
+        ``engine.reset()`` so mocap-driven bodies (walkers) and re-seated robot bases are captured
+        at their true initial pose; the forward pass propagates the re-posed mocap into
+        ``data.xpos`` first (mirrors ``export_web._compile_from_world``).
         """
         self._scene_export_pending = False
         out = os.environ.get("ROQSIM_SCENE_EXPORT_DIR")
@@ -338,9 +343,7 @@ class MujocoSim(_Base):
 
         from .export_web import export_scene
 
-        out_dir = Path(out)
-        if not out_dir.is_absolute() and self._output_dir:
-            out_dir = Path(self._output_dir) / out_dir
+        out_dir = self._resolve_out(out)
         mujoco.mj_forward(self._engine.ctx.model, self._engine.ctx.data)
         # NOT self._logger: the runner may hand us a non-stdlib logger (e.g. scenario-execution's
         # RosLogger), whose info() lacks %-style lazy formatting that export_scene uses.
