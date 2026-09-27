@@ -356,7 +356,7 @@ def test_write_result_shape_rooms_then_lines(tmp_path):
     out = tmp_path / "floorplan.json"
     result = write_result(str(out), "layout", m)
     # no overall dimensions (unbounded canvas); rooms come before lines in the output.
-    assert list(result) == ["schema", "comment", "rooms", "lines", "doors", "markers"]
+    assert list(result) == ["version", "comment", "rooms", "lines", "doors", "markers"]
     assert result["rooms"] == [{"id": 1, "name": "Lab", "line_ids": [1, 2, 3, 4]}]
     # each marker carries the id of the room that contains it (computed), null if outside.
     assert result["markers"][0] == {

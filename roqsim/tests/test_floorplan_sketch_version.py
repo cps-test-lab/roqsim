@@ -1,43 +1,43 @@
-"""A floorplan sketch states its schema, and a reader refuses a newer one or a key it does not read.
+"""A floorplan sketch states its version, and a reader refuses a newer one or a key it does not read.
 
 A sketch is persisted as ``floorplan.json`` beside a generated scene and is the single source of truth
 for it, so it outlives the tool that drew it. Read with the keys that happen to overlap, a sketch
-written to a later schema -- or with a misspelt ``width_m`` -- generates a plausible world with the
-defaults in its place. Absent means schema 1, the layout every sketch had before the stamp existed.
+written to a later version -- or with a misspelt ``width_m`` -- generates a plausible world with the
+defaults in its place. Absent means version 1.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from roqsim.floorplan_geometry import SKETCH_SCHEMA, check_sketch, stamp_sketch
+from roqsim.floorplan_geometry import SKETCH_VERSION, check_sketch, stamp_sketch
 
 LINE = {"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}
 
 
-def test_absent_means_the_first_schema():
+def test_absent_means_the_first_version():
     assert check_sketch({"lines": [LINE]}, "plan") == 1
 
 
-def test_the_current_schema_reads():
-    assert check_sketch(stamp_sketch({"lines": [LINE]}), "plan") == SKETCH_SCHEMA
+def test_the_current_version_reads():
+    assert check_sketch(stamp_sketch({"lines": [LINE]}), "plan") == SKETCH_VERSION
 
 
-def test_stamp_puts_the_schema_first_and_keeps_the_rest():
-    stamped = stamp_sketch({"lines": [LINE], "schema": 99})
-    assert list(stamped)[0] == "schema" and stamped["schema"] == SKETCH_SCHEMA
+def test_stamp_puts_the_version_first_and_keeps_the_rest():
+    stamped = stamp_sketch({"lines": [LINE], "version": 99})
+    assert list(stamped)[0] == "version" and stamped["version"] == SKETCH_VERSION
     assert stamped["lines"] == [LINE]
 
 
-def test_a_newer_schema_is_refused_naming_both():
-    with pytest.raises(ValueError, match=rf"schema {SKETCH_SCHEMA + 1}.*up to {SKETCH_SCHEMA}"):
-        check_sketch({"schema": SKETCH_SCHEMA + 1}, "plan")
+def test_a_newer_version_is_refused_naming_both():
+    with pytest.raises(ValueError, match=rf"version {SKETCH_VERSION + 1}.*up to {SKETCH_VERSION}"):
+        check_sketch({"version": SKETCH_VERSION + 1}, "plan")
 
 
 @pytest.mark.parametrize("bad", [0, "1", 1.5, True])
-def test_a_schema_that_is_not_a_positive_integer_is_refused(bad):
-    with pytest.raises(ValueError, match="schema"):
-        check_sketch({"schema": bad}, "plan")
+def test_a_version_that_is_not_a_positive_integer_is_refused(bad):
+    with pytest.raises(ValueError, match="version"):
+        check_sketch({"version": bad}, "plan")
 
 
 @pytest.mark.parametrize(
@@ -64,7 +64,7 @@ def test_an_unknown_key_is_refused_where_it_sits(sketch, where, hint):
 def test_every_key_a_writer_emits_is_known():
     check_sketch(
         {
-            "schema": 1,
+            "version": 1,
             "comment": "",
             "description": "a flat",
             "rooms": [{"id": 1, "name": "hall", "line_ids": [1], "description": "d"}],

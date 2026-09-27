@@ -1,7 +1,7 @@
 """The sketch window stamps what it returns, and refuses to seed from a sketch it cannot read.
 
 Seeding from a newer sketch would drop the keys the window does not know and send back a sketch in
-this schema, silently losing what the newer one said.
+this version, silently losing what the newer one said.
 """
 
 from __future__ import annotations
@@ -9,16 +9,16 @@ from __future__ import annotations
 import pytest
 from roqsim_scene_builder.floorplan_window import SketchModel, load_sketch, write_result
 
-from roqsim.floorplan_geometry import SKETCH_SCHEMA
+from roqsim.floorplan_geometry import SKETCH_VERSION
 
 
 def test_the_result_is_stamped():
-    assert write_result(None, "", SketchModel())["schema"] == SKETCH_SCHEMA
+    assert write_result(None, "", SketchModel())["version"] == SKETCH_VERSION
 
 
 def test_a_newer_seed_is_refused():
-    with pytest.raises(ValueError, match=rf"schema {SKETCH_SCHEMA + 1}"):
-        load_sketch({"schema": SKETCH_SCHEMA + 1, "lines": []})
+    with pytest.raises(ValueError, match=rf"version {SKETCH_VERSION + 1}"):
+        load_sketch({"version": SKETCH_VERSION + 1, "lines": []})
 
 
 def test_an_unstamped_seed_loads():

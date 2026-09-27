@@ -43,7 +43,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from roqsim.floorplan_geometry import SKETCH_SCHEMA, check_sketch
+from roqsim.floorplan_geometry import SKETCH_VERSION, check_sketch
 from roqsim_scene_builder.annotate_ui import (
     BG,
     BORDER,
@@ -682,7 +682,7 @@ def load_sketch(initial: dict | None) -> tuple[SketchModel, str]:
     """
     initial = initial or {}
     # A newer sketch is refused rather than seeded: the window would drop what it does not know and
-    # send back a sketch in this schema, silently losing it.
+    # send back a sketch in this version, silently losing it.
     check_sketch(initial, "initial sketch")
     model = SketchModel()
     model.description = initial.get("description", "") or ""
@@ -729,7 +729,7 @@ def write_result(json_out: str | None, comment: str, sketch: SketchModel) -> dic
         return sketch.room_descriptions.get(frozenset(line_ids), "").strip()
 
     result = {
-        "schema": SKETCH_SCHEMA,
+        "version": SKETCH_VERSION,
         "comment": comment,
         # floorplan-level placement intent -- omitted when empty so sketches without one stay
         # unchanged
