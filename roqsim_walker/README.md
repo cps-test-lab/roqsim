@@ -31,7 +31,6 @@ roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
 components:
   - walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      name: pedestrian         # entity name
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
@@ -50,17 +49,18 @@ components:
       planner:  {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion:   {walk: /abs/walk.npz}   # override a resolved locomotion clip
+    name: pedestrian           # entity name (a sibling of the plugin ref, not config)
 ```
 
 ### Navigation layers
 
 | Layer | Module | What it does |
 |---|---|---|
-| Global plan | `nav/planner.py`, `nav/occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
-| Behaviour | `nav/behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
+| Global plan | `roqsim_nav`'s `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
+| Behaviour | `roqsim_nav`'s `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
 | Local avoidance | `nav/controller.py` (ORCA) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
 
-Walls are read straight from the compiled model (`nav/obstacles.py`), so the planner and ORCA always
+Walls are read straight from the compiled model (`roqsim_nav`'s `obstacles.py`), so the planner and ORCA always
 agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
 wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
 legs. A `floorplan` mesh adds its own walls the same way.
