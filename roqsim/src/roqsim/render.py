@@ -28,6 +28,13 @@ caller need not repeat what the file already knows. Where the camera is comes fr
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
+
+Exit status (``roqsim.exit_status``): ``0`` rendered (or, with ``--check``, would render); ``2`` the
+request is wrong -- a bad flag or value, a target or ``--state`` recording that does not resolve or
+load, a camera or entity the world does not have; ``3`` no offscreen GL context, and the message names
+the ``MUJOCO_GL`` backend to set; ``4`` the ``--state`` recording exists and cannot be read, or its
+world cannot be rebuilt from its provenance. Every non-zero status comes with one
+``roqsim render: ...`` line on stderr.
 """
 
 from __future__ import annotations
