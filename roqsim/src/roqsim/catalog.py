@@ -65,6 +65,7 @@ from pathlib import Path
 
 import yaml
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_license, manifest_path
 from roqsim.models import ENTRY_POINT_GROUP as MODELS_GROUP
 from roqsim.models import _entry_points, _provider_dirs
@@ -377,6 +378,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="roqsim catalog",
         description="What this installation can spawn and run: models and worlds, as JSON.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, note="2 includes `model` naming no model this installation has."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
     for name, help_text in (
@@ -396,7 +400,11 @@ def main(argv=None):
         result = get_model_details(args.name)
         print(json.dumps(result, indent=2))
         # A model whose names could not be read is not fully answered, so it does not exit 0.
-        return 1 if "error" in result or "error" in result["names"] else 0
+        return (
+            exit_status.BAD_INPUT
+            if "error" in result or "error" in result["names"]
+            else exit_status.OK
+        )
     result = list_models() if args.command == "models" else list_worlds()
     if args.refs:
         # Deduplicated: one name can be two kinds (`roqsim_scenes:depot` is both a world YAML and
