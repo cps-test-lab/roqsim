@@ -78,3 +78,26 @@ def test_a_whole_file_is_kept_and_not_fetched_again(ext, tmp_path, monkeypatch, 
     assert ext._fetch(resource) is True
     assert (tmp_path / _SOURCE).read_bytes() == b"the whole mesh"
     assert "have" in capsys.readouterr().out
+
+
+def test_a_failed_conversion_leaves_no_target(ext, tmp_path, monkeypatch):
+    target = "roqsim_sensors/meshes/body.obj"
+    resource = {
+        "name": "vendor_meshes",
+        "sources": [{"url": "https://example.com/b.stl", "path": _SOURCE}],
+        "convert": {"script": "external/convert/body.py"},
+        "targets": [target],
+    }
+    monkeypatch.setattr(ext.urllib.request, "urlretrieve", _completes)
+    monkeypatch.setattr(ext, "_toolvenv_python", lambda: Path("python"))
+
+    def _stops_half_way(cmd, check):
+        out = tmp_path / target
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_bytes(b"half of a mesh")
+        raise ext.subprocess.CalledProcessError(1, cmd)
+
+    monkeypatch.setattr(ext.subprocess, "run", _stops_half_way)
+    with pytest.raises(ext.subprocess.CalledProcessError):
+        ext._convert(resource)
+    assert not (tmp_path / target).exists()

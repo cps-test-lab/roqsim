@@ -152,7 +152,13 @@ def _convert(res: dict, force: bool = False) -> None:
     if conv.get("needs_blender"):
         cmd += ["--blender", os.environ.get("BLENDER", "blender")]
     print(f"  convert -> {', '.join(res['targets'])}")
-    subprocess.run(cmd, check=True)
+    try:
+        subprocess.run(cmd, check=True)
+    except BaseException:
+        # A conversion that fails or is interrupted may have written some targets part-way.
+        for t in res["targets"]:
+            _resolve(t).unlink(missing_ok=True)
+        raise
     missing = [t for t in res["targets"] if not _resolve(t).exists()]
     if missing:
         sys.exit(f"  conversion did not produce: {', '.join(missing)}")
