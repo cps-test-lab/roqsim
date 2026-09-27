@@ -342,8 +342,6 @@ CASES: dict[str, Case] = {
     "force_limit": Case(
         # Low enough to trip within the trial, which is what a trial does with it.
         lambda _: _arm({"force_limit": {"ft": "ft", "max_force": 0.001}, "name": "safety"}),
-        defect="a trip outlives its trial: Engine.reset never clears the stop it requested "
-        "(ctx.stop_requested)",
     ),
     # sensors
     "lidar": Case(lambda _: _mobile()),
