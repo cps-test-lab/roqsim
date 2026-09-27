@@ -385,9 +385,7 @@ EXIT_BAD_INPUT = 2
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    # Everything a wrong input raises on the way in -- a world that does not resolve or load, a
-    # placements file that is missing or malformed, an unknown sensor type or region -- ends here as one
-    # line and a distinct exit status. The caller is a loop that greps stderr; a traceback is neither.
+    # A wrong input ends here as one line and exit 2 (see the module docstring).
     from roqsim.models import ModelError
     from roqsim.plugin import PluginError
 
