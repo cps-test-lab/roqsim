@@ -16,11 +16,11 @@
 
 """The ``--set`` / ``--override`` pair, for every command that loads a world a run would load.
 
-``roqsim sim``, ``roqsim check``, ``roqsim scenes describe``, every ``roqsim export`` that compiles a
-world and ``roqsim sensors coverage`` each answer a question about the world a run with a given set of
-overrides builds. They are only answers about the *same* world while all of them spell the overrides
-the same way and merge them in the same order, so the options and the merge are defined here once
-rather than per command::
+``roqsim sim``, ``roqsim check``, ``roqsim render``, ``roqsim scenes describe``, every ``roqsim
+export`` that compiles a world and ``roqsim sensors coverage`` each answer a question about the
+world a run with a given set of overrides builds. They are only answers about the *same* world while
+all of them spell the overrides the same way and merge them in the same order, so the options and
+the merge are defined here once rather than per command::
 
     parser = argparse.ArgumentParser(...)
     add_override_options(parser)
