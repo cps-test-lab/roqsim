@@ -6,10 +6,10 @@ to "how do I compute something you did not think of":
 
     from roqsim.recording import open_recording
 
-    rec = open_recording("run.npz")
-    for sample in rec.range(8.0, 20.0):
-        sample.sim_time, sample.wall_time, sample.index, sample.data
-        ...                       # any numpy/mujoco computation over a real restored state
+    with open_recording("run.npz") as rec:      # closes the rebuilt world's plugins on the way out
+        for sample in rec.range(8.0, 20.0):
+            sample.sim_time, sample.wall_time, sample.index, sample.data
+            ...                   # any numpy/mujoco computation over a real restored state
 
 Everything subtle lives here exactly once, so the two commands cannot drift on it: the world rebuild,
 the provenance check, nearest-sample selection by time, and reporting *which* sample a request actually
@@ -82,6 +82,23 @@ class Recording:
         self._buf: np.ndarray | None = None
         self._view: dict | None = None
         self._run_sensors = False
+
+    def close(self) -> None:
+        """Shut the rebuilt world's plugins down, releasing what they hold. Idempotent.
+
+        A replayed camera holds an offscreen renderer that only its ``shutdown`` releases; one left
+        to interpreter exit is torn down after the GL backend is gone. A no-op before :meth:`build`.
+        """
+        engine = getattr(self._ctx, "engine", None)
+        self._model, self._ctx, self._data, self._buf, self._view = None, None, None, None, None
+        if engine is not None:
+            engine.shutdown()
+
+    def __enter__(self) -> Recording:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     # -- what the file says about itself ----------------------------------------------------------
 

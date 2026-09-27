@@ -567,11 +567,14 @@ computations over a run, use :mod:`roqsim.recording`:
 
    from roqsim.recording import open_recording
 
-   rec = open_recording("run.npz")
-   rec.real_time_factor            # simulated seconds per real second, over the whole recording
-   for sample in rec.range(8.0, 20.0):
-       sample.sim_time, sample.wall_time, sample.index, sample.data
-       ...          # any numpy/mujoco computation over a real restored state
+   with open_recording("run.npz") as rec:
+       rec.real_time_factor        # simulated seconds per real second, over the whole recording
+       for sample in rec.range(8.0, 20.0):
+           sample.sim_time, sample.wall_time, sample.index, sample.data
+           ...      # any numpy/mujoco computation over a real restored state
+
+The ``with`` closes the rebuilt world's plugins on the way out (``rec.close()`` does the same): a
+replayed camera holds an offscreen renderer exactly as a live one does, and only its shutdown releases it.
 
 ``--record`` is for a run you launch yourself. A run launched *for* you — an orchestrator starting this
 world through a ROS launch file, where the command line belongs to that file — asks for the same thing
