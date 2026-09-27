@@ -607,8 +607,9 @@ class Ros2Bridge(BridgeBase):
         emit_tf = bool(hints.get("emit_tf", False))
         if emit_tf and self._tf is None:
             self._tf = self._make_tf_broadcaster(static=False)
-        # Carry the namespace-derived frame prefix into the converter so frame ids are namespaced
-        # (empty when this endpoint's namespace is stripped, so its frames are clean, e.g. base_link).
+        # Carry the namespace-derived frame prefix into the converter so a robot's frame ids are
+        # namespaced (empty when this endpoint's namespace is stripped, so its frames are clean, e.g.
+        # base_link). Global frames stay bare (frames.GLOBAL_FRAMES).
         frame_prefix = _join_ns(self._frame_prefix, self._eff_ns(ep))
         hints = {**hints, "frame_prefix": frame_prefix}
         # A producer may ship a fixed sensor-mount transform (base -> its frame) as plain numbers;

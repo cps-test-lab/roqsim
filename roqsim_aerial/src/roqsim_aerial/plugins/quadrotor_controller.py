@@ -73,6 +73,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.kinematics import body_twist
 from roqsim.odometry import CommandWatchdog, SpawnFrame
 from roqsim.plugin import Plugin
 
@@ -299,15 +300,16 @@ class QuadrotorControllerPlugin(Plugin):
         self._vel_cmd = None
         self._yaw_rate = 0.0
         self.watchdog.clear()
-        self._sense(ctx.data)
+        self._sense(ctx.model, ctx.data)
         self._odom_frame.capture(self._state[:3], self._quat)
 
-    def _sense(self, data):
+    def _sense(self, model, data):
         """Read the drone's state; returns ``(pos, rot, vel, omega)`` for the control law."""
         pos = np.array(data.xpos[self._bid])
         rot = np.array(data.xmat[self._bid]).reshape(3, 3)
-        vel = np.array(data.cvel[self._bid][3:6])
-        omega = rot.T @ np.array(data.cvel[self._bid][0:3])
+        twist = body_twist(model, data, self._bid)
+        vel = np.array(twist.linear)
+        omega = rot.T @ np.array(twist.angular)
 
         yaw = float(np.arctan2(rot[1, 0], rot[0, 0]))
         self._state = (*(float(v) for v in pos), *(float(v) for v in vel), yaw, float(omega[2]))
@@ -326,7 +328,7 @@ class QuadrotorControllerPlugin(Plugin):
 
     def pre_step(self, ctx: SimContext) -> None:
         model, data = ctx.model, ctx.data
-        pos, rot, vel, omega = self._sense(data)
+        pos, rot, vel, omega = self._sense(model, data)
 
         if self._vel_cmd is not None and self.watchdog.expired(ctx):
             # Stale: brake at the altitude setpoint, then hold where the drone stopped.
