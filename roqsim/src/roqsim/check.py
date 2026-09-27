@@ -27,6 +27,13 @@ loader would hit them::
 
     roqsim check worlds/depot_nav.yaml
     roqsim check roqsim_mobile:husky_demo --json
+    roqsim check worlds/depot_nav.yaml --override run.overrides.yaml --set sim.timestep=0.001
+
+``--set`` and ``--override`` are ``roqsim sim``'s own options, merged by the same function
+(:mod:`roqsim.override_options`) and applied by the same loader, so what is checked is the world a
+run with those overrides builds -- a campaign's obstacles and plugin settings included, and an
+address the world does not have refused as the run would refuse it. The report records the merged
+overrides under ``overrides`` (``{}`` for none), so a caller can tell which world was checked.
 
 Six stages, each of which can fail without the next being meaningless:
 
@@ -112,19 +119,25 @@ def _warning(check: str, message: str, hint: str | None = None, **extra) -> dict
     return warning
 
 
-def check_world(target: str) -> dict:
+def check_world(target: str, overrides: dict | None = None) -> dict:
     """Load *target* as far as it goes and report what happened, as plain data.
 
-    Returns ``{"target", "ok", "reached", "problems": [...], "warnings": [...], "world": {...},
-    "derived": {...}, "inputs": [...]}``. ``reached`` is the last stage that completed, so a caller
-    can tell "the config is wrong" from "the config is fine and the model does not compile" without
-    parsing messages. ``warnings`` never affect ``ok``: they are things a world that loads will do
-    that its author probably did not mean.
+    *overrides* is the nested override dict ``roqsim sim`` applies
+    (:func:`roqsim.override_options.overrides_from_options`), applied here by the same loader.
+
+    Returns ``{"target", "overrides", "ok", "reached", "problems": [...], "warnings": [...],
+    "world": {...}, "derived": {...}, "inputs": [...]}``, ``overrides`` being what was applied.
+    ``reached`` is the last stage that completed, so a caller can tell "the config is wrong" from
+    "the config is fine and the model does not compile" without parsing messages.
+    ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
+    probably did not mean.
     """
     from roqsim.config import PluginError, load_config
 
+    overrides = overrides or {}
     report: dict = {
         "target": target,
+        "overrides": overrides,
         "ok": False,
         "reached": None,
         "problems": [],
@@ -142,7 +155,7 @@ def check_world(target: str) -> dict:
 
     # -- config (which also expands `extends` and resolves every plugin ref) -----------------
     try:
-        cfg = load_config(path)
+        cfg = load_config(path, overrides)
     except PluginError as exc:
         # The aggregated one: every plugin's validation errors, in one message.
         report["problems"].append(_problem("config", str(exc)))
@@ -379,6 +392,8 @@ def _render_warnings(report: dict) -> list[str]:
 
 def _render_text(report: dict) -> str:
     lines = [f"world: {report['target']}"]
+    if report.get("overrides"):
+        lines.append(f"overrides: {json.dumps(report['overrides'], sort_keys=True)}")
     if report["problems"]:
         lines.append("")
         for problem in report["problems"]:
@@ -477,11 +492,16 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
 
 
 def main(argv=None) -> int:
+    from .override_options import add_override_options, overrides_from_options
+    from .plugin import PluginError
+
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
+    # `roqsim sim`'s own --set/--override, so the world checked is the one that run would build.
+    add_override_options(parser)
     parser.add_argument("--json", action="store_true", help="report as JSON rather than as text")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -490,7 +510,15 @@ def main(argv=None) -> int:
 
     logging_setup.configure(verbose=args.verbose)
 
-    report = check_world(args.world)
+    try:
+        overrides = overrides_from_options(args)
+    except PluginError as err:
+        # An override file that cannot be read is a command line that cannot be acted on, not a
+        # verdict on the world: exit 2, as argparse does, so 0 and 1 keep meaning "a report is on
+        # stdout".
+        print(f"roqsim check: {err}", file=sys.stderr)
+        return 2
+    report = check_world(args.world, overrides)
     print(json.dumps(report, indent=2) if args.json else _render_text(report))
     return 0 if report["ok"] else 1
 
