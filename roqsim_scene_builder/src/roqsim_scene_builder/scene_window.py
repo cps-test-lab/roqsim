@@ -28,8 +28,8 @@ roqsim docs forbid at runtime. Instead the drag redraws the prop's own mesh at t
 transforming its geoms in the *render scene* (the transient ``MjvScene``, not ``model``/``data``); on
 release the prop's pose is written into its ``spawn_model`` config entry and the engine is **rebuilt**
 (recompiling between edits is sanctioned; mutating a live model is not), making the same move
-permanent. The final poses come back under ``moves``; the caller (the ``scene-update`` skill) writes
-them into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
+permanent. The final poses come back under ``moves``; the caller writes them
+into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
 editable pose.
 
 The non-GUI parts -- loading, the dot bookkeeping (:class:`DotModel`), and the pose helpers
@@ -552,8 +552,8 @@ class _ReviewApp:
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         self.comment = build_comment_box(tk, footer)
-        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes,
-        # like the media-review windows; Shift+Enter keeps the textarea's newline. Pass/Fail stay on
+        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes;
+        # Shift+Enter keeps the textarea's newline. Pass/Fail stay on
         # their buttons.
         self.comment.bind("<Return>", self._on_comment_return)
 

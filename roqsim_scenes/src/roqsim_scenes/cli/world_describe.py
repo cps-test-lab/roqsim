@@ -50,7 +50,8 @@ cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, wit
 still filled.
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
-the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
+and ``--set PATH=VALUE`` one value over it: the same options, merged by the same function
+(:mod:`roqsim.override_options`), as ``roqsim sim`` takes, both repeatable. It matters for the build-fed
 halves: which entities a world compiles depends on its plugins' config, so a campaign whose
 obstacles come from its own overrides compiles them only with those overrides applied. Without
 the flag this command answers about the world the FILE declares, which is a different world than
@@ -102,10 +103,10 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
-import yaml
-
 from roqsim import exit_status
 from roqsim.config import drop_transport, load_config, world_sources
+from roqsim.override_options import add_override_options, overrides_from_options
+from roqsim.plugin import PluginError
 from roqsim.world import resolve_world_yaml_ref
 
 #: Depth at which a dotted path stops being a *destination* and starts being data. A campaign
@@ -352,14 +353,9 @@ def main(argv=None) -> int:
         help="also list the geoms/bodies/actuators matching GLOB that model_override can change, "
         "with their current values (builds the model)",
     )
-    parser.add_argument(
-        "--override",
-        metavar="FILE",
-        default="",
-        help="YAML file of overrides to apply before describing, exactly as `roqsim sim "
-        "--override` takes them (the answer is then about the world a run with those "
-        "overrides would load)",
-    )
+    # `roqsim sim`'s own --set/--override: the answer is then about the world a run with those
+    # overrides would load.
+    add_override_options(parser)
     parser.add_argument(
         "--body-tree",
         metavar="GLOB",
@@ -387,22 +383,20 @@ def main(argv=None) -> int:
         return exit_status.BAD_INPUT
 
     world = Path(target).resolve()
-    overrides = None
-    if args.override:
-        # A caller holding overrides is asking about the world its RUN will load, not about the
-        # file: the entities a campaign's own obstacle placement compiles in exist only once its
-        # overrides are applied, so describing the base world answers a different question than
-        # the one asked -- and a caller comparing entity names against that answer concludes a
-        # working campaign is broken.
-        if not Path(args.override).exists():
-            print(f"overrides file {args.override!r} does not exist", file=sys.stderr)
+    # A caller holding overrides is asking about the world its RUN will load, not about the file:
+    # the entities a campaign's own obstacle placement compiles in exist only once its overrides
+    # are applied, so describing the base world answers a different question than the one asked
+    # -- and a caller comparing entity names against that answer concludes a working campaign is
+    # broken.
+    for override_file in args.override_files or []:
+        if not Path(override_file).exists():
+            print(f"overrides file {override_file!r} does not exist", file=sys.stderr)
             return exit_status.BAD_INPUT
-        try:
-            with open(args.override, encoding="utf-8") as handle:
-                overrides = yaml.safe_load(handle) or {}
-        except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
-            print(f"cannot read overrides {args.override}: {err}", file=sys.stderr)
-            return exit_status.BAD_INPUT
+    try:
+        overrides = overrides_from_options(args)
+    except PluginError as err:
+        print(f"cannot read overrides: {err}", file=sys.stderr)
+        return exit_status.BAD_INPUT
     try:
         config = load_config(world, overrides)
     except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback

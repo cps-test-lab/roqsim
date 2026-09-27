@@ -167,7 +167,7 @@ def resolve_model_uri(uri: str, model_paths: list[Path]) -> Path:
             return cand / rel if rel else cand
     raise FuelError(
         f"cannot resolve {uri}: not found on model path {[str(p) for p in model_paths]}. "
-        "Do not substitute a lookalike -- record the miss as a resolution_attempt in the spec."
+        "Add the directory that holds it as a model path; do not substitute a lookalike."
     )
 
 
@@ -254,8 +254,8 @@ def main(argv: list | None = None) -> int:
 
     if failed:
         print(
-            f"\n{len(failed)} asset(s) unresolved. Each is a resolution_attempt for the spec "
-            "(status: dead_link_404 / found_but_missing_value) -- not a reason to substitute geometry.",
+            f"\n{len(failed)} asset(s) unresolved: the world cannot be built as published. "
+            "Do not substitute geometry for them.",
             file=sys.stderr,
         )
         return exit_status.BAD_INPUT

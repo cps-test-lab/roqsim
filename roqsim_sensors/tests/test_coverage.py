@@ -1,4 +1,4 @@
-"""Tests for the sensor-coverage subpackage: FOV membership, adapters, and the coverage engine."""
+"""Tests for the coverage subpackage: FOV membership, adapters, and the coverage engine."""
 
 from __future__ import annotations
 
