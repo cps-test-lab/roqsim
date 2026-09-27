@@ -629,8 +629,10 @@ class NavigatorPlugin(Plugin):
 
         # Decimate, before reading anything else: at 20 Hz inside a 500 Hz loop this hook is a float
         # comparison on 24 steps out of 25, and it shares the one thread with the stack under test.
+        # A thousandth of a step short still counts: float drift in the summed timesteps would
+        # otherwise push a period the timestep divides to the step after it.
         self._accum += ctx.dt
-        if self._accum < self._period:
+        if self._accum < self._period - 1e-3 * ctx.dt:
             return
         step_dt, self._accum = self._accum, 0.0
 

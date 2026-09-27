@@ -74,6 +74,24 @@ def test_speed_handle_reverses_belt(tmp_path):
     assert _package_x(engine) > x0 + 0.05
 
 
+def test_reset_returns_the_belt_to_its_configured_speed(tmp_path):
+    """Trial 2 runs the belt at the world's speed, not at the one trial 1 was switched to."""
+    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine.setup()
+    engine.reset()
+    handle = engine.ctx.blackboard.require("conveyor:conveyor")
+    handle.set_speed(-0.2)
+    engine.step()
+    engine.reset()
+    assert handle.get_speed() == pytest.approx(0.2)
+    for _ in range(5):
+        engine.step()
+    x0 = _package_x(engine)
+    for _ in range(1000):
+        engine.step()
+    assert _package_x(engine) < x0 - 0.05
+
+
 def test_belt_resizes_to_configured_length_and_width(tmp_path):
     # A custom 3.5 m x 0.8 m belt: half-extents L=1.75, W=0.4. Belt surfaces recompute exactly,
     # the drive slab keeps its fixed overhang, and rollers sit at the new belt ends.
