@@ -1,8 +1,8 @@
 """A scene object that does not collide is still in the map built from the scene directory.
 
 ``sdf-to-scene --no-collide`` imports a building shell as visual-only geometry and promises it
-"still generates the occupancy grid"; the world path counts every geom because the lidar hits every
-geom. The scene path skipped ``collide: false`` objects, so that building mapped with no walls.
+"still generates the occupancy grid"; the scene path, like the world path, counts every object
+because the lidar hits every one.
 """
 
 from __future__ import annotations
