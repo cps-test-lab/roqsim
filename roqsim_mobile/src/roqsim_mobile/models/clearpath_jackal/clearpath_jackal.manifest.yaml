@@ -10,9 +10,9 @@ components:
   - diff_drive:
       wheel_radius: 0.098            # jackal_description
       wheel_separation: 0.37559      # track
-      # Kinematic limits. The paper (SIMPAR 2025) states NONE -- see spec gap g_kinematic_limits.
-      # 1.0 m/s is the gap's documented workaround (the Jackal's 2.0 m/s datasheet top speed is an
-      # outdoor figure, and the paper's own distance/time columns back-compute to ~0.44 m/s mean).
+      # Kinematic limits: an assumption. The paper this model was ported for (SIMPAR 2025) states
+      # none; the Jackal's 2.0 m/s datasheet top speed is an outdoor figure, and the paper's own
+      # distance/time columns back-compute to ~0.44 m/s mean.
       # Whatever Nav2 is given must equal these, or the model and the stack saturate differently.
       max_linear_vel: 1.0
       max_angular_vel: 1.0
@@ -28,8 +28,8 @@ components:
       left_joints:  [front_left_wheel_joint,  rear_left_wheel_joint]
       right_joints: [front_right_wheel_joint, rear_right_wheel_joint]
   # Velodyne VLP-16 on the vendor's tower, cast as a PLANAR scan at the sensor's own scan height: what
-  # a 2D costmap receives after pointcloud_to_laserscan (spec gaps g_lidar_params and
-  # g_scan_projection; port log A5 says when a true 16-plane model would be needed instead).
+  # a 2D costmap receives after pointcloud_to_laserscan (port log A5 says when a true 16-plane model
+  # would be needed instead).
   # The mount is jackal_description's vlp16_mount (accessories/vlp16_mount.urdf.xacro @ 4ddf9b5): the
   # tower's plate joint at height 0.1 on mid_mount, the VLP-16 at the plate origin. Clearpath's ROS 2
   # sample puts `velodyne_lidar` at the same place, xyz (0, 0, 0.1) on default_mount (clearpath_config
