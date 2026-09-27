@@ -15,16 +15,15 @@ from pathlib import Path
 import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
+from .document import refuse_unknown_keys
 from .frames import substitute
 from .models import resolve_model
 from .registry import resolve_plugin
 
-#: Every key a manifest may carry at its top level, each named for the reader that consumes it:
-#: ``components`` (``plugins`` under its former spelling) and ``extends`` here, ``assets`` in
-#: :mod:`roqsim.models`, ``fov``/``frames``/``frame_id``/``license`` by the accessors below. A key
-#: outside this set is refused rather than dropped: nothing reads it, so it can only be a misspelt
-#: one -- ``frame:`` for ``frames:`` -- and a manifest that loads with its frames silently missing
-#: looks configured while the run does something else.
+#: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
+#: ``extends`` read here, ``assets`` in :mod:`roqsim.models`, ``fov``/``frames``/``frame_id``/``license``
+#: by the accessors below. :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would
+#: load a model with no frames.
 MANIFEST_KEYS = frozenset(
     {"components", "plugins", "extends", "assets", "fov", "frames", "frame_id", "license"}
 )
@@ -142,8 +141,7 @@ def load_manifest(
 
     The base is named the way anything else names a model (a ``roqsim.models`` ref, or a path
     relative to this manifest), and cycles raise rather than recursing forever. A top-level key
-    outside :data:`MANIFEST_KEYS` is refused with the nearest known one named, on this path because
-    it is the one every spawn takes.
+    outside :data:`MANIFEST_KEYS` is refused here, the path every spawn takes.
     """
     path = manifest_path(model_file)
     if not path.exists():
@@ -160,7 +158,7 @@ def load_manifest(
             f"model included in it: a manifest cannot set the run's seed, pacing or contact "
             f"overrides. Move those keys to the world that spawns this model."
         )
-    _refuse_unknown_keys(data, path)
+    refuse_unknown_keys(data, MANIFEST_KEYS, f"manifest {path}", error=PluginError)
     inherited: list[dict] = []
     ext = data.get("extends")
     if ext is not None:
@@ -170,31 +168,6 @@ def load_manifest(
         base_model = resolve_model(str(ext), base_dir=base_dir or path.parent).path
         inherited = load_manifest(base_model, base_dir=base_dir, seen=seen | {path})
     return inherited + document_entries(data, str(path))
-
-
-def _refuse_unknown_keys(data: dict, path: Path) -> None:
-    """Refuse a top-level key no reader of a manifest consumes, naming the nearest one that exists.
-
-    Checked on the path every spawn takes (:func:`load_manifest`), so a misspelt key is refused
-    where the model is used rather than where its absence is eventually noticed.
-    """
-    unknown = sorted(set(data) - MANIFEST_KEYS)
-    if not unknown:
-        return
-    from difflib import get_close_matches
-
-    hints = []
-    for key in unknown:
-        if match := get_close_matches(key, sorted(MANIFEST_KEYS), n=1, cutoff=0.8):
-            hints.append(f" (did you mean {match[0]!r}?)")
-        else:
-            hints.append("")
-    named = ", ".join(f"{k!r}{h}" for k, h in zip(unknown, hints, strict=True))
-    raise PluginError(
-        f"manifest {path}: unknown key(s) {named}. A manifest carries "
-        f"{', '.join(sorted(MANIFEST_KEYS - {'plugins'}))}; nothing reads any other key, so it "
-        f"would be ignored rather than applied."
-    )
 
 
 def expand_manifest(

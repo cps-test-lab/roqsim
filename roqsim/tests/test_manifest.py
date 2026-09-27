@@ -221,7 +221,9 @@ def test_refuses_a_top_level_key_nothing_reads(tmp_path):
 
 def test_refuses_an_unknown_key_without_guessing_a_far_one(tmp_path):
     model = _write_model(tmp_path, "cam", "banana: 1\ncomponents: []\n")
-    with pytest.raises(PluginError, match=r"unknown key\(s\) 'banana'\. A manifest carries"):
+    with pytest.raises(
+        PluginError, match=r"unknown key\(s\) 'banana'; it takes assets, components"
+    ):
         load_manifest(Path(model))
 
 
