@@ -303,14 +303,21 @@ class MujocoSim(_Base):
         The single point where the live model dies -- on shutdown *and* on a mid-session rebuild -- so
         it is where a recording has to be flushed. Doing it in ``shutdown`` alone would lose a
         recording whenever a scenario reset with different ``world_overrides``.
+
+        The engine is shut down whatever the flush or the viewer's close raises, so the plugins
+        release what configure opened and write their shutdown output.
         """
-        self._finish_recording()
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        if self._engine is not None:
-            self._engine.shutdown()
-            self._engine = None
+        try:
+            self._finish_recording()
+        finally:
+            try:
+                if self._viewer is not None:
+                    viewer, self._viewer = self._viewer, None
+                    viewer.close()
+            finally:
+                if self._engine is not None:
+                    engine, self._engine = self._engine, None
+                    engine.shutdown()
 
     def _ensure_built(self) -> Engine:
         if self._engine is None:
