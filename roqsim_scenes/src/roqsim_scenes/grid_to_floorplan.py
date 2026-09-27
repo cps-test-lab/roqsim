@@ -23,6 +23,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from roqsim.floorplan_geometry import stamp_sketch
+
 
 def _runs(line: np.ndarray, min_cells: int, gap: int) -> list[tuple[int, int]]:
     """Maximal runs of True in `line`, bridging holes of up to `gap` cells."""
@@ -122,4 +124,4 @@ def to_floorplan(
     # The same keys the sketch window returns, so floorplan_to_world.py cannot tell the two apart.
     # Wall THICKNESS is deliberately absent: it is not in that schema and the generator takes it as
     # its own --wall-thickness, so a thickness written here would be silently ignored.
-    return {"lines": lines, "doors": [], "rooms": [], "markers": []}
+    return stamp_sketch({"lines": lines, "doors": [], "rooms": [], "markers": []})

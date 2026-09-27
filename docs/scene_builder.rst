@@ -16,6 +16,8 @@ MCP server exposes two native-window tools a *human* answers in —
   ``floorplan.json``, never an embedded copy), so ``roqsim scenes scene-to-floorplan``
   round-trips a scene back to its floorplan JSON by following that reference. The floorplan-level and
   per-room ``description``\ s ride in ``floorplan.json`` and can be edited there later with no re-bake.
+  The sketch states its ``version`` (``1``; absent means 1), and every reader refuses a newer one, or
+  a key it does not read at any level, naming the nearest known key, before it builds anything.
   See :ref:`sketch-floorplan-tool` below; the full authoring loop is the ``scene-update`` skill.
 
 — and one tool that needs neither a window nor a person:
@@ -133,7 +135,8 @@ CLI (debugging)
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
 It prints the verdict JSON and exits **0** (pass), **1** (fail), **2** (no display / load error),
-**3** (window closed without a verdict).
+**3** (window closed without a verdict). The reason for a 2 is one line on stderr, which is what the
+MCP tool relays when the window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —
