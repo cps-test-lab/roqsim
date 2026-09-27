@@ -941,14 +941,17 @@ Three things to know before writing one:
   nothing either — select the geoms that *own* the contact, or select both sides. Use
   ``roqsim scenes describe <world> --overridable 'gripper_right*'`` to see the names, their current
   friction and their priority, rather than guessing.
-* **A fault that did nothing says so.** One step after the change the plugin compares the *applied*
-  contact against what it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed
-  service reply) or ``untested`` — the last meaning nothing was touching the selected geoms, which is
-  not a failure. It is published as ``override_verified`` too, because a service call leaves no trace
-  in a rosbag and ``mjModel`` is in neither the bag nor the state recording.
-* **A reset returns the world to the configured state**, exactly, from the values read at startup.
-  Without that, repetition 2 of a sweep cell would start already faulted and report a plausible
-  wrong number — ``Engine.reset`` resets ``MjData`` and never touches ``MjModel``.
+* **A fault that did nothing says so.** One step after the change — or after a trial begins, for
+  an override configured ``active: true`` — the plugin compares the *applied* contact against what
+  it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed service reply) or
+  ``untested`` — the last meaning nothing was touching the selected geoms, which is not a failure.
+  It is published as ``override_verified`` too, because a service call leaves no trace in a rosbag
+  and ``mjModel`` is in neither the bag nor the state recording.
+* **A reset returns the world to the configured state**, exactly, from the values read when the
+  override was applied. Without that, repetition 2 of a sweep cell would start already faulted and
+  report a plausible wrong number — ``Engine.reset`` resets ``MjData`` and never touches
+  ``MjModel``. An override the trial left as configured writes nothing, so a value another plugin
+  set on the same rows (a ``payload``'s mass) is kept.
 
 Not every model value can be written at runtime; ``geom_size`` and the ``opt.*`` globals are refused
 by name, with the reason and with what to use instead (for the globals, ``sim.contact_override``,

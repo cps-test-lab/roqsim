@@ -129,9 +129,10 @@ an x86 node and on an arm64 machine (an Apple Silicon laptop, a Graviton/Ampere 
 robot host) with nothing to select by hand:
 
 ``ghcr.io/cps-test-lab/roqsim``
-   The lean core: ROS-free, headless MuJoCo, with the assets / sensor / mobile / manipulation
-   (plugins and the arm and gripper models) / mobile-manipulation / scenes / nav / walker / webctrl
-   packages. ``ENTRYPOINT`` is the ``roqsim`` command tree, so the image is used the way the CLI is:
+   The lean core: ROS-free, headless MuJoCo, with every package except ``roqsim_quadruped`` and
+   ``roqsim_humanoid`` (they need torch; build with ``INCLUDE_TORCH_PKGS=1`` to add them) and
+   ``roqsim_scene_builder``. ``ENTRYPOINT`` is the ``roqsim`` command tree, so the image is used the
+   way the CLI is:
 
    .. code-block:: bash
 
@@ -140,14 +141,18 @@ robot host) with nothing to select by hand:
           sim my_world.yaml --headless --seconds 10
 
 ``ghcr.io/cps-test-lab/roqsim-ros``
-   ROS 2 Jazzy, nav2, MoveIt and rviz2, the lean image's packages plus ``roqsim_quadruped`` and
-   ``roqsim_humanoid``, and every ``ros2_ws`` package colcon-built. ``roqsim_aerial``,
-   ``roqsim_mcp``, ``roqsim_scene_builder`` and ``scenario_execution_roqsim`` are in neither image.
-   Its entrypoint sources ROS and the workspace, then execs what you pass:
+   ROS 2 Jazzy, nav2, MoveIt and rviz2, every package except ``roqsim_scene_builder``, and every
+   ``ros2_ws`` package colcon-built. Its entrypoint sources ROS and the workspace, then execs what
+   you pass:
 
    .. code-block:: bash
 
       docker run --rm ghcr.io/cps-test-lab/roqsim-ros ros2 pkg list
+
+Neither image lists its packages. ``container/packages.py`` finds them the way the Makefile does and
+names each exclusion with its reason: ``roqsim_scene_builder``'s tools are windows a person answers
+in, and the images are headless. A new package therefore goes into both images with no edit, and
+each build fails if what it installed differs from that set.
 
 Neither image sets ``MUJOCO_GL``: which offscreen backend works is a property of the node the image
 lands on, not of the image, so both backends are installed and

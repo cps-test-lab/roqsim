@@ -201,6 +201,15 @@ class ControllerRegistry:
             return (strictness != STRICT), "; ".join(problems)
         return True, "ok"
 
+    def restore(self, controller: Controller, state: str, sim_time: float) -> None:
+        """Put *controller* back in *state* without arbitration, recording the transition.
+
+        For a reset returning each controller to the state its world configured: those states did
+        not conflict when the world was set up, so the claims of controllers not yet restored are
+        no reason to refuse one.
+        """
+        self._set(controller, state, sim_time)
+
     def _set(self, controller: Controller, state: str, sim_time: float) -> None:
         if controller.state == state:
             return
