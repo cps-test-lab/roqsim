@@ -1,8 +1,7 @@
 """The wrench's header names a frame TF can resolve, in each of the three reporting frames.
 
-It was the MJCF site name WITH the arm's prefix for ``sensor`` (a frame nothing publishes) and the
-literal strings ``base`` / ``world`` otherwise, so a tf2 transform of the message failed and a
-viewer showed no frame.
+TF knows a robot's frames without the entity's MJCF prefix, and a site is a frame only once its
+mount transform is published.
 """
 
 from __future__ import annotations
