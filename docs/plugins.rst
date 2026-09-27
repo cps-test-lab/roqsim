@@ -1628,7 +1628,8 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
+named; prefer ``controller_type``.
 
 **A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
 setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
@@ -1693,7 +1694,7 @@ blackboard handle. The sensor and the control law belong to the arm, so they sit
      components:
        - force_torque: {site: fts_site, frame: world}
          name: ft
-       - cartesian_admittance: {ft: ft, law: admittance, site: tool_site}
+       - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
    - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
 
