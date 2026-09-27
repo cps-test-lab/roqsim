@@ -368,7 +368,7 @@ class FloorplanPlugin(Plugin):
         import math
         from pathlib import Path
 
-        from roqsim.floorplan_geometry import wall_pieces
+        from roqsim.floorplan_geometry import check_sketch, wall_pieces
 
         source = self.config.get("floorplan")
         if source:
@@ -382,6 +382,7 @@ class FloorplanPlugin(Plugin):
                     f"scene-builder's sketch window both write this shape."
                 )
             doc = json.loads(path.read_text(encoding="utf-8"))
+            check_sketch(doc, f"floorplan[{self.label}]: {path}")
             lines, doors = list(doc.get("lines") or []), list(doc.get("doors") or [])
         else:
             lines = list(self.config.get("lines") or [])
