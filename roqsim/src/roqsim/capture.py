@@ -634,6 +634,10 @@ class StateRecorder:
         self._first_t = self._last_t = 0.0
         self._first_w = self._last_w = 0.0
         self._next_due = 0.0
+        #: How far ``sim_time`` may fall short of the due time and still be due: half a step.
+        #: ``data.time`` sums dt per step and the due time sums the period per sample, so the step
+        #: that lands on the due time can read a few ulp below it; the step before is a whole dt away.
+        self._half_step = 0.5 * float(ctx.model.opt.timestep)
         self._closed = False
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
         # started by F9 mid-session gets its own origin, which is what makes each take's real-time
@@ -731,9 +735,11 @@ class StateRecorder:
         1x sim time whatever wall-clock pacing the run used. The wall clock is *recorded* rather than
         gated on, which is what makes the pacing itself a measurable property of the run instead of a
         thing the sample schedule hides.
+
+        Due means within half a step of the due time (see ``_half_step``).
         """
         now = ctx.sim_time
-        if now + 1e-12 < self._next_due:
+        if now + self._half_step < self._next_due:
             return False
         # Absolute schedule, so a long step cannot drag the whole series late; resynchronise after a
         # gap (a reset, a paused window) rather than firing a burst of catch-up samples.
