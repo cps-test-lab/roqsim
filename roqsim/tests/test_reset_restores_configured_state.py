@@ -340,8 +340,6 @@ CASES: dict[str, Case] = {
     "force_limit": Case(
         # Low enough to trip within the trial, which is what a trial does with it.
         lambda _: _arm({"force_limit": {"ft": "ft", "max_force": 0.001}, "name": "safety"}),
-        defect="a trip outlives its trial: Engine.reset never clears the stop it requested "
-        "(ctx.stop_requested)",
     ),
     # sensors
     "lidar": Case(lambda _: _mobile()),
@@ -511,8 +509,9 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
     **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
-    "g1_locomotion": {
-        "_obs": "the policy's input buffer, rebuilt in full before every policy call"
+    **{
+        name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
+        for name in ("g1_locomotion", "spot_locomotion")
     },
     "navigator": {
         "_radius": _MEASURED_ONCE,

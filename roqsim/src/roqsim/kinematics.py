@@ -1,8 +1,8 @@
 """Derived kinematic quantities MuJoCo does not hand over directly.
 
 Its own module rather than a helper inside ``state`` or ``capture`` because the callers span packages
--- ``roqsim.state`` and ``roqsim.capture`` here, ``roqsim_ros_bridge.sim_interfaces`` and
-``roqsim_walker.nav.controller`` out of tree -- and because ``state`` already imports ``capture``
+-- ``roqsim.state`` and ``roqsim.capture`` here, ``roqsim_ros_bridge.sim_interfaces`` out of
+tree -- and because ``state`` already imports ``capture``
 transitively (``state -> recording -> capture``), so a helper in either would have to be duplicated
 to be reachable from both.
 """

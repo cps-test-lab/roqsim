@@ -24,19 +24,13 @@ Config::
                                #   steers or does nothing; it has never looked ahead, so this
                                #   never makes it stop. Write a `navigator` with
                                #   `avoidance: {stop: true}` for one that should.
-      robot_body: base_link    # body the walker yields to (default: the robot entity's base)
-      robot_radius: 0.25
       goal_endpoint: true      # false -> patrol only; declares no goal endpoint, so a bridge needs
                                #   no handler for it (a patrol-only world drops the nav2_msgs dep)
       action_name: navigate_through_poses   # relative action name of the goal endpoint
-      orca: {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
+      orca: {radius: 0.26, max_speed: 1.6}  # the disc it presents to avoidance; speed cap
       planner: {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion: {walk: /abs/walk.npz}         # override a resolved locomotion clip
-
-Several ``walker`` plugins may coexist: they share one :class:`~roqsim_walker.nav.controller.
-WalkerController` (so ORCA sees every walker, the robot and any mocap props in one simulation). The
-first instance to initialise owns the per-step tick; the rest only contribute their spec.
 """
 
 from __future__ import annotations
@@ -53,20 +47,17 @@ from roqsim.config import PluginSpec
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.plugin import Plugin, PluginError
 from roqsim_nav.avoidance import DEFAULT_MODEL
-from roqsim_walker.blueprint import BlueprintError, resolve_walker
-from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _heading,
     make_anim_state,
     write_pose,
 )
+from roqsim_walker.blueprint import BlueprintError, resolve_walker
+from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
-
-# Blackboard keys for the state shared by every ``walker`` instance in a world.
-_SPECS_KEY = "walker:_specs"
 
 
 @dataclass
@@ -245,37 +236,20 @@ class WalkerPlugin(Plugin):
             **kw,
         )
 
-        # The controller spec = this plugin's config + everything the blueprint resolved.
+        # What the animation state is built from: where the walker starts + what the blueprint
+        # resolved.
         self._spec = {
-            **{
-                k: cfg[k]
-                for k in (
-                    "speed",
-                    "loop",
-                    "dwell",
-                    "arrival_radius",
-                    "avoidance",
-                    "orca",
-                    "planner",
-                    "recovery",
-                    "waypoints",
-                    "pos",
-                )
-                if k in cfg
-            },
+            **{k: cfg[k] for k in ("waypoints", "pos") if k in cfg},
             "name": self.walker_name,
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
         }
-        specs = ctx.blackboard.get(_SPECS_KEY) or []
-        specs.append(self._spec)
-        ctx.blackboard.set(_SPECS_KEY, specs)
 
     def configure(self, ctx: SimContext) -> None:
         """Register the entity, build this walker's animation state, and declare its endpoints.
 
-        Navigation is not here any more: a nested ``navigator`` owns it (see :meth:`expand`), and
+        Navigation is not here: a nested ``navigator`` owns it (see :meth:`expand`), and
         this plugin owns the body it moves -- the mocap skeleton, the resolved motion clips, the
         blendspace state they are sampled into. The ``walker`` output reads that state from the
         blackboard, which is the seam that lets one navigator serve a pedestrian, a robot and a prop.

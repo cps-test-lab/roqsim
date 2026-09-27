@@ -67,6 +67,13 @@ def test_orientation_keeps_tilt_and_takes_off_the_spawn_heading():
     assert abs(float(np.dot(got, want))) == pytest.approx(1.0, abs=1e-9)
 
 
+def test_a_point_in_the_frame_maps_back_to_the_world():
+    frame = _frame(3.0, -2.0, 2.0)
+    world = (0.4, 1.1, 0.9)
+    assert frame.world_position(frame.position(world)) == pytest.approx(world)
+    assert frame.world_yaw(frame.yaw(rpy_to_quat(0.0, 0.0, -2.5))) == pytest.approx(-2.5)
+
+
 def test_planar_odom_reports_the_body_twist():
     yaw = 0.8
     data = SimpleNamespace(
