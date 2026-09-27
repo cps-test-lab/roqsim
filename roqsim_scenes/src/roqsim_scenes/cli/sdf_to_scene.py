@@ -42,6 +42,8 @@ from pathlib import Path
 import numpy as np
 from lxml import etree
 
+from roqsim import exit_status
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 from . import fuel_fetch
@@ -629,6 +631,7 @@ class Importer:
             manifest["ground_z"] = round(self.ground_z, 6)
         out = Path(self.args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
+        manifest = scene_manifest_format.stamp(manifest)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
         if self.args.lock and self.assets:
@@ -653,7 +656,13 @@ def _slug_prefix(prefix: str, name: str) -> str:
 
 
 def main(argv: list | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a Fuel model the world names that did not resolve.",
+        ),
+    )
     ap.add_argument("--world", type=Path, required=True, help="the SDF world file")
     ap.add_argument(
         "--out-dir", type=Path, required=True, help="scene dir to write (scene.json + meshes/)"
@@ -698,6 +707,11 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--collision", default="visual", choices=["visual"], help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     args.scene_name = args.scene_name or Path(args.out_dir).name
+    if not Path(args.world).is_file():
+        # Checked here rather than left to the XML parser, whose OSError for a missing file is a
+        # traceback through lxml that never says "no such file".
+        print(f"roqsim scenes sdf-to-scene: no such SDF world: {args.world}", file=sys.stderr)
+        return exit_status.BAD_INPUT
 
     try:
         Importer(args).run()
@@ -707,8 +721,8 @@ def main(argv: list | None = None) -> int:
             f"the spec's gap record. Do not substitute a lookalike asset.",
             file=sys.stderr,
         )
-        return 2
-    return 0
+        return exit_status.BAD_INPUT
+    return exit_status.OK
 
 
 if __name__ == "__main__":

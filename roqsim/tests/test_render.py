@@ -1059,3 +1059,16 @@ def test_the_scene_default_takes_the_roof_off(tmp_path, monkeypatch):
     render.render_target(None, tmp_path / "a.png", size="64x48", state=npz)
     render.render_target(None, tmp_path / "b.png", size="64x48", state=npz, view=["azimuth=10"])
     assert seen == [True, False]
+
+
+def test_help_states_the_exit_status(capsys):
+    """A caller branches on the status, so --help names each one render can return."""
+    from roqsim import exit_status
+
+    with pytest.raises(SystemExit):
+        render.main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "exit status: 0 success" in out
+    for code in (exit_status.BAD_INPUT, exit_status.NO_GL, exit_status.RECORDING):
+        assert f"; {code} {exit_status.MEANINGS[code]}" in out
+    assert "MUJOCO_GL" in out

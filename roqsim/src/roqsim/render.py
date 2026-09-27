@@ -31,6 +31,13 @@ world is rendered as the run with those overrides would build it.
 
 **Stdout is exactly one line of JSON** and nothing else, so a caller parses rather than scrapes. Progress
 and diagnostics go to stderr.
+
+Exit status (``roqsim.exit_status``): ``0`` rendered (or, with ``--check``, would render); ``2`` the
+request is wrong -- a bad flag or value, a target or ``--state`` recording that does not resolve or
+load, a camera or entity the world does not have; ``3`` no offscreen GL context, and the message names
+the ``MUJOCO_GL`` backend to set; ``4`` the ``--state`` recording exists and cannot be read, or its
+world cannot be rebuilt from its provenance. Every non-zero status comes with one
+``roqsim render: ...`` line on stderr.
 """
 
 from __future__ import annotations
@@ -48,9 +55,10 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import CaptureError
 from .config import _VIEW_KEYS, PluginError, overrides_from_dotlist
+from .exit_status import NO_GL
 from .models import ModelError
 from .override_options import add_override_options, overrides_from_options
 from .recording import RecordingError
@@ -112,10 +120,10 @@ class RenderError(RuntimeError):
     """``roqsim render`` cannot produce the image it was asked for (see the message)."""
 
 
-# Exit codes, distinct so an orchestrator can react without matching on stderr text.
-EXIT_BAD_ARGS = 2
-EXIT_NO_GL = 3
-EXIT_PROVENANCE = 4
+class RenderGLError(RenderError):
+    """No GL context to render with: the message names the ``MUJOCO_GL`` backend to set."""
+
+    exit_status = NO_GL
 
 
 def parse_size(text: str) -> tuple[int, int]:
@@ -471,7 +479,7 @@ def _preflight(out: Path, size: tuple[int, int], *, check: bool = False) -> None
     try:
         check_gl_backend()
     except GLBackendError as err:
-        raise RenderError(
+        raise RenderGLError(
             f"{err}\n  (Set MUJOCO_GL=egl for a GPU, or MUJOCO_GL=osmesa for CPU-only.)"
         ) from err
     if size[0] < 16 or size[1] < 16:  # pragma: no cover - parse_size already refuses this
@@ -713,7 +721,7 @@ def _render_one(
     try:
         frame = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
     except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
-        raise RenderError(GL_HELP.format(err=err)) from err
+        raise RenderGLError(GL_HELP.format(err=err)) from err
     try:
         from PIL import Image
 
@@ -1033,7 +1041,7 @@ def _render_video(
                 try:
                     renderer = FrameRenderer(model, width, height, camera=cam, geomgroup=geomgroup)
                 except Exception as err:  # noqa: BLE001
-                    raise RenderError(GL_HELP.format(err=err)) from err
+                    raise RenderGLError(GL_HELP.format(err=err)) from err
             else:
                 renderer.camera = cam
             count += 1
@@ -1245,7 +1253,16 @@ def _moment(text: str):
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim render", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim render",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.NO_GL,
+            exit_status.RECORDING,
+            note="Stdout is one JSON line on success; every failure is one line on stderr.",
+        ),
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -1397,15 +1414,15 @@ def main(argv: list | None = None) -> int:
             camera_path=args.camera_path,
             overlays=args.overlay,
         )
-    except RenderError as err:
-        print(f"roqsim render: {err}", file=sys.stderr)
-        return EXIT_NO_GL if "MUJOCO_GL" in str(err) else EXIT_BAD_ARGS
-    except RecordingError as err:
-        print(f"roqsim render: {err}", file=sys.stderr)
-        return EXIT_PROVENANCE
-    except (DisplayError, PluginError, ModelError, CaptureError) as err:
-        print(f"roqsim render: {err}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+    except (
+        RenderError,
+        RecordingError,
+        DisplayError,
+        PluginError,
+        ModelError,
+        CaptureError,
+    ) as err:
+        return exit_status.fail("roqsim render", err)
 
     print(json.dumps(record))
     if args.show and record.get("rendered"):
