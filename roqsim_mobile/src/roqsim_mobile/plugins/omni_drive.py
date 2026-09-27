@@ -465,9 +465,7 @@ class OmniDrivePlugin(Plugin):
         vx_b = c * vx_w + s * vy_w
         vy_b = -s * vx_w + c * vy_w
 
-        # The odom frame is the spawn pose: the body twist is integrated through the ODOM yaw, as
-        # diff_drive does. Integrating the world-frame velocity here while the yaw started at zero
-        # would report a base spawned facing +y as strafing when it drives forward.
+        # The odom frame is the spawn pose, so the body twist is integrated through the odom yaw.
         o = self._odom
         co, so = np.cos(o[2]), np.sin(o[2])
         o[0] += (co * vx_b - so * vy_b) * ctx.dt
