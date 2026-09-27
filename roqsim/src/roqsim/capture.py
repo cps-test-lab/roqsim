@@ -43,6 +43,7 @@ import numpy as np
 from numpy.lib import format as npy_format
 
 from . import flex_skin, keys
+from .exit_status import BAD_INPUT, RECORDING
 from .kinematics import body_twist
 from .rates import (
     SNAP_NOTABLE,
@@ -293,6 +294,14 @@ _PROVENANCE_PACKAGES = ("roqsim", "mujoco", "numpy")
 
 class RecordingError(RuntimeError):
     """A recording cannot be written or read (see the message)."""
+
+    exit_status = RECORDING
+
+
+class RecordingNotFoundError(RecordingError):
+    """The recording named does not exist: a wrong input, not an unreadable recording."""
+
+    exit_status = BAD_INPUT
 
 
 def env_flag(name: str) -> bool:

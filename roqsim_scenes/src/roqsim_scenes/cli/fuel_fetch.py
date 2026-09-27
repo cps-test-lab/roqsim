@@ -41,6 +41,8 @@ from pathlib import Path
 
 import requests
 
+from roqsim import exit_status
+
 _FUEL_HOSTS = ("fuel.gazebosim.org", "fuel.ignitionrobotics.org")
 _CANONICAL_HOST = "fuel.gazebosim.org"
 _DEFAULT_CACHE = Path(
@@ -210,7 +212,11 @@ def _tag(el) -> str:
 
 def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Fetch and pin Fuel models referenced by an SDF world."
+        description="Fetch and pin Fuel models referenced by an SDF world.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a world with no Fuel URI, or one that did not resolve.",
+        ),
     )
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--uri", help="a single Fuel model URI")
@@ -226,7 +232,7 @@ def main(argv: list | None = None) -> int:
             "no Fuel URIs found -- if the world has no inline geometry either, that IS the finding",
             file=sys.stderr,
         )
-        return 1
+        return exit_status.BAD_INPUT
 
     assets, failed = [], []
     for u in uris:
@@ -248,8 +254,8 @@ def main(argv: list | None = None) -> int:
             "(status: dead_link_404 / found_but_missing_value) -- not a reason to substitute geometry.",
             file=sys.stderr,
         )
-        return 2
-    return 0
+        return exit_status.BAD_INPUT
+    return exit_status.OK
 
 
 if __name__ == "__main__":

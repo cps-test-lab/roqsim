@@ -39,7 +39,7 @@ Usage::
         --markers-map markers.json          # {"1": "industrial_table",
                                             #  "2": {"model": "single_bed", "yaw_deg": 180}}
 
-Exit status: ``0`` and one line naming the world and the scene dir written; ``2`` and one
+Exit status (``roqsim.exit_status``): ``0`` and one line naming the world and the scene dir written; ``2`` and one
 ``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a floorplan or
 map file that is missing or is not JSON, a floorplan with no walls, a marker without a model, a
 door on a line that is not there. A caller in a loop greps that line; it does not read a traceback.
@@ -55,6 +55,7 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim import exit_status
 from roqsim_scenes import scene_mesh_io as mio
 
 # The wall/opening arithmetic is shared with the plan-view renderer (roqsim_scenes.floorplan_to_png), so it
@@ -498,12 +499,11 @@ def generate(
     return world_out
 
 
-#: Exit status when an input is wrong; distinct from a crash's ``1`` so a caller can tell the two apart.
-EXIT_BAD_INPUT = 2
-
-
 def main(argv: list | None = None) -> int:
-    ap = argparse.ArgumentParser(description="Generate a roqsim world from a floorplan.")
+    ap = argparse.ArgumentParser(
+        description="Generate a roqsim world from a floorplan.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
+    )
     ap.add_argument(
         "--floorplan", required=True, help="floorplan JSON from sketch_floorplan_by_human"
     )
@@ -581,9 +581,9 @@ def main(argv: list | None = None) -> int:
         # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
         message = err.args[0] if isinstance(err, KeyError) and err.args else err
         print(f"roqsim scenes floorplan-to-world: {message}", file=sys.stderr)
-        return EXIT_BAD_INPUT
+        return exit_status.BAD_INPUT
     print(f"wrote world {out} (scene dir {Path(args.out_dir)})")
-    return 0
+    return exit_status.OK
 
 
 def _read_json(path: str, what: str) -> dict:

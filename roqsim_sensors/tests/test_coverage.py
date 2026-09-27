@@ -17,6 +17,7 @@ from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_fov
 from roqsim.models import resolve_model
 from roqsim.registry import resolve_plugin
@@ -661,7 +662,7 @@ def test_main_reports_a_wrong_input_on_one_line_and_exits_2(
     elif placements == "NOT_JSON":
         (tmp_path / "p.json").write_text("{not json")
         placements = str(tmp_path / "p.json")
-    assert cli.main(_estimate_argv(tmp_path, world, placements)) == cli.EXIT_BAD_INPUT
+    assert cli.main(_estimate_argv(tmp_path, world, placements)) == exit_status.BAD_INPUT
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1, err
     assert err[0].startswith("roqsim sensors coverage: ")

@@ -90,6 +90,8 @@ import json
 import sys
 from pathlib import Path
 
+from . import exit_status
+
 #: Stage names, in the order they run. A problem in one does not stop the report; it stops that
 #: world from reaching the next stage, which is stated rather than implied by an empty section.
 STAGES = ("resolve", "inputs", "config", "build", "configure", "reset")
@@ -480,6 +482,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 is a target that names no world, and 5 a problem at any later stage. Warnings "
+            "do not change the status, and the report is on stdout either way.",
+        ),
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
     parser.add_argument("--json", action="store_true", help="report as JSON rather than as text")
@@ -492,7 +500,10 @@ def main(argv=None) -> int:
 
     report = check_world(args.world)
     print(json.dumps(report, indent=2) if args.json else _render_text(report))
-    return 0 if report["ok"] else 1
+    if report["ok"]:
+        return exit_status.OK
+    # A target that names no world is the caller's input, not a finding about a world.
+    return exit_status.BAD_INPUT if report["reached"] is None else exit_status.FINDING
 
 
 if __name__ == "__main__":

@@ -38,6 +38,8 @@ from pathlib import Path
 
 import click
 
+from . import exit_status
+
 COMMAND_GROUP = "roqsim.commands"
 
 
@@ -150,10 +152,15 @@ class ToolCommand(click.Command):
         """Call the module's ``main`` with `args`, however it expects to receive them.
 
         An input the tool cannot load -- a world, model or recording that does not resolve, a file
-        that is not there -- is reported as one sentence naming the command and exits 1, where a
-        tool has not already said so itself. A traceback there sends the reader into the tool's
-        source to learn that a path was mistyped; ``-v`` keeps it, for the case where the missing
-        file is the tool's own fault.
+        that is not there -- is reported as one sentence naming the command, where a tool has not
+        already said so itself, and exits with the error's status from :mod:`roqsim.exit_status`:
+        ``BAD_INPUT``, or ``RECORDING`` for a recording that exists and cannot be read. A traceback
+        there sends the reader into the tool's source to learn that a path was mistyped; ``-v`` keeps
+        it, for the case where the missing file is the tool's own fault.
+
+        A tool that refuses with ``raise SystemExit("<reason>")`` gets ``BAD_INPUT`` too. Python
+        would exit ``1`` for it, which the table keeps for a crash, and a refusal with a reason is
+        not one.
         """
         main = self._load().main
         with self._named(ctx):
@@ -173,7 +180,12 @@ class ToolCommand(click.Command):
                     raise
                 name = ctx.command_path if ctx else self.name
                 click.echo(f"{name}: {_sentence(err)}", err=True)
-                return 1
+                return exit_status.for_error(err)
+            except SystemExit as err:
+                if not isinstance(err.code, str):
+                    raise
+                click.echo(err.code, err=True)
+                return exit_status.BAD_INPUT
 
     def _forward(self, args):
         raise SystemExit(self._run(args, click.get_current_context(silent=True)))
@@ -321,7 +333,7 @@ def main(argv: list | None = None) -> int:
         return cli.main(args=argv, standalone_mode=False) or 0
     except click.UsageError as err:
         click.echo(f"roqsim: {err.format_message()}", err=True)
-        return 2
+        return exit_status.BAD_INPUT
     except click.ClickException as err:
         click.echo(f"roqsim: {err.format_message()}", err=True)
         return err.exit_code

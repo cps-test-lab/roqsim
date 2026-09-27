@@ -16,6 +16,7 @@ import textwrap
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.check import STAGES, check_world, main
 
 
@@ -117,7 +118,7 @@ def test_the_exit_code_is_the_verdict(tmp_path, capsys):
     pytest.importorskip("roqsim_sensors")
     assert main([str(_world(tmp_path, GOOD))]) == 0
     assert "ok" in capsys.readouterr().out
-    assert main(["nope_xyz:missing"]) == 1
+    assert main(["nope_xyz:missing"]) == exit_status.BAD_INPUT, "a target naming no world is input"
     assert "FAIL" in capsys.readouterr().out
 
 

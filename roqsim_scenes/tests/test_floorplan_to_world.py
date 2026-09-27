@@ -12,6 +12,7 @@ import math
 
 import pytest
 
+from roqsim import exit_status
 from roqsim_scenes.cli import floorplan_to_world as fw
 from roqsim_scenes.cli import scene_to_floorplan as s2f
 
@@ -381,7 +382,7 @@ def test_main_reports_a_bad_input_on_one_line_and_exits_2(
         floorplan = str(target)
     elif isinstance(floorplan, dict):
         floorplan = _fp_json(tmp_path, floorplan)
-    assert fw.main(_argv(tmp_path, floorplan, *extra)) == fw.EXIT_BAD_INPUT
+    assert fw.main(_argv(tmp_path, floorplan, *extra)) == exit_status.BAD_INPUT
     err = capsys.readouterr().err.strip().splitlines()
     assert len(err) == 1, err
     assert err[0].startswith("roqsim scenes floorplan-to-world: ")

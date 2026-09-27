@@ -23,6 +23,7 @@ from pathlib import Path
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
 from roqsim.manifest import manifest_license
 from roqsim.models import ModelError, resolve_model
@@ -202,7 +203,7 @@ def test_the_cli_prints_json_and_refs(capsys):
 
 
 def test_the_cli_exits_nonzero_for_an_unknown_model(capsys):
-    assert main(["model", "not_a_model_xyz"]) == 1
+    assert main(["model", "not_a_model_xyz"]) == exit_status.BAD_INPUT
     assert "error" in json.loads(capsys.readouterr().out)
 
 

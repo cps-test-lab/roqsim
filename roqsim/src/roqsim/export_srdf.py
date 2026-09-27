@@ -65,7 +65,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 
 logger = logging.getLogger(__name__)
 
@@ -608,6 +608,7 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export srdf",
         description="Generate a MoveIt SRDF (incl. a sampled collision matrix) for an roqsim robot.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
@@ -694,7 +695,11 @@ def main(argv: list | None = None) -> int:
 
     links = links_from_urdf(model, Path(args.urdf), args.strip)
     if not links:
-        raise SystemExit(f"no URDF link matched a body in the model (strip={args.strip!r})")
+        print(
+            f"roqsim export srdf: no URDF link matched a body in the model (strip={args.strip!r})",
+            file=sys.stderr,
+        )
+        return exit_status.BAD_INPUT
 
     home = {}
     for item in (p for p in args.home.split(",") if p.strip()):
@@ -721,13 +726,13 @@ def main(argv: list | None = None) -> int:
             samples=args.samples,
         )
     except ValueError as err:
-        raise SystemExit(f"roqsim export srdf: {err}") from err
+        return exit_status.fail("roqsim export srdf", err)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     ET.indent(tree, space="  ")
     tree.write(out, encoding="utf-8", xml_declaration=True)
     log.info("wrote %s", out)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

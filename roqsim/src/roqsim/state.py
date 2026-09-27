@@ -34,16 +34,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import decimated
 from .kinematics import body_twist, joint_dofs, joint_width
 from .motion import MotionError, motion_onset
 from .recording import RecordingError, open_recording
 
 log = logging.getLogger(__name__)
-
-EXIT_BAD_ARGS = 2
-EXIT_PROVENANCE = 4
 
 
 class StateError(RuntimeError):
@@ -609,7 +606,11 @@ def run_state(
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim state", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim state",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -699,12 +700,8 @@ def main(argv: list | None = None) -> int:
             onset_select=args.onset_select,
             decimate=args.decimate,
         )
-    except RecordingError as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_PROVENANCE
-    except (StateError, MotionError) as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+    except (RecordingError, StateError, MotionError) as err:
+        return exit_status.fail("roqsim state", err)
 
     if not (args.out and str(args.out) != "-" or args.out == "-"):
         print(json.dumps(record))

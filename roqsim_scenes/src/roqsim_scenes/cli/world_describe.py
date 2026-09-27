@@ -88,7 +88,7 @@ before the drop and still reports the bridge, so an override addressing it is st
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
 not loading the world -- the reply is printed with ``errors.build`` set and the build-fed keys left
 ``null``, so a caller keeps the half that cost nothing (which plugin keys exist) instead of losing the
-lot. The exit code stays non-zero: ``0`` goes on meaning "fully answered", and a caller that reads only
+lot. The exit code is ``2`` (``roqsim.exit_status.BAD_INPUT``): ``0`` goes on meaning "fully answered", and a caller that reads only
 the status must not be told a partial reply was a complete one.
 """
 
@@ -103,6 +103,7 @@ from pathlib import Path
 
 import yaml
 
+from roqsim import exit_status
 from roqsim.config import drop_transport, load_config, world_sources
 from roqsim.world import resolve_world_yaml_ref
 
@@ -332,6 +333,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim scenes describe",
         description="Describe what a world provides, as JSON on stdout.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a world that loads but does not build or reset; the partial reply is "
+            "still printed, with `errors` set.",
+        ),
     )
     parser.add_argument(
         "world", help="world YAML path, or a package ref such as 'roqsim_scenes:depot'"
@@ -372,16 +378,16 @@ def main(argv=None) -> int:
             resolved = resolve_world_yaml_ref(target)
         except FileNotFoundError as err:
             print(f"cannot resolve world {target!r}: {err}", file=sys.stderr)
-            return 1
+            return exit_status.BAD_INPUT
         if resolved is None:
             print(
                 f"{target!r} is not a world ref (no such roqsim.worlds provider)", file=sys.stderr
             )
-            return 1
+            return exit_status.BAD_INPUT
         target, packaged = str(resolved), True
     if not Path(target).exists():
         print(f"world {target!r} does not exist", file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
 
     world = Path(target).resolve()
     overrides = None
@@ -393,18 +399,18 @@ def main(argv=None) -> int:
         # working campaign is broken.
         if not Path(args.override).exists():
             print(f"overrides file {args.override!r} does not exist", file=sys.stderr)
-            return 1
+            return exit_status.BAD_INPUT
         try:
             with open(args.override, encoding="utf-8") as handle:
                 overrides = yaml.safe_load(handle) or {}
         except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
             print(f"cannot read overrides {args.override}: {err}", file=sys.stderr)
-            return 1
+            return exit_status.BAD_INPUT
     try:
         config = load_config(world, overrides)
     except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
         print(f"cannot load world {world}: {err}", file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
 
     result = {
         "world": str(world),
@@ -467,10 +473,10 @@ def main(argv=None) -> int:
             print(f"cannot {stage} world {world}: {err}", file=sys.stderr)
             result["errors"] = {stage: str(err)}
             print(json.dumps(result))
-            return 1
+            return exit_status.BAD_INPUT
 
     print(json.dumps(result))
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

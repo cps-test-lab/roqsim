@@ -15,7 +15,7 @@ Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Exampl
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
 
-Exit status: ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the report written; ``2`` and
+Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the report written; ``2`` and
 one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong -- a world that does not
 exist or does not load, a placements file that is missing, not JSON or not a list, an unknown sensor
 type or region. The agent driving the propose -> evaluate -> refine loop greps that line; a traceback
@@ -30,6 +30,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+from roqsim import exit_status
 
 from . import catalog as catalog_mod
 from .adapters import build_fov
@@ -348,7 +350,9 @@ def _add_common_sampling(sp):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0], epilog=exit_status.epilog(exit_status.BAD_INPUT)
+    )
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     sp = sub.add_parser("catalog", help="print the sensor catalog as JSON")
@@ -379,10 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-#: Exit status when an input is wrong; distinct from a crash's ``1`` so a caller can tell the two apart.
-EXIT_BAD_INPUT = 2
-
-
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     # Everything a wrong input raises on the way in -- a world that does not resolve or load, a
@@ -397,7 +397,7 @@ def main(argv=None) -> int:
         # A KeyError's str() is the repr of its argument, quotes included; the message is the argument.
         message = err.args[0] if isinstance(err, KeyError) and err.args else err
         print(f"roqsim sensors coverage: {message}", file=sys.stderr)
-        return EXIT_BAD_INPUT
+        return exit_status.BAD_INPUT
 
 
 if __name__ == "__main__":

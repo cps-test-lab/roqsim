@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 
 from . import control as ctl
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import (
     DEFAULT_FPS,
     CaptureError,
@@ -62,6 +62,7 @@ from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
 from .plugin import PluginError
+from .rendering import GLBackendError
 from .replay import is_recording
 from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
@@ -899,10 +900,12 @@ def _refuse_swallowed_target(argv: list[str]) -> None:
         if flag in argv:
             i = argv.index(flag)
             if i + 1 < len(argv) and Path(argv[i + 1]).suffix.lower() in _WORLDISH:
-                raise SystemExit(
+                print(
                     f"roqsim sim: {flag} takes an output path, not {argv[i + 1]!r}. Put the world first:\n"
-                    f"    roqsim sim {argv[i + 1]} {flag} <file>"
+                    f"    roqsim sim {argv[i + 1]} {flag} <file>",
+                    file=sys.stderr,
                 )
+                raise SystemExit(exit_status.BAD_INPUT)
 
 
 def _replay(args, parser) -> int:
@@ -956,9 +959,16 @@ def _replay(args, parser) -> int:
             right_ui=args.right_ui,
             world=args.world,
         )
-    except (DisplayError, ViewError, PluginError, ModelError, CaptureError, RecordingError) as err:
-        print(f"roqsim sim: {err}", file=sys.stderr)
-        return 1
+    except (
+        DisplayError,
+        GLBackendError,
+        ViewError,
+        PluginError,
+        ModelError,
+        CaptureError,
+        RecordingError,
+    ) as err:
+        return exit_status.fail("roqsim sim", err)
 
 
 def main(argv: list | None = None) -> int:
@@ -989,6 +999,12 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim sim",
         description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.NO_GL,
+            exit_status.RECORDING,
+            note="4 is a recording given as the target that cannot be replayed.",
+        ),
     )
     parser.add_argument(
         "target",
@@ -1212,10 +1228,9 @@ def main(argv: list | None = None) -> int:
             transport=transport,
             no_transport=args.no_communication,
         )
-    except (DisplayError, ViewError, PluginError, ModelError, CaptureError) as err:
-        print(f"roqsim sim: {err}", file=sys.stderr)
-        return 1
-    return 0
+    except (DisplayError, GLBackendError, ViewError, PluginError, ModelError, CaptureError) as err:
+        return exit_status.fail("roqsim sim", err)
+    return exit_status.OK
 
 
 if __name__ == "__main__":  # pragma: no cover

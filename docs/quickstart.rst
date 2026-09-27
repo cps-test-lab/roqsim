@@ -781,8 +781,8 @@ a frozen one writes none. Check 3 reads the silence, measured against the run's 
 world whose rows are seconds apart is not failed for its ordinary pace; check 4 reads the pace.
 
 Exit status is ``0`` when nothing is wrong (warnings are still printed), ``5`` on an error-level
-finding, and ``2`` when the checks could not run at all. Exiting on a finding is the point: a
-backgrounded command's output is invisible until it exits.
+finding, and ``2`` when the checks could not run at all (:ref:`exit-status`). Exiting on a finding is
+the point: a backgrounded command's output is invisible until it exits.
 
 **Which of those bodies is a robot comes from the roster.** ``sim_poses.csv`` names every
 named body and cannot say which is which, so the recorder writes ``entities.json`` beside it
@@ -809,7 +809,7 @@ the same row.
 **Who runs it, when a supervisor does.** A run harness executes this command itself, in the running
 container, on a bounded interval while somebody is watching the run — and reads ``--json``: the
 ``findings``, and ``level`` in particular, are the contract it acts on. An ``error``-level finding is
-what such a supervisor ends a run on. So the exit code and the document are a public interface, and ``check`` slugs are names other
+what such a supervisor ends a run on. So the exit code (:ref:`exit-status`) and the document are a public interface, and ``check`` slugs are names other
 software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
 into a run's output by this: it is read on demand and answered.
 
@@ -833,6 +833,38 @@ end — so check 3 fires there only on rows that arrived without advancing sim t
 never writes. A supervisor polling a live run that has to catch a stop runs
 ``roqsim health <run-dir> --watch --for <seconds> --json``: its first poll is judged against the wall
 clock, and ``--for`` bounds it to one pass or a few.
+
+.. _exit-status:
+
+Exit status
+-----------
+
+Every ``roqsim`` tool exits with a status from one table (:mod:`roqsim.exit_status`), so a script
+treats "the input I named is not there" the same way whichever tool it ran. Each tool's ``--help``
+ends with the statuses it can return, generated from that table:
+
+=====  ================================================================================
+code   meaning
+=====  ================================================================================
+``0``  success
+``1``  an unexpected error (a crash, with its traceback on stderr)
+``2``  bad input or a wrong request
+``3``  no GL context (set MUJOCO_GL=egl or osmesa, or give a window a display)
+``4``  a recording that cannot be read or rebuilt
+``5``  a check or health verdict that failed
+=====  ================================================================================
+
+``2`` is anything the caller can fix by asking differently: a world, model, recording or file that
+does not exist or does not load, a flag or value that cannot be honoured. ``4`` is a recording that
+*exists* and cannot be read (a run killed before it closed the archive) or whose world cannot be
+rebuilt from its provenance; a recording path that names nothing is a ``2``. ``5`` is a verdict:
+``roqsim check`` finding a problem in a world it resolved, an error-level ``roqsim health`` finding,
+an exporter's ``--check`` finding its output off its source. ``1`` is never returned on purpose, so it
+always means the tool itself broke. Every other status comes with its reason: a line on stderr
+naming the command, or the report the tool prints (``check``, ``health``).
+
+The scene-builder windows (``roqsim builder``) are the one exception: they return a person's
+verdict on what they were shown, and :doc:`scene_builder` gives their statuses. Interrupting a command (Ctrl-C) exits ``130``, as a shell's convention has it.
 
 Getting numbers out of a run
 ----------------------------
