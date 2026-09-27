@@ -667,3 +667,10 @@ def test_main_reports_a_wrong_input_on_one_line_and_exits_2(
     assert err[0].startswith("roqsim sensors coverage: ")
     assert expect in err[0]
     assert not (tmp_path / "run").exists(), "nothing is written for an input that was refused"
+
+
+def test_regions_from_a_sketch_it_cannot_read_are_refused():
+    from roqsim_sensors.coverage.regions import regions_from_sketch
+
+    with pytest.raises(ValueError, match="floorplan sketch version 99"):
+        regions_from_sketch({"version": 99, "rooms": [], "lines": []})
