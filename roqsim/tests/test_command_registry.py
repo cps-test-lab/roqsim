@@ -12,6 +12,7 @@ something larger.
 from __future__ import annotations
 
 import ast
+import os
 import re
 import subprocess
 import sys
@@ -22,6 +23,7 @@ from pathlib import Path
 import click
 import pytest
 
+from roqsim import exit_status
 from roqsim.commands import cli, load_groups, summary_line
 
 REPO = Path(__file__).resolve().parents[2]
@@ -230,6 +232,121 @@ def test_the_listing_is_fast(tree):
     assert elapsed < 5.0, f"`roqsim --help` took {elapsed:.1f}s; it only lists names"
 
 
+# -- one exit-status table ------------------------------------------------------------------------
+#: Every tool whose --help must state its exit statuses. Its epilog comes from roqsim.exit_status.
+_STATES_ITS_EXIT_STATUS = {
+    "assets collision",
+    "assets inspect-prop",
+    "sim",
+    "render",
+    "state",
+    "check",
+    "health",
+    "catalog",
+    "plugins",
+    "export web",
+    "export capture",
+    "export urdf",
+    "export srdf",
+    "export mesh",
+    "export moveit",
+    "scenes describe",
+    "scenes inputs",
+    "scenes floorplan-to-world",
+    "scenes fuel-fetch",
+    "scenes scene-to-floorplan",
+    "scenes sdf-to-scene",
+    "sensors coverage",
+}
+
+_NAMED_CODE = re.compile(r"(?:exit status: |; )(\d+) ")
+
+
+def test_every_help_names_only_codes_from_the_table(tree, helps):
+    """A script branches on the status, so a tool may only promise one the table defines, in the
+    table's words -- a tool with its own meaning for 2 is the bug this table exists to prevent."""
+    installed = {p for p in _STATES_ITS_EXIT_STATUS if p.split()[0] in tree.commands}
+    assert installed <= set(helps), f"renamed or gone: {sorted(installed - set(helps))}"
+    wrong, silent = {}, []
+    for path, out in helps.items():
+        text = " ".join(out.split())
+        named = [int(c) for c in _NAMED_CODE.findall(text)] if "exit status:" in text else []
+        if path in _STATES_ITS_EXIT_STATUS and not named:
+            silent.append(path)
+        bad = [c for c in named if f"{c} {exit_status.MEANINGS.get(c)}" not in text]
+        if bad:
+            wrong[path] = bad
+    assert not wrong, f"--help names a status outside the table, or in other words: {wrong}"
+    assert not silent, f"--help states no exit status (use exit_status.epilog): {silent}"
+
+
+def _missing_input_cases(root: Path) -> dict[str, list[str]]:
+    """One invocation per tool that names an input which is not there, and nothing else wrong."""
+    nope = str(root / "nope")
+    return {
+        "assets reduce-mesh": [f"{nope}.glb", str(root / "out.obj")],
+        "sim": [f"{nope}.yaml", "--headless"],
+        "render": [f"{nope}.yaml", "--out", str(root / "x.png")],
+        "render --state": ["--state", f"{nope}.npz", "--out", str(root / "x.png")],
+        "state": ["--state", f"{nope}.npz", "--check"],
+        "check": [f"{nope}.yaml"],
+        "health": [nope],
+        "catalog": ["model", "nope_xyz"],
+        "plugins": ["describe", "nope_xyz"],
+        "export web": ["--world", f"{nope}.yaml", "--out", str(root / "web")],
+        "export web --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "web")],
+        "export capture": ["--state", f"{nope}.npz", "--out", str(root / "cap")],
+        "export urdf": ["--world", f"{nope}.yaml", "--out", str(root / "x.urdf")],
+        "export urdf --mjcf": ["--mjcf", f"{nope}.xml", "--out", str(root / "x.urdf")],
+        "export srdf --mjcf": [
+            "--mjcf", f"{nope}.xml", "--urdf", f"{nope}.urdf", "--out", str(root / "x.srdf"),
+            "--name", "x", "--arm-base", "a", "--arm-tip", "b", "--gripper-joint", "g",
+            "--gripper-open", "0", "--gripper-close", "1",
+        ],
+        "export mesh": ["--world", f"{nope}.yaml", "--out", str(root / "x.stl")],
+        "export moveit": ["--world", f"{nope}.yaml", "--out", str(root / "moveit")],
+        "scenes describe": [f"{nope}.yaml"],
+        "scenes inputs": [f"{nope}.yaml"],
+        "scenes fuel-fetch": ["--world", f"{nope}.sdf"],
+        "scenes sdf-to-scene": ["--world", f"{nope}.sdf", "--out-dir", str(root / "sdf")],
+        "scenes scene-to-floorplan": ["--scene", nope],
+        "scenes floorplan-to-world": [
+            "--floorplan", f"{nope}.json", "--out-dir", str(root / "scene"),
+            "--world-out", str(root / "w.yaml"), "--scene-name", "x",
+        ],
+        "sensors coverage": [
+            "estimate", "--world", f"{nope}.yaml", "--placements", f"{nope}.json",
+            "--out", str(root / "cov"),
+        ],
+    }  # fmt: skip
+
+
+def test_a_missing_input_exits_with_the_one_bad_input_code(tree, tmp_path):
+    """A named input that is not there is one status whichever tool was asked, never a crash's 1."""
+    cases = {
+        case: args
+        for case, args in _missing_input_cases(tmp_path).items()
+        if case.split()[0] in tree.commands
+    }
+
+    def run(case: str) -> tuple[int, str]:
+        path = [word for word in case.split() if not word.startswith("--")]
+        out = subprocess.run(
+            [sys.executable, "-m", "roqsim.commands", *path, *cases[case]],
+            capture_output=True,
+            text=True,
+            timeout=300,
+            cwd=tmp_path,
+            env={**os.environ, "MUJOCO_GL": os.environ.get("MUJOCO_GL", "egl")},
+        )
+        return out.returncode, out.stderr.strip().splitlines()[-1] if out.stderr.strip() else ""
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        got = dict(zip(cases, pool.map(run, cases), strict=True))
+    wrong = {c: r for c, r in got.items() if r[0] != exit_status.BAD_INPUT}
+    assert not wrong, f"a missing input must exit {exit_status.BAD_INPUT}: {wrong}"
+
+
 # -- the repository stands alone ------------------------------------------------------------------
 #: Instructions that only resolve inside some larger workspace and are a dead end in a bare clone.
 #: An agent-harness skill path is the one shape worth matching literally; a *relative* path is not,
@@ -260,6 +377,60 @@ _FOREIGN_ALLOWED: dict[str, tuple[str, ...]] = {
     # Same: the pose table this writer fills in is somebody else's published contract.
     "roqsim/src/roqsim/capture.py": ("pose-table contract",),
 }
+
+
+# -- an input the tool cannot load is one sentence, not a traceback ---------------------------------
+
+
+_FAKE_TOOL = """\
+# A tool that cannot load what it was given.
+def main(argv):
+    from roqsim.plugin import PluginError
+
+    if argv[0] == "missing":
+        raise FileNotFoundError(2, "No such file or directory", "nosuch.json")
+    if argv[0] == "unresolved":
+        raise PluginError("world ref 'nosuch:world' names no known 'roqsim.worlds' provider")
+    return 3
+"""
+
+
+@pytest.fixture
+def fake_tool(tmp_path, monkeypatch):
+    from roqsim.commands import tool
+
+    (tmp_path / "fake_tool_for_test.py").write_text(_FAKE_TOOL)
+    monkeypatch.syspath_prepend(str(tmp_path))
+    return tool("fake_tool_for_test", "fake")
+
+
+def _exit_code(cmd, args) -> int:
+    with pytest.raises(SystemExit) as exc:
+        cmd.main(args=args, prog_name="roqsim scenes fake", standalone_mode=False)
+    return exc.value.code
+
+
+def test_a_missing_input_file_is_one_sentence_naming_the_command(fake_tool, capsys):
+    assert _exit_code(fake_tool, ["missing"]) == exit_status.BAD_INPUT
+    assert capsys.readouterr().err == "roqsim scenes fake: No such file or directory: nosuch.json\n"
+
+
+def test_an_input_that_does_not_resolve_is_one_sentence(fake_tool, capsys):
+    assert _exit_code(fake_tool, ["unresolved"]) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err
+    assert err.startswith("roqsim scenes fake: world ref 'nosuch:world' names no known")
+    assert "Traceback" not in err
+
+
+def test_verbose_keeps_the_traceback(fake_tool):
+    from roqsim.plugin import PluginError
+
+    with pytest.raises(PluginError):
+        fake_tool.main(args=["unresolved", "-v"], standalone_mode=False)
+
+
+def test_a_tools_own_exit_code_passes_through(fake_tool):
+    assert _exit_code(fake_tool, ["fine"]) == 3
 
 
 def test_nothing_here_names_a_repository_that_may_not_exist():

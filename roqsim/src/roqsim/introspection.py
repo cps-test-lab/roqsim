@@ -42,6 +42,7 @@ import json
 import re
 import sys
 
+from roqsim import exit_status
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
@@ -357,6 +358,9 @@ def main(argv=None):
     parser = argparse.ArgumentParser(
         prog="roqsim plugins",
         description="JSON introspection of the roqsim.plugins registry.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, note="2 includes `describe` naming no registered plugin."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -371,7 +375,7 @@ def main(argv=None):
     else:  # describe
         result = get_plugin_details(args.name)
         print(json.dumps(result, indent=2))
-        sys.exit(1 if "error" in result else 0)
+        sys.exit(exit_status.BAD_INPUT if "error" in result else exit_status.OK)
 
 
 if __name__ == "__main__":

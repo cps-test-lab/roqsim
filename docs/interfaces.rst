@@ -337,9 +337,9 @@ keys left ``null``::
     "errors": {"build": "mesh not found: ..."}}
 
 A caller keeps the half that cost nothing (which plugin keys exist) instead of losing the lot. **The
-exit code is still non-zero**: ``0`` goes on meaning "fully answered", so a caller reading only the
-status is never told a partial reply was a complete one. A world that cannot *load* has no half to
-hand back and prints nothing.
+exit code is still** ``2`` (:ref:`exit-status`): ``0`` goes on meaning "fully answered", so a caller
+reading only the status is never told a partial reply was a complete one. A world that cannot *load*
+has no half to hand back and prints nothing.
 
 Extending another world
 ------------------------

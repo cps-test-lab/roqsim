@@ -387,6 +387,30 @@ def test_a_failing_plugin_nobody_selected_is_warned_about_not_fatal(recording, m
     assert any("post_step raised" in r.getMessage() for r in caplog.records)
 
 
+def test_a_closed_world_leaves_no_replay_failure_behind(recording, monkeypatch, caplog):
+    """A rebuilt world's plugin can reuse a closed one's id, so nothing keyed on the closed world's
+    plugins survives ``close``: its failures are not reported, and a rebuilt one is warned about."""
+    import logging
+
+    from roqsim.registry import resolve_plugin
+
+    def broken(self, ctx):
+        raise RuntimeError("replay broke")
+
+    monkeypatch.setattr(resolve_plugin("lidar"), "post_step", broken)
+    rec = open_recording(recording)
+    rec.enable_sensors()
+    with caplog.at_level(logging.WARNING, logger="roqsim.recording"):
+        rec.at(1.0)
+        assert rec.replay_failures
+        rec.close()
+        assert rec.replay_failures == [] and not rec._warned
+        rec.at(1.0)
+        rec.close()
+    warned = [r for r in caplog.records if "post_step raised" in r.getMessage()]
+    assert len(warned) == 2, "the rebuilt world's failing plugin is warned about too"
+
+
 def test_a_sensor_whose_producer_is_unknown_is_refused_while_a_plugin_fails(recording, monkeypatch):
     """An endpoint whose ``read`` cannot be traced to any plugin may be the failing one's."""
     from roqsim import recording as recording_module
