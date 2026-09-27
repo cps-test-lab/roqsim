@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from roqsim import runner
+from roqsim import exit_status, runner
 from roqsim.plugin import PluginError
 
 
@@ -185,7 +185,7 @@ def test_recording_is_not_world_config(cli):
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml", "w.yml"])
-def test_record_refuses_to_eat_the_world(monkeypatch, world):
+def test_record_refuses_to_eat_the_world(monkeypatch, capsys, world):
     """`roqsim sim --record world.yaml` -- argparse reports a *missing target*, which is useless.
 
     The check must run before parsing: by the time argparse has assigned world.yaml to --record there
@@ -194,8 +194,10 @@ def test_record_refuses_to_eat_the_world(monkeypatch, world):
     monkeypatch.setattr(runner, "run", lambda *a, **k: None)
     with pytest.raises(SystemExit) as err:
         runner.main(["--record", world])
-    assert "takes an output path" in str(err.value)
-    assert "Put the world first" in str(err.value)
+    assert err.value.code == exit_status.BAD_INPUT
+    stderr = capsys.readouterr().err
+    assert "takes an output path" in stderr
+    assert "Put the world first" in stderr
 
 
 def test_record_after_the_target_is_fine(cli):
@@ -242,11 +244,12 @@ def test_video_has_no_fps_or_speed_flag():
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml"])
-def test_video_refuses_to_eat_the_world(monkeypatch, world):
+def test_video_refuses_to_eat_the_world(monkeypatch, capsys, world):
     monkeypatch.setattr(runner, "run", lambda *a, **k: None)
     with pytest.raises(SystemExit) as err:
         runner.main(["--video", world])
-    assert "takes an output path" in str(err.value)
+    assert err.value.code == exit_status.BAD_INPUT
+    assert "takes an output path" in capsys.readouterr().err
 
 
 def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):

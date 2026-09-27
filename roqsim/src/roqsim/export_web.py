@@ -35,6 +35,7 @@ scene.json so the browser animates the arm from ``/joint_states`` exactly as the
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import shutil
@@ -44,7 +45,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import flex_skin, logging_setup
+from . import exit_status, flex_skin, logging_setup
 from .config import (
     deep_merge,
     drop_transport_plugins,
@@ -760,6 +761,10 @@ def export_scene(
 
 def _compile_from_mjcf(path: Path) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
     """Compile a bare MJCF file directly (no plugins / world YAML). Initial state is the model default."""
+    if not path.is_file():
+        # MuJoCo reports a missing file as a ValueError from its XML parser; this one the command
+        # tree reports as a missing input.
+        raise FileNotFoundError(errno.ENOENT, "no such MJCF", str(path))
     model = mujoco.MjSpec.from_file(str(path)).compile()
     return model, mujoco.MjData(model), {}
 
@@ -818,6 +823,7 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export web",
         description="Export a compiled MuJoCo world to a browser scene descriptor.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
@@ -903,7 +909,7 @@ def main(argv: list | None = None) -> int:
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
         logger.info("wrote source manifest (%d files) to %s", len(sources), args.manifest)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":
