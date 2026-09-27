@@ -303,14 +303,21 @@ class MujocoSim(_Base):
         The single point where the live model dies -- on shutdown *and* on a mid-session rebuild -- so
         it is where a recording has to be flushed. Doing it in ``shutdown`` alone would lose a
         recording whenever a scenario reset with different ``world_overrides``.
+
+        The engine is shut down whatever the flush or the viewer's close raises, so the plugins
+        release what configure opened and write their shutdown output.
         """
-        self._finish_recording()
-        if self._viewer is not None:
-            self._viewer.close()
-            self._viewer = None
-        if self._engine is not None:
-            self._engine.shutdown()
-            self._engine = None
+        try:
+            self._finish_recording()
+        finally:
+            try:
+                if self._viewer is not None:
+                    viewer, self._viewer = self._viewer, None
+                    viewer.close()
+            finally:
+                if self._engine is not None:
+                    engine, self._engine = self._engine, None
+                    engine.shutdown()
 
     def _ensure_built(self) -> Engine:
         if self._engine is None:
@@ -375,10 +382,10 @@ class MujocoSim(_Base):
     def _start_recording(self) -> None:
         """Begin sampling MuJoCo state, when the run asked for it.
 
-        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path, relative to the scenario's ``output_dir``
-        like the scene export), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
-        concern rather than an experiment one -- the same footing as ``sim.headless``, which the world
-        YAML rejects on purpose -- so it is driven by the environment here and never by the world.
+        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path; a relative one is resolved by
+        :meth:`_resolve_out`), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
+        concern rather than an experiment one -- the same footing as ``sim.headless``, which a world
+        YAML ignores with a warning -- so it is driven by the environment here and never by the world.
 
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.
