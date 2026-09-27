@@ -447,4 +447,6 @@ class AckermannDrivePlugin(Plugin):
         self._target_v = self._target_w = 0.0
         self._cmd_v = 0.0
         self._steer = 0.0
+        # An Ackermann command belongs to the episode that sent it, as a twist does.
+        self._steer_cmd = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
