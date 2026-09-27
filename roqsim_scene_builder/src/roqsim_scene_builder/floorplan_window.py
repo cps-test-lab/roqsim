@@ -43,6 +43,7 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from roqsim.floorplan_geometry import SKETCH_VERSION, check_sketch
 from roqsim_scene_builder.annotate_ui import (
     BG,
     BORDER,
@@ -680,6 +681,9 @@ def load_sketch(initial: dict | None) -> tuple[SketchModel, str]:
     descriptions are the opposite -- persistent intent, so they *are* seeded from ``initial``.
     """
     initial = initial or {}
+    # A newer sketch is refused rather than seeded: the window would drop what it does not know and
+    # send back a sketch in this version, silently losing it.
+    check_sketch(initial, "initial sketch")
     model = SketchModel()
     model.description = initial.get("description", "") or ""
     for entry in initial.get("lines") or []:
@@ -725,6 +729,7 @@ def write_result(json_out: str | None, comment: str, sketch: SketchModel) -> dic
         return sketch.room_descriptions.get(frozenset(line_ids), "").strip()
 
     result = {
+        "version": SKETCH_VERSION,
         "comment": comment,
         # floorplan-level placement intent -- omitted when empty so sketches without one stay
         # unchanged
