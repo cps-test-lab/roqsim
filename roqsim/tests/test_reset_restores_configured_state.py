@@ -491,6 +491,11 @@ _RENDERER = "the renderer, made at the first capture and kept for the run"
 _DEPTH_MASK = (
     "the last depth frame's invalid pixels, read only with that frame, which the reset clears"
 )
+_CONTROLLERS = ("arm_controller", "cartesian_admittance")
+_TRANSITIONS = (
+    "the registry's transition log, which a bridge announces by position, so it runs for the "
+    "whole process"
+)
 _MEASURED_ONCE = (
     "the footprint radius, measured from the model's geometry once and kept for the run"
 )
@@ -501,10 +506,7 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
-    "arm_controller": {
-        "_registered.transitions": "the registry's transition log, which a bridge announces by "
-        "position, so it runs for the whole process"
-    },
+    **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
     "g1_locomotion": {
         "_obs": "the policy's input buffer, rebuilt in full before every policy call"
     },
@@ -528,8 +530,6 @@ SKIPPED: dict[str, str] = {
 
 #: Open defects, by plugin: the case is a strict expected failure until the fix removes the entry.
 KNOWN_DEFECTS: dict[str, str] = {
-    "cartesian_admittance": "on_reset does not restore _active, the target wrench (w_d) or the law "
-    "(law, controller_type, _uses_*) a trial set",
     "force_limit": "a trip outlives its trial: Engine.reset never clears the stop it requested "
     "(ctx.stop_requested)",
     "navigator": "_commanded survives the reset, and the handle's pose, the core's per-tick inputs and "
