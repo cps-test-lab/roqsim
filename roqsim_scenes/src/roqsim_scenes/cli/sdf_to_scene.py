@@ -20,7 +20,7 @@ the flat world-space that ``scene.json`` expects. An include's pose replaces the
 Deliberately mechanical. Everything here is determinate: parse, resolve, compose, tessellate, write.
 The judgement calls -- which world maps to which paper scene, whether a missing asset is link rot or
 never-published, what an absent ``<actor>`` means for a paper's claimed dynamic obstacle -- belong to
-the `scene-porting` skill and the spec, not to this script. Accordingly it **fails loudly** rather
+whoever runs it, not to this script. Accordingly it **fails loudly** rather
 than guessing: an unresolvable asset is an error with a message, never a silent omission or a
 substitution.
 
@@ -683,7 +683,7 @@ class Importer:
         if not self.objects:
             raise SystemExit(
                 "no geometry emitted. If the world is pure <include> and every asset failed to "
-                "resolve, that is a provenance finding for the spec -- not an empty scene."
+                "resolve, the world's assets are missing -- not an empty scene."
             )
 
         self._check_nothing_is_walled_off()
@@ -786,8 +786,8 @@ def main(argv: list | None = None) -> int:
         Importer(args).run()
     except fuel_fetch.FuelError as e:
         print(
-            f"\nFAILED: {e}\n\nThis is a finding, not a bug: record it as a resolution_attempt in "
-            f"the spec's gap record. Do not substitute a lookalike asset.",
+            f"\nFAILED: {e}\n\nThe world names an asset that cannot be fetched. Point --model-path at a "
+            f"local copy of it; do not substitute a lookalike asset.",
             file=sys.stderr,
         )
         return exit_status.BAD_INPUT
