@@ -162,7 +162,7 @@ Forms 2 and 3 contain a colon, and the ref is the entry's *key*, so **quote it**
 (``- "my_pkg.mod:MyPlugin": {...}``) — unquoted it parses only while no space follows the colon, so a
 stray ``key: value`` space would silently truncate the ref. Short names have no colon and need no quotes.
 
-Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if the left side ends in ``.py`` or exists on disk, else module. Every failure raises ``PluginError`` naming the attempted form.
+Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if the left side ends in ``.py`` or exists on disk, else module. Every failure raises ``PluginError`` naming the attempted form. A plugin file is executed once per process and reused until it changes on disk, so every resolution of one ref returns the same class.
 
 Validation is **delegated to each plugin** (``validate_config``); ``instantiate_plugins`` aggregates all errors across all plugins and raises once, namespaced ``[name (ref)] message``.
 
