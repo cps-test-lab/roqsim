@@ -505,6 +505,9 @@ def build_target(
     ``*_ros`` world be rendered without ROS installed. Pass ``skip_transport=False`` to demand the
     simulator's own strict build.
 
+    The engine is returned set up, as ``ctx.engine``, and the caller shuts it down; a failure before
+    the return shuts it down here.
+
     ``world_model`` is a recording's resolved component tree (:meth:`roqsim.config.SimConfig.as_record`).
     When given, the config is READ from it rather than resolved from ``target`` and ``overrides`` --
     so a recording renders the components that ran, whatever has happened to the override grammar
@@ -538,18 +541,22 @@ def build_target(
             )
     if no_ceiling:
         _disable_ceiling(cfg)
-    engine = Engine(cfg, preview=True)
-    engine.setup()
-    engine.reset()
-    reset_to_home(engine.ctx.model, engine.ctx.data)
     from .runner import is_model_ref
 
-    if is_model_ref(target) and tilt_preview_light(engine.ctx.model, engine.ctx.data):
-        # Only when the tilt recognised the built-in room's light: a world that aimed its own keeps them.
-        fill_preview_self_shadows(engine.ctx.model)
-    # Keep the engine reachable: a sensor replay has to run the plugins' post_step, and rebuilding the
-    # world a second time to get at them would be both slow and a chance for the two to diverge.
-    engine.ctx.engine = engine
+    engine = Engine(cfg, preview=True)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(engine)
+        engine.reset()
+        reset_to_home(engine.ctx.model, engine.ctx.data)
+        if is_model_ref(target) and tilt_preview_light(engine.ctx.model, engine.ctx.data):
+            # Only when the tilt recognised the built-in room's light: a world that aimed its own
+            # keeps them.
+            fill_preview_self_shadows(engine.ctx.model)
+        # Keep the engine reachable: a sensor replay has to run the plugins' post_step, and
+        # rebuilding the world a second time to get at them would be both slow and a chance for the
+        # two to diverge.
+        engine.ctx.engine = engine
+        stack.pop_all()
     return engine.ctx.model, engine.ctx.data, engine.ctx, cfg.view, None
 
 
@@ -650,45 +657,51 @@ def render_target(
         merged[key] = {**merged.get(key, {}), **value} if isinstance(value, dict) else value
 
     if state:
-        return _render_recording(
-            state,
-            target,
-            out,
-            (width, height),
-            merged,
-            view,
-            focus,
-            camera,
-            no_ceiling,
-            check,
-            at,
-            start,
-            stop,
-            fps,
-            speed,
-            video,
-            geomgroup,
-            camera_path=camera_path,
-            overlays=overlays,
+        from .recording import open_recording
+
+        with open_recording(state) as rec:
+            return _render_recording(
+                rec,
+                target,
+                out,
+                (width, height),
+                merged,
+                view,
+                focus,
+                camera,
+                no_ceiling,
+                check,
+                at,
+                start,
+                stop,
+                fps,
+                speed,
+                video,
+                geomgroup,
+                camera_path=camera_path,
+                overlays=overlays,
+            )
+
+    with contextlib.ExitStack() as stack:
+        # --no-ceiling is applied to the parsed config, not merged in here; see _disable_ceiling.
+        model, data, ctx, world_view, fixed_cam = build_target(
+            target, merged or None, no_ceiling=no_ceiling
+        )
+        if ctx is not None:
+            stack.callback(ctx.engine.shutdown)
+        cam = _pick_camera(
+            model, data, ctx, world_view, focus, camera, fixed_cam, target, width, height
         )
 
-    # --no-ceiling is applied to the parsed config, not merged in here; see _disable_ceiling.
-    model, data, ctx, world_view, fixed_cam = build_target(
-        target, merged or None, no_ceiling=no_ceiling
-    )
-    cam = _pick_camera(
-        model, data, ctx, world_view, focus, camera, fixed_cam, target, width, height
-    )
-
-    record = _base_record(out, width, height, model, cam)
-    if overlays:
-        record["overlays"] = [o.name for o in overlays]
-    if check:
-        record["rendered"] = False
+        record = _base_record(out, width, height, model, cam)
+        if overlays:
+            record["overlays"] = [o.name for o in overlays]
+        if check:
+            record["rendered"] = False
+            return record
+        _render_one(model, data, cam, width, height, out, geomgroup, overlays=overlays)
+        record["rendered"] = True
         return record
-    _render_one(model, data, cam, width, height, out, geomgroup, overlays=overlays)
-    record["rendered"] = True
-    return record
 
 
 def _pick_camera(model, data, ctx, world_view, focus, camera, fixed_cam, target, width, height):
@@ -750,7 +763,7 @@ def _render_one(
 
 
 def _render_recording(
-    state,
+    rec,
     target,
     out,
     size,
@@ -771,12 +784,10 @@ def _render_recording(
     camera_path=None,
     overlays=None,
 ):
-    """Render one moment, or a range, from a recording. The world comes from its provenance."""
+    """Render one moment, or a range, from the recording *rec*; its world is its provenance's."""
     from .camera_path import CameraPathError, Moment
-    from .recording import open_recording
 
     width, height = size
-    rec = open_recording(state)
     stated_view = (merged or {}).get("sim", {}).get("view")
     # The default view of a run is the whole scene from above, which a roof would hide. So a
     # recording rendered with no camera of its own -- none stated here, none recorded with it --

@@ -26,6 +26,8 @@ import math
 import mujoco
 import numpy as np
 
+from roqsim.kinematics import body_twist
+
 _CIRCLE_SEG = 12  # polygon segments approximating a round footprint
 
 
@@ -74,10 +76,10 @@ def wall_polygons(
 def _at_rest(model, data, body_id: int) -> bool:
     """Whether ``body_id`` is moving slower than :data:`RESTING_SPEED`.
 
-    Reads ``cvel``, which is only meaningful after a forward pass -- every caller here runs one
-    before rasterizing, for the same reason ``geom_xpos`` needs it.
+    The body's own velocity, which is only meaningful after a forward pass -- every caller here runs
+    one before rasterizing, for the same reason ``geom_xpos`` needs it.
     """
-    return float(np.linalg.norm(data.cvel[int(body_id)][3:6])) < RESTING_SPEED
+    return float(np.linalg.norm(body_twist(model, data, int(body_id)).linear)) < RESTING_SPEED
 
 
 def _footprint(model, data, g):

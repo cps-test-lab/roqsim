@@ -191,6 +191,28 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_viewer_cannot_close(tmp
     assert sim._engine is None and sim._viewer is None
 
 
+def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, monkeypatch):
+    """After a failed setup the next call builds a fresh engine rather than stepping the broken one."""
+    from roqsim.engine import Engine
+
+    real_setup = Engine.setup
+
+    def failing_setup(self):
+        raise RuntimeError("configure failed")
+
+    monkeypatch.setattr(Engine, "setup", failing_setup)
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(RuntimeError, match="configure failed"):
+        sim.reset()
+    assert sim.context is None
+
+    monkeypatch.setattr(Engine, "setup", real_setup)
+    sim.step()
+    assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
+    sim.shutdown()
+
+
 def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
     """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
     world = _write_world(tmp_path)
