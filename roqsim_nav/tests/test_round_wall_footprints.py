@@ -1,8 +1,8 @@
 """A round geom lying on its side is a wall along its whole length.
 
 A capsule or cylinder placed with ``fromto`` along the floor (a rail, a pipe, a beam) spans its
-length in x/y. Drawn in its local xy plane its footprint was a sliver at its centre, collinear, and
-the hull test discarded it -- the planner then routed straight through a 4 m obstacle.
+length in x/y, so its footprint is taken about its own axis in the world. Drawn in its local xy plane
+it would be a collinear sliver at its centre, which the hull test discards.
 """
 
 from __future__ import annotations
