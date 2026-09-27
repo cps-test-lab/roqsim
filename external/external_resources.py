@@ -75,11 +75,8 @@ def _format_license(text: str) -> str:
 def _download(url: str, dst: Path) -> None:
     """Fetch *url* to *dst*: the whole file, or nothing.
 
-    The bytes land in a sibling ``.part`` file and take the destination's name only once the transfer
-    has completed, so a transfer that breaks off leaves nothing at ``dst``. A truncated file left
-    there would pass the "already have it" check on the next run -- for a source without a
-    ``sha256`` there is nothing else to tell it from a whole one -- and the conversion would then run
-    on half a mesh.
+    The bytes land in a sibling ``.part`` file renamed to ``dst`` once complete: a source without a
+    ``sha256`` is judged present by existing alone, so a truncated file must never sit at ``dst``.
     """
     part = dst.with_name(dst.name + ".part")
     try:

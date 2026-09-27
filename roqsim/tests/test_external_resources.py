@@ -2,8 +2,7 @@
 
 A source that declares no ``sha256`` is told apart from a missing one only by existing, so a transfer
 that broke off part-way must leave nothing behind: otherwise the next run reports ``have`` and the
-conversion runs on a truncated file. Lives here rather than under ``external/`` because that
-directory is not a package; skipped in a checkout that does not carry it.
+conversion runs on a truncated file. Skipped in a checkout that does not carry ``external/``.
 """
 
 from __future__ import annotations
