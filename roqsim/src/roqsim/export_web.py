@@ -825,7 +825,11 @@ def main(argv: list | None = None) -> int:
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="path to a bare MJCF file (compiled directly)")
+    source.add_argument(
+        "--mjcf",
+        help="path to a bare MJCF file (compiled directly; it has no world for --set or --override "
+        "to change, so they are refused with it)",
+    )
     parser.add_argument("--out", required=True, help="output directory for scene.json/scene.bin")
     parser.add_argument(
         "--skip-plugins",
@@ -860,6 +864,13 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf and (args.overrides or args.override_files):
+        # Refused rather than ignored: an export that dropped them would be geometry the caller
+        # believes is overridden and is not. parser.error exits 2, the bad-input code.
+        parser.error(
+            "--set and --override change a world YAML before it compiles, and --mjcf compiles a "
+            "bare MJCF with no world to change -- export the world with --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     logger = logging.getLogger("roqsim.export_web")
