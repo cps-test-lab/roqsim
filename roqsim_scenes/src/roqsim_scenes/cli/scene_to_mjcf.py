@@ -39,6 +39,7 @@ import mujoco
 import yaml
 
 from roqsim import surfaces
+from roqsim.document import refuse_unknown_keys
 from roqsim.textures import UVScaler, resolve_texture, texture_manifest
 from roqsim_scenes import scene_mesh_io as mio
 
@@ -65,9 +66,8 @@ def _resolve_scene(scene: str) -> str:
     return os.path.join(path, "scene.json") if os.path.isdir(path) else path
 
 
-#: Every key the bake reads from its config, by block. A key outside these is refused rather than
-#: dropped: a misspelt ``ground_z`` or ``physical_size`` would otherwise bake a scene with the default
-#: in its place, and the file looks applied while the geometry says something else.
+#: Every key the bake reads from its config, by block. A key outside these is refused: a misspelt
+#: ``ground_z`` or ``physical_size`` would otherwise bake the default in its place.
 CONFIG_KEYS = frozenset(
     {"ground_plane", "ground_z", "floor", "light", "materials", "collision", "origin"}
 )
@@ -79,8 +79,7 @@ MATERIAL_KEYS = frozenset({"match", "texture", "rgba", "reflectance", "emission"
 def _load_config(scene_json: str, explicit: str | None) -> dict:
     """Load the generation config: ``--config`` if given, else ``scene.yaml`` beside scene.json, else {}.
 
-    Checked against :data:`CONFIG_KEYS` and the per-block sets before anything reads it, so a key
-    nothing consumes is refused here with the nearest known one named.
+    Checked by :func:`check_config` before anything reads it.
     """
     path = explicit or os.path.join(os.path.dirname(scene_json), "scene.yaml")
     if os.path.isfile(path):
@@ -93,31 +92,11 @@ def _load_config(scene_json: str, explicit: str | None) -> dict:
 
 def check_config(config: dict, where: str) -> None:
     """Refuse a bake config carrying a key no block reads (see :data:`CONFIG_KEYS`)."""
-    if not isinstance(config, dict):
-        raise ValueError(f"{where}: the bake config must be a mapping at the top level")
-    _refuse_unknown(config, CONFIG_KEYS, where)
-    _refuse_unknown(config.get("floor") or {}, FLOOR_KEYS, f"{where}: floor")
-    _refuse_unknown(config.get("light") or {}, LIGHT_KEYS, f"{where}: light")
+    refuse_unknown_keys(config, CONFIG_KEYS, where)
+    refuse_unknown_keys(config.get("floor") or {}, FLOOR_KEYS, f"{where}: floor")
+    refuse_unknown_keys(config.get("light") or {}, LIGHT_KEYS, f"{where}: light")
     for i, entry in enumerate(config.get("materials") or []):
-        _refuse_unknown(entry, MATERIAL_KEYS, f"{where}: materials[{i}]")
-
-
-def _refuse_unknown(block, known: frozenset[str], where: str) -> None:
-    if not isinstance(block, dict):
-        raise ValueError(f"{where}: must be a mapping, not {type(block).__name__}")
-    unknown = sorted(set(block) - known)
-    if not unknown:
-        return
-    from difflib import get_close_matches
-
-    named = []
-    for key in unknown:
-        match = get_close_matches(str(key), sorted(known), n=1, cutoff=0.8)
-        named.append(f"{key!r} (did you mean {match[0]!r}?)" if match else repr(key))
-    raise ValueError(
-        f"{where}: unknown key(s) {', '.join(named)}; it takes {', '.join(sorted(known))}. "
-        f"Nothing reads any other key, so it would be ignored rather than applied."
-    )
+        refuse_unknown_keys(entry, MATERIAL_KEYS, f"{where}: materials[{i}]")
 
 
 def _physical_size(entry: dict) -> float:
