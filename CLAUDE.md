@@ -62,6 +62,10 @@ Role, then allowed roqsim dependencies (each `pyproject.toml` is authoritative).
 - **`sim.contact_override` is global and pre-compile; `model_override` is aimed and at runtime.**
   Per-geom values belong in the model; one owner per knob, so never add `opt.*` to `model_override`'s
   allowlist. A flex's material is `flex_material`, before compile. Architecture §4 and §9.2.
+- **Aerial worlds fail silently in two ways.** A world with no `density`/`viscosity` is a vacuum, so
+  nothing damps a drone; a multirotor MJCF has no stabiliser, so an uncommanded drone falls, which is
+  why its manifest pulls the controller in (unless an external flight stack flies it). Architecture §4,
+  the `sim.density` note.
 - Sensor noise is per-sensor config; there is no generic error-model framework, on purpose. Architecture §9.
 - `roqsim health` is a reader: a separate process tailing the run's CSVs, never inside the simulator or
   behind a bridge, so it does not share the failure modes it diagnoses. `docs/quickstart.rst`.
