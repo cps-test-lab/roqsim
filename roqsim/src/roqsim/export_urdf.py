@@ -73,7 +73,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .export_mesh import _quat_to_mat
 
 logger = logging.getLogger(__name__)
@@ -1051,6 +1051,11 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export urdf",
         description="Export one robot's kinematic tree from a compiled roqsim world to URDF for MoveIt.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is --check finding the URDF's kinematics off the MJCF's by more than --tolerance.",
+        ),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
@@ -1184,11 +1189,13 @@ def main(argv: list | None = None) -> int:
         tree = exporter.export()
     else:
         if args.strip is not None:
-            raise SystemExit(
+            print(
                 "roqsim export urdf: --strip cannot be used with several --prefix values. Each "
                 "robot keeps its own MJCF prefix there, which is what makes the combined "
-                "description's link and joint names unique."
+                "description's link and joint names unique.",
+                file=sys.stderr,
             )
+            return exit_status.BAD_INPUT
         parts, exporters = [], []
         for prefix in prefixes:
             root_body = _first_body(model, prefix)
@@ -1251,7 +1258,7 @@ def main(argv: list | None = None) -> int:
                 where,
                 args.tolerance,
             )
-            return 1
+            return exit_status.FINDING
 
     if args.manifest:
         from .config import world_sources
@@ -1264,7 +1271,7 @@ def main(argv: list | None = None) -> int:
         Path(args.manifest).parent.mkdir(parents=True, exist_ok=True)
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":
