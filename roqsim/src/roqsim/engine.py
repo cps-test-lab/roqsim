@@ -308,11 +308,9 @@ class Engine:
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
 
-        # A configure that fails leaves the plugins before it holding what configure opens -- a
-        # spin thread, a file, a node -- and the driver never receives an engine to shut down, so
-        # the failing setup shuts them down itself, in reverse order as a shutdown is. The failing
-        # plugin is included: it may have opened its resources before the line that raised. Only
-        # here, not for the build loop: nothing is open before configure.
+        # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
+        # every plugin configured so far, the failing one included (it may have opened something
+        # before it raised). Build opens nothing, so the build loop needs no such guard.
         configured: list[Plugin] = []
         try:
             for plugin in self.plugins:
@@ -323,7 +321,7 @@ class Engine:
                 # gets the world's `present:` honoured by declaring that it registers one.
                 plugin.apply_declared_presence(self.ctx)
         except BaseException:
-            self._shutdown_plugins(configured, "after a configure failed")
+            self._shutdown_plugins(configured, " after a configure failed")
             raise
 
     def _apply_contact_override(self, spec) -> None:
@@ -453,7 +451,7 @@ class Engine:
             try:
                 self._timed(plugin, "shutdown", plugin.shutdown, self.ctx)
             except Exception:
-                self.logger.exception("plugin %s shutdown failed %s", plugin.name, why)
+                self.logger.exception("plugin %s shutdown failed%s", plugin.name, why)
 
     # -- introspection ------------------------------------------------------------------------
     @property
