@@ -557,9 +557,7 @@ def main(argv: list | None = None) -> int:
     )
     args = ap.parse_args(argv)
 
-    # Every way an input can be wrong ends here as one line and a distinct exit status, because the
-    # caller is usually a loop -- the scene-update skill, a script -- that greps stderr and branches
-    # on the status. A traceback names the same fault and is neither.
+    # Every way an input can be wrong ends here as one line and exit 2 (see the module docstring).
     try:
         floorplan = _read_json(args.floorplan, "floorplan")
         markers_map = _read_json(args.markers_map, "markers map") if args.markers_map else {}
