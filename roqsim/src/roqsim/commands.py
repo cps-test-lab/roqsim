@@ -227,7 +227,17 @@ class BlenderToolCommand(ToolCommand):
         return spec.origin
 
     def _forward(self, args):
-        cmd = [self._blender(), "--background", "--python", self._script(), "--", *args]
+        # Blender exits 0 when the script raises, unless told otherwise.
+        cmd = [
+            self._blender(),
+            "--background",
+            "--python-exit-code",
+            "1",
+            "--python",
+            self._script(),
+            "--",
+            *args,
+        ]
         raise SystemExit(subprocess.call(cmd))
 
     def get_help(self, ctx) -> str:

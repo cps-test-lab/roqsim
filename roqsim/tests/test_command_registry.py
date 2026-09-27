@@ -284,6 +284,7 @@ def _missing_input_cases(root: Path) -> dict[str, list[str]]:
     """One invocation per tool that names an input which is not there, and nothing else wrong."""
     nope = str(root / "nope")
     return {
+        "assets reduce-mesh": [f"{nope}.glb", str(root / "out.obj")],
         "sim": [f"{nope}.yaml", "--headless"],
         "render": [f"{nope}.yaml", "--out", str(root / "x.png")],
         "render --state": ["--state", f"{nope}.npz", "--out", str(root / "x.png")],
