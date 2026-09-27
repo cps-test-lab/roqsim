@@ -270,7 +270,6 @@ def _spot_policy() -> Path:
     return Path(roqsim_quadruped.__file__).parent / "policy" / "spot_policy.pt"
 
 
-_STALE_JOINTS = "_jpos/_jvel serve the previous trial's last joint state until the first step"
 _STALE_SCAN = "_payload_value serves the previous trial's last scan until the first cast"
 
 
@@ -322,13 +321,22 @@ CASES: dict[str, Case] = {
     "flex_material": Case(_flex_world),
     "heightfield": _static({"heightfield": {"size": [4.0, 4.0], "resolution": 32, "seed": 3}}),
     # mobile
-    "diff_drive": Case(lambda _: _mobile(), defect=_STALE_JOINTS),
+    "diff_drive": Case(
+        lambda _: _mobile(),
+        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
+    ),
     "spawn_robot": Case(lambda _: _mobile()),
-    "omni_drive": Case(lambda _: _world(_robot("lgdxrobot2")), defect=_STALE_JOINTS),
+    "omni_drive": Case(
+        lambda _: _world(_robot("lgdxrobot2")),
+        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
+    ),
     "floorplan": _static(
         {"floorplan": {"lines": [{"id": 0, "x0_m": 2.0, "y0_m": -2.0, "x1_m": 2.0, "y1_m": 2.0}]}}
     ),
-    "ackermann_drive": Case(lambda _: _world(_robot("piracer")), defect=_STALE_JOINTS),
+    "ackermann_drive": Case(
+        lambda _: _world(_robot("piracer")),
+        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
+    ),
     # navigation and people
     "navigator": Case(
         lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}}),
