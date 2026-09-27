@@ -178,9 +178,10 @@ roqsim scenes scene-to-mjcf --scene <name> \
 ```
 
 `--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor, turned YAW
-degrees about its footprint centre). Textures resolve via `roqsim.textures` (`roqsim_assets:<Name>`
-or a PNG path); the meshes carry metre-scale UVs, so `physical_size` sets true tile scale (the baker
-scales the UVs, since MuJoCo ignores `texrepeat` on a UV'd mesh).
+radians about its footprint centre, as a world's `pose:` reads its `yaw`). Textures resolve via
+`roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
+`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on
+a UV'd mesh).
 
 **Collision** is convex per object by default (`collision: convex`); walls/columns/doors are near-convex
 so their hulls are exact, a concave prop collides as its filled hull. `collision: none` makes the scene

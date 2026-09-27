@@ -6,7 +6,8 @@ ships its own semantic materials (glass, timber, concrete, terrazzo) and lightin
 We keep that look verbatim and only layer on what a runnable world needs and the source shell lacks:
 
 - an invisible **ground-plane collider** (``friction=2``, group 3, name ``floor``) sized to the scene,
-- optional **props** dropped in on the floor (e.g. the office table the UR10e mounts on),
+- optional **props** dropped in on the floor (e.g. the office table the UR10e mounts on), as
+  ``--prop PATH,X,Y[,YAW]``: footprint centre at X,Y, YAW in radians about it,
 - a self-contained ``assets/`` dir (every referenced mesh copied next to the XML, relative paths).
 
 The floor/prop/relocation logic is reused from :mod:`scene_to_mjcf` so both bakers stay in sync. The
@@ -87,7 +88,7 @@ def main(argv: list | None = None) -> None:
         "--prop",
         action="append",
         default=[],
-        help="prop to add: 'PATH,X,Y[,YAW]', footprint centre at X,Y, YAW in degrees",
+        help="prop to add: 'PATH,X,Y[,YAW]', footprint centre at X,Y, YAW in radians",
     )
     ap.add_argument(
         "--ground-z", type=float, help="ground-plane height (default: scene's lowest point)"
