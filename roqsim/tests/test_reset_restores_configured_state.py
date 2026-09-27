@@ -338,11 +338,7 @@ CASES: dict[str, Case] = {
         defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
     ),
     # navigation and people
-    "navigator": Case(
-        lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}}),
-        defect="_commanded survives the reset, and the handle's pose, the core's per-tick inputs "
-        "and the planner stay the previous trial's until the first tick",
-    ),
+    "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
             "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},

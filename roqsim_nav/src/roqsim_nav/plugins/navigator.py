@@ -596,7 +596,12 @@ class NavigatorPlugin(Plugin):
         self._state.pos = np.array([x, y], dtype=float)
         self._state.yaw = yaw
         self._state.waypoints[0] = (x, y)
+        # Built again on the first tick, against this episode's world.
+        self._core.planner = None
         self._core.reset()
+        # What `status()` and the handle's `pose` answer before the first tick.
+        self._core.observe(ctx.sim_time, (x, y), None)
+        self._pose_snapshot = (x, y, yaw)
         # First point at which every entity in the document has registered, so `caution.ignore` can
         # name one declared after this mover.
         self._caution.resolve_ignored(ctx)
@@ -604,6 +609,7 @@ class NavigatorPlugin(Plugin):
         self._accum = 0.0
         self._started = bool(self.config.get("autostart", True))
         # Episode N must not inherit episode N-1's route, nor its completion latch.
+        self._commanded = False
         st = self._state
         st.waypoints = np.asarray([(x, y), *self._configured_goals], dtype=float)
         st.dwell = _dwell_list(self._dwell_spec, len(st.waypoints))
