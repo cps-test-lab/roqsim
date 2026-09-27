@@ -633,7 +633,7 @@ A relative path is anchored to ``RUN_OUTPUT_DIR`` (this run's own result directo
 wherever the launch left the working directory; otherwise it resolves against the working directory as
 usual. Deliberately *not* ``SCENARIO_OUTPUT_DIR``: that is the root shared by every run of a batch, so
 anchoring a per-run file there gives one path that each run of a sweep overwrites in turn. Recording stays a *session*
-concern either way — the same footing as ``sim.headless``, which a world YAML may not set (it is ignored, with a warning) — so
+concern either way — the same footing as ``sim.headless``, which a world YAML ignores with a warning — so
 there is no route to it through the world.
 
 A recording also converts to a **browser run capture** — the motion half of replaying a run in a web
@@ -935,9 +935,8 @@ The adapter can also leave a browser scene descriptor next to the run: set
 ``scene.bin`` (+ textures) into that directory after ``reset()`` — the same format
 ``roqsim export web`` produces, but of the *exact* simulated world (``world_overrides``
 included), captured at its true initial pose. A relative path resolves against the scenario's
-``output_dir`` (which scenario-execution passes to ``setup()``; under a run harness that is the run's
-result directory, so the descriptor ships as an ordinary run artifact for web viewers), falling back to
-the process working directory.
+``output_dir`` (which scenario-execution passes to ``setup()``), falling back to the process working
+directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
