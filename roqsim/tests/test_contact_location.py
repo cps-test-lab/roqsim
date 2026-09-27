@@ -300,3 +300,23 @@ def test_a_rate_the_timestep_divides_refreshes_on_every_period():
         last = stamp
     gaps = {b - a for a, b in zip(refreshed, refreshed[1:], strict=False)}
     assert gaps == {10}, f"refresh spacing in steps: {sorted(gaps)}"
+
+
+def test_a_reset_restarts_the_decimation_phase():
+    """Each trial is evaluated on the same steps, whatever step the previous trial ended on."""
+
+    def first_refresh(ctx, plugin):
+        while True:
+            mujoco.mj_step(ctx.model, ctx.data)
+            plugin.post_step(ctx)
+            if plugin.read_state().time > 0.0:
+                return plugin.read_state().time
+
+    ctx, plugin = _plugin(*_build(), compute_rate_hz=10.0)
+    fresh = first_refresh(ctx, plugin)
+    for _ in range(round(0.03 / ctx.model.opt.timestep)):  # end the trial mid-interval
+        mujoco.mj_step(ctx.model, ctx.data)
+        plugin.post_step(ctx)
+    mujoco.mj_resetData(ctx.model, ctx.data)
+    plugin.on_reset(ctx)
+    assert first_refresh(ctx, plugin) == pytest.approx(fresh)
