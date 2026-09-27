@@ -41,6 +41,7 @@ import yaml
 from roqsim import surfaces
 from roqsim.document import refuse_unknown_keys
 from roqsim.textures import UVScaler, resolve_texture, texture_manifest
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -392,6 +393,7 @@ def build_spec(
     """Build the MjSpec for a scene + props. ``uv_scaler`` must outlive the caller's asset relocation."""
     with open(scene_json) as fh:
         manifest = json.load(fh)
+    scene_manifest_format.check(manifest, scene_json)
     meshdir = os.path.dirname(scene_json)
     materials = config.get("materials") or []
     collide_scene = config.get("collision", "convex") == "convex"

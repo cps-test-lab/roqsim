@@ -284,6 +284,24 @@ def test_compute_rate_hz_decimates_the_whole_computation():
     assert r_dec.x == pytest.approx(r_full.x, abs=0.05)
 
 
+def test_a_rate_the_timestep_divides_refreshes_on_every_period():
+    """20 Hz on a 5 ms step is every tenth step: the summed timesteps reach the period a hair
+    short of it, and the gate must still take that step rather than the next."""
+    model, data = _build(front_x=0.6)
+    model.opt.timestep = 0.005
+    ctx, plugin = _plugin(model, data, compute_rate_hz=20.0)
+    refreshed, last = [], plugin.read_state().time
+    for step in range(1, 401):
+        mujoco.mj_step(ctx.model, ctx.data)
+        plugin.post_step(ctx)
+        stamp = plugin.read_state().time
+        if stamp != last:
+            refreshed.append(step)
+        last = stamp
+    gaps = {b - a for a, b in zip(refreshed, refreshed[1:], strict=False)}
+    assert gaps == {10}, f"refresh spacing in steps: {sorted(gaps)}"
+
+
 def test_a_reset_restarts_the_decimation_phase():
     """Each trial is evaluated on the same steps, whatever step the previous trial ended on."""
 

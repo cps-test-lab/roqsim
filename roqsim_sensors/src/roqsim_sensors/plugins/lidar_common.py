@@ -337,7 +337,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         # Cast at the sensor's own rate, not every physics step; the endpoint reads the latest value.
-        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return
         if (
             self.lazy
