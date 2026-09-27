@@ -1374,8 +1374,8 @@ A velocity command: odometry and the watchdog
 ---------------------------------------------
 
 Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
-``diff_drive``, ``omni_drive``, ``ackermann_drive`` and ``spot_locomotion``. Both are in
-:mod:`roqsim.odometry`, for a plugin of your own to keep too.
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion`` and
+``oli_locomotion``. Both are in :mod:`roqsim.odometry`, for a plugin of your own to keep too.
 
 **Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
 first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
