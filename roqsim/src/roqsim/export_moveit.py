@@ -1245,9 +1245,12 @@ def _run(args, log) -> int:
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if skip:
         cfg.plugins = [p for p in cfg.plugins if p.ref not in skip and (p.name or "") not in skip]
-    engine = Engine(cfg, preview=True)
-    engine.setup()
+    with Engine(cfg, preview=True) as engine:
+        return _export(args, log, engine)
 
+
+def _export(args, log, engine) -> int:
+    """Write the MoveIt configuration for the arms in *engine*'s world."""
     pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
     if not pipelines:
         raise ValueError("--pipelines named none; move_group needs at least one planning pipeline")

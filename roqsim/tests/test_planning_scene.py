@@ -14,6 +14,7 @@ import mujoco
 import pytest
 import yaml
 
+from roqsim import exit_status
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.export_moveit import SCENE_FILE, main
@@ -201,14 +202,14 @@ def _prop(model: str, name: str, x: float, z: float, motion: str = "static") -> 
     }
 
 
-def _export(tmp_path, world: dict, *extra):
+def _export(tmp_path, world: dict, *extra, expect: int = exit_status.OK):
     (tmp_path / "cell.yaml").write_text(yaml.safe_dump(world), encoding="utf-8")
     out = tmp_path / "gen"
     # Far below the Setup Assistant's 10000: the collision matrix is not what is under test here.
     code = main(
         ["--world", str(tmp_path / "cell.yaml"), "--out", str(out), "--samples", "40", *extra]
     )
-    assert code == 0
+    assert code == expect
     return out
 
 
@@ -339,15 +340,15 @@ def test_two_arms_in_one_description_write_the_scene_in_their_common_root(tmp_pa
     assert objects["wall_px"]["header"]["frame_id"] == "base_link"
 
 
-def test_an_arm_with_no_prefix_is_refused_rather_than_given_an_empty_scene(tmp_path):
+def test_an_arm_with_no_prefix_is_refused_rather_than_given_an_empty_scene(tmp_path, capsys):
     """The URDF export selects the robot's bodies by name prefix, so with none it takes every body in
     the world and the scene would come out empty for a reason nothing in it explains."""
     world = {"sim": {}, "plugins": [_prop("industrial_table", "bench", 0.0, 0.0), _arm(prefix="")]}
-    with pytest.raises(SystemExit, match="needs the arm to have an MJCF `prefix:`"):
-        _export(tmp_path, world, "--scene")
+    _export(tmp_path, world, "--scene", expect=exit_status.BAD_INPUT)
+    assert "needs the arm to have an MJCF `prefix:`" in capsys.readouterr().err
 
 
-def test_a_robot_that_is_not_welded_down_is_refused(tmp_path):
+def test_a_robot_that_is_not_welded_down_is_refused(tmp_path, capsys):
     """Its base rides a free joint, so MoveIt plans in a frame TF provides. A prop's pose is fixed in
     the WORLD and the offset between the two is a run-time quantity, so a scene written here would be
     right only until the base moved."""
@@ -369,8 +370,8 @@ def test_a_robot_that_is_not_welded_down_is_refused(tmp_path):
             },
         ],
     }
-    with pytest.raises(SystemExit, match="base is not welded"):
-        _export(tmp_path, world, "--scene")
+    _export(tmp_path, world, "--scene", expect=exit_status.BAD_INPUT)
+    assert "base is not welded" in capsys.readouterr().err
 
 
 def test_the_robot_geoms_a_touch_is_measured_against_are_the_ones_the_urdf_collides(cell):

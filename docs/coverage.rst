@@ -88,8 +88,7 @@ refused for an MJCF ``--world``.
 ``placements.json`` is a list of ``{type, pos, rpy, config?}`` using catalog types. The
 ``estimate`` report carries ``achieved`` (coverage fractions), ``uncovered_regions`` (where to add a
 sensor), ``per_sensor_contribution`` (redundant sensors have ``unique_points: 0``), and ``per_object``.
-The refine loop — evaluate, read the gaps, adjust ``placements.json``, re-evaluate — is what the
-``sensor-coverage`` skill drives.
+To refine a layout, evaluate, read the gaps, adjust ``placements.json`` and evaluate again.
 
 **Per-region coverage.** ``--regions`` restricts the *question* to named areas without touching the
 sampler: it takes a JSON of ``{name, polygon|bbox, z_min?, z_max?}`` regions **or** a scene's

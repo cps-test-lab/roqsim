@@ -1,4 +1,4 @@
-"""Tests for the sensor-coverage subpackage: FOV membership, adapters, and the coverage engine."""
+"""Tests for the coverage subpackage: FOV membership, adapters, and the coverage engine."""
 
 from __future__ import annotations
 
@@ -732,3 +732,28 @@ def test_an_override_with_an_mjcf_world_is_refused_by_name(tmp_path, capsys, fla
         capsys.readouterr().err
     )
     assert not (tmp_path / "run").exists()
+
+
+def test_loading_a_world_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkeypatch):
+    """The ``dummy`` plugin counts its own shutdowns."""
+    from roqsim_sensors.coverage.cli import load_world
+
+    from roqsim.engine import Engine
+
+    seen: list[Engine] = []
+    setup = Engine.setup
+
+    def recording_setup(self):
+        seen.append(self)
+        setup(self)
+
+    def fails(*args, **kwargs):
+        raise RuntimeError("injected after setup")
+
+    monkeypatch.setattr(Engine, "setup", recording_setup)
+    monkeypatch.setattr(mujoco, "mj_forward", fails)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    with pytest.raises(RuntimeError, match="injected"):
+        load_world(str(world))
+    assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]
