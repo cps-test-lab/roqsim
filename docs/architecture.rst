@@ -254,6 +254,13 @@ measurement rather than an incidental.
    reconfigure every world it was spawned into. ``wind`` is inert without a medium, since MuJoCo
    feeds it into the drag terms.
 
+   A multirotor MJCF has no stabiliser either: it exposes thrust and body moments, and nothing
+   holds it level, so an uncommanded drone does not stand still -- it falls. Its manifest therefore
+   pulls in whatever stabilises it inside the simulator (``crazyflie_2`` pulls in
+   ``quadrotor_controller``); an airframe whose stabiliser is an external flight stack pulls in only
+   its motor model (``x500`` pulls in ``multirotor_motors``) and falls until that stack, a scenario
+   or a publisher drives it.
+
 ``sim.contact_override`` sets MuJoCo's global ``o_solref`` / ``o_solimp`` / ``o_friction``, which
 replace every contact's own parameters::
 
