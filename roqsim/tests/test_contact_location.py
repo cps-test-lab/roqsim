@@ -282,3 +282,23 @@ def test_compute_rate_hz_decimates_the_whole_computation():
     assert r_full.in_contact is True
     assert r_dec.in_contact is True
     assert r_dec.x == pytest.approx(r_full.x, abs=0.05)
+
+
+def test_a_reset_restarts_the_decimation_phase():
+    """Each trial is evaluated on the same steps, whatever step the previous trial ended on."""
+
+    def first_refresh(ctx, plugin):
+        while True:
+            mujoco.mj_step(ctx.model, ctx.data)
+            plugin.post_step(ctx)
+            if plugin.read_state().time > 0.0:
+                return plugin.read_state().time
+
+    ctx, plugin = _plugin(*_build(), compute_rate_hz=10.0)
+    fresh = first_refresh(ctx, plugin)
+    for _ in range(round(0.03 / ctx.model.opt.timestep)):  # end the trial mid-interval
+        mujoco.mj_step(ctx.model, ctx.data)
+        plugin.post_step(ctx)
+    mujoco.mj_resetData(ctx.model, ctx.data)
+    plugin.on_reset(ctx)
+    assert first_refresh(ctx, plugin) == pytest.approx(fresh)
