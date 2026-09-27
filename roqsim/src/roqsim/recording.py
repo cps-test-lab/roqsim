@@ -85,10 +85,8 @@ class Recording:
     def close(self) -> None:
         """Shut the rebuilt world's plugins down, releasing what they hold. Idempotent.
 
-        A replayed sensor opens what a live one opens -- a camera its offscreen renderer, above all
-        -- and only its ``shutdown`` hook closes that again. Left to the interpreter, the renderer
-        is torn down after the GL backend has already been unloaded, which prints a traceback on
-        exit from a command that did its job. Nothing to do before :meth:`build`.
+        A replayed camera holds an offscreen renderer that only its ``shutdown`` releases; one left
+        to interpreter exit is torn down after the GL backend is gone. A no-op before :meth:`build`.
         """
         engine = getattr(self._ctx, "engine", None)
         self._model, self._ctx, self._data, self._buf, self._view = None, None, None, None, None

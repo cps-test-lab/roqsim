@@ -477,8 +477,7 @@ def run_state(
     decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    # Closed on every way out: a replayed sensor holds what a live one holds (a camera's renderer),
-    # and only the plugins' shutdown releases it -- see :meth:`roqsim.recording.Recording.close`.
+    # Closed on every way out, so a replayed camera's renderer is released (Recording.close).
     with open_recording(state) as rec:
         return _state_of(
             rec,
