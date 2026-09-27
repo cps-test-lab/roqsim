@@ -189,3 +189,25 @@ def test_scenario_adapter_shuts_the_engine_down_when_the_viewer_cannot_close(tmp
         sim.shutdown()
     assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
     assert sim._engine is None and sim._viewer is None
+
+
+def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
+    """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
+    world = _write_world(tmp_path)
+    run_dir, root = tmp_path / "run", tmp_path / "shared"
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(run_dir))
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (run_dir / "scene" / "scene.json").is_file()
+    assert not (root / "scene").exists()
+
+    # Without a per-run directory the scenario's own output_dir is the fallback.
+    monkeypatch.delenv("RUN_OUTPUT_DIR")
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (root / "scene" / "scene.json").is_file()

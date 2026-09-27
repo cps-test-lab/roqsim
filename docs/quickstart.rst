@@ -937,9 +937,9 @@ The adapter can also leave a browser scene descriptor next to the run: set
 ``ROQSIM_SCENE_EXPORT_DIR`` and every (re)built world is exported as ``scene.json`` +
 ``scene.bin`` (+ textures) into that directory after ``reset()`` — the same format
 ``roqsim export web`` produces, but of the *exact* simulated world (``world_overrides``
-included), captured at its true initial pose. A relative path resolves against the scenario's
-``output_dir`` (which scenario-execution passes to ``setup()``), falling back to the process working
-directory.
+included), captured at its true initial pose. A relative path is anchored to ``RUN_OUTPUT_DIR`` when it
+is set, else to the scenario's ``output_dir`` (which scenario-execution passes to ``setup()``), else to
+the process working directory.
 
 It **records** on the same environment contract the standalone runner uses (``ROQSIM_RECORD``,
 ``ROQSIM_CAPTURE_FPS``, ``ROQSIM_CAPTURE_EXPORT_DIR`` — see :ref:`recording-a-run`), with a
