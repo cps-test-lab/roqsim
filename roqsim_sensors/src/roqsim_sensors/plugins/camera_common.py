@@ -418,7 +418,9 @@ class CameraPlugin(Plugin):
         ]
 
     def _due(self, ctx: SimContext) -> bool:
-        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_capture < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return False
         gates = self._gate_endpoints()
         # `has_subscribers is None` = no introspection available (no bridge, or a backend that cannot
