@@ -165,6 +165,22 @@ def test_reset_returns_to_spawn():
         engine.shutdown()
 
 
+def test_reset_forgets_a_commanded_target():
+    """Trial 2 takes off toward the configured target, not toward where trial 1 was sent."""
+    engine, controller = _flown()
+    try:
+        _fly(engine, controller, 2.0)
+        controller.set_target(1.0, 1.0, 1.5, yaw=1.0)
+        engine.reset()
+        np.testing.assert_allclose(controller._target, [0.0, 0.0, 1.0])
+        assert controller._yaw == 0.0
+        pos = _fly(engine, controller, 6.0)
+        assert np.hypot(*pos[:2]) < 0.05, f"flew toward the previous trial's target: {pos}"
+        assert pos[2] == pytest.approx(1.0, abs=0.05)
+    finally:
+        engine.shutdown()
+
+
 def test_a_configured_body_that_does_not_resolve_is_refused():
     """A misspelt ``body:`` stops the run instead of flying the thrust actuator's body."""
     world = {

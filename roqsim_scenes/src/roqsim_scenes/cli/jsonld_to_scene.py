@@ -44,6 +44,7 @@ from pathlib import Path
 import numpy as np
 
 from roqsim.floorplan_collision import wall_colliders
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 #: Collider colour. Never rendered (``render: false`` puts them in group 3), but a debugger toggling
@@ -145,6 +146,7 @@ def build(mesh: Path, out_dir: Path, scene_name: str | None = None) -> dict:
         "objects": objects,
         "ground_z": float(lo[2]),
     }
+    manifest = scene_manifest_format.stamp(manifest)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "scene.json", "w") as fh:
         json.dump(manifest, fh, indent=2)
