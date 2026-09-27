@@ -40,8 +40,9 @@ Usage::
     roqsim assets collision diff office_table --tol 5      # a tighter question
     roqsim assets collision diff office_table --json       # machine-readable
 
-Exits ``5`` (``roqsim.exit_status``) when anything is FAIL or ERROR, so an agent or a CI step fails loudly rather than reading past
-it. To SEE what a verdict is talking about, render the two halves against each other::
+Exits ``5`` (``roqsim.exit_status``) when anything is FAIL or ERROR, so an agent or a CI step fails
+loudly rather than reading past it. To SEE what a verdict is talking about, render the two halves
+against each other::
 
     roqsim render office_table --geomgroup 2,3 --out check.png
 

@@ -15,11 +15,11 @@ Run with the root ``.venv`` and ``MUJOCO_GL=egl`` for headless rendering. Exampl
     roqsim sensors coverage estimate \\
         --world .../depot.xml --placements p.json --target k=1,frac=0.9 --out run/
 
-Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the report written; ``2`` and
-one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong -- a world that does not
-exist or does not load, a placements file that is missing, not JSON or not a list, an unknown sensor
-type or region. The agent driving the propose -> evaluate -> refine loop greps that line; a traceback
-means a crash, not a refused input.
+Exit status (``roqsim.exit_status``): ``0`` and a ``COVERAGE_OK`` / ``GREEDY_OK`` line naming the
+report written; ``2`` and one ``roqsim sensors coverage: ...`` line on stderr when an input is wrong
+-- a world that does not exist or does not load, a placements file that is missing, not JSON or not
+a list, an unknown sensor type or region. The agent driving the propose -> evaluate -> refine loop
+greps that line; a traceback means a crash, not a refused input.
 """
 
 from __future__ import annotations

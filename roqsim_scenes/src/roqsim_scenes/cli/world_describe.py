@@ -87,9 +87,10 @@ before the drop and still reports the bridge, so an override addressing it is st
 
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
 not loading the world -- the reply is printed with ``errors.build`` set and the build-fed keys left
-``null``, so a caller keeps the half that cost nothing (which plugin keys exist) instead of losing the
-lot. The exit code is ``2`` (``roqsim.exit_status.BAD_INPUT``): ``0`` goes on meaning "fully answered", and a caller that reads only
-the status must not be told a partial reply was a complete one.
+``null``, so a caller keeps the half that cost nothing (which plugin keys exist) instead of losing
+the lot. The exit code is ``2`` (``roqsim.exit_status.BAD_INPUT``): ``0`` goes on meaning "fully
+answered", and a caller that reads only the status must not be told a partial reply was a complete
+one.
 """
 
 from __future__ import annotations

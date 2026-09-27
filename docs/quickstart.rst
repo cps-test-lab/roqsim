@@ -814,10 +814,11 @@ the same row.
 
 **Who runs it, when a supervisor does.** A run harness executes this command itself, in the running
 container, on a bounded interval while somebody is watching the run — and reads ``--json``: the
-``findings``, and ``level`` in particular, are the contract it acts on. An ``error``-level finding is
-what such a supervisor ends a run on. So the exit code (:ref:`exit-status`) and the document are a public interface, and ``check`` slugs are names other
-software matches on rather than prints. Nothing is pushed from inside the run and nothing is written
-into a run's output by this: it is read on demand and answered.
+``findings``, and ``level`` in particular, are the contract it acts on. An ``error``-level finding
+is what such a supervisor ends a run on. So the exit code (:ref:`exit-status`) and the document are
+a public interface, and ``check`` slugs are names other software matches on rather than prints.
+Nothing is pushed from inside the run and nothing is written into a run's output by this: it is read
+on demand and answered.
 
 **What one check costs does not grow with the run.** Every check judges the newest minute, so each
 record is entered at the first row inside that window and the rows before it are never read; only
@@ -870,8 +871,9 @@ collision``, ``inspect-prop``) failing a prop. ``1`` is never returned on purpos
 the tool itself broke. Every other status comes with its reason: a line on stderr
 naming the command, or the report the tool prints (``check``, ``health``).
 
-The scene-builder windows (``roqsim builder``) are the one exception: they return a person's
-verdict on what they were shown, and :doc:`scene_builder` gives their statuses. Interrupting a command (Ctrl-C) exits ``130``, as a shell's convention has it.
+The scene-builder windows (``roqsim builder``) are the one exception: they return a person's verdict
+on what they were shown, and :doc:`scene_builder` gives their statuses. Interrupting a command
+(Ctrl-C) exits ``130``, as a shell's convention has it.
 
 Getting numbers out of a run
 ----------------------------

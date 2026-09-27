@@ -39,10 +39,11 @@ Usage::
         --markers-map markers.json          # {"1": "industrial_table",
                                             #  "2": {"model": "single_bed", "yaw_deg": 180}}
 
-Exit status (``roqsim.exit_status``): ``0`` and one line naming the world and the scene dir written; ``2`` and one
-``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a floorplan or
-map file that is missing or is not JSON, a floorplan with no walls, a marker without a model, a
-door on a line that is not there. A caller in a loop greps that line; it does not read a traceback.
+Exit status (``roqsim.exit_status``): ``0`` and one line naming the world and the scene dir written;
+``2`` and one ``roqsim scenes floorplan-to-world: ...`` line on stderr when an input is wrong -- a
+floorplan or map file that is missing or is not JSON, a floorplan with no walls, a marker without a
+model, a door on a line that is not there. A caller in a loop greps that line; it does not read a
+traceback.
 """
 
 from __future__ import annotations
