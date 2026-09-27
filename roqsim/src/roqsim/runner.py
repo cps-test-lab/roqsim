@@ -50,17 +50,15 @@ from .capture import (
 )
 from .clock import Pacer
 from .config import (
-    deep_merge,
     drop_transport,
     load_config,
     load_config_from_dict,
-    overrides_from_dotlist,
-    overrides_from_files,
     with_transport,
 )
 from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
+from .override_options import add_override_options, overrides_from_options
 from .plugin import PluginError
 from .rendering import GLBackendError
 from .replay import is_recording
@@ -959,9 +957,7 @@ def _replay(args, parser) -> int:
             f"{', '.join(stated)}: {args.target} is a recording, which is replayed rather than run. "
             "Those options drive a live simulation and have nothing to act on here."
         )
-    overrides = deep_merge(
-        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-    )
+    overrides = overrides_from_options(args)
     try:
         return run_replay(
             args.target,
@@ -1165,23 +1161,7 @@ def main(argv: list | None = None) -> int:
         help=f"samples per SIMULATED second (default: {DEFAULT_FPS}); accepts a fraction like 500/17. "
         "Snapped onto the world's physics step grid.",
     )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        metavar="PATH=VALUE",
-        help="override a world value, e.g. --set components.floorplan.floor.reflectance=0.3 "
-        "(repeatable)",
-    )
-    parser.add_argument(
-        "--override",
-        dest="override_files",
-        action="append",
-        metavar="FILE",
-        help="a YAML file of world overrides -- the file spelling of --set, for anything "
-        "structured enough that flattening it onto a command line loses it (repeatable; "
-        "later files and --set win)",
-    )
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -1233,11 +1213,9 @@ def main(argv: list | None = None) -> int:
             # The sliders live in the right panel, so manual control is useless without it.
             right_ui=args.right_ui or args.manual_control,
             manual_control=args.manual_control,
-            # Files first, --set last: a saved override set plus one ad-hoc tweak is the
-            # obvious way to use the two together, and the tweak is what should win.
-            overrides=deep_merge(
-                overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-            ),
+            # Files first, --set last (roqsim.override_options): the one merge every command
+            # that answers about this run's world uses.
+            overrides=overrides_from_options(args),
             record=args.record,
             capture_fps=args.capture_fps,
             video=args.video,

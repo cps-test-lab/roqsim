@@ -9,7 +9,8 @@ plugin. It bakes, once and offline:
   to honour ``physical_size`` -- MuJoCo ignores ``texrepeat`` on a UV'd mesh; a ``materials`` entry
   may also set ``reflectance`` and ``emission``),
 - a ground plane + hemispherical light,
-- optional extra props dropped in with ``--prop``.
+- optional extra props dropped in with ``--prop PATH,X,Y[,YAW]`` (footprint centre at X,Y, YAW in
+  radians about it).
 
 The look/collision/lighting come from a ``scene.yaml`` next to ``scene.json`` (``--config`` to override).
 All referenced meshes/textures are copied next to the XML into ``assets/`` (relative paths), so the
@@ -36,10 +37,12 @@ import sys
 from pathlib import Path
 
 import mujoco
+import numpy as np
 import yaml
 
 from roqsim import surfaces
 from roqsim.document import refuse_unknown_keys
+from roqsim.pose import parse_pose
 from roqsim.textures import UVScaler, resolve_texture, texture_manifest
 from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
@@ -363,11 +366,26 @@ def _slug(name: str) -> str:
     return re.sub(r"[^0-9A-Za-z_]", "_", name).strip("_") or "prop"
 
 
-def _add_prop(spec: mujoco.MjSpec, spec_str: str) -> str:
+def _parse_prop(spec_str: str) -> tuple[str, list[float], list[float]]:
+    """``(path, [x, y], quat)`` from ``PATH,X,Y[,YAW]``, YAW in radians as in a world's ``pose:``."""
     parts = spec_str.split(",")
-    path = os.path.abspath(parts[0])
-    x, y = float(parts[1]), float(parts[2])
-    yaw = math.radians(float(parts[3])) if len(parts) > 3 else 0.0
+    if len(parts) not in (3, 4):
+        sys.exit(f"--prop {spec_str!r}: expected PATH,X,Y[,YAW]")
+    values = {}
+    for field, text in zip(("X", "Y", "YAW"), parts[1:], strict=False):
+        try:
+            values[field] = float(text)
+        except ValueError:
+            sys.exit(f"--prop {spec_str!r}: {field} must be a number, got {text!r}")
+    pose = {"position": {"x": values["X"], "y": values["Y"]}}
+    if "YAW" in values:
+        pose["orientation"] = {"yaw": values["YAW"]}
+    (x, y, _), quat = parse_pose(pose)
+    return os.path.abspath(parts[0]), [x, y], quat
+
+
+def _add_prop(spec: mujoco.MjSpec, spec_str: str) -> str:
+    path, (x, y), quat = _parse_prop(spec_str)
     if not os.path.isfile(path):
         sys.exit(f"prop mesh not found: {path}")
     cx, cy, zmin = _obj_footprint(path)
@@ -381,8 +399,12 @@ def _add_prop(spec: mujoco.MjSpec, spec_str: str) -> str:
     g.name = name
     g.type = mujoco.mjtGeom.mjGEOM_MESH
     g.meshname = name
-    g.pos = [x - cx, y - cy, -zmin]  # footprint centred at (x, y), base on the floor
-    g.quat = [math.cos(yaw / 2), 0, 0, math.sin(yaw / 2)]
+    # Footprint centred at (x, y), base on the floor. The geom turns about the OBJ's origin, not its
+    # footprint centre, so the centre is subtracted rotated.
+    centre = np.zeros(3)
+    mujoco.mju_rotVecQuat(centre, np.array([cx, cy, 0.0]), np.array(quat))
+    g.pos = [x - centre[0], y - centre[1], -zmin]
+    g.quat = quat
     g.rgba = [0.62, 0.5, 0.38, 1.0]  # MuJoCo ignores OBJ .mtl; give the prop a neutral wood tone
     return name
 
@@ -485,7 +507,12 @@ def main(argv: list | None = None) -> None:
         "--config", help="generation config YAML (default: scene.yaml beside scene.json)"
     )
     ap.add_argument("--out", help="output MJCF path (default: worlds/<scene>/<scene>.xml)")
-    ap.add_argument("--prop", action="append", default=[], help="prop to add: 'PATH,X,Y[,YAW]'")
+    ap.add_argument(
+        "--prop",
+        action="append",
+        default=[],
+        help="prop to add: 'PATH,X,Y[,YAW]', footprint centre at X,Y, YAW in radians",
+    )
     args = ap.parse_args(argv)
 
     scene_json = _resolve_scene(args.scene)
