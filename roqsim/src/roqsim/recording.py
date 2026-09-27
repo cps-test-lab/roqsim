@@ -32,7 +32,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .capture import STATE_SPEC, RecordingError, record_dtype
+from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
 from .document import check_version
 
 log = logging.getLogger(__name__)
@@ -92,9 +92,14 @@ class Recording:
 
         A replayed camera holds an offscreen renderer that only its ``shutdown`` releases; one left
         to interpreter exit is torn down after the GL backend is gone. A no-op before :meth:`build`.
+
+        The replay failures and the plugins already warned about belong to the closed world: a
+        rebuilt one's plugin can reuse a closed one's ``id``, and would not be warned about.
         """
         engine = getattr(self._ctx, "engine", None)
         self._model, self._ctx, self._data, self._buf, self._view = None, None, None, None, None
+        self.replay_failures = []
+        self._warned.clear()
         if engine is not None:
             engine.shutdown()
 
@@ -509,7 +514,7 @@ def open_recording(path: str | Path) -> Recording:
     """Open a ``.npz`` recording, validating its shape before anything expensive happens."""
     path = Path(path)
     if not path.exists():
-        raise RecordingError(f"{path}: no such recording")
+        raise RecordingNotFoundError(f"{path}: no such recording")
     try:
         archive = np.load(path, allow_pickle=False)
     except Exception as err:

@@ -34,8 +34,8 @@ import logging
 import time
 from pathlib import Path
 
+from . import exit_status, overlay
 from . import keys as keybind
-from . import overlay
 from .key_state import KeyState
 from .playback import Timeline
 from .recording import open_recording
@@ -469,7 +469,7 @@ def run_replay(
     recording world's own. ``world`` names the world to rebuild from instead of the recording's own
     provenance -- for a run whose world loaded files from beside itself that are not beside the
     recording; the provenance check still refuses one that does not match. Returns ``0`` once the
-    window has been open, ``2`` with no display for it.
+    window has been open, :data:`~roqsim.exit_status.NO_GL` with no display for it.
     """
     from .viewer import (
         GL_HELP,
@@ -484,7 +484,7 @@ def run_replay(
 
     if not has_display():
         log.error("no DISPLAY: replaying a run needs a graphical session.")
-        return 2
+        return exit_status.NO_GL
 
     path = Path(state)
     rec = open_recording(path)
