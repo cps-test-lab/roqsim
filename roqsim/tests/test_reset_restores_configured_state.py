@@ -323,10 +323,7 @@ CASES: dict[str, Case] = {
     "floorplan": _static(
         {"floorplan": {"lines": [{"id": 0, "x0_m": 2.0, "y0_m": -2.0, "x1_m": 2.0, "y1_m": 2.0}]}}
     ),
-    "ackermann_drive": Case(
-        lambda _: _world(_robot("piracer")),
-        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
-    ),
+    "ackermann_drive": Case(lambda _: _world(_robot("piracer"))),
     # navigation and people
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
