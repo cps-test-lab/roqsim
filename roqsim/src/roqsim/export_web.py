@@ -47,14 +47,12 @@ import numpy as np
 
 from . import exit_status, flex_skin, logging_setup
 from .config import (
-    deep_merge,
     drop_transport_plugins,
     load_config,
-    overrides_from_dotlist,
-    overrides_from_files,
     world_sources,
 )
 from .engine import Engine
+from .override_options import add_override_options, overrides_from_options
 
 #: What ``scene.json`` declares itself to be. The other ``scene.json`` in this tree -- a
 #: ``roqsim_scenes`` scene manifest, a bill of meshes and bounds -- shares the file name and nothing
@@ -835,27 +833,9 @@ def main(argv: list | None = None) -> int:
         help="comma-separated plugin names/refs to drop before compiling, on top of the "
         "transport/bridge plugins (which contribute no geometry and are always dropped)",
     )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        default=[],
-        metavar="path.to.key=value",
-        help="override a world value before compiling, e.g. "
-        "--set components.floorplan.mesh=/abs/rooms.stl (repeatable)",
-    )
-    parser.add_argument(
-        "--override",
-        dest="override_files",
-        action="append",
-        default=[],
-        metavar="FILE",
-        help="a YAML file of world overrides -- the file spelling of --set, for anything "
-        "structured enough that flattening it onto a command line loses it (repeatable; "
-        "later files and --set win). The same flag, and the same loader, as `roqsim sim`: a "
-        "campaign whose overrides are a nested tree (a list of obstacle instances, say) can "
-        "hand this exporter exactly what it handed the run",
-    )
+    # The options, and the merge, `roqsim sim` uses: a campaign whose overrides are a nested tree
+    # (a list of obstacle instances, say) hands this exporter exactly what it handed the run.
+    add_override_options(parser)
     parser.add_argument(
         "--settle-steps",
         type=int,
@@ -885,12 +865,9 @@ def main(argv: list | None = None) -> int:
     logger = logging.getLogger("roqsim.export_web")
 
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
-    # Files first, then --set, so the two spell one thing and the flat one wins on a
-    # collision -- identical to `roqsim sim`, because an export that resolved overrides
+    # Resolved by the same function as `roqsim sim`'s, because an export that resolved overrides
     # differently from the run would compile geometry the run never had.
-    overrides = deep_merge(
-        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-    )
+    overrides = overrides_from_options(args)
     model, data, view = (
         _compile_from_mjcf(Path(args.mjcf))
         if args.mjcf
