@@ -64,6 +64,11 @@ import mujoco
 import numpy as np
 
 from . import exit_status, logging_setup
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -693,7 +698,11 @@ def main(argv: list | None = None) -> int:
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--model", help="model reference (name, package:name, or path to an MJCF)")
     source.add_argument("--world", help="path to a world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="path to a bare MJCF file (compiled directly)")
+    source.add_argument(
+        "--mjcf",
+        help="path to a bare MJCF file (compiled directly). --model and --mjcf load no plugins, so "
+        "--set, --override and --skip-plugins are refused with them",
+    )
     parser.add_argument("--out", required=True, help="output .stl / .obj / .ply / .3mf path")
     parser.add_argument(
         "--frame",
@@ -751,8 +760,14 @@ def main(argv: list | None = None) -> int:
         default="",
         help="--world: extra plugin names/refs to drop before compiling (transport plugins always are)",
     )
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if not args.world:
+        source = "--model" if args.model else "--mjcf"
+        refuse_world_options(
+            parser, args, f"{source} compiles a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_mesh")
@@ -786,7 +801,9 @@ def main(argv: list | None = None) -> int:
             label, inputs = Path(args.mjcf).stem, [str(Path(args.mjcf).resolve())]
         else:
             skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
-            model, _data, _view = _compile_from_world(args.world, skip, {}, log)
+            model, _data, _view = _compile_from_world(
+                args.world, skip, overrides_from_options(args), log
+            )
             label, inputs = Path(args.world).stem, None
 
     try:
