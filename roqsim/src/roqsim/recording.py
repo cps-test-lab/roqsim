@@ -32,7 +32,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .capture import STATE_SPEC, RecordingError, record_dtype
+from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
 from .document import check_version
 
 log = logging.getLogger(__name__)
@@ -514,7 +514,7 @@ def open_recording(path: str | Path) -> Recording:
     """Open a ``.npz`` recording, validating its shape before anything expensive happens."""
     path = Path(path)
     if not path.exists():
-        raise RecordingError(f"{path}: no such recording")
+        raise RecordingNotFoundError(f"{path}: no such recording")
     try:
         archive = np.load(path, allow_pickle=False)
     except Exception as err:
