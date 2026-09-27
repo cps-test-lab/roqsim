@@ -58,6 +58,7 @@ import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from roqsim.floorplan_geometry import check_sketch
 from roqsim_scenes.floorplan_geometry import (
     Opening,
     WallPlan,
@@ -342,6 +343,7 @@ def load_source(source: str, doors_map: str | None = None, use_doors_map: bool =
     floorplan = _read_json(fp_path)
     if not _is_floorplan(floorplan):
         raise ValueError(f"{fp_path} is not a floorplan JSON (needs 'lines' and 'rooms')")
+    check_sketch(floorplan, str(fp_path))
 
     # The scene dir's name is the building's name; a loose floorplan.json falls back to its own stem.
     name = fp_path.parent.name if fp_path.name == "floorplan.json" else fp_path.stem

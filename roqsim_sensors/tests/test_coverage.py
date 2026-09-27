@@ -17,6 +17,7 @@ from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_fov
 from roqsim.models import resolve_model
 from roqsim.registry import resolve_plugin
@@ -619,3 +620,58 @@ def test_manifest_fov_near_matches_the_capture_plugin(name):
     if clip_near is None:
         pytest.skip(f"{name}: {ref} has no depth clip")
     assert fov["near"] == pytest.approx(clip_near)
+
+
+def _estimate_argv(tmp_path, world: str, placements: str) -> list[str]:
+    return [
+        "estimate",
+        "--world",
+        world,
+        "--placements",
+        placements,
+        "--out",
+        str(tmp_path / "run"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("world", "placements", "expect"),
+    [
+        ("/no/such/world.yaml", "p.json", "does not exist"),
+        ("no_such_pkg:world", "p.json", "no_such_pkg"),
+        ("WORLD", "/no/such/p.json", "/no/such/p.json"),
+        ("WORLD", "NOT_JSON", "p.json"),
+    ],
+)
+def test_main_reports_a_wrong_input_on_one_line_and_exits_2(
+    tmp_path, capsys, world, placements, expect
+):
+    """The agent driving propose -> evaluate -> refine greps stderr and branches on the status, so a
+    wrong input is one `roqsim sensors coverage:` line and exit 2 -- never a traceback."""
+    from roqsim_sensors.coverage import cli
+
+    if world == "WORLD":
+        world_path = tmp_path / "w.xml"
+        world_path.write_text(
+            "<mujoco><worldbody><geom type='box' size='.1 .1 .1'/></worldbody></mujoco>"
+        )
+        world = str(world_path)
+    if placements == "p.json":
+        (tmp_path / "p.json").write_text("[]")
+        placements = str(tmp_path / "p.json")
+    elif placements == "NOT_JSON":
+        (tmp_path / "p.json").write_text("{not json")
+        placements = str(tmp_path / "p.json")
+    assert cli.main(_estimate_argv(tmp_path, world, placements)) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1, err
+    assert err[0].startswith("roqsim sensors coverage: ")
+    assert expect in err[0]
+    assert not (tmp_path / "run").exists(), "nothing is written for an input that was refused"
+
+
+def test_regions_from_a_sketch_it_cannot_read_are_refused():
+    from roqsim_sensors.coverage.regions import regions_from_sketch
+
+    with pytest.raises(ValueError, match="floorplan sketch version 99"):
+        regions_from_sketch({"version": 99, "rooms": [], "lines": []})

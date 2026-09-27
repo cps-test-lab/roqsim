@@ -13,7 +13,9 @@ Usage::
     roqsim export web --mjcf  path/to/model.xml  --out /tmp/scene/
 
 Output (all in ``--out``):
-  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin)
+  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin),
+                      headed by ``format``/``version`` (:data:`FORMAT`, :data:`FORMAT_VERSION`) so a
+                      reader can refuse a descriptor written to a contract it has not seen
   - ``scene.bin``  -- concatenated Float32/Uint32/Uint8 buffers referenced by byte offset + count
   - ``tex_<i>.png``-- one PNG per *image* texture: copied verbatim when the MJCF's recorded path
                       resolves, else re-encoded from the compiled pixels (a baked scene's paths are
@@ -33,6 +35,7 @@ scene.json so the browser animates the arm from ``/joint_states`` exactly as the
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import shutil
@@ -42,7 +45,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import flex_skin, logging_setup
+from . import exit_status, flex_skin, logging_setup
 from .config import (
     deep_merge,
     drop_transport_plugins,
@@ -52,6 +55,16 @@ from .config import (
     world_sources,
 )
 from .engine import Engine
+
+#: What ``scene.json`` declares itself to be. The other ``scene.json`` in this tree -- a
+#: ``roqsim_scenes`` scene manifest, a bill of meshes and bounds -- shares the file name and nothing
+#: else, and a reader given the wrong one otherwise finds out from a missing key deep in a loader.
+FORMAT = "roqsim.web_scene"
+#: The descriptor's format version. Bumped when a key changes MEANING, never when one is added: a
+#: reader takes what it knows by name, so an additive key (``skins`` arrived that way) costs nothing,
+#: while a changed one would be read with confidence and drawn wrong. A reader refuses a version
+#: above the one it implements, and reads an absent stamp as version 1.
+FORMAT_VERSION = 1
 
 # MuJoCo joint types (mjtJoint) -> the string the web loader switches on.
 _JOINT_TYPE = {
@@ -708,6 +721,8 @@ def export_scene(
     joints, initial_joints = _export_joints(model, data)
 
     scene = {
+        "format": FORMAT,
+        "version": FORMAT_VERSION,
         "up": "z",  # MuJoCo is Z-up (like ROS); the web wrapper group rotates it into three's Y-up
         "bodies": _export_bodies(model, data),
         "joints": joints,
@@ -746,6 +761,10 @@ def export_scene(
 
 def _compile_from_mjcf(path: Path) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
     """Compile a bare MJCF file directly (no plugins / world YAML). Initial state is the model default."""
+    if not path.is_file():
+        # MuJoCo reports a missing file as a ValueError from its XML parser; this one the command
+        # tree reports as a missing input.
+        raise FileNotFoundError(errno.ENOENT, "no such MJCF", str(path))
     model = mujoco.MjSpec.from_file(str(path)).compile()
     return model, mujoco.MjData(model), {}
 
@@ -804,6 +823,7 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export web",
         description="Export a compiled MuJoCo world to a browser scene descriptor.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
@@ -889,7 +909,7 @@ def main(argv: list | None = None) -> int:
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
         logger.info("wrote source manifest (%d files) to %s", len(sources), args.manifest)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

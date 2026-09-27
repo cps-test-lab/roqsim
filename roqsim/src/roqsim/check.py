@@ -81,6 +81,11 @@ will do that its author probably did not intend: ``flex-damping`` (its damping i
 integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
 ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
 stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
+
+Exit status (``roqsim.exit_status``): ``0`` when the world loads (``ok`` is true; warnings do not
+change it), ``2`` when the target names no world, ``5`` when a later stage reported a problem. The
+report itself is on stdout in every case, so a caller branches on the status and reads the JSON for
+what went wrong.
 """
 
 from __future__ import annotations
@@ -89,6 +94,8 @@ import argparse
 import json
 import sys
 from pathlib import Path
+
+from . import exit_status
 
 #: Stage names, in the order they run. A problem in one does not stop the report; it stops that
 #: world from reaching the next stage, which is stated rather than implied by an empty section.
@@ -480,6 +487,12 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 is a target that names no world, and 5 a problem at any later stage. Warnings "
+            "do not change the status, and the report is on stdout either way.",
+        ),
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
     parser.add_argument("--json", action="store_true", help="report as JSON rather than as text")
@@ -492,7 +505,10 @@ def main(argv=None) -> int:
 
     report = check_world(args.world)
     print(json.dumps(report, indent=2) if args.json else _render_text(report))
-    return 0 if report["ok"] else 1
+    if report["ok"]:
+        return exit_status.OK
+    # A target that names no world is the caller's input, not a finding about a world.
+    return exit_status.BAD_INPUT if report["reached"] is None else exit_status.FINDING
 
 
 if __name__ == "__main__":
