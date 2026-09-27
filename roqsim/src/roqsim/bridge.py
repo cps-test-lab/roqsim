@@ -368,7 +368,11 @@ class BridgeBase(Plugin):
         return t
 
     def _tick(self, ctx: SimContext, t: float, stamp: Any) -> None:
-        """Optional per-tick extras owned by the backend (e.g. a clock/time source)."""
+        """Optional per-tick extras owned by the backend, run after the step's outputs are published.
+
+        A clock the outputs are stamped against belongs before them, not here: a subscriber would
+        receive each message ahead of its own clock.
+        """
 
     def _teardown(self, ctx: SimContext) -> None:
         """Release transport resources."""
