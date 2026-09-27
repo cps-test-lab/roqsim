@@ -67,3 +67,44 @@ def test_step_before_setup_raises():
     engine = Engine(cfg)
     with pytest.raises(RuntimeError):
         engine.step()
+
+
+# -- a configure that fails ------------------------------------------------------------------------
+
+
+class ConfigureRaises(Plugin):
+    def configure(self, ctx):
+        self.LOG.append((self.name, "configure"))  # opens what it holds, then fails
+        raise RuntimeError("configure failed")
+
+    LOG = RecordingPlugin.LOG
+
+    def shutdown(self, ctx):
+        self.LOG.append((self.name, "shutdown"))
+
+
+def test_a_configure_that_fails_shuts_down_what_was_configured_before_it():
+    """The plugins configured before the failure hold what configure opened -- a spin thread, a
+    file, a node -- and the driver never gets an engine to shut down, so setup() must do it.
+    In reverse order, as a shutdown is, and the failing plugin included: it may have opened its
+    resources before the line that raised."""
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "plugins": [
+                {REF: {}, "name": "a"},
+                {REF: {}, "name": "b"},
+                {"test_plugin_lifecycle:ConfigureRaises": {}, "name": "c"},
+                {REF: {}, "name": "d"},
+            ],
+        }
+    )
+    engine = Engine(cfg)
+    with pytest.raises(RuntimeError, match="configure failed"):
+        engine.setup()
+    log = RecordingPlugin.LOG
+    assert ("d", "configure") not in log, "nothing after the failure is configured"
+    shut = [name for name, hook in log if hook == "shutdown"]
+    assert shut == ["c", "b", "a"], shut
+    engine.shutdown()  # a driver's finally: nothing left to shut down, and nothing shut down twice
+    assert [name for name, hook in log if hook == "shutdown"] == ["c", "b", "a"]
