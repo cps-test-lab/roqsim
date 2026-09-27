@@ -135,7 +135,8 @@ CLI (debugging)
     roqsim-scene-builder review-scene scene.xml --settle-steps 200 --size 1280x800
 
 It prints the verdict JSON and exits **0** (pass), **1** (fail), **2** (no display / load error),
-**3** (window closed without a verdict).
+**3** (window closed without a verdict). The reason for a 2 is one line on stderr, which is what the
+MCP tool relays when the window produced no result.
 
 The window navigates like a first-person game: **left-drag looks** (the camera turns about the eye,
 not around a pivot in front of it), **WASD walks** — or the **arrow keys**, whichever hand is free —

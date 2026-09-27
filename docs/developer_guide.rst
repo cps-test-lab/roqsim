@@ -135,6 +135,19 @@ binary that does not exist.
 A tool that runs inside Blender is registered with ``tool(..., blender=True)``: it cannot be imported
 here, so the command locates ``blender`` and runs the module inside it.
 
+**An input the tool cannot load is one sentence, not a traceback.** Report the errors you understand
+yourself; where a world, model or recording does not resolve (``PluginError``, ``ModelError``,
+``RecordingError``) or a named file is not there (``FileNotFoundError``) and your ``main`` lets it
+through, the tree prints ``roqsim <group> <tool>: <reason>`` and exits ``2``, or ``4`` for a recording that
+exists and cannot be read. ``-v`` keeps the traceback, for the case where the missing file is the tool's
+own.
+
+**Exit statuses come from** :mod:`roqsim.exit_status` **and nowhere else.** Return its constants, give
+the parser ``epilog=exit_status.epilog(<the codes this tool returns>)``, and report a caught error with
+``return exit_status.fail("roqsim <group> <tool>", err)``. An error class whose status is not a bad input
+says so with an ``exit_status`` class attribute, so every tool that catches it agrees. Never return ``1``:
+it is Python's status for a crash. The table is in :ref:`exit-status`.
+
 Sensor coverage (analysis layer)
 --------------------------------
 

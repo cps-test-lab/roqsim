@@ -48,6 +48,9 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from . import exit_status
+from .capture import RecordingError
+
 log = logging.getLogger(__name__)
 
 #: The format this writer implements. A consumer refuses an unknown pair rather than misreading it.
@@ -374,6 +377,7 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog="roqsim export capture",
         description="Export a recorded run to a browser run capture (capture.json + capture.bin).",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
     )
     ap.add_argument("--state", required=True, help="the recording (.npz) to export")
     ap.add_argument("--out", required=True, help="output directory")
@@ -387,9 +391,8 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     try:
         manifest = export_from_recording(args.state, args.out, target=args.world)
-    except (CaptureExportError, OSError) as err:
-        print(f"error: {err}", file=__import__("sys").stderr)
-        return 1
+    except (CaptureExportError, RecordingError, OSError) as err:
+        return exit_status.fail("roqsim export capture", err)
     # One line of JSON on stdout: a machine contract, as `roqsim render` has.
     print(
         json.dumps(
