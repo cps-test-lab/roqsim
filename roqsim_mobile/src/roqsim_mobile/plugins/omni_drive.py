@@ -33,6 +33,7 @@ sits rather than a config key::
       steer_actuators: [...]
       odom_child_frame: base_footprint   # link the odometry TF points at (see below)
       stamped_cmd_vel: false             # true when the stack publishes TwistStamped (see below)
+      cmd_vel_timeout: 0.0               # s; > 0 stops the base when no command arrives for this long
       test_cmd: [0.2, 0.1, 0.0]     # optional [vx, vy, wz] applied every tick (standalone demo)
 
 ``stamped_cmd_vel`` selects ``geometry_msgs/TwistStamped`` instead of ``geometry_msgs/Twist``
@@ -42,6 +43,12 @@ configuration sets it), and ROS 2 is moving towards the stamped form. A subscrip
 so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
 which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
 naming the topic, both types and both sides.
+
+``cmd_vel_timeout`` is the watchdog every real base driver has, as on ``diff_drive``: a command is
+good for this long and then the base stops, so a stack that dies mid-run leaves a stationary robot
+rather than one driving at its last velocity into a wall. Off (0) by default, because an in-process
+driver that sets a twist once and steps expects it to hold. The stop goes through the same
+acceleration ramp as any command.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
@@ -123,6 +130,10 @@ class OmniDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_footprint")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: Watchdog: a command older than this stops the base; 0 = hold the last command forever.
+        self.cmd_vel_timeout = float(self.config.get("cmd_vel_timeout", 0.0))
+        self._last_cmd = float("-inf")  # sim time of the last drive(); -inf until one arrives
+        self._ctx: SimContext | None = None
         self._act_names = (
             self.config.get("vx_actuator", "base_vx"),
             self.config.get("vy_actuator", "base_vy"),
@@ -200,9 +211,12 @@ class OmniDrivePlugin(Plugin):
             errors.append("'steer_actuators' without 'steer_joints' -- give both or neither")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, wz]")
+        if float(config.get("cmd_vel_timeout", 0.0)) < 0:
+            errors.append("'cmd_vel_timeout' must be >= 0 (0 = no watchdog)")
         return errors
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
@@ -364,6 +378,7 @@ class OmniDrivePlugin(Plugin):
                 vx *= self.max_combined / speed
                 vy *= self.max_combined / speed
         self._target[:] = (vx, vy, float(np.clip(w, -self.max_w, self.max_w)))
+        self._last_cmd = self._ctx.sim_time if self._ctx is not None else 0.0
 
     def read_odom(self):
         x, y, yaw, vx, vy, w = self._odom
@@ -384,6 +399,7 @@ class OmniDrivePlugin(Plugin):
         self._target[:] = 0.0
         self._cmd[:] = 0.0
         self._odom[:] = 0.0
+        self._last_cmd = float("-inf")
 
     def _yaw(self, d) -> float:
         qw, qx, qy, qz = d.qpos[self._qadr + 3 : self._qadr + 7]
@@ -394,6 +410,10 @@ class OmniDrivePlugin(Plugin):
             return  # the viewer's sliders own the actuators this run
         if "test_cmd" in self.config:
             self.drive(*(float(v) for v in self.config["test_cmd"]))
+        if self.cmd_vel_timeout > 0.0 and ctx.sim_time - self._last_cmd > self.cmd_vel_timeout:
+            # The watchdog: the last command has expired, so the target is a stop, reached
+            # through the ramp below like any other command.
+            self._target[:] = 0.0
 
         # Ramp the body-frame command toward the target under the acceleration limits.
         lim = np.array([self.accel, self.accel, self.ang_accel]) * ctx.dt
