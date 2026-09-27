@@ -1374,8 +1374,9 @@ A velocity command: odometry and the watchdog
 ---------------------------------------------
 
 Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
-``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion`` and
-``oli_locomotion``. Both are in :mod:`roqsim.odometry`, for a plugin of your own to keep too.
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion``,
+``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+:mod:`roqsim.odometry`, for a plugin of your own to keep too.
 
 **Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
 first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
@@ -1392,6 +1393,12 @@ locomotion policy is given a zero command and walks to a stop. ``0``, the defaul
 until the next one, because an in-process driver sets a twist once and steps; a world that runs a
 real stack sets the stack's value (``ros2_control``'s ``diff_drive_controller`` ships 0.5 s). Reset
 clears the command and its stamp, so no trial starts with the last one's.
+
+**A quadrotor, in three dimensions.** ``quadrotor_controller``'s ``odom`` is 6-DOF in the same frame:
+x and y from the spawn point along the spawn heading, ``z`` the altitude, tilt kept, and the twist
+in the body frame. A stale velocity command brakes the drone at its altitude setpoint and then holds
+where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``, world frame) does not
+expire, since holding one already is a hover.
 
 Manipulation: an arm on a linear axis
 -------------------------------------

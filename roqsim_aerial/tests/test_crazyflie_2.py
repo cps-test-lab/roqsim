@@ -156,11 +156,13 @@ def test_translates_to_setpoint(target):
 def test_reset_returns_to_spawn():
     engine, controller = _flown()
     try:
+        spawn = np.array(controller.read_state()[:3])
+        assert np.allclose(spawn[:2], 0.0, atol=1e-6)
         _fly(engine, controller, 4.0)
         controller.set_target(1.0, 1.0, 1.5)
         _fly(engine, controller, 4.0)
         engine.reset()
-        assert np.allclose(np.array(controller.read_state()[:3]), 0.0, atol=1e-6)
+        assert np.allclose(np.array(controller.read_state()[:3]), spawn, atol=1e-6)
     finally:
         engine.shutdown()
 
