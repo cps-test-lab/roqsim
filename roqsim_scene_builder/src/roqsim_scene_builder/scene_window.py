@@ -370,7 +370,8 @@ def run_window(
 
     Returns an exit code: 0 (pass, or a neutral Enter-submitted comment), 1 (fail), 2 (no display /
     load error), 3 (closed without a verdict). On any submit the result JSON is written to
-    ``json_out`` (when given).
+    ``json_out`` (when given). The reason for a 2 goes to **stderr**, which is what the MCP tool
+    relays when the window produced no result -- on stdout it would be read by nobody.
     """
     import os
     import sys
@@ -380,6 +381,7 @@ def run_window(
     if not has_display():
         print(
             "roqsim-scene-builder: no DISPLAY -- the scene-review window needs a graphical session.",
+            file=sys.stderr,
             flush=True,
         )
         return 2
@@ -390,10 +392,19 @@ def run_window(
     import tkinter as tk  # imported here so the module stays importable headless
 
     from roqsim import FrameRenderer
+    from roqsim.models import ModelError
+    from roqsim.plugin import PluginError
     from roqsim.rendering import focus_camera, preview_camera
     from roqsim.runner import is_model_ref
 
-    engine, view = load_engine(target, settle_steps)
+    try:
+        engine, view = load_engine(target, settle_steps)
+    except (FileNotFoundError, PluginError, ModelError, ValueError) as err:
+        # A scene that does not load is the documented exit 2, said in one line: the window exists
+        # to show the scene, so there is nothing for a traceback to add. MuJoCo reports a model that
+        # will not compile as a ValueError.
+        print(f"roqsim-scene-builder: cannot load {target!r}: {err}", file=sys.stderr, flush=True)
+        return 2
     width, height = size
     fr = FrameRenderer(engine.ctx.model, width, height)
     ctx = engine.ctx
