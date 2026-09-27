@@ -10,9 +10,11 @@ be changed over it. Anything else would be accepted and have no effect on the pi
 
 from __future__ import annotations
 
+import contextlib
+
 import pytest
 
-from roqsim import render
+from roqsim import recording, render
 
 
 def test_a_component_override_with_state_is_refused_by_name(tmp_path):
@@ -41,6 +43,8 @@ def test_a_view_override_with_state_is_not_refused(monkeypatch, tmp_path):
         seen["merged"] = merged
         return {"rendered": False}
 
+    # render_target opens the recording itself, so the file it names need not exist here.
+    monkeypatch.setattr(recording, "open_recording", contextlib.nullcontext)
     monkeypatch.setattr(render, "_render_recording", fake)
     render.render_target(
         None,
