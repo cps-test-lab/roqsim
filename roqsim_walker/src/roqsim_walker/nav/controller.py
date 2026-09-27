@@ -42,6 +42,7 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
+from roqsim.kinematics import body_twist
 from roqsim_nav import obstacles
 from roqsim_nav.behavior import NavCore, NavParams, build_tree
 from roqsim_nav.grid import build_grid
@@ -735,6 +736,5 @@ class WalkerController:
     def _robot_state(self):
         bid = self._robot_bid
         pos = self.data.xpos[bid]
-        vel = np.zeros(6)
-        mujoco.mj_objectVelocity(self.model, self.data, mujoco.mjtObj.mjOBJ_BODY, bid, vel, 0)
-        return float(pos[0]), float(pos[1]), float(vel[3]), float(vel[4])
+        vel = body_twist(self.model, self.data, bid).linear
+        return float(pos[0]), float(pos[1]), float(vel[0]), float(vel[1])

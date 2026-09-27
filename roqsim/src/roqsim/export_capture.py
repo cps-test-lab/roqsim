@@ -349,25 +349,25 @@ def export_from_recording(
     """
     from .recording import open_recording
 
-    rec = open_recording(state)
-    model, _ctx = rec.build(target)
+    with open_recording(state) as rec:
+        model, _ctx = rec.build(target)
 
-    def posed():
-        # `range` re-poses one MjData per step, so nothing here may keep `data` past the yield --
-        # write_capture copies what it needs out of it before asking for the next sample.
-        for sample in rec.range(*rec.span):
-            yield sample.sim_time, sample.data
+        def posed():
+            # `range` re-poses one MjData per step, so nothing here may keep `data` past the yield
+            # -- write_capture copies what it needs out of it before asking for the next sample.
+            for sample in rec.range(*rec.span):
+                yield sample.sim_time, sample.data
 
-    return write_capture(
-        model,
-        posed(),
-        out_dir,
-        world=rec.world,
-        overrides=rec.meta.get("overrides") or {},
-        packages=rec.meta.get("packages"),
-        seed=rec.meta.get("seed"),
-        logger=logger,
-    )
+        return write_capture(
+            model,
+            posed(),
+            out_dir,
+            world=rec.world,
+            overrides=rec.meta.get("overrides") or {},
+            packages=rec.meta.get("packages"),
+            seed=rec.meta.get("seed"),
+            logger=logger,
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

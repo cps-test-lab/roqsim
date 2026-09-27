@@ -28,8 +28,8 @@ roqsim docs forbid at runtime. Instead the drag redraws the prop's own mesh at t
 transforming its geoms in the *render scene* (the transient ``MjvScene``, not ``model``/``data``); on
 release the prop's pose is written into its ``spawn_model`` config entry and the engine is **rebuilt**
 (recompiling between edits is sanctioned; mutating a live model is not), making the same move
-permanent. The final poses come back under ``moves``; the caller (the ``scene-update`` skill) writes
-them into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
+permanent. The final poses come back under ``moves``; the caller writes them
+into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
 editable pose.
 
 The non-GUI parts -- loading, the dot bookkeeping (:class:`DotModel`), and the pose helpers
@@ -39,6 +39,7 @@ headless; only :func:`run_window` needs a display.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
@@ -158,6 +159,7 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
     """Load ``target`` the way ``roqsim`` does and return ``(engine, view)``.
 
     ``settle_steps`` optionally advances physics so a dropped scene comes to rest before review.
+    The engine is returned set up, and the caller shuts it down.
 
     A review is about geometry, so transport plugins are dropped (``skip_transport``, see
     :func:`roqsim.config.drop_transport_plugins`) -- which is what lets a ``*_ros`` world be reviewed in
@@ -166,7 +168,7 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
     """
     import sys
 
-    from roqsim import Engine, config_for_input, drop_transport_plugins
+    from roqsim import config_for_input, drop_transport_plugins
 
     cfg = config_for_input(target)
     if skip_transport:
@@ -181,14 +183,23 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
                     file=sys.stderr,
                     flush=True,
                 )
+    return _settled(cfg, settle_steps), getattr(cfg, "view", None)
+
+
+def _settled(cfg, settle_steps: int):
+    """A set-up engine for *cfg*, reset and stepped *settle_steps* times; shut down on failure."""
+    from roqsim import Engine
+
     # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
     # one rather than the driver's to resolve.
     engine = Engine(cfg, preview=True)
-    engine.setup()
-    engine.reset()
-    for _ in range(max(0, settle_steps)):
-        engine.step()
-    return engine, getattr(cfg, "view", None)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(engine)
+        engine.reset()
+        for _ in range(max(0, settle_steps)):
+            engine.step()
+        stack.pop_all()
+    return engine
 
 
 @dataclass
@@ -405,35 +416,37 @@ def run_window(
         # will not compile as a ValueError.
         print(f"roqsim-scene-builder: cannot load {target!r}: {err}", file=sys.stderr, flush=True)
         return 2
-    width, height = size
-    fr = FrameRenderer(engine.ctx.model, width, height)
-    ctx = engine.ctx
-    entity = ctx.entities.get(focus_object) if focus_object else None
-    if focus_object and entity is None:
-        print(
-            f"roqsim-scene-builder: no object {focus_object!r} in scene; "
-            f"available: {', '.join(ctx.entities.names()) or '(none)'}. Using default camera.",
-            file=sys.stderr,
-            flush=True,
-        )
-    if entity is not None and entity.body:
-        # Open looking at the requested object, from an angle with a clear line of sight to it.
-        bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-        fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
-    elif is_model_ref(target) and not view:
-        # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.
-        fr.camera = preview_camera(ctx.model, ctx.data, ctx.entities.all(), aspect=width / height)
-    else:
-        apply_view(fr.camera, view)
+    with contextlib.ExitStack() as stack:
+        stack.callback(engine.shutdown)
+        width, height = size
+        fr = FrameRenderer(engine.ctx.model, width, height)
+        stack.callback(fr.close)
+        ctx = engine.ctx
+        entity = ctx.entities.get(focus_object) if focus_object else None
+        if focus_object and entity is None:
+            print(
+                f"roqsim-scene-builder: no object {focus_object!r} in scene; "
+                f"available: {', '.join(ctx.entities.names()) or '(none)'}. Using default camera.",
+                file=sys.stderr,
+                flush=True,
+            )
+        if entity is not None and entity.body:
+            # Open looking at the requested object, from an angle with a clear line of sight to it.
+            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+            fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
+        elif is_model_ref(target) and not view:
+            # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.
+            fr.camera = preview_camera(
+                ctx.model, ctx.data, ctx.entities.all(), aspect=width / height
+            )
+        else:
+            apply_view(fr.camera, view)
 
-    app = _ReviewApp(tk, engine, fr, message, json_out, width, height, title, settle_steps)
-    try:
+        app = _ReviewApp(tk, engine, fr, message, json_out, width, height, title, settle_steps)
+        # A prop move replaces the app's engine and renderer; close the ones it holds at the end.
+        stack.callback(lambda: app.engine.shutdown())
+        stack.callback(lambda: app.fr.close())
         app.root.mainloop()
-    finally:
-        # A prop move rebuilds the engine/renderer, so close whatever the app now holds (which may no
-        # longer be the originals created above) rather than the stale locals.
-        app.fr.close()
-        app.engine.shutdown()
     return app.exit_code
 
 
@@ -539,8 +552,8 @@ class _ReviewApp:
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         self.comment = build_comment_box(tk, footer)
-        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes,
-        # like the media-review windows; Shift+Enter keeps the textarea's newline. Pass/Fail stay on
+        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes;
+        # Shift+Enter keeps the textarea's newline. Pass/Fail stay on
         # their buttons.
         self.comment.bind("<Return>", self._on_comment_return)
 
@@ -1086,17 +1099,16 @@ class _ReviewApp:
     def _rebuild_engine(self) -> None:
         """Recompile the world from the edited config (the sanctioned way to realise a pose change --
         never a live ``model.body_pos`` write) and re-point the renderer, keeping the camera."""
-        from roqsim import Engine, FrameRenderer
+        from roqsim import FrameRenderer
 
         cfg = self.engine.config
         cam = self.fr.camera
-        new = Engine(cfg, preview=True)  # a rebuilt preview, same reasoning as the first build
-        new.setup()
-        new.reset()
-        for _ in range(max(0, self.settle_steps)):
-            new.step()
-        self.fr.close()
-        self.fr = FrameRenderer(new.ctx.model, self.width, self.height, camera=cam)
+        new = _settled(cfg, self.settle_steps)
+        with contextlib.ExitStack() as stack:
+            stack.callback(new.shutdown)
+            self.fr.close()
+            self.fr = FrameRenderer(new.ctx.model, self.width, self.height, camera=cam)
+            stack.pop_all()
         self.engine.shutdown()
         self.engine = new
         self._build_movable()
