@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from roqsim.clock import SHORTFALL_REPORT_SHARE, Pacer
 from roqsim.config import load_config_from_dict
 from roqsim.runner import run
@@ -143,11 +145,7 @@ def test_scenario_adapter_lifecycle(tmp_path: Path):
 def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
     tmp_path: Path, monkeypatch
 ):
-    """The recording is flushed before the engine is torn down, so a close that raises (a disk that
-    filled up) must not also cost the plugins their shutdown -- the CSV a scoring plugin writes
-    there, and a transport thread that keeps the process alive."""
-    import pytest
-
+    """A recording whose close raises (a full disk) still leaves the engine shut down."""
     from roqsim.capture import RecordingError
 
     class _Rec:

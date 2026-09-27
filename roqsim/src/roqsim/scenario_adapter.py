@@ -304,10 +304,8 @@ class MujocoSim(_Base):
         it is where a recording has to be flushed. Doing it in ``shutdown`` alone would lose a
         recording whenever a scenario reset with different ``world_overrides``.
 
-        The engine is shut down whatever the flush does: a recording that cannot be written (a disk
-        that filled up before close) is one artifact lost, and must not also cost the plugins their
-        shutdown -- the CSV a scoring plugin writes there, and a transport thread that would keep
-        the process alive.
+        The engine is shut down whatever the flush raises, so the plugins release what configure
+        opened and write their shutdown output.
         """
         try:
             self._finish_recording()
