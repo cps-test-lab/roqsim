@@ -82,6 +82,10 @@ class Recording:
         self._buf: np.ndarray | None = None
         self._view: dict | None = None
         self._run_sensors = False
+        #: Plugins whose ``post_step`` raised on the latest restore, with the error; their endpoints
+        #: still hold the previous sample's values (:meth:`failed_endpoints`).
+        self.replay_failures: list[tuple[object, Exception]] = []
+        self._warned: set[int] = set()
 
     def close(self) -> None:
         """Shut the rebuilt world's plugins down, releasing what they hold. Idempotent.
@@ -399,6 +403,7 @@ class Recording:
         is refused by name rather than silently recomputed.
         """
         engine = getattr(ctx, "engine", None)
+        self.replay_failures = []
         if engine is None:
             return
         # ctx.data is the engine's own buffer, and _restore posed exactly that object.
@@ -406,7 +411,43 @@ class Recording:
             try:
                 plugin.post_step(ctx)
             except Exception as err:  # noqa: BLE001 - one broken sensor must not stop the rest
-                log.debug("replay: %s.post_step failed: %s", type(plugin).__name__, err)
+                # Not fatal here: most plugins are not what the caller asked for. A caller reading
+                # a selected endpoint asks `failed_endpoints`.
+                self.replay_failures.append((plugin, err))
+                if id(plugin) not in self._warned:
+                    self._warned.add(id(plugin))
+                    log.warning(
+                        "replay: %s (%s).post_step raised at t=%.3f s: %s -- its endpoints keep "
+                        "the previous sample's values",
+                        getattr(plugin, "address", type(plugin).__name__),
+                        type(plugin).__name__,
+                        float(self._data.time) if self._data is not None else float("nan"),
+                        err,
+                    )
+
+    def failed_endpoints(self, endpoints) -> dict[str, str]:
+        """``{endpoint name: why}`` for each of *endpoints* whose producer raised on the latest
+        restore -- whose value is therefore the previous sample's, not this one's.
+
+        An endpoint is attributed to a plugin when its ``read`` is bound to that plugin or closes
+        over it. While any plugin failed, an endpoint attributed to no plugin at all is reported
+        too, since nothing shows its producer was not among them.
+        """
+        if not self.replay_failures:
+            return {}
+        out: dict[str, str] = {}
+        for plugin, err in self.replay_failures:
+            for endpoint in endpoints:
+                if _reads_from(endpoint.read, plugin):
+                    out[endpoint.name] = f"{_label(plugin)}.post_step raised: {err}"
+        engine = getattr(self._ctx, "engine", None)
+        plugins = list(engine.plugins) if engine is not None else []
+        failed = ", ".join(f"{_label(p)} ({e})" for p, e in self.replay_failures)
+        for endpoint in endpoints:
+            if endpoint.name in out or any(_reads_from(endpoint.read, p) for p in plugins):
+                continue
+            out[endpoint.name] = f"its producer is not known, and these raised: {failed}"
+        return out
 
     def at(self, when: float | None = None) -> Sample:
         """The sample nearest ``when``, or the last one when ``when`` is ``None``.
@@ -443,6 +484,25 @@ class Recording:
             "requested_at": None if when is None else round(float(when), 6),
             "at_error": None if when is None else round(sample.sim_time - float(when), 6),
         }
+
+
+def _label(plugin) -> str:
+    return getattr(plugin, "address", type(plugin).__name__)
+
+
+def _reads_from(read, plugin) -> bool:
+    """Whether the callable *read* is *plugin*'s: a bound method of it, or a closure over it."""
+    if read is None:
+        return False
+    if getattr(read, "__self__", None) is plugin:
+        return True
+    for cell in getattr(read, "__closure__", None) or ():
+        try:
+            if cell.cell_contents is plugin:
+                return True
+        except ValueError:  # an empty cell
+            continue
+    return False
 
 
 def open_recording(path: str | Path) -> Recording:

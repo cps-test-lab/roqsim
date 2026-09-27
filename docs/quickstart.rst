@@ -874,6 +874,9 @@ columns, a scan becomes an ``.npz`` array, and an image is refused with a pointe
 (the recording carries the run's seed), but it is not bit-identical to what the live run published at
 that timestamp — live, the sensor fires between recorded samples, so the value published then was
 computed a moment earlier.
+A selected sensor whose plugin raises while re-running on a sample is refused, naming it and the
+error, rather than written with the value it held from the sample before; another plugin that raises
+is logged as a warning and does not stop the rest.
 
 Rendering a picture
 -------------------

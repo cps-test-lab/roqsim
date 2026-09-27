@@ -376,6 +376,18 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
     }
 
 
+def _refuse_stale(rec, endpoints, sample) -> None:
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
+    stale = rec.failed_endpoints(endpoints) if endpoints else {}
+    if stale:
+        detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))
+        raise StateError(
+            f"at t={sample.sim_time:.3f} s the replay could not compute {detail}. Its value would be "
+            "the previous sample's, so nothing is written for it."
+        )
+
+
 def _row(model, sample, chosen, endpoints, twist: bool = False) -> dict:
     # Both clocks lead every row: a series is often read to ask what the run *cost* at some point in it
     # (a controller stalling, a sensor going expensive), and that question is unanswerable from sim time.
@@ -598,6 +610,7 @@ def _state_of(
                 len(rec),
                 sample.sim_time,
             )
+        _refuse_stale(rec, endpoints, sample)
         record = {**rec.at_record(at, sample), "header": header}
         if contacts:
             record["contacts"] = contact_rows(model, sample.data)
@@ -607,6 +620,7 @@ def _state_of(
     rows, times, walls = [], [], []
     array_series: dict[str, list] = {}
     for sample in rec.range(start, stop):
+        _refuse_stale(rec, endpoints, sample)
         times.append(sample.sim_time)
         walls.append(sample.wall_time)
         if any(endpoint_kind(e) == KIND_ARRAY for e in endpoints):
