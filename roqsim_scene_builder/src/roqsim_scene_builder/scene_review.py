@@ -39,8 +39,8 @@ def review_scene_by_human(
 
     Turning on **Move Objects** lets the human grab a ``spawn_model`` prop and slide it across the floor
     (drag) or turn it (Shift-drag); on release the prop's new pose comes back under ``moves``. The
-    window never mutates the world -- it reports intent, and the caller (the ``scene-update`` skill)
-    writes the pose into the world YAML. Only props move; baked walls and floor cannot.
+    window never mutates the world -- it reports intent, and the caller writes the pose into the world
+    YAML. Only props move; baked walls and floor cannot.
 
     Pass ``message`` with the specific thing to judge ("Is the shelving reachable and not clipping
     the wall?"); the human sees it beside the scene and answers in the comment and dots. Pressing

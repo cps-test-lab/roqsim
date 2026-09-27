@@ -145,7 +145,8 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
    of a link in the chain has to agree on one topic. Note this scopes the TF *topics* only — frame ids
-   (``map``, ``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed.
+   (``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed. The
+   global frames ``world`` and ``map`` are never namespaced.
    Setting the bridge's ``namespace`` does **not** do this: tf2_ros's broadcasters hardwire the
    absolute ``/tf``, which is exactly why this option exists.
 
@@ -1286,8 +1287,9 @@ differential base and a small angular limit hides exactly the failure the experi
 
 **What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
 behaviour rather than the kinematics', and a model that states its robot's interface states them in
-its manifest -- the TurtleBot 4's does. ``cmd_vel_timeout`` is on ``omni_drive`` and
-``ackermann_drive`` too, with the same meaning; the other two are ``diff_drive``'s alone::
+its manifest -- the TurtleBot 4's does. ``cmd_vel_timeout`` is on every plugin that takes a
+``cmd_vel`` (see `A velocity command: odometry and the watchdog`_); the other two are
+``diff_drive``'s alone::
 
    - diff_drive:
        cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
@@ -1371,6 +1373,27 @@ Its odometry is dead reckoning like the others', and it drifts on a curve where 
 is left visible rather than corrected by a scrub factor: a skid-steer's scrub is systematic enough
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
+
+A velocity command: odometry and the watchdog
+---------------------------------------------
+
+Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
+``diff_drive``, ``omni_drive`` and ``ackermann_drive``. Both are in :mod:`roqsim.odometry`, for a
+plugin of your own to keep too.
+
+**Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
+first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
+as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from zero, so its
+odometry drifts as wheel odometry does. The true pose is not in ``odom``: it is the
+``ground_truth_pose`` plugin (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
+only for a robot spawned at the map origin facing ``+x``.
+
+**A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once
+the last one is older, the robot stops, through the same limits as any command to zero. ``0``, the
+default, holds a command until the next one, because an in-process driver sets a twist once and
+steps; a world that runs a real stack sets the stack's value (``ros2_control``'s
+``diff_drive_controller`` ships 0.5 s). Reset clears the command and its stamp, so no trial starts
+with the last one's.
 
 Manipulation: an arm on a linear axis
 -------------------------------------

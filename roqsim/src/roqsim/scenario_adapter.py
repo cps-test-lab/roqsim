@@ -267,13 +267,16 @@ class MujocoSim(_Base):
             return
         self._teardown_engine()
         cfg = load_config(_resolve_world(world), overrides, self._transport)
-        self._world = world
-        self._engine = Engine(cfg, logger=_wrap_logger(self._logger))
+        engine = Engine(cfg, logger=_wrap_logger(self._logger))
         # Before setup(): configure() may read the seed, and pre_step certainly does. A seed
         # resolved after this point would reach the tick-time consumers and silently miss the
         # configure-time ones.
-        self._engine.ctx.seed = self._seed_for(cfg)
-        self._engine.setup()
+        engine.ctx.seed = self._seed_for(cfg)
+        # A setup that raises has shut down what it configured; held only once it succeeded, so
+        # the next call builds afresh instead of stepping an engine that never set up.
+        engine.setup()
+        self._engine = engine
+        self._world = world
         self._built_overrides = overrides
         # A (re)built world means the browser scene descriptor (if requested) is stale; the export
         # itself runs after reset(), when mocap bodies are at their true initial pose.
