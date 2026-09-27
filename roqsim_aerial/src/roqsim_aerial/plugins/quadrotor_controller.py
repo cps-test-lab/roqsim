@@ -267,6 +267,10 @@ class QuadrotorControllerPlugin(Plugin):
     # -- lifecycle ---------------------------------------------------------------------------
 
     def on_reset(self, ctx: SimContext) -> None:
+        # A commanded setpoint belongs to the episode that commanded it: the next trial takes off
+        # toward the configured target, not toward wherever the previous one was sent.
+        self._target = np.array(self.cfg("target"), dtype=float)
+        self._yaw = float(self.cfg("yaw"))
         self._vel_cmd = None
         self._yaw_rate = 0.0
         self._state = (0.0,) * 8

@@ -16,6 +16,7 @@ import textwrap
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.check import check_world, main
 
 TABLE = """
@@ -109,7 +110,7 @@ def test_set_wins_over_the_file_as_it_does_for_roqsim_sim(capsys, tmp_path, worl
 def test_an_override_addressing_nothing_is_a_config_problem(capsys, world):
     """Refused as a run refuses it -- not silently dropped, which would check the base world."""
     code, report = _check(capsys, world, "--set", "components.obstacel.instances=[]")
-    assert code == 1
+    assert code == exit_status.FINDING
     assert report["ok"] is False and report["reached"] == "resolve"
     assert [p["stage"] for p in report["problems"]] == ["config"]
     assert "obstacel" in report["problems"][0]["message"]
@@ -133,8 +134,9 @@ def test_the_text_report_names_the_overrides(capsys, world):
 
 
 def test_an_override_file_that_cannot_be_read_is_not_a_verdict(capsys, tmp_path, world):
-    """Exit 2 and a line on stderr: 0 and 1 mean a report is on stdout."""
-    assert main([str(world), "--override", str(tmp_path / "missing.yaml"), "--json"]) == 2
+    """Bad input and a line on stderr, with no report: no world was checked."""
+    code = main([str(world), "--override", str(tmp_path / "missing.yaml"), "--json"])
+    assert code == exit_status.BAD_INPUT
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "missing.yaml" in captured.err
