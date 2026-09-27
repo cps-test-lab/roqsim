@@ -30,7 +30,8 @@ repository extends it without a change here.
 | `export_web.py`, `export_capture.py`, `export_urdf.py`, `export_srdf.py` | A compiled world or a recorded run out to a browser scene descriptor, a run capture, a URDF, or a MoveIt SRDF. |
 | `commands.py` | The `roqsim` command tree. |
 
-Five built-in plugins, all world-agnostic:
+Core registers sixteen plugins, all world-agnostic (`roqsim plugins list` prints every one); among
+them:
 
 - `dummy` — adds one free-floating box and counts its own hook invocations on the blackboard. It
   validates the framework end-to-end with no assets at all, which is what the test suite asserts on.
