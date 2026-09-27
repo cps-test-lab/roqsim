@@ -270,9 +270,6 @@ def _spot_policy() -> Path:
     return Path(roqsim_quadruped.__file__).parent / "policy" / "spot_policy.pt"
 
 
-_STALE_SCAN = "_payload_value serves the previous trial's last scan until the first cast"
-
-
 def _static(*components: dict, **sim) -> Case:
     return Case(lambda _tmp: _world(*components, **sim))
 
@@ -296,11 +293,7 @@ CASES: dict[str, Case] = {
     "clearance_monitor": Case(lambda _: _mobile({"clearance_monitor": {}})),
     "upright_monitor": Case(lambda _: _mobile({"upright_monitor": {}})),
     "energy_monitor": Case(lambda _: _mobile({"energy_monitor": {}})),
-    "joint_state_publisher": Case(
-        lambda _: _mobile({"joint_state_publisher": {}}),
-        defect="has no on_reset, so it serves the previous trial's last joint state until the first "
-        "step",
-    ),
+    "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
     "payload": Case(lambda _: _mobile({"payload": {"mass": 0.5}})),
     "model_override": Case(
@@ -321,28 +314,15 @@ CASES: dict[str, Case] = {
     "flex_material": Case(_flex_world),
     "heightfield": _static({"heightfield": {"size": [4.0, 4.0], "resolution": 32, "seed": 3}}),
     # mobile
-    "diff_drive": Case(
-        lambda _: _mobile(),
-        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
-    ),
+    "diff_drive": Case(lambda _: _mobile()),
     "spawn_robot": Case(lambda _: _mobile()),
-    "omni_drive": Case(
-        lambda _: _world(_robot("lgdxrobot2")),
-        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
-    ),
+    "omni_drive": Case(lambda _: _world(_robot("lgdxrobot2"))),
     "floorplan": _static(
         {"floorplan": {"lines": [{"id": 0, "x0_m": 2.0, "y0_m": -2.0, "x1_m": 2.0, "y1_m": 2.0}]}}
     ),
-    "ackermann_drive": Case(
-        lambda _: _world(_robot("piracer")),
-        defect="_jpos/_jvel serve the previous trial's last joint state until the first step",
-    ),
+    "ackermann_drive": Case(lambda _: _world(_robot("piracer"))),
     # navigation and people
-    "navigator": Case(
-        lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}}),
-        defect="_commanded survives the reset, and the handle's pose, the core's per-tick inputs "
-        "and the planner stay the previous trial's until the first tick",
-    ),
+    "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
         {
             "walker": {"walker": "MaleVisitorWalk", "waypoints": [[-1.0, 0.0], [1.0, 0.0]]},
@@ -364,16 +344,14 @@ CASES: dict[str, Case] = {
         lambda _: _arm({"force_limit": {"ft": "ft", "max_force": 0.001}, "name": "safety"}),
     ),
     # sensors
-    "lidar": Case(lambda _: _mobile(), defect=_STALE_SCAN),
-    "range_sensor": Case(lambda _: _world(_robot("turtlebot4")), defect=_STALE_SCAN),
+    "lidar": Case(lambda _: _mobile()),
+    "range_sensor": Case(lambda _: _world(_robot("turtlebot4"))),
     "imu": Case(lambda _: _mobile({"imu": {}})),
     "gnss": Case(lambda _: _mobile({"gnss": {"datum": {"lat": 47.4, "lon": 8.5, "alt": 400.0}}})),
     "ground_truth_pose": Case(lambda _: _mobile({"ground_truth_pose": {}})),
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
-    "livox_mid360": Case(lambda _: _sensor("mid360"), defect=_STALE_SCAN),
-    "seyond_robin_w1g": Case(
-        lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}}), defect=_STALE_SCAN
-    ),
+    "livox_mid360": Case(lambda _: _sensor("mid360")),
+    "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
     "oakd_camera": Case(lambda _: _sensor("oakd")),
     "realsense_d415": Case(lambda _: _sensor("d415")),
     "realsense_d435": Case(lambda _: _sensor("d435")),
