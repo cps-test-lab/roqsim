@@ -42,6 +42,7 @@ from pathlib import Path
 import numpy as np
 from lxml import etree
 
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 from . import fuel_fetch
@@ -629,6 +630,7 @@ class Importer:
             manifest["ground_z"] = round(self.ground_z, 6)
         out = Path(self.args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
+        manifest = scene_manifest_format.stamp(manifest)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
         if self.args.lock and self.assets:
