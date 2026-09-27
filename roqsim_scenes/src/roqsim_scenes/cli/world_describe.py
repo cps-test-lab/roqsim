@@ -167,12 +167,8 @@ def _built(config):
     """
     from roqsim.engine import Engine
 
-    engine = Engine(config, preview=True)
-    engine.setup()
-    try:
+    with Engine(config, preview=True) as engine:
         yield engine
-    finally:
-        engine.shutdown()
 
 
 def _overridable_targets(ctx, pattern: str) -> dict:

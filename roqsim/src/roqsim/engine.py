@@ -11,6 +11,15 @@ Lifecycle::
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
+A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leaving runs
+:meth:`shutdown`, whether the body returned or raised::
+
+    engine = Engine(cfg)
+    engine.ctx.seed = seed      # before setup: configure may read it
+    with engine:
+        engine.reset()
+        ...
+
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time) and the one-shot load phases — plugin resolution, world load, compile, data creation —
 are recorded for :meth:`load_report`. Profiling off (the default) does no timing work at all.
@@ -85,9 +94,8 @@ _CONES = {
 #:
 #: They are here for FIDELITY first. A published model that enables MuJoCo's global override has to be
 #: reproducible as published, and these three are the values such a model states — and often the ones
-#: it randomizes, since the flag makes them the only contact parameters in play. One corpus
-#: reconstruction turns on exactly that, and its spec records the flag as REQUIRED for the three to
-#: have any effect at all. That a sweep over them is then an ordinary campaign factor, needing no
+#: it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+#: three have no effect at all. That a sweep over them is then an ordinary campaign factor, needing no
 #: bespoke plugin and no hand-edited MJCF per cell, is the second reason rather than the first.
 #:
 #: GLOBAL, and BEFORE COMPILE — both halves load-bearing. Per-geom ``solref``/``solimp`` stay where
@@ -164,6 +172,14 @@ class Engine:
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
+
+    def __enter__(self) -> Engine:
+        """Run :meth:`setup`. A setup that raises has shut down what it configured."""
+        self.setup()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.shutdown()
 
     def _world_plugins(self) -> list[Plugin]:
         """The plugins that build their own ground + lighting, in declaration order."""
@@ -439,8 +455,8 @@ class Engine:
     def shutdown(self) -> None:
         """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).
 
-        A no-op before :meth:`setup` completed: a setup that failed in configure has already shut
-        down what it configured, and nothing else is open.
+        A no-op before :meth:`setup` completed and after a shutdown: a setup that failed in
+        configure has already shut down what it configured, and nothing else is open.
         """
         if not self._setup_done:
             return
