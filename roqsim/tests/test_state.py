@@ -206,6 +206,29 @@ def test_check_lists_the_worlds_sensors_and_their_kinds(recording):
     assert set(record["sensors"].values()) <= {st.KIND_SCALAR, st.KIND_ARRAY, st.KIND_IMAGE}
 
 
+def test_closing_a_recording_shuts_its_rebuilt_world_down(recording, monkeypatch):
+    """A replayed sensor holds what a live one holds; only the plugins' shutdown releases it."""
+    rec = open_recording(recording)
+    _, ctx = rec.build()
+    shut = []
+    monkeypatch.setattr(ctx.engine, "shutdown", lambda: shut.append(True))
+    rec.close()
+    rec.close()  # idempotent: the second call has nothing left to shut down
+    assert shut == [True]
+    assert rec.build()[0] is not None  # a closed recording can be rebuilt
+
+
+def test_run_state_closes_the_recording_on_every_way_out(recording, monkeypatch):
+    from roqsim.recording import Recording
+
+    closed = []
+    monkeypatch.setattr(Recording, "close", lambda self: closed.append(self))
+    st.run_state(recording, check=True)
+    with pytest.raises(st.StateError):
+        st.run_state(recording, sensors=["nosuch"], at=1.0)
+    assert len(closed) == 2
+
+
 def test_an_undeclared_sensor_errors_and_lists_what_the_world_has(recording):
     with pytest.raises(st.StateError) as err:
         st.run_state(recording, sensors=["nosuch"], at=1.0)
