@@ -51,9 +51,11 @@ def _read_manifest(scene_dir: Path) -> dict:
 def _load_scene(scene_dir: Path) -> list[tuple[np.ndarray, np.ndarray]]:
     manifest = _read_manifest(scene_dir)
     out = []
+    # Every object, collidable or not -- the same rule as the world path (`_load_world`). A 2D
+    # costmap is built from what the lidar returns, and the raycaster hits a visual-only mesh as
+    # surely as a collidable one; `sdf-to-scene --no-collide` imports a building shell exactly that
+    # way, and promises it still generates the occupancy grid.
     for obj in manifest["objects"]:
-        if not obj.get("collide", True):
-            continue  # visual-only geometry is not an obstacle
         verts, faces = [], []
         for line in (scene_dir / obj["mesh"]).read_text().splitlines():
             s = line.split()
