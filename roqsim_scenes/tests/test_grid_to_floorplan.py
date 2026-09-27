@@ -40,8 +40,9 @@ def test_y_depends_on_the_grid_height_not_on_the_grid_width():
         ("v", cols - 1, 0, rows - 1),  # right wall
     ]
     ys = [v for ln in g2f.to_floorplan(segs, rows, CELL)["lines"] for v in (ln["y0_m"], ln["y1_m"])]
-    assert min(ys) == pytest.approx(CELL / 2)
-    assert max(ys) == pytest.approx((rows - 0.5) * CELL)
+    # The side walls run edge to edge, so the plan spans the grid's own height.
+    assert min(ys) == pytest.approx(0.0)
+    assert max(ys) == pytest.approx(rows * CELL)
 
 
 def test_origin_places_the_grids_bottom_left_corner():
@@ -93,3 +94,11 @@ def test_a_crisp_four_wall_room_comes_out_as_four_lines():
     segs = g2f.segments(grid, min_cells=3, gap=3)
     assert len(segs) == 4
     assert sorted(s[0] for s in segs) == ["h", "h", "v", "v"]
+
+
+def test_a_run_is_as_long_as_its_cells_whichever_way_it_runs():
+    """Four cells make a four-cell wall, horizontal or vertical -- an L's arms are the same length."""
+    rows = 10
+    h, v = g2f.to_floorplan([("h", 5, 2, 5), ("v", 2, 2, 5)], rows, CELL)["lines"]
+    assert h["x1_m"] - h["x0_m"] == pytest.approx(4 * CELL)
+    assert v["y1_m"] - v["y0_m"] == pytest.approx(4 * CELL)

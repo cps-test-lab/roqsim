@@ -111,7 +111,9 @@ def to_floorplan(
             )
         else:
             x = ox + (fixed + 0.5) * cell_m
-            y0, y1 = oy + (rows - 1 - hi + 0.5) * cell_m, oy + (rows - 1 - lo + 0.5) * cell_m
+            # Edge to edge along the run, as a horizontal wall is: a run of N cells is N cells long,
+            # and a wall one cell thick then covers exactly the cells that were traced.
+            y0, y1 = oy + (rows - 1 - hi) * cell_m, oy + (rows - lo) * cell_m
             lines.append(
                 {
                     "id": i,
