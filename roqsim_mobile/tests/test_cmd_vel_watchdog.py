@@ -1,18 +1,14 @@
-"""Every base stops when its commands stop, once ``cmd_vel_timeout`` is set -- not only diff_drive.
-
-A stack that dies mid-run must leave a stationary robot, not one driving at its last velocity into
-a wall. ``omni_drive`` and ``ackermann_drive`` had no watchdog, so a holonomic base or a car drove
-on for ever.
-"""
+"""``omni_drive`` and ``ackermann_drive`` stop once ``cmd_vel_timeout`` passes with no command,
+as ``diff_drive`` does, and hold the last command when it is 0."""
 
 from __future__ import annotations
 
+# `roqsim` selects MuJoCo's GL backend on import, so it comes first (see test_wheels_roll.py).
+import roqsim  # noqa: F401, I001
 from pathlib import Path  # noqa: E402
 
 import pytest  # noqa: E402
 
-# `roqsim` selects MuJoCo's GL backend on import, so it comes first (see test_wheels_roll.py).
-import roqsim  # noqa: F401, I001
 from roqsim.config import load_config_from_dict  # noqa: E402
 from roqsim.engine import Engine  # noqa: E402
 

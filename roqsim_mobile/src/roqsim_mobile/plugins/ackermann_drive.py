@@ -76,8 +76,7 @@ only symptom is a controller reporting that it cannot make progress.
 good for this long and then the car stops, so a stack that dies mid-run leaves a stationary car
 rather than one driving at its last velocity into a wall. Off (0) by default, because an in-process
 driver that sets a twist once and steps expects it to hold. The stop goes through the same
-acceleration ramp as any command.
-The rack holds its angle when the watchdog stops the car, as it does on any stop.
+acceleration ramp as any command, and the rack holds its angle, as it does on any stop.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT of
 whatever URDF ``robot_state_publisher`` is running beside the simulator: a description rooted at
