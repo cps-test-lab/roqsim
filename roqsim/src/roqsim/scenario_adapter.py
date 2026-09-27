@@ -375,10 +375,10 @@ class MujocoSim(_Base):
     def _start_recording(self) -> None:
         """Begin sampling MuJoCo state, when the run asked for it.
 
-        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path, relative to the scenario's ``output_dir``
-        like the scene export), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
-        concern rather than an experiment one -- the same footing as ``sim.headless``, which the world
-        YAML rejects on purpose -- so it is driven by the environment here and never by the world.
+        Opt-in via ``ROQSIM_RECORD`` (the ``.npz`` path; a relative one is resolved by
+        :meth:`_resolve_out`), with ``ROQSIM_CAPTURE_FPS`` for the rate. Recording is a *session*
+        concern rather than an experiment one -- the same footing as ``sim.headless``, which a world
+        YAML ignores with a warning -- so it is driven by the environment here and never by the world.
 
         The recorder is rebuilt with the world: it holds the model whose state it packs, so a world
         rebuilt with different ``world_overrides`` needs a new one.
