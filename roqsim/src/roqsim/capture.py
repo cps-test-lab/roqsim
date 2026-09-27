@@ -634,11 +634,9 @@ class StateRecorder:
         self._first_t = self._last_t = 0.0
         self._first_w = self._last_w = 0.0
         self._next_due = 0.0
-        #: How far ``sim_time`` may fall short of the due time and still be it: half a step. The two
-        #: clocks are rounded differently -- ``data.time`` is dt added once per step, the due time
-        #: is the period added once per sample -- and after some seconds the step whose time IS the
-        #: due time reads a few 1e-15 below it. Any tolerance well under a step is exact, since the
-        #: step before is a whole dt away; one at 1e-12 slipped every later sample one step late.
+        #: How far ``sim_time`` may fall short of the due time and still be due: half a step.
+        #: ``data.time`` sums dt per step and the due time sums the period per sample, so the step
+        #: that lands on the due time can read a few ulp below it; the step before is a whole dt away.
         self._half_step = 0.5 * float(ctx.model.opt.timestep)
         self._closed = False
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
@@ -738,8 +736,7 @@ class StateRecorder:
         gated on, which is what makes the pacing itself a measurable property of the run instead of a
         thing the sample schedule hides.
 
-        Due means within half a step of the due time (see ``_half_step``): the step that lands on
-        it takes the sample whichever way float rounding put it, and no other step can.
+        Due means within half a step of the due time (see ``_half_step``).
         """
         now = ctx.sim_time
         if now + self._half_step < self._next_due:

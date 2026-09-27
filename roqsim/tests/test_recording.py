@@ -834,11 +834,9 @@ def test_the_pose_record_leaves_a_flexs_own_bodies_out(tmp_path, caplog):
 def test_every_sample_lands_on_the_capture_grid_over_a_long_run(tmp_path, moving):
     """The gate must not slip a step when accumulated float time falls a hair short of the due time.
 
-    ``data.time`` is dt added once per step and the due time is the period added once per sample,
-    and the two roundings drift apart: after some seconds the step whose time IS the due time reads
-    a few 1e-15 below it. A gate with a 1e-12 tolerance then skips that step and samples the next,
-    one dt late, for the rest of the run. The first sample is taken at the first step; every later one
-    must be taken a whole number of ``every`` steps after it.
+    ``data.time`` sums dt per step and the due time sums the period per sample, so after some
+    seconds the step that lands on the due time reads a few ulp below it. The first sample is taken
+    at the first step; every later one must be taken a whole number of ``every`` steps after it.
     """
     model, data = moving
     mujoco.mj_resetData(model, data)
