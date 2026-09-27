@@ -400,6 +400,14 @@ class OmniDrivePlugin(Plugin):
         self._cmd[:] = 0.0
         self._odom[:] = 0.0
         self._last_cmd = float("-inf")
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._wjid + self._sjid):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
 
     def _yaw(self, d) -> float:
         qw, qx, qy, qz = d.qpos[self._qadr + 3 : self._qadr + 7]
@@ -493,6 +501,4 @@ class OmniDrivePlugin(Plugin):
         o[2] = (o[2] + wz * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4], o[5] = vx_b, vy_b, wz
 
-        for k, jid in enumerate(self._wjid + self._sjid):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)
