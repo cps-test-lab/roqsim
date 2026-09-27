@@ -1,7 +1,7 @@
 """``--prop PATH,X,Y,YAW`` puts the prop's footprint centre at (X, Y) whatever the yaw.
 
-An OBJ whose footprint is not centred on its own origin turns about that origin, so subtracting the
-unrotated centre only works at yaw 0; at 90 deg the prop landed off (X, Y) by its turned offset.
+An OBJ whose footprint is not centred on its own origin turns about that origin, so the placement has
+to subtract the footprint centre rotated by the yaw, not the unrotated one.
 """
 
 from __future__ import annotations

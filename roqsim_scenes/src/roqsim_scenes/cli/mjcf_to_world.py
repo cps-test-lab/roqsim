@@ -83,7 +83,12 @@ def main(argv: list | None = None) -> None:
     ap.add_argument(
         "--out", required=True, help="output world MJCF path (assets/ created beside it)"
     )
-    ap.add_argument("--prop", action="append", default=[], help="prop to add: 'PATH,X,Y[,YAW]'")
+    ap.add_argument(
+        "--prop",
+        action="append",
+        default=[],
+        help="prop to add: 'PATH,X,Y[,YAW]', footprint centre at X,Y, YAW in degrees",
+    )
     ap.add_argument(
         "--ground-z", type=float, help="ground-plane height (default: scene's lowest point)"
     )

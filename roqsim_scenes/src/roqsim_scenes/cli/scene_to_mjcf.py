@@ -462,7 +462,12 @@ def main(argv: list | None = None) -> None:
         "--config", help="generation config YAML (default: scene.yaml beside scene.json)"
     )
     ap.add_argument("--out", help="output MJCF path (default: worlds/<scene>/<scene>.xml)")
-    ap.add_argument("--prop", action="append", default=[], help="prop to add: 'PATH,X,Y[,YAW]'")
+    ap.add_argument(
+        "--prop",
+        action="append",
+        default=[],
+        help="prop to add: 'PATH,X,Y[,YAW]', footprint centre at X,Y, YAW in degrees",
+    )
     args = ap.parse_args(argv)
 
     scene_json = _resolve_scene(args.scene)
