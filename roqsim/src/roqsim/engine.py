@@ -378,10 +378,11 @@ class Engine:
             )
 
     def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
+        """Reset physics and let plugins restore initial state.
 
-        (The scenario-execution adapter maps injected scenario parameters onto ``params``; plugins
-        read them from ``ctx`` / their own config. Kept simple here.)
+        ``params`` describe the trial being started: they are set on the blackboard as
+        ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
+        The scenario-execution adapter forwards the scenario parameters it does not consume here.
 
         The state it leaves is checked for bodies placed inside one another
         (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
@@ -399,8 +400,8 @@ class Engine:
         self.ctx.episode += 1
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
-        if params:
-            self.ctx.blackboard.set("reset_params", params)
+        # Set on every reset, so no trial reads the previous one's parameters.
+        self.ctx.blackboard.set("reset_params", dict(params))
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
