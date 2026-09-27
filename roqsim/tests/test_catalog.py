@@ -184,6 +184,44 @@ def test_model_details_add_the_config_a_spawn_actually_injects():
     assert detail["mesh_dirs"] and all(Path(d).is_dir() for d in detail["mesh_dirs"][:1])
 
 
+_ARM_WITH_A_WHEEL = """
+<mujoco>
+  <worldbody>
+    <body name="base">
+      <geom name="wheel" type="sphere" size="0.05"/>
+      <joint name="spin_joint" type="hinge"/>
+      <site name="tool"/>
+    </body>
+  </worldbody>
+  <contact><pair geom1="wheel" geom2="floor" friction="1 1 0.005 0.0001 0.0001"/></contact>
+  <actuator><position name="spin" joint="spin_joint"/></actuator>
+</mujoco>
+"""
+
+
+def test_model_details_name_each_actuator_and_the_joint_it_drives(tmp_path):
+    """What ``actuators: each:`` keys on, and a contact pair naming the world's floor still compiles."""
+    model = tmp_path / "arm_with_a_wheel.xml"
+    model.write_text(_ARM_WITH_A_WHEEL)
+    names = get_model_details(str(model))["names"]
+    assert names == {
+        "bodies": ["base"],
+        "sites": ["tool"],
+        "joints": ["spin_joint"],
+        "actuators": [{"name": "spin", "joint": "spin_joint"}],
+    }
+
+
+def test_the_cli_exits_nonzero_when_a_model_does_not_compile(tmp_path, capsys):
+    model = tmp_path / "missing_mesh.xml"
+    model.write_text(
+        '<mujoco><asset><mesh name="m" file="absent.obj"/></asset>'
+        '<worldbody><geom type="mesh" mesh="m"/></worldbody></mujoco>'
+    )
+    assert main(["model", str(model)]) == 1
+    assert "error" in json.loads(capsys.readouterr().out)["names"]
+
+
 def test_details_for_an_unknown_model_is_an_error_not_an_exception():
     assert "error" in get_model_details("not_a_model_xyz")
     with pytest.raises(ModelError):
