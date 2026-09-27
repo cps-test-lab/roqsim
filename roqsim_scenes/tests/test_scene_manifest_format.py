@@ -18,7 +18,7 @@ import pytest
 from roqsim.textures import UVScaler
 from roqsim_scenes import scene_manifest as sm
 from roqsim_scenes.cli import floorplan_to_world as fw
-from roqsim_scenes.cli import scene_to_mjcf
+from roqsim_scenes.cli import scene_to_floorplan, scene_to_map, scene_to_mjcf
 
 
 def _scene(tmp_path, **stamp):
@@ -72,3 +72,13 @@ def test_the_blender_writer_stamps_the_same_pair():
     src = (Path(scene_to_mjcf.__file__).with_name("usd_to_scene.py")).read_text()
     assert re.search(rf'"format": "{re.escape(sm.FORMAT)}"', src)
     assert re.search(rf'"version": {sm.FORMAT_VERSION}\b', src)
+
+
+def test_every_reader_checks_the_stamp(tmp_path):
+    """The map and floorplan readers refuse what the bake refuses, before reading a key."""
+    _scene(tmp_path, format="roqsim.web_scene", version=1)
+    with pytest.raises(ValueError, match="not a scene manifest"):
+        scene_to_floorplan.floorplan_of(tmp_path)
+    _scene(tmp_path, format=sm.FORMAT, version=sm.FORMAT_VERSION + 1)
+    with pytest.raises(ValueError, match=rf"version {sm.FORMAT_VERSION + 1}"):
+        scene_to_map._load_scene(tmp_path)
