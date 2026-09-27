@@ -96,6 +96,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 
 
@@ -128,11 +129,10 @@ class DiffDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
-        #: Watchdog: a command older than this stops the base; 0 = hold the last command forever.
-        self.cmd_vel_timeout = float(self.config.get("cmd_vel_timeout", 0.0))
+        #: ``cmd_vel_timeout``: a command older than this stops the base; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
         self.odom_rate_hz = float(self.config.get("odom_rate_hz", 50.0))
         self.publish_joint_states = bool(self.config.get("publish_joint_states", True))
-        self._last_cmd = float("-inf")  # sim time of the last drive(); -inf until one arrives
         self._ctx: SimContext | None = None
         #: Odometry error: (linear_stddev, angular_stddev, linear_scale, angular_scale), or None.
         noise = self.config.get("odom_noise")
@@ -193,8 +193,7 @@ class DiffDrivePlugin(Plugin):
                 errors.append(f"'{side}_actuators' and '{side}_joints' must have the same length")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
-        if float(config.get("cmd_vel_timeout", 0.0)) < 0:
-            errors.append("'cmd_vel_timeout' must be >= 0 (0 = no watchdog)")
+        errors += CommandWatchdog.validate(config)
         if float(config.get("odom_rate_hz", 50.0)) <= 0:
             errors.append("'odom_rate_hz' must be > 0")
         noise = config.get("odom_noise")
@@ -344,9 +343,9 @@ class DiffDrivePlugin(Plugin):
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(np.clip(w, -self.max_w, self.max_w))
-        # Stamped for the watchdog. Physics thread by construction: a bridge posts the command
-        # onto it, and an in-process driver calls this between steps.
-        self._last_cmd = self._ctx.sim_time if self._ctx is not None else 0.0
+        # Physics thread by construction: a bridge posts the command onto it, and an in-process
+        # driver calls this between steps.
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
         x, y, yaw, v, w = self._odom
@@ -359,7 +358,7 @@ class DiffDrivePlugin(Plugin):
         self._target_v = self._target_w = 0.0
         self._cmd_wl = self._cmd_wr = 0.0
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
-        self._last_cmd = float("-inf")
+        self.watchdog.clear()
 
     def pre_step(self, ctx: SimContext) -> None:
         if ctx.manual_control:
@@ -367,7 +366,7 @@ class DiffDrivePlugin(Plugin):
         if "test_cmd" in self.config:
             v, w = self.config["test_cmd"]
             self.drive(float(v), 0.0, float(w))
-        if self.cmd_vel_timeout > 0.0 and ctx.sim_time - self._last_cmd > self.cmd_vel_timeout:
+        if self.watchdog.expired(ctx):
             # The watchdog: the last command has expired, so the target is a stop. The ramp below
             # still applies, so the base decelerates as it would on any command to zero.
             self._target_v = self._target_w = 0.0
