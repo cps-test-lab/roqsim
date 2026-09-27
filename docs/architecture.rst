@@ -64,7 +64,19 @@ Full-run sequence:
    step():    drain → pre_step(p0…pN) → mj_step → post_step(p0…pN) → publish_snapshot
    shutdown(): shutdown(pN)…shutdown(p0)   (best-effort; a failure is logged, others still run)
 
-A ``configure`` that raises ends ``setup()`` with the plugins configured before it, and the failing one, shut down in reverse order: they hold what ``configure`` opens, and the driver never receives an engine to shut down. ``shutdown()`` on such an engine is then a no-op.
+A ``configure`` that raises ends ``setup()`` with the plugins configured before it, and the failing one, shut down in reverse order: they hold what ``configure`` opens, and the driver never receives an engine to shut down. ``shutdown()`` on such an engine is then a no-op, as is a second ``shutdown()``.
+
+A driver holds the engine in a ``with`` block, which runs ``setup()`` on entry and ``shutdown()`` on every way out -- a return, an exception from ``reset`` or a step, an interrupt:
+
+::
+
+   engine = Engine(cfg)
+   engine.ctx.seed = resolve_seed(...)   # before setup: configure may read it
+   with engine:
+       engine.reset()
+       ...
+
+Where a window, a recorder or a renderer must also close, the driver puts them on one ``contextlib.ExitStack`` with the engine. A function that hands a set-up engine to its caller (``roqsim.render.build_target``, the scene builder's ``load_engine``) enters it on an ``ExitStack`` and calls ``pop_all()`` once nothing more can fail, so a failure before the hand-over still shuts it down; the caller then owns the shutdown. The scenario adapter is the one driver that keeps an engine across calls -- scenario-execution calls its ``setup`` and ``shutdown`` -- so it shuts the engine down in ``_teardown_engine`` rather than in a block.
 
 Ordering rule: within a hook, plugins run in **YAML order**; ``shutdown`` runs in reverse. Cross-plugin dependencies are expressed by ordering + the blackboard, never by importing another plugin. A plugin whose ``build`` edits what another plugin built -- ``contact_pair_override`` on the entities it pairs, ``flex_material`` on the flex a spawned model brings in -- is declared after that plugin, and refuses at build time, naming the fix, when what it edits is not there yet.
 
@@ -262,9 +274,8 @@ replace every contact's own parameters::
 
 They are here for **fidelity** first. A published model that enables MuJoCo's global override has to
 be reproducible as published, and these three are the values such a model states -- and often the ones
-it randomizes, since the flag makes them the only contact parameters in play. One corpus
-reconstruction turns on exactly that, and its spec records the flag as *required* for the three to
-have any effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
+it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+three have no effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
 bespoke plugin and no hand-edited MJCF per cell, the same reason ``spawn_model``'s
 ``mass``/``friction`` exist -- is the second reason rather than the first.
 

@@ -4,14 +4,14 @@ Both arms are transformations of MuJoCo Menagerie's ``trossen_vx300s`` / ``tross
 Trossen derive from the same ``interbotix_xsarm_descriptions`` xacro the ROS 2 package ships. So the
 first job is asserting nothing drifted in transit.
 
-The second is the gripper, and it is why this file exists rather than reusing the arm battery.
-``references/gripper.md`` is blunt about it: *"A grasp that is only checked at the instant it reaches
-height will report picks that did not happen."* Two such "grasps" are
-nothing of the kind -- a box that simply free-falls to the floor before the fingers close, and a box
-the arm sweeps through on the way to the pose and knocks aside. Both look plausible in a summary and
-both would ship a gripper that cannot pick anything up. ``test_holds_a_payload`` therefore spawns
-the arm *already at* the grasp stance (``rest:``), so there is no approach sweep, and asserts the
-payload leaves the floor **and** does not creep afterwards.
+The second is the gripper, and it is why this file exists rather than reusing the arm battery. A
+grasp that is only checked at the instant it reaches height will report picks that did not happen.
+Two such "grasps" are nothing of the kind -- a box that simply free-falls to the floor before the
+fingers close, and a box the arm sweeps through on the way to the pose and knocks aside. Both look
+plausible in a summary and both would ship a gripper that cannot pick anything up.
+``test_holds_a_payload`` therefore spawns the arm *already at* the grasp stance (``rest:``), so
+there is no approach sweep, and asserts the payload leaves the floor **and** does not creep
+afterwards.
 """
 
 from __future__ import annotations
@@ -121,7 +121,7 @@ def test_aperture_curve_and_jaw_parallelism(model):
                 engine.step()
             assert float(d.qpos[left]) == pytest.approx(commanded, abs=1e-3)
             # The <equality polycoef="0 -1 0 0 0"> mirrors the fingers; splayed jaws are the failure
-            # references/gripper.md warns a literal <mimic> reproduction produces.
+            # a literal <mimic> reproduction produces.
             assert abs(float(d.qpos[left]) + float(d.qpos[right])) < 1e-4, "jaws are not parallel"
     finally:
         engine.shutdown()
