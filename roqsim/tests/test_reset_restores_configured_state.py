@@ -530,8 +530,6 @@ SKIPPED: dict[str, str] = {
 KNOWN_DEFECTS: dict[str, str] = {
     "cartesian_admittance": "on_reset does not restore _active, the target wrench (w_d) or the law "
     "(law, controller_type, _uses_*) a trial set",
-    "force_limit": "a trip outlives its trial: Engine.reset never clears the stop it requested "
-    "(ctx.stop_requested)",
     "navigator": "_commanded survives the reset, and the handle's pose, the core's per-tick inputs and "
     "the planner stay the previous trial's until the first tick",
     **{

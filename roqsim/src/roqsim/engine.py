@@ -398,6 +398,9 @@ class Engine:
         # `rng_for` is keyed on simulated time, so without this every trial after the first
         # would replay the first one's noise exactly.
         self.ctx.episode += 1
+        # A stop request ends the trial that made it, not the next one.
+        self.ctx.stop_requested = False
+        self.ctx.stop_reason = ""
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
         # Set on every reset, so no trial reads the previous one's parameters.

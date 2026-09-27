@@ -331,8 +331,9 @@ The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand s
 with ``ctx.request_stop(reason)``: the driver polls ``ctx.stop_requested`` and leaves its loop
 cleanly, so ``shutdown`` still runs and files still flush, instead of the world being padded out to
 a wall-clock ``--seconds`` guessed high enough for the slowest cell. The engine itself does not act
-on the request, and the scenario adapter does not read it. Physics-thread only, like every other
-write on ``SimContext``; the first reason wins.
+on the request beyond withdrawing it at ``reset()``, since it belongs to the trial that made it, and
+the scenario adapter does not read it. Physics-thread only, like every other write on
+``SimContext``; the first reason wins.
 
 Actuator overrides (``actuators:``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
