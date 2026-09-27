@@ -41,6 +41,11 @@ quotes.
 Each plugin validates its own ``config:`` section; the engine aggregates all errors and fails fast
 before the scene is built.
 
+A world may state its document version with a top-level ``version: 1``; absent means 1. A version
+newer than the running roqsim reads is refused, naming both, for the world and for every world it
+``extends``: loading it with the keys that happen to overlap would run a different experiment while
+looking correct.
+
 Stating a joint's gains (``actuators:``)
 ````````````````````````````````````````
 
