@@ -304,8 +304,9 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
-  prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
-  ``arm_controller``, an eye-in-hand ``realsense_d415``, and a ``fiducial_marker`` on the wrist.
+  prefixed body name without the world having to know it. A downstream ``ur10e_custom.manifest.yaml``
+  could, for instance, ship an ``arm_controller``, an eye-in-hand ``realsense_d415``, and a
+  ``fiducial_marker`` on the wrist (:doc:`architecture` §4, *Model discovery*).
 
 A ``model:`` name is resolved across **all** installed packages, so a world can spawn a model that
 lives in a different package from the spawn plugin. Register a package's models once::
@@ -1376,11 +1377,11 @@ arm to a body that already exists, while a rail has to introduce the moving carr
    components:
      - spawn_arm:
          model: ur10e
-         name: ur10e
          prefix: "ur10e_"
          pos: [0.0, 0.0, 2.6]              # where the axis sits
          rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
+       name: ur10e
 
 What this buys is **kinematic redundancy**: a 6-DOF arm on a rail is a 7-DOF system, so a task pose
 has a one-parameter family of solutions and a planner can trade base travel against arm posture.
@@ -1631,7 +1632,8 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
+named; prefer ``controller_type``.
 
 **A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
 setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
@@ -1674,7 +1676,7 @@ and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
-Tare through the service (see "Taring" above) before commanding anything.
+Tare through the service (see "Gravity and tool mass" below) before commanding anything.
 
 **A limit that stops the trial** is ``force_limit``: a measured wrench magnitude above a threshold
 latches, reports, releases whatever was driving the arm and asks the driver to stop. Named for the
@@ -1686,14 +1688,18 @@ controller switch would put a fiction in a results table's failure-mode column.
 
 ``contact_monitor`` (above) treats contact as the failure, and ``model_override`` (above) can take a
 contact away on command. A contact-rich manipulation task inverts both: contact *is* the task, and the
-measurement is the wrench, not the trajectory. Four plugins make
+measurement is the wrench, not the trajectory. Five plugins make
 that chain, and they are listed in a world in this order because each needs the previous one's
-blackboard handle::
+blackboard handle. The sensor and the control law belong to the arm, so they sit in its
+``components:`` and need no key naming it::
 
-   - spawn_arm:            {model: ur5e, name: ur5e, prefix: "ur5e_"}
-   - force_torque:         {name: ft, arm: ur5e, site: fts_site, frame: world}
+   - spawn_arm: {model: ur5e, prefix: "ur5e_"}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - cartesian_admittance: {arm: ur5e, ft: ft, law: admittance, site: tool_site}
    - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
@@ -1783,9 +1789,10 @@ they cost something a navigation world should not pay:
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
    variation plugin.
 
-``unitree_g1_dex1``'s manifest is a worked example of (3): two ``arm_controller`` instances on one
-entity, each owning its seven arm joints and its own Dex1 gripper, alongside ``g1_locomotion`` on the
-twelve leg motors.
+``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
+entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
+``waist_controller`` on the three waist joints -- alongside ``g1_locomotion`` on the twelve leg
+motors.
 
 Two more if the target **moves** (dynamic grasping):
 
@@ -1807,7 +1814,7 @@ An arm carried by ``spawn_robot`` also needs ``arm_controller``'s ``rest`` stanc
 the base pose and no joint stance, so the arm falls back to ``qpos0``. For the Panda that is not neutral
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
-trials start identically. ``frankie``'s manifest is the worked example of (5), (6) and ``rest``.
+trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
