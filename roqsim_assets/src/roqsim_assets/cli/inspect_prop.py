@@ -28,7 +28,7 @@ redistributable ``CREDITS.txt`` is present.
 
 Pure stdlib, no MuJoCo/GL -- geometry comes straight from the OBJ (honouring any ``scale`` on the
 ``<mesh>`` in the MJCF). Pair it with ``roqsim render <prop> --out check.png`` for the visual eyeball;
-this is the deterministic ground truth the ``model-import`` skill drives.
+this is the deterministic ground truth of the import pipeline.
 
 Usage::
 

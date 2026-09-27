@@ -121,3 +121,47 @@ def test_a_configure_that_fails_shuts_down_what_was_configured_before_it():
     assert shut == ["c", "b", "a"], shut
     engine.shutdown()  # a driver's finally: nothing left to shut down, and nothing shut down twice
     assert [name for name, hook in log if hook == "shutdown"] == ["c", "b", "a"]
+
+
+# -- the engine as a context manager ---------------------------------------------------------------
+
+
+def _shutdowns() -> list[str]:
+    return [name for name, hook in RecordingPlugin.LOG if hook == "shutdown"]
+
+
+def test_a_with_block_sets_up_on_entry_and_shuts_down_on_exit():
+    engine = Engine(load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]}))
+    with engine as entered:
+        assert entered is engine
+        assert ("a", "configure") in RecordingPlugin.LOG
+        assert _shutdowns() == []
+        engine.reset()
+        engine.step()
+    assert _shutdowns() == ["a"]
+    engine.shutdown()  # already shut down: nothing runs twice
+    assert _shutdowns() == ["a"]
+
+
+def test_a_with_block_shuts_down_when_its_body_raises():
+    engine = Engine(load_config_from_dict({"sim": {}, "plugins": [{REF: {}, "name": "a"}]}))
+    with pytest.raises(RuntimeError, match="in the body"):
+        with engine:
+            raise RuntimeError("in the body")
+    assert _shutdowns() == ["a"]
+
+
+def test_a_with_block_whose_setup_fails_shuts_down_once():
+    cfg = load_config_from_dict(
+        {
+            "sim": {},
+            "plugins": [
+                {REF: {}, "name": "a"},
+                {"test_plugin_lifecycle:ConfigureRaises": {}, "name": "b"},
+            ],
+        }
+    )
+    with pytest.raises(RuntimeError, match="configure failed"):
+        with Engine(cfg):
+            pytest.fail("the body of a failed setup runs")
+    assert _shutdowns() == ["b", "a"]

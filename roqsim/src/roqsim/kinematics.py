@@ -76,18 +76,18 @@ def joint_dof_indices(model, names) -> list[int]:
 
 
 def body_twist(model, data, body_id: int) -> Twist:
-    """The world-frame twist of body ``body_id``.
+    """The world-frame twist of body ``body_id``, at the body's frame origin (``data.xpos``).
 
-    ``mj_objectVelocity`` with ``flg_local=0`` rather than ``data.cvel``: cvel is expressed in the
-    com-based frame of the body's kinematic subtree, so its linear part is the velocity *at the
-    subtree centre of mass* and differs from the body origin's by omega x r -- correct for MuJoCo's
-    own dynamics, wrong for "how fast is this robot moving".
+    ``mj_objectVelocity`` on ``mjOBJ_XBODY`` with ``flg_local=0``. Not ``data.cvel``, whose linear
+    part is the velocity at the kinematic subtree's centre of mass, and not ``mjOBJ_BODY``, which
+    MuJoCo measures at the body's own centre of mass (``data.xipos``): either differs from the
+    origin's by omega x r.
 
     Requires ``data`` to be posed -- live during a step, or after ``mj_forward`` when restored from
     a recording.
     """
     vel = np.zeros(6)
-    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, body_id, vel, 0)
+    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_XBODY, body_id, vel, 0)
     return Twist(
         linear=(float(vel[3]), float(vel[4]), float(vel[5])),
         angular=(float(vel[0]), float(vel[1]), float(vel[2])),
