@@ -39,7 +39,9 @@ import mujoco
 import yaml
 
 from roqsim import surfaces
+from roqsim.document import refuse_unknown_keys
 from roqsim.textures import UVScaler, resolve_texture, texture_manifest
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -65,13 +67,37 @@ def _resolve_scene(scene: str) -> str:
     return os.path.join(path, "scene.json") if os.path.isdir(path) else path
 
 
+#: Every key the bake reads from its config, by block. A key outside these is refused: a misspelt
+#: ``ground_z`` or ``physical_size`` would otherwise bake the default in its place.
+CONFIG_KEYS = frozenset(
+    {"ground_plane", "ground_z", "floor", "light", "materials", "collision", "origin"}
+)
+FLOOR_KEYS = frozenset({"texture", "rgb1", "rgb2", "reflectance", "physical_size", "rgba"})
+LIGHT_KEYS = frozenset({"height", "diffuse", "cutoff", "fill"})
+MATERIAL_KEYS = frozenset({"match", "texture", "rgba", "reflectance", "emission", "physical_size"})
+
+
 def _load_config(scene_json: str, explicit: str | None) -> dict:
-    """Load the generation config: ``--config`` if given, else ``scene.yaml`` beside scene.json, else {}."""
+    """Load the generation config: ``--config`` if given, else ``scene.yaml`` beside scene.json, else {}.
+
+    Checked by :func:`check_config` before anything reads it.
+    """
     path = explicit or os.path.join(os.path.dirname(scene_json), "scene.yaml")
     if os.path.isfile(path):
         with open(path) as fh:
-            return yaml.safe_load(fh) or {}
+            config = yaml.safe_load(fh) or {}
+        check_config(config, path)
+        return config
     return {}
+
+
+def check_config(config: dict, where: str) -> None:
+    """Refuse a bake config carrying a key no block reads (see :data:`CONFIG_KEYS`)."""
+    refuse_unknown_keys(config, CONFIG_KEYS, where)
+    refuse_unknown_keys(config.get("floor") or {}, FLOOR_KEYS, f"{where}: floor")
+    refuse_unknown_keys(config.get("light") or {}, LIGHT_KEYS, f"{where}: light")
+    for i, entry in enumerate(config.get("materials") or []):
+        refuse_unknown_keys(entry, MATERIAL_KEYS, f"{where}: materials[{i}]")
 
 
 def _physical_size(entry: dict) -> float:
@@ -371,6 +397,7 @@ def build_spec(
     """Build the MjSpec for a scene + props. ``uv_scaler`` must outlive the caller's asset relocation."""
     with open(scene_json) as fh:
         manifest = json.load(fh)
+    scene_manifest_format.check(manifest, scene_json)
     meshdir = os.path.dirname(scene_json)
     materials = config.get("materials") or []
     collide_scene = config.get("collision", "convex") == "convex"
