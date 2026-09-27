@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from roqsim.clock import SHORTFALL_REPORT_SHARE, Pacer
 from roqsim.config import load_config_from_dict
 from roqsim.runner import run
@@ -138,3 +140,74 @@ def test_scenario_adapter_lifecycle(tmp_path: Path):
     assert counts["pre_step"] == 7
     sim.shutdown()
     assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
+    tmp_path: Path, monkeypatch
+):
+    """A recording whose close raises (a full disk) still leaves the engine shut down."""
+    from roqsim.capture import RecordingError
+
+    class _Rec:
+        frames = 0
+
+        def __init__(self, ctx, path, rate, **kw):
+            pass
+
+        def sample(self, *a, **k):
+            return False
+
+        def close(self):
+            raise RecordingError("disk full")
+
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim.step()
+    ctx = sim.context
+    with pytest.raises(RecordingError, match="disk full"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_viewer_cannot_close(tmp_path: Path):
+    """A viewer whose close raises still leaves the engine shut down."""
+
+    class _Viewer:
+        def close(self):
+            raise RuntimeError("GL context lost")
+
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim._viewer = _Viewer()
+    ctx = sim.context
+    with pytest.raises(RuntimeError, match="GL context lost"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None and sim._viewer is None
+
+
+def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
+    """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
+    world = _write_world(tmp_path)
+    run_dir, root = tmp_path / "run", tmp_path / "shared"
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(run_dir))
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (run_dir / "scene" / "scene.json").is_file()
+    assert not (root / "scene").exists()
+
+    # Without a per-run directory the scenario's own output_dir is the fallback.
+    monkeypatch.delenv("RUN_OUTPUT_DIR")
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (root / "scene" / "scene.json").is_file()
