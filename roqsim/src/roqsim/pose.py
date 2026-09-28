@@ -271,3 +271,25 @@ def pose_mapping(position=(0.0, 0.0, 0.0), rpy=(0.0, 0.0, 0.0)) -> dict:
         "position": dict(zip("xyz", (float(v) for v in position), strict=True)),
         "orientation": dict(zip(("roll", "pitch", "yaw"), (float(v) for v in rpy), strict=True)),
     }
+
+
+def config_pose(config: dict) -> tuple[list[float], list[float]]:
+    """``(position, quaternion)`` of a plugin config's relative ``pose``, for its constructor.
+
+    A plugin is constructed before its config is validated, so a ``pose`` that is not one reads as
+    the identity here and is refused by :func:`config_pose_errors` before anything is built.
+    """
+    try:
+        return parse_pose(config.get("pose") or {}, relative=True)
+    except PoseError:
+        return [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+
+
+def config_pose_errors(config: dict, where: str) -> list[str]:
+    """What is wrong with a plugin config's relative ``pose``: not a pose, or given as ``pos``/``rpy``."""
+    errors = [refusal] if (refusal := refuse_pos_rpy(config, where)) else []
+    try:
+        parse_pose(config.get("pose") or {}, relative=True)
+    except PoseError as exc:
+        errors.append(f"{where}: {exc}")
+    return errors

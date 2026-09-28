@@ -259,7 +259,7 @@ from roqsim.manifest import (
 )
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
-from roqsim.pose import PoseError, parse_pose, refuse_pos_rpy
+from roqsim.pose import config_pose, config_pose_errors
 from roqsim.registry import resolve_plugin
 from roqsim.schema import Field
 
@@ -800,10 +800,7 @@ class SpawnSensorPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.sensor_name = self.address
         self.prefix = self.config.get("prefix", "")
-        try:
-            self.pos, self.quat = parse_pose(self.config.get("pose") or {}, relative=True)
-        except PoseError:  # reported by validate_config
-            self.pos, self.quat = [0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
         # `motion` names who owns the mount's pose, in the same three answers `spawn_model` uses
         # for a prop. `static` is the default: the mount is part of the model, and nothing can
         # move it.
@@ -849,12 +846,7 @@ class SpawnSensorPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if refusal := refuse_pos_rpy(config, f"spawn_sensor '{self.address}'"):
-            errors.append(refusal)
-        try:
-            parse_pose(config.get("pose") or {}, relative=True)
-        except PoseError as exc:
-            errors.append(str(exc))
+        errors += config_pose_errors(config, f"spawn_sensor '{self.address}'")
         if config.get("attach_to") and config.get("motion"):
             errors.append(
                 "'attach_to' and 'motion' are mutually exclusive: a mount welded to a body has "

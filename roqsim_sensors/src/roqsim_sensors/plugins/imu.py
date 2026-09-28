@@ -76,9 +76,10 @@ Config::
       # The entity is the one this entry is NESTED UNDER; declaring it at the top of a document is
       # refused (`requires_owner`) -- an IMU measures a body's motion, so it belongs to something.
       body: ""                  # body the IMU is bolted to; default: the entity's registered base body
-      site: ""                  # measure at an EXISTING site instead (then `body`/`pos`/`rpy` are unused)
-      pos: [0.0, 0.0, 0.0]      # mount offset in the body frame (m)
-      rpy: [0.0, 0.0, 0.0]      # mount orientation, fixed-axis XYZ (rad); or `quat: [w, x, y, z]`
+      site: ""                  # measure at an EXISTING site instead (then `body`/`pose` are unused)
+      pose:                     # the mount in the body frame, a geometry_msgs/Pose; omitted
+        position: {x: 0.0, y: 0.0, z: 0.0}           #   components are 0 (roqsim.pose, relative)
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}   # or a quaternion x/y/z/w
       frame_id: imu_link        # the frame the reading is stamped in (default: '<label>_link')
       topic: imu/data           # the endpoint's RELATIVE topic, so a device can match its driver's
                                 #   layout (the D435i's IMU is `camera/imu`); `topics: {imu: /abs}`
@@ -133,6 +134,7 @@ import numpy as np
 
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import config_pose, config_pose_errors
 
 from ..live_config import FaultableSensorMixin
 
@@ -167,18 +169,6 @@ class ImuReader:
     read: Callable[[], ImuReading]
 
 
-def _quat_from_rpy(rpy) -> list[float]:
-    """(w, x, y, z) from fixed-axis XYZ roll/pitch/yaw (the ROS/URDF convention).
-
-    ``mju_euler2Quat`` with the sequence ``"XYZ"`` (upper case: fixed axes) is that convention
-    exactly -- checked against the hand-rolled half-angle form the other mount plugins carry, which
-    is why this one does not carry a fourth copy of it.
-    """
-    quat = np.zeros(4)
-    mujoco.mju_euler2Quat(quat, np.asarray([float(v) for v in rpy], dtype=float), "XYZ")
-    return [float(v) for v in quat]
-
-
 def _vec3(value) -> list[float]:
     """A three-vector as plain floats.
 
@@ -211,8 +201,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
     REFUSED_WRITES = {
         "site": "the site is resolved to an id at configure; a later write moves no sensor.",
         "body": "the mount is built into the model before compile.",
-        "pos": "likewise -- the mount pose is geometry, not a per-frame value.",
-        "rpy": "likewise.",
+        "pose": "likewise -- the mount pose is geometry, not a per-frame value.",
         "frame_id": "a consumer that saw the frame change mid-run reads it as two sensors.",
         "rate_hz": "the endpoint's rate gate is fixed when the bridge binds it.",
     }
@@ -273,19 +262,15 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         for key in ("accel_bias", "gyro_bias"):
             if key in config and len(config[key]) != 3:
                 errors.append(f"'{key}' must be three numbers [x, y, z]")
-        if "pos" in config and len(config["pos"]) != 3:
-            errors.append("'pos' must be three numbers [x, y, z] (a mount offset has a height)")
-        if "quat" in config and len(config["quat"]) != 4:
-            errors.append("'quat' must be four numbers [w, x, y, z]")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be three numbers [roll, pitch, yaw]")
-        if "quat" in config and "rpy" in config:
-            errors.append("set 'quat' or 'rpy', not both -- two spellings of one orientation")
-        if config.get("site") and (
-            "pos" in config or "rpy" in config or "quat" in config or config.get("body")
-        ):
+        errors += config_pose_errors(config, f"imu[{self.label}]")
+        if "quat" in config:
             errors.append(
-                "'site' names an existing mount, so 'body'/'pos'/'rpy'/'quat' would be ignored: "
+                f"imu[{self.label}]: 'quat' is not read -- state the orientation in 'pose': "
+                "pose: {orientation: {x, y, z, w}}"
+            )
+        if config.get("site") and ("pose" in config or config.get("body")):
+            errors.append(
+                "'site' names an existing mount, so 'body'/'pose' would be ignored: "
                 "either name the site the model ships, or give the body and offset to build one."
             )
         if "seed" in config:
@@ -333,12 +318,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             # label, and a duplicate site name is a compile error that names neither of them.
             site_name = f"{body_name}_{self.label}_site"
             site.name = site_name
-            site.pos = [float(v) for v in self.config.get("pos", [0.0, 0.0, 0.0])]
-            site.quat = (
-                [float(v) for v in self.config["quat"]]
-                if "quat" in self.config
-                else _quat_from_rpy(self.config.get("rpy", [0.0, 0.0, 0.0]))
-            )
+            site.pos, site.quat = config_pose(self.config)
             # A mount frame, not geometry: small, and left in the default site group so a world's
             # own site-visualisation setting decides whether mounts are drawn.
             site.size = [0.005, 0.005, 0.005]

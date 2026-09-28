@@ -725,7 +725,9 @@ def test_e1_the_manifest_declares_the_create3_surface():
     assert poses["gt_ir_omni"]["site"] == "ir_omni"
 
     assert _manifest_plugin("imu")["topic"] == "imu"
-    assert _manifest_plugin("imu")["pos"] == pytest.approx([0.050613, 0.043673, 0.0844])
+    assert _manifest_plugin("imu")["pose"] == {
+        "position": {"x": 0.050613, "y": 0.043673, "z": 0.0844}
+    }
     assert _manifest_plugin("diff_drive") == {
         "max_linear_vel": 0.46,
         "max_angular_vel": 1.9,

@@ -147,7 +147,8 @@ components:
                                  # only inflates the scene's bounding box
 
   # --- Fiducial targets so the cameras have something decodable to render ------------------------
-  # Free-standing AprilTags facing the two cameras (markers face +z by default; rpy tips them upright).
+  # Free-standing AprilTags facing the two cameras (markers face +z by default; the roll stands them
+  # upright).
   # Two markers, so each needs a label of its own: a label is what an override addresses and what
   # the generated texture is named after, and two entries answering to `fiducial_marker` is one
   # instance silently overwriting the other.
@@ -155,15 +156,15 @@ components:
       family: apriltag_36h11
       id: 0
       size: 0.12
-      pose: [0.0, 0.0, 0.5]
-      rpy: [1.5708, 0.0, 1.5708]   # stand upright, face +x toward the D435
+      # stand upright, face +x toward the D435
+      pose: {position: {z: 0.5}, orientation: {roll: 1.5708, yaw: 1.5708}}
     name: tag_toward_d435
   - fiducial_marker:
       family: apriltag_36h11
       id: 1
       size: 0.12
-      pose: [0.0, 0.0, 0.5]
-      rpy: [1.5708, 0.0, 3.14159]  # stand upright, face -y toward the D415
+      # stand upright, face -y toward the D415
+      pose: {position: {z: 0.5}, orientation: {roll: 1.5708, yaw: 3.14159}}
     name: tag_toward_d415
 
   # --- Sensor coverage report (the coverage subpackage's world-YAML toggle) ----------------------

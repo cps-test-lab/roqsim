@@ -149,7 +149,7 @@ components:
                    topics: {range: _internal/ir_intensity_side_left/scan}}
     name: ir_intensity_side_left
   # The IMU at the Create 3's mount (imu.urdf.xacro), on its `imu` topic at its 62 Hz.
-  - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+  - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
   # Ground truth the Create 3's simulator streams for its adapter: the base's world pose under the
   # robot's name, and the optical-flow mouse and IR receiver poses relative to the base, all on one
   # topic at 62 Hz. `child_frame` is the name the adapter's `robot_name` parameter matches.

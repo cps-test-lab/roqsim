@@ -403,7 +403,7 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
      - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
-     - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
+     - imu: {pose: {position: {x: 0.050613, y: 0.043673, z: 0.0844}}, topic: imu, rate_hz: 62}
      - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
        name: gt_mouse
 
@@ -1479,8 +1479,9 @@ arm to a body that already exists, while a rail has to introduce the moving carr
      - spawn_arm:
          model: ur10e
          prefix: "ur10e_"
-         pos: [0.0, 0.0, 2.6]              # where the axis sits
-         rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
+         pose:                             # where the axis sits, rolled 180 deg: the arm
+           position: {z: 2.6}              #   hangs from the ceiling
+           orientation: {roll: 3.14159265}
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
        name: ur10e
 
