@@ -34,8 +34,8 @@ import logging
 import time
 from pathlib import Path
 
+from . import exit_status, overlay
 from . import keys as keybind
-from . import overlay
 from .key_state import KeyState
 from .playback import Timeline
 from .recording import open_recording
@@ -469,7 +469,7 @@ def run_replay(
     recording world's own. ``world`` names the world to rebuild from instead of the recording's own
     provenance -- for a run whose world loaded files from beside itself that are not beside the
     recording; the provenance check still refuses one that does not match. Returns ``0`` once the
-    window has been open, ``2`` with no display for it.
+    window has been open, :data:`~roqsim.exit_status.NO_GL` with no display for it.
     """
     from .viewer import (
         GL_HELP,
@@ -484,59 +484,59 @@ def run_replay(
 
     if not has_display():
         log.error("no DISPLAY: replaying a run needs a graphical session.")
-        return 2
+        return exit_status.NO_GL
 
     path = Path(state)
-    rec = open_recording(path)
-    model, ctx = rec.build(str(world) if world else None, no_ceiling=no_ceiling)
-    # A stated camera merges over the recording world's own sim.view, exactly as it does for a render
-    # of one moment, so opening a replay and rendering a shot of it frame the scene the same way.
-    stated = dict(view or {})
-    opening_view = {**(rec.view or {}), **stated}
+    with open_recording(path) as rec:
+        model, ctx = rec.build(str(world) if world else None, no_ceiling=no_ceiling)
+        # A stated camera merges over the recording world's own sim.view, exactly as it does for a render
+        # of one moment, so opening a replay and rendering a shot of it frame the scene the same way.
+        stated = dict(view or {})
+        opening_view = {**(rec.view or {}), **stated}
 
-    handler = ReplayKeys()
-    try:
-        handle = launch_viewer(
-            model,
-            ctx.data,
-            left_ui=left_ui,
-            right_ui=right_ui,
-            key_callback=handler.key_callback,
-            key_sources=(handler,),
-        )
-    except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
-        raise DisplayError(GL_HELP.format(err=err)) from err
+        handler = ReplayKeys()
+        try:
+            handle = launch_viewer(
+                model,
+                ctx.data,
+                left_ui=left_ui,
+                right_ui=right_ui,
+                key_callback=handler.key_callback,
+                key_sources=(handler,),
+            )
+        except Exception as err:  # noqa: BLE001 - any GL init failure maps to the same guidance
+            raise DisplayError(GL_HELP.format(err=err)) from err
 
-    try:
-        brand_window_async(model, name=path.name)
-        setup_camera(handle, opening_view, ctx)
-        replay = Replay(
-            rec,
-            handle,
-            state=path,
-            shots=shots or path.with_name("shots.yaml"),
-            project=project or Path.cwd(),
-            png_dir=png_dir,
-            render_size=render_size,
-            no_ceiling=no_ceiling,
-            source=source,
-            keys=handler,
-            world=world,
-        )
-        # An explicit --view is a framing the caller chose, so it wins over following the recording's
-        # own camera; without one, a recording that carries a camera opens through it.
-        if stated:
-            replay.follow_recorded = False
-        # A stated --at is checked against the recording, which refuses one outside it by name.
-        # Seeking clamps, which is right for a slider and wrong for a time somebody typed: a render
-        # of the moment they asked for would silently be a render of the last one instead.
-        if at is not None:
-            rec.index_at(float(at))
-        replay.seek_time(rec.span[0] if at is None else at)
-        _drive(replay, handle, transport_window, apply_viewer_keys)
-    finally:
-        handler.close()
-        close_viewer(handle)
+        try:
+            brand_window_async(model, name=path.name)
+            setup_camera(handle, opening_view, ctx)
+            replay = Replay(
+                rec,
+                handle,
+                state=path,
+                shots=shots or path.with_name("shots.yaml"),
+                project=project or Path.cwd(),
+                png_dir=png_dir,
+                render_size=render_size,
+                no_ceiling=no_ceiling,
+                source=source,
+                keys=handler,
+                world=world,
+            )
+            # An explicit --view is a framing the caller chose, so it wins over following the recording's
+            # own camera; without one, a recording that carries a camera opens through it.
+            if stated:
+                replay.follow_recorded = False
+            # A stated --at is checked against the recording, which refuses one outside it by name.
+            # Seeking clamps, which is right for a slider and wrong for a time somebody typed: a render
+            # of the moment they asked for would silently be a render of the last one instead.
+            if at is not None:
+                rec.index_at(float(at))
+            replay.seek_time(rec.span[0] if at is None else at)
+            _drive(replay, handle, transport_window, apply_viewer_keys)
+        finally:
+            handler.close()
+            close_viewer(handle)
     return 0
 
 

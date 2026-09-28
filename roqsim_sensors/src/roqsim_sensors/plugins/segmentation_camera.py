@@ -415,6 +415,11 @@ class SegmentationCameraPlugin(CameraPlugin):
         self._instance_img = instance_img if self.instances else None
         self._boxes = self._boxes_from(instance_img) if self.detections else None
 
+    def _reset_extra(self, ctx: SimContext) -> None:
+        self._labels = None
+        self._instance_img = None
+        self._boxes = None
+
     def _boxes_from(self, instance_img: np.ndarray) -> list:
         """Tight 2D boxes per visible instance: ``[(class_id, name, instance, cx, cy, w, h), ...]``.
 

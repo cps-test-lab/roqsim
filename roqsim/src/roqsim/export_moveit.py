@@ -124,7 +124,7 @@ from pathlib import Path
 import mujoco
 import yaml
 
-from . import logging_setup, planning_scene
+from . import exit_status, logging_setup, planning_scene
 from .export_srdf import ARM_GROUP, ArmGroup, build_srdf, links_from_urdf
 from .export_urdf import (
     UrdfExporter,
@@ -132,6 +132,11 @@ from .export_urdf import (
     combine_urdfs,
     round_trip_error,
     warn_on_unshippable_meshes,
+)
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
 )
 from .presence import subtree_body_ids
 
@@ -1070,10 +1075,18 @@ def main(argv: list | None = None) -> int:
         prog="roqsim export moveit",
         description="Generate a complete MoveIt 2 configuration for an arm, or for a cell's arms "
         "together, from a roqsim world.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is --check finding the URDF's kinematics off the MJCF's by more than --tolerance.",
+        ),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="a bare MJCF file")
+    source.add_argument(
+        "--mjcf",
+        help="not supported: the controller and gripper configuration come from a world's plugins",
+    )
     parser.add_argument("--out", required=True, help="output DIRECTORY for the generated files")
     parser.add_argument(
         "--arm",
@@ -1181,8 +1194,13 @@ def main(argv: list | None = None) -> int:
         "--tolerance", type=float, default=1e-6, help="--check: max allowed FK error in metres"
     )
     parser.add_argument("--skip-plugins", default="", help="extra plugin names/refs to drop")
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        refuse_world_options(
+            parser, args, "--mjcf is a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_moveit")
@@ -1193,7 +1211,7 @@ def main(argv: list | None = None) -> int:
         # Every ValueError raised here describes a configuration that would be WRONG -- a chain that
         # spans the wrong joints, a tip link nothing contains, a home the simulator disagrees with.
         # Those are answers to the operator, not bugs, so they read as a message not a traceback.
-        raise SystemExit(f"roqsim export moveit: {err}") from err
+        return exit_status.fail("roqsim export moveit", err)
 
 
 def _run(args, log) -> int:
@@ -1207,16 +1225,19 @@ def _run(args, log) -> int:
             "world the simulation runs, which is what makes the export match the simulated scene."
         )
 
-    cfg = load_config(args.world)
+    cfg = load_config(args.world, overrides_from_options(args) or None)
     transport, unavailable = drop_transport_plugins(cfg)
     if transport:
         log.info("skipping transport plugins: %s", ", ".join(transport))
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
     if skip:
         cfg.plugins = [p for p in cfg.plugins if p.ref not in skip and (p.name or "") not in skip]
-    engine = Engine(cfg, preview=True)
-    engine.setup()
+    with Engine(cfg, preview=True) as engine:
+        return _export(args, log, engine)
 
+
+def _export(args, log, engine) -> int:
+    """Write the MoveIt configuration for the arms in *engine*'s world."""
     pipelines = [p.strip() for p in args.pipelines.split(",") if p.strip()]
     if not pipelines:
         raise ValueError("--pipelines named none; move_group needs at least one planning pipeline")
@@ -1509,7 +1530,7 @@ def _run(args, log) -> int:
                 where,
                 args.tolerance,
             )
-            return 1
+            return exit_status.FINDING
         log.info("FK round trip: %.3e m worst error (at %r)", err, where)
 
     if args.manifest:
@@ -1520,7 +1541,7 @@ def _run(args, log) -> int:
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
         log.info("wrote source manifest (%d files) to %s", len(sources), args.manifest)
-    return 0
+    return exit_status.OK
 
 
 def _last_link_of_chain(urdf_root: ET.Element, arm_base: str, joints: list[str]) -> str:
