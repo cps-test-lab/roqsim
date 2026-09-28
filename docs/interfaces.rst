@@ -492,6 +492,10 @@ Each controller also publishes ``<controller>/transition_event`` stamped with th
 time, which is where a run reads the instant of a hand-over rather than inferring it from when the
 motion changed.
 
+A reset returns every controller to the state the world configured, so a hand-over belongs to the
+trial that made it. Each restore is a transition like any other and is published there too, stamped
+with the new trial's time zero.
+
 **The world file is the parameter file.** ros2_control's manager is given its controllers as
 parameters and ``load_controller`` instantiates one of *those*; here the robot's ``components:`` is
 that list. A controller the world never declared cannot be loaded -- which is what ``spawner`` does

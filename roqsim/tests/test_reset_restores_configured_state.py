@@ -336,8 +336,6 @@ CASES: dict[str, Case] = {
     "cartesian_admittance": Case(
         lambda _: _arm({"cartesian_admittance": {"site": "tool_site", "ft": "ft"}}),
         use=(_switch_every_controller, _set_law),
-        defect="on_reset does not restore _active, the target wrench (w_d) or the law (law, "
-        "controller_type, _uses_*) a trial set",
     ),
     "force_limit": Case(
         # Low enough to trip within the trial, which is what a trial does with it.
@@ -495,6 +493,11 @@ _RENDERER = "the renderer, made at the first capture and kept for the run"
 _DEPTH_MASK = (
     "the last depth frame's invalid pixels, read only with that frame, which the reset clears"
 )
+_CONTROLLERS = ("arm_controller", "cartesian_admittance")
+_TRANSITIONS = (
+    "the registry's transition log, which a bridge announces by position, so it runs for the "
+    "whole process"
+)
 _MEASURED_ONCE = (
     "the footprint radius, measured from the model's geometry once and kept for the run"
 )
@@ -505,10 +508,7 @@ EXEMPT: dict[str, dict[str | None, str]] = {
         None: "an autopilot in another process does not reset with the simulation, and the bridge "
         "keeps its link, arming and last controls across the episode boundary to match it",
     },
-    "arm_controller": {
-        "_registered.transitions": "the registry's transition log, which a bridge announces by "
-        "position, so it runs for the whole process"
-    },
+    **{name: {"_registered.transitions": _TRANSITIONS} for name in _CONTROLLERS},
     **{
         name: {"_obs": "the policy's input buffer, rebuilt in full before every policy call"}
         for name in ("g1_locomotion", "spot_locomotion")
