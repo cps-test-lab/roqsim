@@ -13,33 +13,31 @@ python -m pytest roqsim_mobile/tests
 ## Models
 
 One folder per model — `models/<name>/<name>.xml` with its meshes in `meshes/` beside it, plus a
-`<model>.manifest.yaml` that brings the robot's own controller and sensors, the vendor's licence, and a
-**port log** recording where every number came from. Spawn one with `spawn_robot: {model: <name>}`; the
+`<model>.manifest.yaml` that brings the robot's own controller and sensors, and the vendor's licence
+(`<name>_LICENSE`, which records the upstream description). Spawn one with `spawn_robot: {model: <name>}`; the
 manifest does the rest, so a world is ~15 lines.
 
-| model | platform | drive | scanner | port log |
-|---|---|---|---|---|
-| `turtlebot4` | iRobot Create 3 + TurtleBot 4 | differential (front caster) | `rplidar_a1` device on `shell_link` + `oakd_pro` (RGB-D) device on `oakd_camera_bracket` | — |
-| `turtlebot3_waffle` | ROBOTIS TurtleBot3 Waffle | differential (passive casters) | `lds01` device on `base_link` | |
-| `husky_a200` | Clearpath Husky A200 | skid-steer, 4 driven wheels (`slip_factor` 3.0) | `hokuyo_ust` device on a PACS bracket (`bracket_0_mount`) | |
-| `clearpath_jackal` | Clearpath Jackal | skid-steer, 4 driven wheels (`slip_factor` 1.7) | VLP-16, planar cast @ 10 Hz | |
-| `piracer` | Waveshare PiRacer AI Kit | **Ackermann** — two steered front wheels, rear pair driven; cannot turn in place | none (a `camera` site, unpopulated) | |
+The table lists a few of this package's bases; the model catalog (`docs/models.rst`, or
+`roqsim catalog models`) lists every model, these among them.
+
+| model | platform | drive | scanner |
+|---|---|---|---|
+| `turtlebot4` | iRobot Create 3 + TurtleBot 4 | differential (front caster) | `rplidar_a1` device on `shell_link` + `oakd_pro` (RGB-D) device on `oakd_camera_bracket` |
+| `turtlebot3_waffle` | ROBOTIS TurtleBot3 Waffle | differential (passive casters) | `lds01` device on `base_link` |
+| `husky_a200` | Clearpath Husky A200 | skid-steer, 4 driven wheels (`slip_factor` 3.0) | `hokuyo_ust` device on a PACS bracket (`bracket_0_mount`) |
+| `clearpath_jackal` | Clearpath Jackal | skid-steer, 4 driven wheels (`slip_factor` 1.7) | VLP-16, planar cast @ 10 Hz |
+| `piracer` | Waveshare PiRacer AI Kit | **Ackermann** — two steered front wheels, rear pair driven; cannot turn in place | none (a `camera` site, unpopulated) |
 
 `create3_dock` is the one other non-robot folder beside `floor`: the TurtleBot 4's charging dock as
 a prop (`spawn_model: {model: create3_dock}`), with the reference description's collision box and its
 infrared emitters as sites, so a stack can dock to it over their ground-truth poses. Its provenance
 (`irobot_create_description`, BSD-3) is in `create3_dock_LICENSE`.
 
-`turtlebot4` has no port log yet. Its provenance
-(`nav2_minimal_tb4_description`, Apache-2.0) is in `turtlebot4_LICENSE` and its MJCF comments, and
-`tests/test_turtlebot4_scene.py` pins the numbers; `tests/test_model_layout.py` carries the gap as a strict
-xfail so writing the log is what clears it.
-
-**Read the port log before changing a model.** Several of the numbers are load-bearing calibrations,
-not defaults: a wheel `armature` that keeps the velocity servo integrable at a 2 ms step, a
+**Read the MJCF comments before changing a model**, and run its scene test (`tests/test_*_scene.py`),
+which pins the numbers. Several of them are load-bearing calibrations, not defaults: a wheel `armature` that keeps the velocity servo integrable at a 2 ms step, a
 `slip_factor` that compensates skid-steer scrub, a caster `priority="1"` that is the only way to make
 a caster frictionless (MuJoCo combines contact params by `max()`, so `condim="1"` alone loses to the
-floor and the caster drags — worth 48% of the robot's yaw rate). Each log states the sensitivity.
+floor and the caster drags — worth 48% of the robot's yaw rate). The comment beside each states why.
 
 ## Plugins
 

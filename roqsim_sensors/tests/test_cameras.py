@@ -43,7 +43,8 @@ def _world(plugin_ref: str, **config):
         "sim": {},
         "plugins": [
             {f"{__name__}:_CameraScene": {}},
-            {plugin_ref: {"camera": "cam", **config}},
+            # One camera for both streams: the fixture has no separate depth camera.
+            {plugin_ref: {"camera": "cam", "depth_camera": "cam", **config}},
         ],
     }
     return load_config_from_dict(cfg)
@@ -280,6 +281,26 @@ def test_realsense_d435_depth_is_opt_in_and_uses_realsense_topics():
     assert ros["frame_id"] == "camera_depth_optical_frame"
     assert ros["encoding"] == "32FC1"
     assert _endpoint(engine, "points") is None  # depth alone does not imply the cloud
+
+
+def test_a_depth_camera_the_model_lacks_is_refused_rather_than_replaced_by_the_colour_one():
+    cfg = {
+        "sim": {},
+        "plugins": [
+            {f"{__name__}:_CameraScene": {}},
+            {D435: {"camera": "cam", "depth": True}},  # the default depth camera, d435_depth
+        ],
+    }
+    with pytest.raises(RuntimeError, match="depth camera 'd435_depth' not found"):
+        Engine(load_config_from_dict(cfg)).setup()
+
+
+def test_a_depth_resolution_needs_a_separate_depth_camera():
+    plugin = RealsenseD435Plugin({})
+    assert plugin.validate_config({"depth_width": 424, "depth_height": 240}) == []
+    assert any("must be > 0" in e for e in plugin.validate_config({"depth_width": 0}))
+    errors = plugin.validate_config({"camera": "cam", "depth_camera": "cam", "depth_width": 424})
+    assert any("through the colour camera 'cam'" in e for e in errors)
 
 
 def test_realsense_d435_working_range_defaults_to_the_datasheet():

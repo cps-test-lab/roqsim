@@ -22,12 +22,13 @@
 # sector (dome / forward wedge), and every camera mount — the RealSenses, the Zivid and the OAK-D —
 # gets a synthesised frustum.
 #
-# A RealSense mount's pos/rpy is the pose of the vendor's `camera_link` (x along the lens normal, z
-# up), and each publishes its vendor frame chain (camera_link -> camera_color_optical_frame, ...) as
-# static TF. The three share the realsense-ros names, so each sits in a namespace of its own, which
-# scopes its topics and its frames alike. (The Zivid also ships a baked `_fov` envelope, which stays hidden: a
-# model with a camera always takes the frustum path.) sensor_coverage_probe then writes a coverage
-# report + render to ./coverage — run with MUJOCO_GL=egl.
+# A RealSense mount's pos/rpy is the pose of `camera_bottom_screw_frame`, the frame the vendor macro
+# places at its origin (x along the lens normal, z up; `camera_link` sits at a fixed offset from it),
+# and each publishes its vendor frame chain (camera_bottom_screw_frame -> camera_link ->
+# camera_color_optical_frame, ...) as static TF. The three share the realsense-ros names, so each
+# sits in a namespace of its own, which scopes its topics and its frames alike. (The Zivid also ships
+# a baked `_fov` envelope, which stays hidden: a model with a camera always takes the frustum path.)
+# sensor_coverage_probe then writes a coverage report + render to ./coverage — run with MUJOCO_GL=egl.
 
 sim:
   pacing: realtime          # realtime | asap | {factor: N}
@@ -66,7 +67,7 @@ components:
       model: realsense_d435
       prefix: "d435_"
       namespace: d435
-      pos: [1.5043000643, -0.0174999842, 0.5]
+      pos: [1.5149, 0.0000000547, 0.4875]
       rpy: [0, 0, -3.1415889804]  # camera_link's x faces -x (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
@@ -78,8 +79,8 @@ components:
       model: realsense_d415
       prefix: "d415_"
       namespace: d415
-      pos: [-0.02, -1.50987, 0.5]
-      rpy: [0, 0, 1.5707963268]   # camera_link's x faces +y (toward the centre)
+      pos: [0, -1.50987, 0.4885]
+      rpy: [0, 0, 1.5707963268]  # camera_link's x faces +y (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
@@ -91,7 +92,7 @@ components:
       model: realsense_d455
       prefix: "d455_"
       namespace: d455
-      pos: [0.0475000123, 1.504649874, 0.5]
+      pos: [0.0000000419, 1.5158, 0.4855]
       rpy: [0, 0, -1.5707989804]  # camera_link's x faces -y (toward the centre)
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap

@@ -207,9 +207,12 @@ HEAD_CAMERA_LINK_TO_CAMERA_LINK = ((0.0, 0.0, 0.0), (0.0, -1.5708, 0.0))
 #: The chest camera: waist_camera_joint's origin on waist_pitch_link, forward axis (the joint's
 #: rpy (0, 2.1818, 0) is a recorded deviation).
 CHEST_CAMERA_LINK = ((0.092, 0.0175, 0.2751), (0.0, 0.0, 0.0))
-#: The D435's own chain: camera_link -> camera_color_frame -> camera_color_optical_frame
-#: (realsense2_description _d435.urdf.xacro).
+#: The D435's own chain (realsense2_description _d435.urdf.xacro): the mount,
+#: camera_bottom_screw_frame -> camera_link, camera_link -> camera_color_frame ->
+#: camera_color_optical_frame, and camera_link -> camera_depth_frame -> camera_depth_optical_frame.
+D435_SCREW_TO_LINK = ((0.0106, 0.0175, 0.0125), (0.0, 0.0, 0.0))
 D435_COLOR = ((0.0, 0.015, 0.0), (0.0, 0.0, 0.0))
+D435_DEPTH = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
 D435_OPTICAL = ((0.0, 0.0, 0.0), (-math.pi / 2, 0.0, -math.pi / 2))
 
 
@@ -287,16 +290,37 @@ def test_c1_sensor_mounts(spawned):
     assert float(head_pos[2]) > float(chest_pos[2]) > 1.0
 
 
+def _body(engine, name):
+    m, d = engine.ctx.model, engine.ctx.data
+    bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, name)
+    assert bid >= 0, name
+    return d.xpos[bid].copy(), d.xmat[bid].copy()
+
+
 def test_c1b_the_head_camera_is_the_vendor_chain(spawned):
-    """C1b: camera_link, and the colour optical frame the image is taken from, are where the URDF's
-    head_camera_joint and the vendor's own D435 chain put them on head_pitch_link."""
+    """C1b: camera_link, and the colour and depth optical frames the images are taken from, are
+    where the URDF's head_camera_joint and the vendor's own D435 chain put them on head_pitch_link;
+    the mount, the vendor's camera_bottom_screw_frame, sits the screw offset behind camera_link."""
     want_link = _chain(HEAD_CAMERA_JOINT, HEAD_CAMERA_LINK_TO_CAMERA_LINK)
     np.testing.assert_allclose(want_link[1], np.eye(3), atol=1e-4)  # the rpy undoes itself
-    d = spawned.ctx.data
-    mid = mujoco.mj_name2id(spawned.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "o_head_camera_mount")
-    pos, rot = _in_body(spawned, "o_head_pitch_link", d.xpos[mid], d.xmat[mid])
-    np.testing.assert_allclose(pos, want_link[0], atol=1e-9)
+    pos, rot = _in_body(spawned, "o_head_pitch_link", *_body(spawned, "o_head_camera_link"))
+    np.testing.assert_allclose(pos, want_link[0], atol=1e-6)
     np.testing.assert_allclose(rot, want_link[1], atol=1e-4)
+    mount_pos, mount_rot = _in_body(
+        spawned, "o_head_pitch_link", *_body(spawned, "o_head_camera_mount")
+    )
+    np.testing.assert_allclose(
+        mount_pos + mount_rot @ np.asarray(D435_SCREW_TO_LINK[0]), want_link[0], atol=1e-6
+    )
+    np.testing.assert_allclose(mount_rot, want_link[1], atol=1e-4)
+    want_depth = _chain(
+        HEAD_CAMERA_JOINT, HEAD_CAMERA_LINK_TO_CAMERA_LINK, D435_DEPTH, D435_OPTICAL
+    )
+    depth_pos, depth_rot = _in_body(
+        spawned, "o_head_pitch_link", *_camera(spawned, "o_head_camera_d435_depth")
+    )
+    np.testing.assert_allclose(depth_pos, want_depth[0], atol=1e-6)
+    np.testing.assert_allclose(depth_rot @ np.diag([1.0, -1.0, -1.0]), want_depth[1], atol=1e-4)
     want_opt = _chain(HEAD_CAMERA_JOINT, HEAD_CAMERA_LINK_TO_CAMERA_LINK, D435_COLOR, D435_OPTICAL)
     cam_pos, cam_rot = _in_body(
         spawned, "o_head_pitch_link", *_camera(spawned, "o_head_camera_d435_color")
@@ -307,7 +331,7 @@ def test_c1b_the_head_camera_is_the_vendor_chain(spawned):
     chest_pos, _ = _in_body(
         spawned, "o_waist_pitch_link", *_camera(spawned, "o_chest_camera_d435_color")
     )
-    np.testing.assert_allclose(chest_pos, _chain(CHEST_CAMERA_LINK, D435_COLOR)[0], atol=1e-9)
+    np.testing.assert_allclose(chest_pos, _chain(CHEST_CAMERA_LINK, D435_COLOR)[0], atol=1e-6)
 
 
 def test_c1c_the_head_camera_looks_forward_at_the_home_stance(spawned):
