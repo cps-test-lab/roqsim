@@ -152,6 +152,22 @@ def test_an_option_naming_nothing_is_refused():
         engine.setup()
 
 
+def test_an_attribute_hiding_the_endpoint_method_is_refused():
+    class Shadowed(Plugin):
+        def __init__(self, config=None, **kw):
+            super().__init__(config, **kw)
+            self.speed = 0.3  # the same name as the endpoint method below
+
+        @endpoint.out
+        def speed(self) -> float:
+            return self.speed
+
+    ctx = SimContext(config={})
+    plugin = Shadowed({}, entity="belt")
+    with pytest.raises(TypeError, match="an instance attribute of that name hides the endpoint"):
+        plugin.register_endpoints(ctx)
+
+
 # -- explicit registration --------------------------------------------------------------------------
 def test_configure_alone_registers_nothing_and_register_endpoints_adds_them_once():
     ctx = SimContext(config={})
