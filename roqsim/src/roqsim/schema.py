@@ -68,9 +68,9 @@ from .document import nearest
 
 #: Config keys a component may carry without its own schema mentioning them, because something other
 #: than the world's author put them there: the spawn plugins' ``prefix``, the transport scope, the
-#: topic hardwire map, and a sensor's runtime fault block. A plugin that declares one of these in its
-#: own schema (with a type or a default) overrides the entry here.
-INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "fault", "robot", "arm"})
+#: topic hardwire map, the per-endpoint QoS, and a sensor's runtime fault block. A plugin that
+#: declares one of these in its own schema (with a type or a default) overrides the entry here.
+INJECTED_KEYS = frozenset({"prefix", "namespace", "topics", "qos", "fault", "robot", "arm"})
 
 #: How a type is named in the published schema -- the vocabulary a caller matches on, not Python's.
 _TYPE_NAMES = {bool: "bool", int: "int", float: "float", str: "str", list: "list", dict: "dict"}

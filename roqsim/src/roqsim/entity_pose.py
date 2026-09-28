@@ -21,14 +21,14 @@ bridge bound still gets its endpoint (``on_demand``), for a consumer that looks 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Annotated
+from typing import TYPE_CHECKING
 
 import mujoco
 import numpy as np
-from numpy.typing import NDArray
 
 from .context import Endpoint
-from .endpoint import Shape, Unit, value_type
+from .endpoint import value_type
+from .types import AngularVelocity3, Point3, Quaternion, Velocity3
 
 if TYPE_CHECKING:
     from .context import SimContext
@@ -44,14 +44,19 @@ def endpoint_name(entity: str) -> str:
 
 @dataclass(frozen=True)
 class EntityPose:
-    """An entity body's true state in the world frame."""
+    """An entity body's true state in the world frame.
 
-    position: Annotated[NDArray[np.float64], Shape(3), Unit("m"), "body origin, world frame"]
-    orientation: Annotated[NDArray[np.float64], Shape(4), "quaternion (w, x, y, z), world frame"]
-    linear_velocity: Annotated[
-        NDArray[np.float64], Shape(3), Unit("m/s"), "of the body origin, world frame"
-    ]
-    angular_velocity: Annotated[NDArray[np.float64], Shape(3), Unit("rad/s"), "world frame"]
+    Attributes:
+        position: body origin, world frame
+        orientation: quaternion (w, x, y, z), world frame
+        linear_velocity: of the body origin, world frame
+        angular_velocity: world frame
+    """
+
+    position: Point3
+    orientation: Quaternion
+    linear_velocity: Velocity3
+    angular_velocity: AngularVelocity3
 
 
 _RESULT = value_type(EntityPose)
@@ -103,6 +108,7 @@ def register(ctx: SimContext) -> None:
                 owner=OWNER,
                 read=_PoseReader(ctx, entity.name, bid),
                 result=_RESULT,
+                payload_type=_RESULT,
             ),
             on_demand=True,
         )
