@@ -191,6 +191,10 @@ def _foreign_types(peers, own_type: str, own_node: str) -> list[tuple[str, str]]
     ]
 
 
+#: The keys of what the bridge made of an endpoint (``bound_name``) that are ROS names.
+_NAMED = frozenset({"topic", "service", "action"})
+
+
 def qos_of(profile: dict) -> QoSProfile:
     """The rclpy profile of a full QoS (:func:`roqsim.endpoint.qos_profile`)."""
     return QoSProfile(
@@ -392,12 +396,12 @@ class Ros2Bridge(BridgeBase):
 
     def bound_name(self, ep) -> dict | None:
         """The topic, service or action *ep* is on, resolved against this node (namespace and
-        remapping included), with its type."""
+        remapping included), with its type and QoS."""
         named = super().bound_name(ep)
         if named is None:
             return None
         return {
-            key: self._node.resolve_topic_name(value) if key != "type" else value
+            key: self._node.resolve_topic_name(value) if key in _NAMED else value
             for key, value in named.items()
         }
 
@@ -663,7 +667,7 @@ class Ros2Bridge(BridgeBase):
         topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints["topic"]))
         publisher = self._node.create_publisher(msg_type, topic, qos_of(hints["qos"]))
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
-        self._names[id(ep)] = {"topic": topic, "type": hints["type"]}
+        self._names[id(ep)] = {"topic": topic, "type": hints["type"], "qos": hints["qos"]}
         # Let an expensive producer (e.g. a rendered camera) skip work when nobody's listening --
         # generic, not camera-specific; cheap endpoints (lidar, odom) just never check it.
         ep.has_subscribers = lambda p=publisher: p.get_subscription_count() > 0
@@ -722,6 +726,8 @@ class Ros2Bridge(BridgeBase):
             handler = get_service_handler(hints["service"])
             name = _join_ns(self._eff_ns(ep), hints["name"])
             self._names[id(ep)] = {"service": name, "type": hints["service"]}
+            if "qos" in hints:
+                self._names[id(ep)]["qos"] = hints["qos"]
             self._services.append(
                 self._node.create_service(
                     srv_type,
@@ -758,7 +764,7 @@ class Ros2Bridge(BridgeBase):
         msg_type = reg.resolve_type(hints["type"])
         binding.prepare(msg_type)
         topic = _resolve_topic(self._eff_ns(ep), hints["topic"])
-        self._names[id(ep)] = {"topic": topic, "type": hints["type"]}
+        self._names[id(ep)] = {"topic": topic, "type": hints["type"], "qos": hints["qos"]}
         decode = binding.decode
         self._node.create_subscription(
             msg_type, topic, lambda m: on_payload(decode(m)), qos_of(hints["qos"])

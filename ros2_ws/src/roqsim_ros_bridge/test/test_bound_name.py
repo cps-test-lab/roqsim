@@ -3,7 +3,8 @@
 
 Another transport describing an endpoint (the control socket's ``describe``) asks
 ``bound_name``, so the name it reports is the one after the node namespace, the endpoint's own
-namespace, a ``topics:`` rename, a stripped namespace and an absolute topic -- not a re-derivation.
+namespace, a ``topics:`` rename, a stripped namespace and an absolute topic -- not a re-derivation --
+with the QoS the bridge used.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ pytest.importorskip("rclpy")
 import mujoco  # noqa: E402
 
 from roqsim.context import Endpoint, Entity, SimContext  # noqa: E402
+from roqsim.endpoint import qos_profile  # noqa: E402
 from roqsim.plugins.contact_monitor import ContactMonitorPlugin  # noqa: E402
 from roqsim_ros_bridge.ros2_bridge import Ros2Bridge  # noqa: E402
 
@@ -69,6 +71,7 @@ def test_bound_names_are_the_resolved_ros_names():
             ("parcel", "seconds"): "/hw/seconds",  # absolute: verbatim
         }
         assert bridge.bound_name(absolute)["type"] == "std_msgs.msg.Float64"
+        assert bridge.bound_name(absolute)["qos"] == qos_profile("default")
         assert bridge.bound_name(Endpoint(name="unbound", direction="out")) is None
     finally:
         bridge.shutdown(ctx)

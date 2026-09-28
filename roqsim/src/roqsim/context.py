@@ -14,7 +14,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from .seed import SeedError
 
@@ -250,6 +250,10 @@ class Endpoint:
     slot: StreamSlot | None = None
     #: What it is, for a reader outside the process: a decorated method's docstring.
     doc: str = ""
+    #: Where a decorated endpoint's options come from, for a reader outside the process: ``rate``
+    #: (``{"from": <attribute or config key>}``), ``when`` and ``family`` (the key named), each
+    #: ``"computed"`` for a callable and absent where not given. Empty on a hand-built endpoint.
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 def endpoint_kind(ep: Endpoint) -> str:
@@ -268,13 +272,19 @@ def endpoint_kind(ep: Endpoint) -> str:
     return "command"
 
 
-class CommandFuture:
+_T = TypeVar("_T")
+
+
+class CommandFuture(Generic[_T]):
     """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
 
     A caller on another thread waits for it with a timeout. :meth:`result` returns what the command
     returned or raises what it raised; :meth:`wait` only says whether it has run. A command that
     raises while nobody is blocked in :meth:`result` is also logged, so a failure whose caller gave
     up waiting, or never asked, is not lost.
+
+    A command that answers only later returns one of its own, and declares what it resolves to:
+    ``-> CommandFuture[RunState]`` is described as a ``RunState`` result.
     """
 
     __slots__ = ("_done", "_error", "_lock", "_value", "_waiters")

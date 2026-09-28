@@ -20,7 +20,7 @@ From another shell, in the same directory or anywhere else on the machine::
    ipc:///home/me/runs/roqsim-control.sock  pid 41213  up 12 s  roqsim_mobile:husky_demo
 
    $ roqsim endpoints
-   robot/diff_drive/cmd_vel      stream             Endpoint ``cmd_vel``: the latest ``(vx, vy, w)`` twist ...
+   robot/diff_drive/cmd_vel      stream             Body-frame velocity command, applied once per step.
    robot/diff_drive/odom         out      50 Hz
    robot/lidar2d_0/lidar/scan    out      41.6667 Hz
    sim/run_control/pause         command            Stop stepping. Commands sent while paused still run ...
@@ -30,11 +30,21 @@ From another shell, in the same directory or anywhere else on the machine::
    $ roqsim describe robot/diff_drive/cmd_vel
    robot/diff_drive/cmd_vel
      kind: stream
-     ...
+     Body-frame velocity command, applied once per step.
+     takes: Twist -- A body-frame velocity.
      parameter vx: float [m/s] -- forward speed
      parameter vy: float [m/s] -- sideways speed; a differential drive drops it = 0.0
-     parameter w: float [rad/s] -- yaw rate = 0.0
-     example: roqsim call robot/diff_drive/cmd_vel '{"vx": 0.0, "vy": 0.0, "w": 0.0}'
+     parameter wz: float [rad/s] -- yaw rate = 0.0
+     on ros2: {"topic": "/cmd_vel", "type": "geometry_msgs.msg.Twist", "qos": {...}}
+     example: roqsim call robot/diff_drive/cmd_vel '{"vx": 0.0, "vy": 0.0, "wz": 0.0}'
+
+   $ roqsim describe robot/diff_drive/odom
+   robot/diff_drive/odom
+     kind: out, 50 Hz (from odom_rate_hz)
+     Wheel odometry, integrated from the wheels' own motion.
+     value: Odometry -- A pose in the odometry frame and the body-frame twist.
+       position: array [m] -- body origin, odometry frame
+       ...
 
    $ roqsim read robot/lidar2d_0/lidar/scan          # arrays summarised; --full prints them
    $ roqsim read sim/entities/robot/pose --field position
@@ -106,8 +116,8 @@ control is ``sim/run_control/{pause, resume, step, reset, state}``, and every en
 pose is the core's ``sim/entities/<name>/pose``. Two endpoints that would share a path are refused
 when the simulation starts, naming both.
 
-Every endpoint is served unless it opts out with ``backend={"ipc": False}`` (``ipc=False`` on a
-decorator). Three kinds:
+Every endpoint is served, carrying its payload as it is, unless it opts out with ``ipc=None`` on its
+decorator (``backend={"ipc": None}`` on a hand-built one). Three kinds:
 
 ``out``
    ``read`` returns its current value; ``sub`` delivers it as it is published, at its rate.
@@ -125,9 +135,10 @@ decorator). Three kinds:
    ``call`` checks the parameters the same way, puts them in the stream's slot and returns at
    once; the newest value is applied at the next step, or while paused at once.
 
-``describe`` returns the whole tree, or one endpoint: its kind, rate, docstring, parameters and
-result with their types and units, what confirms it, and what the other transports call it (the
-ROS topic, service or action the ROS bridge resolved). An unknown path is refused with the nearest known path and its siblings.
+``describe`` returns the whole tree, or one endpoint: its kind, rate, docstring, payload type,
+parameters and result with their types and units, the attribute or config key its rate and its
+presence come from, what confirms it, and what the other transports call it (the ROS topic, service
+or action the ROS bridge resolved, with its type and QoS). An unknown path is refused with the nearest known path and its siblings.
 
 Values
 ------

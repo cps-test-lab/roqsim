@@ -385,6 +385,9 @@ def _base_type(hint: Any, where: str) -> ValueType:
         return _base_type(origin.__value__[args], where)
     if hasattr(hint, "__value__"):
         return _base_type(hint.__value__, where)
+    if origin is CommandFuture or hint is CommandFuture:
+        # A command that answers later: its result is what the future resolves to.
+        return value_type(args[0], where=where) if args else ValueType("any", "any")
     if origin is typing.Union or origin is types.UnionType:
         rest = [a for a in args if a is not type(None)]
         if len(rest) == 1 and len(rest) < len(args):
@@ -433,6 +436,24 @@ def doc_summary(obj: Any) -> str:
     """The first line of *obj*'s own docstring, or ``""``."""
     doc = inspect.cleandoc(obj.__doc__ or "") if getattr(obj, "__doc__", None) else ""
     return doc.splitlines()[0].strip() if doc else ""
+
+
+def doc_prose(obj: Any) -> str:
+    """*obj*'s docstring without its ``Args:`` and ``Attributes:`` sections, which the schema
+    carries entry by entry."""
+    lines = inspect.cleandoc(obj.__doc__ or "").splitlines()
+    kept, base = [], None
+    for line in lines:
+        if base is not None:
+            if not line.strip() or len(line) - len(line.lstrip()) > base:
+                continue
+            base = None
+        head = _SECTION.match(line)
+        if head is not None:
+            base = len(head.group(1))
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 @functools.cache
@@ -776,6 +797,18 @@ class EndpointSpec:
     def direction(self) -> str:
         return DIRECTIONS[self.kind]
 
+    def options(self) -> dict[str, Any]:
+        """Where the ``rate``, ``when`` and ``each`` options come from, for a reader of a built
+        endpoint (:attr:`~roqsim.context.Endpoint.options`): the key named, else ``"computed"``."""
+        out: dict[str, Any] = {}
+        if self.kind == "out" and not isinstance(self.rate, (int, float)):
+            out["rate"] = {"from": self.rate} if isinstance(self.rate, str) else "computed"
+        if self.when is not None:
+            out["when"] = _option_name(self.when)
+        if self.each is not None:
+            out["family"] = _option_name(self.each)
+        return out
+
     def signature(self, cls: type) -> Signature:
         """The schema, read off the method on *cls*."""
         return signature(getattr(cls, self.attr), self.kind, self.each is not None, self.msg)
@@ -1048,6 +1081,7 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
     default_namespace = plugin.endpoint_namespace(ctx)
     for spec in specs:
         sig = spec.signature(type(plugin))
+        options = spec.options()
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]
@@ -1082,7 +1116,8 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 kind=spec.kind,
                 producer=plugin.address,
                 confirm=spec.confirm,
-                doc=inspect.cleandoc(method.__doc__ or ""),
+                doc=doc_prose(method),
+                options=options,
             )
             where = f"{owner}/{name}"
             if spec.kind == "out":
