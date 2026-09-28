@@ -30,13 +30,14 @@ repository extends it without a change here.
 | `export_web.py`, `export_capture.py`, `export_urdf.py`, `export_srdf.py` | A compiled world or a recorded run out to a browser scene descriptor, a run capture, a URDF, or a MoveIt SRDF. |
 | `commands.py` | The `roqsim` command tree. |
 
-Five built-in plugins, all world-agnostic:
+Core registers sixteen plugins, all world-agnostic (`roqsim plugins list` prints every one); among
+them:
 
 - `dummy` — adds one free-floating box and counts its own hook invocations on the blackboard. It
   validates the framework end-to-end with no assets at all, which is what the test suite asserts on.
 - `spawn_model` — place any `roqsim.models` entry in a world as a prop.
-- `ceiling` — a `with_ceiling` switch that *deletes* every geom lying entirely above a height cut at
-  build time. Hiding it is not enough: contact still happens, and a roof made transparent to open the
+- `ceiling` — with `keep: false`, *deletes* every geom lying entirely above `above_z` (default 2.5 m)
+  at build time. Hiding it is not enough: contact still happens, and a roof made transparent to open the
   view stops being a roof for the lidar too — `mj_ray` skips a geom exactly when its resolved alpha is
   0, so "invisible" and "unsensed" are the same setting and neither can be had alone. Deletion is what
   lets an overhead sensor and a top-down view see in while everything else keeps its physics.
@@ -45,7 +46,11 @@ Five built-in plugins, all world-agnostic:
 - `model_override` — change named model values (friction, contact masks, actuator force limits, mass)
   while a run is in progress, on an external trigger, and restore them exactly. It is what makes "the
   gripper loses the object here" a property of the world rather than of whatever drives the robot.
-  Curated allowlist: fields MuJoCo cannot take at runtime are refused by name, with the reason.
+  Curated allowlist: fields MuJoCo cannot take at runtime are refused by name, with the reason. A
+  flex's damping, friction, solref and solimp are on it.
+- `flex_material` — a flex's material (Young's modulus, Poisson's ratio, damping, contact values)
+  from the world, for a flex whichever model declared it, so each value is a campaign factor. Set on
+  the spec before compile, since MuJoCo bakes the modulus into the compiled stiffness.
 
 ## Run it
 
@@ -55,8 +60,9 @@ roqsim sim world.yaml --headless --pacing asap --steps 1000 --profile
 roqsim sim world.yaml --seed 7 --record run.npz --video run.webm
 ```
 
-`roqsim` is the only name to know: `roqsim --help` lists the groups (one per installed package that ships
-tools), `roqsim <group> --help` gives one line per tool, and `roqsim <group> <tool> --help` is that tool's
+`roqsim` is the only name to know: `roqsim --help` lists the core's commands (`sim`, `render`, `check`
+and the rest) and a group per installed package that ships tools, `roqsim <group> --help` gives one
+line per tool, and `roqsim <group> <tool> --help` is that tool's
 own options. `python -m pydoc <module>` has the reasoning behind one.
 
 A world is one YAML file — a `sim:` block of run-level settings and a `components:` list, where each
@@ -182,9 +188,10 @@ without replaying the stream that preceded it — and a sensor re-run from a rec
 noise the live run published. See the docstring on `SimContext.rng_for` for why a shared stateful
 generator cannot do this.
 
-`ctx.request_stop(reason)` ends a run when the trial is actually over, instead of padding it out to a
-wall-clock `--seconds` guessed high enough for the slowest cell. It is a request: `shutdown` still
-runs and files still flush, and an embedding driver may ignore it.
+Under scenario-execution the scenario owns when a run ends, and a trial publishes its outcome for the
+scenario to condition on. Standalone, `ctx.request_stop(reason)` ends a `roqsim sim` run when the
+trial is actually over, instead of padding it out to a wall-clock `--seconds` guessed high enough
+for the slowest cell; `shutdown` still runs and files still flush.
 
 ## Extend it
 
@@ -214,7 +221,10 @@ python -m pytest roqsim/tests
 
 Runtime dependencies are `mujoco`, `numpy`, `pyyaml`, `click` and `pillow`. Video output additionally
 needs `ffmpeg` on `PATH` (checked, with a message, rather than failing mid-render); rendering a raw
-mesh needs `roqsim_assets`. From the repository root, `make venv` installs the whole family and
+mesh needs `roqsim_assets`. A video of a recording shows the whole scene from above unless told
+otherwise; `--camera-path` moves the camera along keyframes (`camera_path.py`), `--overlay` paints
+insets on the frames (`render_overlays.py`, extensible through the `roqsim.render_overlays` entry-point group), and
+the replay window records a person flying the camera as a clip (Shift+F9). From the repository root, `make venv` installs the whole family and
 `make test` runs every package's tests.
 
 ## Docs

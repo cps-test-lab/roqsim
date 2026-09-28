@@ -19,7 +19,10 @@ sits rather than a config key::
       left_joint: left_wheel_joint
       right_joint: right_wheel_joint
       odom_child_frame: base_link   # frame the odometry TF points at (see below)
+      odom_rate_hz: 50.0           # publish rate of odom (and its TF) and joint_states
       stamped_cmd_vel: false       # true when the stack publishes TwistStamped (see below)
+      cmd_vel_timeout: 0.0         # s; > 0 stops the base when no command arrives for this long
+      publish_joint_states: true   # false when a joint_state_publisher covers the whole robot
       test_cmd: [0.15, 0.4]        # optional [v, w] applied every tick (standalone demo)
       odom_noise:                  # optional odometry error (see below); omitted = exact odometry
         linear_stddev: 0.0         # m/s, white noise on the reported linear velocity
@@ -45,8 +48,21 @@ averages each side's wheel velocities. ``slip_factor`` compensates the lateral s
 for the velocity command. Which of the two a stack publishes is a property of that stack, not of
 the kinematics: Nav2 switches with its own ``enable_stamped_cmd_vel`` (the TurtleBot 4's shipped
 configuration sets it), and ROS 2 is moving towards the stamped form. A subscription is one type,
-so a mismatch is not a degradation but silence -- the robot receives no command at all, and the
-only symptom is a controller reporting that it cannot make progress.
+so a mismatch would be not a degradation but silence -- no command arrives and nothing logs it --
+which is why the ROS bridge fails the run when a peer of another type sits on one of its topics,
+naming the topic, both types and both sides.
+
+``cmd_vel_timeout`` is the watchdog every real base driver has: a command is good for this long
+and then the base stops, so a stack that dies mid-run leaves a stationary robot rather than one
+driving at its last velocity into a wall. ``ros2_control``'s ``diff_drive_controller`` ships it at
+0.5 s and the Create 3's firmware behaves the same. It is off by default here, because an in-process
+driver that sets a twist once and steps expects it to hold; a world that runs a real stack sets it
+to that stack's value. The stop goes through the same acceleration ramp as any command.
+
+``publish_joint_states`` switches this plugin's own ``joint_states`` (the wheel joints) off, for a
+robot whose ``joint_state_publisher`` publishes every joint in one message -- a consumer that needs
+a suspension travel in the same message as the wheels must not get two messages on one topic that
+each carry half.
 
 ``odom_child_frame`` names the link the ``odom ->`` transform points at, and it must be the ROOT
 of whatever URDF ``robot_state_publisher`` is running: a robot_state_publisher rooted at
@@ -80,6 +96,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 
 
@@ -112,6 +129,11 @@ class DiffDrivePlugin(Plugin):
         self.odom_child_frame = self.config.get("odom_child_frame", "base_link")
         #: Message type of the velocity command: the stack decides it, not the kinematics.
         self.stamped_cmd_vel = bool(self.config.get("stamped_cmd_vel", False))
+        #: ``cmd_vel_timeout``: a command older than this stops the base; 0 holds it forever.
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self.odom_rate_hz = float(self.config.get("odom_rate_hz", 50.0))
+        self.publish_joint_states = bool(self.config.get("publish_joint_states", True))
+        self._ctx: SimContext | None = None
         #: Odometry error: (linear_stddev, angular_stddev, linear_scale, angular_scale), or None.
         noise = self.config.get("odom_noise")
         self._odom_noise = None
@@ -171,6 +193,9 @@ class DiffDrivePlugin(Plugin):
                 errors.append(f"'{side}_actuators' and '{side}_joints' must have the same length")
         if "test_cmd" in config and len(config["test_cmd"]) != 2:
             errors.append("'test_cmd' must be [v, w]")
+        errors += CommandWatchdog.validate(config)
+        if float(config.get("odom_rate_hz", 50.0)) <= 0:
+            errors.append("'odom_rate_hz' must be > 0")
         noise = config.get("odom_noise")
         if noise is not None:
             known = ("linear_stddev", "angular_stddev", "linear_scale", "angular_scale")
@@ -191,6 +216,7 @@ class DiffDrivePlugin(Plugin):
         return errors
 
     def configure(self, ctx: SimContext) -> None:
+        self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
         # Transport scope for this robot's endpoints: own config wins, else inherited from the spawn.
@@ -283,7 +309,7 @@ class DiffDrivePlugin(Plugin):
                 owner=self.robot,
                 namespace=ns,
                 read=self.read_odom,
-                rate_hz=50.0,
+                rate_hz=self.odom_rate_hz,
                 backend={
                     "ros2": {
                         "type": "nav_msgs.msg.Odometry",
@@ -295,27 +321,31 @@ class DiffDrivePlugin(Plugin):
                 },
             )
         )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
+        if self.publish_joint_states:
+            ctx.interface.add(
+                Endpoint(
+                    name="joint_states",
+                    direction="out",
+                    owner=self.robot,
+                    namespace=ns,
+                    read=self.read_joint_states,
+                    rate_hz=self.odom_rate_hz,
+                    backend={
+                        "ros2": {
+                            "type": "sensor_msgs.msg.JointState",
+                            "topic": self.topic_override("joint_states") or "joint_states",
+                        }
+                    },
+                )
             )
-        )
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
         self._target_v = float(np.clip(vx, -self.max_v, self.max_v))
         self._target_w = float(np.clip(w, -self.max_w, self.max_w))
+        # Physics thread by construction: a bridge posts the command onto it, and an in-process
+        # driver calls this between steps.
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
         x, y, yaw, v, w = self._odom
@@ -328,6 +358,15 @@ class DiffDrivePlugin(Plugin):
         self._target_v = self._target_w = 0.0
         self._cmd_wl = self._cmd_wr = 0.0
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]
+        self.watchdog.clear()
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read_joints(ctx.model, ctx.data)
+
+    def _read_joints(self, m, d) -> None:
+        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        for k, jid in enumerate(self._jid_l + self._jid_r):
+            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
+            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
 
     def pre_step(self, ctx: SimContext) -> None:
         if ctx.manual_control:
@@ -335,6 +374,10 @@ class DiffDrivePlugin(Plugin):
         if "test_cmd" in self.config:
             v, w = self.config["test_cmd"]
             self.drive(float(v), 0.0, float(w))
+        if self.watchdog.expired(ctx):
+            # The watchdog: the last command has expired, so the target is a stop. The ramp below
+            # still applies, so the base decelerates as it would on any command to zero.
+            self._target_v = self._target_w = 0.0
         # differential-drive inverse kinematics -> target wheel angular velocities
         # (slip == 1.0 is the ideal model; > 1.0 compensates skid-steer scrub, see __init__)
         yaw_term = self._target_w * self.slip * self.L / 2.0
@@ -385,8 +428,4 @@ class DiffDrivePlugin(Plugin):
         o[1] += v * np.sin(o[2]) * ctx.dt
         o[2] = (o[2] + w * ctx.dt + np.pi) % (2 * np.pi) - np.pi
         o[3], o[4] = v, w
-        # Wheel joint state for the joint_states endpoint: written in place so read() is zero-copy.
-        jids = self._jid_l + self._jid_r
-        for k, jid in enumerate(jids):
-            self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
-            self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
+        self._read_joints(m, d)

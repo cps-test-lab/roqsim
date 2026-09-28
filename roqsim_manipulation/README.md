@@ -66,6 +66,13 @@ action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simp
 `gripper_joint` angle, 0 open .. 0.8 closed for the 2F-85) is mapped onto the tendon actuator's
 ctrlrange; the bridge reports `reached_goal`/`stalled` from the live finger state (a stall = a grasp).
 
+Cancelling either goal stops the motion, not just the goal: this plugin holds the last target it was
+given every tick, so the bridge commands a hold at the *measured* joint (or finger) position before
+the goal ends, and the arm stays where the cancel found it instead of finishing its way to the
+setpoint in flight. The cancelled goal's terminal status is `CANCELED`, and a `FollowJointTrajectory`
+result grades the pose it stopped in against the last waypoint — so a cancel mid-path does not report
+what a completed trajectory reports.
+
 ## Test
 
 ```bash

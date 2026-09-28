@@ -49,6 +49,7 @@ import mujoco
 import numpy as np
 
 from . import keys, overlay
+from .exit_status import NO_GL
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
 from .rendering import set_orbit_radius, walk_delta
@@ -59,6 +60,8 @@ log = logging.getLogger(__name__)
 
 class DisplayError(RuntimeError):
     """No usable on-screen GL context for the interactive viewer (see :data:`GL_HELP`)."""
+
+    exit_status = NO_GL
 
 
 def has_display() -> bool:
@@ -684,6 +687,15 @@ class TrackingCamera:
         world can actually state, so it is what :mod:`roqsim.view_save` writes back as ``azimuth``.
         """
         return self._offset
+
+    @azimuth_offset.setter
+    def azimuth_offset(self, degrees: float) -> None:
+        """Re-aim the chase cam to a new angle behind the robot -- the way a camera path animates it.
+
+        Set here and not on ``cam.azimuth``: :meth:`update` reads any change to ``cam.azimuth`` as a
+        mouse drag and folds it into the offset, so writing the angle there would apply twice.
+        """
+        self._offset = float(degrees)
 
     def _resolve(self, target: str) -> int:
         """Entity name first (so worlds say ``track: robot``, not the MJCF prefix), then body name."""

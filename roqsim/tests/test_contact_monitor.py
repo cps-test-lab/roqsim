@@ -9,6 +9,7 @@ collision, and a wheel touching a wall must.
 from __future__ import annotations
 
 import mujoco
+import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
@@ -74,7 +75,10 @@ def test_watches_the_whole_subtree():
     """The wheel is watched too -- a wheel clipping a box is as much a collision as the bumper."""
     model, data = _build()
     _, plugin = _plugin(model, data)
-    watched = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) for g in plugin._watched}
+    watched = {
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g))
+        for g in np.flatnonzero(plugin._scope.watched)
+    }
     assert watched == {"chassis", "wheel_geom"}
 
 
@@ -146,6 +150,7 @@ def test_min_force_filters_grazing_contacts():
 # Both follow from ownership being structural: the plugin needs an owner, and its blackboard
 # handle must not be keyed on a name that defaults to the class.
 
+
 def test_declared_at_the_top_of_a_document_it_is_refused():
     """It watches an entity, so there is nothing for it to watch at the top of a document.
 
@@ -197,6 +202,7 @@ def test_two_monitors_get_two_handles():
 # It is also how a trial keeps a robot from being observed at the pose the world compiled it at --
 # a pose no campaign placing obstacles for this configuration knew to keep clear. Spawned into
 # position, the robot is never perceivable where the world happened to put it.
+
 
 def _reveal(ctx, plugin, present=True):
     """Flip presence, then step -- the order a run applies it in.

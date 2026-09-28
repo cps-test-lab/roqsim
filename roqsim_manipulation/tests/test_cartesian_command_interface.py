@@ -10,10 +10,13 @@ masked axis that comes back saturated, and a speed cap that caps no speed.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 from roqsim_manipulation.plugins.cartesian_admittance import (
     CartesianAdmittancePlugin,
+    _GoalStream,
     _type_from_law,
 )
 from roqsim_sensors.plugins.force_torque import WrenchReader
@@ -34,6 +37,8 @@ def _law(*, stiffness=None, axes=None, wrench=(0.0, 0.0, 0.0), pos=None, mat=Non
     plugin._uses_stiffness = bool(np.any(plugin.C))
     plugin._goal_pos = None
     plugin._goal_mat = None
+    plugin._ctx = SimpleNamespace(sim_time=0.0)
+    plugin._stream = _GoalStream("auto", 0.2)
     plugin._rest_pos = np.zeros(3)
     plugin._rest_mat = np.eye(3)
     plugin.v_lin, plugin.v_ang = 1e9, 1e9  # clamping is tested on its own

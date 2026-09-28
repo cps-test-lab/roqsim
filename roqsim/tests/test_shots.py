@@ -212,3 +212,67 @@ def test_a_view_can_name_the_body_a_camera_follows():
     args = render_args(doc)
     view = args[args.index("--view") + 1 : args.index("--size")]
     assert view == ["track=base_link", "follow_heading=false", "distance=9.0"]
+
+
+def test_a_camera_path_and_overlays_survive_the_command_line():
+    """Emitted as one JSON token each, read back by the same parsers `roqsim render` uses."""
+    import json
+
+    from roqsim.camera_path import CameraPath
+    from roqsim.render_overlays import parse_spec
+    from roqsim.shots import render_args
+
+    doc = {
+        "schema": 1,
+        "id": "clip",
+        "state": "run.npz",
+        "from": "onset",
+        "to": "onset+10",
+        "size": "960x540",
+        "video": "clip.mp4",
+        "camera_path": {"ease": "smoothstep", "keyframes": [{"t": "onset", "azimuth": 180}]},
+        "overlays": ["clock", {"costmap": {"anchor": "top-right", "width": 0.3}}],
+    }
+    args = render_args(doc)
+    path = CameraPath.from_arg(args[args.index("--camera-path") + 1])
+    assert path.ease == "smoothstep" and path.moments == {"onset"}
+    specs = [args[i + 1] for i, a in enumerate(args) if a == "--overlay"]
+    assert [parse_spec(s) for s in specs] == [
+        ("clock", {}),
+        ("costmap", {"anchor": "top-right", "width": 0.3}),
+    ]
+    assert args[args.index("--to") + 1] == "onset+10"
+    assert json.loads(specs[1]) == doc["overlays"][1]
+
+
+def test_a_path_file_is_passed_as_given():
+    from roqsim.shots import render_args
+
+    doc = {
+        "schema": 1,
+        "id": "c",
+        "state": "run.npz",
+        "from": 0,
+        "size": "960x540",
+        "video": "c.mp4",
+        "camera_path": "c.camera.yaml",
+    }
+    args = render_args(doc)
+    assert args[args.index("--camera-path") + 1] == "c.camera.yaml"
+
+
+def test_a_fixed_camera_is_one_or_the_other():
+    from roqsim.shots import render_args
+
+    doc = {
+        "schema": 1,
+        "id": "c",
+        "state": "run.npz",
+        "at": 1.0,
+        "size": "960x540",
+        "png": "c.png",
+        "camera": "overhead",
+    }
+    assert "--camera" in render_args(doc)
+    with pytest.raises(ValueError, match="one or the other"):
+        render_args({**doc, "view": {"azimuth": 1}})

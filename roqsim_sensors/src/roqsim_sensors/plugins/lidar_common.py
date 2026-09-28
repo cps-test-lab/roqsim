@@ -125,6 +125,12 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         # The body that static TF hangs from. Unset, it is the root body of the entity carrying the
         # sensor (a robot's base), else the resolved `exclude_body`, else the world -- see _mount_tf.
         self.tf_parent = self.config.get("tf_parent", "")
+        # Opt out of casting AND publishing while nothing subscribes (``Endpoint.lazy``). Off by
+        # default: a scan is cheap and a consumer in-process reads `latest` without subscribing.
+        # A robot manifest sets it on the small sensors only its own stack reads, so a world that
+        # never launches that stack pays nothing for them.
+        self.lazy = bool(self.config.get("lazy", False))
+        self._endpoint: Endpoint | None = None
         self._site_id = -1
         self._bodyexclude = -1
         self._local_dirs: np.ndarray | None = None  # (nray, 3) unit directions, site frame
@@ -233,17 +239,17 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
         # Declared as a backend-neutral output endpoint (no ROS import here). The bridge resolves the
         # type string and publishes at rate; ``namespace`` scopes topic and frames.
-        ctx.interface.add(
-            Endpoint(
-                name=self.ENDPOINT_NAME,
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._payload_value,
-                rate_hz=self.rate_hz,
-                backend={"ros2": ros2_hints},
-            )
+        self._endpoint = Endpoint(
+            name=self.ENDPOINT_NAME,
+            direction="out",
+            owner=self.robot,
+            namespace=ns,
+            read=lambda: self._payload_value,
+            rate_hz=self.rate_hz,
+            backend={"ros2": ros2_hints},
+            lazy=self.lazy,
         )
+        ctx.interface.add(self._endpoint)
 
     def _resolve_exclude_body(self, m, prefix: str) -> int:
         """Body id whose geoms the rays skip, or ``-1`` for "exclude nothing".
@@ -266,6 +272,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         # sim_time restarts at 0 on reset; clear the gate so the first post-reset step casts again.
         self._last_cast = float("-inf")
+        # And the payload with it: read before that cast, the endpoint answers "nothing yet" rather
+        # than the previous trial's last scan, as the cameras do.
+        self._payload_value = None
         # And back to nominal: a fault applied in one trial must not survive into the next of the
         # same process, or the control cell silently becomes a faulted one.
         self.on_reset_fault()
@@ -331,7 +340,18 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         # Cast at the sensor's own rate, not every physics step; the endpoint reads the latest value.
-        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
+            return
+        if (
+            self.lazy
+            and self._endpoint is not None
+            and self._endpoint.has_subscribers is not None
+            and not self._endpoint.has_subscribers()
+        ):
+            # Nobody listening and the sensor opted out: the cast is the whole cost, so skip it too.
+            # `has_subscribers is None` (no transport) is "assume yes", as for the cameras.
             return
         self._last_cast = ctx.sim_time
         m, d = ctx.model, ctx.data

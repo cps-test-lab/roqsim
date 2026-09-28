@@ -42,8 +42,18 @@ import mujoco
 import numpy as np
 from numpy.lib import format as npy_format
 
-from . import keys
+from . import flex_skin, keys
+from .exit_status import BAD_INPUT, RECORDING
 from .kinematics import body_twist
+from .rates import (
+    SNAP_NOTABLE,
+    SNAP_QUIET,
+    GridRate,
+    RateError,
+    parse_rate,
+    physics_rate,
+    snap_rate,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,84 +62,45 @@ log = logging.getLogger(__name__)
 #: announce a snap.
 DEFAULT_FPS = 25
 
-#: Denominator bound for recovering a timestep's intended exact value from its float. A world writes
-#: ``timestep: 0.002``, which is not exactly representable; ``Fraction(0.002)`` is a 60-digit monster
-#: whereas ``limit_denominator(1e9)`` is exactly ``1/500``. Verified to recover the intent for every
-#: timestep in use here, including ``1/240``.
-_DT_DENOM_LIMIT = 10**9
-
-#: How far a snap may move the rate before it is worth saying so, and before it is worth a warning.
-_QUIET = 0.001  # 0.1%: the caller got what they asked for
-_NOTABLE = 0.01  # 1%: above this, name the neighbours
-
-
-class CaptureError(ValueError):
-    """A capture rate that cannot exist in this world (see the message)."""
+#: A capture rate that cannot exist in this world (see the message). The name this module's callers
+#: catch it by, and the one :mod:`roqsim.rates` raises for every caller on the grid: the arithmetic is
+#: shared, so the error has to be the same class or half of it would escape an ``except`` here.
+CaptureError = RateError
 
 
 def parse_fps(text: str | int | float | Fraction) -> Fraction:
-    """Parse a rate as an exact :class:`~fractions.Fraction`: ``25``, ``29.412``, ``500/17``, ``1/3``.
+    """Parse a capture rate, naming the flag it was typed on when it cannot be read.
 
-    Accepting a fraction literally is what makes every rate this module *prints* re-enterable -- the
-    snap messages below suggest rates like ``500/17``, and a suggestion you cannot type back is not a
-    suggestion. It also removes the only reason to write a repeating decimal by hand.
+    :func:`roqsim.rates.parse_rate` with the flag in front of its message: a rate that came in through
+    ``--capture-fps`` is one a person can retype, and a message that does not say where it came from
+    does not help them.
     """
-    if isinstance(text, Fraction):
-        return text
-    if isinstance(text, int):
-        return Fraction(text)
-    if isinstance(text, float):
-        return Fraction(text).limit_denominator(_DT_DENOM_LIMIT)
     try:
-        return Fraction(str(text).strip())
-    except (ValueError, ZeroDivisionError) as err:
-        raise CaptureError(
-            f"--capture-fps {text!r}: expected a number or a fraction, e.g. 25, 29.412, 500/17, 1/3"
-        ) from err
-
-
-def physics_rate(dt: float) -> Fraction:
-    """A world's step rate as an exact rational, recovered from its float timestep."""
-    if dt <= 0:
-        raise CaptureError(f"timestep must be positive, got {dt!r}")
-    return 1 / Fraction(dt).limit_denominator(_DT_DENOM_LIMIT)
+        return parse_rate(text)
+    except RateError as err:
+        raise CaptureError(f"--capture-fps {err}") from err
 
 
 @dataclass(frozen=True)
-class CaptureRate:
-    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second."""
+class CaptureRate(GridRate):
+    """A capture rate that exists in this world: ``every`` steps, i.e. exactly ``fps`` per sim second.
 
-    fps: Fraction  # the effective rate -- what gets declared to ffmpeg and written to a recording
-    every: int  # k: sample once per this many physics steps
-    requested: Fraction  # what the caller asked for, kept so the report can compare
-    physics: Fraction  # the world's step rate, kept for the message
-
-    @property
-    def deviation(self) -> float:
-        """How far the snap moved the rate, as a fraction of the request."""
-        return abs(float(self.fps - self.requested) / float(self.requested))
+    A :class:`~roqsim.rates.GridRate` in a capture's own vocabulary -- ``fps`` for the rate, ffmpeg's
+    rational for the timebase, and a report worded for the flag the rate was typed on.
+    """
 
     @property
-    def period(self) -> float:
-        """Seconds of *simulated* time between samples."""
-        return float(1 / self.fps)
+    def fps(self) -> Fraction:
+        """The effective rate as a capture spells it: what ffmpeg is told and a recording carries."""
+        return self.hz
 
     def ffmpeg_rate(self) -> str:
         """The rate as an exact rational for ffmpeg's ``-r``, e.g. ``500/17``.
 
         Never a rounded decimal: ``-r 29.41`` on a stream whose real spacing is ``500/17`` drifts, which
-        is the whole defect this module exists to avoid.
+        is the whole defect this exists to avoid.
         """
-        return f"{self.fps.numerator}/{self.fps.denominator}"
-
-    def neighbours(self, count: int = 3) -> list[CaptureRate]:
-        """Achievable rates either side of this one, nearest first -- the suggestions in the report."""
-        out: list[CaptureRate] = []
-        for offset in _spiral(count):
-            k = self.every + offset
-            if k >= 1 and k != self.every:
-                out.append(CaptureRate(self.physics / k, k, self.requested, self.physics))
-        return out[:count]
+        return self.rational()
 
     def report(self, logger: logging.Logger | None = None) -> None:
         """Announce the snap in proportion to how far it moved: silent, a note, or a warning.
@@ -144,16 +115,17 @@ class CaptureRate:
         detail = (
             f"{float(self.fps):.3f} fps (every {self.every} steps; exactly {self.ffmpeg_rate()})"
         )
-        if self.deviation < _QUIET:
+        if self.deviation < SNAP_QUIET:
             logger.debug("capture: %s -> %s", float(self.requested), detail)
-        elif self.deviation < _NOTABLE:
+        elif self.deviation < SNAP_NOTABLE:
             logger.info("capture: --capture-fps %s snapped to %s", float(self.requested), detail)
         else:
             nearby = ", ".join(f"{float(n.fps):g} (k={n.every})" for n in self.neighbours())
             logger.warning(
                 "capture: --capture-fps %s snapped to %s -- samples land on physics steps and this "
                 "world steps at %s Hz, so %s/%s = %.2f is not reachable. The timebase is exact, so "
-                "there is no drift. Nearby: %s.",
+                "there is no drift. Nearby: %s; a world stepping at a multiple of %s Hz would hold "
+                "the requested rate exactly.",
                 float(self.requested),
                 detail,
                 float(self.physics),
@@ -161,22 +133,18 @@ class CaptureRate:
                 float(self.requested),
                 float(self.physics / self.requested),
                 nearby,
+                float(self.requested),
             )
 
 
-def _spiral(count: int):
-    """Step offsets nearest-first: 1, -1, 2, -2, ... so suggestions stay close to what was asked."""
-    for i in range(1, count + 2):
-        yield i
-        yield -i
-
-
 def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
-    """Snap a requested rate onto this world's physics grid. Refuses only the impossible.
+    """Snap a requested capture rate onto this world's physics grid. Refuses only the impossible.
 
     Hard errors are limited to rates that cannot exist at all -- non-positive, or faster than the
     simulation steps -- because everything else has a nearest achievable answer, and an exact rational
-    timebase makes taking it harmless.
+    timebase makes taking it harmless. A capture rate is typed as a flag, so refusing it names the
+    flag and the caller can type another; see :func:`roqsim.rates.snap_rate` for the same grid without
+    that door, which is what a bridge binding an endpoint needs.
     """
     requested = parse_fps(fps)
     rate = physics_rate(dt)
@@ -188,8 +156,8 @@ def snap_fps(fps: str | int | float | Fraction, dt: float) -> CaptureRate:
             f"({float(rate):g} Hz, timestep {dt:g}): a sample can only be taken on a physics step. "
             f"Use at most {float(rate):g}, or lower the world's sim.timestep."
         )
-    every = max(1, round(float(rate / requested)))
-    return CaptureRate(rate / every, every, requested, rate)
+    snapped = snap_rate(requested, dt)
+    return CaptureRate(snapped.hz, snapped.every, snapped.requested, snapped.physics)
 
 
 # ==================================================================================================
@@ -327,6 +295,14 @@ _PROVENANCE_PACKAGES = ("roqsim", "mujoco", "numpy")
 class RecordingError(RuntimeError):
     """A recording cannot be written or read (see the message)."""
 
+    exit_status = RECORDING
+
+
+class RecordingNotFoundError(RecordingError):
+    """The recording named does not exist: a wrong input, not an unreadable recording."""
+
+    exit_status = BAD_INPUT
+
 
 def env_flag(name: str) -> bool:
     """Read a capture on/off switch from the environment.
@@ -339,8 +315,8 @@ def env_flag(name: str) -> bool:
     return value is not None and value.strip().lower() not in ("", "0", "false", "no", "off")
 
 
-def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
-    """Every named body, in body order, and the parents of the unnamed ones left out.
+def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str], list[tuple[str, int]]]:
+    """Every named body, in body order; the parents of the unnamed ones left out; and the flexes'.
 
     All of them rather than only those parented to the world: what a trial's success rule reads is
     often welded below a robot -- a tool on a flange, a workpiece in a gripper -- and a consumer
@@ -350,16 +326,26 @@ def _named_bodies(model) -> tuple[list[tuple[int, str]], list[str]]:
 
     An unnamed body has no value for the ``frame`` column, so it is left out and reported instead:
     a tool missing from the record then shows up in the run log rather than as an absent row.
+
+    A flex's own bodies -- one per vertex or node, named by the ``<flexcomp>`` (``block_17``) -- are
+    left out too, as ``(flex name, count)`` per flex: hundreds of rows per sample that no success
+    rule reads by name. They stay in the ``.npz`` and in the run capture, whose pose tracks are what
+    a replay deforms the flex from. The body a flex is declared in is not one of them.
     """
+    owned = flex_skin.owned_bodies(model)
+    flex_owned = {b for bodies in owned.values() for b in bodies}
+    flexes = [(flex_skin.flex_name(model, f), len(bodies)) for f, bodies in owned.items()]
     out, skipped = [], []
     for bid in range(1, model.nbody):  # 0 is the world body itself
+        if bid in flex_owned:
+            continue
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, bid)
         if name:
             out.append((bid, name))
         else:
             parent = int(model.body_parentid[bid])
             skipped.append(mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, parent) or "world")
-    return out, skipped
+    return out, skipped, flexes
 
 
 def package_versions() -> dict:
@@ -515,6 +501,20 @@ def _actuator_record(ctx) -> dict:
     return {entity: [row.as_record() for row in rows] for entity, rows in tables.items() if rows}
 
 
+def _endpoint_rate_record(ctx) -> list:
+    """What each published endpoint actually goes out at, as plain data, or ``[]`` when nothing bound.
+
+    Reads what the bridges wrote at ``configure``; a run with no transport records nothing rather
+    than failing. The rate is in there twice on purpose: ``requested_hz`` is the number the world
+    asked for and quotes everywhere, ``realised_hz`` is the one the run published at, and they differ
+    whenever the request is not a whole number of physics steps. Nobody reading a rate afterwards can
+    tell those apart from the world document alone, and the exact rational is recoverable from
+    ``every_steps`` and the ``timestep`` recorded beside this.
+    """
+    rows = getattr(ctx, "endpoint_rates", None) or []
+    return [dict(row) for row in rows]
+
+
 def _write_archive(path: Path, provenance: dict, samples: np.ndarray) -> None:
     """Write the recording: a JSON ``meta`` member and the structured ``samples`` member.
 
@@ -643,6 +643,10 @@ class StateRecorder:
         self._first_t = self._last_t = 0.0
         self._first_w = self._last_w = 0.0
         self._next_due = 0.0
+        #: How far ``sim_time`` may fall short of the due time and still be due: half a step.
+        #: ``data.time`` sums dt per step and the due time sums the period per sample, so the step
+        #: that lands on the due time can read a few ulp below it; the step before is a whole dt away.
+        self._half_step = 0.5 * float(ctx.model.opt.timestep)
         self._closed = False
         # Origin for the wall column, taken before any sample so the series starts at ~0. A *take*
         # started by F9 mid-session gets its own origin, which is what makes each take's real-time
@@ -661,7 +665,9 @@ class StateRecorder:
         # asks for it, because it is a second file per run and only a campaign wants one.
         self._pose_path = (self.path.parent / SIM_POSE_FILENAME) if sim_poses else None
         self._pose_file = None
-        self._pose_bodies, self._pose_skipped = _named_bodies(ctx.model) if sim_poses else ([], [])
+        self._pose_bodies, self._pose_skipped, self._pose_flexes = (
+            _named_bodies(ctx.model) if sim_poses else ([], [], [])
+        )
         # The roster that says what those rows are. Held as a live reference to the registry, not a
         # copy: an entity spawned or removed mid-run changes the answer, and a snapshot taken at
         # construction would describe a world the trial has since left.
@@ -694,6 +700,10 @@ class StateRecorder:
             # opening the MJCF and re-deriving them. Additive: `Recording` reads `world_model` by
             # name and ignores keys it does not know, so no FORMAT_VERSION bump.
             "actuators": _actuator_record(ctx),
+            # What each published endpoint went out at, requested and realised. A publish lands on a
+            # physics step, so a rate that is not a whole number of steps is served at a neighbouring
+            # one; this is where that shows without reading a log. Additive, like `actuators`.
+            "endpoint_rates": _endpoint_rate_record(ctx),
             "packages": package_versions(),
             "state_spec": STATE_SPEC,
             "state_fields": list(STATE_FIELDS),
@@ -734,9 +744,11 @@ class StateRecorder:
         1x sim time whatever wall-clock pacing the run used. The wall clock is *recorded* rather than
         gated on, which is what makes the pacing itself a measurable property of the run instead of a
         thing the sample schedule hides.
+
+        Due means within half a step of the due time (see ``_half_step``).
         """
         now = ctx.sim_time
-        if now + 1e-12 < self._next_due:
+        if now + self._half_step < self._next_due:
             return False
         # Absolute schedule, so a long step cannot drag the whole series late; resynchronise after a
         # gap (a reset, a paused window) rather than firing a burst of catch-up samples.
@@ -820,6 +832,14 @@ class StateRecorder:
                     len(self._pose_skipped),
                     f" (under {', '.join(skipped)})" if skipped else "",
                 )
+                for flex, count in self._pose_flexes:
+                    self.log.info(
+                        "recording: %s omits the %d bodies of flex %r (its vertices or nodes; "
+                        "the recording and the run capture carry them)",
+                        SIM_POSE_FILENAME,
+                        count,
+                        flex,
+                    )
             data = ctx.data
             for bid, name in self._pose_bodies:
                 pos, quat = data.xpos[bid], data.xquat[bid]

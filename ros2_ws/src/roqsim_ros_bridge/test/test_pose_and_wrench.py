@@ -80,6 +80,20 @@ def test_a_wrench_carries_the_frame_it_was_resolved_in():
     assert msg.header.frame_id == "tool0"
 
 
+def test_a_namespaced_wrench_in_the_world_frame_names_world():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "world", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "world"
+
+
+def test_a_namespaced_wrench_in_a_robot_frame_is_prefixed():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "tool0", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "ur5e/tool0"
+
+
 def test_a_commanded_wrench_decodes_to_the_readers_own_shape():
     msg = _WrenchMsg()
     msg.wrench.force.x, msg.wrench.force.z = 1.5, -8.0
@@ -100,11 +114,19 @@ def test_a_pose_decodes_with_its_orientation_intact():
     msg.pose.orientation.w = msg.pose.orientation.y = math.sqrt(0.5)
     msg.pose.orientation.x = msg.pose.orientation.z = 0.0
 
-    position, quat = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
+    position, quat, _frame = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
 
     assert tuple(position) == (0.4, 0.0, 0.3)
     assert quat[0] == pytest.approx(math.sqrt(0.5)), "w comes first, MuJoCo's order"
     assert quat[2] == pytest.approx(math.sqrt(0.5)), "the pitch must survive the decode"
+
+
+def test_a_pose_decodes_with_its_frame():
+    """A setpoint in ``odom`` read as a world position flies a drone spawned away from the origin to
+    the wrong place; only the consumer can tell the two apart, so the decoder hands the frame on."""
+    msg = _PoseMsg()
+    msg.header.frame_id = "odom"
+    assert get_decoder("geometry_msgs.msg.PoseStamped")(msg)[2] == "odom"
 
 
 def test_the_quaternion_is_reordered_on_the_way_out():
@@ -123,7 +145,7 @@ def test_a_pose_survives_a_round_trip():
     original = ([0.4, -0.1, 0.3], [math.sqrt(0.5), 0.0, math.sqrt(0.5), 0.0])
     fill(msg, original, None, {})
 
-    position, quat = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
+    position, quat, _frame = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
     assert list(position) == pytest.approx(original[0])
     assert list(quat) == pytest.approx(original[1])
 

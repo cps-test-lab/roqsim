@@ -6,10 +6,10 @@ to "how do I compute something you did not think of":
 
     from roqsim.recording import open_recording
 
-    rec = open_recording("run.npz")
-    for sample in rec.range(8.0, 20.0):
-        sample.sim_time, sample.wall_time, sample.index, sample.data
-        ...                       # any numpy/mujoco computation over a real restored state
+    with open_recording("run.npz") as rec:      # closes the rebuilt world's plugins on the way out
+        for sample in rec.range(8.0, 20.0):
+            sample.sim_time, sample.wall_time, sample.index, sample.data
+            ...                   # any numpy/mujoco computation over a real restored state
 
 Everything subtle lives here exactly once, so the two commands cannot drift on it: the world rebuild,
 the provenance check, nearest-sample selection by time, and reporting *which* sample a request actually
@@ -32,7 +32,8 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from .capture import STATE_SPEC, RecordingError, record_dtype
+from .capture import STATE_SPEC, RecordingError, RecordingNotFoundError, record_dtype
+from .document import check_version
 
 log = logging.getLogger(__name__)
 
@@ -64,16 +65,16 @@ class Recording:
     def __init__(self, path: Path, meta: dict, samples: np.ndarray) -> None:
         self.path = path
         self.meta = meta
-        # A NEWER record is refused outright: it was written to a contract this code has not seen,
-        # and reading it with the keys that happen to overlap produces a plausible-looking answer
-        # about something else. An OLDER one still reads -- its samples, times and clock are all
-        # there -- and is refused only where it would be REBUILT (see `build`).
-        version = int(meta.get("format_version") or 1)
-        if version > self.READER_VERSION:
-            raise RecordingError(
-                f"{path} was written with recording format v{version}; this roqsim reads up to "
-                f"v{self.READER_VERSION}. Read it with the version that wrote it, or re-record."
-            )
+        # A newer record is refused here; an older one still reads, and is refused only where it
+        # would be rebuilt (see `build`).
+        self._version = check_version(
+            meta,
+            "format_version",
+            reads=self.READER_VERSION,
+            document="recording format",
+            where=str(path),
+            error=RecordingError,
+        )
         self._samples = samples
         self._model: mujoco.MjModel | None = None
         self._ctx = None
@@ -81,6 +82,32 @@ class Recording:
         self._buf: np.ndarray | None = None
         self._view: dict | None = None
         self._run_sensors = False
+        #: Plugins whose ``post_step`` raised on the latest restore, with the error; their endpoints
+        #: still hold the previous sample's values (:meth:`failed_endpoints`).
+        self.replay_failures: list[tuple[object, Exception]] = []
+        self._warned: set[int] = set()
+
+    def close(self) -> None:
+        """Shut the rebuilt world's plugins down, releasing what they hold. Idempotent.
+
+        A replayed camera holds an offscreen renderer that only its ``shutdown`` releases; one left
+        to interpreter exit is torn down after the GL backend is gone. A no-op before :meth:`build`.
+
+        The replay failures and the plugins already warned about belong to the closed world: a
+        rebuilt one's plugin can reuse a closed one's ``id``, and would not be warned about.
+        """
+        engine = getattr(self._ctx, "engine", None)
+        self._model, self._ctx, self._data, self._buf, self._view = None, None, None, None, None
+        self.replay_failures = []
+        self._warned.clear()
+        if engine is not None:
+            engine.shutdown()
+
+    def __enter__(self) -> Recording:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
 
     # -- what the file says about itself ----------------------------------------------------------
 
@@ -173,6 +200,19 @@ class Recording:
         return bool(self.meta.get("camera_track")) and "cam" in (self._samples.dtype.names or ())
 
     @property
+    def has_ceiling(self) -> bool:
+        """Whether the recorded world put a roof on: a ``ceiling`` component it did not keep off.
+
+        Read from the provenance, so a render can decide before building whether a view from above
+        would be looking at that roof.
+        """
+        record = self.meta.get("world_model") or {}
+        for spec in record.get("components") or []:
+            if "ceiling" in (spec.get("ref"), spec.get("name")) and spec.get("enabled", True):
+                return bool((spec.get("config") or {}).get("keep", True))
+        return False
+
+    @property
     def world(self) -> str | None:
         return self.meta.get("world")
 
@@ -216,7 +256,7 @@ class Recording:
         if self._model is not None:
             return self._model, self._ctx
 
-        if int(self.meta.get("format_version") or 1) < self.READER_VERSION and target is None:
+        if self._version < self.READER_VERSION and target is None:
             raise RecordingError(
                 f"{self.path} predates components being addressed by path, so the overrides it "
                 f"carries would resolve differently against this world -- a run rebuilt from them "
@@ -368,6 +408,7 @@ class Recording:
         is refused by name rather than silently recomputed.
         """
         engine = getattr(ctx, "engine", None)
+        self.replay_failures = []
         if engine is None:
             return
         # ctx.data is the engine's own buffer, and _restore posed exactly that object.
@@ -375,7 +416,43 @@ class Recording:
             try:
                 plugin.post_step(ctx)
             except Exception as err:  # noqa: BLE001 - one broken sensor must not stop the rest
-                log.debug("replay: %s.post_step failed: %s", type(plugin).__name__, err)
+                # Not fatal here: most plugins are not what the caller asked for. A caller reading
+                # a selected endpoint asks `failed_endpoints`.
+                self.replay_failures.append((plugin, err))
+                if id(plugin) not in self._warned:
+                    self._warned.add(id(plugin))
+                    log.warning(
+                        "replay: %s (%s).post_step raised at t=%.3f s: %s -- its endpoints keep "
+                        "the previous sample's values",
+                        getattr(plugin, "address", type(plugin).__name__),
+                        type(plugin).__name__,
+                        float(self._data.time) if self._data is not None else float("nan"),
+                        err,
+                    )
+
+    def failed_endpoints(self, endpoints) -> dict[str, str]:
+        """``{endpoint name: why}`` for each of *endpoints* whose producer raised on the latest
+        restore -- whose value is therefore the previous sample's, not this one's.
+
+        An endpoint is attributed to a plugin when its ``read`` is bound to that plugin or closes
+        over it. While any plugin failed, an endpoint attributed to no plugin at all is reported
+        too, since nothing shows its producer was not among them.
+        """
+        if not self.replay_failures:
+            return {}
+        out: dict[str, str] = {}
+        for plugin, err in self.replay_failures:
+            for endpoint in endpoints:
+                if _reads_from(endpoint.read, plugin):
+                    out[endpoint.name] = f"{_label(plugin)}.post_step raised: {err}"
+        engine = getattr(self._ctx, "engine", None)
+        plugins = list(engine.plugins) if engine is not None else []
+        failed = ", ".join(f"{_label(p)} ({e})" for p, e in self.replay_failures)
+        for endpoint in endpoints:
+            if endpoint.name in out or any(_reads_from(endpoint.read, p) for p in plugins):
+                continue
+            out[endpoint.name] = f"its producer is not known, and these raised: {failed}"
+        return out
 
     def at(self, when: float | None = None) -> Sample:
         """The sample nearest ``when``, or the last one when ``when`` is ``None``.
@@ -414,11 +491,30 @@ class Recording:
         }
 
 
+def _label(plugin) -> str:
+    return getattr(plugin, "address", type(plugin).__name__)
+
+
+def _reads_from(read, plugin) -> bool:
+    """Whether the callable *read* is *plugin*'s: a bound method of it, or a closure over it."""
+    if read is None:
+        return False
+    if getattr(read, "__self__", None) is plugin:
+        return True
+    for cell in getattr(read, "__closure__", None) or ():
+        try:
+            if cell.cell_contents is plugin:
+                return True
+        except ValueError:  # an empty cell
+            continue
+    return False
+
+
 def open_recording(path: str | Path) -> Recording:
     """Open a ``.npz`` recording, validating its shape before anything expensive happens."""
     path = Path(path)
     if not path.exists():
-        raise RecordingError(f"{path}: no such recording")
+        raise RecordingNotFoundError(f"{path}: no such recording")
     try:
         archive = np.load(path, allow_pickle=False)
     except Exception as err:

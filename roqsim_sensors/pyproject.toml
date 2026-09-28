@@ -11,7 +11,7 @@ license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
     "roqsim",
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
 ]
 
@@ -31,6 +31,10 @@ roqsim-coverage = "roqsim_sensors.coverage.cli:main"
 # Sensor plugins, registered into the shared roqsim.plugins group.
 [project.entry-points."roqsim.plugins"]
 lidar = "roqsim_sensors.plugins.lidar:LidarPlugin"
+# The small range sensors a base carries -- IR proximity, ToF, ultrasonic, a downward cliff
+# sensor: a narrow cone cast as an h x v grid of rays and published as one LaserScan, rows
+# concatenated. What a cliff or an obstacle IS stays with the consumer.
+range_sensor = "roqsim_sensors.plugins.range_sensor:RangeSensorPlugin"
 livox_mid360 = "roqsim_sensors.plugins.livox_mid360:LivoxMid360Plugin"
 seyond_robin_w1g = "roqsim_sensors.plugins.seyond_robin_w1g:SeyondRobinW1GPlugin"
 oakd_camera = "roqsim_sensors.plugins.oakd_camera:OakDCameraPlugin"
@@ -53,6 +57,7 @@ force_limit = "roqsim_sensors.plugins.force_limit:ForceLimitPlugin"
 # Sits beside force_torque as another MJCF-sensor reader -- MuJoCo computes rate, proper acceleration
 # and attitude already; this makes them an observable with covariances, TF and a fault switch.
 imu = "roqsim_sensors.plugins.imu:ImuPlugin"
+gnss = "roqsim_sensors.plugins.gnss:GnssPlugin"
 
 # Bundled sensor models (e.g. d435), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]

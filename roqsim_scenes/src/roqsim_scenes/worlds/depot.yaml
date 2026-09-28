@@ -32,7 +32,7 @@ sim:
 components:
   # Ships OPEN (roofless): removes every geom whose geometry sits entirely above 2.6 m -- the roof,
   # ceiling fans, hung fixtures and clerestory windows -- so overhead sensors and a top-down view see
-  # in. Walls, pillars and floor clutter (which span down into the room) stay. Set `enabled: true` for
+  # in. Walls, pillars and floor clutter (which span down into the room) stay. Set `keep: true` for
   # the roofed warehouse. Generic: the `ceiling` plugin (roqsim core) opens any world by height.
   - ceiling: {above_z: 2.6, keep: false}
   # e.g. add a robot below: - spawn_robot: {model: turtlebot4, name: robot, pose: {position: {x: -8.0, y: 0.0}}}
