@@ -24,7 +24,7 @@ Config::
       rpy: [0.0, 0.0, 0.0]  # belt orientation as roll/pitch/yaw (rad)
       length: 2.442         # optional full belt length (X, m); default keeps the base model
       width: 0.58           # optional full belt width  (Y, m); default keeps the base model
-      speed: 0.1            # initial belt speed (m/s); negative reverses
+      speed: 0.1            # belt speed at the start of each episode (m/s); negative reverses
       friction: 0.6         # optional belt<->package sliding friction override
       roller_radius: 0.0275
       belt_wrap: 0.025      # +/- position wrap (m); keep <= half the slab overhang
@@ -309,6 +309,8 @@ class ConveyorPlugin(Plugin):
         self.speed = float(speed)
 
     def on_reset(self, ctx: SimContext) -> None:
+        # A speed set through the endpoint or the handle belongs to the episode that set it.
+        self.speed = float(self.config.get("speed", 0.1))
         ctx.data.qpos[self._belt_qadr] = 0.0
         if self._pkg_qadr >= 0:
             ctx.data.qpos[self._pkg_qadr : self._pkg_qadr + 7] = self._package_pose_world

@@ -67,6 +67,7 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
 #: WGS84 semi-major axis, m. The single constant the tangent-plane projection uses.
@@ -265,7 +266,8 @@ class GnssPlugin(Plugin):
             return self._no_fix()
 
         pos = np.array(ctx.data.xpos[self._bid], dtype=float)  # world ENU, m
-        vel = np.array(ctx.data.cvel[self._bid][3:6], dtype=float)  # world ENU, m/s
+        # The antenna body's own velocity; `cvel` is taken at the subtree centre of mass.
+        vel = np.array(body_twist(ctx.model, ctx.data, self._bid).linear)  # world ENU, m/s
 
         sigma_h = float(self.cfg("horizontal_noise"))
         sigma_v = float(self.cfg("vertical_noise"))
