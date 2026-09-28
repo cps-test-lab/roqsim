@@ -4,8 +4,9 @@
 block here is then excited in each predicted mode shape and left to ring under the ``discrete``
 integrator, and the frequency and decay it actually shows are read off its free vibration. That is
 also where :mod:`roqsim.flex_modes`' numerical damping under ``discrete`` is pinned -- the
-integrator's own damping is one timestep's worth of Rayleigh damping -- and the contact ``solref``
-floor is measured on a resting contact under two integrators. The last part is ``roqsim check`` and ``roqsim scenes describe`` on a
+integrator's own damping is one timestep's worth of Rayleigh damping -- and its resolution limit,
+the ``omega * timestep`` past which neither that damping ratio nor the frequency is the one a run
+shows. The contact ``solref`` floor is measured on a resting contact under two integrators. The last part is ``roqsim check`` and ``roqsim scenes describe`` on a
 world with a flex.
 """
 
@@ -23,6 +24,7 @@ from test_flex_rules import CASES, _mjcf
 from roqsim import flex_modes as flexlib
 from roqsim.check import _render_text, check_world, main
 from roqsim.flex_modes import (
+    MAX_OMEGA_DT,
     FlexTooLarge,
     describe_flexes,
     explain_flex,
@@ -104,6 +106,45 @@ def _ring(model: mujoco.MjModel, mode: int, seconds: float = 2.0) -> tuple[float
     return hz, decay / (2 * math.pi * hz)
 
 
+def _poles(model: mujoco.MjModel, mode: int = 0, seconds: float = 2.0) -> tuple[float, float]:
+    """``(omega, zeta)``, natural frequency and damping ratio, of the ring-down of mode *mode*.
+
+    Read from the poles of the sampled motion rather than from crossings and peaks: a single mode
+    under a one-step integrator is a two-state linear recurrence, so its modal coordinate obeys
+    ``x[k+2] = a1 x[k+1] + a2 x[k]`` exactly, whose roots ``z`` give ``s = log(z) / timestep``.
+    That stays exact at a coarse step and a heavy damping, where a ring-down shows few crossings.
+    """
+    modes = first_modes(model, 0, mode + 1, shapes=True)
+    shape = modes.shapes[:, mode]
+    data = mujoco.MjData(model)
+    full = np.zeros((model.nv, model.nv))
+    mujoco.mj_forward(model, data)
+    mujoco.mj_fullM(model, data, full)
+    mass = full[np.ix_(modes.dofs, modes.dofs)]
+    qpos_of = model.jnt_qposadr[model.dof_jntid[modes.dofs]]
+    rest = model.qpos0[qpos_of]
+    data.qpos[qpos_of] = rest + 1e-4 * shape / np.abs(shape).max()
+
+    coordinate = [shape @ mass @ (data.qpos[qpos_of] - rest)]
+    for _ in range(int(seconds / model.opt.timestep)):
+        mujoco.mj_step(model, data)
+        coordinate.append(shape @ mass @ (data.qpos[qpos_of] - rest))
+    x = np.array(coordinate)
+    x = x[: np.flatnonzero(np.abs(x) > 0.01 * np.abs(x).max())[-1] + 1]
+    (a1, a2), *_ = np.linalg.lstsq(np.stack([x[1:-1], x[:-2]], axis=1), x[2:], rcond=None)
+    s = np.log(np.roots([1.0, -a1, -a2])[0].astype(complex)) / model.opt.timestep
+    return float(abs(s)), float(-s.real / abs(s))
+
+
+def _block_at(omega_dt: float, zeta: float | None = None) -> mujoco.MjModel:
+    """The block at the timestep that puts its first mode at *omega_dt*, damped at *zeta* (by
+    default one timestep's worth of damping, so ``zeta == omega_dt``)."""
+    omega = first_modes(mujoco.MjModel.from_xml_string(_block()), 0).omega[0]
+    timestep = omega_dt / omega
+    damping = timestep if zeta is None else 2 * zeta / omega - timestep
+    return mujoco.MjModel.from_xml_string(_block(timestep=timestep, damping=damping))
+
+
 # -- first_modes ----------------------------------------------------------------------------------
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_each_predicted_mode_rings_at_its_predicted_frequency(mode):
@@ -140,6 +181,67 @@ def test_the_stated_damping_adds_to_the_integrators():
     # The timestep at or below which the integrator's share is at most half is the damping itself.
     assert derived["max_timestep_for_half"] == pytest.approx(0.001)
     assert warnings == []
+
+
+# The resolution limit, measured: (omega * timestep, how far the damping ratio and the natural
+# frequency fall short of what check reports) for the block's first mode damped by one timestep.
+_SHORTFALL = [
+    (0.1, 0.005, 0.005),
+    (0.2, 0.020, 0.018),
+    (0.3, 0.044, 0.038),
+    (0.35, 0.058, 0.050),
+    (0.5, 0.107, 0.092),
+    (0.85, 0.228, 0.199),
+]
+
+
+@pytest.mark.parametrize(("omega_dt", "zeta_short", "omega_short"), _SHORTFALL)
+def test_check_warns_where_its_figures_stop_being_the_ones_that_run(
+    omega_dt, zeta_short, omega_short
+):
+    """The resolution limit: past MAX_OMEGA_DT the reported damping ratio or frequency is more than
+    5 % off the ring-down -- and exactly there the mode is marked and flex-timestep fires."""
+    model = _block_at(omega_dt)
+    # One reported mode, so that the warning is about the mode measured here and no other.
+    derived, warnings = explain_flex(model, 0, n=1)
+    first = derived["modes"][0]
+    omega, zeta = _poles(model)
+    assert first["omega_dt"] == pytest.approx(omega_dt)
+    assert 1 - zeta / first["zeta"] == pytest.approx(zeta_short, abs=0.003)
+    assert 1 - omega / (2 * math.pi * first["hz"]) == pytest.approx(omega_short, abs=0.003)
+
+    within = max(1 - zeta / first["zeta"], 1 - omega / (2 * math.pi * first["hz"])) <= 0.05
+    assert within is (omega_dt <= MAX_OMEGA_DT)
+    assert first["resolved"] is within
+    timestep_warnings = [w for w in warnings if w["check"] == "flex-timestep"]
+    assert len(timestep_warnings) == (0 if within else 1)
+    if not within:
+        (warning,) = timestep_warnings
+        assert set(warning) == {"check", "message", "hint", "flex"}
+        assert warning["message"].startswith("flex 'blk': mode 1 (11.4 Hz) is under-resolved")
+        assert f"omega * timestep = {omega_dt:.2g}, above 0.3" in warning["message"]
+        assert "not the ones that run" in warning["message"]
+        assert f"sim.timestep <= {derived['max_timestep_resolved']:g} s" in warning["hint"]
+
+
+def test_the_suggested_timestep_resolves_every_reported_mode():
+    derived, _ = explain_flex(_block_at(0.85), 0)
+    fine = mujoco.MjModel.from_xml_string(_block(timestep=derived["max_timestep_resolved"]))
+    derived, warnings = explain_flex(fine, 0)
+    assert all(mode["resolved"] for mode in derived["modes"])
+    assert max(mode["omega_dt"] for mode in derived["modes"]) <= MAX_OMEGA_DT
+    assert [w for w in warnings if w["check"] == "flex-timestep"] == []
+
+
+@pytest.mark.parametrize(("zeta", "short"), [(0.15, 0.024), (0.5, 0.068), (0.9, 0.109)])
+def test_at_the_limit_the_shortfall_grows_with_the_damping(zeta, short):
+    """At MAX_OMEGA_DT the 5 % holds up to zeta 0.3 only; a more heavily damped mode is further off."""
+    model = _block_at(MAX_OMEGA_DT, zeta)
+    derived, _ = explain_flex(model, 0)
+    assert derived["modes"][0]["zeta"] == pytest.approx(zeta)
+    assert derived["modes"][0]["resolved"] is True
+    _, measured = _poles(model)
+    assert 1 - measured / zeta == pytest.approx(short, abs=0.003)
 
 
 def test_a_free_flex_drops_its_six_rigid_modes():
@@ -306,6 +408,19 @@ def test_check_explains_a_flex_and_warns_without_failing(tmp_path):
     assert "WARN  [flex-solref] flex 'blk': contact solref" in text
     assert "blk  dim 3, 45 vertices" in text
     assert "modes " in text and "Hz" in text
+
+
+def test_check_marks_an_under_resolved_mode(tmp_path):
+    report = check_world(_world(tmp_path, _block(damping=0.004), ", timestep: 0.004"))
+    assert report["ok"] is True
+    (derived,) = report["derived"]["flexes"]
+    assert [m["resolved"] for m in derived["modes"]] == [True, False, False]
+    assert [(w["check"], w["flex"]) for w in report["warnings"]] == [("flex-timestep", "blk")]
+
+    text = _render_text(report)
+    assert "WARN  [flex-timestep] flex 'blk': mode 2 (13 Hz) is under-resolved" in text
+    assert "modes 11.4, 13*, 22.4* Hz; damping ratio 0.288, 0.326*, 0.562*" in text
+    assert "* under-resolved (omega * timestep above 0.3): a run damps" in text
 
 
 def test_a_stated_timestep_changes_the_verdict(tmp_path):

@@ -5,11 +5,11 @@ of a ``<flexcomp>`` otherwise answers by running the world and watching it: what
 into, how fast it rings, how much of its damping is the material's and how much the integrator's,
 and whether its contact stiffness is the one MuJoCo will use.
 
-Two answers are rules of MuJoCo's integrator rather than of the model. Only this analysis reads
+Three answers are rules of MuJoCo's integrator rather than of the model. Only this analysis reads
 them, so they are stated where they are used rather than among :mod:`roqsim.flex`'s numbered rules:
-**numerical damping under** ``discrete`` in :func:`explain_flex`, and **the** ``solref`` **floor**
-in :func:`solref_floor`. Both were measured on MuJoCo 3.14.0 and are pinned by
-``tests/test_flex_modes.py``, which measures each on a stepped model.
+**numerical damping under** ``discrete`` and **the resolution limit** in :func:`explain_flex`, and
+**the** ``solref`` **floor** in :func:`solref_floor`. Each was measured on MuJoCo 3.14.0 and is
+pinned by ``tests/test_flex_modes.py``, which measures it on a stepped model.
 """
 
 from __future__ import annotations
@@ -37,6 +37,20 @@ _RIGID_TOL = 1e-8
 
 #: Finite-difference step for the stiffness, in the DOF's own unit (metres for a vertex slide joint).
 _FD_STEP = 1e-6
+
+#: The largest ``omega * timestep`` at which ``roqsim check``'s figures for a mode are the ones a
+#: ``discrete`` run shows: at it, a mode damped at ``zeta`` up to 0.3 rings within 5 % of the
+#: reported damping ratio and frequency. Above it the mode is under-resolved by the timestep --
+#: the resolution limit in :func:`explain_flex`, where the measurement is.
+MAX_OMEGA_DT = 0.3
+
+
+def _round_down(value: float, digits: int = 3) -> float:
+    """*value* rounded down to *digits* significant figures, so a stated bound is never above it."""
+    import math
+
+    exponent = math.floor(math.log10(value)) - digits + 1
+    return round(math.floor(value / 10.0**exponent) * 10.0**exponent, -exponent)
 
 
 class FlexTooLarge(ValueError):
@@ -287,22 +301,39 @@ def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict,
 
     ``derived`` carries ``modes`` (``None`` with ``modes_skipped`` and a ``hint`` above the DOF
     cap, ``[]`` for a flex that is not elastic), each with ``hz``, the effective damping ratio
-    ``zeta`` and its ``zeta_numerical`` share; the flex's ``damping``, the ``timestep``, the
-    ``numerical_share`` of the damping and the ``max_timestep_for_half`` that keeps it at most half;
-    and the contact ``solref``, its ``solref_floor`` and whether it is ``below_floor``. The numerical
-    terms are those of the ``discrete`` integrator (numerical damping, below) and ``None`` under
-    any other. ``warnings`` are ``roqsim check`` warnings -- ``{"check", "message", "hint"}``, with the flex's
-    name in the message and, as an extra key, in ``flex`` -- and never make a world fail. ``check``
-    is ``flex-damping`` (the integrator's share of the damping is above half) or ``flex-solref``
-    (the contact ``solref`` is below the floor).
+    ``zeta`` and its ``zeta_numerical`` share, its ``omega_dt`` (``omega * timestep``) and whether
+    it is ``resolved`` (the resolution limit, below: ``False`` means its ``hz`` and ``zeta`` are
+    not what a run shows); the flex's ``damping``, the ``timestep``, the ``numerical_share`` of the
+    damping, the ``max_timestep_for_half`` that keeps it at most half and the
+    ``max_timestep_resolved`` that resolves every reported mode; and the contact ``solref``, its
+    ``solref_floor`` and whether it is ``below_floor``. The numerical terms and the resolution are
+    those of the ``discrete`` integrator (below) and ``None`` under any other. ``warnings`` are
+    ``roqsim check`` warnings -- ``{"check", "message", "hint"}``, with the flex's name in the
+    message and, as an extra key, in ``flex`` -- and never make a world fail. ``check`` is
+    ``flex-damping`` (the integrator's share of the damping is above half), ``flex-timestep`` (a
+    reported mode is under-resolved by the timestep) or ``flex-solref`` (the contact ``solref`` is
+    below the floor).
 
     **Numerical damping under ``discrete``.** The integrator damps a flex's elastic mode *i*
     as if the stated Rayleigh damping (``<elasticity damping>``, a time) were one timestep larger:
-    ``zeta_i = (damping + timestep) * omega_i / 2``. Measured on a pinned block's modes, each excited
-    alone and left to ring: within 1.5 % for ``omega * timestep`` up to 0.12 and within 4 % at 0.23;
-    it is a small-step relation and degrades beyond (0.8 of it at 0.72). The integrator's share of
-    the damping is therefore ``timestep / (damping + timestep)``, the same for every mode, and it is
-    at most half exactly when ``timestep <= damping``.
+    ``zeta_i = (damping + timestep) * omega_i / 2``. The integrator's share of the damping is
+    therefore ``timestep / (damping + timestep)``, the same for every mode, and it is at most half
+    exactly when ``timestep <= damping``. It is a small-step relation, as ``hz`` is: both hold while
+    ``omega_i * timestep`` is small, which is the resolution limit.
+
+    **The resolution limit.** As ``omega * timestep`` grows, the ``discrete`` integrator damps a
+    mode less and rings it slower than ``zeta`` and ``hz`` say. Measured on a pinned block's first
+    mode, excited alone and read from the poles of its sampled ring-down, with the damping one
+    timestep (so ``zeta = omega * timestep``): the damping ratio falls short by 0.5 % at
+    ``omega * timestep`` 0.1, 2 % at 0.2, 4.4 % at 0.3, 7 % at 0.4, 11 % at 0.5 and 23 % at 0.85,
+    and the natural frequency by 0.5 %, 1.8 %, 3.8 %, 6 %, 9 % and 20 %. With no stated damping the
+    shortfall is about half that; at a fixed ``omega * timestep`` it grows with ``zeta`` (at 0.3:
+    2.4 % at ``zeta`` 0.15, 7 % at 0.5, 11 % at 0.9). Hence :data:`MAX_OMEGA_DT` of 0.3: at or below
+    it, a mode damped at ``zeta`` up to 0.3 is within 5 % of both figures; above it the mode is
+    under-resolved, marked ``resolved: False``, and warned about. Only the reported modes are
+    judged; a flex's higher modes ring faster still and are not reported. A coarser grid does
+    not lower the lowest modes (it raises them slightly); a softer material does, ``omega`` scaling
+    with the square root of ``<elasticity young>``.
     """
     import math
 
@@ -331,15 +362,21 @@ def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict,
                 "hz": w / (2 * math.pi),
                 "zeta": (damping + numerical) * w / 2,
                 "zeta_numerical": numerical * w / 2 if discrete else None,
+                "omega_dt": w * timestep,
+                "resolved": w * timestep <= MAX_OMEGA_DT if discrete else None,
             }
             for w in modes.omega
         ]
     if discrete:
         derived["numerical_share"] = timestep / (damping + timestep)
         derived["max_timestep_for_half"] = damping if damping > 0 else None
+        derived["max_timestep_resolved"] = (
+            _round_down(MAX_OMEGA_DT / max(modes.omega)) if modes and modes.omega else None
+        )
     else:
         derived["numerical_share"] = None
         derived["max_timestep_for_half"] = None
+        derived["max_timestep_resolved"] = None
 
     if discrete and derived["modes"] and derived["numerical_share"] > 0.5:
         first = derived["modes"][0]
@@ -365,6 +402,36 @@ def explain_flex(model: mujoco.MjModel, flex_id: int, n: int = 3) -> tuple[dict,
                     "sim.timestep"
                 ),
                 "hint": hint,
+                "flex": name,
+            }
+        )
+
+    coarse = [i for i, mode in enumerate(derived["modes"] or []) if mode["resolved"] is False]
+    if coarse:
+        first = derived["modes"][coarse[0]]
+        others = [str(i + 1) for i in coarse[1:]]
+        also, them, their = "", "it", "its"
+        if others:
+            them, their = "them", "their"
+            also = (
+                f", and so {'are modes' if len(others) > 1 else 'is mode'} {' and '.join(others)}"
+            )
+        warnings.append(
+            {
+                "check": "flex-timestep",
+                "message": (
+                    f"flex {name!r}: mode {coarse[0] + 1} ({first['hz']:.3g} Hz) is under-resolved "
+                    f"by the timestep (omega * timestep = {first['omega_dt']:.2g}, above "
+                    f"{MAX_OMEGA_DT:g}){also}; the damping ratio and frequency reported for "
+                    f"{them} are not the ones that run: the discrete integrator distorts {their} "
+                    f"dynamics, damping {them} less and ringing {them} slower than stated"
+                ),
+                "hint": (
+                    f"set sim.timestep <= {derived['max_timestep_resolved']:g} s to bring omega * "
+                    f"timestep to {MAX_OMEGA_DT:g} or below for every reported mode, or lower "
+                    "the frequencies with a softer material (omega scales with the square root of "
+                    "<elasticity young>)"
+                ),
                 "flex": name,
             }
         )

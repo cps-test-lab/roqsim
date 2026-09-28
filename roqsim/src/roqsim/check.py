@@ -27,6 +27,13 @@ loader would hit them::
 
     roqsim check worlds/depot_nav.yaml
     roqsim check roqsim_mobile:husky_demo --json
+    roqsim check worlds/depot_nav.yaml --override run.overrides.yaml --set sim.timestep=0.001
+
+``--set`` and ``--override`` are ``roqsim sim``'s own options, merged by the same function
+(:mod:`roqsim.override_options`) and applied by the same loader, so what is checked is the world a
+run with those overrides builds -- a campaign's obstacles and plugin settings included, and an
+address the world does not have refused as the run would refuse it. The report records the merged
+overrides under ``overrides`` (``{}`` for none), so a caller can tell which world was checked.
 
 Six stages, each of which can fail without the next being meaningless:
 
@@ -71,22 +78,32 @@ is in there.
 
 ``derived`` is what the model will *do*, worked out without stepping it: for each flex its first
 elastic modes, the damping ratio each rings down with at this timestep and the integrator's share of
-it, and whether its contact ``solref`` is above the floor MuJoCo raises it to
-(:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the ``solref`` floor). The modes are
+it, whether the timestep resolves each mode, and whether its contact ``solref`` is above the floor
+MuJoCo raises it to (:mod:`roqsim.flex_modes`: numerical damping under ``discrete``, the resolution
+limit, the ``solref`` floor). The modes are
 the one costly computation here -- two passive-force evaluations per flex DOF and an eigen solve,
 seconds at most -- and a flex above :data:`roqsim.flex_modes.MODES_DOF_CAP` DOFs is reported
-without them rather than analysed at any cost. Two warnings come from it, for what such a world will
-do that its author probably did not intend: ``flex-damping`` (its damping is mostly the
-integrator's) and ``flex-solref`` (its contact stiffness is not the one that runs). A flex's warning
-also names the flex in an extra ``flex`` key.
+without them rather than analysed at any cost. Three warnings come from it, for what such a world
+will do that its author probably did not intend: ``flex-damping`` (its damping is mostly the
+integrator's), ``flex-timestep`` (the timestep under-resolves a reported mode, so that mode's damping
+ratio and frequency are not the ones that run, and are marked so) and ``flex-solref`` (its contact
+stiffness is not the one that runs). A flex's warning also names the flex in an extra ``flex`` key.
+
+Exit status (``roqsim.exit_status``): ``0`` when the world loads (``ok`` is true; warnings do not
+change it), ``2`` when the target names no world, ``5`` when a later stage reported a problem. The
+report itself is on stdout in every case, so a caller branches on the status and reads the JSON for
+what went wrong. An override that cannot be read is ``2`` with no report: no world was checked.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from pathlib import Path
+
+from . import exit_status
 
 #: Stage names, in the order they run. A problem in one does not stop the report; it stops that
 #: world from reaching the next stage, which is stated rather than implied by an empty section.
@@ -110,19 +127,25 @@ def _warning(check: str, message: str, hint: str | None = None, **extra) -> dict
     return warning
 
 
-def check_world(target: str) -> dict:
+def check_world(target: str, overrides: dict | None = None) -> dict:
     """Load *target* as far as it goes and report what happened, as plain data.
 
-    Returns ``{"target", "ok", "reached", "problems": [...], "warnings": [...], "world": {...},
-    "derived": {...}, "inputs": [...]}``. ``reached`` is the last stage that completed, so a caller
-    can tell "the config is wrong" from "the config is fine and the model does not compile" without
-    parsing messages. ``warnings`` never affect ``ok``: they are things a world that loads will do
-    that its author probably did not mean.
+    *overrides* is the nested override dict ``roqsim sim`` applies
+    (:func:`roqsim.override_options.overrides_from_options`), applied here by the same loader.
+
+    Returns ``{"target", "overrides", "ok", "reached", "problems": [...], "warnings": [...],
+    "world": {...}, "derived": {...}, "inputs": [...]}``, ``overrides`` being what was applied.
+    ``reached`` is the last stage that completed, so a caller can tell "the config is wrong" from
+    "the config is fine and the model does not compile" without parsing messages.
+    ``warnings`` never affect ``ok``: they are things a world that loads will do that its author
+    probably did not mean.
     """
     from roqsim.config import PluginError, load_config
 
+    overrides = overrides or {}
     report: dict = {
         "target": target,
+        "overrides": overrides,
         "ok": False,
         "reached": None,
         "problems": [],
@@ -140,7 +163,7 @@ def check_world(target: str) -> dict:
 
     # -- config (which also expands `extends` and resolves every plugin ref) -----------------
     try:
-        cfg = load_config(path)
+        cfg = load_config(path, overrides)
     except PluginError as exc:
         # The aggregated one: every plugin's validation errors, in one message.
         report["problems"].append(_problem("config", str(exc)))
@@ -170,49 +193,45 @@ def check_world(target: str) -> dict:
         return report
     report["reached"] = "config"
 
-    try:
-        engine.setup()
-    except Exception as exc:  # noqa: BLE001 - any plugin's failure is this command's finding
-        # Which half of setup() failed, asked of the context rather than guessed: `build` hooks and
-        # the compile happen before there is a model, `configure` after. Reporting the wrong one
-        # sends a reader to the wrong file -- an unresolvable site is a name that does not exist in
-        # a model that compiled fine.
-        stage = "configure" if getattr(engine.ctx, "model", None) is not None else "build"
-        report["problems"].append(
-            _problem(
-                stage,
-                f"{type(exc).__name__}: {exc}",
-                hint=(
-                    "a plugin refused what the compiled model offers -- check the names it resolves "
-                    "(bodies, sites, actuators) against `roqsim catalog model <model>`"
-                    if stage == "configure"
-                    else None
-                ),
+    with contextlib.ExitStack() as stack:
+        try:
+            stack.enter_context(engine)
+        except Exception as exc:  # noqa: BLE001 - any plugin's failure is this command's finding
+            # Which half of setup() failed, asked of the context rather than guessed: `build` hooks and
+            # the compile happen before there is a model, `configure` after. Reporting the wrong one
+            # sends a reader to the wrong file -- an unresolvable site is a name that does not exist in
+            # a model that compiled fine.
+            stage = "configure" if getattr(engine.ctx, "model", None) is not None else "build"
+            report["problems"].append(
+                _problem(
+                    stage,
+                    f"{type(exc).__name__}: {exc}",
+                    hint=(
+                        "a plugin refused what the compiled model offers -- check the names it resolves "
+                        "(bodies, sites, actuators) against `roqsim catalog model <model>`"
+                        if stage == "configure"
+                        else None
+                    ),
+                )
             )
-        )
-        _shutdown(engine)
-        return report
-    report["reached"] = "configure"
+            return report
+        report["reached"] = "configure"
 
-    # -- reset: the state a trial starts from ------------------------------------------------
-    try:
-        engine.reset()
-    except Exception as exc:  # noqa: BLE001 - a plugin's on_reset failing is a trial that cannot start
-        report["problems"].append(_problem("reset", f"{type(exc).__name__}: {exc}"))
-        _shutdown(engine)
-        return report
-    report["reached"] = "reset"
-    from roqsim.interpenetration import as_warnings
+        # -- reset: the state a trial starts from ------------------------------------------------
+        try:
+            engine.reset()
+        except Exception as exc:  # noqa: BLE001 - a plugin's on_reset failing is a trial that cannot start
+            report["problems"].append(_problem("reset", f"{type(exc).__name__}: {exc}"))
+            return report
+        report["reached"] = "reset"
+        from roqsim.interpenetration import as_warnings
 
-    report["warnings"].extend(as_warnings(engine.interpenetrations))
+        report["warnings"].extend(as_warnings(engine.interpenetrations))
 
-    try:
         report["world"] = _inventory(engine)
         report["derived"], flex_warnings = _derive(engine)
         report["warnings"].extend(_warning(**warning) for warning in flex_warnings)
         report["ok"] = True
-    finally:
-        _shutdown(engine)
     return report
 
 
@@ -336,7 +355,8 @@ def _derive(engine) -> tuple[dict, list[dict]]:
     """What the loaded world will *do*, worked out from the model without stepping it.
 
     For each flex: its first elastic modes, the damping ratio each will ring down with at this
-    timestep and how much of it is the integrator's, and whether its contact ``solref`` is one MuJoCo
+    timestep and how much of it is the integrator's, whether the timestep resolves each mode well
+    enough for those figures to hold, and whether its contact ``solref`` is one MuJoCo
     will actually use (:func:`roqsim.flex_modes.explain_flex`). The modes are the one costly thing
     ``check`` does -- a finite-difference stiffness and an eigen solve per flex, seconds at most,
     refused above :data:`roqsim.flex_modes.MODES_DOF_CAP` degrees of freedom -- and nothing but
@@ -357,14 +377,6 @@ def _derive(engine) -> tuple[dict, list[dict]]:
     return derived, warnings
 
 
-def _shutdown(engine) -> None:
-    """Release whatever the partial setup took (a renderer's GL context, a file, a node)."""
-    try:
-        engine.shutdown()
-    except Exception:  # noqa: BLE001 - teardown of a half-built world is best effort
-        pass
-
-
 def _render_warnings(report: dict) -> list[str]:
     lines = []
     for warning in report.get("warnings", []):
@@ -376,6 +388,8 @@ def _render_warnings(report: dict) -> list[str]:
 
 def _render_text(report: dict) -> str:
     lines = [f"world: {report['target']}"]
+    if report.get("overrides"):
+        lines.append(f"overrides: {json.dumps(report['overrides'], sort_keys=True)}")
     if report["problems"]:
         lines.append("")
         for problem in report["problems"]:
@@ -443,8 +457,10 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
         if modes is None:
             lines.append(f"       modes not computed: {row.get('modes_skipped', '')}")
         elif modes:
-            hz = ", ".join(f"{m['hz']:.3g}" for m in modes)
-            zeta = ", ".join(f"{m['zeta']:.3g}" for m in modes)
+            # A mode the timestep under-resolves is starred: its figures are not the ones that run.
+            star = ["*" if m.get("resolved") is False else "" for m in modes]
+            hz = ", ".join(f"{m['hz']:.3g}{s}" for m, s in zip(modes, star, strict=True))
+            zeta = ", ".join(f"{m['zeta']:.3g}{s}" for m, s in zip(modes, star, strict=True))
             share = row.get("numerical_share")
             numerical = (
                 f" (numerical share {share:.0%} at timestep {row['timestep']:g} s)"
@@ -455,6 +471,13 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
                 f"       modes {hz} Hz; damping ratio {zeta} at damping {row['damping']:g} s"
                 f"{numerical}"
             )
+            if any(star):
+                from roqsim.flex_modes import MAX_OMEGA_DT
+
+                lines.append(
+                    f"       * under-resolved (omega * timestep above {MAX_OMEGA_DT:g}): a run "
+                    "damps and rings a starred mode differently -- see the flex-timestep warning"
+                )
         floor = row.get("solref_floor")
         solref = " ".join(f"{v:g}" for v in row["solref"])
         lines.append(
@@ -465,11 +488,23 @@ def _render_flexes(flexes: list[dict], derived: dict) -> list[str]:
 
 
 def main(argv=None) -> int:
+    from .override_options import add_override_options, overrides_from_options
+    from .plugin import PluginError
+
     parser = argparse.ArgumentParser(
         prog="roqsim check",
         description="Load a world as far as it goes and report every problem at once.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 is a target that names no world, and 5 a problem at any later stage; the "
+            "report is on stdout either way. An override that cannot be read is 2 with no report. "
+            "Warnings do not change the status.",
+        ),
     )
     parser.add_argument("world", help="a world YAML path, or a '<package>:<world>' ref")
+    # `roqsim sim`'s own --set/--override, so the world checked is the one that run would build.
+    add_override_options(parser)
     parser.add_argument("--json", action="store_true", help="report as JSON rather than as text")
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
@@ -478,9 +513,17 @@ def main(argv=None) -> int:
 
     logging_setup.configure(verbose=args.verbose)
 
-    report = check_world(args.world)
+    try:
+        overrides = overrides_from_options(args)
+    except PluginError as err:
+        # An override file that cannot be read is the caller's input, not a verdict on the world.
+        return exit_status.fail("roqsim check", err)
+    report = check_world(args.world, overrides)
     print(json.dumps(report, indent=2) if args.json else _render_text(report))
-    return 0 if report["ok"] else 1
+    if report["ok"]:
+        return exit_status.OK
+    # A target that names no world is the caller's input, not a finding about a world.
+    return exit_status.BAD_INPUT if report["reached"] is None else exit_status.FINDING
 
 
 if __name__ == "__main__":
