@@ -1235,6 +1235,48 @@ opt-in because a component's config carries keys the world's author did not writ
 ``prefix``, a spawn's entity); those are known centrally, and a plugin says so once its own list is
 complete.
 
+Declaring a plugin's endpoints
+------------------------------
+
+A plugin marks the methods that are its I/O ports, and the base ``Plugin`` registers them on
+``ctx.interface`` when its ``configure`` returns (see :doc:`interfaces` for what an endpoint is)::
+
+   from roqsim import endpoint
+
+   class ForceTorquePlugin(Plugin):
+       @endpoint.out("wrench", rate_hz=lambda self: self.rate_hz,
+                     ros2=lambda self: self._wrench_ros2)       # built in configure
+       def read_pair(self):
+           return (force, torque)
+
+       @endpoint.command("tare", ros2={"service": "std_srvs.srv.Trigger"})
+       def tare(self, _payload=None):
+           ...
+
+       @endpoint.stream("cmd_vel", ros2={"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"})
+       def command_twist(self, twist):
+           ...
+
+* ``endpoint.out`` -- the method returns the neutral payload; it runs on the physics thread when a
+  bridge reads it.
+* ``endpoint.command`` -- a request with an outcome: the endpoint's ``write`` can be called from any
+  thread and returns a future holding what the method returned or raised. The method runs on the
+  physics thread.
+* ``endpoint.stream`` -- an inbound stream: ``write`` keeps the latest payload, and the method gets
+  the newest one once per step. Values superseded within a step are never applied.
+
+The owner is the entity the plugin is nested under (``endpoint_owner``), the namespace its
+``namespace:`` config or else that entity's (``endpoint_namespace``), and the name defaults to the
+method's; a plugin that speaks for another entity overrides the two. Every other keyword is a backend
+hint, a dict or a callable taking the plugin -- hints often need what ``configure`` resolved -- and
+``rate_hz`` may be a callable too. ``when=lambda self: ...`` leaves an endpoint out for an instance
+whose config switches it off.
+
+The method never posts to the physics thread itself: marshalling is the framework's, once. A port
+whose name or number is only known at run time is still added with ``ctx.interface.add``.
+``roqsim plugins describe <name>`` lists a plugin's declared endpoints -- name, kind, direction,
+backends -- read off the class without building a world.
+
 Degrading a sensor mid-run
 --------------------------
 

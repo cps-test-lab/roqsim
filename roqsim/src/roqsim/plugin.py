@@ -12,6 +12,7 @@ Threading contract (see docs/architecture.rst > Concurrency):
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -146,6 +147,61 @@ class Plugin:
         :attr:`expansion_keys`. Default: none.
         """
         return []
+
+    # -- endpoints ----------------------------------------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The entity this plugin's decorated endpoints belong to: the one it is nested under, else
+        its own label. Override where a plugin speaks for another entity."""
+        return self.entity or self.label
+
+    def endpoint_namespace(self, ctx: SimContext) -> str:
+        """The transport scope of this plugin's decorated endpoints: its ``namespace:`` config, else
+        the owning entity's."""
+        entity = ctx.entities.get(self.endpoint_owner)
+        return self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+
+    def register_endpoints(self, ctx: SimContext) -> None:
+        """Add the endpoints declared with :mod:`roqsim.endpoint` to ``ctx.interface``, once per
+        context.
+
+        It runs as the last step of this plugin's ``configure`` -- a subclass's ``configure`` is
+        wrapped to call it (see :meth:`__init_subclass__`), and the engine calls it after a plugin
+        that has none -- so a hint may read what ``configure`` resolved, and a bridge listed later
+        binds them. Endpoints only known at run time are still added with ``ctx.interface.add``.
+        """
+        if self.__dict__.get("_endpoints_ctx") is ctx:
+            return
+        self._endpoints_ctx = ctx
+        from .endpoint import build
+
+        for ep in build(self, ctx):
+            ctx.interface.add(ep)
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        """Wrap a subclass's own ``configure`` so its decorated endpoints register when it returns.
+
+        Only the outermost call registers, so a ``configure`` that calls ``super().configure`` has
+        finished resolving before its hints are read. A ``configure`` that raises registers nothing.
+        """
+        super().__init_subclass__(**kwargs)
+        own = cls.__dict__.get("configure")
+        if own is None or getattr(own, "_registers_endpoints", False):
+            return
+
+        @functools.wraps(own)
+        def configure(self, ctx, _own=own):
+            depth = self.__dict__.get("_configure_depth", 0)
+            self._configure_depth = depth + 1
+            try:
+                _own(self, ctx)
+            finally:
+                self._configure_depth = depth
+            if depth == 0:
+                self.register_endpoints(ctx)
+
+        configure._registers_endpoints = True
+        cls.configure = configure
 
     # -- endpoint topic hardwiring ------------------------------------------------------------
     def topic_override(self, endpoint_name: str) -> str | None:

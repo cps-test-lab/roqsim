@@ -597,7 +597,7 @@ identical across arms.
 
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
-External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on.
+External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on; ``ctx.submit`` is the same queue with a :class:`~roqsim.context.CommandFuture` for a caller that needs the outcome, and the drain delivers a command's exception to the caller waiting on it (one nobody waits on is logged). The queue is a ``collections.deque``: posting and draining take no lock. After the commands the drain applies each inbound stream's latest value (§13).
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
@@ -814,8 +814,18 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 A robot's I/O is **self-describing** and transport-neutral, so it is not duplicated in a per-backend
 bridge and can be wired to any transport. It has three layers:
 
-**1. Endpoints (neutral, in the robot packages).** In ``configure`` a plugin registers
-``Endpoint``\ s on ``ctx.interface`` (see :class:`roqsim.context.Endpoint`): a ``name``,
+**1. Endpoints (neutral, in the robot packages).** A plugin declares its ports with decorators on
+the methods that serve them (:mod:`roqsim.endpoint`): ``@endpoint.out`` (the method returns the
+payload), ``@endpoint.command`` (a request with an outcome) and ``@endpoint.stream`` (an inbound
+stream, latest value wins). ``Plugin.register_endpoints`` turns them into ``Endpoint``\ s on
+``ctx.interface`` as the last step of that plugin's ``configure`` -- a subclass's ``configure`` is
+wrapped to do it, and the engine calls it for a plugin without one -- so a hint may read what
+``configure`` resolved, and a bridge listed later binds them. The owner, namespace and default name
+come from the plugin (``endpoint_owner``, ``endpoint_namespace``, the method name); backend hints are
+keyword arguments, each a dict or a callable of the plugin. :func:`roqsim.endpoint.declared` lists a
+class's endpoints without a world, and ``roqsim plugins describe`` publishes them. A port known only
+at run time is added with ``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
+:class:`roqsim.context.Endpoint`): a ``name``,
 ``direction`` (``"out"`` → provide ``read``; ``"in"`` → provide ``write``), an ``owner`` (the entity),
 a ``namespace`` (a plain scope string each backend attaches to the endpoint's topics/frames/actions),
 an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed by backend name. The
@@ -823,10 +833,21 @@ an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed
 and run on the physics thread. Crucially the robot packages import nothing transport-specific — the
 message *type* is named as a **string** (``"sensor_msgs.msg.LaserScan"``) under the backend hint.
 
+**Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
+itself. A command's ``write`` is safe from any thread: it submits the method
+(:meth:`~roqsim.context.SimContext.submit`) and returns a :class:`~roqsim.context.CommandFuture`, whose
+``result(timeout)`` gives the caller what the method returned or re-raises what it raised. A stream's
+``write`` stores the payload in the endpoint's :class:`~roqsim.context.StreamSlot`, and
+``drain_commands`` hands the newest one to the method once, after the queued commands; values
+superseded within a step are never applied. Such an endpoint is ``marshalled``, and a bridge calls
+its ``write`` directly; any other ``in`` endpoint's write is submitted to the physics thread by the
+bridge.
+
 **2. ``BridgeBase`` (backend-agnostic, in ``roqsim/bridge.py``).** Shared machinery for every
 transport: it iterates ``ctx.interface``, applies the optional owner filter, rate-gates each ``out``
 endpoint, runs the per-tick publish loop on the physics thread, and marshals inbound data onto the
-physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend implements a few hooks:
+physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
+§7), handing the backend a callback that returns the command's future. A backend implements a few hooks:
 ``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly

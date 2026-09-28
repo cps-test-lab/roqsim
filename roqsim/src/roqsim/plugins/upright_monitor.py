@@ -93,7 +93,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from ..context import Endpoint, SimContext
+from .. import endpoint
+from ..context import SimContext
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -171,7 +172,6 @@ class UprightMonitorPlugin(Plugin):
         self._ctx = ctx
         entity = ctx.entities.get(self.watched)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         body_name = (prefix + self.body) if self.body else (entity.body if entity else "")
         self._bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
@@ -186,25 +186,6 @@ class UprightMonitorPlugin(Plugin):
         # key would report the second entity's verdict under the first entity's name.
         ctx.blackboard.set(f"upright:{self.address}", self.read_state)
 
-        ctx.interface.add(
-            Endpoint(
-                name="upright",
-                direction="out",
-                owner=self.watched,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        # The report is a structure and Bool carries one field, so the endpoint
-                        # says WHICH -- the same convention contact_monitor uses.
-                        "field": "upright",
-                        "topic": self.topic_override("upright") or "upright",
-                    }
-                },
-            )
-        )
         _log.info(
             "upright_monitor: watching %r (tilt <= %.1f deg, height within %.3f m)",
             body_name,
@@ -212,6 +193,17 @@ class UprightMonitorPlugin(Plugin):
             self.max_rise_m,
         )
 
+    @endpoint.out(
+        "upright",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Bool",
+            # The report is a structure and Bool carries one field, so the endpoint says WHICH --
+            # the same convention contact_monitor uses.
+            "field": "upright",
+            "topic": self.topic_override("upright") or "upright",
+        },
+    )
     def read_state(self) -> UprightReport:
         """The latest report. A callable, because ``post_step`` REPLACES the report each step."""
         return self._report

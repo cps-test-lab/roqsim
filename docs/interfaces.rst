@@ -527,8 +527,11 @@ Declaring a robot interface (endpoints)
 ---------------------------------------
 
 A robot describes its own I/O so a bridge can wire it to *any* transport (ROS 2, and later zenoh /
-zmq) without the robot package importing that transport. In ``configure`` a plugin registers
-``Endpoint``\ s on ``ctx.interface``:
+zmq) without the robot package importing that transport. A plugin declares its ports by decorating
+the methods that serve them (``@endpoint.out`` / ``@endpoint.command`` / ``@endpoint.stream``, see
+:doc:`plugins`, *Declaring a plugin's endpoints*), and the framework registers them as ``Endpoint``\ s
+on ``ctx.interface`` and marshals every inbound call onto the physics thread. A port known only at run
+time is registered by hand in ``configure``:
 
 .. code-block:: python
 
@@ -575,9 +578,10 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   grade the cancelled goal on the pose it stopped in -- so a caller that cancels and reads the
   joints reads an arm that has stopped, and a result it can tell from a goal that ran to its end.
 
-  ``write`` returns ``None`` in all three cases. A reply is assembled by the backend's handler from
-  the producer's published state — named by a ``state_key`` hint — rather than returned from the
-  plugin, which is what keeps ``Endpoint`` free of any backend's reply types. Both the service and
+  A bridge's inbound callback returns a future for a command, holding what the producer's method
+  returned or raised; a service handler waits on it, so a producer that raised is a failed reply. The
+  rest of a reply is assembled by the backend's handler from the producer's published state — named
+  by a ``state_key`` hint — which is what keeps ``Endpoint`` free of any backend's reply types. Both the service and
   action handlers come from per-type registries in ``roqsim_ros_bridge`` (``services.py`` /
   ``actions.py``), so a new srv or action type is a handler there and no change here. A handler,
   converter or decoder in another package is registered by naming its module in the

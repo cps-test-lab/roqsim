@@ -301,12 +301,21 @@ class BridgeBase(Plugin):
         )
 
     def _inbound(self, ep: Endpoint):
-        """Return a thread-safe callback that marshals a neutral payload onto the physics thread."""
+        """Return a thread-safe callback that marshals a neutral payload onto the physics thread.
 
-        def on_payload(payload) -> None:
+        The callback returns what the write gives back: a :class:`~roqsim.context.CommandFuture`
+        for a command, which a handler waits on for the outcome, and ``None`` for a stream. A
+        ``marshalled`` endpoint queues the work itself, so it is called directly; any other write
+        is submitted to run on the physics thread.
+        """
+        if ep.marshalled:
+            return ep.write
+
+        def on_payload(payload):
             ctx = self._ctx
-            if ctx is not None:
-                ctx.post(lambda c, w=ep.write, p=payload: w(p))
+            if ctx is None:
+                return None
+            return ctx.submit(lambda c, w=ep.write, p=payload: w(p))
 
         return on_payload
 

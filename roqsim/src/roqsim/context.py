@@ -2,14 +2,15 @@
 
 :class:`SimContext` is the single object plugins use to cooperate. It exposes the MuJoCo model/data,
 config, a typed :class:`Blackboard`, an :class:`EntityRegistry`, the thread-safe command queue
-(``post``/``drain``), and the (currently inert) step-gate API used by the foreseen synchronous mode.
+(``post``/``submit``/``drain_commands``) with its :class:`CommandFuture` and the latest-value
+:class:`StreamSlot`, and the (currently inert) step-gate API used by the foreseen synchronous mode.
 """
 
 from __future__ import annotations
 
 import logging
-import queue
 import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -149,15 +150,20 @@ class Endpoint:
     backend-specific details -- the bridge resolves the string (e.g. via ``importlib``).
 
     ``read`` (for ``direction == "out"``) returns the current neutral payload and runs on the physics
-    thread. ``write`` (for ``direction == "in"``) receives a neutral payload; the bridge marshals it
-    onto the physics thread via :meth:`SimContext.post`, so plugins never touch ``data`` off-thread.
+    thread. ``write`` (for ``direction == "in"``) receives a neutral payload. Unless ``marshalled``
+    is set, it runs on the physics thread and the bridge marshals the call there via
+    :meth:`SimContext.submit`, so plugins never touch ``data`` off-thread. A ``marshalled`` write is
+    safe to call from any thread because it queues the work itself -- what the decorators of
+    :mod:`roqsim.endpoint` produce: a command's write returns a :class:`CommandFuture`, a stream's
+    stores the payload in a latest-value :class:`StreamSlot`. A bridge calls it directly.
 
     An ``in`` endpoint says what *kind* of interaction it is through its backend hints, and the choice
     is about the interaction rather than about taste: a plain ``type`` is a stream with no answer, a
     ``service`` is a command whose outcome the caller needs (so it can fail on it), and an ``action``
-    is a goal that takes time, reports feedback and can be cancelled. ``write`` returns ``None`` in
-    every case -- a reply is assembled by the backend's handler from the producer's published state,
-    not returned from here, which is what keeps this dataclass free of any backend's reply types.
+    is a goal that takes time, reports feedback and can be cancelled. The bridge's inbound callback
+    returns a :class:`CommandFuture` for the call, whose value is the producer's own and never a
+    backend's reply type; a reply is assembled by the backend's handler from that outcome and from
+    the producer's published state.
     ``rate_hz`` is the default publish rate (0 => every step / event-driven); a bridge may override it.
 
     ``namespace`` is a plain scope string declared by the producer (usually from its ``namespace:``
@@ -193,6 +199,83 @@ class Endpoint:
     backend: dict[str, dict] = field(default_factory=dict)
     has_subscribers: Callable[[], bool] | None = None
     lazy: bool = False
+    marshalled: bool = (
+        False  # ``write`` queues onto the physics thread itself; call it from anywhere
+    )
+
+
+class CommandFuture:
+    """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
+
+    A caller on another thread waits for it with a timeout. :meth:`result` returns what the command
+    returned or raises what it raised; :meth:`wait` only says whether it has run. A command that
+    raises while nobody is blocked in :meth:`result` is also logged, so a failure whose caller gave
+    up waiting, or never asked, is not lost.
+    """
+
+    __slots__ = ("_done", "_error", "_lock", "_value", "_waiters")
+
+    def __init__(self) -> None:
+        self._done = threading.Event()
+        self._lock = threading.Lock()
+        self._value: Any = None
+        self._error: BaseException | None = None
+        self._waiters = 0
+
+    def done(self) -> bool:
+        return self._done.is_set()
+
+    def wait(self, timeout: float | None = None) -> bool:
+        """Block until the command has run (returned or raised). ``False`` on timeout."""
+        return self._done.wait(timeout)
+
+    def result(self, timeout: float | None = None) -> Any:
+        """The command's return value; re-raises its exception. :class:`TimeoutError` if not run."""
+        with self._lock:
+            self._waiters += 1
+        try:
+            if not self._done.wait(timeout):
+                raise TimeoutError(f"the physics thread did not run the command within {timeout} s")
+        finally:
+            with self._lock:
+                self._waiters -= 1
+        if self._error is not None:
+            raise self._error
+        return self._value
+
+    def _resolve(self, value: Any = None, error: BaseException | None = None) -> bool:
+        """Settle the future on the physics thread. ``True`` when a caller is waiting on it."""
+        self._value, self._error = value, error
+        with self._lock:
+            waited = self._waiters > 0
+            self._done.set()
+        return waited
+
+
+class StreamSlot:
+    """The latest value an inbound stream delivered, applied once on the physics thread.
+
+    :meth:`put` is safe from any thread and never blocks: a newer value replaces one not yet
+    applied. :meth:`SimContext.drain_commands` hands a pending value to ``apply`` once and clears
+    it, so a stream that delivers several values within one step applies only the last.
+    """
+
+    __slots__ = ("_pending", "apply", "name")
+
+    def __init__(self, name: str, apply: Callable[[Any], None]) -> None:
+        self.name = name
+        self.apply = apply
+        # One slot of a bounded deque: append and pop are atomic, and append drops the older value.
+        self._pending: deque = deque(maxlen=1)
+
+    def put(self, payload: Any) -> None:
+        self._pending.append(payload)
+
+    def _take(self) -> tuple[bool, Any]:
+        try:
+            return True, self._pending.pop()
+        except IndexError:
+            return False, None
 
 
 class InterfaceRegistry:
@@ -342,8 +425,12 @@ class SimContext:
         self.stop_requested: bool = False
         self.stop_reason: str = ""
 
-        # Thread-safe command queue: external threads post, the physics thread drains.
-        self._commands: queue.Queue[Callable[[SimContext], None]] = queue.Queue()
+        # Thread-safe command queue: external threads post, the physics thread drains. A deque's
+        # append and popleft are atomic, so neither side takes a lock; the one consumer is the
+        # physics thread, so a non-empty check followed by popleft cannot race another reader.
+        self._commands: deque[tuple[Callable[[SimContext], Any], CommandFuture | None]] = deque()
+        # Latest-value slots of the inbound streams, applied once per drain.
+        self._streams: list[StreamSlot] = []
 
         # Step gates (inert until synchronous mode is enabled).
         self._gates: dict[str, Gate] = {}
@@ -431,23 +518,51 @@ class SimContext:
         """Enqueue a callable to run on the physics thread at the start of the next ``pre_step``.
 
         This is the ONLY safe way for a non-physics thread (e.g. a ROS executor) to cause a change
-        to ``model``/``data``. The command receives this context when it runs.
+        to ``model``/``data``. The command receives this context when it runs. An exception it
+        raises is logged; use :meth:`submit` when the caller needs the outcome.
         """
-        self._commands.put(command)
+        self._commands.append((command, None))
+
+    def submit(self, command: Callable[[SimContext], Any]) -> CommandFuture:
+        """Like :meth:`post`, and return a :class:`CommandFuture` carrying the command's outcome."""
+        future = CommandFuture()
+        self._commands.append((command, future))
+        return future
+
+    def stream_slot(self, name: str, apply: Callable[[Any], None]) -> StreamSlot:
+        """A latest-value slot for an inbound stream; ``apply`` runs on the physics thread."""
+        slot = StreamSlot(name, apply)
+        self._streams.append(slot)
+        return slot
 
     def drain_commands(self) -> int:
-        """Run all queued commands on the calling (physics) thread. Returns the count executed."""
+        """Run queued commands in FIFO order, then apply each stream's latest value, on the
+        calling (physics) thread. Returns the number of commands run.
+
+        A command's exception goes to the caller waiting on its future; one that nobody waits on
+        is logged. Neither stops the loop.
+        """
+        commands = self._commands
         n = 0
-        while True:
-            try:
-                command = self._commands.get_nowait()
-            except queue.Empty:
-                break
-            try:
-                command(self)
-            except Exception:  # a bad command must not kill the loop
-                self.logger.exception("posted command raised")
+        while commands:
+            command, future = commands.popleft()
             n += 1
+            try:
+                value = command(self)
+            except Exception as exc:  # a bad command must not kill the loop
+                if future is None or not future._resolve(error=exc):
+                    self.logger.exception("posted command raised")
+                continue
+            if future is not None:
+                future._resolve(value)
+        for slot in self._streams:
+            fresh, payload = slot._take()
+            if not fresh:
+                continue
+            try:
+                slot.apply(payload)
+            except Exception:
+                self.logger.exception("stream %r raised applying its latest value", slot.name)
         return n
 
     # -- snapshots ----------------------------------------------------------------------------

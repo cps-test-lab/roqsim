@@ -125,7 +125,8 @@ from dataclasses import dataclass
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
 from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
 from roqsim.plugin import Plugin
@@ -331,28 +332,6 @@ class ForceTorquePlugin(Plugin):
             )
         )
 
-        ctx.interface.add(
-            Endpoint(
-                name="tare",
-                direction="in",
-                owner=self.owner,
-                namespace=ns,
-                # The payload is ignored: zeroing takes no argument, and the call IS the request.
-                write=lambda _payload=None: ctx.post(lambda _ctx: self.tare()),
-                backend={
-                    "ros2": {
-                        # A service, not a topic, and `Trigger` rather than `SetBool`: this is the
-                        # zero button, which a real FT driver also exposes as a service taking no
-                        # argument (`zero_ftsensor`). A caller needs the outcome -- a scenario that
-                        # tared and carried on regardless would measure against an offset it only
-                        # assumed was applied.
-                        "service": "std_srvs.srv.Trigger",
-                        "name": self.topic_override("tare") or f"{self.name}/tare",
-                    }
-                },
-            )
-        )
-
         # The frame the wrench is stated in, as TF names it: bare, like every frame a bridge
         # publishes (it applies the namespace), so never the MJCF name with the entity's prefix.
         # `sensor` is the site's own frame, which nothing else publishes, so it comes with the
@@ -375,17 +354,7 @@ class ForceTorquePlugin(Plugin):
             ).removeprefix(prefix)
         else:
             ros2["frame_id"] = "world"
-        ctx.interface.add(
-            Endpoint(
-                name="wrench",
-                direction="out",
-                owner=self.owner,
-                namespace=ns,
-                read=self.read_pair,
-                rate_hz=self.rate_hz,
-                backend={"ros2": ros2},
-            )
-        )
+        self._wrench_ros2 = ros2
 
     def _refuse_a_flex_contact_it_cannot_see(self, m, site_name: str) -> None:
         """Refuse a sensor a flex contact could reach unseen, unless ``flex_reaction`` accepts it.
@@ -463,13 +432,27 @@ class ForceTorquePlugin(Plugin):
                 torque = torque + rng.normal(0.0, self.noise_t, 3)
         return force, torque
 
+    @endpoint.out("wrench", rate_hz=lambda self: self.rate_hz, ros2=lambda self: self._wrench_ros2)
     def read_pair(self):
-        """Endpoint ``read``: the same wrench as plain lists, for a transport-neutral payload."""
+        """Endpoint ``wrench``: the wrench as plain lists, for a transport-neutral payload."""
         force, torque = self.read()
         return (force.tolist(), torque.tolist())
 
-    def tare(self) -> None:
+    # A service, not a topic, and `Trigger` rather than `SetBool`: this is the zero button, which a
+    # real FT driver also exposes as a service taking no argument (`zero_ftsensor`). A caller needs
+    # the outcome -- a scenario that tared and carried on regardless would measure against an
+    # offset it only assumed was applied.
+    @endpoint.command(
+        "tare",
+        ros2=lambda self: {
+            "service": "std_srvs.srv.Trigger",
+            "name": self.topic_override("tare") or f"{self.name}/tare",
+        },
+    )
+    def tare(self, _payload=None) -> None:
         """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
+
+        As the ``tare`` endpoint the payload is ignored: zeroing takes no argument.
 
         What a real sensor's zero button does, with the same limit: this cancels the load as it is
         right now, not the tool's weight at every pose. See "Taring" in the module docstring.
