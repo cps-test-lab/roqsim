@@ -175,7 +175,8 @@ def test_the_retired_name_is_refused_naming_the_new_one():
     with pytest.raises(ModelError) as exc:
         resolve_model("oakd")
     assert str(exc.value) == (
-        "spawn_sensor: model 'oakd' — renamed to 'oakd_pro' when its mount frame became the vendor "
-        "link (it was a display convention pointing the lens along +y). Update the name, and "
-        "re-express this mount's pos/rpy against the vendor link; see roqsim_sensors/README.md."
+        "spawn_sensor: model 'oakd' — renamed to 'oakd_pro' when its mount frame became the one "
+        "its vendor macro places (it was a display convention pointing the lens along +y). Update "
+        "the name, and re-express this mount's pos/rpy as the vendor macro's origin; see "
+        "roqsim_sensors/README.md."
     )
