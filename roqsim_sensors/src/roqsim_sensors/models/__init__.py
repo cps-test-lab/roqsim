@@ -52,6 +52,7 @@ RETIRED_MODELS = {
     "d415": _vendor_link("realsense_d415"),
     "d435": _vendor_link("realsense_d435"),
     "d455": _vendor_link("realsense_d455"),
+    "oakd": _vendor_link("oakd_pro"),
 }
 
 
