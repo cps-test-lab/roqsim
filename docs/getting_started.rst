@@ -8,13 +8,13 @@ Prerequisites
 
 * Linux with Python 3.10+ and ``git`` (MuJoCo is installed automatically into the venv).
 
-Five steps
-----------
+Three steps
+-----------
 
 .. code-block:: bash
 
    # 1. get the code
-   git clone <roqsim-repo-url>
+   git clone https://github.com/cps-test-lab/roqsim.git
    cd roqsim
 
    # 2. create the virtual environment and install everything
@@ -37,7 +37,7 @@ No display? Run it headless
 
 ``roqsim_mobile:turtlebot4_demo`` is a world resolved by name from an installed package; a path to a
 world YAML works just as well. ``roqsim`` is the only command name to learn — ``roqsim --help`` lists the
-groups, one per installed package that ships tools.
+core commands and one group per installed package that ships tools.
 
 Where to next
 -------------
