@@ -39,9 +39,9 @@ from roqsim.introspection import get_plugin_details, list_plugins
 _TOOLS = [list_plugins, get_plugin_details, list_models, get_model_details, list_worlds]
 
 #: What a client is told once, at connect time: the tools answer for THIS installation, a listed name
-#: is one that resolves, and the ``use`` line each row carries is what goes in a world file. Stated
-#: here rather than left to the tool descriptions because the loop -- list, then detail, then write --
-#: is not visible from any one tool.
+#: is one that resolves, and the ``use`` line each model and world row carries is what goes in a world
+#: file. Stated here rather than left to the tool descriptions because the loop -- list, then detail,
+#: then write -- is not visible from any one tool.
 _INSTRUCTIONS = """\
 What this roqsim installation can put in a world, read from the same registries its loader resolves
 against -- so a name a tool returns is a name that resolves, and a name it does not return is not.
@@ -54,7 +54,8 @@ against -- so a name a tool returns is a name that resolves, and a name it does 
 - list_worlds: every world YAML (`roqsim sim <ref>`, `extends: <ref>`), baked scene and built-in
   definition (`sim.world` values).
 
-Every row carries `use`, the line to write. A name that resolves to nothing comes back as
+Every model and world row carries `use`, the line to write; a plugin is written as
+`- <name>: {<config>}` in a world's `components:` list. A name that resolves to nothing comes back as
 `{"error": "..."}` rather than as a tool failure. These tools describe; they run nothing -- a run is
 `roqsim sim`. The same answers from a shell: `roqsim plugins` and `roqsim catalog`.
 """
