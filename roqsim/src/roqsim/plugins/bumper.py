@@ -44,12 +44,12 @@ Config::
         front: [-0.52, 0.52] #   +x: {<zone>: [from, to]}. A sector with from > to wraps through
         left: [0.52, 1.57]   #   +/-pi, so a rear zone is `[2.6, -2.6]`.
       geoms: []              # geom NAMES that ARE the bumper (default: the entity's whole subtree,
-                             #   like contact_monitor). A real bumper is one shell; a contact on the
-                             #   chassis roof presses no switch, so a model that names its shell
-                             #   geoms lists them here.
+                             #   like contact_monitor, its flexes included). A real bumper is one
+                             #   shell; a contact on the chassis roof presses no switch, so a model
+                             #   that names its shell geoms lists them here.
       geom_prefixes: []      # geom name prefixes that are the bumper
-      ignore: [floor]        # geom NAMES that never count (default: ['floor'])
-      ignore_prefixes: []    # geom name prefixes that never count (e.g. ['ground'])
+      ignore: [floor]        # geom or flex NAMES that never count (default: ['floor'])
+      ignore_prefixes: []    # geom or flex name prefixes that never count (e.g. ['ground'])
       min_force: 1.0         # N; contacts below this normal force are ignored (numerical grazing)
       rate_hz: 62.0          # endpoint publish rate
 
@@ -73,7 +73,7 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import mujoco
 import numpy as np
@@ -211,7 +211,8 @@ class BumperPlugin(Plugin):
                     shell[gid] = True
             if not shell.any():
                 raise RuntimeError("bumper: 'geoms'/'geom_prefixes' matched no geom of the entity")
-            scope = ContactScope(body=scope.body, watched=shell, ignored=scope.ignored)
+            # The shell is the named geoms and nothing else, so no flex of the entity presses it.
+            scope = replace(scope, watched=shell, watched_flex=np.zeros_like(scope.watched_flex))
         self._scope = scope
 
         ctx.blackboard.set(f"bumper:{self.address}", self.read_state)

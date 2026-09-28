@@ -14,8 +14,7 @@ parameter is upstream's, passed through unchanged.
 Two deltas, both roqsim conventions:
 
 1. **No ``<option>``.** Upstream pins ``cone="elliptic" impratio="10"``. Those are not incidental --
-   they are the contact settings a *grasping* arm needs, and ``references/gripper.md`` opens with
-   them. But they are world-scoped: a model carrying them reconfigures the contact solver for every
+   they are the contact settings a *grasping* arm needs. But they are world-scoped: a model carrying them reconfigures the contact solver for every
    other robot in the scene. Both already exist as ``sim.cone`` and ``sim.impratio``, so the demo
    world sets them (with ``sim.noslip_iterations``, which the architecture doc measures at a 137x
    reduction in grasp creep). The manifest says so too, because an arm whose gripper quietly creeps

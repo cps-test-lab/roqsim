@@ -145,7 +145,8 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
    of a link in the chain has to agree on one topic. Note this scopes the TF *topics* only — frame ids
-   (``map``, ``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed.
+   (``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed. The
+   global frames ``world`` and ``map`` are never namespaced.
    Setting the bridge's ``namespace`` does **not** do this: tf2_ros's broadcasters hardwire the
    absolute ``/tf``, which is exactly why this option exists.
 
@@ -224,6 +225,15 @@ The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` 
 arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
 in its ``realsense_d435`` capture plugin.
 
+**Where a spawn puts things is checked at every reset.** An arm's ``home``, a model's keyframe, a
+robot's or a prop's ``pose`` -- once every plugin's ``on_reset`` has applied them, the engine reports
+any two bodies that start inside one another deeper than the contact's tolerance: one WARNING in the
+run's log naming both sides, the entity each belongs to and the depth, and the same finding as a
+``roqsim check`` warning. Left alone, the contact solver separates them on the first steps with
+forces that fling them, and the run fails later looking like a controller fault. Nothing is refused;
+an overlap that is meant is excluded from collision and is then not reported
+(:ref:`architecture §2 <2-lifecycle-reference>`).
+
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
 ``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
@@ -289,11 +299,15 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   being run rather than to something included in it.
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
-  plugins (same shape as a world's ``components:``); the entity name is filled in for you, and each
+  plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
+  ``assets``, ``fov``, ``frames``, ``frame_id`` and ``license`` and nothing else: a key outside that
+  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
-  prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
-  ``arm_controller``, an eye-in-hand ``realsense_d415``, and a ``fiducial_marker`` on the wrist.
+  prefixed body name without the world having to know it. A downstream ``ur10e_custom.manifest.yaml``
+  could, for instance, ship an ``arm_controller``, an eye-in-hand ``realsense_d415``, and a
+  ``fiducial_marker`` on the wrist (:doc:`architecture` §4, *Model discovery*).
 
 A ``model:`` name is resolved across **all** installed packages, so a world can spawn a model that
 lives in a different package from the spawn plugin. Register a package's models once::
@@ -572,7 +586,7 @@ contact against a geom outside its ``ignore`` list::
      components:
        - contact_monitor: {ignore: [floor], min_force: 1.0}
 
-Two things are worth knowing before reaching for a proximity check instead:
+Three things are worth knowing before reaching for a proximity check instead:
 
 * **Define the exception, not the rule.** A wheeled robot is in permanent, intended contact with the
   ground, so the plugin's contract is "everything counts except what you list". Listing what a robot
@@ -582,11 +596,36 @@ Two things are worth knowing before reaching for a proximity check instead:
 * **A latched report is a failed trial.** With ``latch: true`` (the default) the report stays true
   after the robot bounces off, because a trial that hit something does not become clean again. Set
   ``latch: false`` for a live "am I touching anything right now" signal.
+* **A flex is a side like a geom.** A MuJoCo ``<flexcomp>`` touches things through its vertices and
+  elements, not through geoms, and MuJoCo reports its side of a contact with geom id ``-1``. The
+  watched set holds the flexes the entity owns -- those whose vertex (or node) bodies all lie in its
+  subtree, such as a soft pad in an arm's end effector -- so an entity that is only a flex is
+  watchable, ``ignore`` may name a flex, and the report names a flex side ``flex:<name>[v<i>]`` (or
+  ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
+  flex contact a collision of the model's last geom.
 
-**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
-*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
-replaced every step and reports the region being touched — its centre in the robot's own frame, and
-whether that region is a point or a line::
+The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
+failure is attributable rather than merely flagged.
+
+Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
+contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
+unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
+with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
+to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
+"did anything hit something" signal but tells you nothing about which robot — and one monitor's
+``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
+
+.. note::
+
+   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
+   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
+   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
+   contact makes "wait for any message" look correct; it is not portable.
+
+**Where is it touching me?** ``contact_location`` is the one a *controller* reads.
+``contact_monitor`` latches a verdict for the end of a trial; this one is replaced every step and
+reports the region being touched — its centre in the robot's own frame, and whether that region is a
+point or a line::
 
    - spawn_robot: {model: ridgeback}
      name: robot
@@ -607,10 +646,11 @@ Three things about it:
   there for logging against a map.
 * **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
   logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
-  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
-  use, and the one a per-step control law needs.
+  current reading at full step rate — the same convention ``contact_monitor``
+  (``contact:{address}``) and ``force_torque`` (``ft:{label}``) use, and the one a per-step control
+  law needs.
 
-**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+**Which switch?** ``bumper`` is the one a base's *safety stack* reads. A real bumper
 is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
 a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
 zone is its own ``bool`` endpoint under ``bumper/<zone>``::
@@ -669,6 +709,13 @@ two geoms that were deliberately non-colliding *makes them collide*. Two boxes w
 ``contype="0" conaffinity="0"`` generate no contacts between them, and four the moment a pair is
 declared. Point this at a sensor-only or decorative geom and that geom becomes solid.
 
+**A side cannot be a flex.** A ``<pair>`` names two geoms and MuJoCo has none for a flex, so a
+flex's contacts keep the combination rule whatever is declared. A side that is one -- a ``geom:``
+naming a flex, or an ``entity`` / ``body`` whose subtree owns a collidable flex -- is refused rather
+than paired geom by geom, since the flex is often the very part that touches. Set a flex's contact
+on the flex itself instead: ``<contact friction="..." priority="..."/>`` in its ``<flexcomp>``, where
+a higher ``priority`` than the other side makes its friction the contact's outright.
+
 Unlike the observation plugins above it, this one is **not** nested under an entity: it names both
 sides, so it sits at the top of a document. Declaring the same two geoms twice is refused rather
 than resolved -- MuJoCo keeps both and uses one, and which is not something a world should have to
@@ -706,6 +753,12 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
+distance query per geom pair, a real share of the step budget if done every physics step, while
+200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
+``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
+rather than offering a number that looks measured.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
@@ -729,8 +782,9 @@ Four things about it:
   samples it would decimate are the integral.
 * **It counts exactly what ``contact_monitor`` counts.** One geometry rule, not two, and one
   implementation of it: both plugins resolve the same ``roqsim.contact_scope.ContactScope`` --
-  every contact with exactly one side in the watched subtree and neither side in ``ignore`` /
-  ``ignore_prefixes`` -- so they cannot disagree about which contacts they describe. Their
+  every contact with exactly one side in the watched subtree (a geom, or a flex the entity owns) and
+  neither side in ``ignore`` / ``ignore_prefixes`` -- so they cannot disagree about which contacts
+  they describe. ``contact_location`` and ``bumper`` resolve it too. Their
   ``ignore`` lists should agree for the same reason clearance's should.
 * **There is no force threshold, and configuring one is refused.** ``contact_monitor``'s
   ``min_force`` rejects numerical grazing for a plugin that must answer yes or no; an integral
@@ -754,9 +808,9 @@ neither plugin keeps a contact the other has forgotten). A trial that touched no
 ``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
 against are read in-process.
 
-**Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
-guards an assumption the other two take for granted. A trial that drives something around a floor
-assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
+**Is it still standing on the floor at all?** ``upright_monitor`` guards an assumption the other
+observation plugins take for granted. A trial that drives something around a floor assumes
+throughout that the thing is on the floor -- and when that breaks, the run does not. It keeps
 producing positions, distances and clearances about a body lying on its side or airborne, all of
 them plausible, none of them about the trial anyone designed::
 
@@ -771,7 +825,7 @@ model that was wrong, and fixing the model is the experiment's job -- ``roqsim_w
 pedestrian is the answer for pedestrians, a low centre of mass or a planar joint for anything
 hand-rolled. What the substrate owes is that nobody finds out from the results.
 
-Three things about it:
+Four things about it:
 
 * **Both thresholds are departures, not limits.** ``max_rise_m`` is symmetric, because a body
   sinking through the floor has left the plane exactly as much as one taking off. ``max_tilt_deg``
@@ -789,30 +843,6 @@ Three things about it:
   driven prop and a walker, and nothing that moves them needs to know it exists.
 * **Nothing infers that an entity should be upright.** A quadruped mid-gait, a banking drone and an
   arm's wrist all leave the plane on purpose. It watches what somebody nested it under.
-
-``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
-distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
-world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
-pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
-``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
-
-The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
-failure is attributable rather than merely flagged.
-
-Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
-contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
-unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
-with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
-to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
-"did anything hit something" signal but tells you nothing about which robot — and one monitor's
-``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
-
-.. note::
-
-   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
-   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
-   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
-   contact makes "wait for any message" look correct; it is not portable.
 
 What a robot carries
 --------------------
@@ -911,21 +941,64 @@ Three things to know before writing one:
   nothing either — select the geoms that *own* the contact, or select both sides. Use
   ``roqsim scenes describe <world> --overridable 'gripper_right*'`` to see the names, their current
   friction and their priority, rather than guessing.
-* **A fault that did nothing says so.** One step after the change the plugin compares the *applied*
-  contact against what it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed
-  service reply) or ``untested`` — the last meaning nothing was touching the selected geoms, which is
-  not a failure. It is published as ``override_verified`` too, because a service call leaves no trace
-  in a rosbag and ``mjModel`` is in neither the bag nor the state recording.
-* **A reset returns the world to the configured state**, exactly, from the values read at startup.
-  Without that, repetition 2 of a sweep cell would start already faulted and report a plausible
-  wrong number — ``Engine.reset`` resets ``MjData`` and never touches ``MjModel``.
+* **A fault that did nothing says so.** One step after the change — or after a trial begins, for
+  an override configured ``active: true`` — the plugin compares the *applied* contact against what
+  it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed service reply) or
+  ``untested`` — the last meaning nothing was touching the selected geoms, which is not a failure.
+  It is published as ``override_verified`` too, because a service call leaves no trace in a rosbag
+  and ``mjModel`` is in neither the bag nor the state recording.
+* **A reset returns the world to the configured state**, exactly, from the values read when the
+  override was applied. Without that, repetition 2 of a sweep cell would start already faulted and
+  report a plausible wrong number — ``Engine.reset`` resets ``MjData`` and never touches
+  ``MjModel``. An override the trial left as configured writes nothing, so a value another plugin
+  set on the same rows (a ``payload``'s mass) is kept.
 
 Not every model value can be written at runtime; ``geom_size`` and the ``opt.*`` globals are refused
 by name, with the reason and with what to use instead (for the globals, ``sim.contact_override``,
 which is *global* and applies *before compile* — a different tool for a different job). The full
 allowlist, with what each field does and how it can silently do nothing, is in the plugin's own
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
-measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2.
+measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
+``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
+flex name; its Young's modulus is not, for the reason in the next section.
+
+A flex's material as a campaign factor
+--------------------------------------
+
+A deformable body is MuJoCo's own ``<flexcomp>``, written in whichever MJCF owns it -- a spawned
+asset, an arm's ``end_effector``, the world MJCF. What an experiment on it varies is its material,
+and ``flex_material`` states that in the world instead::
+
+   components:
+     - spawn_arm: {model: ur5e, prefix: ur5e_, end_effector: {model: soft_tool.xml}}
+       name: ur5e
+     - flex_material: {flex: ur5e_pad, young: 5.0e+5, poisson: 0.45, damping: 0.002,
+                       friction: 1.5, priority: 1}
+       name: pad_material
+
+Each key is then a sweep axis: ``--set components.pad_material.young=2.0e+5``, or a campaign's
+parameter variation over ``components.pad_material.young``. Three things to know:
+
+* **It works on the spec, before compile, because it has to.** MuJoCo bakes ``young`` and
+  ``poisson`` into the compiled element stiffness and keeps neither, so there is no model field a
+  run-time write could reach -- which is why the modulus is a build-time component and not a
+  ``model_override`` row. The contact values and the damping are compiled fields; setting them here
+  keeps one material in one block, and ``model_override`` can still change the four live ones
+  during a run.
+* **The flex is named as it compiles**, with the prefix of the model that brought it in
+  (``ur5e_pad`` above). A name that matches nothing is refused with the list of the model's flexes,
+  so the first run tells you the right one. Plugins build in YAML order, so it is declared after
+  the component that brings the flex in -- below the arm, as here.
+* **A key the flex would not read is refused.** MuJoCo integrates elasticity only for a solid
+  (``dim=3``) or for a shell whose ``elastic2d`` is not ``none``; a modulus on a rope, on a shell left
+  at ``none``, or on a rigid flex would run exactly as without it. ``elastic2d`` and ``thickness`` can
+  be set in the same block, so a shell can be made elastic here.
+
+Write an exponent as ``5.0e+5``: the world is YAML 1.1, which reads ``5e5`` as a string -- refused,
+with that fix. A flex made elastic here is integrated under ``discrete`` when ``sim.integrator`` is
+``auto``, because the integrator is chosen after every plugin has built. The integrator's rules are
+in :mod:`roqsim.flex`; the material's, and the MuJoCo version they were measured on, are in
+:mod:`roqsim.plugins._flex_material`.
 
 Perception ground truth
 -----------------------
@@ -974,7 +1047,7 @@ unlabelled geom, so it is refused at load.
 What a run cost
 ---------------
 
-``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+``energy_monitor`` is the observation plugin that watches effort rather than geometry: it meters the
 actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
 a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
 analysis fits::
@@ -1027,10 +1100,11 @@ forces -- the effort metric a paper falls back on where its platform's electrica
 published, accumulated here at the physics rate rather than at whatever rate ``/joint_states`` was
 published at.
 
-Which actuators count is derived, not configured: every actuator driving a body of the robot's
-kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
-joint does not need the world edited. An entity with no actuators is an error, because a meter
-reading zero forever looks exactly like a robot that costs nothing to drive.
+Which actuators count is derived by default (``actuators:`` narrows it to named ones): every
+actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on
+this robot's bill and a model that gains a joint does not need the world edited. An entity with no
+actuators is an error, because a meter reading zero forever looks exactly like a robot that costs
+nothing to drive.
 
 **It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
@@ -1218,9 +1292,11 @@ place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. 
 that command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
-**What a real base offers its stack.** Three keys on ``diff_drive`` (and ``omni_drive``) are the
-base driver's behaviour rather than the kinematics', and a model that states its robot's interface
-states them in its manifest -- the TurtleBot 4's does::
+**What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
+behaviour rather than the kinematics', and a model that states its robot's interface states them in
+its manifest -- the TurtleBot 4's does. ``cmd_vel_timeout`` is on every plugin that takes a
+``cmd_vel`` (see `A velocity command: odometry and the watchdog`_); the other two are
+``diff_drive``'s alone::
 
    - diff_drive:
        cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
@@ -1305,6 +1381,38 @@ is left visible rather than corrected by a scrub factor: a skid-steer's scrub is
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
 
+A velocity command: odometry and the watchdog
+---------------------------------------------
+
+Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion``,
+``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+:mod:`roqsim.odometry`, for a plugin of your own to keep too.
+
+**Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
+first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
+as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from zero, so its
+odometry drifts as wheel odometry does. A legged controller reads its base pose from the simulator
+and states it relative to the spawn pose, so its odometry is exact, and its ``z`` stays the base
+height, so ``base_link`` stands where the robot does. The true pose is not in ``odom``: it is the
+``ground_truth_pose`` plugin (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
+only for a robot spawned at the map origin facing ``+x``.
+
+**A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once
+the last one is older, the robot stops, through the same limits as any command to zero; a
+locomotion policy is given a zero command and walks to a stop. ``0``, the default, holds a command
+until the next one, because an in-process driver sets a twist once and steps; a world that runs a
+real stack sets the stack's value (``ros2_control``'s ``diff_drive_controller`` ships 0.5 s). Reset
+clears the command and its stamp, so no trial starts with the last one's.
+
+**A quadrotor, in three dimensions.** ``quadrotor_controller``'s ``odom`` is 6-DOF in the same frame:
+x and y from the spawn point along the spawn heading, ``z`` the altitude, tilt kept, and the twist
+in the body frame. A stale velocity command brakes the drone at its altitude setpoint and then holds
+where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``) does not expire, since
+holding one already is a hover. ``cmd_pos`` is read in the frame its header names: ``odom`` is this
+spawn frame, ``world`` or ``map`` (or no frame) the world, and any other frame is refused. The
+configured ``target`` is a world position.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 
@@ -1315,11 +1423,11 @@ arm to a body that already exists, while a rail has to introduce the moving carr
    components:
      - spawn_arm:
          model: ur10e
-         name: ur10e
          prefix: "ur10e_"
          pos: [0.0, 0.0, 2.6]              # where the axis sits
          rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
+       name: ur10e
 
 What this buys is **kinematic redundancy**: a 6-DOF arm on a rail is a 7-DOF system, so a task pose
 has a one-parameter family of solutions and a planner can trade base travel against arm posture.
@@ -1570,12 +1678,51 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
+named; prefer ``controller_type``.
+
+**A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
+setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
+closes on the pose error follows it a steady distance behind: ``v / kp`` for the motion controller
+(25 mm at 50 mm/s and the default ``kp`` of 2 /s), ``D v / C`` on a stiff axis of the compliance
+controller. ``feedforward`` (default ``auto``) commands the goal's own velocity alongside the
+correction, ``twist = v_goal + kp (x_goal - x)``, and damps the compliance law on velocity *relative*
+to the goal's; a zero-stiffness axis is under force control and is given nothing to follow.
+
+.. code:: yaml
+
+   - cartesian_admittance:
+       controller_type: cartesian_motion_controller
+       feedforward: auto          # auto | supplied | off
+       feedforward_window_s: 0.2  # goals further apart than this are not a stream
+
+``v_goal`` comes from one of two places, and which one is a choice about the caller:
+
+* **Supplied with the goal**, by an in-process caller that knows it:
+  ``CartesianHandle.set_goal(pos, quat, twist=[vx, vy, vz, wx, wy, wz])``, world frame. Used under
+  ``auto`` and ``supplied``. ``target_frame`` is a ``PoseStamped``, as on the real controller, so a
+  ROS client cannot supply one.
+* **Estimated from the stream**, under ``auto``, by differencing successive goals over sim time. Per
+  axis it takes the smaller of the last two arrival-to-arrival velocities where they agree in sign,
+  and zero where they do not, so a goal that *jumps* -- a new stationary goal, or one displaced goal
+  in a stream -- feeds nothing forward while a steady stream is fed forward in full. Goals further
+  apart than ``feedforward_window_s`` are waypoints rather than a stream and feed nothing forward;
+  a feedforward lapses once the next goal is half an interval overdue, so a stream that stops leaves
+  the arm to settle on its last goal.
+
+A goal commanded once, or re-sent unchanged, commands exactly what it did without a feedforward;
+``feedforward: off`` is the proportional-only law for a stream too. The twist is clamped to
+``max_linear_vel`` / ``max_angular_vel`` either way.
+
+**The lag is observable.** ``<controller>/tracking_error`` (``std_msgs/Float64``, metres) is how far
+the controlled site is from the pose it tracks -- the commanded ``target_frame`` or, before one, the
+pose the controller took the arm at. An in-process caller reads the full error, rotation included,
+and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
 
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
-Tare through the service (see "Taring" above) before commanding anything.
+Tare through the service (see "Gravity and tool mass" below) before commanding anything.
 
 **A limit that stops the trial** is ``force_limit``: a measured wrench magnitude above a threshold
 latches, reports, releases whatever was driving the arm and asks the driver to stop. Named for the
@@ -1587,14 +1734,18 @@ controller switch would put a fiction in a results table's failure-mode column.
 
 ``contact_monitor`` (above) treats contact as the failure, and ``model_override`` (above) can take a
 contact away on command. A contact-rich manipulation task inverts both: contact *is* the task, and the
-measurement is the wrench, not the trajectory. Four plugins make
+measurement is the wrench, not the trajectory. Five plugins make
 that chain, and they are listed in a world in this order because each needs the previous one's
-blackboard handle::
+blackboard handle. The sensor and the control law belong to the arm, so they sit in its
+``components:`` and need no key naming it::
 
-   - spawn_arm:            {model: ur5e, name: ur5e, prefix: "ur5e_"}
-   - force_torque:         {name: ft, arm: ur5e, site: fts_site, frame: world}
+   - spawn_arm: {model: ur5e, prefix: "ur5e_"}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - cartesian_admittance: {arm: ur5e, ft: ft, law: admittance, site: tool_site}
    - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
@@ -1606,7 +1757,7 @@ That division is the general one. The substrate owes a cell the *mechanism* — 
 wrench, close a Cartesian loop. What is being inserted into what, and what counts as having inserted
 it, is the experiment's to state.
 
-Three things decide whether such a world measures anything at all:
+Four things decide whether such a world measures anything at all:
 
 * **Where the sensor cuts.** A site force sensor reports the wrench transmitted *through* that site
   from the body's children, so the tool must hang **below** it. A peg attached above the measurement
@@ -1636,13 +1787,27 @@ Three things decide whether such a world measures anything at all:
   than of the arm, so it belongs in the world and not in the shared MJCF — see :ref:`architecture`,
   "Actuator overrides", and note that a cell running at zero gravity gets identical physics from
   ``impedance`` and ``position``.
+* **Whether a flex is in the contact.** MuJoCo's site sensor does not see a contact with a flex: a
+  probe pressed into a soft block reads its own weight, however hard it presses, and a soft pad on
+  the tool loses every contact it makes, while the flex's weight and elastic reaction still arrive.
+  ``force_torque`` therefore refuses a sensor whose subtree carries a colliding flex or can collide
+  with one, until the world states ``flex_reaction: excluded`` -- the measurement is in the plugin's
+  docstring.
 
-A trial plugin of this shape — approach → act → succeed/timeout/abort → write — calls
-``ctx.request_stop()`` when it resolves, so a run ends when the trial does instead of being
-padded to a guessed ``--seconds``. Two rules are worth copying from a trial-protocol plugin: give it
+A trial plugin of this shape — approach → act → succeed/timeout/abort → write — publishes its
+outcome when it resolves, and the scenario, which owns the end of the run, conditions on it; run
+standalone under ``roqsim sim`` it also calls ``ctx.request_stop()``, so a hand-run trial ends when
+it resolves instead of being padded to a guessed ``--seconds`` (see :ref:`architecture`, "Who ends a
+run"). Two rules are worth copying from a trial-protocol plugin: give it
 an explicit failure condition as well as a success one (a trial that can only succeed cannot produce a
 success *rate*, it can only hang), and write the raw observable rather than the metric, because a
 force-energy definition belongs to the analysis where it can still be argued with.
+
+Publish the outcome as an ``out`` endpoint on the entity the trial is about, and the scenario
+conditions on it with ``entity_reports(entity: 'ur5e', report: 'trial.resolved', expected_value:
+'True')`` followed by ``emit end``, with a ``timeout`` as the bound. Give the endpoint a ``ros2``
+hint whose ``field`` is the outcome, as ``force_limit`` does with ``tripped``: that field is what
+travels over ROS and what a bare ``report: 'trial'`` compares, on both transports.
 
 Manipulation: what a grasping world needs
 -----------------------------------------
@@ -1656,7 +1821,10 @@ they cost something a navigation world should not pay:
    repetitions. Pair it with ``publish_tf: dynamic`` — nothing else publishes a movable body's pose.
    ``graspable_box`` is the reference prop, sized and contact-tuned for a parallel gripper.
 2. **Solver effort.** ``sim: {noslip_iterations: 10}``. Without it a firmly held object creeps out of
-   the jaws; see "Solver options" in ``architecture.rst`` for the measurements.
+   the jaws; see "Solver options" in ``architecture.rst`` for the measurements. A world with a flex
+   that has elasticity or passive contact cannot have it: such a flex runs under the ``discrete``
+   integrator, where MuJoCo supports no noslip pass, so roqsim refuses the combination before
+   compile (same section).
 3. **Scoped actuator ownership**, if the arm shares its entity with anything else. ``arm_controller``
    claims every joint actuator matching the entity prefix by default, which is right for a standalone
    arm and wrong for a humanoid or a mobile manipulator — it then also claims the legs or the wheels and
@@ -1667,9 +1835,10 @@ they cost something a navigation world should not pay:
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
    variation plugin.
 
-``unitree_g1_dex1``'s manifest is a worked example of (3): two ``arm_controller`` instances on one
-entity, each owning its seven arm joints and its own Dex1 gripper, alongside ``g1_locomotion`` on the
-twelve leg motors.
+``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
+entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
+``waist_controller`` on the three waist joints -- alongside ``g1_locomotion`` on the twelve leg
+motors.
 
 Two more if the target **moves** (dynamic grasping):
 
@@ -1691,7 +1860,7 @@ An arm carried by ``spawn_robot`` also needs ``arm_controller``'s ``rest`` stanc
 the base pose and no joint stance, so the arm falls back to ``qpos0``. For the Panda that is not neutral
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
-trials start identically. ``frankie``'s manifest is the worked example of (5), (6) and ``rest``.
+trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1749,6 +1918,34 @@ special mechanism for that — it uses the two doors any downstream package uses
 What the substrate owes such a cell is the arm, the sensing, the control law and the trial
 machinery — all of which are addressed by name and none of which know what is being welded or
 inserted.
+
+Manipulation: a prop or a tool that deforms
+-------------------------------------------
+
+A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
+model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
+``end_effector:`` mounts it on a flange. ``sim.integrator: auto`` picks the integrator the flex
+needs (:mod:`roqsim.flex`). What the spawn adds around it:
+
+* **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
+  ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
+  each back where the model declared it. ``static`` and ``driven`` are refused for a flex nothing is
+  pinned to -- welding the root would hold none of it; ``<pin>`` the vertices that should be held.
+  A flex pinned to a rigid body rides that body's pose, whichever ``motion`` it has.
+* **A** ``<flexcomp>`` **under** ``<worldbody>`` is moved into a body named after the file, so the
+  prop has a root, and a vertex it pins to the world is pinned there (MuJoCo's attach would drop
+  that flex outright).
+* **scale, mass, friction** reach the flex: its vertices and collision radius scale with the prop,
+  ``mass`` sets the total over the root's geoms and the vertex bodies, and ``friction`` is written to
+  the flex, whose own value its contacts use.
+* **Presence** hides a flex with its entity -- no contacts, not drawn, held still -- and the entity
+  lists its flexes in ``meta["flexes"]``.
+* **On a tool,** the vertices are not gravity-compensated: the arm holds its pose and the pad hangs
+  under its own weight, as a real one on a still arm does.
+
+A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+model's own folder and ``<compiler meshdir>``; keep that file beside the model, since the
+directories a manifest borrows through ``assets:`` are not searched for it.
 
 Writing your own
 ----------------

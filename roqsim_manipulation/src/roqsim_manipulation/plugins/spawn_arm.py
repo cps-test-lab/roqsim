@@ -111,6 +111,17 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
 ``pos``/``rpy`` are offsets within it -- matching how a real tool adapter is specified.
+
+**A tool that deforms.** The end effector's MJCF may carry a ``<flexcomp>`` -- a soft pad, a
+compliant finger -- pinned to one of its bodies (``<pin>``), or written under its ``<worldbody>``,
+in which case it is moved into a body named after the file so its pins hold on the flange. Its
+vertex bodies ride slide joints nothing drives, so gravity compensation leaves them alone
+(:func:`roqsim.actuators.apply_gravity_compensation` stops at a free-swinging joint) and the tool
+sags under its own weight while the arm holds its pose; the joints are unnamed, so a prefix scan
+(``arm_controller``'s joint report) does not pick them up under a non-empty ``prefix``.
+``sim.integrator: auto`` picks the integrator the flex needs, and the entity lists the flex by name
+in ``meta["flexes"]``. A ``force_torque`` sensor above such a tool is refused unless the world
+states ``flex_reaction: excluded`` -- see that plugin.
 """
 
 from __future__ import annotations
@@ -130,6 +141,7 @@ from roqsim.actuators import (
 )
 from roqsim.config import parse_plugin_entry
 from roqsim.context import Entity, SimContext
+from roqsim.flex import entity_flex_ids, flex_label, lift_top_level_flexes
 from roqsim.manifest import expand_manifest, load_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
@@ -501,6 +513,9 @@ class SpawnArmPlugin(Plugin):
         ee_asset = resolve_model(self.ee_model, base_dir=self.base_dir)
         ee = mujoco.MjSpec.from_file(str(ee_asset.path))
         apply_assets(ee, ee_asset)
+        # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would lose the flex
+        # in the attach below (roqsim.flex, rule 4); this puts it in a body on the flange instead.
+        ee = lift_top_level_flexes(ee, ee_asset.path.stem)
         # Whatever tool the arm model ships with goes first, or the new one is welded into it. The
         # ur10e carries a `ee_plate` 60 mm past its flange for the conveyor demo; a gripper attached
         # at `attachment_site` (0.1 m) lands inside it, so the two collide from the first step.
@@ -528,12 +543,16 @@ class SpawnArmPlugin(Plugin):
         frame.quat = self.ee_quat
 
     def configure(self, ctx: SimContext) -> None:
+        # A tool with a <flexcomp> (a soft pad, a compliant finger) makes the arm an entity with
+        # flexes; they are listed by name, as spawn_model lists a prop's.
+        flexes = entity_flex_ids(ctx.model, self.prefix + self.base_body)
         ctx.entities.add(
             Entity(
                 name=self.arm_name,
                 kind="arm",
                 body=self.prefix + self.base_body,
                 meta={
+                    **({"flexes": [flex_label(ctx.model, f) for f in flexes]} if flexes else {}),
                     "prefix": self.prefix,
                     "model": self.config["model"],
                     "home": self._home_vector(),

@@ -28,6 +28,7 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
 from . import image_codec
+from .frames import namespaced
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
@@ -129,13 +130,8 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     return Quaternion(z=math.sin(yaw * 0.5), w=math.cos(yaw * 0.5))
 
 
-def namespaced(prefix: str, name: str) -> str:
-    """Prefix a frame id with the bridge namespace so multi-robot TF trees stay unique."""
-    return f"{prefix}/{name}" if prefix else name
-
-
 def frame(hints: dict, key: str, default: str) -> str:
-    """Frame id from a hint, prefixed by the bridge namespace so multi-robot TF trees stay unique."""
+    """Frame id from a hint, prefixed by the bridge namespace unless global (see :mod:`.frames`)."""
     return namespaced(hints.get("frame_prefix", ""), hints.get(key, default))
 
 
@@ -362,6 +358,47 @@ def _diag3(variance: float) -> list:
     """A row-major 3x3 covariance with *variance* on the diagonal, as the nine floats ROS wants."""
     v = float(variance)
     return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
+
+
+#: sensor_msgs/NavSatStatus and NavSatFix constants, by value so this module keeps its rule of
+#: resolving message types by string rather than importing them.
+NAVSAT_STATUS_NO_FIX = -1
+NAVSAT_STATUS_FIX = 0
+NAVSAT_SERVICE_GPS = 1
+NAVSAT_COVARIANCE_UNKNOWN = 0
+NAVSAT_COVARIANCE_DIAGONAL_KNOWN = 2
+
+
+@converter("sensor_msgs.msg.NavSatFix")
+def fill_navsatfix(msg, payload, stamp: Time, hints: dict) -> None:
+    """A GNSS fix (the mapping ``roqsim_sensors.plugins.gnss.GnssPlugin.read_fix`` returns).
+
+    ``valid`` decides the message's *status*, not whether it is sent: a receiver with no fix still
+    publishes, with ``status.status = NO_FIX`` and an unknown covariance, which is what a real
+    driver does and what lets a consumer tell "denied" from "unplugged". The position fields are
+    passed through as the producer reports them; with no fix that is zeros, and the status is the
+    field a consumer must read first.
+
+    The covariance is built from the producer's declared ``eph``/``epv`` (1-sigma metres), squared
+    onto the diagonal, and marked DIAGONAL_KNOWN -- the same policy as :func:`fill_imu`: the filter
+    downstream weights the channel by the noise the world configured.
+    """
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "gnss_link")
+    valid = bool(payload.get("valid", True))
+    msg.status.service = NAVSAT_SERVICE_GPS
+    msg.latitude = float(payload["lat"])
+    msg.longitude = float(payload["lon"])
+    msg.altitude = float(payload["alt"])
+    if not valid:
+        msg.status.status = NAVSAT_STATUS_NO_FIX
+        msg.position_covariance = [0.0] * 9
+        msg.position_covariance_type = NAVSAT_COVARIANCE_UNKNOWN
+        return
+    msg.status.status = NAVSAT_STATUS_FIX
+    eph, epv = float(payload.get("eph", 0.0)), float(payload.get("epv", 0.0))
+    msg.position_covariance = [eph * eph, 0.0, 0.0, 0.0, eph * eph, 0.0, 0.0, 0.0, epv * epv]
+    msg.position_covariance_type = NAVSAT_COVARIANCE_DIAGONAL_KNOWN
 
 
 @converter("vision_msgs.msg.Detection2DArray")
@@ -708,18 +745,21 @@ def decode_ackermann_stamped(msg) -> tuple[float, float]:
 
 
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...]]:
-    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz)``, in MuJoCo's quaternion order.
+def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...], str]:
+    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz, frame_id)``, in MuJoCo's
+    quaternion order.
 
     The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
     division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
     every consumer of the type, and a Cartesian controller commanded to hold its tool upright needs
-    exactly the part that would have been thrown away.
+    exactly the part that would have been thrown away. The frame is passed on for the same reason:
+    only the consumer knows which frames it can read a pose in.
     """
     q = msg.pose.orientation
     return (
         (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
         (q.w, q.x, q.y, q.z),
+        msg.header.frame_id,
     )
 
 
