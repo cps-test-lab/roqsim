@@ -391,6 +391,9 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.owner)
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+        prefix = self.config.get("prefix")
+        if prefix is None:
+            prefix = entity.meta.get("prefix", "") if entity else ""
 
         self._site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, self._resolved_site)
         if self._site_id < 0:
@@ -449,13 +452,13 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
                         # look; `topic:` is how a device states its own layout.
                         "topic": self.topic_override("imu") or self.topic,
                         "frame_id": self.frame_id,
-                        "static_tf": self._mount_tf(m),
+                        "static_tf": self._mount_tf(m, prefix),
                     }
                 },
             )
         )
 
-    def _mount_tf(self, m) -> dict:
+    def _mount_tf(self, m, prefix: str) -> dict:
         """Static ``mount body -> frame_id`` transform as plain numbers, for a bridge.
 
         Read off a throwaway ``MjData`` at the reference pose: the body<-site transform is rigid, so
@@ -471,11 +474,12 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         site_mat = d0.site_xmat[self._site_id].reshape(3, 3)
         mujoco.mju_mat2Quat(rel_quat, np.ascontiguousarray(base_mat.T @ site_mat).reshape(-1))
         return {
-            # Bare name: the bridge applies any namespace prefix, and the model's body name is
-            # already prefixed per robot, so it is stripped back to what TF expects.
-            "parent": mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, self._mount_bid).split("/")[
-                -1
-            ],
+            # Bare name: the bridge applies any namespace prefix, and the model's body name carries
+            # the robot's MJCF prefix, so it is stripped back to what TF expects -- the same name
+            # every other sensor on the robot hangs its frame from (lidar_common._mount_tf).
+            "parent": mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, self._mount_bid).removeprefix(
+                prefix
+            ),
             "translation": [float(v) for v in rel_pos],
             "rotation": [float(v) for v in rel_quat],  # (w, x, y, z)
         }
