@@ -92,26 +92,14 @@ reproduces from it; with the block omitted nothing is drawn and the odometry is 
 
 from __future__ import annotations
 
-from typing import Annotated
-
 import mujoco
 import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
-from roqsim.endpoint import Unit
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
-
-#: The ``odom`` payload: the planar pose and body-frame twist, in the odometry frame.
-Odometry = tuple[
-    Annotated[float, Unit("m"), "x"],
-    Annotated[float, Unit("m"), "y"],
-    Annotated[float, Unit("rad"), "yaw"],
-    Annotated[float, Unit("m/s"), "forward speed"],
-    Annotated[float, Unit("m/s"), "sideways speed (always 0)"],
-    Annotated[float, Unit("rad/s"), "yaw rate"],
-]
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 
 class DiffDrivePlugin(Plugin):
@@ -293,27 +281,18 @@ class DiffDrivePlugin(Plugin):
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
 
-    # This robot's I/O as backend-neutral endpoints. A bridge (ROS 2, zenoh, ...) reads
-    # ctx.interface and wires them up; nothing ROS-specific is imported here -- the message type is
-    # named as a string under a backend hint block, resolved by the bridge. The namespace (own
-    # config, else the spawn's) scopes topics/frames per robot so one bridge serves many robots.
-    @endpoint.stream(
-        "cmd_vel",
-        ros2=lambda self: {
-            "type": "geometry_msgs.msg.TwistStamped"
-            if self.stamped_cmd_vel
-            else "geometry_msgs.msg.Twist",
-            "topic": self.topic_override("cmd_vel") or "cmd_vel",
-        },
-    )
-    def command_twist(
-        self,
-        vx: Annotated[float, Unit("m/s"), "forward speed"],
-        vy: Annotated[float, Unit("m/s"), "sideways speed; a differential drive drops it"] = 0.0,
-        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
-    ) -> None:
-        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step."""
-        self.drive(vx, vy, w)
+    # This robot's I/O as backend-neutral endpoints; a bridge carries each by its payload type, under
+    # the namespace (own config, else the spawn's) that scopes one robot's topics and frames.
+    @endpoint.stream(Twist, ros2=lambda self: {"stamped": self.stamped_cmd_vel})
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed; a differential drive drops it
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
@@ -324,39 +303,23 @@ class DiffDrivePlugin(Plugin):
         self.watchdog.stamp(self._ctx)
 
     @endpoint.out(
-        "odom",
-        rate_hz=lambda self: self.odom_rate_hz,
-        ros2=lambda self: {
-            "type": "nav_msgs.msg.Odometry",
-            "topic": self.topic_override("odom") or "odom",
-            "frame_id": "odom",
-            "child_frame_id": self.odom_child_frame,
-            "emit_tf": True,
-        },
+        rate="odom_rate_hz",
+        ros2=lambda self: {"child_frame_id": self.odom_child_frame, "emit_tf": True},
     )
-    def read_odom(self) -> Odometry:
-        """Endpoint ``odom``: the wheel odometry, integrated from the wheels' own motion."""
+    def odom(self) -> Odometry:
+        """Wheel odometry, integrated from the wheels' own motion."""
+        x, y, yaw, v, w = self._odom
+        return Odometry.planar(x, y, yaw, v, 0.0, w)
+
+    def read_odom(self) -> tuple[float, float, float, float, float, float]:
+        """The latest ``(x, y, yaw, vx, vy, w)``, what the :class:`RobotHandle` reads."""
         x, y, yaw, v, w = self._odom
         return (x, y, yaw, v, 0.0, w)
 
-    @endpoint.out(
-        "joint_states",
-        rate_hz=lambda self: self.odom_rate_hz,
-        when=lambda self: self.publish_joint_states,
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.JointState",
-            "topic": self.topic_override("joint_states") or "joint_states",
-        },
-    )
-    def read_joint_states(
-        self,
-    ) -> tuple[
-        Annotated[list[str], "wheel joint names"],
-        Annotated[list[float], Unit("rad")],
-        Annotated[list[float], Unit("rad/s")],
-    ]:
-        """Endpoint ``joint_states``: the wheels' positions and velocities."""
-        return (self._jnames, self._jpos, self._jvel)
+    @endpoint.out(rate="odom_rate_hz", when="publish_joint_states")
+    def joint_states(self) -> JointState:
+        """The wheels' positions and velocities."""
+        return JointState(self._jnames, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target_v = self._target_w = 0.0
@@ -367,7 +330,7 @@ class DiffDrivePlugin(Plugin):
         self._read_joints(ctx.model, ctx.data)
 
     def _read_joints(self, m, d) -> None:
-        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        """The joint_states payload, written in place so ``joint_states`` is zero-copy."""
         for k, jid in enumerate(self._jid_l + self._jid_r):
             self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
             self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]

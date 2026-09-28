@@ -57,9 +57,9 @@ Config::
                              #   un-failed -- the same rule contact_monitor follows)
       rate_hz: 30.0          # endpoint publish rate
 
-Endpoint ``upright`` (out) reads an :class:`UprightReport`. The ROS 2 backend hint publishes
-``upright`` as a ``std_msgs/Bool`` on ``upright`` (relative, so two namespaced entities get
-``/a/upright`` and ``/b/upright``); a consumer wanting the detail reads the fields.
+Endpoint ``upright`` (out) reads an :class:`UprightReport`. ROS carries its ``upright`` field, a
+``std_msgs/Bool`` on ``upright`` (relative, so two namespaced entities get ``/a/upright`` and
+``/b/upright``); a consumer wanting the detail reads the fields.
 
 **The reference height is where the body SETTLED, not where it was spawned**, which is what
 ``settle_s`` buys. A body spawned twenty centimetres above the floor drops onto it, and measuring
@@ -89,15 +89,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Annotated
 
 import mujoco
 import numpy as np
 
 from .. import endpoint
 from ..context import SimContext
-from ..endpoint import Unit
 from ..plugin import Plugin
+from ..types import Degrees, Duration, Length
 
 _log = logging.getLogger(__name__)
 
@@ -111,20 +110,27 @@ class UprightReport:
     split ``contact_monitor`` and ``clearance_monitor`` make exists because a clearance costs a
     geometry query, and this costs nothing.
 
-    ``first_time`` is the simulation time at which the body first left the plane since reset
-    (``-1.0`` while it has not), and ``reason`` is ``"tilt"`` or ``"height"`` -- which of the two
-    it was, because they point at different mistakes: a tilt is usually where the drive is
-    applied, a height is usually contact or a joint that does not constrain what it looks like it
-    constrains.
+    ``reason`` says which of the two departures it was, because they point at different mistakes:
+    a tilt is usually where the drive is applied, a height is usually contact or a joint that does
+    not constrain what it looks like it constrains.
+
+    Attributes:
+        upright: the verdict
+        first_time: when it first left the plane since reset; -1.0 while it has not
+        tilt_deg: angle between the body's +z and the world's
+        rise_m: departure from the settled height, either direction
+        worst_tilt_deg: largest tilt since reset
+        worst_rise_m: largest departure since reset, signed
+        reason: 'tilt' or 'height' once it left the plane
     """
 
     upright: bool
-    first_time: Annotated[float, Unit("s"), "when it first left the plane; -1.0 while it has not"]
-    tilt_deg: Annotated[float, Unit("deg")]
-    rise_m: Annotated[float, Unit("m"), "departure from the settled height, either direction"]
-    worst_tilt_deg: Annotated[float, Unit("deg")]
-    worst_rise_m: Annotated[float, Unit("m")]
-    reason: Annotated[str, "'tilt' or 'height' once it left the plane"]
+    first_time: Duration
+    tilt_deg: Degrees
+    rise_m: Length
+    worst_tilt_deg: Degrees
+    worst_rise_m: Length
+    reason: str
 
 
 class UprightMonitorPlugin(Plugin):
@@ -186,7 +192,7 @@ class UprightMonitorPlugin(Plugin):
 
         # Keyed on the address, like contact_monitor's: two monitors in one world writing to one
         # key would report the second entity's verdict under the first entity's name.
-        ctx.blackboard.set(f"upright:{self.address}", self.read_state)
+        ctx.blackboard.set(f"upright:{self.address}", self.upright)
 
         _log.info(
             "upright_monitor: watching %r (tilt <= %.1f deg, height within %.3f m)",
@@ -195,19 +201,11 @@ class UprightMonitorPlugin(Plugin):
             self.max_rise_m,
         )
 
-    @endpoint.out(
-        "upright",
-        rate_hz=lambda self: self.rate_hz,
-        ros2=lambda self: {
-            "type": "std_msgs.msg.Bool",
-            # The report is a structure and Bool carries one field, so the endpoint says WHICH --
-            # the same convention contact_monitor uses.
-            "field": "upright",
-            "topic": self.topic_override("upright") or "upright",
-        },
-    )
-    def read_state(self) -> UprightReport:
-        """The latest report. A callable, because ``post_step`` REPLACES the report each step."""
+    # The report is a structure and ROS carries its verdict alone: `field` names it, and its type
+    # (bool) is the message's -- the same convention contact_monitor uses.
+    @endpoint.out(rate="rate_hz", ros2={"field": "upright"})
+    def upright(self) -> UprightReport:
+        """The latest report. A method, because ``post_step`` replaces the report each step."""
         return self._report
 
     def on_reset(self, ctx: SimContext) -> None:

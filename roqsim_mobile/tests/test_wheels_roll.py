@@ -23,8 +23,8 @@ against physics, and is deliberately indifferent to which drive plugin it uses.
 from __future__ import annotations
 
 # `roqsim` selects MuJoCo's GL backend on import, and MUJOCO_GL is read once while `import mujoco`
-# runs -- so roqsim must come first or a model with a camera (turtlebot4's OAK-D) fails to build an
-# offscreen renderer. See roqsim/CLAUDE.md; the E402 ignore below is what keeps isort from "tidying"
+# runs -- so roqsim must come first or a robot that mounts a camera (turtlebot4's manifest mounts the
+# `oakd_pro` device) fails to build an offscreen renderer. See roqsim/CLAUDE.md; the E402 ignore below is what keeps isort from "tidying"
 # this back into one block.
 import roqsim  # noqa: F401, I001
 from pathlib import Path  # noqa: E402
@@ -75,8 +75,9 @@ def _step(engine, n: int, model: str, drive=None) -> None:
     *drive* re-issues the command every step: a base with a command watchdog (the TurtleBot 4's
     expires one after 0.5 s, as its driver does) would otherwise stop before the check.
 
-    MuJoCo binds its GL backend during ``import mujoco``, once per process, and a camera-carrying
-    model renders in ``post_step`` -- so turtlebot4's OAK-D needs one. This file imports roqsim
+    MuJoCo binds its GL backend during ``import mujoco``, once per process, and a spawned robot that
+    carries a camera renders in ``post_step`` -- so turtlebot4 needs one: its bare MJCF has no camera,
+    but its manifest mounts the `oakd_pro` device, and the spawned robot renders through that. This file imports roqsim
     first to get it, but when an earlier test module in the same session imported mujoco first the
     backend is already chosen and no import order here can change it. Skipping with the reason beats
     a failure that depends on pytest's collection order, and the check is unaffected on every model
@@ -91,7 +92,7 @@ def _step(engine, n: int, model: str, drive=None) -> None:
             if type(exc).__name__ != "GLBackendError":
                 raise
             pytest.skip(
-                f"{model} carries a camera and this process bound an on-screen GL backend before "
+                f"{model} mounts a camera and this process bound an on-screen GL backend before "
                 f"roqsim could choose one; run this file alone or set MUJOCO_GL=egl"
             )
 

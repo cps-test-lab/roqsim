@@ -10,7 +10,7 @@ mount must be re-expressed: a mount of the old model at ``T_old`` becomes ``T_ol
 This module holds what every such builder needs and nothing device-specific: rotations in the URDF
 convention, a reader for one xacro macro's properties and fixed joints, the splice that rewrites a
 manifest's generated block, and :func:`rewrite_mounts`, which applies a ``D`` to the world files it
-is given. Builder: ``build_realsense_devices.py``.
+is given. Builders: ``build_realsense_devices.py``, ``build_oakd_pro.py``.
 """
 
 from __future__ import annotations

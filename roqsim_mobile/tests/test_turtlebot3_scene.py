@@ -32,6 +32,7 @@ import yaml
 
 from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
+from roqsim.types import Odometry, Twist
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile" / "models"
@@ -92,6 +93,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -418,8 +420,9 @@ def test_c4_odometry_tf_points_at_the_description_root():
     model, data = _build()
     ctx, _ = _plugin(model, data)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
-    assert odom.backend["ros2"]["frame_id"] == "odom"
-    assert odom.backend["ros2"]["child_frame_id"] == "base_footprint"
+    # Odometry travels from the `odom` frame by default; the child is what the platform states.
+    assert odom.payload_type.cls is Odometry
+    assert odom.backend["ros2"] == {"child_frame_id": "base_footprint", "emit_tf": True}
 
 
 def test_c5_odometry_tf_default_is_base_link():
@@ -433,6 +436,7 @@ def test_c5_odometry_tf_default_is_base_link():
     )
     plugin = DiffDrivePlugin(cfg)
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     odom = next(e for e in ctx.interface.all() if e.name == "odom")
     assert odom.backend["ros2"]["child_frame_id"] == "base_link"
 
@@ -449,12 +453,13 @@ def test_c6_cmd_vel_type_follows_the_stack():
 
     ctx, _ = _plugin(model, data)
     plain = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
-    assert plain.backend["ros2"]["type"] == "geometry_msgs.msg.Twist"
+    assert plain.payload_type.cls is Twist
+    assert plain.backend["ros2"] == {"stamped": False}  # geometry_msgs/Twist
 
     ctx, _ = _plugin(model, data, stamped_cmd_vel=True)
     stamped = next(e for e in ctx.interface.all() if e.name == "cmd_vel")
-    assert stamped.backend["ros2"]["type"] == "geometry_msgs.msg.TwistStamped"
-    assert stamped.backend["ros2"]["topic"] == plain.backend["ros2"]["topic"]
+    assert stamped.backend["ros2"] == {"stamped": True}  # geometry_msgs/TwistStamped
+    assert stamped.topic == plain.topic is None
 
 
 # --------------------------------------------------------------------------- D. the mounted scanner

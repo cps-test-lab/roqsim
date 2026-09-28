@@ -244,8 +244,9 @@ The other half of the same question, for a caller holding an *override* rather t
                  "entity": "robot.rplidar", "enabled": true, "origin": "manifest",
                  "paths": ["components.robot.rplidar.lidar.angle_max", ...,
                            "components.robot.rplidar.lidar.rays", ...]}, ...],
-    "addresses": ["robot", "robot.bumper", ..., "robot.diff_drive", ..., "robot.rplidar",
-                  "robot.rplidar.lidar", "ros2_bridge", "sim_interfaces"],
+    "addresses": ["robot", "robot.bumper", ..., "robot.diff_drive", ..., "robot.oakd",
+                  "robot.oakd.oakd_camera", "robot.rplidar", "robot.rplidar.lidar", "ros2_bridge",
+                  "sim_interfaces"],
     "entities": null, "flexes": null, "warnings": null, ...}
 
 ``components`` reports every component that will **run** -- the document's own entries and everything its
@@ -254,8 +255,9 @@ into its config that already exist. ``origin`` says which of the two a component
 
 ``addresses`` is that set on its own, and **it is exactly what resolution accepts**: a caller checks a
 sweep key against it before spending an image pull. Note the world above declares three entries
-and gets the rest -- drive, lidar, camera, bumper, cliff and IR sensors -- from the turtlebot4's
-manifest, and those are the ones a sweep is most likely to want.
+and gets the rest -- drive, the lidar and camera devices and the sensors on them, bumper, cliff
+and IR sensors -- from the turtlebot4's manifest, and those are the ones a sweep is most likely to
+want.
 
 A path not listed is not necessarily wrong (a plugin may accept a key its world leaves at the
 default), so a caller reports an unlisted *path* as unverifiable. What the list does settle is the
@@ -529,12 +531,14 @@ Declaring a robot interface (endpoints)
 A robot describes its own I/O so a bridge can wire it to *any* transport (ROS 2, and later zenoh /
 zmq) without the robot package importing that transport. A plugin declares its ports by decorating
 the methods that serve them (``@endpoint.out`` / ``@endpoint.command`` / ``@endpoint.stream``, see
-:doc:`plugins`, *Declaring a plugin's endpoints*), and the framework registers them as ``Endpoint``\ s
+:doc:`plugins`, *Declaring a plugin's endpoints*), and the engine registers them as ``Endpoint``\ s
 on ``ctx.interface`` and marshals every inbound call onto the physics thread. The method's signature
-is the endpoint's schema, carried as ``params`` (what ``write`` takes, by name) and ``result`` (what
-``read`` returns, or a command's outcome), so a bridge can describe and check a port without knowing
-the plugin. Every entity also has a core pose endpoint, ``sim/entities/<name>/pose``. A port known
-only at run time is registered by hand in ``configure``:
+is the endpoint's schema, carried as ``params`` (what ``write`` takes, by name), ``result`` (what
+``read`` returns, or a command's outcome) and ``payload_type`` (the neutral type a transport
+carries, one of ``roqsim.types`` or a plugin's dataclass), so a bridge can describe, check and map a
+port without knowing the plugin -- the ROS bridge gives every neutral type its message, so such a
+plugin names no ROS type. Every entity also has a core pose endpoint, ``sim/entities/<name>/pose``.
+A port known only at run time is registered by hand in ``configure``:
 
 .. code-block:: python
 
