@@ -49,6 +49,7 @@ import mujoco
 import numpy as np
 
 from . import keys, overlay
+from .exit_status import NO_GL
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
 from .rendering import set_orbit_radius, walk_delta
@@ -59,6 +60,8 @@ log = logging.getLogger(__name__)
 
 class DisplayError(RuntimeError):
     """No usable on-screen GL context for the interactive viewer (see :data:`GL_HELP`)."""
+
+    exit_status = NO_GL
 
 
 def has_display() -> bool:
