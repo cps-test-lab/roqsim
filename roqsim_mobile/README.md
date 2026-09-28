@@ -17,8 +17,8 @@ One folder per model — `models/<name>/<name>.xml` with its meshes in `meshes/`
 (`<name>_LICENSE`, which records the upstream description). Spawn one with `spawn_robot: {model: <name>}`; the
 manifest does the rest, so a world is ~15 lines.
 
-The table lists a few; the docs model catalog (`docs/models.rst`, or `roqsim catalog models`) lists
-all seventeen.
+The table lists a few of this package's bases; the model catalog (`docs/models.rst`, or
+`roqsim catalog models`) lists every model, these among them.
 
 | model | platform | drive | scanner |
 |---|---|---|---|
@@ -33,9 +33,8 @@ a prop (`spawn_model: {model: create3_dock}`), with the reference description's 
 infrared emitters as sites, so a stack can dock to it over their ground-truth poses. Its provenance
 (`irobot_create_description`, BSD-3) is in `create3_dock_LICENSE`.
 
-**Read the MJCF comments before changing a model**, and run its scene test (`tests/test_*_scene.py`), which
-pins the numbers. Several of them are load-bearing calibrations,
-not defaults: a wheel `armature` that keeps the velocity servo integrable at a 2 ms step, a
+**Read the MJCF comments before changing a model**, and run its scene test (`tests/test_*_scene.py`),
+which pins the numbers. Several of them are load-bearing calibrations, not defaults: a wheel `armature` that keeps the velocity servo integrable at a 2 ms step, a
 `slip_factor` that compensates skid-steer scrub, a caster `priority="1"` that is the only way to make
 a caster frictionless (MuJoCo combines contact params by `max()`, so `condim="1"` alone loses to the
 floor and the caster drags — worth 48% of the robot's yaw rate). The comment beside each states why.
