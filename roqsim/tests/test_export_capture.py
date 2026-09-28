@@ -6,9 +6,9 @@ descriptor exports, the binary must be readable by a browser's typed-array views
 mean exactly one thing (a body driven by joint tracks must not also carry a pose track, or two
 writers fight over one transform).
 
-The redundancy test is the one that earns its keep: an earlier cut marked only the body that *owns* a
-joint as explained, which emitted a pose track for every link welded to a moving parent -- 36 tracks
-instead of 2 on a real recording, silently.
+The redundancy test is the one that earns its keep: marking only the body that *owns* a joint as
+explained emits a pose track for every link welded to a moving parent -- 36 tracks instead of 2 on a
+real recording, silently.
 """
 
 from __future__ import annotations
@@ -226,8 +226,8 @@ def test_session_path_anchors_relative_output(monkeypatch, tmp_path):
     assert _session_path("capture") == tmp_path / "cfg" / "0" / "capture"
 
     # SCENARIO_OUTPUT_DIR is the *campaign* root and must never anchor a per-run artifact: every run
-    # of a sweep would write the same shared path, the last one winning. This is not hypothetical --
-    # it is what a first cut did, and the capture landed beside campaign.db instead of in the run.
+    # of a sweep would write the same shared path, the last one winning, and the capture would land
+    # beside campaign.db instead of in the run.
     monkeypatch.delenv("RUN_OUTPUT_DIR")
     monkeypatch.delenv("OUTPUT_DIR")
     monkeypatch.setenv("SCENARIO_OUTPUT_DIR", str(tmp_path / "campaign_root"))
@@ -262,3 +262,82 @@ def test_world_identity_distinguishes_no_overrides_from_unrecorded(tmp_path):
     # `packages` is different in kind: a producer always knows its own versions, so it defaults to
     # them rather than being absent. Only `overrides` has an "I cannot tell" state.
     assert unrecorded["packages"]["roqsim"], "the producer always knows its own versions"
+
+
+# -- a flex replays from its bodies' pose tracks ----------------------------------------------------
+
+# A trilinear block and a full-dof sheet pinned along one edge, in a free-floating holder. Their
+# vertex and node bodies move on UNNAMED slide joints, which a viewer cannot address -- so they must
+# arrive as pose tracks, or the flex skin the scene descriptor carries has nothing to follow.
+_FLEX_MJCF = """
+<mujoco>
+  <worldbody>
+    <body name="holder" pos="0 0 0.5">
+      <freejoint name="holder_free"/>
+      <geom type="box" size="0.01 0.01 0.01"/>
+      <flexcomp name="blk" type="grid" count="3 3 3" spacing=".05 .05 .05" dim="3" radius=".001"
+                dof="trilinear" pos="0.2 0 0">
+        <edge equality="true"/><contact selfcollide="none"/>
+      </flexcomp>
+      <flexcomp name="cloth" type="grid" count="4 3 1" spacing=".05 .05 .05" dim="2" radius=".001"
+                pos="-0.2 0 0">
+        <edge equality="true"/><pin id="0 1 2"/>
+      </flexcomp>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _flex_samples(model, data, n=4):
+    """Turn and shift the holder and displace every vertex/node: an arbitrary deformation per sample."""
+    rng = np.random.default_rng(3)
+    for k in range(n):
+        for j in range(model.njnt):
+            adr = model.jnt_qposadr[j]
+            if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_SLIDE:
+                data.qpos[adr] = rng.uniform(-0.01, 0.01)
+        free = model.joint("holder_free").qposadr[0]
+        quat = rng.normal(size=4)
+        data.qpos[free : free + 7] = [0.1 * k, 0.0, 0.5, *(quat / np.linalg.norm(quat))]
+        mujoco.mj_forward(model, data)
+        yield 0.04 * k, data
+
+
+def test_a_flex_replays_from_its_bodies_pose_tracks(tmp_path):
+    """The two artifacts together: skin weights over captured bone poses give MuJoCo's vertices."""
+    from test_export_web import _flex_skin, _skinned  # the viewer's skinning, written once
+
+    model = mujoco.MjModel.from_xml_string(_FLEX_MJCF)
+    scene = export_scene(
+        model, mujoco.MjData(model), tmp_path / "scene", logging.getLogger(__name__)
+    )
+
+    data = mujoco.MjData(model)
+    expected = []
+
+    def samples():
+        for t, d in _flex_samples(model, data):
+            expected.append(d.flexvert_xpos.copy())
+            yield t, d
+
+    manifest = write_capture(model, samples(), tmp_path / "cap")
+    poses = {
+        t["name"]: _read(tmp_path / "cap" / "capture.bin", t).reshape(-1, 7)
+        for t in manifest["tracks"]
+        if t["kind"] == "pose"
+    }
+    assert set(poses) <= {b["name"] for b in scene["bodies"]}
+    for flex, name in enumerate(("blk", "cloth")):
+        verts, faces, skin, index, weight = _flex_skin(scene, tmp_path / "scene", name)
+        missing = [b for b in skin["bones"] if b not in poses]
+        assert not missing, f"bones of {name!r} with no pose track: {missing}"
+        drawn = np.unique(faces)
+        adr, num = model.flex_vertadr[flex], model.flex_vertnum[flex]
+        for i, flexvert in enumerate(expected):
+            pose = lambda b, i=i: (poses[b][i, :3], poses[b][i, 3:])  # noqa: E731
+            got = _skinned(verts, skin, index, weight, pose)
+            want = flexvert[adr : adr + num]
+            if len(verts) > num:  # a sheet: drawn from both sides, over two copies of its vertices
+                want = np.vstack([want, want])
+            assert np.abs(got - want)[drawn].max() < 1e-5, f"{name!r} sample {i}"

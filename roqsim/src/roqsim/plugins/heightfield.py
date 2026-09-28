@@ -16,15 +16,15 @@
 
 """World plugin: outdoor ground -- a height field, from a DEM or generated.
 
-Everything this substrate could stand a robot on was flat. The quadruped, the Husky, the Jackal and
-the Warthog are all outdoor platforms whose papers are about what happens on ground that is not, and
-the experiment those papers describe could not be expressed here at all: not "poorly approximated",
-not "expressible with effort" -- there was no terrain.
+Without it, everything this substrate can stand a robot on is flat. The quadruped, the Husky, the
+Jackal and the Warthog are all outdoor platforms whose papers are about what happens on ground that
+is not, and the experiment those papers describe cannot be expressed on flat ground at all: not
+"poorly approximated", not "expressible with effort" -- there is no terrain.
 
 MuJoCo has height fields natively, so this is the plumbing rather than the physics: elevation samples
 in, an ``hfield`` geom out, with the two things a world actually needs around it -- it provides the
-ground itself (``provides_world``), and it lights it, because a world definition it replaced would
-have done both.
+ground itself (``provides_world``), and it lights it, because the world definition it replaces would
+do both.
 
 **Three sources, one shape.** Elevation arrives as a normalised grid, whatever it came from:
 

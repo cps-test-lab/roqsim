@@ -74,6 +74,24 @@ def test_speed_handle_reverses_belt(tmp_path):
     assert _package_x(engine) > x0 + 0.05
 
 
+def test_reset_returns_the_belt_to_its_configured_speed(tmp_path):
+    """Trial 2 runs the belt at the world's speed, not at the one trial 1 was switched to."""
+    engine = Engine(_belt_only(tmp_path, {"speed": 0.2}))
+    engine.setup()
+    engine.reset()
+    handle = engine.ctx.blackboard.require("conveyor:conveyor")
+    handle.set_speed(-0.2)
+    engine.step()
+    engine.reset()
+    assert handle.get_speed() == pytest.approx(0.2)
+    for _ in range(5):
+        engine.step()
+    x0 = _package_x(engine)
+    for _ in range(1000):
+        engine.step()
+    assert _package_x(engine) < x0 - 0.05
+
+
 def test_belt_resizes_to_configured_length_and_width(tmp_path):
     # A custom 3.5 m x 0.8 m belt: half-extents L=1.75, W=0.4. Belt surfaces recompute exactly,
     # the drive slab keeps its fixed overhang, and rollers sit at the new belt ends.
@@ -126,9 +144,9 @@ def test_placed_belt_keeps_its_package(tmp_path):
 
 
 def test_belt_ships_no_table(tmp_path):
-    # The belt is a benchtop unit: the industrial table it used to bundle is a separate prop now,
-    # so a bare conveyor must contribute no table geometry (and the feet must still expect a
-    # ~0.76 m top under them, which is what makes the split poses in the worlds line up).
+    # The belt is a benchtop unit and the industrial table a separate prop, so a bare conveyor
+    # must contribute no table geometry (and the feet must still expect a ~0.76 m top under them,
+    # which is what makes the separate poses in the worlds line up).
     engine = Engine(_belt_only(tmp_path))
     engine.setup()
     m = engine.ctx.model
@@ -139,8 +157,8 @@ def test_belt_ships_no_table(tmp_path):
 
 
 def test_industrial_table_top_carries_the_belt(tmp_path):
-    # The split-out table must present its top exactly where the belt's feet land, so
-    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the old bundled cell.
+    # The separate table must present its top exactly where the belt's feet land, so
+    # `spawn_model industrial_table` + `conveyor` at the same z reproduces the source cell.
     plugins = [
         {
             "spawn_model": {

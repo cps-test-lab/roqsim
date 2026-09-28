@@ -4,9 +4,9 @@
 
 """The model catalog describes each model from the model, and names the licence it carries.
 
-Both halves of a catalog row used to be file-shaped rather than informative: every row repeated its
-package's summary, and the licence was the sidecar's *file name*. Both are now read out of what
-ships -- the sentence that opens the MJCF, and the licence text itself -- which only holds while
+Both halves of a catalog row are read out of what ships -- the sentence that opens the MJCF, and
+the licence text itself -- rather than the package's summary and the sidecar's *file name*. That
+only holds while
 every model file actually opens with such a sentence. That is what the first test pins: a model
 whose header opens with a generator banner or an element note falls back to describing its package,
 and nothing else would notice.

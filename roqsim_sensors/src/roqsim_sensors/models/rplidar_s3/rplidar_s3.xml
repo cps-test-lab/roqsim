@@ -1,0 +1,42 @@
+<mujoco model="rplidar_s3">
+  <!--
+    Slamtec RPLIDAR S3 2D lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Husarion `husarion_components_description` (urdf/slamtec_rplidar.urdf.xacro, model
+    `s3`), the component LDR06 of Husarion's UGVs: the body is `<name>_link`, whose origin is the
+    housing base, and the scan is stamped in its child `<name>_laser` at xyz (0, 0, 0.0305),
+    rpy (0, 0, pi).
+
+    Body-local axes: z = up, the housing spans z 0 .. 41.3 mm (data sheet Figure 4-1). The data
+    sheet's Figure 2-3 puts the optical centre 30.55 mm above the base, 0.05 mm above the vendor
+    frame; the site stays on the vendor frame.
+
+    Built by external/convert/build_scanner_devices.py from husarion_components_description @ 5f783f89961bb16098184f5381b1a76058cec19e.
+    Scan parameters and the `frames:` entry for this site are in rplidar_s3.manifest.yaml; see
+    rplidar_s3_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="s3__dark_mat" rgba="0.08 0.08 0.09 1"/>
+    <material name="s3__light_mat" rgba="0.22 0.22 0.24 1"/>
+    <mesh name="s3__dark" file="s3__dark.obj"/>
+    <mesh name="s3__light" file="s3__light.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0.0224737" mass="0.115033" diaginertia="0.00004115765 0.00004115765 0.00004956023"/>
+      <geom name="rplidar_s3_visual_0" type="mesh" mesh="s3__dark" material="s3__dark_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="rplidar_s3_visual_1" type="mesh" mesh="s3__light" material="s3__light_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing. -->
+      <geom name="rplidar_s3_collision" type="box" pos="0 0 0.02065" size="0.0278 0.0278 0.02065" group="3"/>
+      <!-- The vendor scan frame `<name>_laser`: 30.5 mm up and turned half a revolution.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0.0305" quat="0 0 0 1" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

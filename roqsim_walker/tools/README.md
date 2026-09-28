@@ -42,7 +42,7 @@ CC-BY-SA only; see the package [`THIRD_PARTY.md`](../THIRD_PARTY.md)).
   offsets are canonical arms-down (`elbow/wrist/knee/ankle` = `[0,0,-len]`), with lengths taken from
   the source bind — **not** the raw T-pose positions.
 - **Facing.** CARLA faces −X; the Open-RMF actors face +X. `--flip` sets −X; the default is +X.
-  This is why `skin.py` now separates `flip` from `tpose` (CARLA coupled them).
+  This is why `skin.py` separates `flip` from `tpose` (CARLA couples them).
 - **Anim set.** `blueprint._infer_gender` needs a CARLA-style `…F02` name and cannot read
   `FemaleVisitorWalk`; pass `--anim-set female|adult|kid` explicitly or the gait defaults to `adult`.
 - **Held props.** `--exclude-material <group>` (repeatable) drops a material group and its texture —

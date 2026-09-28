@@ -7,7 +7,7 @@ script owns the whole chain and is the reproducible record of the port:
     6 pinned repos -> xacro expansion -> URDF with a flat meshdir -> MuJoCo compile -> tiago_pro.xml
 
 Everything a URDF cannot express is added in ``postprocess()``: the holonomic planar drive, the
-visual/collision split, the lidar/IMU sites, actuators, the 14 gripper ``<mimic>`` couplings as MJCF
+visual/collision split, the IMU site, actuators, the 14 gripper ``<mimic>`` couplings as MJCF
 joint equalities, sensors, and the home keyframe. See the package THIRD_PARTY.md for the assumptions
 and their sensitivity.
 
@@ -57,6 +57,13 @@ SOURCES = {
     "pal_pro_gripper": ("pal_pro_gripper", "3588daa87cf4dd7f2310b098c03dd8d2bb27faa6", "1.12.5"),
     "pal_urdf_utils": ("pal_urdf_utils", "775cdd6886296e6c00f17dbdfd9bcdd20e0e6622", "2.9.2"),
 }
+#: base_link's scanner-band collision box as MuJoCo writes it from base.urdf.xacro:64-69 (half
+#: extents), and the half extents of the visual body's waist that replaces it: omni_base_description
+#: meshes/base/base_link.stl sliced at z 0.1174-0.1466 spans x +-0.2500..0.2509, y +-0.1589..0.1598,
+#: the larger values in the fillets at the band's edges. See postprocess().
+BASE_BAND_BOX_SIZE = "0.29 0.195 0.015"
+BASE_WAIST_HALF_EXTENTS = "0.25 0.159 0.015"
+
 # ROS package name -> (source key, path within that checkout). `xacro`'s $(find …) is resolved
 # against these and nothing else.
 PACKAGES = {
@@ -68,14 +75,19 @@ PACKAGES = {
     "pal_urdf_utils": ("pal_urdf_utils", "."),
 }
 
-# xacro args. Everything except `camera_model` is PAL's own default (dual tiago-pro arms, spherical
-# wrists + tool changers, pal-pro-grippers, sick-571 front+rear lasers, no teleop pilot station).
+# xacro args. Everything except `camera_model` and `laser_model` is PAL's own default (dual tiago-pro
+# arms, spherical wrists + tool changers, pal-pro-grippers, no teleop pilot station).
 #
 # camera_model: PAL's default is `realsense-d435i`, but at this pin
 # tiago_pro_head_description/meshes/ ships only `realsense-d435_cover_link.stl` -- the `d435i` cover
 # mesh does not exist upstream, so the default config cannot be compiled. `realsense-d435` is the
 # nearest present variant (the d435 and d435i differ only by the IMU the sim does not read).
-XACRO_ARGS = ["camera_model:=realsense-d435"]
+#
+# laser_model: PAL's default is `sick-571`; `no-laser` is its other choice
+# (tiago_pro_configuration.yaml). The two TIM571s are roqsim_sensors `sick_tim571` devices the
+# manifest mounts at PAL's joint origins, so the model carries no laser link, mesh or site of its own.
+# `virtual_base_laser_link` is outside the laser macro and stays.
+XACRO_ARGS = ["camera_model:=realsense-d435", "laser_model:=no-laser"]
 
 MODEL = "tiago_pro"
 HEADLINE = "PAL Robotics TIAGo Pro (omnidirectional base, SEA arm, head and PRO gripper) for MuJoCo."
@@ -177,17 +189,6 @@ HOME = {
     **dict(zip(ARM_R, [-0.36, -1.83, -0.47, -2.35, 0.0, -1.2, 0.0], strict=True)),
 }
 
-# 2D nav lidar mounts. Positions are the source laser links' exact poses expressed in base_link
-# (base_sensors.urdf.xacro: laser_height 0.13244, front/rear at diagonal corners); the yaw is each
-# laser's own mounting yaw (-45 deg front, +135 deg rear), so the two 270-deg fans overlap into full
-# 360-deg coverage. Own upright sites rather than the source links because the real laser links are
-# mounted z-down and roqsim's `lidar` casts its fan in the site's local xy plane -- a flipped site
-# scans the same plane with reversed handedness. Position/yaw are the source's, the upright z is
-# ours. See port log C1.
-LIDAR_SITES = {
-    "lidar_front": ("0.2751 -0.183 0.13244", "0 0 -0.7853981634"),
-    "lidar_rear": ("-0.2751 0.183 0.13244", "0 0 2.3561944902"),
-}
 
 
 def _sh(cmd: list[str], **kw) -> str:
@@ -335,8 +336,8 @@ def postprocess(base: Path, out: Path) -> None:
     # Explicit attrs beat class defaults in MJCF, so pop them first. rgba is KEPT on visuals: it
     # is the real URDF colour, which is why this port needs no material-recovery step.
     #
-    # density="0" is deliberately kept on visual geoms rather than stripped. robot-porting warns
-    # that a zero-density mesh geom renders as its bounding sphere; that does NOT reproduce here
+    # density="0" is deliberately kept on visual geoms rather than stripped. A zero-density mesh
+    # geom is said to render as its bounding sphere; that does NOT reproduce here
     # (checked by rendering base_link with and without it under MuJoCo 3.11 -- identical mesh), and
     # stripping it instead corrupts the mass: 14 of the 72 source links carry no <inertial>, so
     # MuJoCo derives their inertia from geometry and the visual meshes then contribute ~20 kg of
@@ -351,6 +352,25 @@ def postprocess(base: Path, out: Path) -> None:
         g.set("class", f"{MODEL}_{'visual' if visual else 'collision'}")
 
     bodies = {b.get("name"): b for b in root.iter("body")}
+
+    # ---- base_link: the scanner band is the visual body's waist ---------------------------
+    # PAL gives base_link a 0.58 x 0.39 x 0.03 m collision box at z 0.132 (base.urdf.xacro:64-69),
+    # and both TIM571 scan origins, at (+-0.27512, -+0.18297, 0.13244), lie inside it. PAL's visual
+    # body is recessed across that box's whole z-range: base_link.stl sliced anywhere in 0.117-0.147
+    # is a 0.500 x 0.318 m waist, and both scanners stand outside it in the open band between the
+    # lower and upper chassis. The box takes that waist's extent, which is the opening the real base
+    # has; its z-range stays PAL's. It sets no part of the footprint (the boxes above and below it are
+    # wider), and base_link's mass and inertia are its explicit <inertial>, so neither changes.
+    band = [
+        g for g in bodies["base_link"].findall("geom")
+        if g.get("type") == "box" and g.get("size") == BASE_BAND_BOX_SIZE
+    ]
+    if len(band) != 1:
+        raise RuntimeError(
+            f"base_link has {len(band)} collision boxes of size {BASE_BAND_BOX_SIZE!r}, expected "
+            f"PAL's one scanner-band box -- the description changed under the pin"
+        )
+    band[0].set("size", BASE_WAIST_HALF_EXTENTS)
 
     # ---- wheels: near-frictionless load carriers -----------------------------------------
     # The real base runs 4 mecanum wheels. Their rollers are NOT modelled (see the port log's
@@ -372,7 +392,7 @@ def postprocess(base: Path, out: Path) -> None:
         # joint whose <limit effort> is 6 N.m, so the wheel cannot reach the speed the same file
         # permits -- the observational wheel servos under-run and joint_states misreports wheel speed.
         #
-        # But they were also what kept the wheel servos stable, because the bare wheel inertia is tiny
+        # But they also keep the wheel servos stable, because the bare wheel inertia is tiny
         # (~4e-4 kg.m^2): an explicit velocity servo needs kv < I/dt to be stable, i.e. kv < 0.2 here,
         # and the wheels spin chaotically without either. `armature` is the principled fix -- it is
         # the motor's rotor inertia reflected through the gearbox, which a real geared wheel drive
@@ -384,9 +404,9 @@ def postprocess(base: Path, out: Path) -> None:
             j.set("armature", "0.05")
 
     # ---- gripper pads: explicit rubber friction ------------------------------------------
-    # The finger links that touch a grasped object were inheriting the generic collision class, i.e.
+    # Left to the generic collision class, the finger links that touch a grasped object get
     # MuJoCo's default friction (1.0 sliding, 0.005 torsional, 0 rolling) with no `priority` -- so the
-    # effective coefficients depended on whatever object was being gripped rather than on the gripper.
+    # effective coefficients depend on whatever object is being gripped rather than on the gripper.
     # Real PRO pads are rubber, and `priority=3` makes the pad's values win outright so the pair is a
     # property of the gripper. Torsional friction matters here: the 0.005 default lets a held object
     # spin about the contact normal under its own weight.
@@ -397,9 +417,9 @@ def postprocess(base: Path, out: Path) -> None:
     #
     # STILL OPEN: these links collide via their vendor mesh CONVEX HULLS, which is what makes the pinch
     # 2-point (see the port log). The fix is a pad collision primitive, and it belongs on the
-    # `fingertip_*` links -- they are the geometry that straddles the TCP. An attempt to put pads on
-    # `inner_finger_*` instead (chosen because it carries the largest jaw-facing facet, 11 x 43 mm) was
-    # WRONG and is recorded here so it is not repeated: that link is proximal, its pad sits ~60 mm
+    # `fingertip_*` links -- they are the geometry that straddles the TCP. Pads on `inner_finger_*`
+    # instead (tempting, because it carries the largest jaw-facing facet, 11 x 43 mm) are WRONG:
+    # that link is proximal, its pad sits ~60 mm
     # behind the TCP along the approach axis, and it can never reach an object at the grasp point.
     # Choose the pad link by what straddles the TCP, not by facet area.
     for side in ("left", "right"):
@@ -410,7 +430,7 @@ def postprocess(base: Path, out: Path) -> None:
                     if g.get("class") != f"{MODEL}_collision":
                         continue
                     # 0.7, matching roqsim_manipulation_assets' robotiq_2f85 pads (Menagerie's values,
-                    # and the reference for a WORKING grasp in this substrate). 1.6 was tried and is
+                    # and the reference for a WORKING grasp in this substrate). 1.6 is
                     # too high once the world sets `impratio: 10` and an elliptic cone: the tangential
                     # capacity then exceeds what the angled pads can hold in shear and the object is
                     # extruded out sideways instead of gripped.
@@ -421,9 +441,9 @@ def postprocess(base: Path, out: Path) -> None:
                     # resolves a contact pair from the HIGHER-priority geom alone -- friction,
                     # condim AND the solver parameters. So `priority=3` silently replaces whatever
                     # grasp tuning the OBJECT carries with this geom's defaults: measured, a
-                    # graspable prop's solref of 0.005 became the collision class's 0.02, a 4x
-                    # stiffer contact, and grasps that had been working stopped. Softened values
-                    # belong on the pad because the pad is what now owns the pair.
+                    # graspable prop's solref of 0.005 becomes the collision class's 0.02, a 4x
+                    # stiffer contact, and grasps that work on the softer contact fail. Softened
+                    # values belong on the pad because the pad is what now owns the pair.
                     g.set("solref", "0.004 1")
                     # solimp stiffer than the graspable props' own 0.9 0.95: a held object CREEPS
                     # downward through this gripper's contact under sustained load, because the pads
@@ -436,7 +456,7 @@ def postprocess(base: Path, out: Path) -> None:
     # ---- gripper linkage joints: armature + damping ---------------------------------------
     # The source URDF gives the finger linkage joints no armature and almost no damping, and their
     # effort limit is 0.1 N.m. A revolute joint on a small link therefore has near-zero effective
-    # inertia -- the same condition that made the wheel servos chatter (A5) -- and under the stiff
+    # inertia -- the same condition that makes bare wheel servos chatter (A5) -- and under the stiff
     # contact solve a grasp needs (elliptic cone, impratio 10) the linkage rings and the two jaws grab
     # unevenly, so one pad loses contact and the object is pushed out sideways.
     #
@@ -481,16 +501,6 @@ def postprocess(base: Path, out: Path) -> None:
     bodies["base_imu_link"].insert(
         0, ET.Element("site", {"name": "base_imu", "size": "0.01", "rgba": "0 0 0 0"})
     )
-
-    base_link = bodies["base_link"]
-    for i, (name, (pos, euler)) in enumerate(LIDAR_SITES.items()):
-        base_link.insert(
-            i,
-            ET.Element(
-                "site",
-                {"name": name, "pos": pos, "euler": euler, "size": "0.006", "rgba": "1 0 0 0.6"},
-            ),
-        )
 
     # Head RGB-D camera on the source's camera link. fovy 42.5 deg / 640x480 matches roqsim_sensors'
     # d435 model (the D435 colour stream's vertical FOV), so the two agree on one sensor.
@@ -668,9 +678,9 @@ def add_pad_boxes(model_path: Path) -> None:
     `inner_finger_*` -- which carries a much nicer 11 x 43 mm face -- sits ~60 mm behind it and can
     never touch an object at the grasp point.
 
-    The inward direction is asserted below rather than assumed. This pass was once disabled on the
-    belief that the `lr == "left"` sign put that pad on the finger's BACK; measuring the generated
-    geoms disproved it -- both jaws come out symmetric, centres at +-13.4 mm in TCP y with the normals
+    The inward direction is asserted below rather than assumed. The `lr == "left"` sign reads as if
+    it put that pad on the finger's BACK; it does not -- measured on the generated geoms, both jaws
+    come out symmetric, centres at +-13.4 mm in TCP y with the normals
     facing each other and a 18.8 mm face gap at PAD_REF_TRAVEL. The assertion is what keeps that
     question answered: if a future upstream link rename or frame change does flip a side, this raises
     instead of silently shipping a jaw that cannot touch anything.

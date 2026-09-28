@@ -5,7 +5,7 @@ OBJs -- grey housing (``mid360_body``) and laser dome window (``mid360_dome``). 
 scaled mm->m, have their base dropped to z=0 with the housing centred on x=y=0, and are exported axes
 1:1 (Z up).
 
-The dome is the housing CAD's material ``mat_2``. The sensor's FOV is no longer a baked mesh --
+The dome is the housing CAD's material ``mat_2``. The sensor's FOV is not a baked mesh --
 ``spawn_sensor`` synthesises it as an angular sector from the datasheet angles in
 ``mid360.manifest.yaml`` -- so this script produces only the two housing meshes. Invoked by
 ``livox_mid360_convert.py``; not run directly.

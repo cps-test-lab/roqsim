@@ -34,14 +34,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
-from .kinematics import body_twist
+from . import exit_status, logging_setup
+from .capture import decimated
+from .kinematics import body_twist, joint_dofs, joint_width
+from .motion import MotionError, motion_onset
 from .recording import RecordingError, open_recording
 
 log = logging.getLogger(__name__)
-
-EXIT_BAD_ARGS = 2
-EXIT_PROVENANCE = 4
 
 
 class StateError(RuntimeError):
@@ -136,8 +135,8 @@ def joint_columns(model, data, names: list[str]) -> dict:
     for name in names:
         jid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
         qadr, dadr = int(model.jnt_qposadr[jid]), int(model.jnt_dofadr[jid])
-        width = _joint_width(model, jid)
-        dof = _joint_dofs(model, jid)
+        width = joint_width(model, jid)
+        dof = joint_dofs(model, jid)
         for i in range(width):
             suffix = "" if width == 1 else f".{i}"
             out[f"{name}.qpos{suffix}"] = float(data.qpos[qadr + i])
@@ -145,28 +144,6 @@ def joint_columns(model, data, names: list[str]) -> dict:
             suffix = "" if dof == 1 else f".{i}"
             out[f"{name}.qvel{suffix}"] = float(data.qvel[dadr + i])
     return out
-
-
-_JOINT_WIDTH = {
-    int(mujoco.mjtJoint.mjJNT_FREE): 7,
-    int(mujoco.mjtJoint.mjJNT_BALL): 4,
-    int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
-    int(mujoco.mjtJoint.mjJNT_HINGE): 1,
-}
-_JOINT_DOFS = {
-    int(mujoco.mjtJoint.mjJNT_FREE): 6,
-    int(mujoco.mjtJoint.mjJNT_BALL): 3,
-    int(mujoco.mjtJoint.mjJNT_SLIDE): 1,
-    int(mujoco.mjtJoint.mjJNT_HINGE): 1,
-}
-
-
-def _joint_width(model, jid: int) -> int:
-    return _JOINT_WIDTH[int(model.jnt_type[jid])]
-
-
-def _joint_dofs(model, jid: int) -> int:
-    return _JOINT_DOFS[int(model.jnt_type[jid])]
 
 
 def mjcf_sensor_columns(model, data, names: list[str]) -> dict:
@@ -182,16 +159,23 @@ def mjcf_sensor_columns(model, data, names: list[str]) -> dict:
 
 
 def contact_rows(model, data) -> list[dict]:
-    """Every current contact: the geom pair, where it is, and how hard. One row per contact."""
+    """Every current contact: its two sides, where it is, and how hard. One row per contact.
+
+    A side is a geom or a flex. ``geom1``/``geom2`` name the geom (its id where it has no name) and
+    are ``None`` on a flex side, where ``flex1``/``flex2`` name the flex and ``vert1``/``vert2`` or
+    ``elem1``/``elem2`` give the vertex or element that touched, indices local to the flex; each is
+    ``None`` where it does not apply. A flex side carries ``geom = -1`` in MuJoCo's contact, and
+    naming that id would name the model's last geom.
+    """
     rows = []
     force = np.zeros(6)
     for i in range(data.ncon):
         con = data.contact[i]
         mujoco.mj_contactForce(model, data, i, force)
-        rows.append(
+        sides = [_contact_side(model, con, k) for k in (0, 1)]
+        row = {f"{key}{k + 1}": side[key] for key in _SIDE_KEYS for k, side in enumerate(sides)}
+        row.update(
             {
-                "geom1": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom1) or con.geom1,
-                "geom2": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, con.geom2) or con.geom2,
                 "pos.x": float(con.pos[0]),
                 "pos.y": float(con.pos[1]),
                 "pos.z": float(con.pos[2]),
@@ -199,7 +183,26 @@ def contact_rows(model, data) -> list[dict]:
                 "force.normal": float(force[0]),
             }
         )
+        rows.append(row)
     return rows
+
+
+_SIDE_KEYS = ("geom", "flex", "vert", "elem")
+
+
+def _contact_side(model, con, k: int) -> dict:
+    """Side *k* of one contact as ``geom``/``flex``/``vert``/``elem``, ``None`` where it does not apply."""
+    geom = int(con.geom[k])
+    if geom >= 0:
+        name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
+        return {"geom": name or geom, "flex": None, "vert": None, "elem": None}
+    flex, vert, elem = int(con.flex[k]), int(con.vert[k]), int(con.elem[k])
+    return {
+        "geom": None,
+        "flex": mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_FLEX, flex) or flex,
+        "vert": vert if vert >= 0 else None,
+        "elem": elem if elem >= 0 else None,
+    }
 
 
 def _rpy(quat) -> tuple[float, float, float]:
@@ -370,6 +373,18 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
     }
 
 
+def _refuse_stale(rec, endpoints, sample) -> None:
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
+    stale = rec.failed_endpoints(endpoints) if endpoints else {}
+    if stale:
+        detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))
+        raise StateError(
+            f"at t={sample.sim_time:.3f} s the replay could not compute {detail}. Its value would be "
+            "the previous sample's, so nothing is written for it."
+        )
+
+
 def _row(model, sample, chosen, endpoints, twist: bool = False) -> dict:
     # Both clocks lead every row: a series is often read to ask what the run *cost* at some point in it
     # (a controller stalling, a sensor going expensive), and that question is unanswerable from sim time.
@@ -429,6 +444,27 @@ def _write_npz(arrays: dict, times, walls, out: Path, header: dict) -> None:
     )
 
 
+#: Ways of choosing the signal that do not name joints. Anything else is a comma-separated joint list.
+_ONSET_KEYWORDS = ("auto", "planar", "actuated", "any")
+
+
+def _onset_record(rec, target: str | None, select: str) -> dict:
+    """When this recording first moves, as the CLI's JSON.
+
+    ``select="any"`` deliberately does **not** build the world: reading every velocity needs only the
+    samples, which is what lets it answer for a recording whose world no longer rebuilds. Every other
+    selection needs the model to tell the robot's joints from the scenery's.
+    """
+    how = (
+        select
+        if select in _ONSET_KEYWORDS
+        else tuple(n.strip() for n in select.split(",") if n.strip())
+    )
+    model = None if how == "any" else rec.build(target)[0]
+    record = motion_onset(rec, select=how, model=model).as_record()
+    return {"recording": str(rec.path), "world": rec.world, "span": list(rec.span), **record}
+
+
 def run_state(
     state,
     target: str | None = None,
@@ -445,11 +481,76 @@ def run_state(
     stop: float | None = None,
     out: str | Path | None = None,
     check: bool = False,
+    onset: bool = False,
+    onset_select: str = "auto",
+    decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    rec = open_recording(state)
-    model, ctx = rec.build(target)
+    # Closed on every way out, so a replayed camera's renderer is released (Recording.close).
+    with open_recording(state) as rec:
+        return _state_of(
+            rec,
+            target,
+            bodies=bodies,
+            sites=sites,
+            joints=joints,
+            mjcf_sensors=mjcf_sensors,
+            sensors=sensors,
+            twist=twist,
+            contacts=contacts,
+            at=at,
+            start=start,
+            stop=stop,
+            out=out,
+            check=check,
+            onset=onset,
+            onset_select=onset_select,
+            decimate=decimate,
+        )
+
+
+def _state_of(
+    rec,
+    target: str | None,
+    *,
+    bodies,
+    sites,
+    joints,
+    mjcf_sensors,
+    sensors,
+    twist: bool,
+    contacts: bool,
+    at: float | None,
+    start: float | None,
+    stop: float | None,
+    out: str | Path | None,
+    check: bool,
+    onset: bool,
+    onset_select: str,
+    decimate: int | None,
+) -> dict:
     out_path = Path(out) if out and str(out) != "-" else None
+
+    # Both of these answer from the samples alone, so they are handled before the world is rebuilt:
+    # a recording whose world can no longer be built -- a model provider that is no longer installed
+    # -- still reports its motion and can still be decimated.
+    if decimate is not None:
+        if out_path is None:
+            raise StateError("--decimate writes a new recording, so it needs --out PATH.")
+        written = decimated(rec, decimate, out_path)
+        after = open_recording(written)
+        return {
+            "decimated": str(written),
+            "source": str(rec.path),
+            "factor": int(decimate),
+            "samples": [len(rec), len(after)],
+            "rate_fps": [str(rec.fps), str(after.fps)],
+            "span": list(after.span),
+        }
+    if onset:
+        return _onset_record(rec, target, onset_select)
+
+    model, ctx = rec.build(target)
 
     # An endpoint's kind can only be read off a *populated* payload, and a sensor fills its port in
     # post_step -- so one sample has to be restored with the plugins running before anything can be said
@@ -506,6 +607,7 @@ def run_state(
                 len(rec),
                 sample.sim_time,
             )
+        _refuse_stale(rec, endpoints, sample)
         record = {**rec.at_record(at, sample), "header": header}
         if contacts:
             record["contacts"] = contact_rows(model, sample.data)
@@ -515,6 +617,7 @@ def run_state(
     rows, times, walls = [], [], []
     array_series: dict[str, list] = {}
     for sample in rec.range(start, stop):
+        _refuse_stale(rec, endpoints, sample)
         times.append(sample.sim_time)
         walls.append(sample.wall_time)
         if any(endpoint_kind(e) == KIND_ARRAY for e in endpoints):
@@ -559,7 +662,11 @@ def run_state(
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim state", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim state",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -600,7 +707,28 @@ def main(argv: list | None = None) -> int:
         help="a sensor the WORLD declares, re-run as it was configured (see --check for the list)",
     )
     sel.add_argument("--contacts", action="store_true", help="the contacts at that moment")
+    sel.add_argument(
+        "--onset",
+        action="store_true",
+        help="when this run first moves, as JSON (see --onset-select); a run that never moved "
+        "reports moved=false rather than a time",
+    )
+    sel.add_argument(
+        "--onset-select",
+        metavar="HOW",
+        default="auto",
+        help="'auto' (default; planar for a mobile base, actuated joints for a fixed one), "
+        "'planar', 'actuated', 'any' (every velocity -- needs no world rebuild, but sees a "
+        "spawn drop), or a comma-separated list of joint names",
+    )
     parser.add_argument("--check", action="store_true", help="report what this recording offers")
+    parser.add_argument(
+        "--decimate",
+        type=int,
+        metavar="N",
+        help="write a copy of the recording keeping every Nth sample, at 1/N of its rate "
+        "(needs --out)",
+    )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -624,13 +752,12 @@ def main(argv: list | None = None) -> int:
             stop=args.stop,
             out=args.out,
             check=args.check,
+            onset=args.onset,
+            onset_select=args.onset_select,
+            decimate=args.decimate,
         )
-    except RecordingError as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_PROVENANCE
-    except StateError as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+    except (RecordingError, StateError, MotionError) as err:
+        return exit_status.fail("roqsim state", err)
 
     if not (args.out and str(args.out) != "-" or args.out == "-"):
         print(json.dumps(record))

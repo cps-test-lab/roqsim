@@ -219,7 +219,7 @@ def test_world_yaml_round_trips_and_places_the_robot_first(tmp_path):
 
 
 def test_the_generated_world_loads(tmp_path):
-    """The consequence, and the only assertion that would have caught this.
+    """The consequence, and the only assertion that catches it.
 
     The entry's shape is not a matter of taste: the loader refuses a `name` inside a plugin's
     config by name, so a generated world carrying one cannot be run at all -- and a generator
@@ -421,10 +421,10 @@ def test_emitted_props_validate_against_the_plugin_that_reads_them(obstacle):
     """The check the YAML round-trip cannot make: does the plugin ACCEPT what we wrote?
 
     Everything else here compares the emitted mapping against arithmetic this module also owns, so a
-    generator that emits a key no plugin reads passes all of it. That is not hypothetical: `pos:` was
-    emitted here for as long as the tool existed, was removed from `box`/`cylinder` in favour of the
-    single `pose:` shape, and every generated world stopped loading -- with the tests green, because
-    no test asked the plugin. Validation is the plugin's own, so it moves when the schema moves.
+    generator that emits a key no plugin reads passes all of it. When the plugins' schema drops a
+    key the generator still emits, every generated world stops loading while those tests stay green,
+    because none of them asks the plugin. Validation is the plugin's own, so it moves when the
+    schema moves.
     """
     box = pytest.importorskip("roqsim_assets.plugins.box")
     cylinder = pytest.importorskip("roqsim_assets.plugins.cylinder")

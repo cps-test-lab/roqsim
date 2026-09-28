@@ -92,7 +92,7 @@ def _drift(recorded: np.ndarray, expected: np.ndarray) -> np.ndarray:
 
     A unit quaternion and its negation are the same rotation, and the blend that produces these
     picks a sign by whichever branch a near-tie falls on. Comparing raw components therefore reports
-    a difference of up to 2.0 for a body that did not move at all -- which happened: one bone, one
+    a difference of up to 2.0 for a body that did not move at all -- a real case: one bone, one
     frame, ``q_new == -q_ref`` to the bit with identical positions and ``|dot| == 1``. A guard that
     fires on that is worse than no guard, because the first thing it teaches is to ignore it.
 

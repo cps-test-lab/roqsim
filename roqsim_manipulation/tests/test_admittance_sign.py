@@ -2,9 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """A contact controller must push back less as the contact pushes back more.
 
-The law and the sensor disagreed about which direction a wrench means. Both conventions are
-plausible and they are negatives of each other, so the mistake did not read as a sign error -- it
-read as the contact getting away from the controller.
+The law and the sensor must agree about which direction a wrench means. Both conventions are
+plausible and they are negatives of each other, so a mismatch does not read as a sign error -- it
+reads as the contact getting away from the controller.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def _law(measures="environment_on_tool", pressed_newtons=0.0):
 def test_the_target_contact_force_is_an_equilibrium(measures):
     """At exactly the target, the law commands nothing. That is what "regulates" means, and the
     reading it is computed from differs by a sign between the two conventions -- so a law that
-    assumed one of them had an equilibrium in one and a runaway in the other."""
+    assumes one of them has an equilibrium in one and a runaway in the other."""
     twist = _law(measures, pressed_newtons=10.0)._wrench_twist(0.01)
     assert twist[2] == pytest.approx(0.0, abs=1e-9)
 

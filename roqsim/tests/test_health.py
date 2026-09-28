@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from roqsim import health
+from roqsim import exit_status, health
 
 CLOCK_HEADER = "wall_ts,sim_ts\n"
 POSE_HEADER = ",".join(
@@ -161,6 +161,142 @@ def test_tail_skips_a_row_it_cannot_trust(tmp_path):
     assert tail.malformed == 1
 
 
+# -- the tailer enters a long record at its window ------------------------------------------------
+#
+# A supervisor runs `roqsim health` as a NEW PROCESS on every poll, inside the simulator's own
+# container and memory budget. A reader that parsed the whole record on every poll had a transient
+# footprint that grew for as long as the run did -- until, several minutes into a run under a
+# calibrated limit, the poll's own allocation was what put the simulator over it. The checks judge
+# the newest minute, so that is all a reader may read.
+
+
+def test_a_windowed_tail_reads_the_window_and_skips_the_rest(tmp_path, monkeypatch):
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)  # ten rows, so the over-read is visible
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(10000)))
+    tail = health.Tail(path, window=70.0)
+    rows = tail.rows()
+    stamps = [float(r["wall_ts"]) for r in rows]
+    assert stamps[-1] == 10999.0, "the newest row is read"
+    assert stamps[0] <= 10999.0 - 70.0, "the whole window is covered"
+    assert stamps[0] > 10999.0 - 70.0 - 12, "and at most one chunk more"
+    assert tail.skipped > 0.9 * path.stat().st_size, "the rest of the file was never read"
+    assert "sim_ts" in rows[0], "the header is consumed as a header although it was skipped over"
+
+
+def test_a_windowed_tail_still_follows_what_arrives(tmp_path):
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(1000)))
+    tail = health.Tail(path, window=70.0)
+    assert tail.rows()
+    with path.open("a") as handle:
+        handle.write(clock_line(2000.0, 1000.0))
+        handle.write("2001.0,1001.0")  # a row still being written
+        handle.flush()
+    assert [r["sim_ts"] for r in tail.rows()] == ["1000.000000"]
+    with path.open("a") as handle:
+        handle.write("\n")
+    assert [r["sim_ts"] for r in tail.rows()] == ["1001.0"]
+
+
+def test_a_windowed_tail_reads_a_short_record_whole(tmp_path):
+    path = tmp_path / "c.csv"
+    path.write_text(CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(30)))
+    tail = health.Tail(path, window=70.0)
+    assert len(tail.rows()) == 30
+    assert tail.skipped == 0
+
+
+def test_a_windowed_tail_ignores_a_partial_last_row_when_placing_the_window(tmp_path, monkeypatch):
+    """The newest stamp is taken from the last COMPLETE row: the fragment after the final newline
+    may be cut inside its first field, and a window placed from a truncated number is placed wrong."""
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)
+    path = tmp_path / "c.csv"
+    path.write_text(
+        CLOCK_HEADER + "".join(clock_line(1000.0 + t, float(t)) for t in range(1000)) + "1"
+    )
+    tail = health.Tail(path, window=70.0)
+    stamps = [float(r["wall_ts"]) for r in tail.rows()]
+    assert stamps[-1] == 1999.0
+    assert stamps[0] <= 1999.0 - 70.0
+
+
+def test_a_windowed_tail_enters_a_reset_record_no_earlier_than_the_reset(tmp_path, monkeypatch):
+    """The pose record's time column is sim time, which a world reset sends back to zero. Scanning
+    backwards from a young series, the rows before the reset are OLDER in the file but LATER in sim
+    time, so the window's arithmetic would never find a row old enough and the scan would read the
+    whole run. The checks re-anchor at a reset, so nothing before it changes a verdict: stop there."""
+    monkeypatch.setattr(health, "_SCAN_CHUNK", 256)
+    path = tmp_path / "p.csv"
+    before = [pose_line(float(t), "base", 0.0) for t in range(5000)]  # long; all before the reset
+    after = [pose_line(float(t), "base", 0.0) for t in range(20)]  # young: shorter than any window
+    path.write_text(POSE_HEADER + "".join(before) + "".join(after))
+    tail = health.Tail(path, window=70.0)
+    rows = tail.rows()
+    assert [r["timestamp"] for r in rows][-20:] == [f"{t:.6f}" for t in range(20)]
+    assert len(rows) <= 20 + 4, "at most one chunk from before the reset"
+
+
+def test_a_one_shot_check_on_a_long_run_costs_the_window_and_not_the_run(tmp_path, capsys):
+    """The property the tailer's window exists for, asserted end to end through the CLI.
+
+    A run an hour long at 25 Hz, one body: several megabytes of poses, of which the checks need the
+    last minute. Peak allocation while judging it must not scale with the file -- the bound here is
+    loose against the window and far below what parsing the whole record costs.
+    """
+    import tracemalloc
+
+    now = time.time()
+    hz, seconds = 25, 3600
+    write_run(
+        tmp_path,
+        [clock_line(now - seconds + i / hz, i / hz) for i in range(seconds * hz)],
+        [pose_line(i / hz, "base", (i / hz) * 0.5) for i in range(seconds * hz)],
+    )
+    size = (tmp_path / "sim_poses.csv").stat().st_size
+    assert size > 8 * 1024 * 1024, "the record has to be large for the bound to mean anything"
+    tracemalloc.start()
+    try:
+        code = health.main([str(tmp_path), "--robot", "base", "--json"])
+        _, peak = tracemalloc.get_traced_memory()
+    finally:
+        tracemalloc.stop()
+    assert code == exit_status.OK
+    assert peak < size / 2, f"peak {peak} bytes against a {size} byte record"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["state"]["sim_ts"] == pytest.approx(seconds - 1 / hz)
+    assert any("were not read" in note for note in payload["notes"]), "and the report says so"
+
+
+def test_a_long_run_whose_robot_stopped_is_still_caught_from_the_window(tmp_path, capsys):
+    """A robot that moved for an hour and has stood still for the last two minutes: the finding
+    comes from the newest minute alone, which is exactly what the window keeps."""
+    now = time.time()
+    moving = [pose_line(float(t), "base", t * 0.5) for t in range(0, 3600)]
+    parked = [pose_line(float(t), "base", 1800.0) for t in range(3600, 3720)]
+    write_run(
+        tmp_path,
+        [clock_line(now - 3720 + t, float(t)) for t in range(0, 3720)],
+        moving + parked,
+    )
+    assert health.main([str(tmp_path), "--robot", "base"]) == exit_status.OK
+    out = capsys.readouterr().out
+    assert "robot-motion" in out and "moved under 1 cm" in out
+
+
+def test_a_long_run_whose_clock_wedged_is_still_caught_from_the_window(tmp_path, capsys):
+    """An hour at realtime, then rows for two minutes whose sim time stands still.
+
+    The one stop a one-shot check can see, because the rows record it: they arrived, and sim time
+    did not advance in them."""
+    now = time.time()
+    running = [clock_line(now - 3720 + t, float(t)) for t in range(0, 3600)]
+    wedged = [clock_line(now - 3720 + t, 3600.0) for t in range(3600, 3720)]
+    write_run(tmp_path, running + wedged)
+    assert health.main([str(tmp_path)]) == exit_status.FINDING
+    assert "sim-time-stuck" in capsys.readouterr().out
+
+
 # -- check 2: sim time starts ------------------------------------------------------------------
 
 
@@ -203,7 +339,83 @@ def test_start_check_is_silent_when_no_record_has_appeared_yet():
     assert check.findings(now=100.0 + 30.0, origin=100.0) == []
 
 
-# -- check 3: sim time rate --------------------------------------------------------------------
+# -- check 3: sim time keeps advancing -----------------------------------------------------------
+
+
+def test_stuck_check_passes_a_run_whose_rows_keep_arriving():
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 121)])
+    assert check.findings(now=221.0, origin=100.0) == []
+
+
+def test_stuck_check_fires_when_rows_stop_arriving():
+    """A frozen simulation writes no clock rows; against the wall clock, the silence is the finding."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)])
+    assert check.findings(now=109.0 + 59.0, origin=100.0) == [], "within the floor"
+    findings = check.findings(now=109.0 + 61.0, origin=100.0)
+    assert [(f.level, f.check) for f in findings] == [(health.ERROR, "sim-time-stuck")]
+    assert "has not advanced for 61 s" in findings[0].detail
+
+
+def test_stuck_check_does_not_fire_on_an_expensive_world():
+    """A deformable body at a sub-millisecond step: a few percent of realtime, but a row arrives on
+    every sample -- it is slow, not stopped."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + 3.3 * i, 0.1 * i) for i in range(0, 200)])
+    last = 100.0 + 3.3 * 199
+    assert check.findings(now=last + 3.0, origin=100.0) == []
+
+
+def test_stuck_check_measures_silence_against_the_runs_own_cadence():
+    """Rows twenty seconds apart: a minute without one is three missed rows, not a stop."""
+    check = health.SimTimeStops(floor=60.0, factor=10.0)
+    check.update([health.ClockRow(100.0 + 20.0 * i, 0.1 * i) for i in range(0, 10)])
+    last = 100.0 + 20.0 * 9
+    assert check.limit() == pytest.approx(200.0)
+    assert check.findings(now=last + 150.0, origin=100.0) == []
+    assert [f.level for f in check.findings(now=last + 210.0, origin=100.0)] == [health.ERROR]
+
+
+def test_stuck_check_leaves_a_run_that_never_started_to_check_2():
+    """Before sim time has advanced once there is no cadence, and "never started" is check 2's."""
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0, 0.0)])
+    assert check.findings(now=1000.0, origin=100.0) == []
+
+
+def test_stuck_check_counts_a_row_that_does_not_advance_as_silence():
+    """A row whose sim time stood still says the writer is alive, not the simulation -- and it is
+    the only stop a one-shot check, whose "now" is the newest row, can see."""
+    check = health.SimTimeStops()
+    rows = [health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)]
+    rows += [health.ClockRow(110.0 + t, 9.0) for t in range(0, 90)]
+    check.update(rows)
+    findings = check.findings(now=rows[-1].wall_ts, origin=100.0)
+    assert [f.level for f in findings] == [health.ERROR]
+
+
+def test_stuck_check_is_not_tripped_by_a_reset():
+    """Sim time goes back at a reset; the loop is running, so it is progress."""
+    check = health.SimTimeStops()
+    splitter = health.SeriesSplitter()
+    rows = [health.ClockRow(100.0 + t, float(t)) for t in range(0, 60)]
+    rows += [health.ClockRow(160.0 + t, float(t)) for t in range(0, 60)]
+    for index, series in enumerate(splitter.split(rows)):
+        if index:
+            check.on_new_series()
+        check.update(series)
+    assert check.findings(now=220.0, origin=100.0) == []
+
+
+def test_stuck_check_reports_once():
+    check = health.SimTimeStops()
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 10)])
+    assert len(check.findings(now=300.0, origin=100.0)) == 1
+    assert check.findings(now=400.0, origin=100.0) == []
+
+
+# -- check 4: sim time rate --------------------------------------------------------------------
 
 
 def test_rate_check_passes_a_realtime_run():
@@ -218,13 +430,20 @@ def test_rate_check_waits_for_a_full_window():
     assert check.findings(now=130.0, origin=100.0) == [], "never fail a run for its first minute"
 
 
-def test_rate_check_fires_on_a_wedged_run():
-    """Rows stop arriving; the window keeps sliding. Silence is what makes the rate fall."""
+def test_rate_check_warns_on_a_slow_run_whose_rows_keep_arriving():
+    """An expensive world at 3 % of realtime: worth saying, not worth ending the run over."""
     check = health.SimTimeRate(min_advance=5.0, window=60.0)
-    check.update([health.ClockRow(100.0 + t, t * 0.001) for t in range(0, 10)])
-    findings = check.findings(now=100.0 + 90.0, origin=100.0)
-    assert [f.level for f in findings] == [health.ERROR]
-    assert "last row" in findings[0].detail
+    check.update([health.ClockRow(100.0 + 3.3 * i, 0.1 * i) for i in range(0, 40)])
+    findings = check.findings(now=100.0 + 3.3 * 39, origin=100.0)
+    assert [(f.level, f.check) for f in findings] == [(health.WARN, "sim-time-rate")]
+    assert "0.030x realtime" in findings[0].detail
+
+
+def test_rate_check_leaves_silence_to_the_stuck_check():
+    """Rows stop arriving; the rate is measured between rows, so the stop is check 3's alone."""
+    check = health.SimTimeRate(min_advance=5.0, window=60.0)
+    check.update([health.ClockRow(100.0 + t, float(t)) for t in range(0, 61)])
+    assert check.findings(now=100.0 + 600.0, origin=100.0) == []
 
 
 def test_rate_check_is_not_fooled_by_a_reset(tmp_path):
@@ -323,7 +542,7 @@ def test_a_short_record_that_is_still_growing_is_a_note_and_not_a_skip(tmp_path,
     *skip* it says nobody is checking the robot's motion, which sends a reader (or an agent
     reading this document) looking for the reason four seconds into a healthy run."""
     _short_run(tmp_path)
-    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == exit_status.OK
     report = json.loads(capsys.readouterr().out)
 
     assert report["skipped"] == [], "an early run has skipped nothing"
@@ -338,7 +557,7 @@ def test_a_short_record_that_has_CLOSED_is_a_skip(tmp_path, capsys):
     # The one unambiguous end-of-run marker these files carry (see recording_of).
     (run / "run.npz").write_bytes(b"")
 
-    assert health.main([str(run), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(run), "--robot", "base", "--json"]) == exit_status.OK
     report = json.loads(capsys.readouterr().out)
 
     assert any("no verdict was possible" in skip for skip in report["skipped"])
@@ -398,7 +617,7 @@ def test_cli_reports_a_healthy_run(tmp_path, capsys):
         [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
         [pose_line(float(t), "base", t * 0.5) for t in range(0, 120)],
     )
-    assert health.main([str(tmp_path), "--robot", "base"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base"]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
@@ -406,8 +625,31 @@ def test_cli_exits_5_on_a_wedged_run(tmp_path, capsys):
     """--watch is the mode that expects the run to continue, so silence counts against it."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.001) for t in range(0, 10)])
-    assert health.main([str(tmp_path), "--watch"]) == health.EXIT_FINDING
-    assert "sim-time-rate" in capsys.readouterr().out
+    assert health.main([str(tmp_path), "--watch"]) == exit_status.FINDING
+    assert "sim-time-stuck" in capsys.readouterr().out
+
+
+def test_cli_one_shot_cannot_see_a_run_that_stopped(tmp_path, capsys):
+    """The same silent record, one-shot: its rows end, and nothing in them says whether the run
+    ended or froze -- so it is not reported. A caller that must catch a stop runs --watch."""
+    now = time.time()
+    write_run(tmp_path, [clock_line(now - 300 + t, float(t)) for t in range(0, 10)])
+    assert health.main([str(tmp_path)]) == exit_status.OK
+    capsys.readouterr()
+    code = health.main([str(tmp_path), "--watch", "--for", "0.01", "--poll", "0.01"])
+    assert code == exit_status.FINDING, "one bounded --watch pass judges against the wall clock"
+    assert "sim-time-stuck" in capsys.readouterr().out
+
+
+def test_cli_watch_does_not_end_an_expensive_world(tmp_path, capsys):
+    """A few percent of realtime with a row on every sample: a warning, and the watch goes on."""
+    now = time.time()
+    rows = [clock_line(now - 3.3 * (100 - i), 0.1 * i) for i in range(0, 100)]
+    write_run(tmp_path, rows)
+    code = health.main([str(tmp_path), "--watch", "--for", "0.05", "--poll", "0.01", "--json"])
+    assert code == exit_status.OK
+    payload = json.loads(capsys.readouterr().out)
+    assert [(f["level"], f["check"]) for f in payload["findings"]] == [("warn", "sim-time-rate")]
 
 
 def test_cli_one_shot_does_not_call_a_finished_run_stalled(tmp_path, capsys):
@@ -419,16 +661,18 @@ def test_cli_one_shot_does_not_call_a_finished_run_stalled(tmp_path, capsys):
     """
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, float(t)) for t in range(0, 120)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
-def test_cli_still_fails_a_run_that_was_slow_while_it_ran(tmp_path, capsys):
-    """One-shot judges the recorded span -- so a run that crawled is caught from the record alone."""
+def test_cli_still_reports_a_run_that_was_slow_while_it_ran(tmp_path, capsys):
+    """One-shot judges the recorded span -- so a run that crawled is seen from the record alone, and
+    reported as slow rather than failed."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.01) for t in range(0, 200)])
-    assert health.main([str(tmp_path)]) == health.EXIT_FINDING
-    assert "realtime" in capsys.readouterr().out
+    assert health.main([str(tmp_path)]) == exit_status.OK
+    out = capsys.readouterr().out
+    assert "sim-time-rate" in out and "realtime" in out and out.startswith("warn")
 
 
 def test_watch_stops_without_complaint_when_the_recording_closes(tmp_path, capsys):
@@ -436,12 +680,12 @@ def test_watch_stops_without_complaint_when_the_recording_closes(tmp_path, capsy
     now = time.time()
     write_run(tmp_path, [clock_line(now - 30 + t * 0.25, float(t) * 0.25) for t in range(0, 120)])
     (tmp_path / "run.npz").write_bytes(b"not a real archive, only its existence is read")
-    assert health.main([str(tmp_path), "--watch", "--poll", "0.01"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--watch", "--poll", "0.01"]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
 def test_cli_exits_2_without_a_clock_record(tmp_path, capsys):
-    assert health.main([str(tmp_path)]) == health.EXIT_BAD_ARGS
+    assert health.main([str(tmp_path)]) == exit_status.BAD_INPUT
     err = capsys.readouterr().err
     assert "no readable clock record" in err
     # It must not name a cause it did not observe: the record is best-effort, so its absence does
@@ -452,7 +696,7 @@ def test_cli_exits_2_without_a_clock_record(tmp_path, capsys):
 def test_cli_skips_check_1_when_no_robot_is_named(tmp_path, capsys):
     now = time.time()
     write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     out = capsys.readouterr().out
     assert "check 1" in out and "skip" in out, "a skipped check must say so, never pass quietly"
 
@@ -462,10 +706,10 @@ def test_cli_json_carries_the_findings(tmp_path, capsys):
 
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.001) for t in range(0, 10)])
-    assert health.main([str(tmp_path), "--watch", "--json"]) == health.EXIT_FINDING
+    assert health.main([str(tmp_path), "--watch", "--json"]) == exit_status.FINDING
     payload = json.loads(capsys.readouterr().out)
-    assert payload["exit"] == health.EXIT_FINDING
-    assert payload["findings"][0]["check"] == "sim-time-rate"
+    assert payload["exit"] == exit_status.FINDING
+    assert payload["findings"][0]["check"] == "sim-time-stuck"
 
 
 # -- the state block: where everything is, alongside what is wrong ---------------------------------
@@ -483,7 +727,7 @@ def test_json_reports_the_last_pose_and_clock(tmp_path, capsys):
          for line in (pose_line(float(t), "base", t * 0.5),
                       pose_line(float(t), "crate", 3.0))],
     )
-    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == exit_status.OK
     state = json.loads(capsys.readouterr().out)["state"]
     assert state["sim_ts"] == 119.0
     assert state["rate"] == 1.0                      # one sim second per wall second
@@ -555,7 +799,7 @@ def test_a_run_is_found_one_level_below_the_directory_given(tmp_path, capsys):
     os.utime(new_run / "run.clock_map.csv", (now, now))
     os.utime(old_run / "run.clock_map.csv", (now - 600, now - 600))
 
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     state = json.loads(capsys.readouterr().out)["state"]
     # The newest run, and its own poses -- 29.5 is the last sample of the moving robot.
     assert state["entities"][0]["position"] == [29.5, 0.0, 0.0]
@@ -605,7 +849,7 @@ def test_a_re_creation_is_reported_rather_than_hidden(tmp_path, capsys):
     health.time.sleep = shrink_between_polls
     try:
         assert health.main([str(tmp_path), "--watch", "--poll", "0.01", "--for", "0.05",
-                            "--json"]) == health.EXIT_OK
+                            "--json"]) == exit_status.OK
     finally:
         health.time.sleep = real_sleep
     notes = " ".join(json.loads(capsys.readouterr().out)["notes"])
@@ -642,7 +886,7 @@ def test_check_1_watches_the_robots_the_roster_names(tmp_path, capsys):
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
                             {"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK  # check 1 warns, never errors
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK  # check 1 warns, never errors
     payload = json.loads(capsys.readouterr().out)
     motion = [f for f in payload["findings"] if f["check"] == "robot-motion"]
     assert len(motion) == 1, "the standing robot is a finding; the standing shelf is not"
@@ -660,7 +904,7 @@ def test_an_absent_robot_is_not_watched(tmp_path, capsys):
         [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base", "present": False}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert not [f for f in payload["findings"] if f["check"] == "robot-motion"]
     assert any("check 1" in s for s in payload["skipped"]), "nothing watched must say so"
@@ -675,7 +919,7 @@ def test_robot_overrides_the_roster(tmp_path, capsys):
         [pose_line(float(t), "shelf", 3.0) for t in range(0, 120)],
     )
     write_roster(tmp_path, [{"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--robot", "shelf", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "shelf", "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert [f for f in payload["findings"] if f["check"] == "robot-motion"]
 
@@ -688,7 +932,7 @@ def test_a_missing_roster_says_so_rather_than_naming_a_flag(tmp_path, capsys):
         [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
         [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
     )
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     skipped = " ".join(payload["skipped"])
     assert health.ENTITIES_FILENAME in skipped and "check 1" in skipped
@@ -705,7 +949,7 @@ def test_the_state_block_carries_kind_from_the_roster(tmp_path, capsys):
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
                             {"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     kinds = {e["name"]: e.get("kind")
              for e in json.loads(capsys.readouterr().out)["state"]["entities"]}
     assert kinds == {"base": "robot", "shelf": "object"}
@@ -715,7 +959,7 @@ def test_a_malformed_roster_is_a_reason_and_not_a_crash(tmp_path, capsys):
     now = time.time()
     write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
     (tmp_path / health.ENTITIES_FILENAME).write_text("{not json")
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert any("check 1" in s for s in payload["skipped"])
 

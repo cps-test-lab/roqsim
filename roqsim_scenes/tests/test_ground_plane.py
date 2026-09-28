@@ -3,8 +3,7 @@
 A baked scene's floor answers to two constraints that pull apart. The **collider** must sit exactly at
 the ground height, because that is what the robot stands on and what ``contact_monitor: {ignore:
 [floor]}`` names. The **visual** must never hide a floor the scene brought of its own -- one geom doing
-both put a drawn plane at the same z as a scene's own floor mesh, and they z-fought across the room,
-which is why the drawn floor was removed the first time.
+both puts a drawn plane at the same z as a scene's own floor mesh, and they z-fight across the room.
 
 The cases below are mostly ones no scene in the tree exercises, so they are pinned here rather than
 argued: a scene whose floor lies *below* its stated ground height, a scene that states no ground height
@@ -114,11 +113,11 @@ def test_the_visual_never_collides_and_is_actually_drawn(tmp_path):
 
 
 def test_a_scene_that_states_no_ground_height_gets_no_drawn_floor_but_says_so(tmp_path, capsys):
-    """Silence here is the bug this whole feature came from.
+    """Silence here would be the bug.
 
     The height would have to be guessed from the scene's lowest point, and a floor drawn at a guessed
     height makes everything standing on it hover or sink. So it is skipped -- but an unexplained void
-    under the robot in the run view is exactly the report that started this, so the bake must name the
+    under the robot in the run view reads as a broken scene, so the bake must name the
     cause and the fix.
     """
     sj = _scene(tmp_path, ground_z=None, objects=[("Floor", 0.0, True)])
@@ -164,10 +163,10 @@ def test_a_prop_sunk_into_the_floor_does_not_drag_the_drawn_floor_down_with_it(t
     """A source world may bury part of a prop; the floor is meant to hide exactly that part.
 
     ``turtlebot3_world`` sinks the largest of its ornaments 0.5 m into the ground. Reading that as
-    "there is scene floor 0.5 m down" put the drawn plane below it, which exposed the ornament's buried
-    underside -- drawing MORE than the source world does -- and left a half-metre step around the room
-    for everything else. A prop that rises above the stated ground cannot be hidden by a floor at the
-    ground, so it has no say in where that floor goes.
+    "there is scene floor 0.5 m down" puts the drawn plane below it, which exposes the ornament's
+    buried underside -- drawing MORE than the source world does -- and leaves a half-metre step
+    around the room for everything else. A prop that rises above the stated ground cannot be hidden
+    by a floor at the ground, so it has no say in where that floor goes.
     """
     sj = _scene(tmp_path, ground_z=0.0, objects=[("Wall", 1.0, True)])
     _prop(tmp_path / "meshes" / "Ornament.obj", -0.5, 1.5)

@@ -10,11 +10,10 @@ else.
 straight from ``data.xpos``/``data.xquat``. It deliberately does NOT walk the TF tree, because on a
 localized robot the route from the robot's own frames to a world-anchored prop runs through AMCL's
 ``map -> odom`` -- so a "ground truth" object pose fetched over TF arrives with the localization error
-added to it. Measured on the TIAGo Pro pick trial: an exact parcel pose reached the arm 43 mm out in x
-and 73 mm in y, the gripper closed on air, and the stack reported success while the parcel had never
-moved. A grasp with 18 mm of pad clearance cannot absorb that. Reading ground truth in the robot's
-frame is also what a real camera does -- it measures relative to itself -- so this is the faithful
-shape, not a shortcut around one.
+added to it. On a TIAGo Pro pick that error measures 43 mm in x and 73 mm in y: the gripper closes
+on air, and the stack reports success while the parcel never moves. A grasp with 18 mm of pad
+clearance cannot absorb that. Reading ground truth in the robot's frame is also what a real camera
+does -- it measures relative to itself -- so this is the faithful shape, not a shortcut around one.
 
 **It is a sensor like the others here**, and it is configured like one: ground truth plus a
 configurable error model, with noise drawn from ``ctx.rng_for`` so it is reproducible from a recording

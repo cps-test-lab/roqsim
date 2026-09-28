@@ -19,3 +19,6 @@ components:
       site: lidar
       rays: 360
       max_range: 12.0
+      # Nothing is excluded: the site stands 0.12 m above the body, clear of every geom, so no ray starts
+      # inside robot geometry, and a robot part in the scan plane would be a real return.
+      exclude_body: ''

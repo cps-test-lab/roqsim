@@ -23,8 +23,6 @@ anchor child wall). Then:
   robot), and **columns** are emitted as-is.
 
 Returns world-frame vertices only; MuJoCo builds the convex hull at compile time.
-
-Ported from our earlier in-house nav prototype's ``floorplan_collision.py``.
 """
 
 from __future__ import annotations
@@ -166,7 +164,7 @@ def _dedupe(parts):
 def _split_curie(identifier: str) -> tuple[str, str]:
     """``"rooms:pose-a-wrt-b"`` -> ``("rooms:", "pose-a-wrt-b")``; unprefixed ids -> ``("", id)``.
 
-    Identifiers may be plain (our earlier in-house nav prototype's fixtures) or CURIEs with a generator-chosen prefix
+    Identifiers may be plain or CURIEs with a generator-chosen prefix
     (scenery_builder emits ``rooms:``). Frames are keyed by their *full* id, because ``as-seen-by``
     and the polyhedron ``points`` reference them that way; only the ``pose-``/``position-`` tokens
     need the prefix stripped before parsing.

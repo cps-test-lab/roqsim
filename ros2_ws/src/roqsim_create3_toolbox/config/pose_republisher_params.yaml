@@ -1,0 +1,13 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_gz_bringup/config/pose_republisher_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation): the raw-stream topics the Gazebo adapter
+# reads, which roqsim's TurtleBot 4 model publishes under the same names.
+/**:
+  pose_republisher_node:
+    ros__parameters:
+      robot_publisher_topic: sim_ground_truth_pose
+      robot_subscriber_topic: _internal/sim_ground_truth_pose
+      mouse_publisher_topic: _internal/sim_ground_truth_mouse_pose
+      dock_subscriber_topic: _internal/sim_ground_truth_dock_pose
+      dock_publisher_topic: sim_ground_truth_dock_pose
+      ir_emitter_publisher_topic: _internal/sim_ground_truth_ir_emitter_pose
+      ir_receiver_publisher_topic: _internal/sim_ground_truth_ir_receiver_pose

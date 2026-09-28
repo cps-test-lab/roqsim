@@ -23,16 +23,41 @@ components:
       right_actuators: [fr_wheel_motor, rr_wheel_motor]
       left_joints:  [fl_wheel_joint, rl_wheel_joint]
       right_joints: [fr_wheel_joint, rr_wheel_joint]
-  # The base description ships NO lidar: Husarion keeps sensors in husarion_components_description,
-  # so which scanner a unit carries is a deployment choice. These are the Panther's commonly shipped
-  # 3D-capable scanner reduced to a planar scan, and the mount height is an assumption -- port log.
-  - lidar:
-      site: lidar
-      frame_id: laser
-      rays: 720
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.2
-      max_range: 40.0
-      rate_hz: 10.0
-      exclude_body: base_link
+  # The scanner Husarion's own components configuration for this description names: an RPLIDAR S3
+  # (component LDR06) on mount_link at xyz (0, -0.1, 0), rpy 0, named `second_lidar`
+  # (husarion_ugv_description config/components.yaml:5-14 @ 559e784b, the file urdf/panther.urdf.xacro:26
+  # loads by default). That file ships the entry commented out: Husarion includes no lidar with the
+  # base platform and offers several (Panther options manual), so this is the sample, not a standard
+  # fit. The alternatives are in the port log.
+  #
+  # Husarion's macro names the mount link and the scan frame after the component
+  # (slamtec_rplidar.urdf.xacro:249-278 @ 5f783f8): `second_lidar_link` at the joint origin, declared
+  # below, and `second_lidar_laser` 30.5 mm above it, turned half a revolution, which the device
+  # publishes. The scan is the device's, as sllidar_ros2 publishes it, but for the topic. Husarion's
+  # S3 block gives a Gazebo std_dev of 0.015 m (slamtec_rplidar.urdf.xacro:48 @ 5f783f8), a
+  # simulation value, so the data sheet's accuracy stands.
+  #
+  # The scan frame is 0.202 m above body_link, 0.3845 m above the ground at the 0.1825 m wheel radius.
+  - spawn_sensor:
+      model: rplidar_s3
+      parent_frame: second_lidar_link
+      pos: [0.0, 0.0, 0.0]
+      rpy: [0.0, 0.0, 0.0]
+      frame_id: second_lidar_laser  # slamtec_rplidar.urdf.xacro:278, component name second_lidar
+    name: second_lidar
+    components:
+      - lidar:
+          # Relative, so the robot's namespace scopes it: `<ns>/second_lidar/scan`
+          # (slamtec_rplidar.urdf.xacro:286 @ 5f783f8).
+          topics: {scan: second_lidar/scan}
+
+# Fixed links Husarion's description chains and this MJCF flattens into body_link, down to the link
+# the scanner hangs from.
+frames:
+  # husarion_ugv_description urdf/panther/base.urdf.xacro:87-91 @ 559e784b (body_to_cover_joint)
+  - {name: cover_link, parent: body_link, pos: [0.0, 0.0, 0.14], rpy: [0.0, 0.0, 0.0]}
+  # base.urdf.xacro:95-99 (cover_to_mount_joint)
+  - {name: mount_link, parent: cover_link, pos: [0.0, 0.0, 0.0315], rpy: [0.0, 0.0, 0.0]}
+  # config/components.yaml:10-14 @ 559e784b with slamtec_rplidar.urdf.xacro:249-253 @ 5f783f8: the
+  # component's joint from mount_link to `second_lidar_link`, the S3's housing base.
+  - {name: second_lidar_link, parent: mount_link, pos: [0.0, -0.1, 0.0], rpy: [0.0, 0.0, 0.0]}

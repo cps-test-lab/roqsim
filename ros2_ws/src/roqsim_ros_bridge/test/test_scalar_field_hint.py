@@ -1,10 +1,9 @@
 """The ``field`` backend hint: publishing one member of a structured payload as a primitive message.
 
-Guards the gap this closed. ``contact_monitor`` has always declared
-``{"ros2": {"type": "std_msgs.msg.Bool", "topic": "collision"}}``, but nothing had ever bridged it,
-and the reflective fallback would have assigned its ``ContactReport`` dataclass straight to a
-``bool`` field -- a run with a live collision monitor and no ``/collision`` publisher, which reads
-as "nothing was hit". Naming the field on the endpoint keeps the meaning with the producer, so no
+``contact_monitor`` declares ``{"ros2": {"type": "std_msgs.msg.Bool", "topic": "collision"}}``, and
+without a ``field`` hint the reflective fallback would assign its ``ContactReport`` dataclass
+straight to a ``bool`` field -- a run with a live collision monitor and no ``/collision`` publisher,
+which reads as "nothing was hit". Naming the field on the endpoint keeps the meaning with the producer, so no
 primitive type needs a converter in the registry that knows one plugin's attribute names.
 """
 

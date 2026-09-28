@@ -15,24 +15,29 @@ requires-python = ">=3.10"
 # what keeps the dependency acyclic.
 dependencies = [
     "roqsim",
-    "mujoco>=3.0",   # obstacles.py reads wall footprints straight off the compiled model
+    "mujoco>=3.14,<3.15",   # obstacles.py reads wall footprints straight off the compiled model
     "numpy>=1.24",
     "py_trees>=2.2", # the navigate / stuck-recovery behaviour tree
 ]
 
 [project.optional-dependencies]
-test = ["pytest>=7.0"]
+# The navigator is embodiment-agnostic; its tests are not. They drive the embodiments it serves -- a
+# `spawn_robot` TurtleBot 4 (roqsim_mobile), a `walker` (roqsim_walker) and `box` props (roqsim_assets),
+# all in `nav_opponents.yaml` -- because a navigator tested only against stand-ins is not tested
+# against the bodies worlds give it. `roqsim_walker` depends back on this package, so that entry is a
+# cycle confined to the extra; the runtime graph above stays a tree.
+test = ["pytest>=7.0", "roqsim_mobile", "roqsim_walker", "roqsim_assets"]
 # ORCA local collision avoidance: the `orca` model of the world-level `avoidance:` plugin. Built from
-# source (Cython), so it is opt-in -- without it a navigator follows its planned path without
-# yielding, and logs why.
+# source (Cython), so it is opt-in -- without it a world whose `avoidance:` names `orca` fails to
+# load, naming this extra.
 #
 # This is a PEP 508 direct reference, the only one in the tree, and it is a deliberate trade: rvo2
-# publishes no wheel, so the alternatives were vendoring the Cython source or having no ORCA at all.
+# publishes no wheel, so the alternatives are vendoring the Cython source or having no ORCA at all.
 # Two consequences a downstream consumer has to plan for, because pip does not warn about either:
 # PyPI rejects a distribution whose metadata carries a direct URL, so this package cannot be uploaded
 # with the extra intact; and resolving it needs git plus a compiler, which a minimal wheel-only or
-# air-gapped build (a campaign image) will not have. Install the base package there -- the runtime
-# degrades to planned paths without local avoidance and logs why, it does not fail.
+# air-gapped build (a campaign image) will not have. Install the base package there and use a
+# pure-Python avoidance model.
 #
 # It gates the `orca` model ONLY: this package stays wheel-installable, and a world using a
 # pure-Python avoidance model needs no toolchain at all.

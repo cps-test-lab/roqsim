@@ -165,7 +165,7 @@ def test_matrix_is_computed_even_when_the_model_masks_self_collision():
     collision geom) because the vendor's collision primitives of neighbouring links overlap at rest.
     Under that mask MuJoCo reports no contacts between robot links at all, so a sampler that trusted it
     would mark every pair `Never` and ship an SRDF with MoveIt's self-collision checking switched off
-    entirely. Measured on the TIAGo Pro before this was fixed: 0 contacts over 200 poses, 1711 `Never`,
+    entirely. Measured on the TIAGo Pro under that mask: 0 contacts over 200 poses, 1711 `Never`,
     0 `Always`.
 
     The question the matrix asks is geometric, so the sampler enables collision itself — and must put the
@@ -196,7 +196,7 @@ def test_matrix_is_computed_even_when_the_model_masks_self_collision():
         collision_matrix(model, links, samples=50)
 
     # Clearing the mask on the compiled model does NOT work -- MuJoCo fixes what can collide at compile
-    # time. Pinned because it is the trap that makes the fix look unnecessary.
+    # time. Pinned because it is the trap that makes unmasking the spec look unnecessary.
     for g in range(model.ngeom):
         model.geom_contype[g] = 1
         model.geom_conaffinity[g] = 1
@@ -334,7 +334,7 @@ def test_a_mounted_arm_rides_the_base_free_joint(collapsed):
 
 
 def test_a_bolted_down_arm_gets_no_virtual_joint(bolted):
-    """The regression this exists for: a pedestal arm must not be handed a virtual joint.
+    """What this exists for: a pedestal arm must not be handed a virtual joint.
 
     Nothing publishes odom -> base_link in a static cell, so move_group logs "The complete state of the
     robot is not yet known. Missing virtual_joint" once a second and never assembles a complete robot

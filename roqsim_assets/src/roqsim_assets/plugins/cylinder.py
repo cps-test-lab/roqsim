@@ -3,8 +3,8 @@
 The round sibling of ``box``. Between them they cover the two shapes anonymous scenery actually
 takes: a carton and a post. Poles, bollards, pillars, tree trunks, traffic cones and the cylinder
 fields that procedurally generated navigation benchmarks are built from are all this object, and
-until now the only way to place one was to bake it into a scene or to find a modelled asset with the
-right proportions -- ``spawn_model`` scales uniformly, so it cannot turn a 0.3 m drum into a
+without this the only way to place one is to bake it into a scene or to find a modelled asset with
+the right proportions -- ``spawn_model`` scales uniformly, so it cannot turn a 0.3 m drum into a
 0.075 m post without shrinking its height too.
 
 The distinction from ``box`` is not cosmetic where clearance is the experiment. Two diagonally
@@ -72,14 +72,14 @@ class CylinderPlugin(Plugin):
         self.radius = self._float(self.config.get("radius"), 0.2)
         self.height = self._float(self.config.get("height"), 0.5)
         # One way to state a pose, in the shape SpawnEntity uses. An omitted z stands it on the
-        # floor, which is what a two-element `pos` used to mean.
+        # floor.
         self.pos, self.quat = self._pose(self.config.get("pose"), self.height)
         self.color = self._rgba(self.config.get("color")) or _GREY_RGBA
         self.collide = bool(self.config.get("collide", True))
         self.friction = self._friction(self.config.get("friction"))
         # `motion` names who owns this body's pose -- one question with three answers, rather
         # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
-        # was meaningless and had to be refused wherever they were offered.
+        # is meaningless and would have to be refused wherever they are offered.
         self.motion = self.config.get("motion", "physics")
         self.free = self.motion == "physics"
         self.mocap = self.motion == "driven"
@@ -182,7 +182,7 @@ class CylinderPlugin(Plugin):
         ):
             if gone in config:
                 # Refused rather than translated: a removed key that quietly still worked would
-                # leave two vocabularies for one question, which is what this replaced.
+                # leave two vocabularies for one question.
                 errors.append(
                     f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
                     "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "

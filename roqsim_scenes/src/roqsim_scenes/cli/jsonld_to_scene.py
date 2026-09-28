@@ -9,9 +9,8 @@ Importing only the mesh is the failure this tool exists to prevent. **MuJoCo col
 convex hull**, and a wall with a door cut out of it is not convex: its hull is the solid wall. The
 doorway then stays open to every renderer and to ``mj_ray``/``mj_multiRay`` (both test the real
 triangles) while being a solid slab to physics -- so the world looks right in every picture, reads as
-passable on ``/scan``, and stops the robot dead. secorolab was imported that way and 87% of the
-building was unreachable through eight walled doorways; four campaigns ran against it before anyone
-noticed, because nothing anyone looked at could show it.
+passable on ``/scan``, and stops the robot dead. A building imported that way can be mostly
+unreachable through its walled doorways while nothing anyone looks at shows it.
 
 So the two views are split by role, which is what ``scene.json`` already expresses per object:
 
@@ -45,6 +44,7 @@ from pathlib import Path
 import numpy as np
 
 from roqsim.floorplan_collision import wall_colliders
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 #: Collider colour. Never rendered (``render: false`` puts them in group 3), but a debugger toggling
@@ -146,6 +146,7 @@ def build(mesh: Path, out_dir: Path, scene_name: str | None = None) -> dict:
         "objects": objects,
         "ground_z": float(lo[2]),
     }
+    manifest = scene_manifest_format.stamp(manifest)
     out_dir.mkdir(parents=True, exist_ok=True)
     with open(out_dir / "scene.json", "w") as fh:
         json.dump(manifest, fh, indent=2)

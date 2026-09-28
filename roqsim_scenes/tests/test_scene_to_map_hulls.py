@@ -3,8 +3,8 @@
 MuJoCo collides a mesh geom by its CONVEX HULL but raycasts its real triangles. So a table whose scan
 plane passes between its legs is invisible both to the lidar and to a triangle-sliced map, while still
 being a solid block to the physics engine -- measured in the pick world, rays fired at the table pass
-straight through and hit the wall 3 m beyond, and the map got four isolated cells for the whole table.
-A planner then routes through it and the base collides with something it never saw.
+straight through and hit the wall 3 m beyond, and the map gets four isolated cells for the whole
+table. A planner then routes through it and the base collides with something it never saw.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 # roqsim_manipulation_assets
 
-Arm and gripper models for [roqsim](../README.md). The **asset** half of what used to be a single
-`roqsim_manipulation`; the plugins stayed in [`roqsim_manipulation`](../roqsim_manipulation).
+Arm and gripper models for [roqsim](../README.md). The **asset** half of the manipulation family;
+the plugins are in [`roqsim_manipulation`](../roqsim_manipulation).
 
 Real robots only. Workpieces — a bored block, a pipe weldment — are one experiment's geometry and
 ship with that experiment, so what is here is what any user of the substrate can pick up and mount.
@@ -37,10 +37,10 @@ src/roqsim_manipulation_assets/models/
   ur5e/ …  panda/ …  gen3/ …  robotiq_2f85/ …  schunk_pg70/ …  open_manipulator_x/ …
 ```
 
-Same shape `roqsim_assets` uses for props, and `resolve_model` accepts it directly. It replaced a flat
-`models/*.xml` over one shared `models/meshes/`, where a model's files were spread across four globs
-and Menagerie link names (`base_0.obj`, `link1.stl`) had to be kept apart by a per-model mesh
-subdirectory anyway. Two consequences worth knowing:
+Same shape `roqsim_assets` uses for props, and `resolve_model` accepts it directly. A flat
+`models/*.xml` over one shared `models/meshes/` would spread a model's files across four globs, and
+Menagerie link names (`base_0.obj`, `link1.stl`) would need a per-model mesh subdirectory to stay
+apart anyway. Two consequences worth knowing:
 
 - `gen3` is an arm **plus** the 2F-85, and reuses that model's meshes rather than copying 3 MB of them:
   it is the one MJCF here with `meshdir=".."`, so both halves are named `<model>/meshes/<file>`.
@@ -62,8 +62,8 @@ That asymmetry is what keeps it acyclic.
 
 Nothing here is privileged. A downstream package — including an experiment's own — registers its
 models with an `roqsim.models` entry point pointing at a module that exposes `MODELS_DIR`, and its
-models then resolve by bare name exactly as these do. That is how the two workpieces that used to
-live here now ship with their experiments without either of them being a special case.
+models then resolve by bare name exactly as these do. That is how workpieces ship with their
+experiments without being a special case.
 
 ## Grippers are interchangeable
 

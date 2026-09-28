@@ -3,21 +3,21 @@
 Deliberately **not** ``conftest.py``. Importing a helper with ``from conftest import ...`` looks
 natural and works when one package's tests run alone, then breaks the moment the whole suite does:
 several packages here have a ``conftest.py``, the name is ambiguous on ``sys.path``, and whichever
-one is imported first wins. It failed with "cannot import name from
+one is imported first wins. It fails with "cannot import name from
 roqsim_sensors/tests/conftest.py". A conftest is for fixtures pytest injects, not a module to import
 by name.
 
-The one thing here exists because of a defect it would have caught twice in one session.
+The one thing here guards a defect that makes a broken assertion pass.
 
 ``mujoco.mj_name2id`` returns **-1** for a name that is not in the model, and ``-1`` is a perfectly
 good Python index. So ``model.geom_priority[mj_name2id(m, GEOM, "typo")]`` silently reads the *last*
 geom, and ``"absent_geom" not in touching`` is trivially true. Both failure modes assert something
 about a geom that does not exist and pass.
 
-That is not hypothetical. Porting the Maker's Pet Loki, the root link's own body cylinder -- the
-largest part of the robot, visual and collision -- was never emitted at all, and the test asserting
-"the body is not dragging on the floor" passed *because* the geom was missing. Minutes earlier, a
-caster renamed by its contact class made a priority assertion read a different geom entirely.
+That is not hypothetical. A root link's own body cylinder -- the largest part of a robot, visual and
+collision -- that is never emitted makes "the body is not dragging on the floor" pass *because* the
+geom is missing, and a caster renamed by its contact class makes a priority assertion read a
+different geom entirely.
 
 :func:`named` turns both into an immediate, legible failure.
 """

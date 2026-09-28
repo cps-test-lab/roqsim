@@ -4,10 +4,10 @@ These are the substrate's side of a contract with the ROS 2 bridge: ``roqsim_ros
 (``registry.py``) read exactly these attribute names off whatever an endpoint returns, and nothing
 here imports ROS -- that is what keeps a sensor runnable with no bridge loaded.
 
-**One type per wire format, shared by every sensor that emits it.** A second point-cloud sensor
-started by declaring its own class with the same single ``points`` field, which is how a wire format
-acquires two definitions that must be kept in step by hand: the field a converter reads is then
-documented in whichever producer the reader happened to open. Two things follow from putting them
+**One type per wire format, shared by every sensor that emits it.** A sensor that declares its
+own class for a format another sensor already emits gives that wire format two definitions that
+must be kept in step by hand, and the field a converter reads is then documented in whichever
+producer the reader happens to open. Two things follow from putting them
 here instead -- a new sensor emits an existing format by importing it rather than by re-deriving what
 the converter needs, and a change to a format is one edit with every producer visible from it.
 """

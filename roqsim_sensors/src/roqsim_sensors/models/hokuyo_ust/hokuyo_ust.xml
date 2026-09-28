@@ -1,0 +1,37 @@
+<mujoco model="hokuyo_ust">
+  <!--
+    Hokuyo UST-10LX 2D lidar: a standalone mount (housing mesh + a `scan` site) for the `spawn_sensor`
+    plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Clearpath's `clearpath_sensors_description` (urdf/hokuyo_ust.urdf.xacro), the
+    `hokuyo_ust` accessory of Clearpath's ROS 2 robots: the body is `<name>_link`, whose origin is the
+    base of the bracket, and the scan is stamped in its child `<name>_laser`, 47.4 mm up "to the
+    LIDAR's focal point".
+
+    Body-local axes: x = the scan's zero bearing, z = up; the mesh spans z 0 .. 70 mm, the
+    specification's 70 mm sensor height.
+
+    Built by external/convert/build_scanner_devices.py from clearpath_common @ b0f6d920422ad302372a1c65e31d61648da884ed.
+    Scan parameters and the `frames:` entry for this site are in hokuyo_ust.manifest.yaml; see
+    hokuyo_ust_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="hokuyo_ust_mat" rgba="0.2 0.2 0.2 1"/>
+    <mesh name="hokuyo_ust" file="hokuyo_ust.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0.035" mass="0.13" diaginertia="0.000080167 0.000080167 0.000054167"/>
+      <geom name="hokuyo_ust_visual" type="mesh" mesh="hokuyo_ust" material="hokuyo_ust_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision box (6 x 6 x 8 cm) over the bracket and sensor. -->
+      <geom name="hokuyo_ust_collision" type="box" pos="0 0 0.04" size="0.03 0.03 0.04" group="3"/>
+      <!-- The vendor scan frame `<name>_laser`: 47.4 mm above the bracket base.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0.0474" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

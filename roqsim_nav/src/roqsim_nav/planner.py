@@ -1,7 +1,5 @@
 """Grid-based global path planning on an :class:`~roqsim_nav.occupancy.OccupancyGrid`.
 
-Ported from an earlier in-house navigation prototype.
-
 ORCA only avoids *imminent* collisions; it cannot route around a wall. This is the
 global layer: 8-connected A* over the (inflated) occupancy grid finds a wall-safe
 cell path to a goal, then line-of-sight string-pulling collapses it to a handful

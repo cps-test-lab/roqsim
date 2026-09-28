@@ -9,10 +9,11 @@ shape of its tree, and a deadline in here would take the decision away from the 
 in a library constant. The stack and the simulator come up concurrently, and how long that is
 allowed to take is the author's to say.
 
-What was missing is not a deadline but an explanation. A run that ended on its timeout said only
-that the action was waiting, so a name gone out of sync between a plugin and this package -- a
-renamed blackboard key, a namespace the scenario did not expect -- arrived as a slow robot. These
-tests pin the reason each call gives, and that giving it does not make anything fail sooner.
+What a wait needs is not a deadline but an explanation. A run that ends on its timeout saying only
+that the action is waiting turns a name gone out of sync between a plugin and this package -- a
+renamed blackboard key, a namespace the scenario did not expect -- into what looks like a slow
+robot. These tests pin the reason each call gives, and that giving it does not make anything fail
+sooner.
 
 ROS-free, like the calls themselves: they are duck-typed over a client, so the interesting
 mistakes are catchable without a ROS installation.
@@ -65,9 +66,8 @@ def _offered(*names):
 def test_every_call_says_which_name_is_missing(call, expected):
     """A reason that does not name the thing is a reason nobody can act on.
 
-    All four had to be checked because all four wait the same way, and two of them said nothing
-    at all -- so a nav goal or a fault injection that never landed produced a timeout with an
-    empty explanation.
+    All four, because all four wait the same way, and a call that says nothing turns a nav goal
+    or a fault injection that never landed into a timeout with an empty explanation.
     """
     reason = call().pending_reason()
     assert reason and expected in reason

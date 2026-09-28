@@ -108,9 +108,9 @@ def test_manifest_assets_multiple_providers(tmp_path):
 
 
 def test_apply_assets_own_meshdir_beats_provider(tmp_path):
-    # Regression: the Oli's ``left_hip_yaw_link.STL`` (own ``meshes/oli/``) was silently shadowed
-    # by the G1's same-named Menagerie mesh in the provider's flat ``meshes/`` dir -- the spawned
-    # robot wore the wrong robot's limb shells. The spec's own declared meshdir must win.
+    # The Oli's ``left_hip_yaw_link.STL`` (own ``meshes/oli/``) must not be shadowed by the G1's
+    # same-named Menagerie mesh in the provider's flat ``meshes/`` dir -- the spawned robot would
+    # wear the wrong robot's limb shells. The spec's own declared meshdir must win.
     own = tmp_path / "meshes" / "bot"
     own.mkdir(parents=True)
     (own / "part.STL").write_bytes(b"")

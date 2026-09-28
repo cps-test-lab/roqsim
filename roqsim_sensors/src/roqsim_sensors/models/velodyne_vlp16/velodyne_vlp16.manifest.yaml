@@ -1,0 +1,84 @@
+# Velodyne VLP-16 (Puck) lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin. The sensor has 16 planes; this device casts one of them as the
+# planar LaserScan the Velodyne driver's own velodyne_laserscan node publishes.
+#
+# Mesh, link frames and inertial: Dataspeed velodyne_description (see velodyne_vlp16.xml). Scan values:
+# Velodyne "Puck" data sheet 63-9229 Rev-K ("data sheet"),
+# https://velodynelidar.com/wp-content/uploads/2019/12/63-9229_Rev-K_Puck-_Datasheet_Web.pdf, and the
+# "VLP-16 User Manual" 63-9243 Rev. F ("manual"),
+# https://data.ouster.io/downloads/velodyne/user-manual/vlp-16-user-manual-revf.pdf.
+#
+# Frames, as the vendor macro chains them (velodyne_description urdf/VLP-16.urdf.xacro @ 03e3ce2): the
+# vendor joint origin places `${name}_base_link`, the housing base, which is the mount body; the scan is
+# stamped in its child `${name}`, 0.0377 m above it. The intermediate link is not published: its name
+# follows `${name}`, which only `{frame_id}` carries. spawn_sensor publishes `parent_frame -> {frame_id}`
+# at the joint origin composed with the 0.0377 m.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: velodyne          # velodyne_description VLP-16.urdf.xacro `name:=velodyne`; the driver's frame_id
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame (VLP-16.urdf.xacro `${name}_base_scan_joint`)
+    parent: mount
+    pos: [0.0, 0.0, 0.0377]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: ros-drivers/velodyne @ 56fc178d2dad (branch ros2). The driver node
+      # stamps `frame_id: velodyne` at `rpm: 600.0` (velodyne_driver/config/
+      # VLP16-velodyne_driver_node-params.yaml); velodyne_transform_node turns packets into a cloud
+      # (velodyne_pointcloud/config/VLP16-velodyne_transform_node-params.yaml: min_range 0.9,
+      # max_range 130.0, organize_cloud true); velodyne_laserscan projects one ring of that cloud
+      # into a LaserScan (velodyne_laserscan/src/velodyne_laserscan.cpp, "laserscan";
+      # config/default-velodyne_laserscan_node-params.yaml: ring -1, resolution 0.007).
+      #
+      # Layout: the scan has round(2*pi / resolution) = 898 bins of angle_increment 0.007 rad from
+      # angle_min -pi, and a point lands in bin (atan2(y, x) + pi) / resolution (laserscan :163-173,
+      # :198-203). Ray i is cast at -pi + 0.007 i, the bearing a consumer reads from angle_min and
+      # angle_increment, so the last is at -pi + 897 * 0.007. The header's angle_max says pi, 4.2 mrad
+      # past the last bin's bearing; that inconsistency of the driver's header is not reproduced.
+      rays: 898
+      angle_min: -3.141592654   # -pi
+      angle_max: 3.137407346    # -pi + 897 * 0.007
+      # Header: range_min 0.0 and range_max 200.0, hard-coded (laserscan :170-171). These are only
+      # published; the physical limits below decide which rays measure.
+      range_min: 0.0
+      max_range: 200.0
+      # Physical limits. Near: the transform node's min_range 0.9 m (a point nearer than it is not in
+      # the cloud); the data sheet states no minimum. Far: the data sheet's measurement range 100 m,
+      # inside the node's 130 m max_range.
+      detection_min: 0.9
+      detection_max: 100.0
+      # Every bin starts at +inf (laserscan :173) and only a point of the chosen ring overwrites it.
+      # With organize_cloud true, a point outside [min_range, max_range] and a laser with no return
+      # (raw distance 0) are written as NaN x/y (velodyne_pointcloud/src/lib/
+      # organized_cloudXYZIRT.cpp:98-114, src/lib/rawdata.cpp:333-338); their bin index is computed
+      # from a NaN, which C++ leaves undefined and x86-64 evaluates to INT_MIN, so the `bin >= 0`
+      # test drops them and the bin stays +inf. Too close and no return are therefore both +inf.
+      too_close: +inf           # laserscan :173; the NaN-to-int conversion is platform-defined
+      no_return: +inf           # laserscan :173
+      rate_hz: 10.0             # manual 8.3: 600 RPM / 60 = 10 frames per second, the driver's rpm
+      # Data sheet: range accuracy up to +-3 cm (typical). It does not say which sigma; taken as 1 sigma.
+      range_stddev: 0.03
+      # Not modelled: the ring. With ring -1 the node takes ring 8 for a 16-laser sensor (laserscan
+      # :121-129), and rings are numbered by ascending vertical angle (velodyne_pointcloud/src/lib/
+      # calibration.cpp:164-187), so ring 8 of VLP16db.yaml is the +1 deg laser; this device casts
+      # the 0 deg plane. Also not modelled: the 0.2 deg firings (manual 8.3) that share one 0.007 rad
+      # bin, the last written winning; and the intensities the node publishes.
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the cast plane's full
+# turn and its physical detection limits.
+fov:
+  near: 0.9
+  far: 100.0
+  h_min: -3.141592654
+  h_max: 3.141592654
+  v_min: 0.0
+  v_max: 0.0

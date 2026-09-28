@@ -8,7 +8,7 @@ sim:
 
 components:
   # diff_drive (outdoor skid-steer, 4 driven wheels + the calibrated slip_factor of 5.25 — the
-  # largest in roqsim_mobile) and the lidar come from the warthog model manifest.
+  # largest in roqsim_mobile) and the two Hokuyo scanners come from the warthog model manifest.
   - spawn_robot:
       model: warthog
       pose:

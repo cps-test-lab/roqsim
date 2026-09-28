@@ -2,13 +2,17 @@
 
 Starts: the sim + ROS bridge (roqsim_ros_bridge) running the g1_nav2.yaml world (the G1 walks via
 its RL locomotion policy, driven by /cmd_vel), a static map->odom transform (localization stand-in),
+pointcloud_to_laserscan projecting the head-mounted Livox Mid-360's cloud into the /scan nav2 reads,
 nav2 map_server + planner_server + controller_server + behavior_server + bt_navigator, and a
 lifecycle manager to activate them. Everything runs with use_sim_time (the bridge publishes /clock).
+
+Needs the pointcloud_to_laserscan package (ros-jazzy-pointcloud-to-laserscan).
 
     ros2 launch roqsim_nav2_example nav2_g1.launch.py
     ros2 launch roqsim_nav2_example nav2_g1.launch.py gui:=true   # MuJoCo viewer + rviz2
 """
 
+import math
 import os
 import sys
 
@@ -107,8 +111,51 @@ def generate_launch_description():
                 arguments=["--frame-id", "map", "--child-frame-id", "odom"],
                 parameters=[{"use_sim_time": use_sim_time}],
             ),
-            # The base_link->lidar static TF comes from the sim: the lidar plugin declares its mount
-            # frame (from the MuJoCo site) and the ros2_bridge publishes it on /tf_static.
+            # The static chain base_link->torso_link->mid360_link comes from the sim: the robot's
+            # manifest declares torso_link and the mid360 mount publishes its own frame, and the
+            # ros2_bridge sends both on /tf_static.
+            #
+            # nav2's costmaps read a LaserScan on /scan; the G1's sensor is a Livox Mid-360 point
+            # cloud. No Unitree or published G1 navigation setup states a projection, so every value
+            # below is this example's assumption, derived from the G1 model and nav2_params_g1.yaml:
+            #   target_frame   base_link: the costmaps' robot_base_frame, so the scan's origin is the
+            #                  robot and the height band is relative to the pelvis.
+            #   min_height     -0.55 m: the floor is 0.77-0.79 m below base_link while the policy
+            #                  marches in place, and the body's tilt (about 0.9 deg) lifts floor
+            #                  returns by up to 0.13 m at range_max. Obstacles lower than about 0.22 m
+            #                  above the floor are not in the scan.
+            #   max_height     0.60 m: the top of the head, 1.38 m above the floor; nothing higher can
+            #                  touch the robot.
+            #   range_min      0.45 m: the robot's own shoulders, arms and hands return up to 0.41 m
+            #                  from base_link horizontally (standing, unitree_g1_dex1). They are real
+            #                  returns of the sensor, but not obstacles to plan around. The scan's
+            #                  (0, 0, 0) points (the Mid-360's no-return value) fall inside it too.
+            #   range_max      8.0 m: the costmaps' obstacle_max_range; beyond it the tilt above
+            #                  would put the floor inside the band.
+            #   angle_*        a full turn at the device model's azimuth step, 360 rays.
+            #   scan_time      0.1 s: the Mid-360's 10 Hz frame rate.
+            Node(
+                package="pointcloud_to_laserscan",
+                executable="pointcloud_to_laserscan_node",
+                name="pointcloud_to_laserscan",
+                output="screen",
+                remappings=[("cloud_in", "/livox/lidar"), ("scan", "/scan")],
+                parameters=[
+                    {
+                        "use_sim_time": use_sim_time,
+                        "target_frame": "base_link",
+                        "min_height": -0.55,
+                        "max_height": 0.60,
+                        "range_min": 0.45,
+                        "range_max": 8.0,
+                        "angle_min": -math.pi,
+                        "angle_max": math.pi,
+                        "angle_increment": 2.0 * math.pi / 360.0,
+                        "scan_time": 0.1,
+                        "use_inf": True,
+                    }
+                ],
+            ),
             nav2_node("nav2_map_server", "map_server", "map_server"),
             nav2_node("nav2_planner", "planner_server", "planner_server"),
             nav2_node("nav2_controller", "controller_server", "controller_server"),

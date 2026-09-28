@@ -73,6 +73,71 @@ class _UnpoweredScene(_RobotScene):
         base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.1], mass=2.0)
 
 
+class _TwoJointScene(_RobotScene):
+    """Two motors on one robot, so the per-actuator split is observable.
+
+    One actuator alone cannot tell a sum of magnitudes from the magnitude of a sum, which is why the
+    single-motor scene above cannot check the arithmetic an arm depends on.
+    """
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="base_link", pos=[0, 0, 1.0])
+        base.add_joint(name="j1", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], damping=DAMPING)
+        base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.1], mass=2.0)
+        link = base.add_body(name="link2", pos=[0.4, 0, 0])
+        link.add_joint(name="j2", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], damping=DAMPING)
+        link.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.2, 0.2, 0.1], mass=2.0)
+        for joint in ("j1", "j2"):
+            actuator = spec.add_actuator()
+            actuator.name = f"{joint}_motor"
+            actuator.target = joint
+            actuator.trntype = mujoco.mjtTrn.mjTRN_JOINT
+
+
+class _HoldingScene(_RobotScene):
+    """A gravity-loaded joint held at a pose by a position servo: torque without motion.
+
+    This is the manipulator case the mechanical integral alone cannot see -- the arm is still, so
+    ``force * velocity`` is zero however much of the payload the motor is carrying.
+    """
+
+    #: Gravity's moment on the held joint: the offset mass, its lever arm, and MuJoCo's default g.
+    HOLD_NM = 5.0 * 9.81 * 0.4
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="base_link", pos=[0, 0, 1.0])
+        base.add_joint(
+            name="shoulder", type=mujoco.mjtJoint.mjJNT_HINGE, axis=[0, 1, 0], damping=DAMPING
+        )
+        # The mass hangs out along +x, so gravity puts a constant moment on the joint.
+        base.add_geom(
+            type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.4, 0.05, 0.05], pos=[0.4, 0, 0], mass=5.0
+        )
+        actuator = spec.add_actuator()
+        actuator.name = "shoulder_motor"
+        actuator.target = "shoulder"
+        actuator.trntype = mujoco.mjtTrn.mjTRN_JOINT
+        actuator.gaintype = mujoco.mjtGain.mjGAIN_AFFINE
+        actuator.biastype = mujoco.mjtBias.mjBIAS_AFFINE
+        actuator.gainprm[0] = 2000.0
+        actuator.biasprm[1] = -2000.0
+        actuator.biasprm[2] = -200.0
+
+
+class _CompensatedHoldingScene(_HoldingScene):
+    """The same loaded joint, with MuJoCo carrying its weight.
+
+    This is what every position- or impedance-driven arm in roqsim is: `apply_gravity_compensation`
+    sets `gravcomp` on the arm's bodies, so the weight-carrying force arrives OUTSIDE the actuator
+    and `actuator_force` reads zero on a joint holding a payload. A meter reading only that reports
+    an arm that is free to hold a load up, and free to lift one.
+    """
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        super().build(spec, ctx)
+        spec.body("base_link").gravcomp = 1.0
+
+
 def _engine(
     *, scene: str = f"{__name__}:_RobotScene", steps: int = 500, drive: float = CTRL, **config
 ):
@@ -120,6 +185,26 @@ def test_the_power_is_force_times_velocity_and_the_energy_is_its_integral():
     assert report.energy_j == pytest.approx(expected_w * engine.ctx.sim_time, rel=0.1)
 
 
+def test_one_joints_descent_does_not_pay_for_anothers_lift():
+    """The split into driving and driven happens per actuator, before the sum.
+
+    Netted first, the two cancel and an arm changing pose reports as free. The scene puts the two
+    motors' work in opposite directions deliberately: that is an arm's ordinary case, not a corner.
+    """
+    engine = _engine(scene=f"{__name__}:_TwoJointScene", steps=0)
+    plugin = _plugin(engine)
+    d = engine.ctx.data
+    d.qvel[:] = [20.0, -20.0]
+    d.ctrl[:] = [CTRL, CTRL]
+    engine.step()
+
+    work = d.actuator_force[plugin._actuators] * d.actuator_velocity[plugin._actuators]
+    assert work.min() < 0.0 < work.max(), "the two actuators do opposite-sign work"
+    report = plugin.read()
+    assert report.power_w == pytest.approx(float(work[work > 0.0].sum()), rel=1e-9)
+    assert abs(float(work.sum())) < report.power_w, "the net alone would have understated the draw"
+
+
 def test_a_standing_robot_costs_only_what_it_was_told_it_costs():
     """The default models nothing: no motion, no draw. `idle_w` is the platform's own number."""
     assert _plugin(_engine(drive=0.0)).read().power_w == pytest.approx(0.0, abs=1e-9)
@@ -135,10 +220,109 @@ def test_efficiency_divides_the_mechanical_power_and_leaves_it_reported():
     assert lossy.power_w == pytest.approx(plain.power_w * 2.0, rel=1e-6)
 
 
-def test_braking_is_paid_for_unless_the_drive_is_regenerative():
-    """A robot without regenerative drive does not get paid to slow down."""
-    braking = _engine(steps=200, drive=-CTRL)
-    assert _plugin(braking).read().energy_j > 0.0
+def _braking(**config):
+    """One step with the load moving and the motor opposing it: negative mechanical power."""
+    engine = _engine(steps=0, **config)
+    engine.ctx.data.qvel[0] = 20.0
+    engine.ctx.data.ctrl[:] = -CTRL
+    engine.step()
+    return _plugin(engine).read()
+
+
+def test_braking_is_not_billed_to_the_pack_unless_the_drive_is_regenerative():
+    """A motor braking a load dissipates the load's energy; it does not draw it from the pack.
+
+    Billing the magnitude would charge the experiment for joules the pack never supplied -- and
+    charge them twice over once a winding loss is configured, which is where a braking motor's real
+    cost is.
+    """
+    report = _braking(idle_w=2.0)
+    assert report.mechanical_w < 0.0, "the motor is braking"
+    assert report.power_w == pytest.approx(2.0), "only the idle draw reaches the pack"
+
+
+def test_a_regenerative_credit_crosses_the_drivetrain_losses_on_the_way_back():
+    """A recovered joule is scaled DOWN by the efficiency. Dividing makes a lossier machine recover
+    more, which is the wrong direction."""
+    report = _braking(regenerative=True, efficiency=0.5)
+    assert report.mechanical_w < 0.0
+    assert report.power_w == pytest.approx(report.mechanical_w * 0.5, rel=1e-9)
+
+
+def test_a_reverse_drive_is_not_braking_and_is_paid_for():
+    """Driving the other way is still driving: force and velocity share a sign."""
+    assert _plugin(_engine(steps=200, drive=-CTRL)).read().energy_j > 0.0
+
+
+# -- holding, which is where a manipulator's bill comes from -----------------------------------
+
+
+def _held(**config):
+    """The loaded joint, settled at its held pose."""
+    return _plugin(
+        _engine(scene=f"{__name__}:_HoldingScene", steps=1500, drive=0.0, **config)
+    ).read()
+
+
+def test_a_held_load_is_free_until_a_winding_loss_says_it_is_not():
+    """Mechanical power is exactly zero at a standstill, whatever the motor is carrying.
+
+    Unconfigured the plugin says so rather than guessing a motor; `resistive_w_per_nm2` is the
+    platform's own number, and it is the term that makes a manipulator's slow trial add up.
+    """
+    still = _held()
+    assert still.mechanical_w == pytest.approx(0.0, abs=1e-2), "it is not moving"
+    assert still.power_w == pytest.approx(0.0, abs=1e-2), "and nothing was assumed about its motor"
+
+    lossy = _held(resistive_w_per_nm2=0.01)
+    expected = 0.01 * _HoldingScene.HOLD_NM**2
+    assert lossy.power_w == pytest.approx(expected, rel=0.02)
+    assert lossy.resistive_w == pytest.approx(expected, rel=0.02)
+    assert lossy.mechanical_w == pytest.approx(0.0, abs=1e-2), "still not moving"
+    assert lossy.energy_j > 0.0, "and the holding is integrated, not only reported"
+
+
+def test_a_compensated_arm_is_billed_for_the_load_it_holds():
+    """The torque metered is the one a real drive supplies, not the residue MuJoCo leaves.
+
+    `actuator_force` is zero here by construction, so this is the case a meter reading it alone
+    cannot see -- and it is the ordinary case, because every position- and impedance-driven arm is
+    gravity-compensated.
+    """
+    scene = f"{__name__}:_CompensatedHoldingScene"
+    engine = _engine(scene=scene, steps=1500, drive=0.0, resistive_w_per_nm2=0.01)
+    plugin = _plugin(engine)
+    d = engine.ctx.data
+    assert d.actuator_force[plugin._actuators[0]] == pytest.approx(0.0, abs=1e-6), (
+        "MuJoCo carries the weight outside the actuator -- the premise of this test"
+    )
+    expected = 0.01 * _HoldingScene.HOLD_NM**2
+    assert plugin.read().resistive_w == pytest.approx(expected, rel=0.02)
+    assert plugin.read().energy_j > 0.0
+
+
+def test_a_coefficient_per_actuator_bills_each_motor_its_own_loss():
+    """An arm's shoulder and its wrist are not the same motor, so one coefficient cannot serve both.
+    An actuator the mapping omits contributes nothing."""
+    engine = _engine(
+        scene=f"{__name__}:_TwoJointScene", steps=200, resistive_w_per_nm2={"j2_motor": 0.5}
+    )
+    plugin = _plugin(engine)
+    d = engine.ctx.data
+    aid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_ACTUATOR, "j2_motor")
+    assert plugin.read().resistive_w == pytest.approx(0.5 * float(d.actuator_force[aid]) ** 2)
+
+
+def test_a_coefficient_for_an_unmetered_actuator_is_an_error():
+    """Ignored, it would read as a joint that costs nothing to hold."""
+    with pytest.raises(RuntimeError, match="does not meter"):
+        _engine(steps=1, resistive_w_per_nm2={"belt_motor": 0.5})
+
+
+def test_the_torque_integral_is_accumulated_beside_the_energy():
+    """The effort metric a paper falls back on where its motor constants are not published."""
+    report = _plugin(_engine()).read()
+    assert report.torque_integral_nms == pytest.approx(CTRL * 500 * 0.002, rel=1e-6)
 
 
 def test_only_this_robots_actuators_are_metered():
@@ -191,6 +375,7 @@ def test_a_reset_starts_the_next_trial_on_a_full_battery():
     assert _plugin(engine).read().energy_j > 0.0
     engine.reset()
     assert _plugin(engine).read().energy_j == 0.0
+    assert _plugin(engine).read().torque_integral_nms == 0.0
     assert _plugin(engine).read().depleted is False
 
 
@@ -221,6 +406,9 @@ def test_it_belongs_to_a_robot():
         ({"capacity_wh": -1}, "'capacity_wh' must be >= 0"),
         ({"rate_hz": 0}, "'rate_hz' must be > 0"),
         ({"actuators": "wheel_motor"}, "must be a list"),
+        ({"resistive_w_per_nm2": -1}, "'resistive_w_per_nm2' must be >= 0"),
+        ({"resistive_w_per_nm2": {"wheel_motor": -1}}, "'resistive_w_per_nm2' must be >= 0"),
+        ({"resistive_w_per_nm2": "lots"}, "must be a number, or a mapping"),
     ],
 )
 def test_config_errors_are_reported_by_name(config, expected):

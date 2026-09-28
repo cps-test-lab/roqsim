@@ -214,9 +214,6 @@ TEMPLATE = """<mujoco model="rosbot">
         <inertial pos="{body_pos}" mass="{body_mass}" diaginertia="{body_inertia}"/>
 {body_geoms}
         <geom class="collision" size="{half}" pos="0 0 0.02"/>
-        <!-- The stock scanner sits on the cover. Height is an assumption (see the port log): the
-             base description ships no lidar, because Husarion keeps sensors in a separate package. -->
-        <site name="lidar" pos="0 0 0.1043" size="0.006" rgba="1 0 0 0.6"/>
 {wheels}      </body>
     </body>
   </worldbody>

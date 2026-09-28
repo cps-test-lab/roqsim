@@ -57,11 +57,11 @@ class SensorFov:
     #: device's lens sits on the outside of its housing; a MuJoCo ``<camera>`` sits at the *pose* the
     #: datasheet gives, which is millimetres BEHIND the housing geom modelling that face. So a
     #: visibility ray leaves the origin already inside the sensor's own body and is occluded by it
-    #: immediately: the D435 mount's ``d435_front`` sits 4.3 mm ahead of its camera and blocked the
-    #: whole central cone, which is why every ``spawn_sensor``-mounted camera under-reported (a lone
-    #: camera in an empty room measured 0.000 coverage while its wide-angle fringe rays still got
-    #: out). Passed to ``mj_multiRay``'s ``bodyexclude``, the same mechanism the ``lidar`` plugin's
-    #: ``exclude_body`` uses for a robot's chassis -- this is that fix for the coverage engine.
+    #: immediately: the D435 mount's ``d435_front`` sits 4.3 mm ahead of its camera and would block
+    #: the whole central cone, so every ``spawn_sensor``-mounted camera would under-report (a lone
+    #: camera in an empty room would measure 0.000 coverage while its wide-angle fringe rays still
+    #: got out). Passed to ``mj_multiRay``'s ``bodyexclude``, the same mechanism the ``lidar``
+    #: plugin's ``exclude_body`` uses for a robot's chassis.
     body_exclude: int = -1
 
     def __post_init__(self) -> None:

@@ -27,6 +27,11 @@ steering here is geometrically right and dynamically nominal.
 Meshes are millimetre-scale Collada (``scale="0.001 0.001 0.001"``), which is exactly the trap
 :func:`urdf_source.mesh_scales` exists to catch -- see its docstring.
 
+**The two SICK S300s are not in this model.** The manifest mounts the ``sick_s300`` device model at
+each of the vendor's ``lidar_1_joint`` and ``lidar_2_joint``, and those devices carry the housings,
+meshes and masses. This generator removes both links from the expanded tree before it reads it
+(:func:`neobotix.drop_scanner_links`), so the MJCF's mass sum is the description's minus their 1.201 kg.
+
 Usage::
 
     python external/convert/build_mpo700_mjcf.py           # fetch, convert, write
@@ -47,7 +52,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sources import resolve_source  # noqa: E402
 from neobotix import (  # noqa: E402
-    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, subs_for, wrapper,
+    NEO_COMMIT, NEO_URL, asset_block, colours, convert_meshes, drop_scanner_links, subs_for, wrapper,
 )
 from urdf_source import expand_xacro, inertial, mesh_scales, pose  # noqa: E402
 
@@ -62,8 +67,16 @@ TARGET_FACES = 4000
 
 #: Corner order matching omni_drive's WHEEL_ORDER (front_left, front_right, rear_left, rear_right).
 CORNERS = ("front_left", "front_right", "back_left", "back_right")
-#: Massless-ish fixed links whose visual rides on the base but whose mass must be kept.
+#: Scanner links removed from the expanded tree: the manifest mounts a sick_s300 at each.
 SENSOR_LINKS = ("lidar_1_link", "lidar_2_link")
+
+#: The wheel as Neobotix documents it: D = 180 mm, B = 30 mm (MPO-700 "Mechanical Properties",
+#: https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html). The vendor's shipped wheel
+#: mesh agrees: its tyre spans radius 0.090 and 0.0298 along the roll axis.
+WHEEL_RADIUS = 0.09
+WHEEL_WIDTH = 0.030
+#: A MuJoCo cylinder's axis is its local z; this turns it onto the roll joint's axis (0, -1, 0).
+TYRE_QUAT = "0.7071068 0.7071068 0 0"
 
 
 
@@ -99,9 +112,18 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
             xyz, quat = pose(collision)
             x, y, z = (float(a) + float(b) for a, b in zip(xyz.split(), offset, strict=True))
             if shape.tag == "sphere":
+                # The vendor's tyre is a sphere 180 mm across in every direction, six times the real
+                # wheel's width, and it reaches the S300 housings at Neobotix's documented scanner
+                # pose. The tyre here is the documented wheel instead; the vendor sphere is kept only
+                # as the check that both still describe the same wheel radius.
+                radius = float(shape.get("radius"))
+                if abs(radius - WHEEL_RADIUS) > 1e-9 or quat:
+                    raise ValueError(
+                        f"{link.get('name')}: vendor tyre sphere r {radius} with rotation {quat!r} "
+                        f"no longer matches the documented {WHEEL_RADIUS} m wheel on the roll axis")
                 out += (f'{indent}<geom class="{cls}" name="{link.get("name")}_tyre"'
-                        f' size="{float(shape.get("radius")):g}"'
-                        f' pos="{x:g} {y:g} {z:g}"{quat}/>\n')
+                        f' size="{WHEEL_RADIUS:g} {WHEEL_WIDTH / 2:g}"'
+                        f' pos="{x:g} {y:g} {z:g}" quat="{TYRE_QUAT}"/>\n')
             else:
                 stem = Path(shape.get("filename")).stem
                 sub = subs_for(stem, shipped)[0]
@@ -112,17 +134,6 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
 
     base = links["base_link"]
     base_geoms = geoms(base, "        ", "collision")
-
-    # The sensor links stay their own bodies rather than being merged, so the mass audit reproduces
-    # the description's sum -- lidar_1 is 1.2 kg, not a rounding error on a 196.8 kg robot.
-    sensors = ""
-    for name in SENSOR_LINKS:
-        pos, quat = pose(joints[name])
-        sensors += SENSOR_BODY.format(
-            name=name, body_pos=pos, body_quat=quat,
-            geoms=geoms(links[name], "          ", "collision"),
-            **inertial(links[name]),
-        )
 
     corners = ""
     for corner in CORNERS:
@@ -147,7 +158,7 @@ def build(urdf: ET.Element, shipped: set[str], scales: dict[str, str]) -> str:
                    .find("collision/geometry/sphere").get("radius"))
     assets = asset_block(shipped, palette, scales)
     return TEMPLATE.format(
-        commit=NEO_COMMIT, assets=assets, base_geoms=base_geoms, sensors=sensors, corners=corners,
+        commit=NEO_COMMIT, assets=assets, base_geoms=base_geoms, corners=corners,
         rest_height=f"{radius - wheel_z:g}",
         **{f"base_{k}": v for k, v in inertial(base).items()},
     )
@@ -157,11 +168,6 @@ def _inertial_line(link: ET.Element) -> str:
     a = inertial(link)
     return f'<inertial pos="{a["pos"]}" mass="{a["mass"]}" diaginertia="{a["diaginertia"]}"/>'
 
-
-SENSOR_BODY = """        <body name="{name}" pos="{body_pos}"{body_quat}>
-          <inertial pos="{pos}" mass="{mass}" diaginertia="{diaginertia}"/>
-{geoms}        </body>
-"""
 
 CORNER_BODY = """        <body name="{steer_link}" pos="{steer_pos}"{steer_quat}>
           {steer_inertial}
@@ -197,6 +203,10 @@ TEMPLATE = """<mujoco model="mpo_700">
     wheel slip, so encoder odometry and ground truth coincide by construction. And the steering here
     is observational - a paper measuring steer rate limits or reorientation delay needs real steer
     actuation, which this is not.
+
+    The two SICK S300s are not in this file: the manifest mounts a `sick_s300` device model at each
+    of the vendor's lidar_1_joint and lidar_2_joint, and those devices carry the scanners' housings
+    and mass.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
   <!--
@@ -215,10 +225,13 @@ TEMPLATE = """<mujoco model="mpo_700">
         <geom type="mesh" group="3" rgba="0.6 0.1 0.1 0.35"/>
       </default>
       <default class="wheel_collision">
-        <!-- Near-frictionless spheres: the base is driven through the planar actuators below, and
-             `priority` is what makes the low friction take effect at all - MuJoCo otherwise takes
-             the MAXIMUM of the two contacting geoms' friction and the floor's value wins. -->
-        <geom type="sphere" group="3" rgba="0.05 0.05 0.05 0.4"
+        <!-- The documented wheel, 180 mm across and 30 mm wide (Neobotix MPO-700 Mechanical
+             Properties, D and B), as a cylinder on the roll axis; the vendor's tyre is a sphere of
+             the same radius. Near-frictionless: the base is driven through the planar actuators
+             below, and `priority` is what makes the low friction take effect at all - MuJoCo
+             otherwise takes the MAXIMUM of the two contacting geoms' friction and the floor's
+             value wins. -->
+        <geom type="cylinder" group="3" rgba="0.05 0.05 0.05 0.4"
               friction="0.02 0.005 0.0001" priority="2"/>
       </default>
       <default class="steer">
@@ -237,9 +250,9 @@ TEMPLATE = """<mujoco model="mpo_700">
     <!--
       The vendor's base collision IS the full body mesh, and MuJoCo convex-hulls a collision mesh -
       so the hull closes over the wheel arches and overlaps the wheels inside them (measured: the
-      front-right tyre penetrates it by 1.4 mm at the reference pose). A wheel is a GRANDCHILD of
-      base_link, via its steering link, so MuJoCo's automatic parent-child exclusion does not cover
-      the pair and the robot fights itself at rest.
+      front-right tyre penetrates it by 2.3 mm at rest, and the tyres overlap it by more while they
+      steer). A wheel is a GRANDCHILD of base_link, via its steering link, so MuJoCo's automatic
+      parent-child exclusion does not cover the pair and the robot fights itself at rest.
 
       Excluded explicitly rather than by widening a contact group: these four pairs are the ones that
       cannot be real, and naming them leaves every other self-collision live.
@@ -255,11 +268,7 @@ TEMPLATE = """<mujoco model="mpo_700">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 0" size="0.01" rgba="0 0 0 0"/>
-      <!-- The vendor's own two scanner mounts, diagonally opposite. Neither sees 360 degrees on its
-           own; together they cover the robot. -->
-      <site name="lidar_1" pos="0.338 0.288 0.223" size="0.01" rgba="1 0 0 0.6"/>
-      <site name="lidar_2" pos="-0.338 -0.288 0.223" size="0.01" rgba="1 0 0 0.6"/>
-{base_geoms}{sensors}{corners}    </body>
+{base_geoms}{corners}    </body>
   </worldbody>
 
   <actuator>
@@ -304,6 +313,7 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         urdf = expand_xacro({"neo_simulation2": source}, Path("mpo_700.urdf.xacro"),
                             Path(tmp), wrapper=wrapper("mpo_700", "continuous"))
+    drop_scanner_links(urdf, SENSOR_LINKS)
 
     if args.check:
         shipped = {p.stem for p in (PKG / "meshes").glob("*.obj")}

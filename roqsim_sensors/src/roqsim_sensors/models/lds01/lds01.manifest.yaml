@@ -1,0 +1,60 @@
+# ROBOTIS LDS-01 (HLS-LFCD2) 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: ROBOTIS turtlebot3_description (see lds01.xml). Scan values: HLS-LFCD2
+# "LDS1.5 Specifications" (2017-02-14, pages marked tentative), section 2 "Standard Performance"
+# ("spec"), https://emanual.robotis.com/assets/docs/LDS_Basic_Specification.pdf, linked from
+# https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_lds_01/
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: base_scan         # the TurtleBot 3 link name
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: ROBOTIS-GIT/hls_lfcd_lds_driver @ 6a80b3f153 (branch jazzy),
+      # src/hlds_laser_publisher.cpp ("driver"), which turtlebot3_bringup launches for the LDS-01.
+      #
+      # Layout: angle_increment 1 deg, angle_min 0, angle_max = 2 pi - 1 deg (:82-84), 360 rays, so
+      # the last ray sits at angle_max and no bearing is published twice.
+      rays: 360
+      angle_min: 0.0
+      angle_max: 6.265732015    # 2 pi - 1 deg
+      # Header: hard-coded range_min 0.12 and range_max 3.5 (:85-86); spec: distance range
+      # 120 ~ 3,500 mm (white, Lambertian >= 80%), so the physical limits are the same numbers.
+      range_min: 0.12
+      max_range: 3.5
+      # The driver publishes the device's distance unmapped, with no inf or NaN (:105-107). The
+      # device's value for an invalid sample is not documented, so both keep the REP 117 defaults.
+      too_close: -inf           # unverified device code; REP 117 default
+      no_return: +inf           # unverified device code; REP 117 default
+      rate_hz: 5.0              # spec: scan rate 300 +-10 rpm
+      # Spec: distance precision +-10 mm at 120-499 mm, +-3.5% at 500-3,500 mm. The spec does not
+      # say which sigma; taken as 1 sigma. Its distance accuracy (+-15 mm / +-5.0%) has no stated
+      # distribution, so no per-instance bias is modelled.
+      range_stddev: 0.01
+      range_stddev_relative: 0.035
+      range_stddev_relative_from: 0.5
+      # Not modelled: the raw intensities the driver publishes; and a packet whose sync byte fails,
+      # which the driver skips and so publishes its 6 slots as 0.0 (:154).
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and its physical detection limits. The 360 rays fill the turn, so the sector is all of it.
+fov:
+  near: 0.12
+  far: 3.5
+  h_min: 0.0
+  h_max: 6.283185307
+  v_min: 0.0
+  v_max: 0.0

@@ -319,7 +319,7 @@ def test_prepare_viewer_gl_also_preloads(monkeypatch):
 # --- launch_viewer / close_viewer: ordered window teardown ----------------------------------------
 #
 # The window runs on threads MuJoCo owns and ``Handle.close()`` only *requests* their exit, so a
-# process that closed and exited immediately used to hang (or segfault) in the race between that
+# process that closes and exits immediately can hang (or segfault) in the race between that
 # teardown and interpreter shutdown. close_viewer must therefore wait for those threads.
 
 
@@ -777,7 +777,7 @@ def test_a_held_f1_is_one_toggle():
 
 
 def test_the_list_and_the_mode_notice_are_on_screen_together():
-    # set_texts replaces the whole overlay, so this is the regression the slot channel exists for:
+    # set_texts replaces the whole overlay, so this is the failure the slot channel exists for:
     # switching camera mode with the list open must not wipe the list explaining the switch.
     handle, clock = _help_handle(), _Clock()
     helper, walk = _helper(), WalkKeys(keys=False)
@@ -819,9 +819,9 @@ def test_a_window_without_the_overlay_api_still_takes_the_key():
 def test_a_window_lists_the_camera_keys_it_wired_up():
     """What ``launch_viewer`` assembles, not what a test hands in.
 
-    The keys the window's own navigation mode is *for* went missing from the list once, because the
-    handler that implements them declared nothing and every test until this one passed its bindings
-    in by hand. The merge is the thing to pin: whatever a run wires, the list names.
+    A handler that declares nothing drops the keys it implements from the list, and a test that
+    passes its bindings in by hand cannot see that. The merge is the thing to pin: whatever a run
+    wires, the list names.
     """
     listed = key_catalogue.merge(HelpKeys, WalkKeys())
     labels = [b.label for b in listed]
@@ -842,3 +842,18 @@ def test_a_run_with_nowhere_to_save_a_view_does_not_offer_the_key():
 
     listed = key_catalogue.merge(HelpKeys, WalkKeys(), SaveViewKey(savable=False))
     assert "F8" not in {b.label for b in listed}
+
+
+def test_the_offset_can_be_set_without_being_read_as_a_drag(ctx):
+    """A camera path animates the angle behind the robot through this setter; writing cam.azimuth
+    instead would be folded into the offset as a mouse drag and applied twice."""
+    v = _FakeViewer()
+    cam = TrackingCamera({"track": "robot", "follow_heading": True, "azimuth": 180}, ctx)
+    cam.apply(v)
+    _set_yaw(ctx, cam.track_body_id, 0.0)
+    cam.update(v)
+    cam.azimuth_offset = 90.0
+    cam.update(v)
+    assert v.cam.azimuth == pytest.approx(90.0)
+    cam.update(v)  # a second frame with nothing changed holds; no drift
+    assert v.cam.azimuth == pytest.approx(90.0)

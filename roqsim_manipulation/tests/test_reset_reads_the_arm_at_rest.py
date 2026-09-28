@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """After a reset, the sensors read the arm holding its pose, before the first step as after it.
 
-A reset zeroes every actuator command, and the arm controller wrote its own only at its first
-step. Until then the physics state was the arm at its home pose with every position servo pulling
-toward zero, so a wrench read at that moment was a transient of tens of newtons -- and a sensor
-tared then carried it as a bias through the whole trial, with nothing reported.
+A reset zeroes every actuator command. Until the arm controller writes its own, the physics state
+is the arm at its home pose with every position servo pulling toward zero, so a wrench read at
+that moment is a transient of tens of newtons -- and a sensor tared then carries it as a bias
+through the whole trial, with nothing reported.
 """
 
 from __future__ import annotations

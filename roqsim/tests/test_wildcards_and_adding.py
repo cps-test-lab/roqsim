@@ -32,23 +32,25 @@ def _cfg(overrides):
 
 
 def test_one_assignment_reaches_every_robots_sensor():
-    cfg = _cfg({"components": {"*.lidar": {"range_stddev": 0.05}}})
+    cfg = _cfg({"components": {"*.rplidar.lidar": {"range_stddev": 0.05}}})
     hit = {s.address: s.config["range_stddev"] for s in cfg.plugins if s.ref == "lidar"}
-    assert hit == {"r1.lidar": 0.05, "r2.lidar": 0.05}
+    assert hit == {"r1.rplidar.lidar": 0.05, "r2.rplidar.lidar": 0.05}
 
 
 def test_it_reaches_components_no_document_declared():
     """Which is the point: neither robot's lidar is written anywhere -- both come from the model."""
     assert all(
         s.entity
-        for s in _cfg({"components": {"*.lidar": {"rays": 720}}}).plugins
+        for s in _cfg({"components": {"*.rplidar.lidar": {"rays": 720}}}).plugins
         if s.ref == "lidar"
     )
 
 
 def test_the_manifest_still_fills_in_the_rest():
     lidar = next(
-        s for s in _cfg({"components": {"*.lidar": {"rays": 720}}}).plugins if s.ref == "lidar"
+        s
+        for s in _cfg({"components": {"*.rplidar.lidar": {"rays": 720}}}).plugins
+        if s.ref == "lidar"
     )
     assert lidar.config["rays"] == 720 and lidar.config["max_range"] == 12.0
 
@@ -69,11 +71,11 @@ def test_the_refusal_explains_what_a_wildcard_addresses():
 
 
 def test_a_wildcard_matches_exactly_one_segment():
-    """Not a subtree. `*.lidar` reaches each robot's lidar and stops there -- everything after the
-    address is a path into that component's config, however deep."""
-    cfg = _cfg({"components": {"*.lidar.topics.scan": "/s"}})
+    """Not a subtree. `*.rplidar.lidar` reaches each robot's lidar and stops there -- everything after
+    the address is a path into that component's config, however deep."""
+    cfg = _cfg({"components": {"*.rplidar.lidar.topics.scan": "/s"}})
     scans = {s.address: s.config["topics"]["scan"] for s in cfg.plugins if s.ref == "lidar"}
-    assert scans == {"r1.lidar": "/s", "r2.lidar": "/s"}
+    assert scans == {"r1.rplidar.lidar": "/s", "r2.rplidar.lidar": "/s"}
 
 
 # -- adding ------------------------------------------------------------------------------------
@@ -91,15 +93,15 @@ def test_an_override_can_add_a_component_under_an_owner():
 
 def test_an_added_component_behaves_as_though_the_document_declared_it():
     """It goes back through the same walk, so it is wired, checked and merged identically -- adding
-    a `lidar` sets keys on the model's, exactly as declaring one in the document would, rather than
-    starting a second sensor beside it."""
-    cfg = _cfg({"components": {"r1": {"components": [{"lidar": {"rays": 999}}]}}})
-    lidars = [
-        (s.address, s.config["rays"], s.config["max_range"])
+    an `oakd_camera` sets keys on the model's, exactly as declaring one in the document would, rather
+    than starting a second sensor beside it."""
+    cfg = _cfg({"components": {"r1": {"components": [{"oakd_camera": {"rate_hz": 7.0}}]}}})
+    cameras = [
+        (s.address, s.config["rate_hz"], s.config["camera"])
         for s in cfg.plugins
-        if s.ref == "lidar" and s.entity == "r1"
+        if s.ref == "oakd_camera" and s.entity == "r1"
     ]
-    assert lidars == [("r1.lidar", 999, 12.0)]
+    assert cameras == [("r1.oakd_camera", 7.0, "oakd_rgb")]
 
 
 def test_adding_takes_a_list_of_entries():
@@ -107,3 +109,45 @@ def test_adding_takes_a_list_of_entries():
     to say which shape is wanted rather than reporting a reserved key."""
     with pytest.raises(PluginError, match="LIST of entries"):
         _cfg({"components": {"r1": {"components": {"contact_monitor": {}}}}})
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"components": {"r1.rplidar": {"components": [{"contact_monitor": {}}]}}},
+        {"components": {"r1": {"rplidar": {"components": [{"contact_monitor": {}}]}}}},
+    ],
+)
+def test_adding_under_a_component_a_manifest_supplied_is_refused(overrides):
+    """`rplidar` exists only once the turtlebot4's manifest has expanded, which is too late for what
+    it owns to be expanded, merged and wired -- so the addition would reach nothing while the run
+    looked healthy. The refusal writes out the override that does work."""
+    with pytest.raises(PluginError) as exc:
+        _cfg(overrides)
+    message = str(exc.value)
+    assert "'r1.rplidar'" in message and "a model manifest supplies" in message
+    assert "components.r1.components" in message and "name: rplidar" in message
+
+
+def test_adding_under_a_manifest_component_declared_through_its_owner_works():
+    """The shape the refusal points at: an entry for the device under the declared robot, carrying
+    what to add. The manifest still fills in the rest of the mount and its lidar."""
+    cfg = _cfg(
+        {
+            "components": {
+                "r1": {
+                    "components": [
+                        {
+                            "spawn_sensor": {},
+                            "name": "rplidar",
+                            "components": [{"contact_monitor": {"min_force": 2.0}}],
+                        }
+                    ]
+                }
+            }
+        }
+    )
+    by_address = {s.address: s for s in cfg.plugins}
+    assert by_address["r1.rplidar.contact_monitor"].config["min_force"] == 2.0
+    assert by_address["r1.rplidar"].config["model"] == "rplidar_a1"
+    assert "r1.rplidar.lidar" in by_address and "r2.rplidar.contact_monitor" not in by_address

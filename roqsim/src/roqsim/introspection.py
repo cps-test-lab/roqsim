@@ -42,6 +42,7 @@ import json
 import re
 import sys
 
+from roqsim import exit_status
 from roqsim.registry import ENTRY_POINT_GROUP, _entry_points
 
 # Some plugins qualify the header ("Config (in addition to camera_common.CameraPlugin's)::",
@@ -66,8 +67,8 @@ _CONFIG_FIELD_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(.+?)\s*(?:#\s*(.*))?$")
 # doc rather than end the block.
 _COMMENT_ONLY_RE = re.compile(r"^\s*#\s?(.*)$")
 # A key that opens a nested mapping rather than carrying a value: "  sample:" with the keys under
-# it indented further. The world YAML nests, so the block does too, and a key like this used to end
-# the parse -- reporting a plugin's first few keys and silently dropping the rest.
+# it indented further. The world YAML nests, so the block does too, and ending the parse at a key
+# like this would report a plugin's first few keys and silently drop the rest.
 _CONFIG_NEST_RE = re.compile(r"^\s+([A-Za-z_]\w*):\s*(?:#\s*(.*))?$")
 # The line naming the plugin itself, which a block opens with one level above its keys. Written
 # either as a plain key ("sensor_coverage_probe:"), as the list entry a world YAML's
@@ -355,8 +356,11 @@ def main(argv=None):
     import argparse  # pylint: disable=import-outside-toplevel
 
     parser = argparse.ArgumentParser(
-        prog="python -m roqsim.introspection",
+        prog="roqsim plugins",
         description="JSON introspection of the roqsim.plugins registry.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, note="2 includes `describe` naming no registered plugin."
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -371,7 +375,7 @@ def main(argv=None):
     else:  # describe
         result = get_plugin_details(args.name)
         print(json.dumps(result, indent=2))
-        sys.exit(1 if "error" in result else 0)
+        sys.exit(exit_status.BAD_INPUT if "error" in result else exit_status.OK)
 
 
 if __name__ == "__main__":

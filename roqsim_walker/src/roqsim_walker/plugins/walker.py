@@ -1,10 +1,9 @@
 """Scene + controller plugin: a kinematic pedestrian that patrols a route or is driven to goals.
 
-Ported from our earlier in-house nav prototype's pedestrian stack (``humanoid`` + ``pedestrian.controller``), split into the
-roqsim plugin model: this plugin builds one walker's mocap bodies + skin into the ``MjSpec``,
-registers it as an ``Entity(kind='pedestrian')``, and declares a backend-neutral goal
-:class:`~roqsim.context.Endpoint` any bridge can serve (the ROS 2 bridge serves it as
-``nav2_msgs/NavigateThroughPoses`` -- see ``roqsim_walker_ros``).
+The pedestrian stack in the roqsim plugin model: this plugin builds one walker's mocap bodies + skin
+into the ``MjSpec``, registers it as an ``Entity(kind='pedestrian')``, and declares a
+backend-neutral goal :class:`~roqsim.context.Endpoint` any bridge can serve (the ROS 2 bridge serves
+it as ``nav2_msgs/NavigateThroughPoses`` -- see ``roqsim_walker_ros``).
 
 Config::
 
@@ -25,19 +24,13 @@ Config::
                                #   steers or does nothing; it has never looked ahead, so this
                                #   never makes it stop. Write a `navigator` with
                                #   `avoidance: {stop: true}` for one that should.
-      robot_body: base_link    # body the walker yields to (default: the robot entity's base)
-      robot_radius: 0.25
       goal_endpoint: true      # false -> patrol only; declares no goal endpoint, so a bridge needs
                                #   no handler for it (a patrol-only world drops the nav2_msgs dep)
       action_name: navigate_through_poses   # relative action name of the goal endpoint
-      orca: {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
+      orca: {radius: 0.26, max_speed: 1.6}  # the disc it presents to avoidance; speed cap
       planner: {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion: {walk: /abs/walk.npz}         # override a resolved locomotion clip
-
-Several ``walker`` plugins may coexist: they share one :class:`~roqsim_walker.nav.controller.
-WalkerController` (so ORCA sees every walker, the robot and any mocap props in one simulation). The
-first instance to initialise owns the per-step tick; the rest only contribute their spec.
 """
 
 from __future__ import annotations
@@ -54,20 +47,17 @@ from roqsim.config import PluginSpec
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.plugin import Plugin, PluginError
 from roqsim_nav.avoidance import DEFAULT_MODEL
-from roqsim_walker.blueprint import BlueprintError, resolve_walker
-from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _foot_ground as foot_ground,
 )
-from roqsim_walker.nav.controller import (
+from roqsim_walker.animation import (
     _heading,
     make_anim_state,
     write_pose,
 )
+from roqsim_walker.blueprint import BlueprintError, resolve_walker
+from roqsim_walker.humanoid import JOINT_NAMES, build_humanoid, forward_kinematics
 from roqsim_walker.output import STATE_KEY
-
-# Blackboard keys for the state shared by every ``walker`` instance in a world.
-_SPECS_KEY = "walker:_specs"
 
 
 @dataclass
@@ -102,10 +92,9 @@ class WalkerPlugin(Plugin):
         self._seq_lock = threading.Lock()
 
     # -- expansion -----------------------------------------------------------------------------
-    #: Legacy ``walker:`` keys and where they now live on the nested ``navigator``. The walker used
-    #: to own navigation itself; it now owns the body, and one navigator serves it, a robot and a
-    #: prop alike. Mapping the old keys here rather than asking worlds to be rewritten is what makes
-    #: that a refactor instead of a breaking change.
+    #: Navigation keys a ``walker:`` block accepts, and where they live on the nested ``navigator``.
+    #: The walker owns the body, and one navigator serves it, a robot and a prop alike; mapping the
+    #: keys here lets a world state navigation on the walker without writing the navigator.
     _NAV_KEYS = {
         "speed": "speed",
         "loop": "loop",
@@ -124,7 +113,7 @@ class WalkerPlugin(Plugin):
         """Give this walker a ``navigator`` component, unless the world already wrote one.
 
         The same mechanism ``spawn_robot`` uses to attach a model manifest's controllers. A world
-        that says nothing about navigation still gets exactly what it always got; a world that wants
+        that says nothing about navigation gets a default navigator; a world that wants
         the navigator's newer options -- ``route_mode``, ``autostart``, a different tracker -- writes
         the component itself and this steps aside.
         """
@@ -171,15 +160,14 @@ class WalkerPlugin(Plugin):
             # single random pause applied to both.
             nav["dwell"] = [list(d) if isinstance(d, (list, tuple)) else [d, d] for d in dwells]
         if isinstance(nav.get("avoidance"), bool):
-            # A walker's own block has always spelled this as a yes/no. The navigator names a model
-            # instead, because there is more than one and "yes" does not say which -- so the legacy
-            # spelling is translated here rather than a world being asked to change.
+            # A walker's own block spells this as a yes/no. The navigator names a model instead,
+            # because there is more than one and "yes" does not say which -- so the walker's
+            # spelling is translated here.
             #
-            # `stop: false` is the load-bearing half. A walker has never looked ahead: it gives way
-            # through the local model or not at all, and `avoidance: true` has always meant "steers,
-            # never stops". Letting it acquire a forward probe here would change how every existing
-            # pedestrian world behaves, which is exactly what this compatibility path exists to
-            # prevent -- and it is why the three capabilities are independent rather than a ladder.
+            # `stop: false` is the load-bearing half. A walker does not look ahead: it gives way
+            # through the local model or not at all, and `avoidance: true` means "steers, never
+            # stops". A forward probe here would change how every pedestrian world with that key
+            # behaves -- and it is why the three capabilities are independent rather than a ladder.
             nav["avoidance"] = {
                 "steer": DEFAULT_MODEL if nav["avoidance"] else "none",
                 "stop": False,
@@ -194,7 +182,7 @@ class WalkerPlugin(Plugin):
         # stopped. A world that puts a walker in a room with a robot should write a `navigator` for
         # it and ask for `avoidance: {stop: true}`.
         nav.setdefault("avoidance", {"stop": False})
-        # A walker's own footprint, so it presents the same disc to avoidance it always did.
+        # A walker's own footprint, so it presents its own disc to avoidance.
         nav.setdefault("radius", float((cfg.get("orca") or {}).get("radius", 0.26)))
         if (cfg.get("orca") or {}).get("max_speed") is not None:
             nav["max_speed"] = float(cfg["orca"]["max_speed"])
@@ -248,37 +236,20 @@ class WalkerPlugin(Plugin):
             **kw,
         )
 
-        # The controller spec = this plugin's config + everything the blueprint resolved.
+        # What the animation state is built from: where the walker starts + what the blueprint
+        # resolved.
         self._spec = {
-            **{
-                k: cfg[k]
-                for k in (
-                    "speed",
-                    "loop",
-                    "dwell",
-                    "arrival_radius",
-                    "avoidance",
-                    "orca",
-                    "planner",
-                    "recovery",
-                    "waypoints",
-                    "pos",
-                )
-                if k in cfg
-            },
+            **{k: cfg[k] for k in ("waypoints", "pos") if k in cfg},
             "name": self.walker_name,
             "skeleton": blueprint["skeleton"],
             "sole": blueprint["sole"],
             "motion": blueprint["motion"],
         }
-        specs = ctx.blackboard.get(_SPECS_KEY) or []
-        specs.append(self._spec)
-        ctx.blackboard.set(_SPECS_KEY, specs)
 
     def configure(self, ctx: SimContext) -> None:
         """Register the entity, build this walker's animation state, and declare its endpoints.
 
-        Navigation is not here any more: a nested ``navigator`` owns it (see :meth:`expand`), and
+        Navigation is not here: a nested ``navigator`` owns it (see :meth:`expand`), and
         this plugin owns the body it moves -- the mocap skeleton, the resolved motion clips, the
         blendspace state they are sampled into. The ``walker`` output reads that state from the
         blackboard, which is the seam that lets one navigator serve a pedestrian, a robot and a prop.
@@ -339,11 +310,11 @@ class WalkerPlugin(Plugin):
             )
         )
 
-        # The goal endpoint is NOT declared here any more: the nested `navigator` declares it, for
+        # The goal endpoint is NOT declared here: the nested `navigator` declares it, for
         # both nav2 action types, from one place. Two declarations of the same capability would mean
         # two handlers racing to register for one type in the bridge, where the loser is silently
         # overwritten. `goal_endpoint` and `action_name` still work in this block -- `expand` passes
-        # them through -- so a world reads the same as it always did.
+        # them through.
 
     def read_body_poses(self):
         """Endpoint ``read`` (physics thread): ``[(frame, pos[3], quat[4]), ...]`` for the 17 bones.

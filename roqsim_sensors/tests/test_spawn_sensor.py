@@ -5,7 +5,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 import pytest
-from external_meshes import needs_mid360, needs_robin, needs_zivid
+from external_meshes import needs_robin, needs_zivid
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
@@ -78,7 +78,6 @@ def _robin_world(**spawn_config):
     return load_config_from_dict(cfg)
 
 
-@needs_mid360
 def test_no_fov_geom_without_show_fov():
     # The Mid-360 ships no baked _fov mesh; its sector is synthesised at build time, and only when
     # show_fov is set -- so a plain mount has no FOV geom at all (mirrors the camera path).
@@ -89,7 +88,6 @@ def test_no_fov_geom_without_show_fov():
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "mid360_fov") < 0
 
 
-@needs_mid360
 def test_show_fov_synthesises_the_lidar_sector():
     # show_fov synthesises the Mid-360's dome sector as a mesh geom named "<site>_fov" = "mid360_fov".
     engine = Engine(_mid360_world(show_fov=True, fov_alpha=0.2))
@@ -97,7 +95,6 @@ def test_show_fov_synthesises_the_lidar_sector():
     assert np.isclose(_fov_alpha(engine), 0.2)
 
 
-@needs_mid360
 def test_show_fov_default_alpha_maximises_overlap_contrast():
     # Default fov_alpha is ~0.25: the darkness step between single- and double-coverage under alpha
     # blending is largest near this value and vanishes at very low alpha.
@@ -106,7 +103,6 @@ def test_show_fov_default_alpha_maximises_overlap_contrast():
     assert np.isclose(_fov_alpha(engine), 0.25)
 
 
-@needs_mid360
 def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     import mujoco
 
@@ -120,7 +116,6 @@ def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     assert m.geom_group[gid] == 2  # FOV_GEOM_GROUP -- normally rendered (not the dropped 4/5)
 
 
-@needs_mid360
 def test_lidar_sector_vertex_count_matches_grid():
     # A closed sector shell is an inner + outer sheet over the (azimuth x elevation) grid: 2*na*ne.
     import math
@@ -133,7 +128,6 @@ def test_lidar_sector_vertex_count_matches_grid():
     assert _mesh_vertnum(engine, "mid360_fov") == 2 * na * ne
 
 
-@needs_mid360
 def test_lidar_sector_reaches_the_datasheet_range():
     # The outer shell sits at the manifest far (Mid-360: 40 m detection range), so the farthest
     # vertex from the mount is ~40 m -- the user asked for the true datasheet range, not a stub.
@@ -233,7 +227,6 @@ def test_synthesised_frustum_is_double_sided():
     assert n > 0 and n % 2 == 0
 
 
-@needs_mid360
 def test_lidar_sector_is_double_sided():
     # Same guard for the lidar dome: doubled faces so the coverage volume is visible from inside too.
     engine = Engine(_mid360_world(show_fov=True))
@@ -425,7 +418,6 @@ def test_fov_occlusion_mesh_is_a_grid_not_a_hull(tmp_path):
     )  # near + far sheets, not an 8-vert hull
 
 
-@needs_mid360
 def test_camera_less_model_is_unaffected_by_unconditional_occlusion():
     # Occlusion is unconditional for cameras, but a camera-less model (mid360) has no pinhole to
     # raycast from -- it must fall through to its synthesised sector, not error.
@@ -454,14 +446,13 @@ def test_fov_rays_config_validation():
     assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
 
 
-@needs_mid360
 def test_lidar_sector_is_clipped_by_the_walls():
-    """A synthesised lidar sector must stop at world geometry, like a camera frustum already did.
+    """A synthesised lidar sector must stop at world geometry, like a camera frustum.
 
-    It used to draw its full physical reach straight through the building. That is wrong on its own
-    terms -- the volume claims to show what the sensor sees -- and it wrecked every render of such a
-    world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bounded an otherwise 10 m room, so
-    MuJoCo's model-derived default camera framed a ~160 m box and the room came out as a few dark
+    Drawn to its full physical reach straight through the building, it would be wrong on its own
+    terms -- the volume claims to show what the sensor sees -- and would wreck every render of such
+    a world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bound an otherwise 10 m room, so
+    MuJoCo's model-derived default camera frames a ~160 m box and the room comes out as a few dark
     pixels.
 
     Asserted below the wall tops, where the default empty_room actually encloses the sensor. The room
@@ -600,7 +591,7 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
     """The claim the whole feature rests on: MuJoCo RENDERS the stated lens.
 
     A pure ``camera_info`` change would leave the image identical and tell every consumer the
-    principal point is somewhere it is not -- which is the failure this replaces, so it is the one
+    principal point is somewhere it is not -- which is the failure this prevents, so it is the one
     thing a test must not take on trust. Shifting the principal point right by N px must move the
     image content left by N px, which a column correlation reads off directly.
     """

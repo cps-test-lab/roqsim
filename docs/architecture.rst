@@ -60,11 +60,27 @@ Full-run sequence:
 ::
 
    setup():   build(p0)…build(pN)  →  spec.compile()  →  MjData  →  configure(p0)…configure(pN)
-   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → gates.reset()
+   reset():   drain →  mj_resetData → mj_forward → on_reset(p0)…on_reset(pN) → mj_forward → interpenetration check → gates.reset()
    step():    drain → pre_step(p0…pN) → mj_step → post_step(p0…pN) → publish_snapshot
    shutdown(): shutdown(pN)…shutdown(p0)   (best-effort; a failure is logged, others still run)
 
-Ordering rule: within a hook, plugins run in **YAML order**; ``shutdown`` runs in reverse. Cross-plugin dependencies are expressed by ordering + the blackboard, never by importing another plugin.
+A ``configure`` that raises ends ``setup()`` with the plugins configured before it, and the failing one, shut down in reverse order: they hold what ``configure`` opens, and the driver never receives an engine to shut down. ``shutdown()`` on such an engine is then a no-op, as is a second ``shutdown()``.
+
+A driver holds the engine in a ``with`` block, which runs ``setup()`` on entry and ``shutdown()`` on every way out -- a return, an exception from ``reset`` or a step, an interrupt:
+
+::
+
+   engine = Engine(cfg)
+   engine.ctx.seed = resolve_seed(...)   # before setup: configure may read it
+   with engine:
+       engine.reset()
+       ...
+
+Where a window, a recorder or a renderer must also close, the driver puts them on one ``contextlib.ExitStack`` with the engine. A function that hands a set-up engine to its caller (``roqsim.render.build_target``, the scene builder's ``load_engine``) enters it on an ``ExitStack`` and calls ``pop_all()`` once nothing more can fail, so a failure before the hand-over still shuts it down; the caller then owns the shutdown. The scenario adapter is the one driver that keeps an engine across calls -- scenario-execution calls its ``setup`` and ``shutdown`` -- so it shuts the engine down in ``_teardown_engine`` rather than in a block.
+
+Ordering rule: within a hook, plugins run in **YAML order**; ``shutdown`` runs in reverse. Cross-plugin dependencies are expressed by ordering + the blackboard, never by importing another plugin. A plugin whose ``build`` edits what another plugin built -- ``contact_pair_override`` on the entities it pairs, ``flex_material`` on the flex a spawned model brings in -- is declared after that plugin, and refuses at build time, naming the fix, when what it edits is not there yet.
+
+**The start state is checked for interpenetration.** After the closing ``mj_forward`` of ``reset()``, ``data.contact`` describes the state the trial starts from — keyframes and ``home`` poses applied, props re-seated — and :func:`roqsim.interpenetration.interpenetrations` reads every contact MuJoCo acts on (``efc_address >= 0``) whose penetration ``-dist`` exceeds that contact's tolerance: the largest of 5 mm, its ``solimp`` width, and the depth at which its ``solref`` spring asks for one standard gravity (so a softer contact may sit deeper). Contacts between the same two sides fold into one finding; a side is a geom or, for a flex contact (``contact.geom == -1``), the flex named from ``contact.flex``; each side carries the entity whose body subtree holds it. The findings are kept in ``Engine.interpenetrations`` and logged as **one WARNING** naming the deepest three pairs and what to change (an arm's ``home``, a spawn pose). Nothing is refused: the overlap would otherwise be resolved on the first steps with contact forces that fling the bodies apart, and the run would fail later in a way that looks like a controller or protocol fault, so the finding is written where that run's log keeps it. A pair MuJoCo does not collide (``contype``/``conaffinity``, ``<exclude>``, parent-child filtering) exerts no force and is not reported, which is also how an intended overlap is declared. A geom that passes all the way through a thin one can get no contact from MuJoCo at all; the solver then does not act on it either, and it is not reported. ``roqsim check`` resets the world and reports the same findings as warnings, and so does ``roqsim scenes describe --entities``.
 
 Reference implementation: ``roqsim/src/roqsim/engine.py``.
 
@@ -80,7 +96,7 @@ Reference implementation: ``roqsim/src/roqsim/engine.py``.
 
 -  ``__init__(self, config: dict | None, *, name: str | None)`` — receives its YAML ``config:`` section.
 -  ``validate_config(self, config) -> list[str]`` — return error strings (empty = valid).
--  ``expand(cls, spec, world, base_dir) -> list[PluginSpec]`` *(classmethod, optional)* — extra specs to splice in right after this one at config load; used by spawn plugins to pull in a model's manifest (see §4). Default: none.
+-  ``expand(cls, spec, world, base_dir) -> list[PluginSpec]`` *(classmethod, optional)* — extra specs to splice in right after this one at config load; used by spawn plugins to pull in a model's manifest (see §4). What it returns is expanded in turn. A plugin lists the config keys ``expand`` reads in ``expansion_keys``, so a too-late override of one is refused. Default: none.
 -  Hooks as in §2. ``parallel_safe: bool`` marks a read-only ``post_step`` for the future parallel executor. ``transport_only: bool`` marks a plugin that builds no geometry and holds no state (``BridgeBase`` and its subclasses), so the scene-only consumers — ``roqsim render``, the review window, the exporters — drop it and can therefore build a ``*_ros`` world without its middleware installed; ``roqsim sim`` keeps it unless asked for ``--no-communication``, which warns that the run then publishes and receives nothing (see :doc:`plugins` › Transport plugins).
 
 .. _simcontext-contextpy-impl:
@@ -125,15 +141,15 @@ Config (``config.py``)
 4. Config & registry
 --------------------
 
-Single world YAML, two sections; ``plugins`` order = execution order:
+Single world YAML, two sections; ``components`` order = execution order:
 
 .. code:: yaml
 
    sim:
      timestep: 0.004        # optional; else from the model
-     pacing: realtime       # realtime | {factor: 4.0} | asap        [planned: honoured by runner]
+     pacing: realtime       # realtime | {factor: 4.0} | asap
      world: empty_room      # built-in name OR a path to an MJCF file; default empty_room (see below)
-     integrator: implicitfast  # euler | rk4 | implicit | implicitfast
+     integrator: auto       # auto (default) | euler | rk4 | implicit | implicitfast | discrete
      noslip_iterations: 10  # solver effort; see "Solver options" below
      sync: {enabled: false} # foreseen lockstep mode (§10); inert
 
@@ -158,7 +174,7 @@ Forms 2 and 3 contain a colon, and the ref is the entry's *key*, so **quote it**
 (``- "my_pkg.mod:MyPlugin": {...}``) — unquoted it parses only while no space follows the colon, so a
 stray ``key: value`` space would silently truncate the ref. Short names have no colon and need no quotes.
 
-Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if the left side ends in ``.py`` or exists on disk, else module. Every failure raises ``PluginError`` naming the attempted form.
+Order: no ``:`` → must be an entry-point (else error). Has ``:`` → file if the left side ends in ``.py`` or exists on disk, else module. Every failure raises ``PluginError`` naming the attempted form. A plugin file is executed once per process and reused until it changes on disk, so every resolution of one ref returns the same class.
 
 Validation is **delegated to each plugin** (``validate_config``); ``instantiate_plugins`` aggregates all errors across all plugins and raises once, namespaced ``[name (ref)] message``.
 
@@ -169,7 +185,7 @@ The static environment the robots/props stand in — ground + lighting — is a 
 
 - ``sim.world`` is either a built-in world name or a **path to an MJCF file**. The only built-in is ``empty_room`` (a checker ground plane named ``floor``, a ceiling light, and four perimeter walls — a bounded, lit room); unset ⇒ ``empty_room``. A value that ends in ``.xml``/``.mjcf`` or contains a path separator is loaded as the base scene (``MjSpec.from_file``, resolved relative to the world YAML) — e.g. a baked scene like ``depot/depot.xml`` (see ``roqsim_scenes``). Anything that is neither the built-in nor a resolvable file is a fail-fast error.
 - The engine builds/loads the world into the ``MjSpec`` **before** any plugin ``build``, so plugins attach onto it.
-- A scene plugin that builds its **own** ground+lighting sets the class attribute ``provides_world = True`` (the mobile ``floorplan``, which also adds lidar walls). When such a plugin is present the engine **skips** the world definition; if ``sim.world`` was *also* set explicitly the engine logs a warning and lets the plugin win. So ``floorplan`` is the mobile scene, ``sim.world`` is the fixed-cell default, and they never double up the floor.
+- A scene plugin that builds its **own** ground+lighting sets the class attribute ``provides_world = True`` (the mobile ``floorplan``, which also adds lidar walls). When such a plugin is present the engine **skips** the world definition; a world that *also* sets ``sim.world``, or carries two such plugins, is refused with a ``PluginError`` naming both (``Engine._check_one_world``). So ``floorplan`` is the mobile scene, ``sim.world`` is the fixed-cell default, and they never double up the floor.
 
 Policy specs (``roqsim.policy``)
 ''''''''''''''''''''''''''''''''
@@ -195,7 +211,7 @@ linear velocity, which the humanoids do not use) -- by rebuilding each from a sp
 element-wise with the plugin's own builder. Neither plugin is migrated: they work and are covered, and
 swapping a live observation builder would risk a silent regression for no present gain.
 
-A useful thing that fell out of writing those tests: Unitree's ``get_gravity_orientation`` and Isaac
+Those tests also show that Unitree's ``get_gravity_orientation`` and Isaac
 Lab's ``quat_rotate_inverse(q, [0,0,-1])`` are bit-identical (max difference 0 over 500 random
 quaternions), so one ``projected_gravity`` term serves a humanoid and a quadruped alike.
 
@@ -203,6 +219,22 @@ Solver options (``sim.solver`` and friends)
 '''''''''''''''''''''''''''''''''''''''''''
 
 ``sim`` carries five optional passthroughs to MuJoCo's ``<option>``: ``solver`` (``newton``/``cg``/``pgs``), ``iterations``, ``ls_iterations``, ``noslip_iterations`` and ``impratio``. Each is left at MuJoCo's default unless a world sets it, because the right value is a property of the *experiment*, not of the framework: a navigation world wants the cheapest solve that keeps wheels stable, a manipulation world needs contacts that hold.
+
+The integrator is ``sim.integrator``. Its default, ``auto``, resolves after every plugin's ``build``
+and before compile: to ``discrete`` for a model with a flex that has elasticity or passive contact,
+which MuJoCo refuses to compile under ``implicit``/``implicitfast``, and to ``implicitfast`` for any
+other model -- the integrator every world ran under before ``auto`` existed, and the one the
+velocity-servo wheel drives need for stability. The choice and the flex that decided it are logged,
+recorded in the run's provenance (``world_model.sim.integrator``) and printed by ``roqsim check``. A
+stated integrator is applied at the same point, so neither a plugin nor the world MJCF can set it; a
+stated ``sim.timestep`` likewise wins over theirs.
+
+A flex also constrains the rest of this block, and roqsim refuses the combinations before compile,
+naming the key to change: a stated ``implicit``/``implicitfast`` (or, for passive contact, any
+integrator but ``discrete``) with such a flex; ``solver: pgs`` or ``noslip_iterations`` above 0
+with one under ``discrete`` (MuJoCo supports neither there -- use ``newton`` or ``cg``); and a flex
+declared in a mocap body, which is carried rigidly and never deforms. The rules, and the MuJoCo
+version they were measured on, are in :mod:`roqsim.flex`.
 
 **A grasping world must set ``noslip_iterations``.** MuJoCo defaults it to ``0``, which leaves friction contacts a residual tangential drift. Measured on the G1/Dex1 pick: a 0.5 kg parcel gripped at 20 N between two pads crept out of the jaws at **0.119 m/s** and was dropped within two seconds; with ``noslip_iterations: 10`` the creep is **0.0009 m/s** and the lift holds indefinitely — a 137× reduction. ``iterations`` and ``ls_iterations`` alone changed nothing measurable, because this is the solver's dedicated slip-removal pass rather than general convergence. The failure mode is worth knowing because it presents as *insufficient friction* and is not: sweeping the sliding coefficient from 0.4 to 3.0 moved the creep rate by 17%, while halving the payload moved it by 80×.
 
@@ -222,6 +254,13 @@ measurement rather than an incidental.
    reconfigure every world it was spawned into. ``wind`` is inert without a medium, since MuJoCo
    feeds it into the drag terms.
 
+   A multirotor MJCF has no stabiliser either: it exposes thrust and body moments, and nothing
+   holds it level, so an uncommanded drone does not stand still -- it falls. Its manifest therefore
+   pulls in whatever stabilises it inside the simulator (``crazyflie_2`` pulls in
+   ``quadrotor_controller``); an airframe whose stabiliser is an external flight stack pulls in only
+   its motor model (``x500`` pulls in ``multirotor_motors``) and falls until that stack, a scenario
+   or a publisher drives it.
+
 ``sim.contact_override`` sets MuJoCo's global ``o_solref`` / ``o_solimp`` / ``o_friction``, which
 replace every contact's own parameters::
 
@@ -235,9 +274,8 @@ replace every contact's own parameters::
 
 They are here for **fidelity** first. A published model that enables MuJoCo's global override has to
 be reproducible as published, and these three are the values such a model states -- and often the ones
-it randomizes, since the flag makes them the only contact parameters in play. One corpus
-reconstruction turns on exactly that, and its spec records the flag as *required* for the three to
-have any effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
+it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+three have no effect at all. That a sweep over them is then an ordinary experiment factor -- needing no
 bespoke plugin and no hand-edited MJCF per cell, the same reason ``spawn_model``'s
 ``mass``/``friction`` exist -- is the second reason rather than the first.
 
@@ -257,6 +295,21 @@ A short vector is padded from MuJoCo's current value rather than zero-filled, so
 what sweeping one element means. Unknown keys and over-long vectors are rejected at config load, not
 at compile: a typo here is otherwise invisible.
 
+**The contact time constant has a floor at** ``2 * sim.timestep``, and it is the step that moves it.
+MuJoCo clamps a smaller one there and reports nothing, so at the default 2 ms step a world asking for
+0.5 ms, 1 ms or 2 ms gets 4 ms and a contact bit-identical in all three -- while its own configuration
+still reads 0.5 ms. A time constant below the floor is therefore refused, naming the floor that
+applies, because tightening a fit is exactly the reason to reach for this key and a silent clamp
+turns the attempt into a wrong conclusion about the solver. To go tighter, lower ``sim.timestep``:
+halving it halves the floor and roughly doubles the wall time. Only the positive form is a time
+constant -- a negative ``solref`` is MuJoCo's direct ``(-stiffness, -damping)`` parameterisation, to
+which no floor applies.
+
+Worth knowing before tuning for penetration: the floor is not usually what limits a fit. A 5 kg mass
+resting on a plate at the shipped defaults penetrates on the order of nanometres, four orders below
+the 0.1 mm a tight assembly cares about. Where a peg sits proud of its bore, measure before reaching
+for the solver -- an arm's own contact stiffness, and the servo behind it, are the more likely cause.
+
 ``sim.cone`` selects the friction cone. Pyramidal is MuJoCo's default and cheaper; elliptic is the
 physically correct one and matters when the *tangential* force is the measurement -- an insertion
 benchmark reads F_x/F_y directly, and a pyramidal cone quantises their direction to the pyramid's
@@ -266,22 +319,44 @@ facets.
 often runs at zero g deliberately: a simulated force-torque sensor is not tared, so with gravity on
 every wrench sample carries a constant tool-weight bias that a force-energy metric is dominated by.
 
-Ending a run from a plugin (``ctx.request_stop``)
-'''''''''''''''''''''''''''''''''''''''''''''''''
+Who ends a run (``ctx.request_stop`` and the scenario)
+''''''''''''''''''''''''''''''''''''''''''''''''''''''
 
-A trial that knows it is finished -- the goal was reached, the episode failed, the recording is
-complete -- can say so with ``ctx.request_stop(reason)``. The standalone driver polls
-``ctx.stop_requested`` and leaves its loop cleanly, so ``shutdown`` still runs and files still flush.
+Under scenario-execution the scenario owns when a run ends: it ends it with ``emit end`` after a
+condition it watches or a sim-time bound, and roqsim never ends a scenario run. A trial plugin that
+knows it is finished -- the goal was reached, the episode failed -- therefore publishes that as
+observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
+condition on, and holds the robot idle until the scenario ends the run.
 
-Without it a world is padded out to a wall-clock ``--seconds``, guessed high enough for the slowest
-cell and then wasted on every faster one. It is a *request*: the engine does not
-act on it, so an embedding driver (scenario-execution, a test harness) may ignore it and keep
-stepping. Physics-thread only, like every other write on ``SimContext``; the first reason wins.
+For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
+outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
+plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
+bound on the trial:
+
+.. code-block:: text
+
+   scenario trial:
+       timeout(120s)
+       do serial:
+           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
+           emit end
+
+The report is addressed as the world names it -- the entity and the endpoint -- and read from the
+endpoint itself in a stepped run and through the bridge's endpoint map over ROS (§13), so one
+scenario ends the same way on either transport.
+
+The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
+with ``ctx.request_stop(reason)``: the driver polls ``ctx.stop_requested`` and leaves its loop
+cleanly, so ``shutdown`` still runs and files still flush, instead of the world being padded out to
+a wall-clock ``--seconds`` guessed high enough for the slowest cell. The engine itself does not act
+on the request beyond withdrawing it at ``reset()``, since it belongs to the trial that made it, and
+the scenario adapter does not read it. Physics-thread only, like every other write on
+``SimContext``; the first reason wins.
 
 Actuator overrides (``actuators:``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so used to mean editing the shared MJCF: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
+A model ships one set of actuator gains, and they are that model's own sizing — the ur5e's servo is softer than the ur10e's because it is a 5 kg-payload arm. An experiment reproducing a published controller needs *its* gains, which are a property of the experiment rather than of the robot. Saying so by editing the shared MJCF would leak: every other world that spawns the model silently inherits the edit, and the value that ran is recorded nowhere. ``actuators:`` on a spawn plugin (``spawn_arm``, ``spawn_robot``) states the law and the gains instead, and ``roqsim/actuators.py`` rewrites the model's own actuators to match.
 
 The vocabulary is the robot's, not MuJoCo's: ``control`` names a ros2_control command interface and the gains are the ones a real controller's yaml carries, because a port transcribing a paper reads its numbers out of a controller config and a key it has to translate is a key it can get wrong. ``effort_limit`` is URDF's ``<limit effort=>``, which ``export_urdf`` already emits from ``actuator_forcerange``.
 
@@ -353,7 +428,13 @@ Model plugin manifests (``expand``)
 
 A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + ``lidar``; an arm → ``arm_controller``) in a ``<model>.manifest.yaml`` manifest next to its MJCF, so a world only spawns the model instead of re-declaring them. Mechanism:
 
-- Before instantiation, ``_expand_plugins`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is the list of explicitly-declared specs; core does no dedupe of its own.
+- Before instantiation, ``expand_document`` (``config.py``) resolves each plugin class and calls its ``expand(spec, world, base_dir)`` classmethod, **splicing the returned specs in immediately after** the plugin that produced them (so a spawn's controller/sensors land before a later ``ros2_bridge`` that reads their endpoints). ``world`` is every spec declared or injected so far; core does no dedupe of its own.
+- **Expansion is recursive and depth-first.** Each returned spec is expanded in turn, so a robot manifest can mount a device model (``spawn_sensor``) whose own manifest brings its capture plugin. Build order stays the document's shape: robot, its first component, the mounted device, the device's components, the robot's next component.
+
+  - An injected spec whose owner has not been placed yet waits for that owner and follows it. This happens when a robot manifest nests an override under a device the world declares itself. A carrier therefore always builds before what it carries.
+  - A chain that reaches the same model file twice is refused, naming the chain. So is one that nests deeper than eight expansions.
+  - **Ownership is the full address.** An injected spec's ``entity`` is its producer's address (``robot.scan_front``), so ``_as_tree``, overrides (``components.robot.scan_front.lidar.rays``), ``enabled`` cascades and the run record all work at any depth. Two robots each mounting a ``scan_front`` never collide.
+  - **A late override of an expansion input is refused.** A component a manifest injected is first addressable after it has expanded. An override of a key its ``expand`` reads (the plugin's ``expansion_keys``: ``model``, ``prefix``, ``frame_id``, ...) would leave what it brought in built from the old value, so it is refused. Declaring that component in the world, nested under its carrier, lands the value before expansion.
 - **Expansion runs while the document loads**, not inside the engine, so ``SimConfig.plugins`` is the
   *effective* component list -- what the document declares plus what its models' manifests contribute
   -- in build order. ``SimConfig.declared`` keeps the entries a reader actually wrote. That is what
@@ -363,9 +444,9 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - **A run records the components that ran, and a recording is rebuilt by reading them.** The
   provenance carries the resolved tree and the ``sim`` block beside the recipe (the world reference
   and the override document, which stay because they are what a reader needs to see how the run was
-  asked for, and what an external consumer uses as world identity). Replay no longer re-runs the load
+  asked for, and what an external consumer uses as world identity). Replay does not re-run the load
   path, so no later change to how an override resolves can make a recording rebuild a *different*
-  world while looking correct. ``format_version`` is now **read**: a newer record is refused rather
+  world while looking correct. ``format_version`` is **read**: a newer record is refused rather
   than partly understood, and an older one still reads -- its samples, times and clock are intact --
   but will not rebuild from overrides that would resolve differently today.
 
@@ -378,6 +459,12 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
   import and be refused for it anyway.
 
 - Spawn plugins implement ``expand`` in one line via the shared ``roqsim.manifest.expand_manifest(spec, world, *, base_dir=None)``. It resolves the model (see *Model discovery* below), reads the ``<model>.manifest.yaml`` beside the resolved file, and injects each entry as a **component of the spawn**. There is no per-family wiring key any more: an entry belongs to the entity whose entry it sits under, so a mobile spawn and an arm spawn wire their components identically. Distinct entities (two arms) never collide.
+- **A manifest entry that itself provides an entity** (a ``spawn_sensor`` in a robot manifest) gets the spawn's prefix as ``attach_prefix`` rather than ``prefix``, and derives its own from that. Its nested ``components:`` are kept, owned by its address and merged by label like everything else. Precedence is nearer-wins all the way down: the world's value, then the robot manifest's, then the device manifest's.
+
+  - A mounted device's ``prefix`` defaults to ``<carrier prefix><label>_``, and its ``namespace`` to the carrier's.
+  - A device manifest may use ``{frame_id}`` and ``{parent_frame}`` placeholders, and no others.
+  - ``{frame_id}`` is the mount's ``frame_id``, else the manifest's top-level ``frame_id:`` (the vendor's default scan-frame name, ``roqsim.manifest.manifest_frame_id``). A device whose vendor names none declares none, and a mount of it without a ``frame_id`` is refused rather than given a made-up name. Two mounts on one carrier with the same ``frame_id`` are refused too, since they share its namespace.
+  - Vendor fixed links a model flattened are a ``frames:`` block (``roqsim.frames``). It is built as sites and published as static transforms. The ``spawn_sensor`` and ``spawn_robot`` docstrings (``docs/plugins.rst``) have the details.
 - When the owner already declares a component with the same **label** (its ``name:``, else its plugin ref), the manifest default is **not injected** — the world's entry is the one that runs — but the manifest's config is **merged underneath it**: per key, the world's value wins and missing keys are filled from the manifest. This is what makes a *partial* override work (a nested ``diff_drive: {test_cmd: [...]}`` adds a scripted command and keeps the model's wheel geometry and actuator names). Keying on the label rather than the ref is load-bearing: a model may ship two of a kind (tiago_pro's front and rear lidars), and keying on the ref would collapse them onto one entry and silently lose a sensor. The merge is shallow on purpose: a nested value the world sets replaces the manifest's whole mapping rather than being deep-merged. The world's spec is mutated in place, which is safe because plugins are constructed only after expansion completes — so declaration order does not matter.
 
   .. note::
@@ -399,7 +486,7 @@ A spawn plugin's ``model:`` string is resolved by ``roqsim.models.resolve_model`
 - **Package-qualified** ``<package>:<model>`` (``roqsim_manipulation_assets:ur10e``) — resolved within that provider; use it to disambiguate a name shipped by two packages, or to self-document a dependency. A dotted ``module:name`` exposing ``MODELS_DIR`` also works for models outside the group.
 - **Filesystem path** (absolute, or relative to ``base_dir``) — loaded directly.
 
-``resolve_model`` returns a ``ModelAsset(path, meshdirs, texturedirs)``. Crucially, **the asset dirs follow the model to its own package** (a provider exposes ``MODELS_DIR`` and optionally ``MESHES_DIR``/``TEXTUREDIR``): a spawn plugin calls ``apply_assets`` to rewrite the child spec's mesh/texture refs to absolute paths found across those dirs, so it no longer forces its own package's ``meshdir`` onto a foreign model — which is what made a cross-package model impossible before. A model that reuses other packages' meshes adds an ``assets:`` key to its ``<model>.manifest.yaml`` naming the provider(s) to borrow from — a single name or a **list**. Search order: the model's **own** declared ``meshdir`` always comes first — its assets can never be shadowed by same-named files elsewhere (Menagerie-style link names recur across robots, e.g. the Oli and the G1 both ship a ``left_hip_yaw_link.STL``) — then the borrowed providers in order, then the provider default and the model file's dir. Since MuJoCo allows only one ``meshdir`` per model, resolving to absolute paths is what lets meshes from *several* packages coexist. A package registers its models with::
+``resolve_model`` returns a ``ModelAsset(path, meshdirs, texturedirs)``. Crucially, **the asset dirs follow the model to its own package** (a provider exposes ``MODELS_DIR`` and optionally ``MESHES_DIR``/``TEXTUREDIR``): a spawn plugin calls ``apply_assets`` to rewrite the child spec's mesh/texture refs to absolute paths found across those dirs, so it does not force its own package's ``meshdir`` onto a foreign model — which would make a cross-package model impossible. A model that reuses other packages' meshes adds an ``assets:`` key to its ``<model>.manifest.yaml`` naming the provider(s) to borrow from — a single name or a **list**. Search order: the model's **own** declared ``meshdir`` always comes first — its assets can never be shadowed by same-named files elsewhere (Menagerie-style link names recur across robots, e.g. the Oli and the G1 both ship a ``left_hip_yaw_link.STL``) — then the borrowed providers in order, then the provider default and the model file's dir. Since MuJoCo allows only one ``meshdir`` per model, resolving to absolute paths is what lets meshes from *several* packages coexist. A package registers its models with::
 
     [project.entry-points."roqsim.models"]
     roqsim_assets = "roqsim_assets.models"   # a module exposing MODELS_DIR
@@ -417,11 +504,11 @@ Types are *roles* (which hooks you implement), not separate base classes:
 -  **Controller** (``pre_step``): diff-drive (``cmd_vel``), arm trajectory, conveyor velocity, ped ORCA.
 -  **Sensor** (``post_step``, maybe ``render``): lidar (``mj_multiRay``, no GL), camera (RGB-D, GL), IMU.
 -  **Transport/bridge** (``configure``\ +\ ``pre/post_step``\ +\ ``shutdown``): ROS 2 bridge, ``simulation_interfaces``.
--  **Recording/observability** (``post_step``): metrics/CSV (a task plugin's own series). Recording MuJoCo *state* is not a plugin — it is the driver's ``--record`` (see §8).
+-  **Recording/observability** (``post_step``): metrics/CSV (a task plugin's own series). Recording MuJoCo *state* is not a plugin — it is the driver's ``--record`` (see :ref:`recording-a-run`).
 -  **Render** (future): viewer overlays, debug markers.
 -  **Perturbation**: a sensor's own noise config, switchable mid-run through its ``fault:`` block
    (§9.1), or ``model_override`` changing a named model value mid-run on an external trigger (§9.2).
-   There is no shared error-model framework; the one that existed was removed (§9.1).
+   There is no shared error-model framework, on purpose (§9.1).
 
 ``DummyPlugin`` (``plugins/dummy.py``) is a minimal end-to-end example implementing every hook.
 
@@ -523,7 +610,7 @@ Anti-patterns (do not do)
 8. Rendering
 ------------
 
-A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built, which is why the heading no longer says otherwise.
+A ``RenderService`` on the context that owns all GL/EGL contexts and camera renderers -- created lazily and shared, so multiple sensor/render plugins never fight over contexts -- is **[planned]**. Everything else in this section is built.
 
 -  **Lidar** uses ``mujoco.mj_multiRay`` — **no GL**, works headless everywhere (M1 uses this; nav2 needs a ``LaserScan``).
 -  **Camera / RGB-D** uses ``mujoco.Renderer`` (offscreen). Cameras render **only when consumed** (lazy), and their expensive endpoints are not *published* to nobody either: ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points`` set ``Endpoint.lazy``, so a subscriber-less stream costs neither a GL pass nor a serialisation. The two checks answer different questions — the render gate ORs over every endpoint one pass feeds, the publish gate is per-endpoint — so a consumer of the compressed topic alone still gets frames, and a consumer of the raw topic alone does not pay for the JPEG (or, for depth published as ``16UC1``, for the RVL of its ``compressedDepth`` companion -- an order dearer than the JPEG, since RVL has no C library behind it).
@@ -545,16 +632,17 @@ A ``RenderService`` on the context that owns all GL/EGL contexts and camera rend
 9.1 Sensor noise
 ~~~~~~~~~~~~~~~~
 
-**Design note:** an earlier generic, composable error-model framework (a ``roqsim.error_models`` registry wired into sensors via an ``error_model:`` config key) was **removed**. In practice noise is sensor-specific — its parameters, where it applies, and how it degrades only make sense in the context of one sensor — so a generic cross-sensor abstraction added indirection without real reuse.
+**Design note:** there is **no** generic, composable error-model framework (a registry wired into sensors through an ``error_model:`` config key). Noise is sensor-specific — its parameters, where it applies, and how it degrades only make sense in the context of one sensor — so a generic cross-sensor abstraction adds indirection without real reuse.
 
 Instead, each sensor owns its noise as plain config:
 
--  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to finite ranges (0 = off); ``dropout_percent`` randomly drops that percentage of points per scan to a "no return" (``inf``). Determinism: seeded from the run's seed (``sim.seed`` in the world, or ``--seed``, or the value the scenario adapter resolves from ``ROQSIM_SEED`` -- an explicit one wins; with none of them, one is drawn and announced) through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, episode, sim_time, sensor name)``. The ``episode`` — :attr:`~roqsim.context.SimContext.episode`, advanced by :meth:`~roqsim.engine.Engine.reset` — is what stops a process that serves several trials from replaying one noise sequence over and over: ``mj_resetData`` puts ``data.time`` back to zero, so keying on simulated time alone made trial 2 re-draw trial 1's noise step for step, and repeated trials of one configuration were duplicates wearing the clothes of samples. It occupies a counter slot rather than perturbing the key, so the key still means "the run's seed", the generator stays randomly accessible, the whole series stays reproducible from one base seed, and trial *i* of two different runs draws the *same* noise when their seeds match — which is what makes two configurations comparable trial-for-trial rather than only in distribution. A recording carries the episode beside the seed, because the right seed at the wrong episode reproduces the bug in miniature: noise that never happened, and entirely plausible-looking. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. Before this, ``ctx.rng`` was read by the sensors but never set by anything, so noisy runs were not reproducible at all. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses. **An unresolved seed raises** (``roqsim.seed.SeedError``) rather than standing in a 0: the seed is the driver's to resolve, so a run without one is missing a required input, and the failure lands at the first draw instead of on every trial afterwards. It is raised from ``rng_for`` and not from ``setup()`` because that is the only place that knows a draw is happening -- a geometry export or a ``scenes describe`` builds the same world and needs no seed. A **preview** -- a driver that compiles a world in order to LOOK at it and never steps it into a run whose numbers anyone keeps -- says so with ``Engine(cfg, preview=True)``, which pins the fixed ``roqsim.seed.PREVIEW_SEED``: a picture is not a measurement, and two renders of one world must be the same picture. That is a flag rather than a line each such tool remembers, because forgetting it is invisible until someone points the tool at a world that happens to draw: ``roqsim render``, ``roqsim check``, ``roqsim scenes describe``, the map and MoveIt exports and the scene preview all refused such a world, naming a seed their caller had no way to supply -- and the campaign world check refused a perfectly good randomised world before spending anything on it. A driver may still assign ``ctx.seed`` itself afterwards; the flag sets the default, not the policy. Where a world is run repeatedly to sample a distribution, leave ``sim.seed`` unset -- a stated one gives every repetition the same draws, which is reproducibility bought at the price of the variation those repetitions exist to measure.
+-  **Lidar** (``roqsim_sensors``): ``range_stddev`` adds zero-mean Gaussian noise to every hit (0 = off), and ``range_stddev_relative`` makes that sigma a fraction of the true distance at and beyond ``range_stddev_relative_from`` -- the shape a triangulation scanner's datasheet states (the LDS-01: +-10 mm below 0.5 m, +-3.5 % above). The noisy distance is floored at 0 and quantised to ``range_resolution`` (the S300's 10 mm steps). It reaches a measured return and a 2D scan's ``raw`` too-close return; a constant ``too_close``/``no_return`` value carries none. ``dropout_percent`` randomly drops that percentage of rays per scan to a no return (the scan's ``no_return`` value, ``+inf`` by default). A systematic per-instance bias is not modelled: the datasheets state it as a bound with no distribution. Determinism: seeded from the run's seed (``sim.seed`` in the world, or ``--seed``, or the value the scenario adapter resolves from ``ROQSIM_SEED`` -- an explicit one wins; with none of them, one is drawn and announced) through :meth:`roqsim.context.SimContext.rng_for`, which returns a **counter-based** (Philox) generator keyed on ``(seed, episode, sim_time, sensor name)``. The ``episode`` — :attr:`~roqsim.context.SimContext.episode`, advanced by :meth:`~roqsim.engine.Engine.reset` — is what stops a process that serves several trials from replaying one noise sequence over and over: ``mj_resetData`` puts ``data.time`` back to zero, so keying on simulated time alone would make trial 2 re-draw trial 1's noise step for step, and repeated trials of one configuration duplicates wearing the clothes of samples. It occupies a counter slot rather than perturbing the key, so the key still means "the run's seed", the generator stays randomly accessible, the whole series stays reproducible from one base seed, and trial *i* of two different runs draws the *same* noise when their seeds match — which is what makes two configurations comparable trial-for-trial rather than only in distribution. A recording carries the episode beside the seed, because the right seed at the wrong episode reproduces noise that never happened, and entirely plausible-looking. Counter-based rather than stateful for a specific reason: a shared stateful generator's position depends on how many draws happened before it — sensor rates, step count, and for cameras whether anyone was subscribed — so it is not a function of the world at all, and a value drawn at t = 12.5 could not be reproduced without replaying the whole run. Keying on *simulated time* rather than a step counter is what lets a sensor be re-run from a **recording** and produce the same noise the live run published, because a restored state carries its ``sim_time`` and nothing carries a step count. A sensor re-run from a recording (``roqsim state --sensor``) is therefore deterministic and noise-correct for the restored state, but **not** bit-identical to what the live run published at that timestamp: live, ``post_step`` runs at the physics rate, so a sensor's own ``rate_hz`` gate fires between recorded samples and the endpoint holds a scan computed slightly earlier than the sample that recorded it. Measured, about a quarter coincide exactly. Recovering the rest would mean recording every firing — bagging the topic, at ~26x the size of the state recording — which is the trade this design refuses. **An unresolved seed raises** (``roqsim.seed.SeedError``) rather than standing in a 0: the seed is the driver's to resolve, so a run without one is missing a required input, and the failure lands at the first draw instead of on every trial afterwards. It is raised from ``rng_for`` and not from ``setup()`` because that is the only place that knows a draw is happening -- a geometry export or a ``scenes describe`` builds the same world and needs no seed. A **preview** -- a driver that compiles a world in order to LOOK at it and never steps it into a run whose numbers anyone keeps -- says so with ``Engine(cfg, preview=True)``, which pins the fixed ``roqsim.seed.PREVIEW_SEED``: a picture is not a measurement, and two renders of one world must be the same picture. That is a flag rather than a line each such tool remembers, because forgetting it is invisible until someone points the tool at a world that happens to draw: without it, ``roqsim render``, ``roqsim check``, ``roqsim scenes describe``, the map and MoveIt exports and the scene preview would each refuse such a world, naming a seed their caller has no way to supply -- and a campaign's world check would refuse a perfectly good randomised world before spending anything on it. A driver may still assign ``ctx.seed`` itself afterwards; the flag sets the default, not the policy. Where a world is run repeatedly to sample a distribution, leave ``sim.seed`` unset -- a stated one gives every repetition the same draws, which is reproducibility bought at the price of the variation those repetitions exist to measure.
+-  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §5 removed. Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
-When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the range window and the noise so the devices cannot drift apart on them. They had: the 3D lidars were missing the ``max_range`` clamp and the presence mask, both of which are now applied once, for everyone.
+When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 
 **One raycast seam: ``roqsim.raycast``.** :func:`roqsim.raycast.cast` is the only ``mj_multiRay``
 caller in the tree — the lidar base, the coverage engine and sampler, ``spawn_sensor``'s build-time
@@ -572,7 +660,7 @@ go through it. Three things live there because they must be decided once:
    ``mjData``. Hammering one ``mjData`` with 8 threads × 40000 casts, a sampler saw ``pstack`` peak
    at 2112 bytes and return **1632 instead of 0** — MuJoCo guarantees a function restores ``pstack``,
    and concurrency breaks it. The leak is monotonic, so a long trial walks toward stack exhaustion;
-   the observed failure while developing this was a core dump. Every one of those 320000 casts
+   the failure it produces is a core dump. Every one of those 320000 casts
    returned the *right answer*, which is the point: the race corrupts an allocator invariant, not the
    output, so it survives any amount of parity testing and then crashes in a long run. MuJoCo's own
    guidance is one ``mjData`` per thread and the ray functions are not exempt. If 3D-lidar throughput
@@ -592,26 +680,28 @@ go through it. Three things live there because they must be decided once:
 
 The test for which of the two a perturbation is, is **where the failure lives**. A lidar that mis-measures a wall it can see is noise. A gripper that stops holding is not a measurement at all, and no perturbation of a report can produce it.
 
-.. _92-physical-faults-impl:
-
 **Reaching a sensor's config from outside the world.** A sensor usually arrives from a model manifest -- ``spawn_robot: {model: turtlebot4}``
 brings the lidar with it -- so a world that only spawns a robot never names it. Two
 consequences, and they differ:
 
--  **A world may set one key of a default** without restating the rest. Declare it as a component of
-   the spawn; ``expand_manifest`` merges the manifest's config *underneath* that entry, per key, so::
+-  **A world may set one key of a default** without restating the rest. Declare it where the manifest
+   puts it -- for a TurtleBot 4, under the robot's ``rplidar`` mount; ``expand_manifest`` merges the
+   manifest's config *underneath* that entry, per key, so::
 
       components:
         - spawn_robot: {model: turtlebot4}
           name: robot
           components:
-            - lidar: {range_stddev: 0.05}   # keeps the model's rays, max_range, frame_id
+            - spawn_sensor: {}                # the manifest's RPLIDAR mount, by its label
+              name: rplidar
+              components:
+                - lidar: {range_stddev: 0.05}   # keeps the device's rays, max_range, frame_id
 
    Restating the rest would be a duplicate that silently diverges the day the manifest changes. The
-   entry carries no ``robot:`` key: it belongs to the robot because it sits inside it.
+   entry carries no ``robot:`` key: it belongs to the mount because it sits inside it.
 
 -  **An override reaches a default the document never declared.** Expansion runs while the document
-   loads, so ``--set components.robot.lidar.range_stddev=0.05`` resolves against what will actually
+   loads, so ``--set components.robot.rplidar.lidar.range_stddev=0.05`` resolves against what will actually
    run -- no entry, no stub. It is still applied before compile, so the value is in the compiled
    model and therefore in the run's provenance.
 
@@ -620,8 +710,8 @@ consequences, and they differ:
    same assignment, which they have to be -- a sweep flattens a path onto a command line, a saved
    override set writes a document, and they must not diverge::
 
-      --set components.robot.lidar.rays=720
-      components: {robot.lidar: {rays: 720}}
+      --set components.robot.rplidar.lidar.rays=720
+      components: {robot.rplidar.lidar: {rays: 720}}
 
    Assignments are applied twice: once against what the document declares, then again once its
    models' manifests have contributed. The first pass is what lets a *structural* override work --
@@ -633,7 +723,9 @@ consequences, and they differ:
    a bare ``lidar`` against a robot carrying two is a no-match rather than an ambiguity, and the
    useful answer is both their addresses.
 
-**Proximity is a separate observable, and a separate plugin.** ``contact_monitor`` answers *did it touch*; ``clearance_monitor`` answers *how close did it come*. Contact is the honest failure criterion and a poor optimisation target -- a bit gives every non-touching configuration one score -- so the pair exists to supply a verdict and a gradient over one geometry, with one owner each. The distance is measured in the simulator rather than derived afterwards from recorded poses for three reasons that cannot be fixed downstream: the closest approach falls *between* pose samples, and the faster the pass the more is missed; a footprint radius would put a calibration constant between the geometry and the result, which is the objection §9.2 and the contact plugin both raise against proximity proxies; and an articulated obstacle's nearest part is a limb rather than its origin. ``mj_geomDistance`` measures the real shapes, so the limb is what it finds and names. Collision masks matter here and MuJoCo's distance query does not apply them: a render-only geom would otherwise be reported as clearance to something the robot passes straight through (a pedestrian model carries six of those beside fifteen solid ones), so candidates and watched geoms are filtered by MuJoCo's own pairing rule on both sides. It **never ends a trial** -- two plugins reporting one failure by different rules is how a trial starts disagreeing with itself, and a clearance threshold is exactly the tunable number the contact oracle avoids; a scenario that wants to stop on a near-miss reads the endpoint and decides, with the threshold stated in the experiment. Measuring is a distance query per geom pair, so ``compute_rate_hz`` (default 200) is decoupled from the publish rate: every physics step cost about a fifth of the step budget on a nav world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking pace.
+**Proximity is a separate observable, and a separate plugin.** ``contact_monitor`` answers *did it touch*; ``clearance_monitor`` answers *how close did it come*. Contact is the honest failure criterion and a poor optimisation target -- a bit gives every non-touching configuration one score -- so the pair exists to supply a verdict and a gradient over one geometry, with one owner each. The distance is measured in the simulator rather than derived afterwards from recorded poses for three reasons that cannot be fixed downstream: the closest approach falls *between* pose samples, and the faster the pass the more is missed; a footprint radius would put a calibration constant between the geometry and the result, which is the objection ``contact_monitor`` raises against a proximity proxy; and an articulated obstacle's nearest part is a limb rather than its origin. ``mj_geomDistance`` measures the real shapes, so the limb is what it finds and names. Collision masks matter here and MuJoCo's distance query does not apply them: a render-only geom would otherwise be reported as clearance to something the robot passes straight through (a pedestrian model carries six of those beside fifteen solid ones), so candidates and watched geoms are filtered by MuJoCo's own pairing rule on both sides. It **never ends a trial** -- two plugins reporting one failure by different rules is how a trial starts disagreeing with itself, and a clearance threshold is exactly the tunable number the contact oracle avoids; a scenario that wants to stop on a near-miss reads the endpoint and decides, with the threshold stated in the experiment. Measuring is a distance query per geom pair, so ``compute_rate_hz`` (default 200) is decoupled from the publish rate: every physics step cost about a fifth of the step budget on a nav world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking pace.
+
+.. _92-physical-faults-impl:
 
 9.2 Physical faults (``model_override``)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -642,7 +734,7 @@ The runtime counterpart to ``--set``: name a model field, name the objects, name
 
 **Not every model field can be written at runtime, and the ones that cannot fail silently** -- so the plugin ships a curated allowlist, one row per field with its object namespace, its write class and its caveat, and refuses everything else by name with the reason. Two write classes, both measured against MuJoCo 3.11.0:
 
--  ``live`` -- in effect on the next step: ``geom_friction``, ``geom_contype``/``geom_conaffinity``, ``actuator_forcerange``.
+-  ``live`` -- in effect on the next step: ``geom_friction``, ``geom_contype``/``geom_conaffinity``, ``actuator_forcerange``, and a flex's ``flex_friction``, ``flex_solref``, ``flex_solimp`` and ``flex_damping`` (measured on MuJoCo 3.14.0). ``flex_damping`` is live only on a flex compiled with a non-zero damping: MuJoCo sizes the flex's edge Jacobian at compile, and over a compiled 0 a written damping acts in part (measured: the ringing barely changes, where written over a compiled 1e-9 it reproduces the compiled run exactly), so that write is refused. A flex's Young's modulus and Poisson's ratio have no row because they have no field -- MuJoCo bakes them into ``flex_stiffness`` -- and the ``flex_material`` plugin sets them before compile.
 -  ``needs_setconst`` -- ``body_mass``, whose write the dynamics **ignore** until ``mj_setConst`` recomputes the derived inertia (measured: the mass matrix does not move, and ``body_invweight0``/``body_subtreemass`` keep their compile-time values). The plugin calls it.
 
 ``geom_size`` is refused: ``geom_rbound`` is cached at compile, so a box grown 0.05 → 0.4 m kept ``rbound`` at 0.0866 and, while overlapping the floor, produced ``ncon = 0`` -- geometry that renders big and collides as if small. Three further refusals are *decisions* rather than safety, and the plugin says so: ``geom_priority`` (it also governs ``condim``/``solref``/``solimp``, so it would swap the contact's stiffness model at the instant of the fault), MuJoCo's own ``sensor_noise`` (§9.1 gave that to per-sensor config), and every ``opt.*`` global (``sim.contact_override`` and the ``sim:`` block own those, *before compile*, so they are in the compiled model and in the run's provenance -- a runtime write would make the recorded value differ from the one that ran).
@@ -700,7 +792,7 @@ With ``Engine(profile=True)`` (the runner's ``--profile``) the engine times ever
 12. Conventions
 ---------------
 
--  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, aerial vehicles in ``roqsim_aerial/`` (``quadrotor_controller``, models, worlds), and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
+-  **Layout:** the framework core is its own pip package ``roqsim/`` (engine, plugin API, drivers, the generic ``dummy`` plugin, and the driver-level capture/render modules). Generic, robot-family-agnostic sensors live in ``roqsim_sensors/`` (``lidar``, ``oakd_camera``, ``realsense_d435``, ``imu``, ``gnss``). Robot-family plugins + assets live in further sibling packages — wheeled bases in ``roqsim_mobile/`` (floorplan/spawn_robot/diff_drive/omni_drive, models, worlds); arms and manipulators are further siblings, aerial vehicles in ``roqsim_aerial/`` (``quadrotor_controller``, ``multirotor_motors``, ``px4_sitl``, models, worlds), and a robot belonging to two families goes in a package depending on both (``roqsim_mobile_manipulation/``) rather than widening one family's dependencies. The ROS bridge and the nav2 example are colcon packages under ``ros2_ws/src/`` (``roqsim_ros_bridge``, ``roqsim_nav2_example``). Keep the core ROS-free.
 -  **Naming:** plugin classes ``PascalCase``, entry-point names ``snake_case``; blackboard handles under ``<kind>:<name>`` (``robot:<name>``, ``metrics:<name>``, ``model_override:<name>``, ``contact_monitor:<name>``, ``door:<name>:state``).
 -  **Reaching a plugin from outside:** a plugin an out-of-process *or* out-of-package driver must reach **publishes a blackboard handle** in ``configure`` — a small callable or dataclass under ``<kind>:<name>``, where ``<name>`` is the instance's world-YAML ``name:``. Consumers resolve that key; they never iterate ``engine.plugins`` and never match on a class name, which breaks silently on a rename and cannot distinguish two instances of one plugin. Publish a *callable* when the value is replaced each step (``contact_monitor.read_state``) rather than the object it returns. The in-process seam a driver starts from is ``MujocoSim.context`` (a :class:`~roqsim.context.SimContext`, i.e. exactly the rights a plugin has, single-writer rule included) — not the ``Engine``, so ``plugins`` and ``config`` stay the engine's own. Over a transport the same capability is an ``Endpoint`` (§13); the two are the same declaration read two ways, which is what lets one scenario action serve a stepped run and a ROS run.
 -  **Assets:** record upstream license for any vendored MJCF/mesh next to it (see ``roqsim_mobile/.../husky_a200/husky_a200_LICENSE`` for the pattern). Where a provider ships its models *flat*, one directory holds several vendors' terms and "the file beside it" attributes the wrong one, so the model names its own with ``license:`` in its manifest (:func:`roqsim.manifest.manifest_license`, read by both the docs catalog and ``roqsim catalog models``).
@@ -730,6 +822,30 @@ transport: it iterates ``ctx.interface``, applies the optional owner filter, rat
 endpoint, runs the per-tick publish loop on the physics thread, and marshals inbound data onto the
 physics thread via ``ctx.post`` (single-writer rule intact, §7). A backend implements a few hooks:
 ``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
+
+The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
+``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
+different constant for the whole run rather than as jitter that averages out. The requested rate is
+therefore **snapped to the nearest achievable one when the endpoint is bound** (``roqsim.rates``, the
+same grid arithmetic a capture rate uses, and the same
+:data:`~roqsim.rates.SNAP_QUIET` / :data:`~roqsim.rates.SNAP_NOTABLE` bands for announcing the move in
+proportion to its size, naming the nearby achievable rates where it is large). Nearest, not rounded
+down: a snapped rate may be the faster neighbour, so a rate that is meant as a ceiling has to be one
+this world can hold. A gate built that way then **counts steps rather than comparing sim-time** — the
+spacing is the step count it was snapped to, which no accumulated float time can move.
+
+The alternative — keeping the requested rate and advancing the deadline BY the period, so the spacing
+alternates (17, 17, 16, …) and the mean comes out right — is deliberately not taken: the spacing is
+what a consumer differentiates and what a filter's ``dt`` is set from, so a rate that is right on
+average and wrong at every step buys a mean nobody observes with an alias somebody reads as the
+robot's behaviour. It is the same alias the ROS bridge warns about when a coarse ``/clock`` quantises
+an output's stamps.
+
+Both numbers reach the run's record: a recording's provenance carries ``endpoint_rates``, one row per
+gated publication — every bound output, plus the streams a backend publishes itself (a merged
+``joint_states``, ``/clock``), which appear in no world document at all — with its ``requested_hz``,
+its ``realised_hz`` and the ``every_steps`` behind it. So a rate quoted from the world document can be
+checked against the one the run actually published at without measuring arrival times.
 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
 ``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
@@ -773,10 +889,23 @@ plugin accepts a ``topics:`` map keyed by endpoint role name — ``topics: {imag
 /camera/color/image_raw, joint_states: /joint_states}`` — read via ``Plugin.topic_override(name)``
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
-``ep.namespace`` (and the node namespace); a relative topic is scoped as usual. Only the topic is
-overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
+``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
+namespace — how a robot manifest gives a second scanner the vendor's ``scan2`` under the robot's
+namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
+
+**The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
+``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
+it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefix. So the bridge says
+what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
+``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
+publishes by owner and name with the topic its publisher is on, the message type and the published
+``field`` (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its ``owner`` filter. The topic is
+read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
+a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
+``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
+report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as
@@ -784,7 +913,7 @@ matching-dtype numpy buffers (one C-level copy) instead of per-element Python lo
 backend (zenoh, zmq) is a new ``BridgeBase`` subclass + its own registry — robots and worlds are
 unchanged.
 
-.. _13-glossary--faq:
+.. _14-glossary--faq:
 
 14. Glossary & FAQ
 ------------------

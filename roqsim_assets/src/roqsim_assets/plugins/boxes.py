@@ -19,9 +19,9 @@ Why a list and not a count
 The point is **how many** becomes the length of one config value instead of the number of plugin
 entries. That is what lets a campaign vary it: ``roqsim.apply_overrides`` resolves a plugin by name and
 deep-merges into its config, and it *refuses an override that matches no plugin* -- so a campaign can
-replace ``boxes.instances`` wholesale, but could never have appended a fourth ``box:`` entry. Before
-this, "8 obstacles instead of 4" was a structural edit to the world file and therefore not a factor at
-all.
+replace ``boxes.instances`` wholesale, but cannot append a fourth ``box:`` entry. With one
+entry per obstacle, "8 obstacles instead of 4" would be a structural edit to the world file and
+therefore not a factor at all.
 
 A list rather than a ``count:`` scalar because real populations are **heterogeneous**: an obstacle
 generator scales its count by path length and gives each obstacle its own pose and size. A count plus
@@ -80,9 +80,9 @@ class BoxesPlugin(Plugin):
 
     #: The CHILDREN register the entities, and `apply_declared_presence` below forwards to them
     #: -- but the key is validated against the entry that carries it, so without this a
-    #: population was refused `present:` outright ("registers none"). Declaring an entity absent
-    #: and spawning it in is the substrate's one way to reveal a prop, and it was the one kind of
-    #: entry that could not say it.
+    #: population is refused `present:` outright ("registers none"). Declaring an entity absent
+    #: and spawning it in is the substrate's one way to reveal a prop, and a population has to be
+    #: able to say it.
     provides_entity = True
 
     def _child_label(self, entry: dict, index: int) -> str:

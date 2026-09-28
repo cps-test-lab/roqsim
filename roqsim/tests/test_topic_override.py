@@ -1,4 +1,4 @@
-"""Plugin.topic_override + validate_topics: the per-endpoint absolute-topic hardwire."""
+"""Plugin.topic_override + validate_topics: the per-endpoint topic, absolute or namespace-relative."""
 
 from __future__ import annotations
 
@@ -18,12 +18,20 @@ def test_topic_override_absent_is_none():
     assert Plugin({"topics": None}).topic_override("image") is None
 
 
-def test_validate_topics_accepts_absolute_and_rejects_relative():
+def test_validate_topics_accepts_absolute_and_relative():
     assert Plugin.validate_topics({}) == []
     assert Plugin.validate_topics({"topics": {"image": "/camera/color/image_raw"}}) == []
+    # Relative: a rename inside the endpoint's namespace (a vendor's `scan2` for a second scanner).
+    assert (
+        Plugin.validate_topics({"topics": {"scan": "scan2", "image": "camera/color/image_raw"}})
+        == []
+    )
 
-    errs = Plugin.validate_topics({"topics": {"image": "camera/color/image_raw"}})
-    assert errs and "absolute" in errs[0]
+
+def test_validate_topics_rejects_malformed_names():
+    for bad in ("", "/", "scan/", "a//b", "my scan", 7):
+        errs = Plugin.validate_topics({"topics": {"scan": bad}})
+        assert errs and "topic name" in errs[0], bad
 
     errs = Plugin.validate_topics({"topics": ["not", "a", "map"]})
     assert errs and "mapping" in errs[0]

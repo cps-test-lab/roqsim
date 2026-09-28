@@ -1,0 +1,15 @@
+# The Create 3 motion_control parameters a campaign varies: one file, so a campaign tool that
+# rewrites a parameter file per configuration addresses
+# `motion_control.ros__parameters.safety_override` and nothing else. The default is the reference
+# simulator's (its create3_nodes.launch.py sets backup_only).
+#
+#   safety_override: none        -> backup limit on, max_speed 0.306 m/s
+#                    backup_only -> backup limit off, max_speed 0.306 m/s
+#                    full        -> everything off, max_speed 0.46 m/s
+#
+# The firmware's wheel_accel_limit is not a parameter of the simulated motion_control (the
+# reference simulator ramps in its ros2_control controller); here the ramp is the base's own
+# `diff_drive: {wheel_accel_limit}` in the world.
+motion_control:
+  ros__parameters:
+    safety_override: backup_only

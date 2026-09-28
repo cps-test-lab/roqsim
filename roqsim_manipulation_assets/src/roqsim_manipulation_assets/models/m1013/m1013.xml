@@ -25,7 +25,7 @@
       <!-- Servo gains scale with the vendor's own effort limits, which fall 7x along the chain
            (346, 346, 163, 50, 50, 50 N*m). A single stiff setting chatters on the distal joints:
            at kv=150 against link_6's effective inertia of ~0.105 kg*m^2, kv*dt/I is 2.9 at a 2 ms
-           timestep -- past the explicit-damping stability threshold -- and joints 5 and 6 sat at
+           timestep -- past the explicit-damping stability threshold -- and joints 5 and 6 sit at
            their force limit flipping sign every step while barely moving. Sized so kv*dt/I stays
            below ~0.5 for each class. -->
       <default class="joint">

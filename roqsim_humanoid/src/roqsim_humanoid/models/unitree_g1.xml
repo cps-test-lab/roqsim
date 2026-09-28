@@ -2,7 +2,8 @@
   <!-- Unitree G1, 12-DoF leg-only walking model.
        Adapted from unitree_rl_gym resources/robots/g1_description/g1_12dof.xml (BSD-3-Clause) for
        roqsim: the base body is renamed pelvis -> `base_link` and its free joint -> `base_free`
-       (the framework's spawn/odom/lidar convention), and a `lidar` site is added for the nav2 scan.
+       (the framework's spawn/odom convention), and the head mesh is the vendored one with the opening
+       for its Livox Mid-360 cut by external/convert/g1_head_window.py (the manifest mounts the sensor).
        The 12 leg joints + `<motor>` torque actuators, joint ordering, and the rigid upper-body
        geoms (head/torso/arms carried on base_link) are kept verbatim so the pretrained motion.pt
        policy sees exactly the conventions it was trained on. No <option>/timestep here: the world
@@ -30,7 +31,7 @@
     <mesh name="right_ankle_roll_link" file="right_ankle_roll_link.STL"/>
     <mesh name="torso_link_23dof_rev_1_0" file="torso_link_23dof_rev_1_0.STL"/>
     <mesh name="logo_link" file="logo_link.STL"/>
-    <mesh name="head_link" file="head_link.STL"/>
+    <mesh name="head_link" file="head_link_mid360_window.STL"/>
     <mesh name="left_shoulder_pitch_link" file="left_shoulder_pitch_link.STL"/>
     <mesh name="left_shoulder_roll_link" file="left_shoulder_roll_link.STL"/>
     <mesh name="left_shoulder_yaw_link" file="left_shoulder_yaw_link.STL"/>
@@ -47,8 +48,6 @@
     <body name="base_link" pos="0 0 0.793">
       <inertial pos="0.0144905 0.000151462 0.144068" quat="0.999881 -0.000505543 -0.0154276 0.000328408" mass="17.7349" diaginertia="0.552723 0.454092 0.211762"/>
       <joint name="base_free" type="free" limited="false" actuatorfrclimited="false"/>
-      <!-- Lidar mount for the nav2 scan: on the torso, ~1.1 m off the ground when standing. -->
-      <site name="lidar" pos="0.0 0 0.30" size="0.01"/>
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.2 0.2 0.2 1" mesh="pelvis"/>
       <geom type="mesh" contype="0" conaffinity="0" group="1" density="0" rgba="0.7 0.7 0.7 1" mesh="pelvis_contour_link"/>
       <geom type="mesh" rgba="0.7 0.7 0.7 1" mesh="pelvis_contour_link"/>

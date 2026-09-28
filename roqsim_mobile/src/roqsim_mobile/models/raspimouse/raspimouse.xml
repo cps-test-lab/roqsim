@@ -40,7 +40,6 @@
 
   <asset>
     <material name="mat_mount" rgba="0.2 0.2 0.2 1"/>
-    <material name="mat_lidar" rgba="0.1 0.1 0.1 1"/>
     <material name="mat_raspimouse_body__m0" rgba="0.0008 0.0008 0.0008 1"/>
     <material name="mat_raspimouse_body__m1" rgba="0.5 0.5 0.5 1"/>
     <material name="mat_raspimouse_body__m2" rgba="0.512 0 0 1"/>
@@ -58,7 +57,6 @@
     <mesh file="raspimouse_wheel__m0.obj"/>
     <mesh file="raspimouse_wheel__m1.obj"/>
     <mesh file="RasPiMouse_MultiLiDARMount.stl" scale="0.001 0.001 0.001"/>
-    <mesh file="robotis_lds01.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
@@ -77,18 +75,15 @@
         <geom class="visual" type="box" size="0.005 0.0025 0.0035" pos="0.059 0.01 0.032" rgba="0.15 0.15 0.15 1"/>
         <geom class="visual" type="box" size="0.005 0.0025 0.0035" pos="0.04 0.045 0.032" rgba="0.15 0.15 0.15 1"/>
         <geom class="collision" name="chassis_geom" size="0.0585 0.04 0.04" pos="0.005 0 0.040"/>
-        <!-- The vendor's own multi-lidar mount and LDS-01, with EVERY visual of both links: the
-             scanner carries four leg cylinders as well as its mesh, and emitting only the mesh
-             leaves it floating 3 cm above the mount. `lidar:=lds` is a supported option of the
-             description, so the mount height and the 0.120 m scan plane are the vendor's numbers,
-             not assumptions. -->
+        <!-- The vendor's own multi-lidar mount (`lidar:=lds`), and the four leg cylinders its
+             scanner link stands on, placed through the vendor's fixed joints. The LDS-01 itself is
+             the `lds01` device model: raspimouse.manifest.yaml declares lds_multi_mount_link as a
+             frame and mounts the scanner on it at the vendor's laser joint. -->
         <geom class="visual" mesh="RasPiMouse_MultiLiDARMount" material="mat_mount" pos="0 0 0.0855"/>
-        <geom class="visual" mesh="robotis_lds01" material="mat_lidar" pos="0 0 0.12"/>
-        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.035 0.025 0.0972" rgba="0.1 0.1 0.1 1"/>
-        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.035 -0.025 0.0972" rgba="0.1 0.1 0.1 1"/>
-        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="-0.022 0.031 0.0972" rgba="0.1 0.1 0.1 1"/>
-        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="-0.022 -0.031 0.0972" rgba="0.1 0.1 0.1 1"/>
-        <site name="lidar" pos="0 0 0.12" size="0.004" rgba="1 0 0 0.6"/>
+        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="-0.0350398 -0.0249442 0.0972" rgba="0.1 0.1 0.1 1"/>
+        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="-0.0349601 0.0250557 0.0972" rgba="0.1 0.1 0.1 1"/>
+        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.0219506 -0.031035 0.0972" rgba="0.1 0.1 0.1 1"/>
+        <geom class="visual" type="cylinder" size="0.005 0.0095" pos="0.0220493 0.0309649 0.0972" rgba="0.1 0.1 0.1 1"/>
         <body name="left_wheel" pos="0 0.0425 0.02215" quat="0.7073883 -0.7068252 0 0">
           <inertial pos="-0.000107 0 0.002875" mass="0.0113" diaginertia="0.000002208187 0.00000218412 0.000004078299"/>
           <joint name="left_wheel_joint" class="wheel" axis="0 0 1"/>

@@ -110,10 +110,10 @@ def test_several_boxes_coexist_under_distinct_prefixes():
 def test_physics_by_default_so_a_trial_can_teleport_it():
     """A box is movable unless the world says otherwise.
 
-    The other way round failed silently and expensively: SetEntityState refuses an entity with no
-    free `base_joint`, so a world that parked an obstacle out of the way and teleported it in on
-    cue failed on its first call, every run, while the world compiled, the entity existed under
-    the name the caller used, and GetEntities listed it.
+    The other way round fails silently and expensively: SetEntityState refuses an entity with no
+    free `base_joint`, so a world that parks an obstacle out of the way and teleports it in on
+    cue fails on its first call, every run, while the world compiles, the entity exists under
+    the name the caller uses, and GetEntities lists it.
     """
     model, _, _, ctx = _build(pose={"position": {"x": 1.0, "y": 2.0}}, size=[0.4, 0.4, 0.8])
     assert model.njnt == 1
@@ -205,7 +205,7 @@ def test_a_driven_box_has_no_dofs_and_is_a_mocap_body():
 @pytest.mark.parametrize("gone, says", [("free", "'free' is gone"), ("mocap", "'mocap' is gone")])
 def test_the_keys_motion_replaced_are_refused_not_ignored(gone, says):
     """`free` and `mocap` asked one question -- who owns this pose -- as two booleans, whose
-    fourth combination was meaningless and had to be refused wherever they were offered.
+    fourth combination is meaningless and would have to be refused wherever they are offered.
 
     Refused rather than translated: this plugin declares no schema, so a key it merely stopped
     reading would be silently ignored, and the world would load, read as it always did, and

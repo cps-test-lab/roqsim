@@ -78,9 +78,9 @@ class SetEntityState(SimAction):
                 action=self,
             )
         # Parsed by `roqsim.pose`, which is what a world document and the SetEntityState
-        # service both go through. A full pose, therefore, and one convention: this action used
-        # to convert yaw itself and refuse roll or pitch, which made the OSC verb the only place
-        # in the substrate where an orientation meant something narrower than everywhere else --
+        # service both go through. A full pose, therefore, and one convention: a verb that converted
+        # yaw itself and refused roll or pitch would be the only place in the substrate where an
+        # orientation meant something narrower than everywhere else --
         # and `rpy_to_quat`'s own docstring says why that is a bug waiting to happen. A pose a
         # body cannot take is refused by the simulator, naming the weld; a floor is not this
         # action's to assume.
@@ -93,14 +93,14 @@ class SetEntityState(SimAction):
             float(position[1]),
             # `parse_pose` leaves z None when the document did not state one -- there it means
             # "the height the model rests at", which only a spawn can resolve. A teleport has no
-            # model to ask, so an unstated z stays 0.0, exactly as this action has always read it.
+            # model to ask, so an unstated z stays 0.0.
             0.0 if position[2] is None else float(position[2]),
         )
         self._quat = tuple(float(v) for v in quat)
         # A twist is part of the state, and it defaults to zero: a body PUT somewhere is not still
-        # carrying the velocity it had, which is what this has always done. What changes is that a
-        # stated velocity now arrives instead of being dropped -- `SetEntityState` carries one, and
-        # both this action and the bridge behind it used to ignore it while replying OK.
+        # carrying the velocity it had. A stated velocity arrives rather than being dropped --
+        # `SetEntityState` carries one, and ignoring it while replying OK would let a caller read a
+        # velocity it cannot set.
         self._lin, self._ang = _twist_of(twist)
         #: Cleared here, not in __init__: `execute` runs each time the action becomes active, so a
         #: write reached twice in one run fires twice rather than replaying the first outcome.

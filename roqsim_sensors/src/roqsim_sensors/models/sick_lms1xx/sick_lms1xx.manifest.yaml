@@ -1,0 +1,83 @@
+# SICK LMS111 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a robot
+# manifest at the vendor joint origin.
+#
+# Variant: Clearpath's `sick_lms1xx` accessory is the LMS111 it sells as the Ridgeback's lidar upgrade
+# (Ridgeback user manual rev. 1.1.2, section 1.2.1 "LIDAR Upgrades",
+# https://static.generation-robots.com/img/products/Ridgeback_UserManual_2016.pdf; ridgeback_description
+# accessories.urdf.xacro "SICK LMS111 LASER payload"). This model is the LMS111-10100.
+#
+# Mesh, link frames: Clearpath clearpath_sensors_description (see sick_lms1xx.xml). Scan values: SICK
+# data sheet LMS111-10100, part no. 1041114,
+# https://www.sick.com/media/pdf/2/42/842/dataSheet_LMS111-10100_1041114_en.pdf ("data sheet"), and
+# the LMS1xx operating instructions 8012471/ZN27/2017-06-09, chapter 10.1,
+# https://www.generationrobots.com/media/Operating_instructions_LMS1xx_LIDAR_SICK.PDF ("OI").
+#
+# Frames, as Clearpath's macro chains them (sick_lms1xx.urdf.xacro:19-29 @ b0f6d92): the vendor joint
+# origin places `<name>_link`, the mount body; the scan is stamped in `<name>_laser` at
+# xyz (0.0549, 0, 0.0367). Clearpath names the sensor `lidar2d_<idx>` (clearpath_config
+# sensors/types/lidars_2d.py @ b2a64ba), so the scan frame is `lidar2d_0_laser` for the first. The
+# intermediate `<name>_link` is not published, for the reason hokuyo_ust.manifest.yaml gives.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
+# second scanner names its own. `exclude_body: mount` skips this device's housing and nothing else;
+# `emit_static_tf: false` because spawn_sensor publishes the `frames:` chain.
+frame_id: lidar2d_0_laser   # Clearpath's first 2D lidar (lidars_2d.py get_frame_id_from_idx @ b2a64ba)
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame (sick_lms1xx.urdf.xacro:25-29 @ b0f6d92)
+    parent: mount
+    pos: [0.0549, 0.0, 0.0367]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: clearpathrobotics/LMS1xx @ 90001ac2849c (humble-devel, the jazzy
+      # release branch), src/LMS1xx_node.cpp ("driver"), the `lms1xx` node Clearpath launches
+      # (clearpath_robot clearpath_sensors/launch/sick_lms1xx.launch.py @ 74362fc, params
+      # config/sick_lms1xx.yaml: publish_min_range_as_inf false).
+      #
+      # Layout: angle_min/angle_max are the device's configured start/stop angle less 90 deg, and a
+      # window that divides evenly by the resolution includes both endpoints (:157-173): at the data
+      # sheet's 0.5 deg over -135 .. +135 deg that is 541 rays, the last at angle_max. Data sheet:
+      # aperture 270 deg; 25 Hz or 50 Hz at 0.25 deg or 0.5 deg (OI 10.1: 0.5 deg at 50 Hz).
+      rays: 541
+      angle_min: -2.356194490   # -135 deg
+      angle_max: 2.356194490    # +135 deg
+      # Header: hard-coded range_min 0.01 and range_max 20.0, whatever the unit (:154-155). These are
+      # only published; the physical limits below decide which rays measure.
+      range_min: 0.01
+      max_range: 20.0
+      # Physical limits: data sheet working range 0.5 m ... 20 m (OI 10.1: operating range LMS10x/
+      # LMS11x 0.5 m .. 20 m; scanning range 18 m at 10% remission, 20 m at 90%). Clearpath's
+      # simulation uses 0.05 .. 25 m (sick_lms1xx.urdf.xacro:5); the hardware figure wins.
+      detection_min: 0.5
+      detection_max: 20.0
+      # The driver publishes every raw distance as value * 0.001 m with no mapping (:243-253; parsed
+      # as-is, src/LMS1xx.cpp:384-394), so a ray the unit does not measure arrives as whatever the
+      # unit sends for it. What the LMS111 sends for a return inside 0.5 m, and for no return, is not
+      # stated in the data sheet or the OI, so both keep the REP 117 defaults.
+      too_close: -inf           # unverified device output; REP 117 default
+      no_return: +inf           # unverified device output; REP 117 default
+      rate_hz: 50.0             # data sheet: scanning frequency 50 Hz (at 0.5 deg)
+      # OI 10.1: statistical error (1 sigma) 12 mm typical, 20 mm maximum (data sheet: 12 mm, typical).
+      # The +-30 mm systematic error has no stated distribution, so no per-instance bias is modelled.
+      # Clearpath's simulation has no noise.
+      range_stddev: 0.012
+      # Not modelled: the RSSI intensities the driver publishes; and a known driver defect -- with
+      # publish_min_range_as_inf true its test reads range_min's truthiness (the constant 0.01)
+      # instead of comparing the range, so every ray would be published as +inf. Clearpath leaves
+      # the parameter false.
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and its physical detection limits.
+fov:
+  near: 0.5
+  far: 20.0
+  h_min: -2.356194490
+  h_max: 2.356194490
+  v_min: 0.0
+  v_max: 0.0

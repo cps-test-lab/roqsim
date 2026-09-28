@@ -73,7 +73,7 @@ CAPSULE_ASPECT = 1.3
 #: ur5e 17.5%) measured identically. SENSITIVITY: high for anything reasoning about self-collision --
 #: a motion planner will refuse poses upstream's hulls allow. A tighter envelope needs several
 #: primitives per link (ur10e uses two on its long links), not a smaller scale: a single
-#: axis-aligned box was tried and is worse (30.2%), because these links are bent.
+#: axis-aligned box is worse (30.2%), because these links are bent.
 RADIUS_SCALE = 0.86
 
 

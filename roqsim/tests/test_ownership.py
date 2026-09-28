@@ -6,7 +6,7 @@
 
 There is nothing for a plugin to parse and therefore nothing to spell wrong. The two ways a document
 can contradict itself -- an attacher with nothing to attach to, an owner that owns nothing -- are
-refused by name, because both used to be silent and both cost a debugging session.
+refused by name, because either one left silent costs a debugging session.
 """
 
 import pytest
@@ -64,8 +64,8 @@ def test_two_owners_may_each_have_a_component_of_the_same_kind():
 
 
 def test_an_attacher_at_the_top_of_a_document_is_refused_with_the_fix():
-    """It has nothing to attach to. This used to fall back to the literal name 'robot' and run
-    ALONGSIDE the default it meant to replace -- a config that silently had no effect."""
+    """It has nothing to attach to. Falling back to the literal name 'robot' would run it
+    ALONGSIDE the default it meant to replace -- a config that silently has no effect."""
     with pytest.raises(PluginError) as exc:
         instantiate_plugins(_cfg([{ATTACHER: {}}]))
     msg = str(exc.value)

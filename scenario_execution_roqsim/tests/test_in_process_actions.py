@@ -15,9 +15,10 @@ from __future__ import annotations
 import math
 
 import mujoco
-from roqsim.placement import PLACEABLE_MODES_HINT
 import numpy as np
 import pytest
+
+from roqsim.placement import PLACEABLE_MODES_HINT
 
 pytest.importorskip(
     "scenario_execution",
@@ -29,11 +30,13 @@ from scenario_execution.actions.base_action import ActionError  # noqa: E402
 
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
+from scenario_execution_roqsim.actions.delete_entity import DeleteEntity  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
     EntityNavigateStart,
 )
+from scenario_execution_roqsim.actions.entity_reports import EntityReports  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
 from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
@@ -133,9 +136,8 @@ def _start(action, sim, clock, **args):
 def test_the_baseline_is_where_the_entity_was_when_the_action_started(world):
     """Not its absolute pose, and not a world-side plugin's reference: the crate starts at z = 0.4.
 
-    A trigger measuring absolute z would fire instantly on any sensible threshold. That is exactly the
-    bug the predecessor action needed an `_armed` hysteresis flag to survive, and it disappears when the
-    action owns its own baseline.
+    A trigger measuring absolute z would fire instantly on any sensible threshold. An action that
+    owns its own baseline needs no hysteresis flag to avoid that.
     """
     ctx, clock, sim = world
     action = _start(
@@ -590,12 +592,12 @@ def test_set_entity_state_raises_on_an_unknown_entity(teleport_world):
 
 
 def test_set_entity_state_applies_roll_and_pitch(teleport_world):
-    """A full orientation, the same one `SetEntityState` has always accepted.
+    """A full orientation, the same one `SetEntityState` accepts.
 
-    This action used to convert yaw itself and refuse roll or pitch, on the grounds that it places
-    a wheeled base on its floor. That made the OSC verb the only place in the substrate where an
-    orientation meant something narrower than everywhere else -- while the service behind it took
-    a whole quaternion -- and it blocked aiming a sensor, which is a pose with no floor in it. The
+    Converting yaw alone and refusing roll or pitch, on the grounds that the action places a wheeled
+    base on its floor, would make the OSC verb the only place in the substrate where an orientation
+    meant something narrower than everywhere else -- while the service behind it takes a whole
+    quaternion -- and would block aiming a sensor, which is a pose with no floor in it. The
     real constraint is whether the body has a free joint, and the simulator already reports that.
     """
     ctx, clock, sim = teleport_world
@@ -617,7 +619,7 @@ def test_set_entity_state_applies_roll_and_pitch(teleport_world):
     assert action.update() is SUCCESS
 
     # Compared against roqsim's own conversion rather than a hand-written quaternion: the point is
-    # that this action no longer has a convention of its own, and pinning a literal here would put
+    # that this action has no convention of its own, and pinning a literal here would put
     # a second one back into the tests.
     from roqsim.pose import rpy_to_quat
 
@@ -662,10 +664,9 @@ def test_set_entity_state_refuses_a_malformed_pose_naming_the_key(teleport_world
 def test_set_entity_state_applies_a_stated_twist(teleport_world):
     """A twist is part of the state, and a stated one has to arrive.
 
-    `SetEntityState` carries a twist, the GETTER reports one, and both this action and the bridge
-    behind it used to drop it while replying OK -- so a caller could read a velocity it could not
-    set. Written in the scenario's own vocabulary (`velocity_6d` spells its halves
-    `translational`/`angular`).
+    `SetEntityState` carries a twist, the GETTER reports one, and dropping it while replying OK
+    would let a caller read a velocity it cannot set. Written in the scenario's own vocabulary
+    (`velocity_6d` spells its halves `translational`/`angular`).
     """
     ctx, clock, sim = teleport_world
     jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, "robot_free")
@@ -1200,8 +1201,394 @@ def test_waiting_without_a_call_is_unchanged():
 
 def test_every_call_type_can_be_asked_why_it_is_waiting():
     """The contract is shared, so an action never has to know which kind of call it holds --
-    which is how the nav call was missed when the question was first added."""
-    from scenario_execution_roqsim.access import NavCall, OverrideCall, SpawnCall, TeleportCall
+    and every call type has to answer."""
+    from scenario_execution_roqsim.access import (
+        NavCall,
+        OverrideCall,
+        ReportCall,
+        SpawnCall,
+        TeleportCall,
+    )
 
-    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall):
+    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall, ReportCall):
         assert hasattr(cls, "pending_reason"), cls.__name__
+
+
+# -- delete_entity ----------------------------------------------------------------------------------
+#
+# Absence where the entity stands: the pose is kept, so a later spawn can bring it back, and nothing
+# that could perceive or touch it still can.
+
+
+def _robot_geoms(ctx):
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    return [g for g in range(ctx.model.ngeom) if ctx.model.geom_bodyid[g] == bid]
+
+
+def test_delete_makes_the_entity_absent_where_it_stands(teleport_world):
+    ctx, clock, sim = teleport_world
+    bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "robot")
+    entity = ctx.entities.get("robot")
+    assert entity.present, "the fixture spawns it present"
+    where = ctx.data.xpos[bid].copy()
+
+    action = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert action.update() is RUNNING, "the flip is posted, not yet drained"
+    assert entity.present is True, "and nothing has changed before it drains"
+    _step(ctx, clock)
+    assert action.update() is SUCCESS
+
+    assert entity.present is False
+    geoms = _robot_geoms(ctx)
+    assert geoms, "the robot body carries geoms to check"
+    assert all(
+        int(ctx.model.geom_contype[g]) == 0 and int(ctx.model.geom_conaffinity[g]) == 0
+        for g in geoms
+    ), "nothing can touch an absent entity"
+    assert np.allclose(ctx.data.xpos[bid], where, atol=0.01), "absence does not move it"
+
+
+def test_delete_refuses_an_entity_that_is_already_absent(teleport_world):
+    """The same answer both transports give: DeleteEntity over ROS answers RESULT_OPERATION_FAILED."""
+    ctx, clock, sim = teleport_world
+    ctx.entities.get("robot").present = False
+
+    action = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert action.update() is RUNNING
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "already absent" in action.feedback_message
+
+
+def test_an_entity_deleted_then_spawned_is_present_again(teleport_world):
+    """The two verbs are one mechanism run both ways, so they compose."""
+    ctx, clock, sim = teleport_world
+    entity = ctx.entities.get("robot")
+
+    delete = _start(DeleteEntity(), sim, clock, entity="robot")
+    assert delete.update() is RUNNING
+    _step(ctx, clock)
+    assert delete.update() is SUCCESS
+    assert entity.present is False
+
+    spawn = _start(
+        SpawnEntity(),
+        sim,
+        clock,
+        entity="robot",
+        pose={"position": {"x": 1.0, "y": 0.0, "z": 0.5}, "orientation": {"yaw": 0.0}},
+    )
+    assert spawn.update() is RUNNING
+    _step(ctx, clock)
+    assert spawn.update() is SUCCESS
+    assert entity.present is True
+    assert any(int(ctx.model.geom_contype[g]) != 0 for g in _robot_geoms(ctx))
+
+
+def test_delete_refuses_an_empty_entity_name(teleport_world):
+    ctx, clock, sim = teleport_world
+    action = DeleteEntity()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="empty"):
+        action.execute(entity="")
+
+
+# -- entity_reports -------------------------------------------------------------------------------
+#
+# A plugin's report, read the way a scenario ends a run on a trial's outcome. The arm test is the
+# case the action exists for; the crate on the ramp is the same path with core plugins only.
+
+
+def _reports(sim, clock, **args):
+    full = {
+        "comparison_operator": "eq",
+        "dwell": 0.0,
+        "fail_if_bad_comparison": False,
+        **args,
+    }
+    return _start(EntityReports(), sim, clock, **full)
+
+
+def test_a_stepped_run_ends_when_the_arm_trips_its_force_limit_and_not_before(tmp_path):
+    """The idiom end to end on a real arm: `entity_reports(... 'force_limit.tripped' ...)` is what
+    a scenario waits on before `emit end`, so it must hold RUNNING for every step before the trip
+    and succeed on the tick after it -- read through the endpoint the plugin declared, which is the
+    one the ROS bridge publishes too."""
+    pytest.importorskip("roqsim_sensors", reason="force_limit is a roqsim_sensors plugin")
+    pytest.importorskip("roqsim_manipulation_assets", reason="the ur5e model")
+    from roqsim.config import load_config_from_dict
+    from roqsim.engine import Engine
+
+    settle = 0.05
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {"timestep": 0.002},
+                "components": [
+                    {
+                        "spawn_arm": {"model": "ur5e", "prefix": "ur5e_", "namespace": "ur5e"},
+                        "name": "ur5e",
+                        "components": [
+                            {"arm_controller": {}},
+                            {"force_torque": {"site": "fts_site", "frame": "world"}, "name": "ft"},
+                            # Any measured wrench exceeds 1 mN, so it trips on the first step past
+                            # the settle window: a moment the test knows in advance.
+                            {
+                                "roqsim_sensors.plugins.force_limit:ForceLimitPlugin": {
+                                    "ft": "ft",
+                                    "max_force": 0.001,
+                                    "settle_s": settle,
+                                    "stop_run": False,
+                                },
+                                "name": "safety",
+                            },
+                        ],
+                    }
+                ],
+            },
+            base_dir=tmp_path,
+        )
+    )
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    ctx, clock = engine.ctx, FakeClock()
+    action = _reports(
+        FakeSim(ctx), clock, entity="ur5e", report="force_limit.tripped", expected_value="True"
+    )
+    report = ctx.blackboard.get("force_limit:ur5e.safety")
+
+    ticks = 0
+    while action.update() is RUNNING:
+        assert not report().tripped, "RUNNING although the limit had already tripped"
+        engine.step()
+        clock.t = ctx.sim_time
+        ticks += 1
+        assert ticks < 200, "never tripped"
+    assert report().tripped
+    assert report().at_time >= settle, "and not before the moment it was configured to trip at"
+    assert ticks >= round(settle / 0.002), "so the action waited out every step before the trip"
+    assert "force_limit.tripped = True" in action.feedback_message
+
+
+@pytest.fixture
+def ramp_contact(world):
+    """`world`, plus a contact_monitor on the parcel: it falls onto the ramp in its first steps."""
+    from roqsim.plugins.contact_monitor import ContactMonitorPlugin
+
+    ctx, clock, sim = world
+    monitor = ContactMonitorPlugin({"ignore": [], "rate_hz": 500.0}, entity="parcel")
+    monitor.configure(ctx)
+    monitor.on_reset(ctx)
+    return ctx, clock, sim, monitor
+
+
+def test_a_bare_report_compares_the_field_its_publication_carries(ramp_contact):
+    """`report: 'contact'` means `contact.in_contact`: the field the ROS bridge publishes, so the
+    short form compares the same value on both transports."""
+    ctx, clock, sim, monitor = ramp_contact
+    action = _reports(sim, clock, entity="parcel", report="contact", expected_value="True")
+    assert action.update() is RUNNING, "falling, not yet touching"
+    for _ in range(500):
+        _step(ctx, clock, monitor)
+        if action.update() is SUCCESS:
+            break
+    assert action.status is not FAILURE
+    assert action.update() is SUCCESS
+    assert "parcel.contact.in_contact = True" in action.feedback_message
+
+
+def test_every_field_of_a_report_is_readable_in_process(ramp_contact):
+    """Not only the published one: a stepped run reads the report itself."""
+    ctx, clock, sim, monitor = ramp_contact
+    action = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="contact.first_time",
+        expected_value="0.0",
+        comparison_operator="gt",
+    )
+    assert action.update() is RUNNING, "first_time is -1.0 until the first contact"
+    for _ in range(500):
+        _step(ctx, clock, monitor)
+        if action.update() is SUCCESS:
+            break
+    assert action.update() is SUCCESS
+
+
+class _Outcome:
+    """A trial plugin's report, under the test's control."""
+
+    def __init__(self):
+        self.resolved = False
+        self.score = 0.0
+
+
+def _outcome_world(world):
+    ctx, clock, sim = world
+    outcome = _Outcome()
+    from roqsim.context import Endpoint
+
+    ctx.interface.add(
+        Endpoint(
+            name="trial",
+            direction="out",
+            owner="parcel",
+            read=lambda: outcome,
+            backend={"ros2": {"type": "std_msgs.msg.Bool", "field": "resolved"}},
+        )
+    )
+    return ctx, clock, sim, outcome
+
+
+def test_the_dwell_is_held_on_the_runners_clock_and_restarts_on_a_dip(world):
+    ctx, clock, sim, outcome = _outcome_world(world)
+    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True", dwell=1.0)
+    assert action.update() is RUNNING
+
+    outcome.resolved = True
+    clock.t = 10.0
+    assert action.update() is RUNNING
+    clock.t = 10.5
+    assert action.update() is RUNNING, "half the dwell is not the dwell"
+    outcome.resolved = False
+    assert action.update() is RUNNING
+    outcome.resolved = True
+    clock.t = 11.0
+    assert action.update() is RUNNING, "the dwell restarted at 11.0"
+    clock.t = 12.01
+    assert action.update() is SUCCESS
+
+
+def test_a_comparison_that_does_not_hold_waits_unless_told_to_fail(world):
+    ctx, clock, sim, outcome = _outcome_world(world)
+    patient = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="0.5",
+        comparison_operator="ge",
+    )
+    strict = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="0.5",
+        comparison_operator="ge",
+        fail_if_bad_comparison=True,
+    )
+    assert patient.update() is RUNNING
+    assert strict.update() is FAILURE
+    assert "trial.score = 0.0 (want >= 0.5)" in strict.feedback_message
+    outcome.score = 0.7
+    assert patient.update() is SUCCESS
+
+
+@pytest.mark.parametrize(
+    "entity,report,message",
+    [
+        ("nobody", "trial", r"no entity 'nobody' publishes a report\. .*parcel: trial"),
+        ("parcel", "verdict", r"publishes no report 'verdict'\. It publishes: trial"),
+        ("parcel", "trial.sucess", r"no field 'sucess'.*resolved, score"),
+    ],
+)
+def test_a_name_that_does_not_exist_raises_listing_what_does(world, entity, report, message):
+    """Authoring errors, so they raise -- and say what the world does offer, since the mistake is
+    almost always a near miss."""
+    _ctx, clock, sim, _outcome = _outcome_world(world)
+    action = _reports(sim, clock, entity=entity, report=report, expected_value="True")
+    with pytest.raises(ActionError, match=message):
+        action.update()
+
+
+def test_an_entity_with_no_report_is_told_apart_from_no_entity(world):
+    ctx, clock, sim = world
+    ctx.entities.add(Entity(name="crate_b", kind="object", body="crate_b"))
+    action = _reports(sim, clock, entity="crate_b", report="trial", expected_value="True")
+    with pytest.raises(ActionError, match="'crate_b' is an entity, but no plugin on it publishes"):
+        action.update()
+
+
+def test_a_bare_report_that_publishes_no_field_asks_for_one(world):
+    """A report with no published field has no short form; comparing the whole structure against a
+    literal would wait forever on a comparison that can never hold."""
+    ctx, clock, sim = world
+    from roqsim.context import Endpoint
+
+    ctx.interface.add(Endpoint(name="trial", direction="out", owner="parcel", read=_Outcome))
+    action = _reports(sim, clock, entity="parcel", report="trial", expected_value="True")
+    with pytest.raises(ActionError, match=r"name the one to compare.*resolved, score"):
+        action.update()
+
+
+def test_a_literal_that_cannot_be_compared_with_the_value_raises(world):
+    _ctx, clock, sim, _outcome = _outcome_world(world)
+    action = _reports(
+        sim,
+        clock,
+        entity="parcel",
+        report="trial.score",
+        expected_value="'high'",
+        comparison_operator="gt",
+    )
+    with pytest.raises(ActionError, match="cannot be compared"):
+        action.update()
+
+
+@pytest.mark.parametrize(
+    "args,message",
+    [
+        (dict(entity="", report="trial", expected_value="True"), "`entity` is empty"),
+        (dict(entity=None, report="trial", expected_value="True"), "`entity` is empty"),
+        (dict(entity="parcel", report="", expected_value="True"), "names no report"),
+        (dict(entity="parcel", report=".resolved", expected_value="True"), "names no report"),
+        (dict(entity="parcel", report="trial", expected_value="resolved"), "quoted inside"),
+        (dict(entity="parcel", report="trial", expected_value=None), "must be a string"),
+        (
+            dict(entity="parcel", report="trial", expected_value="1", comparison_operator="approx"),
+            "unknown `comparison_operator`",
+        ),
+        (dict(entity="parcel", report="trial", expected_value="1", dwell=-0.1), "must be >= 0"),
+    ],
+)
+def test_an_unusable_report_configuration_raises_at_execute(world, args, message):
+    _ctx, clock, sim = world
+    action = EntityReports()
+    action.setup(simulation=sim, clock=clock)
+    full = {"comparison_operator": "eq", "dwell": 0.0, "fail_if_bad_comparison": False, **args}
+    with pytest.raises(ActionError, match=message):
+        action.execute(**full)
+
+
+# -- a rebuilt world ------------------------------------------------------------------------------
+
+
+def test_a_rebuilt_world_is_not_answered_from_the_old_models_body_ids(monkeypatch):
+    """A reset with other `world_overrides` compiles a new model with other body ids; the cache must
+    notice even when the new model gets the freed one's `id()`, which is forced here."""
+    from scenario_execution_roqsim.access import in_process
+    from scenario_execution_roqsim.access.in_process import InProcessAccess
+
+    monkeypatch.setattr(in_process, "id", lambda _obj: 1, raising=False)
+
+    def ctx_for(xml):
+        model = mujoco.MjModel.from_xml_string(xml)
+        ctx = SimContext(config={})
+        ctx.model, ctx.data = model, mujoco.MjData(model)
+        mujoco.mj_forward(model, ctx.data)
+        ctx.entities.add(Entity(name="parcel", kind="object", body="crate"))
+        return ctx
+
+    crate = "<body name='crate' pos='{x} 0 1'><freejoint/><geom type='box' size='.1 .1 .1'/></body>"
+    other = "<body name='other' pos='5 5 1'><freejoint/><geom type='box' size='.1 .1 .1'/></body>"
+    first = ctx_for(f"<mujoco><worldbody>{crate.format(x=0)}</worldbody></mujoco>")
+    # Rebuilt with a body ahead of the crate, so the crate's id is not the one it had.
+    second = ctx_for(f"<mujoco><worldbody>{other}{crate.format(x=2)}</worldbody></mujoco>")
+    sim = FakeSim(first)
+    access = InProcessAccess(sim)
+    assert access.entity_pose("parcel").pos[0] == pytest.approx(0.0)
+    sim.context = second
+    assert access.entity_pose("parcel").pos[0] == pytest.approx(2.0)

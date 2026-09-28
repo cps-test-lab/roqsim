@@ -111,8 +111,9 @@ def generate_launch_description():
                 arguments=["--frame-id", "map", "--child-frame-id", "odom"],
                 parameters=[{"use_sim_time": use_sim_time}],
             ),
-            # The base_link->rplidar_link static TF now comes from the sim: the lidar plugin declares
-            # its mount frame (from the MuJoCo site) and the ros2_bridge publishes it on /tf_static.
+            # The base_link->shell_link->rplidar_link static TF comes from the sim: spawn_robot
+            # declares shell_link, the RPLIDAR mount declares rplidar_link, and the ros2_bridge
+            # publishes both on /tf_static.
             nav2_node("nav2_map_server", "map_server", "map_server"),
             nav2_node("nav2_planner", "planner_server", "planner_server"),
             nav2_node("nav2_controller", "controller_server", "controller_server"),

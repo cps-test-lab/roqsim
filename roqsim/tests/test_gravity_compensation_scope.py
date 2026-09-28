@@ -90,7 +90,12 @@ def test_without_a_table_the_whole_mechanism_is_compensated():
     apply_gravity_compensation(spec)
 
     assert {b.name for b in spec.bodies if b.name != "world" and b.gravcomp} == {
-        "base", "wheel", "shoulder", "forearm", "tool"}
+        "base",
+        "wheel",
+        "shoulder",
+        "forearm",
+        "tool",
+    }
 
 
 def test_a_torque_driven_arm_is_left_alone():
@@ -102,10 +107,105 @@ def test_a_torque_driven_arm_is_left_alone():
     spec = mujoco.MjSpec.from_string(_ROVER)
     table = resolve_actuators(
         spec,
-        {"each": {"arm_1_motor": {"control": "effort", "ctrlrange": [-50.0, 50.0]},
-                  "arm_2_motor": {"control": "effort", "ctrlrange": [-50.0, 50.0]}}},
+        {
+            "each": {
+                "arm_1_motor": {"control": "effort", "ctrlrange": [-50.0, 50.0]},
+                "arm_2_motor": {"control": "effort", "ctrlrange": [-50.0, 50.0]},
+            }
+        },
         model_name="rover",
     )
     apply_gravity_compensation(spec, table)
 
     assert not {b.name for b in spec.bodies if b.name != "world" and b.gravcomp}
+
+
+#: The rover's arm again, carrying on its tool a pendulum on an unactuated ball joint, a two-finger
+#: gripper whose second finger follows the first through a joint equality, and a four-bar whose
+#: passive joints a ``connect`` closes into a loop with a driven one.
+_ARM_WITH_TOOLS = """
+<mujoco model="tools">
+  <worldbody>
+    <body name="shoulder">
+      <joint name="arm_1" type="hinge" axis="0 1 0"/>
+      <geom type="capsule" fromto="0 0 0 0 0 .3" size=".03" mass="1"/>
+      <body name="tool" pos="0 0 .3">
+        <geom type="sphere" size=".04" mass=".2"/>
+        <body name="pendulum" pos=".1 0 0">
+          <joint name="swing" type="ball"/>
+          <geom type="capsule" fromto="0 0 0 0 0 -.3" size=".01" mass=".1"/>
+          <body name="bob" pos="0 0 -.3">
+            <geom type="sphere" size=".03" mass=".2"/>
+          </body>
+        </body>
+        <body name="finger_a" pos="0 .05 0">
+          <joint name="finger_a" type="slide" axis="0 1 0"/>
+          <geom type="box" size=".01 .01 .03" mass=".05"/>
+        </body>
+        <body name="finger_b" pos="0 -.05 0">
+          <joint name="finger_b" type="slide" axis="0 -1 0"/>
+          <geom type="box" size=".01 .01 .03" mass=".05"/>
+        </body>
+        <body name="crank" pos="-.1 0 0">
+          <joint name="crank" type="hinge" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0 0 0 -.1" size=".01" mass=".05"/>
+          <body name="coupler" pos="0 0 -.1">
+            <joint name="coupler" type="hinge" axis="0 1 0"/>
+            <geom type="capsule" fromto="0 0 0 -.1 0 0" size=".01" mass=".05"/>
+          </body>
+        </body>
+        <body name="rocker" pos="-.2 0 0">
+          <joint name="rocker" type="hinge" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0 0 0 -.1" size=".01" mass=".05"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <equality>
+    <joint joint1="finger_a" joint2="finger_b"/>
+    <connect body1="coupler" body2="rocker" anchor="-.1 0 0"/>
+  </equality>
+  <actuator>
+    <position name="arm_1_motor" joint="arm_1" kp="100"/>
+    <position name="finger_motor" joint="finger_a" kp="100"/>
+    <position name="crank_motor" joint="crank" kp="100"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def _tools_compensated(whole_mechanism: bool) -> set:
+    spec = mujoco.MjSpec.from_string(_ARM_WITH_TOOLS)
+    if whole_mechanism:
+        apply_gravity_compensation(spec)
+    else:
+        apply_gravity_compensation(spec, resolve_actuators(spec, None, model_name="tools"))
+    return {body.name for body in spec.bodies if body.name != "world" and body.gravcomp}
+
+
+def test_a_pendulum_on_the_tool_keeps_its_weight():
+    """Nothing acts on its ball joint, so no drive holds its pose: it must hang and swing.
+
+    Compensated, it would float at whatever angle it was spawned in -- still, and wrong. Its weight
+    still reaches the arm through the joint, as a load the arm's drives carry.
+    """
+    assert _tools_compensated(whole_mechanism=False).isdisjoint({"pendulum", "bob"})
+    assert _tools_compensated(whole_mechanism=True).isdisjoint({"pendulum", "bob"})
+
+
+def test_a_coupled_finger_and_a_closed_linkage_are_still_held():
+    """A joint an equality couples to a driven one, or one a loop closes through, is not free.
+
+    A gripper's follower finger and the passive links of its linkage are held by the actuator
+    through those constraints, so they stay compensated like the tool they belong to.
+    """
+    for whole_mechanism in (False, True):
+        assert _tools_compensated(whole_mechanism) >= {
+            "shoulder",
+            "tool",
+            "finger_a",
+            "finger_b",
+            "crank",
+            "coupler",
+            "rocker",
+        }

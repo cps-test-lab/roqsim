@@ -1,6 +1,6 @@
 """Scene plugin: a **parametric** artificial palm-like tree -- trunk, arching fronds, fruit bunches.
 
-The prop class the asset library was missing entirely: foliage. It is not a decorative plant. A palm's
+The asset library's foliage prop. It is not a decorative plant. A palm's
 crown is a *thin, radially arranged, self-occluding* obstacle set, which is a different planning
 problem from the boxes and shelves the other assets build -- narrow passages between fronds, a target
 tucked under the crown, and a target that a depth sensor sees only partially. That is exactly what

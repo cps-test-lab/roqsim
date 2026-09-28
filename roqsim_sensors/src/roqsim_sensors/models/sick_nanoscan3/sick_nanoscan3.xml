@@ -1,0 +1,82 @@
+<mujoco model="sick_nanoscan3">
+  <!--
+    SICK nanoScan3 safety laser scanner: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Neobotix `rox`, whose ROX platforms carry two of them: the body is `lidar_1_link`
+    (sick_nanoscan.xacro), the mesh keeps that link's visual origin xyz (0, 0, -0.02),
+    rpy (pi, 0, pi/2), and the scan is stamped in the link itself.
+
+    Body-local axes: x = the scan's zero bearing, z = up with the device upright.
+
+    The site sits on the vendor frame because the vendor frame IS the scan plane, which is measured
+    rather than assumed: the converted housing spans z -0.0489 .. +0.0311, so the link sits 31.1 mm
+    below the housing top and 48.9 mm above its bottom, against the data sheet's scan plane at
+    29.7 mm below the top and 50.5 mm above the bottom of an 80.2 mm housing. That agrees to 1.6 mm,
+    and the converted housing measures 106.6 mm wide and 80.0 mm tall against the data sheet's
+    106.6 mm and 80 mm. (Its 102.4 mm depth is short of the data sheet's 117.5 mm because that
+    figure includes the system plug, which this mesh does not carry.)
+
+    ON A ROBOT THIS LINK IS Z-DOWN, and that is the vendor's, not a conversion error: rox.urdf.xacro
+    hangs lidar_1 at rpy (pi, 0, pi/4), so the link's z points at the floor. Composed with this
+    mesh's own rpy (pi, 0, pi/2) the two rolls cancel to a pure yaw, which leaves the housing in the
+    world exactly as the source Collada authors it -- optics dome downward. Both origins are the
+    vendor's and both are reproduced rather than corrected; a z-up "fix" to either would move the
+    scan plane off the link and reverse the scan's angular sense.
+
+    Built by external/convert/build_scanner_devices.py from rox @ c865076d5412aca9c861e3b3326fb6a30cb393b1.
+    Scan parameters and the `frames:` entry for this site are in sick_nanoscan3.manifest.yaml; see
+    sick_nanoscan3_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="nanoscan_3__m0_mat" rgba="0 0 0 1"/>
+    <material name="nanoscan_3__m1_mat" rgba="0.949 0.7529 0 1"/>
+    <material name="nanoscan_3__m2_mat" rgba="0.502 0.502 0.502 1"/>
+    <material name="nanoscan_3__m3_mat" rgba="1 1 1 1"/>
+    <material name="nanoscan_3__m4_mat" rgba="0.1451 0.1412 0.1529 1"/>
+    <material name="nanoscan_3__m5_mat" rgba="0.1412 0.1412 0.149 1"/>
+    <material name="nanoscan_3__m6_mat" rgba="0.302 0.5216 0.251 1"/>
+    <material name="nanoscan_3__m7_mat" rgba="0.1412 0.1412 0.1412 1"/>
+    <material name="nanoscan_3__m8_mat" rgba="1 0.6314 0.6 1"/>
+    <mesh name="nanoscan_3__m0" file="nanoscan_3__m0.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m1" file="nanoscan_3__m1.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m2" file="nanoscan_3__m2.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m3" file="nanoscan_3__m3.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m4" file="nanoscan_3__m4.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m5" file="nanoscan_3__m5.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m6" file="nanoscan_3__m6.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m7" file="nanoscan_3__m7.obj" inertia="shell"/>
+    <mesh name="nanoscan_3__m8" file="nanoscan_3__m8.obj" inertia="shell"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0" mass="0.001" diaginertia="0.0001 0.000001 0.0001"/>
+      <geom name="sick_nanoscan3_visual_0" type="mesh" mesh="nanoscan_3__m0" material="nanoscan_3__m0_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_1" type="mesh" mesh="nanoscan_3__m1" material="nanoscan_3__m1_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_2" type="mesh" mesh="nanoscan_3__m2" material="nanoscan_3__m2_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_3" type="mesh" mesh="nanoscan_3__m3" material="nanoscan_3__m3_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_4" type="mesh" mesh="nanoscan_3__m4" material="nanoscan_3__m4_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_5" type="mesh" mesh="nanoscan_3__m5" material="nanoscan_3__m5_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_6" type="mesh" mesh="nanoscan_3__m6" material="nanoscan_3__m6_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_7" type="mesh" mesh="nanoscan_3__m7" material="nanoscan_3__m7_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <geom name="sick_nanoscan3_visual_8" type="mesh" mesh="nanoscan_3__m8" material="nanoscan_3__m8_mat" pos="0 0 -0.02" quat="1e-09 0.70710678 0.707106782 1e-09"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor collides with the full mesh; this box bounds the converted housing instead. -->
+      <geom name="sick_nanoscan3_collision" type="box" pos="-0.0011 0 -0.00885" size="0.0513 0.0534 0.04005" group="3"/>
+      <!-- The vendor scan frame (lidar_1_link) is the mount itself.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

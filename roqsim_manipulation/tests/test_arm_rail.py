@@ -156,7 +156,7 @@ def test_exported_urdf_keeps_the_rail_dof(tmp_path):
 
 def test_unrailed_arm_has_no_world_link(tmp_path):
     # The synthetic parent is emitted only for a jointed root; a welded-down arm keeps root_link as
-    # the URDF root, so this change cannot perturb the existing descriptions.
+    # the URDF root, so a welded arm's description is unchanged.
     from roqsim.export_urdf import UrdfExporter
 
     engine = _engine(tmp_path)

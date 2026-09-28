@@ -35,6 +35,7 @@ WORLD = (
 
 def _engine():
     engine = Engine(load_config(WORLD))
+    engine.ctx.seed = 1  # a test driving an Engine is the driver; the scanners draw range noise
     engine.setup()
     engine.reset()
     return engine

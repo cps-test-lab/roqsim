@@ -6,13 +6,13 @@ it so, and all three are the vendor's doing rather than ours:
 
 * **No meshes at all.** The description is 291 lines of primitives -- one body cylinder, twelve
   bumper plates, two wheel cylinders, a caster sphere, a lidar puck and six sensor markers. Nothing
-  to convert, so none of the Collada, Blender, axis, scale or winding traps that cost the ROSbot,
-  the Doosan and the Raspberry Pi Mouse their iterations can apply here.
+  to convert, so none of the Collada, Blender, axis, scale or winding traps the ROSbot, Doosan
+  and Raspberry Pi Mouse conversions have to handle can apply here.
 * **No `$(find ...)` anywhere.** Its four includes are plain relative filenames inside its own
   package, so none of the ament-index plumbing the Clearpath, Doosan and Husarion ports needed is
   used -- ``expand_xacro`` is called with an empty package map.
-* **No sensor assumptions.** Every other mobile port in this batch had to invent a scanner mount
-  height, a scan rate or a range. This description mounts its own lidar off the body geometry and
+* **No sensor assumptions.** The other mobile ports here have to assume a scanner mount height,
+  a scan rate or a range. This description mounts its own lidar off the body geometry and
   ``plugins.xacro`` states the scan itself: 360 samples over a full turn, 0.1--10 m, 5 Hz.
 
 The drive limits are the vendor's own Nav2 configuration (``config/navigation.yaml``), and the
@@ -195,8 +195,8 @@ TEMPLATE = """<mujoco model="oomwoo_one">
       <freejoint name="base_free"/>
       <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_diaginertia}"/>
       <site name="base_imu" pos="0 0 {imu_z}" size="0.005" rgba="0 0 0 0"/>
-      <!-- The scan plane, off the description's own scan_joint - not an assumption, unlike every
-           other mobile port in this batch. -->
+      <!-- The scan plane, off the description's own scan_joint - not an assumption, unlike most
+           other mobile models here. -->
       <site name="lidar" pos="0 0 {lidar_z}" size="0.005" rgba="1 0 0 0.6"/>
 {base_geoms}{parts}{wheels}    </body>
   </worldbody>

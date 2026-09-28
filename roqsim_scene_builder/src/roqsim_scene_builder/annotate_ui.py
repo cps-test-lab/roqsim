@@ -181,13 +181,14 @@ def build_scrollable(tk, parent, *, padx: int = 12, pady: tuple[int, int] = (6, 
 
     Pack the **footer first**, ``side="bottom"``, and call this after: Tk's packer hands out parcels
     in packing order, so a footer that is packed last gets whatever cavity the content above it did
-    not eat -- which is nothing, once a caller passes a long enough ``message``. That is how the
-    submit buttons went missing. With the footer's parcel already claimed, everything variable (the
+    not eat -- which is nothing, once a caller passes a long enough ``message``, and the submit
+    buttons are gone. With the footer's parcel already claimed, everything variable (the
     title, the message, the tool row, the item rows) goes in ``inner`` and scrolls instead of pushing.
 
     ``sync`` re-measures: call it after adding or removing rows programmatically, since a change made
     outside the geometry manager's own resize path produces no ``<Configure>``. The scrollbar is only
-    mapped while the content actually overflows, so a short panel looks exactly as it did before.
+    mapped while the content actually overflows, so a short panel looks exactly as it would without
+    one.
 
     The wheel is bound on ``bind_all`` between ``<Enter>`` and ``<Leave>`` of the region rather than
     on the canvas: the pointer is almost always over a row's frame/label/entry, not the canvas, and a

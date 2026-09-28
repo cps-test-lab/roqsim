@@ -35,7 +35,7 @@ def _slots(handle):
 
 
 def test_a_second_slot_does_not_take_the_first_ones_text_down():
-    # The regression this module exists for: the mode notice and the key list are written by
+    # What this module exists for: the mode notice and the key list are written by
     # different callers, and set_texts replaces the whole overlay.
     handle = _Handle()
     overlay.set_text(handle, overlay.SLOT_MODE, font=_FONT, gridpos=_BOTTOM, text1="camera")

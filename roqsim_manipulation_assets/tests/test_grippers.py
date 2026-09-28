@@ -10,7 +10,7 @@ Each gripper is checked three ways, because each catches a different class of mi
   coefficients or the manifest produces a gripper that closes when told to open. Nothing else notices.
 * **hold under gravity** -- the jaws are closed on a parcel in zero g, then gravity is switched on and
   the slip is measured. A friction grasp that looks right statically can still creep out of the jaws
-  (the humanoid pick measured 0.12 m/s of it before ``noslip_iterations`` was raised), so the assertion
+  (the humanoid pick measures 0.12 m/s of it with too few ``noslip_iterations``), so the assertion
   is on millimetres of slip over ten seconds rather than on contact existing.
 """
 

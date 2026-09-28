@@ -68,8 +68,8 @@ def test_a_configured_logger_prints_that_format(env, expected, tmp_path):
 
 
 def test_every_cli_uses_the_helper_rather_than_its_own_basicConfig():
-    """Six entry points repeated the same three-line call. The point of the helper is that the
-    seventh does not have to rediscover the decision -- so a new `basicConfig` here is a
+    """The point of the helper is that the decision is made once, so a new entry point does not
+    rediscover it in its own three-line call -- so a new `basicConfig` here is a
     regression even though it would work.
 
     `export_capture` is excluded deliberately: its format is bare `%(message)s` because that

@@ -21,8 +21,8 @@ on-screen window. The window management lives here so neither driver duplicates 
   itself stays MuJoCo's -- it is C++ with no hook -- but is made to *feel* first-person by holding
   its pivot a metre or so in front of the eye (:func:`roqsim.rendering.set_orbit_radius`). Note the
   shape of that fix: a re-parameterisation the renderer cannot tell apart, not a correction.
-  Post-correcting each drag from the driver loop was tried and makes the window flicker between the
-  orbited and the corrected pose, because Simulate renders on its own clock; do not reintroduce it.
+  Post-correcting each drag from the driver loop makes the window flicker between the orbited and
+  the corrected pose, because Simulate renders on its own clock; do not do that.
   The same property is what makes the mode switch itself free: entering and leaving flight only
   re-spells the eye, so neither transition moves the picture.
 * :func:`launch_viewer` / :func:`close_viewer` are the open/close pair every driver must use, because
@@ -49,6 +49,7 @@ import mujoco
 import numpy as np
 
 from . import keys, overlay
+from .exit_status import NO_GL
 from .gl import DEFAULT_MUJOCO_GL
 from .key_state import KeyState
 from .rendering import set_orbit_radius, walk_delta
@@ -59,6 +60,8 @@ log = logging.getLogger(__name__)
 
 class DisplayError(RuntimeError):
     """No usable on-screen GL context for the interactive viewer (see :data:`GL_HELP`)."""
+
+    exit_status = NO_GL
 
 
 def has_display() -> bool:
@@ -213,7 +216,7 @@ def ui_kwargs(left_ui: bool = False, right_ui: bool = False) -> dict:
 _VIEWER_THREADS: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
 #: How long :func:`close_viewer` waits for MuJoCo's render thread to finish. Teardown takes ~10 ms;
-#: the cap only exists so a wedged GL driver degrades to the old racy exit instead of hanging here.
+#: the cap only exists so a wedged GL driver degrades to a racy exit instead of hanging here.
 _CLOSE_TIMEOUT_S = 5.0
 
 
@@ -620,7 +623,7 @@ def close_viewer(handle, *, timeout: float = _CLOSE_TIMEOUT_S) -> None:
     for thread in threads:
         thread.join(timeout=max(0.0, deadline - time.monotonic()))
         if thread.is_alive():
-            # Nothing left to do but let the process exit the old way; say so rather than hang.
+            # Nothing left to do but let the process exit unordered; say so rather than hang.
             print(
                 f"roqsim: the viewer's {thread.name} did not shut down within {timeout:g}s; "
                 "exiting anyway (the process may crash on the way out)",
@@ -684,6 +687,15 @@ class TrackingCamera:
         world can actually state, so it is what :mod:`roqsim.view_save` writes back as ``azimuth``.
         """
         return self._offset
+
+    @azimuth_offset.setter
+    def azimuth_offset(self, degrees: float) -> None:
+        """Re-aim the chase cam to a new angle behind the robot -- the way a camera path animates it.
+
+        Set here and not on ``cam.azimuth``: :meth:`update` reads any change to ``cam.azimuth`` as a
+        mouse drag and folds it into the offset, so writing the angle there would apply twice.
+        """
+        self._offset = float(degrees)
 
     def _resolve(self, target: str) -> int:
         """Entity name first (so worlds say ``track: robot``, not the MJCF prefix), then body name."""

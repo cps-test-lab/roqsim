@@ -6,7 +6,7 @@ ROS 2 **TurtleBot3 World** (from ROBOTIS `turtlebot3_simulations`, Apache-2.0) �
 with nine pillars that TurtleBot 3's and nav2's own tutorials navigate.
 
 There is **no runtime plugin**. An offline pipeline turns a source scene into a committed `.xml` world;
-roqsim loads it via `sim.world` (which now accepts an MJCF file path), and so does
+roqsim loads it via `sim.world` (which accepts an MJCF file path), and so does
 `python -m mujoco.viewer --mjcf …`.
 
 A world can be baked from an **already-materialled MJCF building** — an export whose semantic
@@ -30,6 +30,11 @@ usd_to_scene.py   (USD → per-object OBJ + scene.json)      ← Blender (has US
 sdf_to_scene.py   (Gazebo/Ignition SDF → the same)         ← venv (fetches + pins Fuel models)
 scene_to_mjcf.py  (scene.json + scene.yaml → <name>.xml)   ← venv (has mujoco)
 ```
+
+Every importer stamps its `scene.json` with `"format": "roqsim_scenes.scene_manifest"` and a
+`"version"` (`roqsim_scenes.scene_manifest`); an unstamped one is version 1. Every reader (the bake,
+`scene-to-map`, `scene-to-floorplan`) refuses another format by name — the web descriptor
+`roqsim export web` writes is also a `scene.json` — and a version newer than it reads.
 
 A world that is **generated rather than authored** takes a different route. Its input is a 2D
 occupancy grid — no source file, no meshes to convert, pin or hull — and there are two ways down from
@@ -81,8 +86,8 @@ objects means each wall/column/desk becomes its own **convex collider** — the 
 collidable, no external collider file.
 
 USD hands that split over for free (one prim per object). **SDF does not**, and `sdf_to_scene.py`
-exists mostly to recover it. Three rules there are load-bearing — each was a bug that reached a
-running world, and all three look identical from the outside ("the robot sinks into the floor"),
+exists mostly to recover it. Four rules there are load-bearing — each guards a failure that reaches a
+running world, and all four look identical from the outside ("the robot sinks into the floor"),
 because the MJCF loads and steps happily in every case:
 
 - **Split connected components, then cut at reflex edges.** Components alone are not enough: a
@@ -172,10 +177,11 @@ roqsim scenes scene-to-mjcf --scene <name> \
     --prop path/to/prop.obj,12.9,10.4
 ```
 
-`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor). Textures resolve
-via `roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
-`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on a
-UV'd mesh).
+`--prop PATH,X,Y[,YAW]` drops a mesh in (footprint centred at X,Y, base on the floor, turned YAW
+radians about its footprint centre, as a world's `pose:` reads its `yaw`). Textures resolve via
+`roqsim.textures` (`roqsim_assets:<Name>` or a PNG path); the meshes carry metre-scale UVs, so
+`physical_size` sets true tile scale (the baker scales the UVs, since MuJoCo ignores `texrepeat` on
+a UV'd mesh).
 
 **Collision** is convex per object by default (`collision: convex`); walls/columns/doors are near-convex
 so their hulls are exact, a concave prop collides as its filled hull. `collision: none` makes the scene
@@ -258,8 +264,8 @@ the reader onto `ezdxf`.
 
 Rooms and doors are left empty on purpose: open the result in the scene-builder's 2D window
 (`sketch_floorplan_by_human`, `initial=…`) to name rooms, add door openings and tweak walls, then run
-`floorplan_to_world.py` on the finished `floorplan.json` to bake the world (see the `scene-update`
-skill for the full human-in-the-loop flow):
+`roqsim scenes floorplan-to-world` on the finished `floorplan.json` to bake the world, then review it
+with `review_scene_by_human` (`docs/scene_builder.rst`):
 
 ```
 roqsim scenes floorplan-to-world \
@@ -292,7 +298,9 @@ building its own `scene.yaml` beside its `floorplan.json` when its surfaces diff
 — carpet instead of plaster underfoot, a raw concrete soffit — instead of repainting the look every
 other generated room inherits. It is authored, so a rebake reads it and never overwrites it. A
 `materials` entry takes `texture` / `rgba` / `physical_size` / `reflectance` / `emission` (the last is
-what keeps a soffit, which faces away from every lamp below it, from rendering near-black).
+what keeps a soffit, which faces away from every lamp below it, from rendering near-black). The bake
+refuses a key it does not read, at the top level and inside `floor`, `light` and each material, with
+the nearest known one named: a misspelt key would otherwise bake the default in its place.
 
 Each marker becomes a `spawn_model` in the world YAML. `--markers-map` maps a marker id to the model
 to place — either a bare name (`"single_bed"`) or `{"model": "single_bed", "yaw_deg": 180}` to also
