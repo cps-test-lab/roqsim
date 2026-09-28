@@ -74,10 +74,22 @@ def _split_ref(ref: str) -> tuple[str, str]:
     return left, cls
 
 
+#: Modules loaded from plugin files, keyed by resolved path, with the ``(mtime_ns, size)`` they were
+#: loaded at: one world load resolves a ref several times, and each must return the same class. A
+#: file changed on disk is loaded afresh.
+_FILE_MODULES: dict[Path, tuple[tuple[int, int], object]] = {}
+
+
 def _load_from_file(path: Path, cls_name: str, ref: str) -> type[Plugin]:
     if not path.exists():
         raise PluginError(f"plugin file {path} (from {ref!r}) does not exist")
-    module_name = f"roqsim_ext_{path.stem}_{abs(hash(str(path.resolve())))}"
+    resolved = path.resolve()
+    stat = resolved.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _FILE_MODULES.get(resolved)
+    if cached is not None and cached[0] == stamp:
+        return _get_class(cached[1], cls_name, ref)
+    module_name = f"roqsim_ext_{path.stem}_{abs(hash(str(resolved)))}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise PluginError(f"could not load plugin file {path} (from {ref!r})")
@@ -87,6 +99,7 @@ def _load_from_file(path: Path, cls_name: str, ref: str) -> type[Plugin]:
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001
         raise PluginError(f"error importing plugin file {path} (from {ref!r}): {exc}") from exc
+    _FILE_MODULES[resolved] = (stamp, module)
     return _get_class(module, cls_name, ref)
 
 
