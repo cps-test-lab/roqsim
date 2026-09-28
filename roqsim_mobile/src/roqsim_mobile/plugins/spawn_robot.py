@@ -198,9 +198,9 @@ class SpawnRobotPlugin(Plugin):
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
         #: The manifest's and this config's fixed frames, read in :meth:`build`.
-        self.frames: list = []
+        self.frame_decls: list = []
         #: Their static transforms, and those joining them to the root, read at :meth:`configure`.
-        self.frame_transforms: list[dict] = []
+        self.frame_links: list[dict] = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -251,10 +251,10 @@ class SpawnRobotPlugin(Plugin):
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other
         # name in it, and a mount declared after this robot can hang from it.
         where = f"spawn_robot {self.robot_name} ({self.config['model']})"
-        self.frames = parse_frames(
+        self.frame_decls = parse_frames(
             manifest_frames(asset.path) + list(self.config.get("frames") or []), where
         )
-        add_frame_sites(child, self.frames, where)
+        add_frame_sites(child, self.frame_decls, where)
         frame = spec.worldbody.add_frame()
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -309,13 +309,13 @@ class SpawnRobotPlugin(Plugin):
             )
             for row in self.actuator_table
         ]
-        if self.frames:
-            self.frame_transforms = static_transforms(
+        if self.frame_decls:
+            self.frame_links = static_transforms(
                 ctx.model,
                 self._root_links(ctx, base_body)
                 + [
                     (f.parent, self.prefix + f.parent, f.name, self.prefix + f.name)
-                    for f in self.frames
+                    for f in self.frame_decls
                 ],
                 f"spawn_robot {self.robot_name}",
             )
@@ -327,22 +327,14 @@ class SpawnRobotPlugin(Plugin):
         return self.robot_name
 
     @endpoint.out(
-        "frames",
-        when=lambda self: bool(self.frames),
+        when="frame_links",
         ros2=lambda self: {
-            "type": "tf2_msgs.msg.TFMessage",
-            "topic": "tf",
-            "frame_id": self.frame_transforms[0]["parent"],
-            "static_tf": self.frame_transforms,
+            "frame_id": self.frame_links[0]["parent"],
+            "static_tf": self.frame_links,
         },
     )
-    def read_frames(self) -> None:
-        """Endpoint ``frames``: the robot's fixed frames, published once as static transforms.
-
-        Each is ``parent -> name`` read from the compiled model, with frame names bare and scoped
-        by the robot's namespace. There is nothing to stream, so the read returns ``None``.
-        """
-        return None
+    def frames(self) -> None:
+        """The robot's fixed frames, as static transforms with bare names; nothing to stream."""
 
     def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
         """``root -> body`` for each body other than the root that a frame chain hangs from.
@@ -356,9 +348,9 @@ class SpawnRobotPlugin(Plugin):
         m = ctx.model
         root = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, base_body)
         root_name = base_body.removeprefix(self.prefix)
-        declared = {f.name for f in self.frames}
+        declared = {f.name for f in self.frame_decls}
         links: list[tuple[str, str, str, str]] = []
-        for frame in self.frames:
+        for frame in self.frame_decls:
             if frame.parent in declared or any(link[2] == frame.parent for link in links):
                 continue
             body = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, self.prefix + frame.parent)

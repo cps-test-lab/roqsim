@@ -4,8 +4,8 @@
 
 """The typed endpoints of ``ackermann_drive``, ``omni_drive`` and ``spawn_robot``.
 
-Each endpoint's ROS hints, owner, namespace and rate are what the plugin declared before its methods
-carried them, and a named write reaches the drive once per step.
+Each endpoint's payload type, owner, namespace, rate and ROS deviations, and a named write reaching
+the drive once per step.
 """
 
 from __future__ import annotations
@@ -17,7 +17,12 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.endpoint import ParameterError
 from roqsim.engine import Engine
-from roqsim_mobile.plugins.ackermann_drive import AckermannDrivePlugin
+from roqsim.types import JointState, Odometry, Twist
+from roqsim_mobile.plugins.ackermann_drive import (
+    AckermannCommand,
+    AckermannDrive,
+    AckermannDrivePlugin,
+)
 from roqsim_mobile.plugins.spawn_robot import SpawnRobotPlugin
 
 
@@ -48,39 +53,44 @@ def test_ackermann_endpoints_keep_their_ros_interface():
         "odom": ("out", "car", 50.0),
         "joint_states": ("out", "car", 50.0),
     }
-    assert eps["cmd_vel"].backend == {
-        "ros2": {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
-    }
+    assert eps["cmd_vel"].payload_type.cls is Twist
+    assert eps["cmd_vel"].backend == {"ros2": {"stamped": False}}
+    # By field name onto the message stacks already send, on the topic they send it on.
+    assert eps["ackermann_cmd"].payload_type.cls is AckermannCommand
     assert eps["ackermann_cmd"].backend == {
         "ros2": {"type": "ackermann_msgs.msg.AckermannDriveStamped", "topic": "drive"}
     }
-    assert eps["odom"].backend["ros2"]["child_frame_id"] == "base_link"
-    assert [p.name for p in eps["ackermann_cmd"].params] == ["steering_angle", "speed"]
-    assert eps["ackermann_cmd"].params[0].type.unit == "rad"
+    assert [p.name for p in eps["ackermann_cmd"].params] == ["drive"]
+    drive = {f.name: f.type for f in eps["ackermann_cmd"].params[0].type.fields}
+    assert drive["steering_angle"].unit == "rad" and drive["speed"].unit == "m/s"
+    assert eps["odom"].result.cls is Odometry and eps["joint_states"].result.cls is JointState
+    assert eps["odom"].backend == {"ros2": {"child_frame_id": "base_link", "emit_tf": True}}
 
 
 def test_an_ackermann_command_by_name_turns_the_wheels_at_rest():
     engine = _engine("piracer")
     eps = _endpoints(engine)
-    eps["ackermann_cmd"].write({"steering_angle": 0.3, "speed": 0.0})
+    eps["ackermann_cmd"].write({"drive": AckermannDrive(steering_angle=0.3, speed=0.0)})
     for _ in range(200):
         engine.step()
     drive = _plugin(engine, AckermannDrivePlugin)
     assert drive._steer == pytest.approx(0.3, abs=1e-6)
-    names, positions, _ = eps["joint_states"].read()
-    assert list(names[:2]) == drive.steer_joint_names
-    assert all(abs(p) > 0.1 for p in positions[:2]), "the steer joints follow the command"
+    joints = eps["joint_states"].read()
+    assert list(joints.names[:2]) == drive.steer_joint_names
+    assert all(abs(p) > 0.1 for p in joints.positions[:2]), "the steer joints follow the command"
 
 
 def test_a_twist_by_name_drives_the_car_and_a_misfit_is_refused():
     engine = _engine("piracer")
     eps = _endpoints(engine)
-    with pytest.raises(ParameterError, match="speed"):
-        eps["ackermann_cmd"].write({"steering_angle": 0.1, "sped": 0.2})
+    with pytest.raises(ParameterError, match="drive"):
+        eps["ackermann_cmd"].write({"steering_angle": 0.1, "speed": 0.2})
+    with pytest.raises(ParameterError, match="wz"):
+        eps["cmd_vel"].write({"vx": 0.5, "w": 0.1})
     eps["cmd_vel"].write({"vx": 0.5})
     for _ in range(300):
         engine.step()
-    assert eps["odom"].read()[3] > 0.2
+    assert eps["odom"].read().linear[0] > 0.2
 
 
 def test_omni_endpoints_keep_their_ros_interface_and_strafe_by_name():
@@ -91,11 +101,11 @@ def test_omni_endpoints_keep_their_ros_interface_and_strafe_by_name():
         "odom": ("out", 50.0),
         "joint_states": ("out", 50.0),
     }
-    assert eps["odom"].backend["ros2"]["child_frame_id"] == "base_footprint"
+    assert eps["odom"].backend == {"ros2": {"child_frame_id": "base_footprint", "emit_tf": True}}
     eps["cmd_vel"].write({"vx": 0.0, "vy": 0.3})
     for _ in range(500):
         engine.step()
-    assert eps["odom"].read()[4] > 0.1, "a holonomic base honours vy"
+    assert eps["odom"].read().linear[1] > 0.1, "a holonomic base honours vy"
 
 
 def test_spawn_robot_frames_belong_to_the_robot_and_its_namespace():
@@ -104,14 +114,9 @@ def test_spawn_robot_frames_belong_to_the_robot_and_its_namespace():
     spawn = _plugin(engine, SpawnRobotPlugin)
     assert frames.namespace == "tb" and frames.direction == "out"
     assert frames.backend == {
-        "ros2": {
-            "type": "tf2_msgs.msg.TFMessage",
-            "topic": "tf",
-            "frame_id": spawn.frame_transforms[0]["parent"],
-            "static_tf": spawn.frame_transforms,
-        }
+        "ros2": {"frame_id": spawn.frame_links[0]["parent"], "static_tf": spawn.frame_links}
     }
-    assert frames.read() is None
+    assert frames.result.kind == "none" and frames.read() is None
 
 
 def test_a_robot_without_frames_has_no_frames_endpoint():

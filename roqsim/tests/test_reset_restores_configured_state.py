@@ -191,7 +191,7 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
 #: What to write into an ``in`` endpoint, by endpoint name: a value, or ``f(engine, endpoint)``.
 PAYLOADS: dict[str, Any] = {
     "cmd_vel": (0.2, 0.0, 0.3),
-    "ackermann_cmd": (0.3, 0.2),
+    "ackermann_cmd": ({"steering_angle": 0.3, "speed": 0.2},),
     "follow_joint_trajectory": _joint_command,
     "joint_command": _joint_command,
     "joint_velocity": _joint_command,

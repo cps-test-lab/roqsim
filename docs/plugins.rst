@@ -1352,7 +1352,9 @@ id (``frame_id``, ``child_frame_id``), ``stamped`` (``TwistStamped`` for a ``Twi
 rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, a ``topic`` other than the endpoint's
 name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
 maps to by field name (see below). A dict, a callable of the plugin returning one -- for a value
-``configure`` resolves -- or ``None`` to keep the endpoint off ROS.
+``configure`` resolves -- or ``None`` to keep the endpoint off ROS. An ``out`` that returns nothing
+exists to carry fixed frames: its ``static_tf`` hint (a list of ``{parent, child, translation,
+rotation}``) is published once on ``/tf_static``, as ``spawn_robot``'s ``frames`` does.
 
 **Registration is the engine's.** After a plugin's ``configure`` returns, the engine registers its
 endpoints (``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a

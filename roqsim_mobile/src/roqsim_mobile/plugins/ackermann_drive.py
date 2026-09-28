@@ -106,22 +106,44 @@ between the two is what a localisation experiment is about.
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass, field
 
 import mujoco
 import numpy as np
-from numpy.typing import NDArray
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
-from roqsim.endpoint import Unit
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
-
-from .diff_drive import Odometry
+from roqsim.types import Angle, AngularSpeed, JointState, Odometry, Speed, Twist
 
 #: Below this speed a curvature command has no meaning (see the module docstring).
 _MIN_SPEED = 1e-3
+
+
+@dataclass
+class AckermannDrive:
+    """A steering angle and a speed.
+
+    Attributes:
+        steering_angle: angle of a virtual wheel at the centre of the front axle, left positive
+        speed: forward speed
+    """
+
+    steering_angle: Angle = 0.0
+    speed: Speed = 0.0
+
+
+@dataclass
+class AckermannCommand:
+    """The ``ackermann_cmd`` payload, shaped as ``ackermann_msgs/AckermannDriveStamped`` so the ROS
+    bridge maps it by field name.
+
+    Attributes:
+        drive: the steering angle and speed
+    """
+
+    drive: AckermannDrive = field(default_factory=AckermannDrive)
 
 
 class AckermannDrivePlugin(Plugin):
@@ -158,10 +180,9 @@ class AckermannDrivePlugin(Plugin):
         self._cmd_v = 0.0  # ramped speed
         self._steer = 0.0  # slewed centre (bicycle) steering angle
         #: Centre angle commanded directly (Ackermann), or None when the last command was a twist.
-        #: Which of the two arrived last decides where the angle comes from; they are not merged,
+        #: Which of the two was applied last decides where the angle comes from; they are not merged,
         #: because a twist's curvature and a stated angle are two ways of saying the same thing and
-        #: averaging them would obey neither. Both endpoints are streams applied once per step, the
-        #: twist first, so when both arrive within one step the Ackermann command is the last.
+        #: averaging them would obey neither.
         self._steer_cmd: float | None = None
         self._odom = [0.0, 0.0, 0.0, 0.0, 0.0]  # x, y, yaw, v, w
         self._steer_aid: list[int] = []
@@ -265,51 +286,36 @@ class AckermannDrivePlugin(Plugin):
         )
 
     # -- commands -----------------------------------------------------------------------------
+    # Both inputs are streams, applied once per step in this order: when a twist and an Ackermann
+    # command arrive within one step, the Ackermann command is the one in force.
 
-    @endpoint.stream(
-        "cmd_vel",
-        ros2=lambda self: {
-            "type": "geometry_msgs.msg.TwistStamped"
-            if self.stamped_cmd_vel
-            else "geometry_msgs.msg.Twist",
-            "topic": self.topic_override("cmd_vel") or "cmd_vel",
-        },
-    )
-    def command_twist(
-        self,
-        vx: Annotated[float, Unit("m/s"), "forward speed"],
-        vy: Annotated[float, Unit("m/s"), "sideways speed; a car drops it"] = 0.0,
-        w: Annotated[float, Unit("rad/s"), "yaw rate, steered through the bicycle relation"] = 0.0,
-    ) -> None:
-        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step."""
-        self.drive(vx, vy, w)
+    @endpoint.stream(Twist, ros2=lambda self: {"stamped": self.stamped_cmd_vel})
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step.
 
-    @endpoint.stream(
-        "ackermann_cmd",
-        ros2=lambda self: {
-            # The message's own steering_angle is documented as "the yaw of a virtual wheel located
-            # at the center of the front axle", which is exactly the angle this plugin splits into
-            # two. The representations line up field for field, so nothing is converted on the way
-            # in.
-            "type": "ackermann_msgs.msg.AckermannDriveStamped",
-            # `drive` rather than the endpoint's own name: this interface exists to be spoken to by
-            # stacks that already emit AckermannDriveStamped, and they emit it there. A world that
-            # wants another topic says so with a topic override.
-            "topic": self.topic_override("ackermann_cmd") or "drive",
-        },
-    )
-    def command_ackermann(
-        self,
-        steering_angle: Annotated[
-            float, Unit("rad"), "centre (bicycle) steering angle, positive to the left"
-        ],
-        speed: Annotated[float, Unit("m/s"), "forward speed"],
-    ) -> None:
-        """Endpoint ``ackermann_cmd``: the latest steering angle and speed, applied once per step.
-
-        Turns the wheels at any speed, standing still included (see :meth:`steer`).
+        Args:
+            vx: forward speed
+            vy: sideways speed; a car drops it
+            wz: yaw rate, steered through the bicycle relation
         """
-        self.steer(steering_angle, speed)
+        self.drive(vx, vy, wz)
+
+    # The message's own steering_angle is documented as "the yaw of a virtual wheel located at the
+    # center of the front axle", which is exactly the angle this plugin splits into two, so nothing
+    # is converted on the way in. On `drive` rather than the endpoint's own name: this interface
+    # exists to be spoken to by stacks that already emit AckermannDriveStamped, and they emit it
+    # there.
+    @endpoint.stream(
+        AckermannCommand,
+        ros2={"type": "ackermann_msgs.msg.AckermannDriveStamped", "topic": "drive"},
+    )
+    def ackermann_cmd(self, drive: AckermannDrive) -> None:
+        """Steering angle and speed, applied once per step; turns the wheels at rest too.
+
+        Args:
+            drive: the centre steering angle and the speed (see :meth:`steer`)
+        """
+        self.steer(drive.steering_angle, drive.speed)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (``vy`` dropped: a car cannot strafe either)."""
@@ -431,38 +437,22 @@ class AckermannDrivePlugin(Plugin):
         self._read_joints(m, d)
 
     @endpoint.out(
-        "odom",
-        rate_hz=50.0,
-        ros2=lambda self: {
-            "type": "nav_msgs.msg.Odometry",
-            "topic": self.topic_override("odom") or "odom",
-            "frame_id": "odom",
-            "child_frame_id": self.odom_child_frame,
-            "emit_tf": True,
-        },
+        rate=50.0, ros2=lambda self: {"child_frame_id": self.odom_child_frame, "emit_tf": True}
     )
-    def read_odom(self) -> Odometry:
-        """Endpoint ``odom``: dead reckoning from the driven wheels and the measured steering angle."""
+    def odom(self) -> Odometry:
+        """Dead reckoning from the driven wheels and the measured steering angle."""
+        x, y, yaw, v, w = self._odom
+        return Odometry.planar(x, y, yaw, v, 0.0, w)
+
+    def read_odom(self) -> tuple[float, float, float, float, float, float]:
+        """The latest ``(x, y, yaw, vx, vy, w)``, what the :class:`RobotHandle` reads."""
         x, y, yaw, v, w = self._odom
         return (x, y, yaw, v, 0.0, w)
 
-    @endpoint.out(
-        "joint_states",
-        rate_hz=50.0,
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.JointState",
-            "topic": self.topic_override("joint_states") or "joint_states",
-        },
-    )
-    def read_joint_states(
-        self,
-    ) -> tuple[
-        Annotated[list[str], "steer joints, then driven joints"],
-        Annotated[NDArray[np.float64], Unit("rad")],
-        Annotated[NDArray[np.float64], Unit("rad/s")],
-    ]:
-        """Endpoint ``joint_states``: the steer joints and the driven wheels."""
-        return (self._jnames, self._jpos, self._jvel)
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The steer joints, then the driven wheels."""
+        return JointState(self._jnames, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:
         self._target_v = self._target_w = 0.0
@@ -476,7 +466,7 @@ class AckermannDrivePlugin(Plugin):
         self._read_joints(ctx.model, ctx.data)
 
     def _read_joints(self, m, d) -> None:
-        """The joint_states payload, written in place so ``read_joint_states`` is zero-copy."""
+        """The joint_states payload, written in place so ``joint_states`` is zero-copy."""
         for k, jid in enumerate(self._steer_jid + self._drive_jid):
             self._jpos[k] = d.qpos[m.jnt_qposadr[jid]]
             self._jvel[k] = d.qvel[m.jnt_dofadr[jid]]
