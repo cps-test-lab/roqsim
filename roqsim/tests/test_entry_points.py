@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from roqsim import models, registry, world
+from roqsim import commands, models, registry, world
 from roqsim.entry_points import entry_points
 
 
@@ -17,6 +17,7 @@ def test_a_group_is_scanned_once_and_read_by_every_registry():
     assert {ep.name for ep in plugins} >= {"spawn_model", "dummy"}
     assert registry._entry_points is entry_points
     assert models._entry_points is entry_points
+    assert commands.entry_points is entry_points
     assert world._world_entry_points() == entry_points(world.WORLDS_ENTRY_POINT_GROUP)
 
 
