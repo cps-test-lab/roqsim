@@ -1,9 +1,9 @@
 """TurtleBot 4 drive-test battery (port verification).
 
-Mirrors the robot-porting verification battery and its siblings `test_husky_scene.py` /
-`test_jackal_scene.py` / `test_turtlebot3_scene.py`: static sanity (A), open-loop drive tests (B) and
-sensor checks (C). Everything is driven through the real ``diff_drive`` plugin -- whose *defaults* are
-this platform's geometry, which is why `turtlebot4.manifest.yaml` declares a bare ``diff_drive: {}``.
+Mirrors its siblings `test_husky_scene.py` / `test_jackal_scene.py` / `test_turtlebot3_scene.py`:
+static sanity (A), open-loop drive tests (B) and sensor checks (C). Everything is driven through the
+real ``diff_drive`` plugin -- whose *defaults* are this platform's geometry, which is why
+`turtlebot4.manifest.yaml` declares a bare ``diff_drive: {}``.
 
 Reference dimensions come from `nav2_minimal_tb4_description` (see `turtlebot4_LICENSE`): body radius
 0.164 m and length 0.06 m, body mass 2.300 kg with COM 0.0228 m forward, wheel r=0.03575 m w=0.015 m

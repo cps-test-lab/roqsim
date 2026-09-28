@@ -343,6 +343,34 @@ def test_a_configured_active_override_applies_and_survives_reset():
     assert plugin.read_state().active is True
 
 
+def test_a_configured_active_override_is_checked_in_every_trial():
+    """A campaign cell run degraded must know its fault landed, as a triggered one does."""
+    ctx, plugin = _plugin(
+        {"field": "body_mass", "select": ["crate"], "to": 20.0}, scene=FREE, active=True
+    )
+    for _ in range(2):  # the first trial, and a repetition
+        plugin.on_reset(ctx)
+        _run(ctx, plugin, 0.01)
+        assert plugin.read_state().verified == "landed"
+        assert plugin.read_state().since == 0.0, "active since the trial began"
+
+
+def test_a_reset_keeps_a_mass_another_plugin_set_after_configure():
+    """A payload adds its mass after the override has been configured; a reset must not undo it."""
+    ctx, plugin = _plugin({"field": "body_mass", "select": ["crate"], "to": 20.0}, scene=FREE)
+    crate = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, "crate")
+    ctx.model.body_mass[crate] += 0.5  # what `payload` does in its configure
+    mujoco.mj_setConst(ctx.model, ctx.data)
+
+    plugin.on_reset(ctx)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(1.5)
+
+    plugin.set_active(True)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(20.0)
+    plugin.on_reset(ctx)
+    assert float(ctx.model.body_mass[crate]) == pytest.approx(1.5)
+
+
 def test_the_endpoints_and_the_handle():
     """The ROS path, exercised without ROS: the bridge only ever calls write() and read()."""
     ctx, plugin = _at_rest(*_plugin(FRICTION_OFF))

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+from roqsim import exit_status
 from roqsim_scenes.cli import world_inputs
 
 
@@ -59,7 +60,7 @@ def test_an_unresolvable_parent_fails_when_completeness_is_required(capsys, tmp_
     """
     world = _world(tmp_path, "extends: ./no_such_parent.yaml\ncomponents: []\n")
 
-    assert world_inputs.main([str(world), "--require-complete"]) == 1
+    assert world_inputs.main([str(world), "--require-complete"]) == exit_status.BAD_INPUT
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "no_such_parent.yaml" in captured.err

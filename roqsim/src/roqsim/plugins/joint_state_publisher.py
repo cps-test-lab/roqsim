@@ -160,8 +160,14 @@ class JointStatePublisherPlugin(Plugin):
     def read_joint_states(self):
         return (self._names, self._pos, self._vel, self._eff)
 
+    def on_reset(self, ctx: SimContext) -> None:
+        # The reset pose, not the previous episode's last one, until the first step.
+        self._read(ctx.data)
+
     def post_step(self, ctx: SimContext) -> None:
-        d = ctx.data
+        self._read(ctx.data)
+
+    def _read(self, d) -> None:
         # Written in place so read() is zero-copy, like the base controllers' joint state.
         self._pos[:] = d.qpos[self._qpos]
         self._vel[:] = d.qvel[self._dof]
