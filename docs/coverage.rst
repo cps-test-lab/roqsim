@@ -81,11 +81,14 @@ The CLI (placement search)
        --world <w> --regions scene/floorplan.json --region-names "room 1,room 2" --restrict \
        --types livox_mid360 --mount-z 3.3 --target k=1,frac=0.95 --out run/
 
+``estimate`` and ``greedy`` take ``roqsim sim``'s ``--set`` and ``--override``, so the coverage measured
+is that of the world a run with those overrides builds; they apply to a world YAML or ref, and are
+refused for an MJCF ``--world``.
+
 ``placements.json`` is a list of ``{type, pos, rpy, config?}`` using catalog types. The
 ``estimate`` report carries ``achieved`` (coverage fractions), ``uncovered_regions`` (where to add a
 sensor), ``per_sensor_contribution`` (redundant sensors have ``unique_points: 0``), and ``per_object``.
-The refine loop — evaluate, read the gaps, adjust ``placements.json``, re-evaluate — is what the
-``sensor-coverage`` skill drives.
+To refine a layout, evaluate, read the gaps, adjust ``placements.json`` and evaluate again.
 
 **Per-region coverage.** ``--regions`` restricts the *question* to named areas without touching the
 sampler: it takes a JSON of ``{name, polygon|bbox, z_min?, z_max?}`` regions **or** a scene's

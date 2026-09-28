@@ -36,7 +36,7 @@ import time
 from pathlib import Path
 
 from . import control as ctl
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import (
     DEFAULT_FPS,
     CaptureError,
@@ -50,18 +50,17 @@ from .capture import (
 )
 from .clock import Pacer
 from .config import (
-    deep_merge,
     drop_transport,
     load_config,
     load_config_from_dict,
-    overrides_from_dotlist,
-    overrides_from_files,
     with_transport,
 )
 from .engine import Engine
 from .gl import select_offscreen_gl
 from .models import ModelError
+from .override_options import add_override_options, overrides_from_options
 from .plugin import PluginError
+from .rendering import GLBackendError
 from .replay import is_recording
 from .seed import resolve_seed
 from .splash import clear_loading_overlay, show_loading_overlay
@@ -669,137 +668,151 @@ def run(
             if profile:
                 print(f"[loading] placeholder window open: {open_s * 1e3:.0f} ms", file=sys.stderr)
 
-    try:
-        engine = Engine(cfg, logger=logger, profile=profile)
-        # Before setup(): configure() may read it, and pre_step certainly does.
-        engine.ctx.manual_control = manual_control
-        # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported* and
-        # recorded, so it can be repeated. A seed nothing sets and nothing reports is the case where
-        # a noisy run cannot be reproduced at all.
-        engine.ctx.seed = resolve_seed(seed, logger or log, config_seed=getattr(cfg, "seed", None))
-        engine.setup()
-    except BaseException:
-        # The compile failed while the loading window is up -- close it so it doesn't dangle.
-        if loading_view is not None:
-            close_viewer(loading_view)
-        raise
-    if profile:
-        print(engine.format_load_report(), file=sys.stderr)
-    engine.reset()
-
-    dt = engine.dt
-    pacer = Pacer.from_config(pacing if pacing is not None else cfg.pacing, dt)
-    pacer.reset()
-
-    if seconds is not None:
-        steps_from_seconds = int(round(seconds / dt))
-        max_steps = steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
-
-    if video and not record:
-        # A recording is how a video is made, so --video needs one; put it beside the video by default
-        # rather than inventing a second convention for where it lives.
-        record = str(Path(video).with_suffix(".npz"))
-
-    # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
-    # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
-    # to add --record to without editing a launch file that two backends share. Recording is a session
-    # concern -- the same footing as `sim.headless`, which the world YAML rejects on purpose -- so the
-    # environment is the right channel, and it is the one the scenario adapter already uses.
-    # An explicit flag always wins.
-    if record is None:
-        record = os.environ.get("ROQSIM_RECORD") or None
-        if record:
-            record = str(_session_path(record))
-    if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
-        capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
-
-    # The rate is checked against the *compiled* timestep, which is the only authority: a world can
-    # inherit it from a baked MJCF rather than declaring it in `sim:`.
-    rate = snap_fps(capture_fps, dt)
-    if record or not headless:
-        rate.report(engine.logger or log)
-
-    # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
-    # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
-    # kills F9: the window goes on setting the flag on an object the loop no longer holds.
-    recorder = None
-    if headless:
-        if record:
-            recorder = StateRecorder(
-                engine.ctx,
-                record,
-                rate,
-                world=target,
-                overrides=overrides,
-                config=engine.config,
-                camera=False,
-                sim_poses=env_flag("ROQSIM_SIM_POSES"),
-                logger=engine.logger or log,
-            )
-    else:
-        # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
-        # run. It costs nothing until a take starts -- recording is a memcpy.
-        recorder = TakeRecorder(
-            engine.ctx,
-            record or _DEFAULT_RECORD,
-            rate,
-            world=target,
-            overrides=overrides,
-            config=engine.config,
-            camera=True,
-            logger=engine.logger or log,
-        )
-        if record:
-            recorder.start()
-
-    # The handlers stay installed across the teardown, not just the loop: the flush is the part that must
-    # survive a signal, and restoring the defaults first would mean a SIGTERM arriving during
-    # recorder.close() -- which is exactly when a supervisor sends it -- killing the process mid-write.
-    with _graceful_stop(engine.ctx.control, engine.logger):
+    # The engine is shut down on every way out of this block; the loading window only on a failure
+    # before the loop, which otherwise takes it over.
+    with contextlib.ExitStack() as stack:
         try:
-            if headless:
-                _run_headless(engine, pacer, max_steps, recorder)
-            else:
-                _run_windowed(
-                    engine,
-                    pacer,
-                    max_steps,
-                    cfg.view,
-                    name=cfg.name,
-                    viewer=loading_view,
-                    profile=profile,
-                    left_ui=left_ui,
-                    right_ui=right_ui,
-                    preview=is_model_ref(target),
-                    recorder=recorder,
-                    toggle=toggle,
-                    saver=saver,
-                    world_yaml=world_yaml,
+            engine = Engine(cfg, logger=logger, profile=profile)
+            # Before setup(): configure() may read it, and pre_step certainly does.
+            engine.ctx.manual_control = manual_control
+            # Drawn rather than defaulted to 0, so an unseeded run is still varied -- but *reported*
+            # and recorded, so it can be repeated. A seed nothing sets and nothing reports is the case
+            # where a noisy run cannot be reproduced at all.
+            engine.ctx.seed = resolve_seed(
+                seed, logger or log, config_seed=getattr(cfg, "seed", None)
+            )
+            stack.enter_context(engine)
+            if profile:
+                print(engine.format_load_report(), file=sys.stderr)
+            engine.reset()
+
+            dt = engine.dt
+            pacer = Pacer.from_config(pacing if pacing is not None else cfg.pacing, dt)
+            pacer.reset()
+
+            if seconds is not None:
+                steps_from_seconds = int(round(seconds / dt))
+                max_steps = (
+                    steps_from_seconds if max_steps is None else min(max_steps, steps_from_seconds)
                 )
-        finally:
-            # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or
-            # a supervisor's SIGTERM is turned into QUITTING by _graceful_stop rather than raising through
-            # the render thread. The recording is written *first* -- it is the primary artifact, and the
-            # capture is derived from the same samples, so nothing about the export can be allowed to cost
-            # it. Both still run before engine.shutdown(), because the export reads the live model: it
-            # needs no world rebuild and no GL backend.
-            #
-            # All of it runs deaf to further stop signals. Two supervisors mean two of the same
-            # signal, which the escalation counter reads as insisting -- and an interrupt raised in
-            # here does not end a run early, it ends it *without its results*: the capture, and the
-            # CSV a scoring plugin writes in shutdown(), are both produced below this line.
-            with _deaf_to_stop_signals(engine.logger or log):
-                written = recorder.close() if recorder is not None else None
-                _export_capture_at_exit(engine, recorder, target, overrides, engine.logger or log)
-                # Once, here, because every stop that matters reaches this block and because the
-                # fact is about the whole run. Silent unless the run genuinely failed its rate:
-                # the line's presence is the signal, so it must not appear on healthy runs.
-                _pacing = pacer.report_line()
-                if _pacing:
-                    (engine.logger or log).warning("%s", _pacing)
-                if profile:
-                    print(engine.format_timing(), file=sys.stderr)
-                engine.shutdown()
+
+            if video and not record:
+                # A recording is how a video is made, so --video needs one; put it beside the video by default
+                # rather than inventing a second convention for where it lives.
+                record = str(Path(video).with_suffix(".npz"))
+
+            # Session defaults from the environment, for a run nobody launched by hand. A campaign starts this
+            # world through a ROS launch file (roqsim_ros_bridge.run_bridge -> here), so there is no command line
+            # to add --record to without editing a launch file that two backends share. Recording is a session
+            # concern -- the same footing as `sim.headless`, which a world YAML ignores with a warning -- so the
+            # environment is the right channel, and it is the one the scenario adapter already uses.
+            # An explicit flag always wins.
+            if record is None:
+                record = os.environ.get("ROQSIM_RECORD") or None
+                if record:
+                    record = str(_session_path(record))
+            if capture_fps == DEFAULT_FPS and os.environ.get("ROQSIM_CAPTURE_FPS"):
+                capture_fps = parse_fps(os.environ["ROQSIM_CAPTURE_FPS"])
+
+            # The rate is checked against the *compiled* timestep, which is the only authority: a world can
+            # inherit it from a baked MJCF rather than declaring it in `sim:`.
+            rate = snap_fps(capture_fps, dt)
+            if record or not headless:
+                rate.report(engine.logger or log)
+
+            # NB: ``toggle``/``saver`` are the ones built above and already wired into the window's key
+            # callback -- do not rebind them here. Re-initialising ``toggle = None`` at this point silently
+            # kills F9: the window goes on setting the flag on an object the loop no longer holds.
+            recorder = None
+            if headless:
+                if record:
+                    recorder = StateRecorder(
+                        engine.ctx,
+                        record,
+                        rate,
+                        world=target,
+                        overrides=overrides,
+                        config=engine.config,
+                        camera=False,
+                        sim_poses=env_flag("ROQSIM_SIM_POSES"),
+                        logger=engine.logger or log,
+                    )
+            else:
+                # Windowed: always build the take recorder, even without --record, so F9 works in any windowed
+                # run. It costs nothing until a take starts -- recording is a memcpy.
+                recorder = TakeRecorder(
+                    engine.ctx,
+                    record or _DEFAULT_RECORD,
+                    rate,
+                    world=target,
+                    overrides=overrides,
+                    config=engine.config,
+                    camera=True,
+                    logger=engine.logger or log,
+                )
+                if record:
+                    recorder.start()
+        except BaseException:
+            if loading_view is not None:
+                close_viewer(loading_view)
+            raise
+
+        # The handlers stay installed across the teardown, not just the loop: the flush is the part that must
+        # survive a signal, and restoring the defaults first would mean a SIGTERM arriving during
+        # recorder.close() -- which is exactly when a supervisor sends it -- killing the process mid-write.
+        with _graceful_stop(engine.ctx.control, engine.logger):
+            try:
+                if headless:
+                    _run_headless(engine, pacer, max_steps, recorder)
+                else:
+                    _run_windowed(
+                        engine,
+                        pacer,
+                        max_steps,
+                        cfg.view,
+                        name=cfg.name,
+                        viewer=loading_view,
+                        profile=profile,
+                        left_ui=left_ui,
+                        right_ui=right_ui,
+                        preview=is_model_ref(target),
+                        recorder=recorder,
+                        toggle=toggle,
+                        saver=saver,
+                        world_yaml=world_yaml,
+                    )
+            finally:
+                # Every stop that matters reaches here: a closed window ends the loop normally, and Ctrl+C or
+                # a supervisor's SIGTERM is turned into QUITTING by _graceful_stop rather than raising through
+                # the render thread. The recording is written *first* -- it is the primary artifact, and the
+                # capture is derived from the same samples, so nothing about the export can be allowed to cost
+                # it. Both still run before engine.shutdown(), because the export reads the live model: it
+                # needs no world rebuild and no GL backend.
+                #
+                # All of it runs deaf to further stop signals. Two supervisors mean two of the same
+                # signal, which the escalation counter reads as insisting -- and an interrupt raised in
+                # here does not end a run early, it ends it *without its results*: the capture, and the
+                # CSV a scoring plugin writes in shutdown(), are both produced below this line.
+                #
+                # The shutdown is a `finally` of its own, so a recording that cannot be written still
+                # leaves the plugins shut down and their shutdown output written; and it is called
+                # here rather than left to the `with`, so that it too runs deaf.
+                with _deaf_to_stop_signals(engine.logger or log):
+                    try:
+                        written = recorder.close() if recorder is not None else None
+                        _export_capture_at_exit(
+                            engine, recorder, target, overrides, engine.logger or log
+                        )
+                        # Once, here, because every stop that matters reaches this block and because the
+                        # fact is about the whole run. Silent unless the run genuinely failed its rate:
+                        # the line's presence is the signal, so it must not appear on healthy runs.
+                        _pacing = pacer.report_line()
+                        if _pacing:
+                            (engine.logger or log).warning("%s", _pacing)
+                        if profile:
+                            print(engine.format_timing(), file=sys.stderr)
+                    finally:
+                        engine.shutdown()
 
     # After the loop and after shutdown: the render is outside the measurement window entirely, which is
     # what lets --video cost the run nothing. Not in the finally, so an exception that ended the run is
@@ -899,10 +912,12 @@ def _refuse_swallowed_target(argv: list[str]) -> None:
         if flag in argv:
             i = argv.index(flag)
             if i + 1 < len(argv) and Path(argv[i + 1]).suffix.lower() in _WORLDISH:
-                raise SystemExit(
+                print(
                     f"roqsim sim: {flag} takes an output path, not {argv[i + 1]!r}. Put the world first:\n"
-                    f"    roqsim sim {argv[i + 1]} {flag} <file>"
+                    f"    roqsim sim {argv[i + 1]} {flag} <file>",
+                    file=sys.stderr,
                 )
+                raise SystemExit(exit_status.BAD_INPUT)
 
 
 def _replay(args, parser) -> int:
@@ -938,9 +953,7 @@ def _replay(args, parser) -> int:
             f"{', '.join(stated)}: {args.target} is a recording, which is replayed rather than run. "
             "Those options drive a live simulation and have nothing to act on here."
         )
-    overrides = deep_merge(
-        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-    )
+    overrides = overrides_from_options(args)
     try:
         return run_replay(
             args.target,
@@ -956,9 +969,16 @@ def _replay(args, parser) -> int:
             right_ui=args.right_ui,
             world=args.world,
         )
-    except (DisplayError, ViewError, PluginError, ModelError, CaptureError, RecordingError) as err:
-        print(f"roqsim sim: {err}", file=sys.stderr)
-        return 1
+    except (
+        DisplayError,
+        GLBackendError,
+        ViewError,
+        PluginError,
+        ModelError,
+        CaptureError,
+        RecordingError,
+    ) as err:
+        return exit_status.fail("roqsim sim", err)
 
 
 def main(argv: list | None = None) -> int:
@@ -989,6 +1009,12 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim sim",
         description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.NO_GL,
+            exit_status.RECORDING,
+            note="4 is a recording given as the target that cannot be replayed.",
+        ),
     )
     parser.add_argument(
         "target",
@@ -1131,23 +1157,7 @@ def main(argv: list | None = None) -> int:
         help=f"samples per SIMULATED second (default: {DEFAULT_FPS}); accepts a fraction like 500/17. "
         "Snapped onto the world's physics step grid.",
     )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        metavar="PATH=VALUE",
-        help="override a world value, e.g. --set components.floorplan.floor.reflectance=0.3 "
-        "(repeatable)",
-    )
-    parser.add_argument(
-        "--override",
-        dest="override_files",
-        action="append",
-        metavar="FILE",
-        help="a YAML file of world overrides -- the file spelling of --set, for anything "
-        "structured enough that flattening it onto a command line loses it (repeatable; "
-        "later files and --set win)",
-    )
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
 
@@ -1199,11 +1209,9 @@ def main(argv: list | None = None) -> int:
             # The sliders live in the right panel, so manual control is useless without it.
             right_ui=args.right_ui or args.manual_control,
             manual_control=args.manual_control,
-            # Files first, --set last: a saved override set plus one ad-hoc tweak is the
-            # obvious way to use the two together, and the tweak is what should win.
-            overrides=deep_merge(
-                overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-            ),
+            # Files first, --set last (roqsim.override_options): the one merge every command
+            # that answers about this run's world uses.
+            overrides=overrides_from_options(args),
             record=args.record,
             capture_fps=args.capture_fps,
             video=args.video,
@@ -1212,10 +1220,9 @@ def main(argv: list | None = None) -> int:
             transport=transport,
             no_transport=args.no_communication,
         )
-    except (DisplayError, ViewError, PluginError, ModelError, CaptureError) as err:
-        print(f"roqsim sim: {err}", file=sys.stderr)
-        return 1
-    return 0
+    except (DisplayError, GLBackendError, ViewError, PluginError, ModelError, CaptureError) as err:
+        return exit_status.fail("roqsim sim", err)
+    return exit_status.OK
 
 
 if __name__ == "__main__":  # pragma: no cover
