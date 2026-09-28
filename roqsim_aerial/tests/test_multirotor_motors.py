@@ -41,6 +41,7 @@ def _harness(config=None, *, air=True):
     ctx.data = mujoco.MjData(model)
     plugin = MultirotorMotorsPlugin(config or {}, entity="drone")
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 
@@ -67,7 +68,9 @@ def test_commands_are_clipped():
     ctx, plugin = _harness()
     plugin.set_normalized([2.0, -1.0, 0.5, 0.0])
     _settle(ctx, plugin, 1.0)
-    assert ctx.data.ctrl == pytest.approx(np.array([1.0, 0.0, 0.5, 0.0]) * MAX_THRUST, rel=1e-3)
+    assert ctx.data.ctrl == pytest.approx(
+        np.array([1.0, 0.0, 0.5, 0.0]) * MAX_THRUST, rel=1e-3
+    )
 
 
 def test_the_lag_actually_lags():
@@ -158,9 +161,8 @@ def test_missing_actuator_fails_loudly():
     ctx = SimContext({})
     ctx.model = model
     ctx.data = mujoco.MjData(model)
-    plugin = MultirotorMotorsPlugin(
-        {"rotors": ["rotor0_thrust", "nope", "also_nope"], "spin": [1, 1, -1]}, entity="drone"
-    )
+    plugin = MultirotorMotorsPlugin({"rotors": ["rotor0_thrust", "nope", "also_nope"],
+                                     "spin": [1, 1, -1]}, entity="drone")
     with pytest.raises(RuntimeError, match="nope"):
         plugin.configure(ctx)
 

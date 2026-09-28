@@ -83,7 +83,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated
 
 import mujoco
 import numpy as np
@@ -244,19 +243,16 @@ class MultirotorMotorsPlugin(Plugin):
 
     # -- commands --------------------------------------------------------------------------------
 
-    # The rotors' command as a backend-neutral endpoint; the namespace (own config, else the
-    # spawn's) scopes the topic per robot.
-    @endpoint.stream(
-        "motor_cmd", ros2={"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}
-    )
-    def command_motors(
-        self,
-        data: Annotated[NDArray[np.float64], "normalized output per rotor, 0..1, in rotor order"],
-    ) -> None:
-        """Endpoint ``motor_cmd``: the latest normalized rotor outputs, applied once per step.
+    # No neutral type carries it, so the rotor outputs map by name onto the message a flight stack's
+    # mixer publishes.
+    @endpoint.stream(ros2={"type": "std_msgs.msg.Float32MultiArray"})
+    def motor_cmd(self, data: NDArray[np.float64]) -> None:
+        """Normalized rotor outputs, applied once per step through the motor lag.
 
-        One value per configured rotor; a command of another length is refused and logged, and the
-        rotors keep the previous one. Values outside 0..1 are clipped."""
+        Args:
+            data: one output per rotor, 0..1, in rotor order; clipped to 0..1, and a command of
+                another length is refused and the previous one kept
+        """
         self.set_normalized(data)
 
     def set_normalized(self, values) -> None:
