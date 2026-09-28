@@ -147,14 +147,18 @@ def test_registered_as_mcp_tool():
 
 
 @pytest.mark.parametrize(
-    ("call", "default"),
+    ("call", "command"),
     [
-        (lambda **kw: review_scene_by_human("roqsim_scenes:depot", **kw), "960x720"),
-        (lambda **kw: sketch_floorplan_by_human(**kw), "760x760"),
+        (lambda **kw: review_scene_by_human("roqsim_scenes:depot", **kw), "review-scene"),
+        (lambda **kw: sketch_floorplan_by_human(**kw), "sketch-floorplan"),
     ],
 )
-def test_window_size_reaches_the_window_with_the_clis_default(monkeypatch, call, default):
+def test_window_size_reaches_the_window_with_the_clis_default(monkeypatch, call, command):
     """The CLI's --size is reachable from the tool, and an omitted size is the CLI's own default."""
+    from roqsim_scene_builder.cli import main
+
+    option = next(p for p in main.commands[command].params if p.name == "size")
+    default = option.default
     seen: dict = {}
     monkeypatch.setattr(
         window_runner.subprocess,
