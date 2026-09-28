@@ -5,6 +5,9 @@ each with its own ``CameraInfo`` -- ``rgbd_camera/camera_info`` and
 ``rgbd_camera/depth/camera_info``). Bundled with the ``oakd_pro`` device model, which
 ``turtlebot4.manifest.yaml`` in ``roqsim_mobile`` mounts, reading resolution/FOV from its
 ``oakd_rgb`` camera; the mount publishes the vendor chain to the frame the images are stamped in.
+Depth renders through that one camera and is stamped in its optical frame: depthai-ros aligns stereo
+depth to the RGB image by default (``i_align_depth``) and stamps it in
+``<name>_rgb_camera_optical_frame``, so the device has no separate depth camera.
 
 Config (in addition to ``camera_common.CameraPlugin``'s, and ``depth_camera.DepthCameraPlugin``'s
 ``clip_near``/``clip_far``/``depth_encoding``)::
