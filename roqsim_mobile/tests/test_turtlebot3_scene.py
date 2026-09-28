@@ -1,9 +1,8 @@
 """TurtleBot3 Waffle drive-test battery (port verification).
 
-Mirrors the robot-porting verification battery and its siblings `test_husky_scene.py` /
-`test_jackal_scene.py`: static sanity (A), open-loop drive tests (B) and sensor checks (C).
-Everything is driven through the real ``diff_drive`` plugin with the shipped manifest, so the model
-and the controller are verified together.
+Mirrors its siblings `test_husky_scene.py` / `test_jackal_scene.py`: static sanity (A), open-loop
+drive tests (B) and sensor checks (C). Everything is driven through the real ``diff_drive`` plugin
+with the shipped manifest, so the model and the controller are verified together.
 
 Reference dimensions come from ROBOTIS's own MuJoCo model (robotis_tb3 @ d8344c0, see
 turtlebot3_waffle_LICENSE) cross-checked against turtlebot3_description: wheel r=0.033 m,
@@ -219,7 +218,7 @@ def test_a5_scale_and_geometry():
 def test_a6_visual_meshes_are_not_bounding_spheres():
     """A6: every visual mesh geom is a real mesh with plausible extents.
 
-    Guards the two silent mesh traps the porting skill documents: a `density="0"` visual mesh renders
+    Guards two silent mesh traps: a `density="0"` visual mesh renders
     as its bounding sphere, and a decimation/axis mistake preserves nothing but the vertex count. The
     chassis mesh's own bounds are the independent check on the collision box asserted in A5.
     """
@@ -372,7 +371,7 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
 def test_c2_the_mounted_scan_is_the_lds01(mounted):
     """C2: the scan the robot publishes is the LDS-01's driver layout, datasheet window and noise.
 
-    The paper states no lidar parameter at all (spec gap g_lidar_params), so these values are the
+    The paper states no lidar parameter at all, so these values are the
     assumption of record -- pinned here so a change to the device or the mount is deliberate.
     """
     _, lidar = mounted
