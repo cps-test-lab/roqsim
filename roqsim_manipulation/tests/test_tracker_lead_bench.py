@@ -53,20 +53,18 @@ def _arm(gain: float, gravity_compensation: bool | None = None):
     }
     if gravity_compensation is not None:
         arm["gravity_compensation"] = gravity_compensation
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [
-                {
-                    "spawn_arm": arm,
-                    "name": "ur10e",
-                    "components": [
-                        {"cartesian_admittance": {"site": "attachment_site", "law": "position"}},
-                    ],
-                },
-            ],
-        }
-    )
+    cfg = load_config_from_dict({
+        "sim": {},
+        "components": [
+            {
+                "spawn_arm": arm,
+                "name": "ur10e",
+                "components": [
+                    {"cartesian_admittance": {"site": "attachment_site", "law": "position"}},
+                ],
+            },
+        ],
+    })
     # No seed resolved and none needed: nothing in this world draws, and `rng_for` is the only
     # thing that asks. A bench that pinned one would be claiming a reproducibility property it
     # does not depend on.
@@ -99,11 +97,9 @@ def _track(gain: float, dz: float = GOAL_DZ, gravity_compensation: bool | None =
     engine.shutdown()
 
     heights = np.array(heights)
-    return {
-        "final_mm": abs(heights[-1] - goal[2]) * 1e3,
-        "mean_mm": abs(heights.mean() - goal[2]) * 1e3,
-        "ripple_mm": (heights.max() - heights.min()) * 1e3,
-    }
+    return {"final_mm": abs(heights[-1] - goal[2]) * 1e3,
+            "mean_mm": abs(heights.mean() - goal[2]) * 1e3,
+            "ripple_mm": (heights.max() - heights.min()) * 1e3}
 
 
 def test_a_healthy_arm_arrives():

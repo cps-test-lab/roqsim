@@ -30,12 +30,8 @@ EFFORT = {"control": "effort", "ctrlrange": [-330.0, 330.0]}
 
 def _droop_mm(model: str, prefix: str, **arm) -> float:
     """How far the flange falls over :data:`HOLD_S`, commanded to the pose it starts in."""
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [{"spawn_arm": {"model": model, "prefix": prefix, **arm}, "name": "arm"}],
-        }
-    )
+    cfg = load_config_from_dict({"sim": {}, "components": [
+        {"spawn_arm": {"model": model, "prefix": prefix, **arm}, "name": "arm"}]})
     engine = Engine(cfg)
     engine.setup()
     engine.reset()
@@ -63,7 +59,8 @@ def test_a_position_servo_holds_the_pose_it_was_given(gain):
     Uncompensated the two differ by an order of magnitude in how far the arm falls, which is what
     makes a gain read as a load rating.
     """
-    assert abs(_droop_mm("ur10e", "ur10e_", actuators={"control": "position", "p": gain})) < 1.0
+    assert abs(_droop_mm("ur10e", "ur10e_",
+                         actuators={"control": "position", "p": gain})) < 1.0
 
 
 def test_the_shipped_arm_holds_too():
@@ -80,9 +77,9 @@ def test_an_uncompensated_arm_falls_and_the_key_is_what_says_so():
     Stated rather than merely allowed: an experiment on a drooping arm is a real experiment, and
     it should be visible in the world document rather than implied by the actuator law.
     """
-    fell = _droop_mm(
-        "ur10e", "ur10e_", actuators={"control": "position", "p": 200.0}, gravity_compensation=False
-    )
+    fell = _droop_mm("ur10e", "ur10e_",
+                     actuators={"control": "position", "p": 200.0},
+                     gravity_compensation=False)
     assert fell < -100.0, "a soft position servo alone does not hold a UR10e up"
 
 
@@ -92,17 +89,9 @@ def test_a_torque_controlled_arm_is_left_alone():
     Compensating it would make a controller that omits gravity look as good as one that has it,
     which is the comparison such an experiment exists to make.
     """
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [
-                {
-                    "spawn_arm": {"model": "ur10e", "prefix": "ur10e_", "actuators": EFFORT},
-                    "name": "arm",
-                }
-            ],
-        }
-    )
+    cfg = load_config_from_dict({"sim": {}, "components": [
+        {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_",
+                       "actuators": EFFORT}, "name": "arm"}]})
     engine = Engine(cfg)
     engine.setup()
     # 1 is the world-body marker that makes the field writable at run time; a compensated arm
@@ -113,22 +102,10 @@ def test_a_torque_controlled_arm_is_left_alone():
 
 def test_a_torque_controlled_arm_can_ask_for_it():
     """...and the same key says so, for a controller that is told its gravity term."""
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [
-                {
-                    "spawn_arm": {
-                        "model": "ur10e",
-                        "prefix": "ur10e_",
-                        "actuators": EFFORT,
-                        "gravity_compensation": True,
-                    },
-                    "name": "arm",
-                }
-            ],
-        }
-    )
+    cfg = load_config_from_dict({"sim": {}, "components": [
+        {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_",
+                       "actuators": EFFORT,
+                       "gravity_compensation": True}, "name": "arm"}]})
     engine = Engine(cfg)
     engine.setup()
     assert int(engine.ctx.model.ngravcomp) > 1
@@ -142,12 +119,8 @@ def test_the_effort_report_still_carries_the_holding_torque():
     would report a motor doing nothing while the arm hangs off it -- and a monitor watching effort
     for a collision would see a quieter arm than exists.
     """
-    cfg = load_config_from_dict(
-        {
-            "sim": {},
-            "components": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "ur5e"}],
-        }
-    )
+    cfg = load_config_from_dict({"sim": {}, "components": [
+        {"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "ur5e"}]})
     engine = Engine(cfg)
     engine.setup()
     engine.reset()
