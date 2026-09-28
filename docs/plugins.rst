@@ -1117,10 +1117,17 @@ arrive*, and simulating the grasp that holds it is a different experiment with a
 mode::
 
    components:
+     - spawn_model:
+         model: graspable_carton
+         motion: physics
+         pose: {position: {x: 0.6, y: 0, z: 0.05}}
      - spawn_robot: {model: turtlebot4}
        name: robot
        components:
          - attachment: {body: graspable_carton, attached: false}
+
+The load is listed before the robot: the weld names both bodies when the model is built, so the
+body it carries has to be built already.
 
 It is MuJoCo's weld equality switched at run time -- Gazebo's ``DetachableJoint``, expressed the way
 this simulator already offers it. Two properties are what make it usable rather than a curiosity.

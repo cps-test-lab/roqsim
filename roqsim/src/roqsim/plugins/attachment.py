@@ -41,7 +41,7 @@ Config::
     attachment:
       # The entity is the one this entry is NESTED UNDER (`requires_owner`): the thing that CARRIES.
       body: graspable_carton    # REQUIRED: the body being carried
-      to: ""                    # body that holds it (default: the owner entity's base body)
+      to: ""                    # body that holds it (default: the one body ending in base_link)
       attached: false           # state at reset -- a campaign factor, not a second world file
       prefix: ""                # name prefix for `body`/`to`, as the spawn plugins use
       namespace: ""             # transport scope for the endpoints
@@ -50,14 +50,15 @@ Endpoints, scoped by the component's **address** with dots as slashes (``robot.a
 ``robot/attachment/attach``), exactly as a sensor's fault switch is:
 
 ``attach`` (in)
-    a ``std_srvs/SetBool`` service: true holds, false releases. The reply says what the state is
-    now, so a scenario can fail a trial on a release that did not happen.
+    a ``std_srvs/SetBool`` service: true holds, false releases. The reply's message is the state
+    after the call (``attached`` or ``released``), so a scenario can fail a trial on a release that
+    did not happen.
 ``attached`` (out)
     a ``std_msgs/Bool``, so a stack can watch the load without calling anything.
 
 An :class:`AttachmentHandle` is published on the blackboard under ``attachment:<address>`` with the
-same three members the fault handles offer, so an in-process consumer -- or a future scenario action
--- drives this the way it drives the other two switchable channels.
+same three members the fault handles offer, so an in-process consumer drives this the way it drives
+the other switchable channels.
 
 **Two bodies, one weld, and both must be able to move.** A weld between bodies that MuJoCo has
 welded to the world is not a constraint it can satisfy -- there is nothing to solve for -- so an
@@ -77,6 +78,7 @@ import numpy as np
 
 from roqsim.context import Endpoint, SimContext
 from roqsim.plugin import Plugin
+from roqsim.schema import Field
 
 _log = logging.getLogger(__name__)
 
@@ -88,6 +90,11 @@ class AttachmentReport:
     attached: bool
     since: float  # sim time the state last changed; -1.0 if it never has
     changes: int  # how many times it changed since reset
+
+    @property
+    def verified(self) -> str:
+        """The state as the ``SetBool`` service handler reports it in its reply's message."""
+        return "attached" if self.attached else "released"
 
 
 @dataclass
@@ -110,6 +117,21 @@ class AttachmentPlugin(Plugin):
     #: A carrier carries something, so this belongs inside the carrier's ``components:`` block.
     requires_owner = True
 
+    #: Declared once, so `roqsim plugins describe attachment` publishes the same keys the checks run on.
+    CONFIG_SCHEMA = {
+        "body": Field(str, required=True, static=True, doc="the body being carried"),
+        "to": Field(
+            str,
+            default="",
+            static=True,
+            doc="body that holds it (default: the one body ending in base_link)",
+        ),
+        "attached": Field(
+            bool, default=False, doc="state at reset: whether the trial starts with the load held"
+        ),
+        "prefix": Field(str, static=True, doc="name prefix for body and to, as the spawns use"),
+    }
+
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self.carrier = self.entity
@@ -126,12 +148,8 @@ class AttachmentPlugin(Plugin):
     # -- validation ---------------------------------------------------------------------------
 
     def validate_config(self, config: dict) -> list[str]:
-        errors = self.validate_topics(config)
-        if not config.get("body"):
-            errors.append("'body' is required: name the body being carried")
-        if "attached" in config and not isinstance(config["attached"], bool):
-            errors.append("'attached' must be true or false")
-        return errors
+        # Required keys and types come from CONFIG_SCHEMA; the topic map is this plugin's own.
+        return self.validate_topics(config)
 
     # -- lifecycle ----------------------------------------------------------------------------
 
@@ -141,11 +159,9 @@ class AttachmentPlugin(Plugin):
         prefix is not known yet unless the world (or a manifest) states it."""
         prefix = self.config.get("prefix")
         load = self._resolve_body_name(spec, self.body, prefix)
-        # The carrier's own body is not knowable here without the entity registry, so an unstated
-        # `to:` is resolved in configure and the weld is built against the load only once both are
-        # known -- which means the weld itself is added here with both names, and `to` must be
-        # resolvable by name too. Defaulting it to the OWNER'S conventional base body keeps the
-        # common case ("carry it on the robot") free of configuration.
+        # The owner's registered body is not known before configure, and the weld needs both names
+        # now, so an unstated `to:` means the conventional base body: the one named or ending in
+        # base_link. A world with none, or with several, is refused by name.
         carrier = self._resolve_body_name(spec, self.to or "base_link", prefix)
 
         equality = spec.add_equality()
@@ -169,6 +185,11 @@ class AttachmentPlugin(Plugin):
                 return f"{prefix}{wanted}"
             raise RuntimeError(f"attachment: body {prefix}{wanted!r} not found")
         matches = [b.name for b in spec.bodies if b.name == wanted or b.name.endswith(wanted)]
+        if not matches:
+            raise RuntimeError(
+                f"attachment: no body matching {wanted!r} is built yet. The weld names both bodies "
+                f"at build, so list the component that spawns it before this one."
+            )
         if len(matches) != 1:
             raise RuntimeError(
                 f"attachment: expected exactly one body matching {wanted!r}, found {matches}. Set "
@@ -220,7 +241,7 @@ class AttachmentPlugin(Plugin):
                         # A service, not a topic, for the reason the fault switch is one: picking
                         # something up is a command whose outcome the caller needs.
                         "service": "std_srvs.srv.SetBool",
-                        "name": f"{scope}/attach",
+                        "name": self.topic_override("attach") or f"{scope}/attach",
                         "state_key": f"attachment:{self.address}",
                     }
                 },
@@ -292,10 +313,9 @@ class AttachmentPlugin(Plugin):
         drove up to is metres away.
 
         ``eq_data[3:10]`` is the pose of **body1 in body2's frame** -- here the load in the carrier's
-        -- which is the layout the compiler fills from the model's reference configuration, and which
-        was confirmed by measurement rather than read off a sign convention: written the other way
-        round the solver drives the load to twice its offset, so a parcel 0.5 m to the side is
-        snatched to 1.5 m. ``tests/test_attachment.py`` pins the direction with a load the carrier
+        -- which is the layout the compiler fills from the model's reference configuration. Written
+        the other way round the solver drives the load to twice its offset, so a parcel 0.5 m to the
+        side is snatched to 1.5 m. ``tests/test_attachment.py`` pins the direction with a load the carrier
         both moves AND rotates, because a translation-only test cannot tell the two apart.
         """
         d, m = ctx.data, ctx.model

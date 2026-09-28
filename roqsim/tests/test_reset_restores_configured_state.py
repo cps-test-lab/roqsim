@@ -203,6 +203,7 @@ PAYLOADS: dict[str, Any] = {
     "door": 1.0,
     "tare": None,
     "override": True,
+    "attach": True,
 }
 
 
@@ -296,6 +297,20 @@ CASES: dict[str, Case] = {
     "joint_state_publisher": Case(lambda _: _mobile({"joint_state_publisher": {}})),
     "bumper": Case(lambda _: _mobile({"bumper": {"zones": {"front": [-0.8, 0.8]}}})),
     "payload": Case(lambda _: _mobile({"payload": {"mass": 0.5}})),
+    "attachment": Case(
+        lambda _: _world(
+            # The load first: the weld names both bodies at build, so the load must be built already.
+            {
+                "spawn_model": {
+                    "model": "graspable_box",
+                    "prefix": "b_",
+                    "motion": "physics",
+                    "pose": {"position": {"x": 0.4, "y": 0.0, "z": 0.1}},
+                }
+            },
+            _robot("makerspet_mini", {"attachment": {"body": "graspable_box"}}),
+        ),
+    ),
     "model_override": Case(
         lambda _: _world(
             _box(),

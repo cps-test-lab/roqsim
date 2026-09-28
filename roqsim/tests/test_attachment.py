@@ -258,6 +258,13 @@ def test_a_load_welded_to_the_world_is_refused():
         _engine(body="post")
 
 
+def test_a_load_not_built_yet_says_where_to_list_it():
+    """The weld names both bodies at build, so a load spawned by a later component is not there yet;
+    the refusal says so rather than suggesting a prefix."""
+    with pytest.raises(RuntimeError, match="before this one"):
+        _engine(body="no_such_parcel")
+
+
 def test_it_belongs_to_the_thing_that_carries():
     with pytest.raises(PluginError):
         load_config_from_dict({"sim": {}, "components": [{"attachment": {"body": "parcel"}}]})
@@ -266,10 +273,22 @@ def test_it_belongs_to_the_thing_that_carries():
 @pytest.mark.parametrize(
     ("config", "expected"),
     [
-        ({}, "'body' is required"),
-        ({"body": "parcel", "attached": "yes"}, "'attached' must be true or false"),
+        ({}, "body"),
+        ({"body": "parcel", "attached": "yes"}, "attached"),
     ],
 )
 def test_config_errors_are_reported_by_name(config, expected):
-    errors = AttachmentPlugin(config, entity="robot", label="attachment").validate_config(config)
-    assert any(expected in e for e in errors), errors
+    errors = AttachmentPlugin(config, entity="robot", label="attachment").config_errors(config)
+    assert len(errors) == 1 and expected in errors[0], errors
+
+
+def test_the_service_reply_names_the_state_after_the_call():
+    """The SetBool handler replies with the producer's ``verified``: the state the call left, so a
+    scenario can tell a release that happened from one that did not."""
+    engine = _engine()
+    handle = engine.ctx.blackboard.get("attachment:robot.attachment")
+    assert handle.read_state().verified == "released"
+    handle.set_active(True)
+    assert handle.read_state().verified == "attached"
+    handle.set_active(False)
+    assert handle.read_state().verified == "released"
