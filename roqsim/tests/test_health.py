@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from roqsim import health
+from roqsim import exit_status, health
 
 CLOCK_HEADER = "wall_ts,sim_ts\n"
 POSE_HEADER = ",".join(
@@ -261,7 +261,7 @@ def test_a_one_shot_check_on_a_long_run_costs_the_window_and_not_the_run(tmp_pat
         _, peak = tracemalloc.get_traced_memory()
     finally:
         tracemalloc.stop()
-    assert code == health.EXIT_OK
+    assert code == exit_status.OK
     assert peak < size / 2, f"peak {peak} bytes against a {size} byte record"
     payload = json.loads(capsys.readouterr().out)
     assert payload["state"]["sim_ts"] == pytest.approx(seconds - 1 / hz)
@@ -279,7 +279,7 @@ def test_a_long_run_whose_robot_stopped_is_still_caught_from_the_window(tmp_path
         [clock_line(now - 3720 + t, float(t)) for t in range(0, 3720)],
         moving + parked,
     )
-    assert health.main([str(tmp_path), "--robot", "base"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base"]) == exit_status.OK
     out = capsys.readouterr().out
     assert "robot-motion" in out and "moved under 1 cm" in out
 
@@ -293,7 +293,7 @@ def test_a_long_run_whose_clock_wedged_is_still_caught_from_the_window(tmp_path,
     running = [clock_line(now - 3720 + t, float(t)) for t in range(0, 3600)]
     wedged = [clock_line(now - 3720 + t, 3600.0) for t in range(3600, 3720)]
     write_run(tmp_path, running + wedged)
-    assert health.main([str(tmp_path)]) == health.EXIT_FINDING
+    assert health.main([str(tmp_path)]) == exit_status.FINDING
     assert "sim-time-stuck" in capsys.readouterr().out
 
 
@@ -542,7 +542,7 @@ def test_a_short_record_that_is_still_growing_is_a_note_and_not_a_skip(tmp_path,
     *skip* it says nobody is checking the robot's motion, which sends a reader (or an agent
     reading this document) looking for the reason four seconds into a healthy run."""
     _short_run(tmp_path)
-    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == exit_status.OK
     report = json.loads(capsys.readouterr().out)
 
     assert report["skipped"] == [], "an early run has skipped nothing"
@@ -557,7 +557,7 @@ def test_a_short_record_that_has_CLOSED_is_a_skip(tmp_path, capsys):
     # The one unambiguous end-of-run marker these files carry (see recording_of).
     (run / "run.npz").write_bytes(b"")
 
-    assert health.main([str(run), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(run), "--robot", "base", "--json"]) == exit_status.OK
     report = json.loads(capsys.readouterr().out)
 
     assert any("no verdict was possible" in skip for skip in report["skipped"])
@@ -617,7 +617,7 @@ def test_cli_reports_a_healthy_run(tmp_path, capsys):
         [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
         [pose_line(float(t), "base", t * 0.5) for t in range(0, 120)],
     )
-    assert health.main([str(tmp_path), "--robot", "base"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base"]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
@@ -625,7 +625,7 @@ def test_cli_exits_5_on_a_wedged_run(tmp_path, capsys):
     """--watch is the mode that expects the run to continue, so silence counts against it."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.001) for t in range(0, 10)])
-    assert health.main([str(tmp_path), "--watch"]) == health.EXIT_FINDING
+    assert health.main([str(tmp_path), "--watch"]) == exit_status.FINDING
     assert "sim-time-stuck" in capsys.readouterr().out
 
 
@@ -634,10 +634,10 @@ def test_cli_one_shot_cannot_see_a_run_that_stopped(tmp_path, capsys):
     ended or froze -- so it is not reported. A caller that must catch a stop runs --watch."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, float(t)) for t in range(0, 10)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     capsys.readouterr()
     code = health.main([str(tmp_path), "--watch", "--for", "0.01", "--poll", "0.01"])
-    assert code == health.EXIT_FINDING, "one bounded --watch pass judges against the wall clock"
+    assert code == exit_status.FINDING, "one bounded --watch pass judges against the wall clock"
     assert "sim-time-stuck" in capsys.readouterr().out
 
 
@@ -647,7 +647,7 @@ def test_cli_watch_does_not_end_an_expensive_world(tmp_path, capsys):
     rows = [clock_line(now - 3.3 * (100 - i), 0.1 * i) for i in range(0, 100)]
     write_run(tmp_path, rows)
     code = health.main([str(tmp_path), "--watch", "--for", "0.05", "--poll", "0.01", "--json"])
-    assert code == health.EXIT_OK
+    assert code == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert [(f["level"], f["check"]) for f in payload["findings"]] == [("warn", "sim-time-rate")]
 
@@ -661,7 +661,7 @@ def test_cli_one_shot_does_not_call_a_finished_run_stalled(tmp_path, capsys):
     """
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, float(t)) for t in range(0, 120)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
@@ -670,7 +670,7 @@ def test_cli_still_reports_a_run_that_was_slow_while_it_ran(tmp_path, capsys):
     reported as slow rather than failed."""
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.01) for t in range(0, 200)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     out = capsys.readouterr().out
     assert "sim-time-rate" in out and "realtime" in out and out.startswith("warn")
 
@@ -680,12 +680,12 @@ def test_watch_stops_without_complaint_when_the_recording_closes(tmp_path, capsy
     now = time.time()
     write_run(tmp_path, [clock_line(now - 30 + t * 0.25, float(t) * 0.25) for t in range(0, 120)])
     (tmp_path / "run.npz").write_bytes(b"not a real archive, only its existence is read")
-    assert health.main([str(tmp_path), "--watch", "--poll", "0.01"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--watch", "--poll", "0.01"]) == exit_status.OK
     assert "nothing wrong observed" in capsys.readouterr().out
 
 
 def test_cli_exits_2_without_a_clock_record(tmp_path, capsys):
-    assert health.main([str(tmp_path)]) == health.EXIT_BAD_ARGS
+    assert health.main([str(tmp_path)]) == exit_status.BAD_INPUT
     err = capsys.readouterr().err
     assert "no readable clock record" in err
     # It must not name a cause it did not observe: the record is best-effort, so its absence does
@@ -696,7 +696,7 @@ def test_cli_exits_2_without_a_clock_record(tmp_path, capsys):
 def test_cli_skips_check_1_when_no_robot_is_named(tmp_path, capsys):
     now = time.time()
     write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
-    assert health.main([str(tmp_path)]) == health.EXIT_OK
+    assert health.main([str(tmp_path)]) == exit_status.OK
     out = capsys.readouterr().out
     assert "check 1" in out and "skip" in out, "a skipped check must say so, never pass quietly"
 
@@ -706,9 +706,9 @@ def test_cli_json_carries_the_findings(tmp_path, capsys):
 
     now = time.time()
     write_run(tmp_path, [clock_line(now - 300 + t, t * 0.001) for t in range(0, 10)])
-    assert health.main([str(tmp_path), "--watch", "--json"]) == health.EXIT_FINDING
+    assert health.main([str(tmp_path), "--watch", "--json"]) == exit_status.FINDING
     payload = json.loads(capsys.readouterr().out)
-    assert payload["exit"] == health.EXIT_FINDING
+    assert payload["exit"] == exit_status.FINDING
     assert payload["findings"][0]["check"] == "sim-time-stuck"
 
 
@@ -727,7 +727,7 @@ def test_json_reports_the_last_pose_and_clock(tmp_path, capsys):
          for line in (pose_line(float(t), "base", t * 0.5),
                       pose_line(float(t), "crate", 3.0))],
     )
-    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "base", "--json"]) == exit_status.OK
     state = json.loads(capsys.readouterr().out)["state"]
     assert state["sim_ts"] == 119.0
     assert state["rate"] == 1.0                      # one sim second per wall second
@@ -799,7 +799,7 @@ def test_a_run_is_found_one_level_below_the_directory_given(tmp_path, capsys):
     os.utime(new_run / "run.clock_map.csv", (now, now))
     os.utime(old_run / "run.clock_map.csv", (now - 600, now - 600))
 
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     state = json.loads(capsys.readouterr().out)["state"]
     # The newest run, and its own poses -- 29.5 is the last sample of the moving robot.
     assert state["entities"][0]["position"] == [29.5, 0.0, 0.0]
@@ -849,7 +849,7 @@ def test_a_re_creation_is_reported_rather_than_hidden(tmp_path, capsys):
     health.time.sleep = shrink_between_polls
     try:
         assert health.main([str(tmp_path), "--watch", "--poll", "0.01", "--for", "0.05",
-                            "--json"]) == health.EXIT_OK
+                            "--json"]) == exit_status.OK
     finally:
         health.time.sleep = real_sleep
     notes = " ".join(json.loads(capsys.readouterr().out)["notes"])
@@ -886,7 +886,7 @@ def test_check_1_watches_the_robots_the_roster_names(tmp_path, capsys):
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
                             {"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK  # check 1 warns, never errors
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK  # check 1 warns, never errors
     payload = json.loads(capsys.readouterr().out)
     motion = [f for f in payload["findings"] if f["check"] == "robot-motion"]
     assert len(motion) == 1, "the standing robot is a finding; the standing shelf is not"
@@ -904,7 +904,7 @@ def test_an_absent_robot_is_not_watched(tmp_path, capsys):
         [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base", "present": False}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert not [f for f in payload["findings"] if f["check"] == "robot-motion"]
     assert any("check 1" in s for s in payload["skipped"]), "nothing watched must say so"
@@ -919,7 +919,7 @@ def test_robot_overrides_the_roster(tmp_path, capsys):
         [pose_line(float(t), "shelf", 3.0) for t in range(0, 120)],
     )
     write_roster(tmp_path, [{"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--robot", "shelf", "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--robot", "shelf", "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert [f for f in payload["findings"] if f["check"] == "robot-motion"]
 
@@ -932,7 +932,7 @@ def test_a_missing_roster_says_so_rather_than_naming_a_flag(tmp_path, capsys):
         [clock_line(now - 120 + t, float(t)) for t in range(0, 120)],
         [pose_line(float(t), "base", 0.0) for t in range(0, 120)],
     )
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     skipped = " ".join(payload["skipped"])
     assert health.ENTITIES_FILENAME in skipped and "check 1" in skipped
@@ -949,7 +949,7 @@ def test_the_state_block_carries_kind_from_the_roster(tmp_path, capsys):
     )
     write_roster(tmp_path, [{"name": "robot", "kind": "robot", "body": "base"},
                             {"name": "shelf", "kind": "object", "body": "shelf"}])
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     kinds = {e["name"]: e.get("kind")
              for e in json.loads(capsys.readouterr().out)["state"]["entities"]}
     assert kinds == {"base": "robot", "shelf": "object"}
@@ -959,7 +959,7 @@ def test_a_malformed_roster_is_a_reason_and_not_a_crash(tmp_path, capsys):
     now = time.time()
     write_run(tmp_path, [clock_line(now - 120 + t, float(t)) for t in range(0, 120)])
     (tmp_path / health.ENTITIES_FILENAME).write_text("{not json")
-    assert health.main([str(tmp_path), "--json"]) == health.EXIT_OK
+    assert health.main([str(tmp_path), "--json"]) == exit_status.OK
     payload = json.loads(capsys.readouterr().out)
     assert any("check 1" in s for s in payload["skipped"])
 
