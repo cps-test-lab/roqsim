@@ -21,8 +21,9 @@ Concepts
 
 * **Field of view.** Every sensor reduces to one ``SensorFov`` — a posed angular sector: a camera is a
   rectangular ``FRUSTUM``, a lidar a ``CONE_BAND`` (azimuth × elevation band). It is extracted per
-  sensor type by an adapter (see :doc:`developer_guide` › Sensor coverage (analysis layer)), so a camera's FOV comes from
-  its MJCF ``fovy``/resolution and a lidar's from its plugin defaults — never re-typed.
+  sensor type by an adapter (see :doc:`developer_guide` › Sensor coverage (analysis layer)), so a
+  camera's FOV comes from its MJCF ``fovy``/resolution and a lidar's from its plugin defaults — never
+  re-typed.
 * **Coverage count.** For each sample point, the number of sensors that see it, gated by range → angular
   FOV → line of sight (occlusion by walls/furniture, but **not** by the sensor's own mount — see
   below). ``k=1`` means "seen by ≥1 sensor"; ``k=2`` is
