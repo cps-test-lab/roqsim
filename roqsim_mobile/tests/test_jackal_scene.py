@@ -1,9 +1,8 @@
 """Clearpath Jackal drive-test battery (port verification).
 
-Mirrors the robot-porting verification battery and `test_husky_scene.py`: static sanity (A),
-open-loop drive tests (B) and sensor checks (C). Everything is driven through the real
-``diff_drive`` plugin with the shipped manifest, so the model, its calibration and the controller
-are verified together.
+Mirrors `test_husky_scene.py`: static sanity (A), open-loop drive tests (B) and sensor checks (C).
+Everything is driven through the real ``diff_drive`` plugin with the shipped manifest, so the model,
+its calibration and the controller are verified together.
 
 Reference dimensions come from Clearpath's ``jackal_description`` (see clearpath_jackal_LICENSE):
 chassis box 0.420 x 0.310 x 0.184 m, mass 16.523 kg; wheel r=0.098 m, w=0.040 m, m=0.477 kg;

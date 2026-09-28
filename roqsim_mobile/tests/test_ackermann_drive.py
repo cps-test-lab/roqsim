@@ -445,3 +445,17 @@ def test_whichever_command_arrived_last_owns_the_angle():
     assert left == pytest.approx(0.0, abs=1e-6) and right == pytest.approx(0.0, abs=1e-6), (
         "a straight twist must re-centre the rack"
     )
+
+
+def test_reset_forgets_an_ackermann_steering_command():
+    """Trial 2 starts with the rack centred, not slewing to the angle trial 1 asked for."""
+    engine = _engine()
+    plugin = _plugin(engine)
+    plugin.steer(0.4, 0.0)
+    for _ in range(300):
+        engine.step()
+    assert plugin._steer > 0.3
+    engine.reset()
+    for _ in range(300):
+        engine.step()
+    assert plugin._steer == pytest.approx(0.0, abs=1e-9)

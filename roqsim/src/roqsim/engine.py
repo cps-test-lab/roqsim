@@ -11,6 +11,15 @@ Lifecycle::
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
+A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leaving runs
+:meth:`shutdown`, whether the body returned or raised::
+
+    engine = Engine(cfg)
+    engine.ctx.seed = seed      # before setup: configure may read it
+    with engine:
+        engine.reset()
+        ...
+
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time) and the one-shot load phases — plugin resolution, world load, compile, data creation —
 are recorded for :meth:`load_report`. Profiling off (the default) does no timing work at all.
@@ -85,9 +94,8 @@ _CONES = {
 #:
 #: They are here for FIDELITY first. A published model that enables MuJoCo's global override has to be
 #: reproducible as published, and these three are the values such a model states — and often the ones
-#: it randomizes, since the flag makes them the only contact parameters in play. One corpus
-#: reconstruction turns on exactly that, and its spec records the flag as REQUIRED for the three to
-#: have any effect at all. That a sweep over them is then an ordinary campaign factor, needing no
+#: it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+#: three have no effect at all. That a sweep over them is then an ordinary campaign factor, needing no
 #: bespoke plugin and no hand-edited MJCF per cell, is the second reason rather than the first.
 #:
 #: GLOBAL, and BEFORE COMPILE — both halves load-bearing. Per-geom ``solref``/``solimp`` stay where
@@ -164,6 +172,14 @@ class Engine:
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
+
+    def __enter__(self) -> Engine:
+        """Run :meth:`setup`. A setup that raises has shut down what it configured."""
+        self.setup()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.shutdown()
 
     def _world_plugins(self) -> list[Plugin]:
         """The plugins that build their own ground + lighting, in declaration order."""
@@ -308,12 +324,21 @@ class Engine:
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
 
-        for plugin in self.plugins:
-            self._timed(plugin, "configure", plugin.configure, self.ctx)
-            # After configure, because the entity has to be registered before its presence can
-            # be set; here rather than inside each plugin so that a plugin registering an entity
-            # gets the world's `present:` honoured by declaring that it registers one.
-            plugin.apply_declared_presence(self.ctx)
+        # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
+        # every plugin configured so far, the failing one included (it may have opened something
+        # before it raised). Build opens nothing, so the build loop needs no such guard.
+        configured: list[Plugin] = []
+        try:
+            for plugin in self.plugins:
+                configured.append(plugin)
+                self._timed(plugin, "configure", plugin.configure, self.ctx)
+                # After configure, because the entity has to be registered before its presence can
+                # be set; here rather than inside each plugin so that a plugin registering an entity
+                # gets the world's `present:` honoured by declaring that it registers one.
+                plugin.apply_declared_presence(self.ctx)
+        except BaseException:
+            self._shutdown_plugins(configured, " after a configure failed")
+            raise
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -369,10 +394,11 @@ class Engine:
             )
 
     def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
+        """Reset physics and let plugins restore initial state.
 
-        (The scenario-execution adapter maps injected scenario parameters onto ``params``; plugins
-        read them from ``ctx`` / their own config. Kept simple here.)
+        ``params`` describe the trial being started: they are set on the blackboard as
+        ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
+        The scenario-execution adapter forwards the scenario parameters it does not consume here.
 
         The state it leaves is checked for bodies placed inside one another
         (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
@@ -388,10 +414,13 @@ class Engine:
         # `rng_for` is keyed on simulated time, so without this every trial after the first
         # would replay the first one's noise exactly.
         self.ctx.episode += 1
+        # A stop request ends the trial that made it, not the next one.
+        self.ctx.stop_requested = False
+        self.ctx.stop_reason = ""
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
-        if params:
-            self.ctx.blackboard.set("reset_params", params)
+        # Set on every reset, so no trial reads the previous one's parameters.
+        self.ctx.blackboard.set("reset_params", dict(params))
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
@@ -427,15 +456,22 @@ class Engine:
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
 
     def shutdown(self) -> None:
-        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest)."""
+        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).
+
+        A no-op before :meth:`setup` completed and after a shutdown: a setup that failed in
+        configure has already shut down what it configured, and nothing else is open.
+        """
         if not self._setup_done:
             return
-        for plugin in reversed(self.plugins):
+        self._shutdown_plugins(self.plugins, "")
+        self._setup_done = False
+
+    def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
+        for plugin in reversed(plugins):
             try:
                 self._timed(plugin, "shutdown", plugin.shutdown, self.ctx)
             except Exception:
-                self.logger.exception("plugin %s shutdown failed", plugin.name)
-        self._setup_done = False
+                self.logger.exception("plugin %s shutdown failed%s", plugin.name, why)
 
     # -- introspection ------------------------------------------------------------------------
     @property
