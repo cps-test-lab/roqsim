@@ -247,3 +247,13 @@ def test_a_files_up_axis_can_be_overridden_per_file(tmp_path):
     verts = mio.read_collada(dae, ignore_up_axis=True)[0].verts
     assert verts[2].tolist() == [0.0, 2.0, 0.0], "coordinates have to come back as authored"
     assert mio.read_mesh(dae, ignore_up_axis=True)[0].verts[2].tolist() == [0.0, 2.0, 0.0]
+
+
+def test_a_missing_world_file_is_one_sentence(tmp_path, capsys):
+    from roqsim_scenes.cli import sdf_to_scene
+
+    missing = tmp_path / "nosuch.sdf"
+    rc = sdf_to_scene.main(["--world", str(missing), "--out-dir", str(tmp_path / "scene")])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "no such SDF world" in err and str(missing) in err and "Traceback" not in err
