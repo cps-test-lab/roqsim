@@ -1039,6 +1039,11 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
     default_namespace = plugin.endpoint_namespace(ctx)
     for spec in specs:
         sig = spec.signature(type(plugin))
+        if spec.attr in vars(plugin):
+            raise TypeError(
+                f"{type(plugin).__name__}.{spec.attr}: an instance attribute of that name hides the "
+                f"endpoint method {spec.name!r}; rename the attribute"
+            )
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]
