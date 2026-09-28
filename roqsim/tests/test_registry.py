@@ -60,3 +60,33 @@ def test_missing_class_in_module_errors():
 def test_non_plugin_class_errors():
     with pytest.raises(PluginError, match="Plugin subclass"):
         resolve_plugin("roqsim.engine:Engine")
+
+
+def test_a_plugin_file_is_executed_once_per_process(tmp_path: Path):
+    """A world load resolves one ref several times; each must hand back the same class, and the
+    file's module-level code must not run again."""
+    runs = tmp_path / "runs.log"
+    (tmp_path / "once.py").write_text(
+        "from pathlib import Path\n"
+        "from roqsim.plugin import Plugin\n"
+        f"with Path({str(runs)!r}).open('a') as fh:\n"
+        "    fh.write('run\\n')\n"
+        "class P(Plugin):\n"
+        "    pass\n"
+    )
+    first = resolve_plugin("once.py:P", base_dir=tmp_path)
+    second = resolve_plugin("once.py:P", base_dir=tmp_path)
+    assert first is second
+    assert runs.read_text().count("run") == 1
+
+
+def test_an_edited_plugin_file_is_loaded_again(tmp_path: Path):
+    import os
+
+    path = tmp_path / "edited.py"
+    path.write_text("from roqsim.plugin import Plugin\nclass P(Plugin):\n    VERSION = 1\n")
+    assert resolve_plugin("edited.py:P", base_dir=tmp_path).VERSION == 1
+    path.write_text("from roqsim.plugin import Plugin\nclass P(Plugin):\n    VERSION = 22\n")
+    st = path.stat()
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert resolve_plugin("edited.py:P", base_dir=tmp_path).VERSION == 22

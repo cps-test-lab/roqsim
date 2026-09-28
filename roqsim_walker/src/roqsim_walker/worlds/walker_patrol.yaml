@@ -8,9 +8,8 @@
 # the routes are unobstructed). A truly open world (e.g. a wall-less MJCF via `sim.world`) skips the
 # grid and the walkers follow straight-line legs.
 #
-# Multiple `walker` plugins share one controller (one ORCA simulation sees them all). The shuttles
-# cross in the centre; with `avoidance: false` (default) they pass through each other. Flip it to
-# `avoidance: true` (needs the extra: pip install -e 'roqsim_walker[avoidance]') and they yield.
+# The shuttles cross in the centre; with `avoidance: false` (default) they pass through each other.
+# Flip it to `avoidance: true` and they steer round each other.
 
 sim:
   pacing: realtime
