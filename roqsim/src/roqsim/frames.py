@@ -94,29 +94,35 @@ def _triple(value, key: str, where: str) -> tuple[float, float, float]:
         raise PluginError(f"{where}: '{key}' must be three numbers, got {value!r}") from None
 
 
-def parse_frames(entries, where: str) -> list[FrameDecl]:
-    """Validate a ``frames:`` block into declarations, in order. ``None`` is no frames."""
+def parse_frames(entries, where: str, block: str = "frames") -> list[FrameDecl]:
+    """Validate a ``frames:`` block into declarations, in order. ``None`` is no frames.
+
+    *block* names the key being read in messages: a ``mounts:`` block has the same shape.
+    """
+    kind = block.rstrip("s")
     if entries is None:
         return []
     if not isinstance(entries, list):
-        raise PluginError(f"{where}: 'frames' must be a list of {{name, parent, pos, rpy}} entries")
+        raise PluginError(
+            f"{where}: '{block}' must be a list of {{name, parent, pos, rpy}} entries"
+        )
     out: list[FrameDecl] = []
     seen: set[str] = set()
     for i, entry in enumerate(entries):
-        at = f"{where}.frames[{i}]"
+        at = f"{where}.{block}[{i}]"
         if not isinstance(entry, dict):
             raise PluginError(f"{at}: must be a mapping of name, parent, pos, rpy")
         unknown = sorted(set(entry) - _FRAME_KEYS)
         if unknown:
-            raise PluginError(f"{at}: unknown key(s) {unknown}; a frame has {sorted(_FRAME_KEYS)}")
+            raise PluginError(f"{at}: unknown key(s) {unknown}; a {kind} has {sorted(_FRAME_KEYS)}")
         name, parent = entry.get("name"), entry.get("parent")
         for key, val in (("name", name), ("parent", parent)):
             if not isinstance(val, str) or not val:
                 raise PluginError(f"{at}: '{key}' is required and must be a non-empty string")
         if name in seen:
-            raise PluginError(f"{at}: frame {name!r} is declared twice")
+            raise PluginError(f"{at}: {kind} {name!r} is declared twice")
         if parent == name:
-            raise PluginError(f"{at}: frame {name!r} cannot be its own parent")
+            raise PluginError(f"{at}: {kind} {name!r} cannot be its own parent")
         seen.add(name)
         out.append(
             FrameDecl(

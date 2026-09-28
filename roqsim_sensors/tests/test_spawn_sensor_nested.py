@@ -107,10 +107,12 @@ def _device(tmp_path, frame_id: str | None = "scanner_link") -> str:
     return str(tmp_path / "scanner.xml")
 
 
-def _carrier(tmp_path, mounts: str) -> str:
+def _carrier(tmp_path, mounts: str, declared_mounts: str = "") -> str:
+    """The carrier model; *mounts* are its devices, *declared_mounts* its ``mounts:`` block."""
     (tmp_path / "carrier.xml").write_text(CARRIER_XML)
     (tmp_path / "carrier.manifest.yaml").write_text(
         textwrap.dedent(CARRIER_FRAMES)
+        + textwrap.dedent(declared_mounts)
         + "components:\n"
         + textwrap.indent(textwrap.dedent(mounts), "  ")
     )
@@ -450,3 +452,132 @@ def test_a_carrier_mount_of_a_device_without_a_frame_chain_is_refused(tmp_path):
         {"components": [{"spawn_sensor": {"model": str(tmp_path / "bare.xml")}, "name": "cam"}]}
     )
     _engine(cfg)
+
+
+# -- named mounts ------------------------------------------------------------------------------
+
+CARRIER_MOUNTS = """
+mounts:
+  - {name: front, parent: shell_link, pos: [0.1, 0, 0]}
+  - {name: rear, parent: base_link, pos: [-0.25, 0, 0.1], rpy: [0, 0, 3.141592653589793]}
+"""
+
+
+def _on(device, mount, label="scan_front", extra=""):
+    return f"""
+    - spawn_sensor: {{model: {device}, mount: {mount}{extra}}}
+      name: {label}
+    """
+
+
+def _world_with(carrier, *children):
+    return load_config_from_dict(
+        {
+            "components": [
+                {
+                    CARRIER: {"model": carrier, "prefix": "r_", "namespace": "tb"},
+                    "name": "robot",
+                    "components": list(children),
+                },
+            ]
+        }
+    )
+
+
+def test_a_mount_places_the_device_where_its_parent_frame_and_pose_would(tmp_path):
+    device = _device(tmp_path)
+    by_mount = _engine(_world(_carrier(tmp_path, _on(device, "front"), CARRIER_MOUNTS)))
+    explicit = f"""
+    - spawn_sensor: {{model: {device}, parent_frame: shell_link, pos: [0.1, 0, 0]}}
+      name: scan_front
+    """
+    by_pose = _engine(_world(_carrier(tmp_path, explicit, CARRIER_MOUNTS)))
+    for a, b in zip(
+        _body_pose(by_mount, "r_scan_front_mount"),
+        _body_pose(by_pose, "r_scan_front_mount"),
+        strict=True,
+    ):
+        assert np.allclose(a, b, atol=1e-12)
+    spec = next(s for s in by_mount.config.plugins if s.address == "robot.scan_front")
+    assert spec.config["mount"] == "front"
+    assert (spec.config["parent_frame"], spec.config["pos"]) == ("shell_link", [0.1, 0.0, 0.0])
+    root = _endpoint(by_mount, "frames", "robot.scan_front").backend["ros2"]["static_tf"][0]
+    assert root["parent"] == "shell_link"
+
+
+def test_a_mount_is_not_built_or_published(tmp_path):
+    engine = _engine(_world(_carrier(tmp_path, _on(_device(tmp_path), "front"), CARRIER_MOUNTS)))
+    m = engine.ctx.model
+    assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "r_front") < 0
+    published = {
+        (t["parent"], t["child"])
+        for e in engine.ctx.interface.all()
+        for t in e.backend.get("ros2", {}).get("static_tf") or []
+    }
+    assert ("shell_link", "scanner_link") in published
+    assert not any("front" in pair for pair in published)
+
+
+def test_a_world_puts_a_device_on_a_robots_mount_by_nesting_it_under_the_robot(tmp_path):
+    """The carrier's own device is on `front`; a world adds a second one on `rear` without an offset."""
+    device = _device(tmp_path)
+    carrier = _carrier(tmp_path, _on(device, "front"), CARRIER_MOUNTS)
+    extra = {
+        "spawn_sensor": {"model": device, "mount": "rear", "frame_id": "rear_link"},
+        "name": "added",
+    }
+    engine = _engine(_world_with(carrier, extra))
+    pos, _ = _body_pose(engine, "r_added_mount")
+    assert np.allclose(pos, [-0.25, 0, 0.1], atol=1e-9)
+
+
+def test_a_mount_the_carrier_does_not_declare_is_refused_listing_its_mounts(tmp_path):
+    with pytest.raises(PluginError, match=r"mount 'fron' .*Did you mean 'front'\?.*front, rear"):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "fron"), CARRIER_MOUNTS))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [", parent_frame: base_link", ", pos: [0, 0, 1]", ", rpy: [0, 0, 1]", ", attach_to: base_link"],
+)
+def test_a_mount_beside_a_placement_key_is_refused(tmp_path, extra):
+    with pytest.raises(
+        PluginError, match=r"'mount: front' and \[.*\] both say where the device goes"
+    ):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "front", extra=extra), CARRIER_MOUNTS))
+
+
+def test_a_world_override_of_a_mounted_devices_pose_is_refused(tmp_path):
+    """The robot owns where its devices sit: a world restating a pose would silently fight the mount."""
+    carrier = _carrier(tmp_path, _on(_device(tmp_path), "front"), CARRIER_MOUNTS)
+    override = {"spawn_sensor": {"pos": [0, 0, 1]}, "name": "scan_front"}
+    with pytest.raises(PluginError, match=r"'mount: front' and \['pos'\]"):
+        _world_with(carrier, override)
+
+
+def test_a_mount_whose_parent_the_carrier_lacks_is_refused(tmp_path):
+    bad = """
+    mounts:
+      - {name: front, parent: nowhere_link}
+    """
+    with pytest.raises(
+        PluginError, match=r"mount 'front' hangs from 'nowhere_link', which is neither"
+    ):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "front"), bad))
+
+
+def test_two_mounts_of_one_name_are_refused(tmp_path):
+    dup = """
+    mounts:
+      - {name: front, parent: base_link}
+      - {name: front, parent: cover_link}
+    """
+    with pytest.raises(PluginError, match=r"mounts\[1\]: mount 'front' is declared twice"):
+        _world(_carrier(tmp_path, _on(_device(tmp_path), "front"), dup))
+
+
+def test_a_mount_on_a_device_nobody_carries_is_refused(tmp_path):
+    with pytest.raises(PluginError, match=r"not nested under one"):
+        load_config_from_dict(
+            {"components": [{"spawn_sensor": {"model": _device(tmp_path), "mount": "front"}}]}
+        )

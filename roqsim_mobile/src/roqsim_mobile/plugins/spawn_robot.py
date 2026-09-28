@@ -30,6 +30,10 @@ as a static transform ``parent -> name`` read from the compiled model, in the ro
 Where a chain starts at a body other than the robot's root, ``root -> body`` is published with it,
 so the chain joins the robot's tree; that body must be welded to the root.
 
+**Mounts.** The manifest's ``mounts:`` block names where the robot's devices go: a parent (a body or
+one of these frames) and a pose in it. A mount is neither built nor published; a nested
+``spawn_sensor`` names it with ``mount:`` (:func:`roqsim.manifest.resolve_mount`).
+
 ``name:`` is the entry's reserved SIBLING, not one of the keys above: it labels the entry and names
 the entity this spawn registers (default: the plugin ref). Components nested under the entry attach
 to that entity by position, and are addressed ``<name>.<label>``.

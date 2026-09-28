@@ -24,6 +24,8 @@ Config::
         attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
         parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
                                #   the carrier to hang from; `pos`/`rpy` are the vendor macro's origin
+        mount: oakd            # OPTIONAL, nested only: a mount the carrier's manifest declares,
+                               #   which sets `parent_frame`/`pos`/`rpy` (none of them may be given)
         frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
                                #   vendor name its manifest's `frame_id:` declares (see below)
         device_name: camera    # the vendor macro's `name` param, which prefixes the device's frame
@@ -56,19 +58,33 @@ such a sensor means moving what carries it.
 
 **A device mounted by its carrier.** Nested under a robot or arm -- in the world's ``components:``,
 or in the robot's own manifest -- a ``spawn_sensor`` is that carrier's device and inherits its
-identity, so a robot manifest states a vendor mount and nothing else::
+identity. Where it goes is a **mount** of the carrier: a named ``{name, parent, pos, rpy}`` in the
+carrier manifest's ``mounts:`` block (:func:`roqsim.manifest.resolve_mount`), shaped like a frame
+but neither built nor published, so the TF tree stays the robot description's. The device names
+it and states no pose::
 
+    mounts:
+      - {name: rplidar, parent: shell_link, pos: [-0.04, 0, 0.098715], rpy: [0, 0, 1.5708]}
     components:
-      - spawn_sensor: {model: rplidar_a1, parent_frame: shell_link,
-                       pos: [-0.04, 0, 0.098715], rpy: [0, 0, 1.5708], frame_id: rplidar_link}
+      - spawn_sensor: {model: rplidar_a1, mount: rplidar, frame_id: rplidar_link}
         name: rplidar
+
+``mount:`` is resolved when the document expands into ``parent_frame``/``pos``/``rpy``, which the
+record then shows. A name the carrier does not declare is refused with its mounts listed, and so is
+``mount:`` beside any of ``parent_frame``, ``attach_to``, ``pos`` or ``rpy``, whether the world or an
+override sets it. A world puts another
+device on a spawned robot's mount by nesting it in that robot's ``components:`` (or adding it there
+from an override), with ``mount:`` naming the mount -- no offset of the robot's to repeat, and the
+robot's own device on that mount switched off with ``enabled: false`` if the new one replaces it.
+``parent_frame`` with an explicit ``pos``/``rpy`` still places a device the carrier declares no
+mount for.
 
 * ``attach_prefix`` defaults to the carrier's prefix, and ``prefix`` to ``<attach_prefix><name>_``,
   so two identical scanners on one base never collide and the device's own components resolve
   its own bodies (``exclude_body: mount`` is this device's housing and nothing else).
 * ``parent_frame`` is where it hangs: a body of the carrier, or a frame the carrier declares
-  (``spawn_robot``'s ``frames:``), resolved under ``attach_prefix``. It is required when nested
-  (``attach_to`` still works and names a body), and the two are mutually exclusive.
+  (``spawn_robot``'s ``frames:``), resolved under ``attach_prefix``. A nested mount needs it, from
+  ``mount:`` or given (``attach_to`` still works and names a body); the two are mutually exclusive.
 * ``namespace`` defaults to the carrier entity's, at configure; an explicit one wins, and a capture
   plugin's ``topics:`` still overrides a topic outright.
 * A nested mount is welded: ``motion`` other than ``static`` is refused.
@@ -230,6 +246,7 @@ from roqsim.manifest import (
     manifest_frame_id,
     manifest_frames,
     manifest_path,
+    resolve_mount,
 )
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
@@ -617,6 +634,10 @@ class SpawnSensorPlugin(Plugin):
             "device_name",
             "parent_frame",
             "attach_to",
+            "mount",
+            # Where the device goes: checked against `mount:` when it expands.
+            "pos",
+            "rpy",
         }
     )
 
@@ -637,6 +658,9 @@ class SpawnSensorPlugin(Plugin):
         "attach_to": Field(str, doc="body of an already-spawned carrier to weld the mount to"),
         "attach_prefix": Field(str, doc="carrier's MJCF prefix for attach_to/parent_frame"),
         "parent_frame": Field(str, doc="carrier body or declared frame to hang from"),
+        "mount": Field(
+            str, doc="a mount the carrier's manifest declares; sets parent_frame/pos/rpy"
+        ),
         "frame_id": Field(str, doc="the device's scan frame; default: its manifest's frame_id"),
         "device_name": Field(
             str, doc="the vendor macro's name, prefixing its frames; default: its manifest's"
@@ -675,6 +699,8 @@ class SpawnSensorPlugin(Plugin):
                 )
             cfg.setdefault("attach_prefix", carrier.config.get("prefix", ""))
             cfg.setdefault("prefix", f"{cfg['attach_prefix']}{spec.label}_")
+        if cfg.get("mount") is not None:
+            cls._resolve_mount(spec, carrier if spec.entity is not None else None, base_dir)
         if cfg.get("model"):
             model_file = resolve_model(cfg["model"], base_dir=base_dir).path
             for key, value in _identity(cfg, model_file).items():
@@ -684,6 +710,41 @@ class SpawnSensorPlugin(Plugin):
                 cls._refuse_carrier_mount_without_frames(spec, model_file)
                 cls._refuse_shared_frames(spec, model_file, world, base_dir)
         return expand_manifest(spec, world, base_dir=base_dir, substitutions=_placeholders(cfg))
+
+    @staticmethod
+    def _resolve_mount(spec, carrier, base_dir) -> None:
+        """Resolve ``mount:`` to the carrier's ``parent_frame``/``pos``/``rpy``, written into this entry.
+
+        The carrier is the entity this entry is nested under, so a world puts a device on a spawned
+        robot's mount by nesting it in that robot's ``components:``, as the robot's manifest does.
+        A mount carries the whole placement, so a placement key beside it is refused.
+        """
+        cfg = spec.config
+        name = cfg["mount"]
+        if carrier is None:
+            raise PluginError(
+                f"spawn_sensor '{spec.address}': 'mount: {name}' names a mount of the robot that "
+                f"carries the device, and this entry is not nested under one. Declare it in that "
+                f"robot's 'components:' block."
+            )
+        clash = [k for k in ("parent_frame", "attach_to", "pos", "rpy") if k in cfg]
+        if clash:
+            raise PluginError(
+                f"spawn_sensor '{spec.address}': 'mount: {name}' and {clash} both say where the "
+                f"device goes; the mount carries its parent frame and pose. Give one."
+            )
+        if not carrier.config.get("model"):
+            raise PluginError(
+                f"spawn_sensor '{spec.address}': 'mount: {name}' names a mount of "
+                f"'{carrier.address}', which spawns no model to declare one."
+            )
+        carrier_file = resolve_model(carrier.config["model"], base_dir=base_dir).path
+        decl = resolve_mount(
+            carrier_file, str(name), carrier.config.get("frames"), f"spawn_sensor '{spec.address}'"
+        )
+        cfg["parent_frame"] = decl.parent
+        cfg["pos"] = list(decl.pos)
+        cfg["rpy"] = list(decl.rpy)
 
     @staticmethod
     def _refuse_unfilled_identity(spec, model_file, base_dir) -> None:
@@ -829,6 +890,11 @@ class SpawnSensorPlugin(Plugin):
                 "'parent_frame' also accepts a frame the carrier declares."
             )
         nested = self.entity is not None
+        if config.get("mount") and not config.get("parent_frame"):
+            errors.append(
+                f"'mount: {config['mount']}' is resolved when the document expands, from the "
+                "carrier this entry is nested under; nest it in that carrier's 'components:'."
+            )
         if nested and not (config.get("attach_to") or config.get("parent_frame")):
             errors.append(
                 f"spawn_sensor '{self.address}' is mounted on '{self.entity}' but says nowhere to "
