@@ -86,8 +86,9 @@ catalog above once ROS is sourced and the workspace is on the path.
        ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
        ``get_entity_state``, ``set_entity_state``, ``get_simulation_state``,
        ``set_simulation_state``, ``step_simulation`` and ``reset_simulation`` (relative names).
-       Co-loaded with ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``;
-       alone, on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
+       Listed after a ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``
+       (plugins configure in world order, and the bridge shares its node when it configures);
+       otherwise on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
        required config. What each does is in :doc:`interfaces`.
 
 .. note::
