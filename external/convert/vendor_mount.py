@@ -1,10 +1,11 @@
-"""Shared by the device builders that re-seat a device model on its vendor link.
+"""Shared by the device builders that re-seat a device model on the frame its vendor macro places.
 
-A device model whose ``mount`` body is the link its vendor macro builds everything from is placed by
-the vendor joint origin; one whose ``mount`` was pre-rotated into a display convention was not. When
-a builder moves a model from the second to the first it renames it (the old name is refused at load,
-see ``roqsim.models.RetiredModel``) and every existing mount must be re-expressed: a mount of the old
-model at ``T_old`` becomes ``T_old * D``, for the ``D`` its builder derives.
+A device model whose ``mount`` body is the frame its vendor macro attaches to the macro's ``parent``
+is placed by the ``origin`` a robot description gives that macro; one whose ``mount`` was pre-rotated
+into a display convention was not. When a builder moves a model from the second to the first it
+renames it (the old name is refused at load, see ``roqsim.models.RetiredModel``) and every existing
+mount must be re-expressed: a mount of the old model at ``T_old`` becomes ``T_old * D``, for the
+``D`` its builder derives.
 
 This module holds what every such builder needs and nothing device-specific: rotations in the URDF
 convention, a reader for one xacro macro's properties and fixed joints, the splice that rewrites a
@@ -286,8 +287,12 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
         new_pos, new_rpy = rewrite_pose(pos, rpy, deltas[name][1])
         new_model = deltas[name][0]
         lines[i] = lines[i].replace(m.group("name"), m.group("name").replace(name, new_model), 1)
-        pos_line = f"{indent}pos: {fmt_list(new_pos)}\n"
-        rpy_line = f"{indent}rpy: {fmt_list(new_rpy)}\n"
+        pos_line, rpy_line = (
+            f"{indent}{key}: {fmt_list(value)}"
+            + (f"  {keys[key][2]}" if key in keys and keys[key][2] else "")
+            + "\n"
+            for key, value in (("pos", new_pos), ("rpy", new_rpy))
+        )
         if "pos" in keys:
             lines[keys["pos"][0]] = pos_line
         if "rpy" in keys:

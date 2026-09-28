@@ -7,8 +7,9 @@ point-cloud path; add one here the same way once a D415 world needs it). Topic/f
 
 Same code as the D435 plugin (both are ``CameraPlugin`` colour renderers); it exists as its own
 plugin/model so a robot that carries a real D415 is faithful. The bundled
-``realsense_d415`` model (``models/realsense_d415/realsense_d415.xml``) provides a ``d415_color`` camera; attach it to a robot or mount
-it standalone with ``spawn_sensor``.
+``realsense_d415`` model (``models/realsense_d415/realsense_d415.xml``) provides a ``d415_color``
+camera, and a ``d415_depth`` camera at the depth optical frame for a depth path to render from;
+attach it to a robot or mount it standalone with ``spawn_sensor``.
 
 Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
 ``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``). Defaults below match the

@@ -74,10 +74,22 @@ catalog above once ROS is sourced and the workspace is on the path.
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
        physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
-       (see the note below).
+       (see the note below). Also: ``node_name`` (default ``roqsim_bridge``); ``frame_prefix``
+       (prefix for frame ids, default the ``namespace``); ``publish_static_tf`` (default ``true``;
+       ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
+       (an isolated ROS context on that domain, so several bridges can run in one process) with
+       ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
+       local names on its domain); ``gt: {prefix, exempt}`` (the ground-truth topic prefix and the
+       topics exempt from it, :doc:`ground_truth`). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
-     - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
-       required config; reuses the bridge's node when co-loaded.
+     - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
+       ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
+       ``get_entity_state``, ``set_entity_state``, ``get_simulation_state``,
+       ``set_simulation_state``, ``step_simulation`` and ``reset_simulation`` (relative names).
+       Listed after a ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``
+       (plugins configure in world order, and the bridge shares its node when it configures);
+       otherwise on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
+       required config. What each does is in :doc:`interfaces`.
 
 .. note::
 
@@ -246,7 +258,9 @@ rides a body has its pose from that body, so moving the sensor means moving what
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
 in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
-robot declares in its manifest's ``frames:``) with the vendor joint origin as ``pos``/``rpy``. It
+robot declares in its manifest's ``frames:``) with the ``origin`` the robot description passes the
+device's vendor macro as ``pos``/``rpy``: a device model's ``mount`` is the frame that origin places,
+so the device sits where ``robot_state_publisher`` would put it. It
 inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
 are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
 the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
@@ -254,7 +268,7 @@ else the vendor default the device manifest declares as ``frame_id:``; a device 
 none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
 parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
 own, as a second instance of the macro would: two mounts that would publish any one frame name are
-refused. A device that declares no ``frames:`` chain has no vendor link to hang from, and a robot
+refused. A device that declares no ``frames:`` chain has no vendor frame to hang from, and a robot
 mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
 

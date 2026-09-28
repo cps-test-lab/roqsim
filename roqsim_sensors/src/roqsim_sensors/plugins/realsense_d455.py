@@ -13,15 +13,16 @@ reprojects every valid pixel, so it is not free.
 What is D455-specific: a distinctly wider-FOV, longer-range camera (87 x 62 deg colour, 95 mm stereo
 baseline, 0.6-6 m ideal range) against the D435's 69 x 42 deg and 0.3-3 m. The bundled
 ``realsense_d455`` model (``models/realsense_d455/realsense_d455.xml``) provides a ``d455_color``
-camera with that wide FOV baked in, and the clip
-range below is the D455's own -- which is what decides whether a wall 4 m away is a depth return or
-a "no return". Attach it to a robot or mount it standalone with ``spawn_sensor``.
+camera with that wide FOV baked in and a ``d455_depth`` camera at the depth optical frame (59 mm
+along the baseline from the colour one) with the depth stream's own 87 x 58 deg, and the clip range
+below is the D455's own -- which is what decides whether a wall 4 m away is a depth return or a "no
+return". Attach it to a robot or mount it standalone with ``spawn_sensor``.
 
 Config: see ``camera_common.CameraPlugin`` (``robot``/``arm``, ``camera``, ``width``/``height``,
 ``fovy``, ``rate_hz``, ``frame_id``, ``compressed``/``jpeg_quality``) plus
-``depth``/``points``/``clip_near``/``clip_far``/
-``depth_frame_id``. Defaults below match the D455's 640x400@30fps colour profile (the native
-1280x800 colour aspect, downscaled to fit MuJoCo's default 640x480 offscreen buffer).
+``depth``/``points``/``clip_near``/``clip_far``/``depth_camera``/``depth_frame_id``. Defaults below
+match the D455's 640x400@30fps colour profile (the native 1280x800 colour aspect, downscaled to fit
+MuJoCo's default 640x480 offscreen buffer).
 """
 
 from __future__ import annotations
@@ -31,6 +32,7 @@ from .realsense_d435 import RealsenseD435Plugin
 
 class RealsenseD455Plugin(RealsenseD435Plugin):
     DEFAULT_CAMERA = "d455_color"
+    DEFAULT_DEPTH_CAMERA = "d455_depth"
     DEFAULT_FRAME_ID = "camera_color_optical_frame"
     DEFAULT_TOPIC_PREFIX = "camera/color"
     DEFAULT_RATE_HZ = 30.0

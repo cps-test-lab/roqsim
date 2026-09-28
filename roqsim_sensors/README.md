@@ -72,26 +72,30 @@ subscribes.
 
 ### Conventions for standalone sensor models
 
-Two rules bind every camera model bundled here (spawned via `spawn_sensor`); both are locked by
+These rules bind every camera model bundled here (spawned via `spawn_sensor`); they are locked by
 tests in `tests/test_spawn_sensor.py` and `tests/test_realsense_devices.py`:
 
-- **Mount frame.** A device whose vendor publishes a ROS description is mounted by the link its
-  vendor macro builds everything from, so `pos`/`rpy` on a `spawn_sensor` mean the vendor joint
-  origin whether the mount hangs in a world or on a robot. For the RealSense models that is
-  `camera_link`: x along the lens normal, y left, z up, so a mount at `rpy [0,0,0]` looks along
-  world +x. The mesh, collision box and camera carry the vendor poses inside it, and the manifest's
-  `frames:` publishes the vendor chain from it. The `zivid` and `oakd` mounts keep a display
-  convention instead -- they look along local **+y**, +z up -- the
-  Zivid because Zivid publishes no ROS description to take a link from; a robot mount of the Zivid
-  is refused for the same reason.
-- **Resolution cap.** A camera rendered through a `spawn_sensor` mount cannot use a `<camera
-  resolution>` larger than **640×480** — MuJoCo's default offscreen framebuffer. Raising the sensor
-  model's own `<visual><global offwidth/offheight>` does **not** help: `MjSpec.attach` drops the
-  child's visual-global settings, so the compiled world keeps the parent's 640×480 and the camera
-  plugin's `mujoco.Renderer(model, h, w)` raises `ValueError` above it. A square high-res sensor
-  (e.g. the Zivid XL250, native 704/1408/2816) must render a downscaled square that fits — `zivid`
-  uses 480×480, documenting its native modes in the XML. To exceed 640×480, the *world* MJCF must
-  raise `offwidth`/`offheight` and the plugin config must override `width`/`height`.
+- **Mount frame.** A device whose vendor publishes a ROS description is mounted by the frame its
+  vendor macro attaches to the macro's `parent`, so `pos`/`rpy` on a `spawn_sensor` are the
+  `origin` a robot description gives the macro, whether the mount hangs in a world or on a robot: a
+  pose copied from `<xacro:sensor_d435 ...><origin .../>` places the camera where
+  `robot_state_publisher` would. For the RealSense models that frame is `camera_bottom_screw_frame`,
+  the tripod screw, with `camera_link` (x along the lens normal, y left, z up) at the macro's fixed
+  offset from it -- (0.0106, 0.0175, 0.0125) m on the D435 -- so a mount at `rpy [0,0,0]` looks along
+  world +x. The mesh, collision box and cameras carry the vendor poses inside `camera_link`, and the
+  manifest's `frames:` publishes the vendor chain from the mount. The `zivid` and `oakd` mounts keep
+  a display convention instead -- they look along local **+y**, +z up -- the Zivid because Zivid
+  publishes no ROS description to take a link from; a robot mount of the Zivid is refused for the
+  same reason.
+- **One camera per stream.** Each RealSense model renders colour from a camera at the vendor colour
+  optical frame and depth from one at the depth optical frame (`d435_depth` etc.), each at its
+  stream's data-sheet FOV and resolution, so depth, its `camera_info` and the point cloud are
+  rendered from the frame they are stamped in.
+- **Resolution.** A camera plugin renders through `roqsim.rendering.FrameRenderer`, which grows the
+  compiled world's offscreen framebuffer to the frame it renders, so a camera may declare a `<camera
+  resolution>` above MuJoCo's default 640×480 (the RealSense depth cameras render 848×480). A sensor
+  model's own `<visual><global offwidth/offheight>` has no effect: `MjSpec.attach` drops the child's
+  visual-global settings.
 
 ## Bundled models
 
@@ -108,9 +112,9 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 
 | model | role |
 |-------|------|
-| `realsense_d435` | Intel RealSense D435i: visual mesh + a `d435_color` camera at the vendor colour optical frame, mounted by `camera_link`. Spawn with `spawn_sensor: {model: realsense_d435, pos: ..., rpy: ...}`; its manifest auto-attaches the `realsense_d435` plugin and the D435i's `imu` (at the vendor gyro optical frame, lazy), and publishes `camera_link` → `camera_color_frame` → `camera_color_optical_frame`, the depth frames and the IMU frames. `device_name` (default `camera`, the macro's own) prefixes every frame, so a second D435 on one robot sets its own. Mesh converted from `realsense2_description`'s `d435.dae` (Apache-2.0 — see `models/realsense_d435/REALSENSE_D435_MESH_LICENSE`); every pose from `_d435.urdf.xacro` and `_d435i_imu_modules.urdf.xacro`. |
-| `realsense_d415` | Intel RealSense D415: visual mesh + a `d415_color` camera at the vendor colour optical frame, mounted by `camera_link`; colour and depth frames as for the D435. Its manifest auto-attaches `realsense_d415`. Mesh from `realsense2_description`'s `d415.stl` (decimated to ~13k tris via Blender, Apache-2.0 — see `models/realsense_d415/REALSENSE_D415_MESH_LICENSE`); poses from `_d415.urdf.xacro`. |
-| `realsense_d455` | Intel RealSense D455: visual mesh + a `d455_color` camera at the vendor colour optical frame (59 mm from the depth frame, on the other side of it from the D435's), mounted by `camera_link`, with the D455's wide 87°×62° colour FOV baked in (fovy 62° + the 640×400 / 1.6-aspect resolution ⇒ ~87° horizontal). Its manifest auto-attaches `realsense_d455`. Mesh from `realsense2_description`'s `d455.stl` (decimated to ~6k tris via Blender, Apache-2.0 — see `models/realsense_d455/REALSENSE_D455_MESH_LICENSE`); poses from `_d455.urdf.xacro`. |
+| `realsense_d435` | Intel RealSense D435i: visual mesh + a `d435_color` camera at the vendor colour optical frame and a `d435_depth` camera at the depth optical frame (87°×58° depth FOV, 848×480), mounted by `camera_bottom_screw_frame`. Spawn with `spawn_sensor: {model: realsense_d435, pos: ..., rpy: ...}`; its manifest auto-attaches the `realsense_d435` plugin and the D435i's `imu` (at the vendor gyro optical frame, lazy), and publishes `camera_bottom_screw_frame` → `camera_link` → `camera_color_frame` → `camera_color_optical_frame`, the depth frames and the IMU frames. `device_name` (default `camera`, the macro's own) prefixes every frame, so a second D435 on one robot sets its own. Mesh converted from `realsense2_description`'s `d435.dae` (Apache-2.0 — see `models/realsense_d435/REALSENSE_D435_MESH_LICENSE`); every pose from `_d435.urdf.xacro` and `_d435i_imu_modules.urdf.xacro`. |
+| `realsense_d415` | Intel RealSense D415: visual mesh + a `d415_color` camera at the vendor colour optical frame and a `d415_depth` camera at the depth optical frame (65°×40° depth FOV, not rendered by the colour-only plugin), mounted by `camera_bottom_screw_frame`; colour and depth frames as for the D435. Its manifest auto-attaches `realsense_d415`. Mesh from `realsense2_description`'s `d415.stl` (decimated to ~13k tris via Blender, Apache-2.0 — see `models/realsense_d415/REALSENSE_D415_MESH_LICENSE`); poses from `_d415.urdf.xacro`. |
+| `realsense_d455` | Intel RealSense D455: visual mesh + a `d455_color` camera at the vendor colour optical frame (59 mm from the depth frame, on the other side of it from the D435's) and a `d455_depth` camera at the depth optical frame (87°×58° depth FOV, 848×480), mounted by `camera_bottom_screw_frame`, with the D455's wide 87°×62° colour FOV baked in (fovy 62° + the 640×400 / 1.6-aspect resolution ⇒ ~87° horizontal). Its manifest auto-attaches `realsense_d455`. Mesh from `realsense2_description`'s `d455.stl` (decimated to ~6k tris via Blender, Apache-2.0 — see `models/realsense_d455/REALSENSE_D455_MESH_LICENSE`); poses from `_d455.urdf.xacro`. |
 | `mid360` | A standalone Livox Mid-360 3D-lidar mount: visual meshes (grey housing + blue laser dome) + a `mid360` scan site at the dome's optical centre. It ships **no** baked FOV geom -- `show_fov` synthesises the coverage volume from its manifest's angular `fov:` band. Spawn with `spawn_sensor: {model: mid360, pos: ..., rpy: ...}`; its manifest (`mid360.manifest.yaml`) auto-attaches `livox_mid360` (frame `livox_frame`). Add `show_fov: true` to draw the translucent 360°×59° sector shell, out to the manifest's 40 m detection range. The meshes are tessellated (Open CASCADE) and decimated from Livox's own Mid-360 STEP assemblies (housing + FOV) — see `models/mid360/MID360_MESH_LICENSE` for provenance. |
 | `zivid` | A standalone Zivid 3 XL250 mount: visual mesh (dark housing, glass strip + two lens windows) + a `zivid_color` camera at the +x optical module (looks along +y), plus a hidden 39° square FOV mesh that is **never drawn** (see below). Spawn with `spawn_sensor: {model: zivid, pos: ..., rpy: ...}`; its manifest (`zivid.manifest.yaml`) auto-attaches `zivid`. Add `show_fov: true` to draw a translucent frustum synthesised from `zivid_color`, spanning the manifest's 1.3–5 m working range: a model with a camera always takes the frustum path, so the baked envelope stays hidden. The housing mesh is decimated (~8k tris via Blender) from Zivid's own Zivid 3 STL; optical parameters (baseline, FOV, focus) come from the XL250 datasheet — see `models/zivid/ZIVID_MESH_LICENSE` for provenance. |
 | `oakd` | A standalone Luxonis OAK-D Pro mount: a **box** at the source URDF's collision dimensions (2.25 × 9.7 × 3 cm) + an `oakd_rgb` camera at the device origin (looks along +y), plus the three stereo-baseline sites. Spawn with `spawn_sensor: {model: oakd, ...}`; its manifest auto-attaches `oakd_camera`. **No mesh on purpose**: `roqsim_mobile`'s turtlebot4 carries this device as the same box, the upstream `oakd_pro.dae` is 12 MB / 152k tris, and a decimated copy was reviewed against the box and judged not worth carrying — what the model exists to provide is the camera. Every number (box, camera pose, 56.84° fovy, 0.075 m baseline) comes from `nav2_minimal_tb4_description`'s `oakd.urdf.xacro` (Apache-2.0 — see `models/oakd/OAKD_LICENSE`); the fovy is URDF-faithful and is asserted equal to turtlebot4.xml's by `roqsim_mobile`'s tests. |
@@ -129,12 +133,11 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `velodyne_vlp16` | Velodyne VLP-16 (Puck) lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` casting one plane of its 16 as the driver's `velodyne_laserscan` publishes it (898 rays of 0.007 rad from −π, header 0–200 m, returns measured 0.9–100 m, too close and no return `+inf`, 10 Hz), excluding only its own `mount`, stamped in `velodyne` 37.7 mm above the housing base. Mounted by `roqsim_mobile`'s `clearpath_jackal`. Meshes and link frames from Dataspeed `velodyne_description` — see `models/velodyne_vlp16/velodyne_vlp16_LICENSE`. |
 
 The twelve scanners and the three RealSense cameras are device models a robot mounts from its
-manifest: a `spawn_sensor` at the vendor's parent frame and joint origin, overriding a value only
-where its vendor configuration differs. The RealSense MJCFs and their manifests' `frames:` blocks are
-written by `external/convert/build_realsense_devices.py` from `realsense2_description` at a pinned
-realsense-ros tag. Its vendor macro attaches `camera_bottom_screw_frame` (the tripod screw) to the
-parent and `camera_link` to that at a fixed offset (`--mount-delta` prints it); a robot description
-that instantiates the macro composes the two into the mount's `pos`.
+manifest: a `spawn_sensor` at the vendor's parent frame and the origin the robot description gives
+the vendor macro, overriding a value only where its vendor configuration differs. The RealSense MJCFs
+and their manifests' `frames:` blocks are written by `external/convert/build_realsense_devices.py`
+from `realsense2_description` at a pinned realsense-ros tag, including the fixed
+`camera_bottom_screw_frame` → `camera_link` offset (`--mount-delta` prints it).
 
 The model name `realsense_d435` also names the capture plugin, in the other entry-point group: the
 two are one device, the model placing it and the plugin rendering it.
@@ -146,15 +149,16 @@ new one (`roqsim.models.resolve_model`, this package's `RETIRED_MODELS`):
 
 | retired | now | what changed |
 |---------|-----|--------------|
-| `d415`, `d435`, `d455` | `realsense_d415`, `realsense_d435`, `realsense_d455` | The mount frame became the vendor `camera_link`. It was a display convention: the body was pre-rotated so a mount at `rpy [0,0,0]` looked along +y. |
+| `d415`, `d435`, `d455` | `realsense_d415`, `realsense_d435`, `realsense_d455` | The mount frame became the one the vendor macro's origin places, `camera_bottom_screw_frame`. It was a display convention: the body was pre-rotated so a mount at `rpy [0,0,0]` looked along +y. |
 
 Re-express a mount of a retired model rather than editing its numbers by hand:
 
     python external/convert/build_realsense_devices.py --rewrite-mounts world.yaml [...]
 
-renames the model and rewrites each mount's `pos`/`rpy` to `T_old * D` with `D = Rq * T_link_mesh^-1`
-(`Rq` the retired body rotation, `T_link_mesh` the vendor mesh-in-link pose), which puts the housing
-and the camera where they were. One camera moves: the retired `d415` centred its camera on the
+renames the model and rewrites each mount's `pos`/`rpy` to `T_old * D` with
+`D = Rq * T_link_mesh^-1 * T_screw_link^-1` (`Rq` the retired body rotation, `T_link_mesh` the vendor
+mesh-in-link pose, `T_screw_link` the screw-to-`camera_link` offset), which puts the housing and the
+camera where they were. One camera moves: the retired `d415` centred its camera on the
 housing, 5 mm in front of the glass, and `realsense_d415`'s sits at the vendor colour optical frame,
 38 mm from there. `tests/test_realsense_devices.py` holds that check.
 

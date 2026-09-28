@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the RealSense device models in ``roqsim_sensors/models/realsense_<d>/`` from the vendor link.
+"""Build the RealSense device models in ``roqsim_sensors/models/realsense_<d>/`` from the vendor macro.
 
     python external/convert/build_realsense_devices.py                  # all three
     python external/convert/build_realsense_devices.py realsense_d435   # one
@@ -17,30 +17,34 @@ Every number is read from ``realsense2_description`` at a pinned tag of
 ``_d435i_imu_modules.urdf.xacro``) by evaluating the macro's own ``xacro:property`` expressions, so
 nothing is transcribed by hand.
 
-**The MJCF ``mount`` body is ``<name>_link``** (``camera_link``), the link the macro hangs the mesh,
-the collision box and every camera frame from. The macro itself attaches ``<name>_bottom_screw_frame``
-(the tripod screw) to its parent and ``<name>_link`` to that at a fixed offset, which
-``--mount-delta`` prints; a robot port whose description instantiates the macro composes
-the two. Inside the mount:
+**The MJCF ``mount`` body is ``<name>_bottom_screw_frame``** (the tripod screw), the frame the macro
+attaches to its ``parent`` at the ``origin`` it is given, so a pose copied from a robot description's
+``<xacro:sensor_d435 ...><origin .../>`` places the device where ``robot_state_publisher`` would. Its
+one child body, ``link``, is ``<name>_link`` (``camera_link``) at the macro's fixed
+``<name>_link_joint`` offset, and holds everything the macro hangs from that link:
 
 * the visual mesh geom carries the vendor mesh-in-link origin as its pose;
 * the front glass plate and the collision box are measured on the converted mesh (mesh-local, in
   :class:`Device`) and carried into the link by that same pose;
-* the colour camera sits at the vendor ``<name>_color_optical_frame``: MuJoCo's camera looks down its
-  own ``-z`` with ``+y`` up, the ROS optical frame down ``+z`` with ``+y`` down, so its ``xyaxes`` are
-  the optical ``x`` and ``-y``.
+* the colour camera sits at the vendor ``<name>_color_optical_frame`` and the depth camera at
+  ``<name>_depth_optical_frame``: MuJoCo's camera looks down its own ``-z`` with ``+y`` up, the ROS
+  optical frame down ``+z`` with ``+y`` down, so their ``xyaxes`` are the optical ``x`` and ``-y``.
+  Each has its own stream's optics from the data sheet (:class:`Device`), because the real device
+  images colour and depth through different lenses.
 
 The manifest's ``frames:`` chain is the vendor's nominal-extrinsics chain for what the device
-publishes: colour and depth frames and their optical frames, and for the D435i the gyro frame, its
-optical frame and ``<name>_imu_optical_frame`` (co-located with it, as ``_d455.urdf.xacro`` spells
-and ``realsense2_camera`` publishes).
+publishes: ``<name>_bottom_screw_frame -> <name>_link``, the colour and depth frames and their
+optical frames, and for the D435i the gyro frame, its optical frame and
+``<name>_imu_optical_frame`` (co-located with it, as ``_d455.urdf.xacro`` spells and
+``realsense2_camera`` publishes).
 
 **Re-expressing a mount.** The retired ``d415``/``d435``/``d455`` models pre-rotated ``mount`` by
 :data:`RETIRED_MOUNT_QUAT` so a mount at ``rpy [0, 0, 0]`` looked along ``+y``, with the mesh in the
 body's own axes. A mount of the old model at ``T_old`` put the mesh at ``T_old * Rq``; the new model
-puts it at ``T_new * T_link_mesh``, so ``T_new = T_old * D`` with ``D = Rq * T_link_mesh^-1``.
-``--rewrite-mounts`` applies ``D`` to every ``spawn_sensor`` of a retired model in the YAML files it
-is given, renames the model, and leaves every other line as written (``vendor_mount.py``).
+puts it at ``T_new * T_screw_link * T_link_mesh``, so ``T_new = T_old * D`` with
+``D = Rq * T_link_mesh^-1 * T_screw_link^-1``. ``--rewrite-mounts`` applies ``D`` to every
+``spawn_sensor`` of a retired model in the YAML files it is given, renames the model, and leaves
+every other line as written (``vendor_mount.py``).
 """
 
 from __future__ import annotations
@@ -92,8 +96,15 @@ class Device:
     #: Geoms measured on the converted mesh, in its own axes: (name, pos, size) boxes.
     front: tuple[tuple[float, float, float], tuple[float, float, float]] | None
     collision: tuple[tuple[float, float, float], tuple[float, float, float]]
+    #: The colour stream's vertical FOV (deg) and resolution.
     fovy: float
     resolution: tuple[int, int]
+    #: The depth stream's, from the Intel RealSense D400 Series data sheet (document 337029): the
+    #: vertical depth FOV, rendered at 848x480, a depth resolution it lists. MuJoCo derives the
+    #: horizontal FOV from the aspect: 88.8 deg at fovy 58 against the data sheet's 87, 65.5 deg at
+    #: fovy 40 against its 65.
+    depth_fovy: float
+    depth_resolution: tuple[int, int]
     #: The D435i's inertial module, whose frames the manifest's `imu` component stamps.
     imu_xacro: str | None = None
     #: The device's weight from its data sheet (kg), carried as a uniform box of the collision
@@ -116,6 +127,8 @@ DEVICES = {
             collision=((0.0, 0.0, -0.01), (0.0495, 0.0115, 0.01)),
             fovy=42.5,
             resolution=(640, 480),
+            depth_fovy=40.0,  # depth FOV 65 x 40 deg
+            depth_resolution=(848, 480),
         ),
         Device(
             name="realsense_d435",
@@ -127,6 +140,8 @@ DEVICES = {
             collision=((0.0, 0.0, -0.01285), (0.04536, 0.01314, 0.01286)),
             fovy=42.5,
             resolution=(640, 480),
+            depth_fovy=58.0,  # depth FOV 87 x 58 deg
+            depth_resolution=(848, 480),
             imu_xacro="_d435i_imu_modules.urdf.xacro",
             mass=0.072,  # D435/D435i data sheet: 72 g
         ),
@@ -140,6 +155,8 @@ DEVICES = {
             collision=((0.0, 0.0, -0.0131), (0.062, 0.0145, 0.013)),
             fovy=62.0,
             resolution=(640, 400),
+            depth_fovy=58.0,  # depth FOV 87 x 58 deg
+            depth_resolution=(848, 480),
         ),
     )
 }
@@ -181,12 +198,17 @@ def vendor(device: Device, urdf: Path | None = None) -> Vendor:
     urdf = urdf or _source()
     x = Xacro(urdf / device.xacro, "camera")
     mesh_xyz, mesh_rpy = x.mesh_origin()
-    screw, _, _ = x.joint("link_joint")
+    screw, screw_rpy, _ = x.joint("link_joint")
     color, color_rpy, _ = x.joint("color_joint")
     depth, depth_rpy, _ = x.joint("depth_joint")
     _, optical, _ = x.joint("color_optical_joint")
     _, depth_optical, _ = x.joint("depth_optical_joint")
-    if any(color_rpy) or any(depth_rpy) or not np.allclose(optical, depth_optical):
+    if (
+        any(screw_rpy)
+        or any(color_rpy)
+        or any(depth_rpy)
+        or not np.allclose(optical, depth_optical)
+    ):
         raise RuntimeError(
             f"{device.xacro}: colour/depth frames are not the plain chain assumed here"
         )
@@ -202,10 +224,14 @@ def vendor(device: Device, urdf: Path | None = None) -> Vendor:
 
 
 def mount_delta(device: Device, v: Vendor) -> tuple[np.ndarray, np.ndarray]:
-    """``D = Rq * T_link_mesh^-1`` as (rotation, translation): ``T_new = T_old * D``."""
+    """``D = Rq * T_link_mesh^-1 * T_screw_link^-1`` as (rotation, translation): ``T_new = T_old * D``.
+
+    ``T_screw_link`` is a pure translation (the macro's ``<name>_link_joint`` has no rotation, which
+    :func:`vendor` checks).
+    """
     r_lm, t_lm = v.link_mesh
     r = quat_matrix(RETIRED_MOUNT_QUAT) @ r_lm.T
-    return r, -r @ t_lm
+    return r, -r @ (t_lm + np.asarray(v.screw_to_link, dtype=float))
 
 
 # -- output ----------------------------------------------------------------------------------------
@@ -225,10 +251,10 @@ def mjcf(device: Device, v: Vendor) -> str:
     if device.front:
         pos, size = device.front
         front = f"""
-      <!-- Front glass strip: the decimated mesh has no separate material for the front window, so
-           a thin black plate stands in, just proud of the mesh's front face. -->
-      <geom name="{short}_front" type="box" pos="{fmt_vec(placed(pos))}" quat="{fmt_vec(q_lm)}"
-            size="{fmt_vec(size)}" material="{short}_glass" contype="0" conaffinity="0"/>"""
+        <!-- Front glass strip: the decimated mesh has no separate material for the front window,
+             so a thin black plate stands in, just proud of the mesh's front face. -->
+        <geom name="{short}_front" type="box" pos="{fmt_vec(placed(pos))}" quat="{fmt_vec(q_lm)}"
+              size="{fmt_vec(size)}" material="{short}_glass" contype="0" conaffinity="0"/>"""
     glass = (
         f'\n    <material name="{short}_glass" rgba="0.05 0.05 0.05 1" specular="0.6" '
         f'shininess="0.6"/>'
@@ -245,21 +271,28 @@ def mjcf(device: Device, v: Vendor) -> str:
             device.mass / 12 * (full[0] ** 2 + full[1] ** 2),
         ]
         inertial = f"""
-      <!-- The data sheet's weight, as a uniform box of the collision geom's size. -->
-      <inertial pos="{fmt_vec(placed(cpos))}" quat="{fmt_vec(q_lm)}" mass="{fmt_num(device.mass)}"
-                diaginertia="{" ".join(f"{i:.9g}" for i in diag)}"/>"""
+        <!-- The data sheet's weight, as a uniform box of the collision geom's size. -->
+        <inertial pos="{fmt_vec(placed(cpos))}" quat="{fmt_vec(q_lm)}"
+                  mass="{fmt_num(device.mass)}"
+                  diaginertia="{" ".join(f"{i:.9g}" for i in diag)}"/>"""
+    cw, ch = device.resolution
+    dw, dh = device.depth_resolution
+    axes = f"{fmt_vec(cam_x)} {fmt_vec(cam_y)}"
     return f"""<mujoco model="{device.name}">
   <!--
-    Intel RealSense {short.upper()}: visual mesh + a colour camera, mounted by `spawn_sensor` at the
-    vendor joint origin of `<name>_link`. Written by external/convert/build_realsense_devices.py from
-    realsense2_description/urdf/{device.xacro} @ realsense-ros {REALSENSE_COMMIT[:7]} (tag 4.56.1);
-    see {device.name.upper()}_MESH_LICENSE.
+    Intel RealSense {short.upper()}: visual mesh + a colour and a depth camera, mounted by
+    `spawn_sensor` at the origin the vendor macro is given. Written by
+    external/convert/build_realsense_devices.py from realsense2_description/urdf/{device.xacro}
+    @ realsense-ros {REALSENSE_COMMIT[:7]} (tag 4.56.1); see {device.name.upper()}_MESH_LICENSE.
 
-    The `mount` body IS `camera_link`: x forward (the lens normal), y left, z up. The mesh keeps
-    its own axes and carries the vendor mesh-in-link origin as its pose; the front plate and the
-    collision box were measured on the converted mesh and ride the same pose. `{short}_color` is
-    the vendor `camera_color_optical_frame`, turned into MuJoCo's camera convention (looks down -z,
-    +y up). The manifest's `frames:` publishes the vendor chain from this body.
+    The `mount` body IS `camera_bottom_screw_frame`, the tripod screw the macro attaches to its
+    parent. `link` is `camera_link` (x forward along the lens normal, y left, z up) at the macro's
+    fixed offset from it. The mesh keeps its own axes and carries the vendor mesh-in-link origin as
+    its pose; the front plate and the collision box were measured on the converted mesh and ride the
+    same pose. `{short}_color` is the vendor `camera_color_optical_frame` and `{short}_depth` the
+    vendor `camera_depth_optical_frame`, each turned into MuJoCo's camera convention (looks down -z,
+    +y up) and each with its own stream's data-sheet optics. The manifest's `frames:` publishes the
+    vendor chain from the mount.
   -->
   <compiler angle="radian" meshdir="meshes" autolimits="true"/>
 
@@ -269,13 +302,17 @@ def mjcf(device: Device, v: Vendor) -> str:
   </asset>
 
   <worldbody>
-    <body name="mount">{inertial}
-      <geom name="{short}_visual" type="mesh" mesh="{short}_mesh" material="{short}_body"
-            pos="{fmt_vec(t_lm)}" quat="{fmt_vec(q_lm)}" contype="0" conaffinity="0"/>{front}
-      <geom name="{short}_collision" type="box" pos="{fmt_vec(placed(cpos))}" quat="{fmt_vec(q_lm)}"
-            size="{fmt_vec(csize)}" group="3"/>
-      <camera name="{short}_color" pos="{fmt_vec(v.color)}" xyaxes="{fmt_vec(cam_x)} {fmt_vec(cam_y)}"
-              fovy="{fmt_num(device.fovy)}" resolution="{device.resolution[0]} {device.resolution[1]}"/>
+    <body name="mount">
+      <body name="link" pos="{fmt_vec(v.screw_to_link)}">{inertial}
+        <geom name="{short}_visual" type="mesh" mesh="{short}_mesh" material="{short}_body"
+              pos="{fmt_vec(t_lm)}" quat="{fmt_vec(q_lm)}" contype="0" conaffinity="0"/>{front}
+        <geom name="{short}_collision" type="box" pos="{fmt_vec(placed(cpos))}"
+              quat="{fmt_vec(q_lm)}" size="{fmt_vec(csize)}" group="3"/>
+        <camera name="{short}_color" pos="{fmt_vec(v.color)}" xyaxes="{axes}"
+                fovy="{fmt_num(device.fovy)}" resolution="{cw} {ch}"/>
+        <camera name="{short}_depth" pos="{fmt_vec(v.depth)}" xyaxes="{axes}"
+                fovy="{fmt_num(device.depth_fovy)}" resolution="{dw} {dh}"/>
+      </body>
     </body>
   </worldbody>
 </mujoco>
@@ -290,7 +327,9 @@ def frames_block(device: Device, v: Vendor) -> str:
         "device_name: camera",
         'frame_id: "{device_name}_color_optical_frame"',
         "frames:",
-        '  - {name: "{device_name}_link", parent: mount}',
+        '  - {name: "{device_name}_bottom_screw_frame", parent: mount}',
+        f'  - {{name: "{{device_name}}_link", parent: "{{device_name}}_bottom_screw_frame", '
+        f"pos: {fmt_list(v.screw_to_link)}}}",
         f'  - {{name: "{{device_name}}_color_frame", parent: "{{device_name}}_link", '
         f"pos: {fmt_list(v.color)}}}",
         f'  - {{name: "{{frame_id}}", parent: "{{device_name}}_color_frame", rpy: {opt}}}',
@@ -332,7 +371,8 @@ def main(argv: list[str] | None = None) -> None:
             screw = vendor(DEVICES[new], urdf).screw_to_link
             print(
                 f"{old} -> {new}: T_new = T_old * D, D.pos = {fmt_list(t)}, "
-                f"D.rpy = {fmt_list(matrix_rpy(r))}; bottom_screw_frame -> camera_link {fmt_list(screw)}"
+                f"D.rpy = {fmt_list(matrix_rpy(r))}; the mount (camera_bottom_screw_frame) -> "
+                f"camera_link {fmt_list(screw)}"
             )
         return
     if args.rewrite_mounts:

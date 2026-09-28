@@ -23,7 +23,7 @@ Config::
                                #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
         attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
         parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
-                               #   the carrier to hang from; `pos`/`rpy` are the vendor joint origin
+                               #   the carrier to hang from; `pos`/`rpy` are the vendor macro's origin
         frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
                                #   vendor name its manifest's `frame_id:` declares (see below)
         device_name: camera    # the vendor macro's `name` param, which prefixes the device's frame
@@ -73,6 +73,11 @@ identity, so a robot manifest states a vendor mount and nothing else::
   plugin's ``topics:`` still overrides a topic outright.
 * A nested mount is welded: ``motion`` other than ``static`` is refused.
 
+**The mount frame.** A device model's ``mount`` body is the frame its vendor macro's ``origin``
+places -- the link the macro attaches to its ``parent`` (a RealSense's ``<name>_bottom_screw_frame``,
+the tripod screw) -- and ``pos``/``rpy`` are that origin. A pose copied from a robot description's
+call of the macro therefore places the device where ``robot_state_publisher`` would.
+
 **Frames and placeholders.** A device manifest may declare a ``frames:`` chain relative to its own
 bodies (:mod:`roqsim.frames`), first entry hanging from the mount and the scan frame named
 ``{frame_id}``, plus the vendor's default name for that frame as ``frame_id:``::
@@ -104,7 +109,7 @@ mount's namespace.
 
 Mounts on one carrier share its namespace, so two of them that would publish any one frame name --
 the scan frame or any link of the chain -- are refused, naming the frames. And a carrier mount of a
-device that declares no ``frames:`` is refused, naming the device: it has no vendor link to hang
+device that declares no ``frames:`` is refused, naming the device: it has no vendor frame to hang
 from, so nothing would connect the frame its data is stamped in to the carrier's tree.
 
 **Moving a mount after the world is built.** ``motion:`` is the same three-answer key
@@ -148,7 +153,8 @@ and stays on the capture plugin's ``distortion:``, which warps the render to mat
 
 **FOV visualisation.** ``show_fov: true`` makes the sensor's field of view visible. Three paths, tried
 in order: (1) if the model has cameras (e.g. the RealSense/Zivid mounts) a translucent view **frustum**
-is synthesised per camera from its ``fovy``/aspect spanning the valid detection band
+is synthesised per camera -- a RealSense's depth camera aside, which is the same device's other
+stream -- from its ``fovy``/aspect spanning the valid detection band
 ``fov_near``..``fov_range``, **always clipped against world geometry** into a visibility volume that
 stops at walls and objects (see *Occlusion* below); (2) otherwise (a camera-less model), if it ships
 FOV geoms -- non-colliding, name ending :data:`FOV_GEOM_SUFFIX` (``_fov``), hidden at rgba alpha 0 --
@@ -230,6 +236,8 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import rpy_to_quat
 from roqsim.registry import resolve_plugin
 from roqsim.schema import Field
+
+from .camera_common import DEPTH_CAMERA_SUFFIX
 
 #: Name suffix marking a sensor model's FOV-visualisation geoms (non-colliding, hidden until
 #: revealed). A name convention, not a geom group -- see the module docstring for why.
@@ -488,6 +496,18 @@ _INTRINSICS_KEYS = _LENS_KEYS + ("camera",)
 _PIXEL_PITCH_M = 1e-6
 
 
+def _view_cameras(cameras: list) -> list:
+    """A model's cameras less a device's depth camera: one per view it draws or calibrates.
+
+    A depth camera (:data:`~roqsim_sensors.plugins.camera_common.DEPTH_CAMERA_SUFFIX`) beside the
+    colour camera is another stream of the same device, so a frustum for it would draw one device's
+    view twice and read as two sensors' overlap.
+    """
+    if len(cameras) < 2:
+        return cameras
+    return [c for c in cameras if not c.name.endswith(DEPTH_CAMERA_SUFFIX)]
+
+
 def _intrinsics_errors(intr) -> list[str]:
     """Everything wrong with an ``intrinsics:`` block, as validation strings.
 
@@ -692,7 +712,7 @@ class SpawnSensorPlugin(Plugin):
     def _refuse_carrier_mount_without_frames(spec, model_file) -> None:
         """Refuse a carrier mount of a device that declares no vendor frame chain.
 
-        Such a device has no vendor link to hang from: its ``pos``/``rpy`` would place a body whose
+        Such a device has no vendor frame to hang from: its ``pos``/``rpy`` would place a body whose
         frame no vendor description names, and nothing would publish a transform between the
         carrier and the frame its data is stamped in.
         """
@@ -700,7 +720,7 @@ class SpawnSensorPlugin(Plugin):
             return
         raise PluginError(
             f"spawn_sensor '{spec.address}': device {spec.config['model']!r} declares no "
-            f"'frames:' chain in {manifest_path(model_file).name}, so it has no vendor link for "
+            f"'frames:' chain in {manifest_path(model_file).name}, so it has no vendor frame for "
             f"'{spec.entity}' to carry it by and nothing would connect the frame its data is "
             f"stamped in to the carrier's tree. Mount it at world level (attach_to a body), or "
             f"give the device its vendor frame chain."
@@ -885,8 +905,8 @@ class SpawnSensorPlugin(Plugin):
             self._apply_intrinsics(child)
         if self.show_fov:
             near, far = self._resolve_fov_range(asset)
-            # A synthesised camera frustum is always clipped against the world built so far, so pass
-            # the world spec every time; camera-less paths (bundled envelope, lidar sector) ignore it.
+            # A synthesised frustum or lidar sector is always clipped against the world built so far,
+            # so pass the world spec every time; only a bundled envelope ignores it.
             self._show_fov(child, asset, near, far, world_spec=spec)
         self._apply_motion(child, asset)
         # After the FOV synthesis, which reads the model's sole scan site: frame sites are extra.
@@ -1017,7 +1037,11 @@ class SpawnSensorPlugin(Plugin):
         cam.principal_pixel = [cx - width / 2.0, height / 2.0 - cy]
 
     def _lens_camera(self, child: mujoco.MjSpec):
-        """The camera ``intrinsics:`` describes: the named one, or the only one there is."""
+        """The camera ``intrinsics:`` describes: the named one, or the only one there is.
+
+        A device's depth camera (:data:`~roqsim_sensors.plugins.camera_common.DEPTH_CAMERA_SUFFIX`)
+        does not count: a unit's lens is the one it images colour through unless named.
+        """
         cameras = list(child.cameras)
         wanted = self._intrinsics.get("camera")
         if wanted:
@@ -1028,8 +1052,9 @@ class SpawnSensorPlugin(Plugin):
                 f"spawn_sensor: 'intrinsics.camera' is {wanted!r}, which model "
                 f"{self.config['model']!r} does not have. It has: {[c.name for c in cameras]}"
             )
-        if len(cameras) == 1:
-            return cameras[0]
+        views = _view_cameras(cameras)
+        if len(views) == 1:
+            return views[0]
         if not cameras:
             raise RuntimeError(
                 f"spawn_sensor: 'intrinsics' states a lens but model {self.config['model']!r} has no "
@@ -1102,7 +1127,7 @@ class SpawnSensorPlugin(Plugin):
         A ray grid (:func:`_visibility_grid`) is cast from the camera against a snapshot of ``world_spec``
         (the world built so far) and each ray clamped at its hit, so the drawn mesh is a *visibility
         volume* that stops at walls and objects (:func:`_visibility_mesh`)."""
-        cameras = list(child.cameras)
+        cameras = _view_cameras(list(child.cameras))
         if not cameras:
             return 0
         # A copy of CHILD rather than a re-read of the model file: a placement may have written its
