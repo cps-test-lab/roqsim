@@ -88,8 +88,20 @@ def resolve(ref: str, *, group: str, base: type, kind: str, base_dir: Path | Non
     return obj
 
 
+#: Modules loaded from files, keyed by resolved path, with the ``(mtime_ns, size)`` they were loaded
+#: at: every navigator resolves its ref in validation and again in configure, and each must get the
+#: same class. A file changed on disk is loaded afresh.
+_FILE_MODULES: dict[Path, tuple[tuple[int, int], object]] = {}
+
+
 def _import_file(path: Path, ref: str, kind: str):
-    module_name = f"roqsim_nav_ext_{path.stem}_{abs(hash(str(path.resolve())))}"
+    resolved = path.resolve()
+    stat = resolved.stat()
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _FILE_MODULES.get(resolved)
+    if cached is not None and cached[0] == stamp:
+        return cached[1]
+    module_name = f"roqsim_nav_ext_{path.stem}_{abs(hash(str(resolved)))}"
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise RegistryError(f"could not load {kind} file {path} (from {ref!r})")
@@ -99,6 +111,7 @@ def _import_file(path: Path, ref: str, kind: str):
         spec.loader.exec_module(module)
     except Exception as exc:  # noqa: BLE001
         raise RegistryError(f"error importing {kind} file {path} (from {ref!r}): {exc}") from exc
+    _FILE_MODULES[resolved] = (stamp, module)
     return module
 
 

@@ -12,7 +12,7 @@ import logging
 
 import pytest
 
-from roqsim import runner
+from roqsim import exit_status, runner
 from roqsim.plugin import PluginError
 
 
@@ -185,7 +185,7 @@ def test_recording_is_not_world_config(cli):
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml", "w.yml"])
-def test_record_refuses_to_eat_the_world(monkeypatch, world):
+def test_record_refuses_to_eat_the_world(monkeypatch, capsys, world):
     """`roqsim sim --record world.yaml` -- argparse reports a *missing target*, which is useless.
 
     The check must run before parsing: by the time argparse has assigned world.yaml to --record there
@@ -194,8 +194,10 @@ def test_record_refuses_to_eat_the_world(monkeypatch, world):
     monkeypatch.setattr(runner, "run", lambda *a, **k: None)
     with pytest.raises(SystemExit) as err:
         runner.main(["--record", world])
-    assert "takes an output path" in str(err.value)
-    assert "Put the world first" in str(err.value)
+    assert err.value.code == exit_status.BAD_INPUT
+    stderr = capsys.readouterr().err
+    assert "takes an output path" in stderr
+    assert "Put the world first" in stderr
 
 
 def test_record_after_the_target_is_fine(cli):
@@ -242,11 +244,12 @@ def test_video_has_no_fps_or_speed_flag():
 
 
 @pytest.mark.parametrize("world", ["world.yaml", "scene.xml"])
-def test_video_refuses_to_eat_the_world(monkeypatch, world):
+def test_video_refuses_to_eat_the_world(monkeypatch, capsys, world):
     monkeypatch.setattr(runner, "run", lambda *a, **k: None)
     with pytest.raises(SystemExit) as err:
         runner.main(["--video", world])
-    assert "takes an output path" in str(err.value)
+    assert err.value.code == exit_status.BAD_INPUT
+    assert "takes an output path" in capsys.readouterr().err
 
 
 def test_video_implies_a_recording_beside_it(monkeypatch, tmp_path):
@@ -440,3 +443,67 @@ def test_a_headless_run_does_no_key_work(tmp_path, monkeypatch):
     scene.write_text("<mujoco><worldbody><geom type='plane' size='1 1 .1'/></worldbody></mujoco>")
     runner.run(str(scene), headless=True, max_steps=1)
     assert called == []
+
+
+# -- the engine is shut down however the run fails ------------------------------------------------
+
+
+@pytest.fixture
+def probe(tmp_path, monkeypatch):
+    """A world with one plugin that records its shutdown, importable by module name.
+
+    By module rather than by file: the registry imports a ``module:Class`` ref through
+    ``importlib``, so the test reads the same module object the plugin ran in.
+    """
+    monkeypatch.syspath_prepend(str(tmp_path))
+    (tmp_path / "teardown_probe.py").write_text(
+        "from roqsim.plugin import Plugin\n"
+        "LOG = []\n"
+        "class Probe(Plugin):\n"
+        "    def on_reset(self, ctx):\n"
+        "        if getattr(type(self), 'fail_reset', False):\n"
+        "            raise RuntimeError('bad reset')\n"
+        "    def shutdown(self, ctx):\n"
+        "        LOG.append('shutdown')\n"
+    )
+    world = tmp_path / "w.yaml"
+    world.write_text("components:\n  - teardown_probe:Probe: {}\n")
+    import teardown_probe
+
+    teardown_probe.LOG.clear()
+    return world, teardown_probe
+
+
+def test_a_failed_reset_still_shuts_the_engine_down(probe, monkeypatch):
+    """The engine is set up by the time reset runs, so its plugins hold what configure opened; a
+    reset that raises must not leave them holding it."""
+    world, module = probe
+    monkeypatch.setattr(module.Probe, "fail_reset", True, raising=False)
+    with pytest.raises(RuntimeError, match="bad reset"):
+        runner.run(str(world), headless=True, max_steps=1, pacing="asap")
+    assert module.LOG == ["shutdown"]
+
+
+def test_a_recording_that_cannot_be_written_still_shuts_the_engine_down(probe, monkeypatch):
+    """The CSV a scoring plugin writes in shutdown() must survive the recording failing to close."""
+    from roqsim.capture import RecordingError
+
+    world, module = probe
+
+    class _Rec:
+        frames = 0
+
+        def __init__(self, ctx, path, rate, **kw):
+            pass
+
+        def sample(self, *a, **k):
+            return False
+
+        def close(self):
+            raise RecordingError("disk full")
+
+    monkeypatch.setattr("roqsim.runner.StateRecorder", _Rec)
+    monkeypatch.setattr("roqsim.runner._run_headless", lambda *a, **k: None)
+    with pytest.raises(RecordingError, match="disk full"):
+        runner.run(str(world), headless=True, max_steps=1, record="r.npz", pacing="asap")
+    assert module.LOG == ["shutdown"]
