@@ -260,7 +260,7 @@ def cmd_thumbs(args: argparse.Namespace) -> None:
         with open(dest, "wb") as fh:
             fh.write(_get(url))
         print(f"  {uid}  {(meta.get('name') or '').strip()[:50]:<52}  -> {os.path.basename(dest)}")
-    # Last line is the temp dir alone, so a caller can capture it (e.g. to feed a media-review grid).
+    # Last line is the temp dir alone, so a caller can capture it (e.g. to show the thumbnails side by side).
     print(out_dir)
 
 

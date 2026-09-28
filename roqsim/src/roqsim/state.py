@@ -34,16 +34,13 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .capture import decimated
 from .kinematics import body_twist, joint_dofs, joint_width
 from .motion import MotionError, motion_onset
 from .recording import RecordingError, open_recording
 
 log = logging.getLogger(__name__)
-
-EXIT_BAD_ARGS = 2
-EXIT_PROVENANCE = 4
 
 
 class StateError(RuntimeError):
@@ -376,6 +373,18 @@ def _selected(model, bodies, sites, joints, mjcf_sensors):
     }
 
 
+def _refuse_stale(rec, endpoints, sample) -> None:
+    """Raise when a selected sensor's plugin failed on this sample: its endpoint still holds the
+    previous sample's value, which must not be written under this sample's time."""
+    stale = rec.failed_endpoints(endpoints) if endpoints else {}
+    if stale:
+        detail = "; ".join(f"--sensor {name}: {why}" for name, why in sorted(stale.items()))
+        raise StateError(
+            f"at t={sample.sim_time:.3f} s the replay could not compute {detail}. Its value would be "
+            "the previous sample's, so nothing is written for it."
+        )
+
+
 def _row(model, sample, chosen, endpoints, twist: bool = False) -> dict:
     # Both clocks lead every row: a series is often read to ask what the run *cost* at some point in it
     # (a controller stalling, a sensor going expensive), and that question is unanswerable from sim time.
@@ -477,7 +486,49 @@ def run_state(
     decimate: int | None = None,
 ) -> dict:
     """Pull numbers out of a recording. Returns the JSON record the CLI prints."""
-    rec = open_recording(state)
+    # Closed on every way out, so a replayed camera's renderer is released (Recording.close).
+    with open_recording(state) as rec:
+        return _state_of(
+            rec,
+            target,
+            bodies=bodies,
+            sites=sites,
+            joints=joints,
+            mjcf_sensors=mjcf_sensors,
+            sensors=sensors,
+            twist=twist,
+            contacts=contacts,
+            at=at,
+            start=start,
+            stop=stop,
+            out=out,
+            check=check,
+            onset=onset,
+            onset_select=onset_select,
+            decimate=decimate,
+        )
+
+
+def _state_of(
+    rec,
+    target: str | None,
+    *,
+    bodies,
+    sites,
+    joints,
+    mjcf_sensors,
+    sensors,
+    twist: bool,
+    contacts: bool,
+    at: float | None,
+    start: float | None,
+    stop: float | None,
+    out: str | Path | None,
+    check: bool,
+    onset: bool,
+    onset_select: str,
+    decimate: int | None,
+) -> dict:
     out_path = Path(out) if out and str(out) != "-" else None
 
     # Both of these answer from the samples alone, so they are handled before the world is rebuilt:
@@ -556,6 +607,7 @@ def run_state(
                 len(rec),
                 sample.sim_time,
             )
+        _refuse_stale(rec, endpoints, sample)
         record = {**rec.at_record(at, sample), "header": header}
         if contacts:
             record["contacts"] = contact_rows(model, sample.data)
@@ -565,6 +617,7 @@ def run_state(
     rows, times, walls = [], [], []
     array_series: dict[str, list] = {}
     for sample in rec.range(start, stop):
+        _refuse_stale(rec, endpoints, sample)
         times.append(sample.sim_time)
         walls.append(sample.wall_time)
         if any(endpoint_kind(e) == KIND_ARRAY for e in endpoints):
@@ -609,7 +662,11 @@ def run_state(
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim state", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim state",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(exit_status.BAD_INPUT, exit_status.RECORDING),
+    )
     parser.add_argument(
         "target",
         nargs="?",
@@ -699,12 +756,8 @@ def main(argv: list | None = None) -> int:
             onset_select=args.onset_select,
             decimate=args.decimate,
         )
-    except RecordingError as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_PROVENANCE
-    except (StateError, MotionError) as err:
-        print(f"roqsim state: {err}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+    except (RecordingError, StateError, MotionError) as err:
+        return exit_status.fail("roqsim state", err)
 
     if not (args.out and str(args.out) != "-" or args.out == "-"):
         print(json.dumps(record))

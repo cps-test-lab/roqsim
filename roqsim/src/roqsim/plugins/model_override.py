@@ -367,7 +367,7 @@ class _Target:
     def __init__(self, spec: FieldSpec, ids: list[int], nominal: np.ndarray, target: np.ndarray):
         self.spec = spec
         self.ids = ids
-        self.nominal = nominal  # saved from the compiled model, so restoring is exact
+        self.nominal = nominal  # the rows as they were when last applied, so restoring is exact
         self.target = target
 
     def write(self, model, active: bool) -> None:
@@ -653,14 +653,21 @@ class ModelOverridePlugin(Plugin):
             return
         self._apply(ctx, bool(on))
 
-    def _apply(self, ctx: SimContext, on: bool) -> None:
+    def _write(self, ctx: SimContext, on: bool) -> None:
         for target in self._targets:
+            if on:
+                # Taken now rather than at configure, so a value another plugin set after this one
+                # was configured -- a payload's mass -- is what a restore brings back.
+                rows = getattr(ctx.model, target.spec.field)[target.ids]
+                target.nominal = np.array(rows, copy=True)
             target.write(ctx.model, on)
         if any(t.spec.write == SETCONST for t in self._targets):
             # Without this the dynamics ignore a mass write entirely -- measured, the mass matrix
             # does not move. Cheap, and only run when a SETCONST-class row is in play.
             mujoco.mj_setConst(ctx.model, ctx.data)
 
+    def _apply(self, ctx: SimContext, on: bool) -> None:
+        self._write(ctx, on)
         self._active = on
         self._contacts_before = self._count_selected_contacts(ctx)
         self._verify_pending = on  # a restore writes back saved values; there is nothing to verify
@@ -689,20 +696,22 @@ class ModelOverridePlugin(Plugin):
         it, nothing crashes, and the nominal control cell silently becomes a faulted one. Restoring
         to the configured value rather than to ``false`` is what keeps ``active: true`` usable as a
         static campaign factor.
+
+        Only a state the trial changed is written back: an override that stayed as configured
+        leaves the rows alone, and with them whatever another plugin wrote there.
         """
         self._ctx = ctx
-        for target in self._targets:
-            target.write(ctx.model, self.initial_active)
-        if any(t.spec.write == SETCONST for t in self._targets):
-            mujoco.mj_setConst(ctx.model, ctx.data)
+        if self._active != self.initial_active:
+            self._write(ctx, self.initial_active)
         self._active = self.initial_active
-        self._contacts_before = 0
-        self._verify_pending = False
-        self._report = OverrideReport(self.initial_active, -1.0, 0, UNTESTED)
+        # An override active from the start is checked after the first step, as a triggered one is.
+        self._contacts_before = self._count_selected_contacts(ctx) if self._active else 0
+        self._verify_pending = self._active
+        self._report = OverrideReport(self._active, 0.0 if self._active else -1.0, 0, UNTESTED)
 
     def shutdown(self, ctx: SimContext) -> None:
-        for target in self._targets:
-            target.write(ctx.model, self.initial_active)
+        if self._active != self.initial_active:
+            self._write(ctx, self.initial_active)
 
     # -- did it land? --------------------------------------------------------------------------
     def post_step(self, ctx: SimContext) -> None:
