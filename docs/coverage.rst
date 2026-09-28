@@ -151,13 +151,13 @@ valid detection band. A model that has a camera always synthesises its frustum f
 Zivid (which also ships a bundled ``_fov`` envelope) -- the baked envelope stays hidden. The
 ``worlds/all_sensors_demo.yaml`` world shows every sensor's FOV and runs a coverage probe.
 
-A synthesised camera frustum or lidar sector is **always** clipped into a **visibility volume** that stops at walls and
-objects instead of passing through them (a ``fov_rays`` grid, default ``[32, 24]``, is cast from the
-camera, and a sector's own azimuth x elevation grid from the scan site) -- occlusion is unconditional,
-not a per-placement opt-in. Only a bundled ``_fov`` envelope is drawn un-clipped: it is a baked mesh. The clip is a
-static build-time snapshot of the world *built so far*, so list scene/floorplan plugins before the
-sensors; dynamic bodies occlude at their spawn pose and the volume does not update at runtime. This is a
-per-sensor visual (what one sensor can see); for the quantitative per-area overlap count across all
+A synthesised camera frustum or lidar sector is **always** clipped into a **visibility volume** that
+stops at walls and objects instead of passing through them (a ``fov_rays`` grid, default ``[32, 24]``,
+is cast from the camera, and a sector's own azimuth x elevation grid from the scan site) -- occlusion
+is unconditional, not a per-placement opt-in. Only a bundled ``_fov`` envelope is drawn un-clipped: it
+is a baked mesh. The clip is a static build-time snapshot of the world *built so far*, so list
+scene/floorplan plugins before the sensors; dynamic bodies occlude at their spawn pose and the volume
+does not update at runtime. This is a per-sensor visual (what one sensor can see); for the quantitative per-area overlap count across all
 sensors use the coverage probe with ``palette: density``.
 
 A sensor never occludes itself
