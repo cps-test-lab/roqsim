@@ -70,8 +70,8 @@ class NavParams:
 class NavCore:
     """State + logic for one agent's navigation, shared by the py-trees leaves.
 
-    ``st`` is anything satisfying :class:`~roqsim_nav.state.NavStateLike` -- the plain
-    :class:`~roqsim_nav.state.NavState`, or the walker controller's richer per-walker object.
+    ``st`` is anything satisfying :class:`~roqsim_nav.state.NavStateLike`, such as the plain
+    :class:`~roqsim_nav.state.NavState`.
     ``planner`` is a :class:`~roqsim_nav.planner.GridPlanner` or ``None`` (then paths are straight
     lines to each goal -- recovery still applies).
 
