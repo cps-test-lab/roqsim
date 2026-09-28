@@ -88,7 +88,7 @@ from typing import Any
 
 import yaml
 
-from .document import check_version
+from .document import check_version, refuse_unknown_keys
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -153,22 +153,23 @@ def _refuse_unknown_document_keys(doc: dict, where: str) -> None:
     that varies per run looks like it needs one; it does not, which is why the message says where
     a varying value actually goes.
     """
-    unknown = sorted(set(doc) - _DOCUMENT_KEYS - _INHERITANCE_KEYS)
-    if not unknown:
-        return
-    keys = ", ".join(repr(k) for k in unknown)
-    one = len(unknown) == 1
     # The legacy entry-list spelling is accepted and not offered: a message is read as the
     # current shape of a document, so naming it there would teach what is being swept out.
-    named = (_DOCUMENT_KEYS | _INHERITANCE_KEYS) - {_ENTRIES_KEY_LEGACY}
-    raise PluginError(
-        f"{where}: unknown top-level key{'' if one else 's'} {keys}. A world document has only "
-        f"{', '.join(sorted(named))}.\n"
-        f"A world declares no parameters and substitutes nothing: a value that varies per run is "
-        f"written into the document as its ordinary literal and changed by an OVERRIDE -- "
-        f"'--set components.<name>.<key>=<value>' standalone, a campaign's 'sim:' channel -- "
-        f"which addresses that key in place."
-    )
+    offered = (_DOCUMENT_KEYS | _INHERITANCE_KEYS | {_VERSION_KEY}) - {_ENTRIES_KEY_LEGACY}
+    try:
+        refuse_unknown_keys(
+            {k: v for k, v in doc.items() if k != _ENTRIES_KEY_LEGACY},
+            offered,
+            where,
+            error=PluginError,
+        )
+    except PluginError as err:
+        raise PluginError(
+            f"{err}\nA world declares no parameters and substitutes nothing: a value that varies "
+            f"per run is written into the document as its ordinary literal and changed by an "
+            f"override ('--set components.<name>.<key>=<value>', or 'sim.<key>=<value>'), which "
+            f"addresses that key in place."
+        ) from None
 
 
 def document_entries(doc: dict, where: str = "document") -> list:

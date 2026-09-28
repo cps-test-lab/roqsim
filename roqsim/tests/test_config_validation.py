@@ -159,6 +159,16 @@ def test_unknown_top_level_key_is_refused():
     msg = str(exc.value)
     assert "'parameters'" in msg
     assert "components.<name>.<key>" in msg
+    assert "plugins" not in msg  # the legacy spelling is accepted but not offered
+
+
+def test_a_misspelt_top_level_key_names_the_one_it_meant():
+    with pytest.raises(PluginError, match="'componets' \\(did you mean 'components'\\?\\)"):
+        load_config_from_dict({"componets": []})
+
+
+def test_the_legacy_entry_key_and_a_version_stamp_still_load():
+    load_config_from_dict({"version": 1, "sim": {}, "plugins": []})
 
 
 def test_unknown_top_level_key_in_an_inherited_world_is_refused(tmp_path):
@@ -168,7 +178,7 @@ def test_unknown_top_level_key_in_an_inherited_world_is_refused(tmp_path):
 
 
 def test_override_rooted_outside_the_document_is_refused():
-    # It used to merge into the document, where nothing reads it: the world built unchanged and the
-    # run reported success against a value nobody applied.
+    # Merged into the document, nothing would read it: the world would build unchanged and the run
+    # would report success against a value nobody applied.
     with pytest.raises(PluginError, match="box_offset_y"):
         load_config_from_dict({"components": []}, overrides={"box_offset_y": 0.03})
