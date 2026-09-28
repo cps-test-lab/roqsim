@@ -272,6 +272,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         # sim_time restarts at 0 on reset; clear the gate so the first post-reset step casts again.
         self._last_cast = float("-inf")
+        # And the payload with it: read before that cast, the endpoint answers "nothing yet" rather
+        # than the previous trial's last scan, as the cameras do.
+        self._payload_value = None
         # And back to nominal: a fault applied in one trial must not survive into the next of the
         # same process, or the control cell silently becomes a faulted one.
         self.on_reset_fault()
@@ -337,7 +340,9 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         # Cast at the sensor's own rate, not every physics step; the endpoint reads the latest value.
-        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if ctx.sim_time - self._last_cast < 1.0 / self.rate_hz - 1e-3 * ctx.dt:
             return
         if (
             self.lazy
