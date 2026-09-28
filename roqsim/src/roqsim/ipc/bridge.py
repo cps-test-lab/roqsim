@@ -423,12 +423,15 @@ class IpcBridge(BridgeBase):
         if not full:
             return entry
         entry.update(owner=ep.owner, producer=ep.producer, name=ep.name, namespace=ep.namespace)
-        # Where a decorated endpoint's rate, presence and family come from: an attribute or config key.
+        # Where a decorated endpoint's rate, laziness, presence and family come from: an attribute
+        # or config key.
         if isinstance(ep.options.get("rate"), dict):
             entry["rate_from"] = ep.options["rate"]["from"]
-        for key in ("when", "family"):
+        for key in ("lazy", "when", "family"):
             if key in ep.options:
                 entry[key] = ep.options[key]
+        if ep.lazy and "lazy" not in entry:
+            entry["lazy"] = True
         if path in self._confirm_of:
             entry["confirm"] = path_of(self._confirm_of[path])
         # The typed schema, where the endpoint declares one (roqsim.endpoint).

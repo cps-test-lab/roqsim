@@ -809,12 +809,17 @@ class EndpointSpec:
     def direction(self) -> str:
         return DIRECTIONS[self.kind]
 
-    def options(self) -> dict[str, Any]:
-        """Where the ``rate``, ``when`` and ``each`` options come from, for a reader of a built
-        endpoint (:attr:`~roqsim.context.Endpoint.options`): the key named, else ``"computed"``."""
+    def options(self, cls: type) -> dict[str, Any]:
+        """Where the ``rate``, ``lazy``, ``when`` and ``each`` options of the plugin class *cls*
+        come from, for a reader of a built endpoint (:attr:`~roqsim.context.Endpoint.options`):
+        ``rate`` and ``lazy`` as :meth:`describe` gives them, the others the key named, else
+        ``"computed"``."""
         out: dict[str, Any] = {}
-        if self.kind == "out" and not isinstance(self.rate, (int, float)):
-            out["rate"] = {"from": self.rate} if isinstance(self.rate, str) else "computed"
+        if self.kind == "out":
+            if not isinstance(self.rate, (int, float)):
+                out["rate"] = _describe_option(cls, self.rate, float)
+            if self.lazy is not False:
+                out["lazy"] = _describe_option(cls, self.lazy, bool)
         if self.when is not None:
             out["when"] = _option_name(self.when)
         if self.each is not None:
@@ -1100,7 +1105,7 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 f"{type(plugin).__name__}.{spec.attr}: an instance attribute of that name hides the "
                 f"endpoint method {spec.name!r}; rename the attribute"
             )
-        options = spec.options()
+        options = spec.options(type(plugin))
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]

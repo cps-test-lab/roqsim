@@ -742,6 +742,11 @@ class Ros2Bridge(BridgeBase):
             sent=not self._publish_static_tf,
         )
         self._static_outputs[id(ep)] = handle
+        self._names[id(ep)] = {
+            "topic": self._tf_topic(static=True),
+            "type": hints["type"],
+            "qos": hints["qos"],
+        }
         return handle
 
     def _skip_unsubscribed(self, ep) -> bool:
