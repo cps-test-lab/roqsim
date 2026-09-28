@@ -141,6 +141,14 @@ class Odd:
     spin: float
 
 
+LINK = {
+    "parent": "base_link",
+    "child": "laser",
+    "translation": [0, 0, 0.2],
+    "rotation": [1, 0, 0, 0],
+}
+
+
 class Producer(Plugin):
     @endpoint.out(ros2={"type": "geometry_msgs.msg.Accel"})
     def push(self) -> Push:
@@ -174,6 +182,12 @@ class Producer(Plugin):
     @endpoint.out(ros2=None)
     def private(self) -> float:
         return 0.0
+
+    @endpoint.out(ros2={"static_tf": [LINK]})
+    def frames(self) -> None: ...
+
+    @endpoint.out
+    def nothing(self) -> None: ...
 
 
 @pytest.fixture(scope="module")
@@ -247,6 +261,20 @@ def test_a_field_hint_publishes_that_field_as_its_own_type(eps):
 
 def test_a_command_without_parameters_is_a_trigger_service(eps):
     assert typemap.resolve(eps["zero"]).hints == {"service": "std_srvs.srv.Trigger", "name": "zero"}
+
+
+def test_an_out_returning_nothing_carries_its_static_transforms(eps):
+    binding = typemap.resolve(eps["frames"])
+    assert binding.hints == {
+        "static_tf": [LINK],
+        "type": "tf2_msgs.msg.TFMessage",
+        "topic": "tf",
+        "qos": QOS_PRESETS["default"],
+    }
+    assert binding.fill is None  # its read is None, which the bridge never publishes
+    nothing = typemap.resolve(eps["nothing"])
+    assert nothing.hints is None and not nothing.required
+    assert "only to carry a static_tf hint" in nothing.reason
 
 
 def test_a_package_maps_its_own_type_through_the_entry_point(monkeypatch, eps):
