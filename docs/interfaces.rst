@@ -612,9 +612,10 @@ zmq) without the robot package importing that transport. In ``configure`` a plug
   subscribed to ``/odom`` — and because it buys nothing for a cheap payload. Set on the camera plugins'
   ``image``, ``image_compressed``, ``depth``, ``depth_compressed`` and ``points``.
 
-Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. For a
-second robot add another with ``namespace: robot2``: it serves that robot's endpoints and prefixes
-its topics/frames (``/robot2/...``). See :doc:`architecture` for how the bridge machinery works.
+Running the ROS 2 bridge then needs no per-topic config — add ``ros2_bridge`` to the world. One
+bridge serves every robot: give each spawn its own ``namespace:`` and its topics and frames land
+under ``/<namespace>/...`` (see :doc:`architecture` §13, *Namespacing*, for the bridge's own
+``namespace`` and its ``owner`` filter).
 
 ``RobotHandle(name, drive(vx, vy, w), read_odom() -> (x, y, yaw, vx, vy, w))`` remains the uniform way
 a controller exposes a robot to *in-process* consumers (teleop, the standalone driver).
@@ -651,10 +652,10 @@ caller to send geometry that nothing can load.
 and from what ``GetEntities`` lists. Its pose does not move, which is the point — parking it out
 of sight leaves a free body accelerating under gravity for as long as it is away, so it comes
 back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the three model fields
-this flips (on its geoms, and on a flex's own copies of them) and why the geom *group* is the one
-that matters: ``mj_multiRay`` ignores
-``contype``/``conaffinity`` and tests the real triangles, so disabling contact alone would leave
-an absent obstacle a perfectly good lidar return.
+this flips (on its geoms, and on a flex's own copies of them) and why disabling contact alone is
+not enough: ``mj_multiRay`` ignores ``contype``/``conaffinity`` and tests the real triangles, so
+it is the zeroed alpha, and the absent geom group that roqsim's raycasts mask by default, that take
+an absent obstacle out of a lidar's returns.
 
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
@@ -674,9 +675,10 @@ Moving one needs a free joint
 `````````````````````````````
 
 ``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
-same joint when it is given a pose. A body compiled without one is welded scenery: it holds the
-pose the world gave it, and both services refuse to move it, naming the weld and the
-``motion: physics`` that resolves it.
+same joint with its ``initial_pose`` -- always, since a request that states no pose asks for the
+origin; to bring an entity back where it was, state that pose. A body compiled without one is
+welded scenery: it holds the pose the world gave it, and both services refuse to move it, naming the
+weld and the ``motion: physics`` that resolves it.
 
 This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
 exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an
