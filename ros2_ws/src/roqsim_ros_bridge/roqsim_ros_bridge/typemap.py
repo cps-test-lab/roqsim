@@ -48,8 +48,6 @@ producer's own hints -- and the converters. For a decorated endpoint:
   the binding naming every mismatch (:meth:`Binding.prepare`) rather than dropping one;
 * with neither, the endpoint is not on ROS: :func:`describe` says so and the bridge logs it;
 * a command without parameters is a ``std_srvs/Trigger`` service;
-* an ``out`` returning nothing carries only its ``static_tf`` hint, published once, and binds as a
-  ``tf2_msgs/TFMessage`` on ``tf``;
 * the topic is the world's ``topics:`` name (``Endpoint.topic``), else the hint's, else the
   endpoint's name; the QoS is the world's ``qos:`` (``Endpoint.qos``), else the hint's, else
   ``default``.
@@ -777,8 +775,6 @@ def resolve(ep) -> Binding | None:
         return _service(ep, hints)
 
     carried = ep.payload_type if ep.payload_type is not None else ep.result
-    if ep.direction == "out" and carried is not None and carried.kind == "none":
-        return _static_tf(ep, hints, required=bool(raw))
     field_name = hints.get("field") if ep.direction == "out" else None
     if field_name is not None and carried is not None:
         carried = _field_type(carried, field_name)
@@ -836,22 +832,6 @@ def resolve(ep) -> Binding | None:
         hints["qos"] = _qos(ep, hints)
     binding.hints = hints
     return binding
-
-
-def _static_tf(ep, hints: dict, required: bool) -> Binding:
-    """An ``out`` returning nothing: it exists to carry the static transforms of its ``static_tf``
-    hint, which the bridge publishes once on ``/tf_static``. It binds as a ``TFMessage`` on ``tf``,
-    and its read, always ``None``, is never filled."""
-    if not hints.get("static_tf"):
-        return Binding(
-            hints=None,
-            required=required,
-            reason="it returns nothing, so it is on ROS only to carry a static_tf hint",
-        )
-    hints.setdefault("type", "tf2_msgs.msg.TFMessage")
-    hints["topic"] = ep.topic or hints.get("topic") or "tf"
-    hints["qos"] = _qos(ep, hints)
-    return Binding(hints=hints)
 
 
 _TF_TYPES = (T.Transform, T.Transforms)
