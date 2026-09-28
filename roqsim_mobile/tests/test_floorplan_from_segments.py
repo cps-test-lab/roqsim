@@ -79,7 +79,9 @@ def test_a_door_is_a_hole_with_a_beam_over_it():
 
 def test_a_full_height_opening_keeps_a_true_doorway():
     engine = _world(
-        lines=ROOM, height=2.0, opening_height=2.0,
+        lines=ROOM,
+        height=2.0,
+        opening_height=2.0,
         doors=[{"line_id": 0, "t": 0.5, "width_m": 0.9}],
     )
 
@@ -115,19 +117,37 @@ def test_a_layout_can_come_from_the_file_the_sketch_tools_write(tmp_path):
     assert len(_walls(_world(floorplan=str(path)))) == 4
 
 
-@pytest.mark.parametrize("config,expected", [
-    ({}, "exactly one source"),
-    ({"lines": ROOM, "mesh": "x.stl"}, "exactly one source"),
-    ({"lines": [], "doors": []}, "'lines' is empty"),
-    ({"lines": ROOM, "height": 1.0, "opening_height": 2.0}, "taller than"),
-    ({"lines": ROOM, "thickness": 0.0}, "'thickness' must be > 0"),
-])
+@pytest.mark.parametrize(
+    "config,expected",
+    [
+        ({}, "exactly one source"),
+        ({"lines": ROOM, "mesh": "x.stl"}, "exactly one source"),
+        ({"lines": [], "doors": []}, "'lines' is empty"),
+        ({"lines": ROOM, "height": 1.0, "opening_height": 2.0}, "taller than"),
+        ({"lines": ROOM, "thickness": 0.0}, "'thickness' must be > 0"),
+    ],
+)
 def test_an_unusable_floorplan_is_refused_at_load(config, expected):
     """Before a world is built, and naming the key. Naming BOTH sources is refused too: there is
     no rule for which would win, and picking one silently is how a world stops meaning what it
     says."""
     with pytest.raises(Exception, match=expected):
         _world(**config)
+
+
+@pytest.mark.parametrize(
+    "doc,expected",
+    [
+        ({"version": 99, "lines": ROOM}, "floorplan sketch version 99"),
+        ({"lines": ROOM, "doors": [{"id": 0, "line_id": 0, "t": 0.5, "widht_m": 1}]}, "width_m"),
+    ],
+)
+def test_a_sketch_file_it_cannot_read_is_refused(tmp_path, doc, expected):
+    """A newer sketch, or a misspelt key, would otherwise build walls from the keys that overlap."""
+    path = tmp_path / "rooms.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    with pytest.raises(Exception, match=expected):
+        _world(floorplan=str(path))
 
 
 def test_a_missing_floorplan_file_says_so():
