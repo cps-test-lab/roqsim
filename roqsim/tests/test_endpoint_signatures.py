@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 from typing import Annotated
@@ -111,6 +112,14 @@ def test_a_misfit_is_refused_into_the_future_before_anything_is_queued(payload, 
         with pytest.raises(ParameterError, match=re.escape(message)):
             future.result(timeout=0)
         assert "It takes vx: float, m/s, w: float, rad/s = 0.0" in str(future._error)
+
+
+def test_a_refused_command_is_logged_for_a_caller_that_never_reads_the_future(caplog):
+    # A topic feeding a command fires and forgets; the refusal must still be visible.
+    engine, _ = _engine()
+    with engine, caplog.at_level(logging.WARNING):
+        engine.ctx.interface.find("box", "set_speed").write({"vxx": 0.2})
+    assert "unknown parameter 'vxx' (did you mean 'vx'?)" in caplog.text
 
 
 def test_every_misfit_is_named_at_once():

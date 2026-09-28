@@ -1387,9 +1387,9 @@ it received; that is not an endpoint).
      - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
        ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
        ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
-       ``walker`` (``body_poses``), ``navigator`` (its route commands, today posted from the
-       write), ``conveyor`` (``speed``; ``package_pose``), ``door`` (``cmd``, ``door``; ``state``),
-       ``prop_trajectory`` (``stage_progress``)
+       ``walker`` (``body_poses``), ``navigator`` (its route commands), ``conveyor`` (``speed``;
+       ``package_pose``), ``door`` (``cmd``, ``door``; ``state``), ``prop_trajectory``
+       (``stage_progress``)
      - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
        ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
        ``package_pose`` (``owner=`` the package entity, ``namespace=""``)

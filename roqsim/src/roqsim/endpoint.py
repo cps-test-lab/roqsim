@@ -702,6 +702,9 @@ def _submitter(ctx: SimContext, method: Callable, params: tuple[Param, ...], whe
         try:
             kwargs = _bind(params, payload, where)
         except ParameterError as exc:
+            # Logged here as well as handed back: a transport that fires and forgets (a topic
+            # feeding a command) never reads the future, and the refusal must not vanish.
+            ctx.logger.warning("%s", exc)
             refused = CommandFuture()
             refused._resolve(error=exc)
             return refused
