@@ -74,7 +74,7 @@ def _drive(ctx, plugin, seconds, *, vx=0.0, wz=0.0, lift=0.0):
         ctx.data.qvel[:6] = [vx, 0.0, lift, 0.0, 0.0, wz]
         mujoco.mj_step(ctx.model, ctx.data)
         plugin.post_step(ctx)
-    return plugin.read_state()
+    return plugin.upright()
 
 
 def _run(ctx, plugin, seconds):
@@ -82,7 +82,7 @@ def _run(ctx, plugin, seconds):
     for _ in range(int(seconds / ctx.model.opt.timestep)):
         mujoco.mj_step(ctx.model, ctx.data)
         plugin.post_step(ctx)
-    return plugin.read_state()
+    return plugin.upright()
 
 
 def test_a_body_driving_along_the_floor_is_upright():
@@ -195,7 +195,7 @@ def test_a_reset_forgets_the_verdict_and_the_reference():
     mujoco.mj_forward(ctx.model, ctx.data)
     plugin.on_reset(ctx)
 
-    assert plugin.read_state().upright is True
+    assert plugin.upright().upright is True
     assert _run(ctx, plugin, 1.0).upright is True
 
 
@@ -294,7 +294,7 @@ def test_a_driven_body_written_into_a_bad_pose_is_still_reported():
     ctx = _mocap_ctx()
     plugin = _plugin(ctx)
     _run(ctx, plugin, 0.05)
-    assert plugin.read_state().upright is True
+    assert plugin.upright().upright is True
 
     ctx.data.mocap_quat[0] = [math.cos(math.pi / 4), math.sin(math.pi / 4), 0.0, 0.0]
     mujoco.mj_forward(ctx.model, ctx.data)

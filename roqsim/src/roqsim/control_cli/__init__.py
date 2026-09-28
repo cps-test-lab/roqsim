@@ -127,11 +127,18 @@ def _describe(sim, args) -> int:
             print(f"{row['path']:<48} {row['kind']}")
         return exit_status.OK
     print(entry["path"])
-    print(
-        f"  kind: {entry['kind']}" + (f", {entry['rate_hz']:g} Hz" if entry.get("rate_hz") else "")
-    )
+    rate = f", {entry['rate_hz']:g} Hz" if entry.get("rate_hz") else ""
+    if rate and entry.get("rate_from"):
+        rate += f" (from {entry['rate_from']})"
+    print(f"  kind: {entry['kind']}{rate}")
+    if entry.get("when"):
+        print(f"  present when: {entry['when']}")
+    if entry.get("family"):
+        print(f"  one of a family, per item of: {entry['family']}")
     if entry.get("doc"):
         print("  " + entry["doc"].replace("\n", "\n  "))
+    if entry["kind"] != "out" and entry.get("payload"):
+        print(f"  takes: {_typed(entry['payload'])}")
     for param in entry.get("params") or []:
         print(
             f"  parameter {_typed(param)}" + ("" if param["required"] else f" = {param['default']}")

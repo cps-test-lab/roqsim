@@ -14,7 +14,7 @@ import time
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from .seed import SeedError
 
@@ -162,11 +162,13 @@ class Endpoint:
     :mod:`roqsim.endpoint` produce: a command's write returns a :class:`CommandFuture`, a stream's
     stores the payload in a latest-value :class:`StreamSlot`. A bridge calls it directly.
 
-    ``params`` and ``result`` are the endpoint's schema, as data any bridge can read (see
-    :mod:`roqsim.endpoint`). An ``in`` endpoint with ``params`` takes a mapping of those names
-    (``None`` for none) and checks it before queueing: a command's ``write`` returns a future that
-    raises :class:`roqsim.endpoint.ParameterError` for a misfit, a stream's raises it to the caller.
-    ``result`` types the ``out`` payload or the command's outcome.
+    ``params``, ``result`` and ``payload_type`` are the endpoint's schema, as data any bridge can
+    read (see :mod:`roqsim.endpoint`). An ``in`` endpoint with ``params`` takes a mapping of those
+    names (``None`` for none) and checks it before queueing: a command's ``write`` returns a future
+    that raises :class:`roqsim.endpoint.ParameterError` for a misfit, a stream's raises it to the
+    caller. ``result`` types the ``out`` payload or the command's outcome, and ``payload_type`` is
+    what a transport carries, which is how a bridge serves a decorated endpoint that names no wire
+    type (``transport``). ``topic`` and ``qos`` are what the world set for it.
 
     An ``in`` endpoint says what *kind* of interaction it is through its backend hints, and the choice
     is about the interaction rather than about taste: a plain ``type`` is a stream with no answer, a
@@ -207,7 +209,7 @@ class Endpoint:
     read: Callable[[], Any] | None = None
     write: Callable[[Any], None] | None = None
     rate_hz: float = 0.0
-    backend: dict[str, dict] = field(default_factory=dict)
+    backend: dict[str, dict | None] = field(default_factory=dict)
     has_subscribers: Callable[[], bool] | None = None
     lazy: bool = False
     marshalled: bool = (
@@ -220,6 +222,20 @@ class Endpoint:
     #: The type of what ``read`` returns (``out``) or what a command's future resolves to, as
     #: :class:`roqsim.endpoint.ValueType`; ``None`` when not declared.
     result: ValueType | None = None
+    #: The type a transport carries (:class:`roqsim.endpoint.ValueType`): an ``out``'s result, or the
+    #: dataclass an ``in`` endpoint takes -- its ``params`` are that type's fields, by name, or its one
+    #: parameter is the whole value. ``None`` when not declared. A bridge maps it to its wire type.
+    payload_type: ValueType | None = None
+    #: The world's name for this endpoint on a transport (the producer's ``topics:`` config): absolute
+    #: with a leading ``/``, else under ``namespace``. ``None``: the backend's hint, else ``name``.
+    topic: str | None = None
+    #: The world's quality of service for this endpoint (the producer's ``qos:`` config), as a full
+    #: profile of :func:`roqsim.endpoint.qos_profile`; it wins over a backend hint's. ``None``: unset.
+    qos: dict[str, Any] | None = None
+    #: A bridge serves this endpoint without a hint block for its backend, from ``payload_type``'s
+    #: default mapping; a hint block of ``None`` keeps it off that backend. Set for every decorated
+    #: endpoint. ``False``: served only by a backend whose hint block it carries.
+    transport: bool = False
     #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
     #: :func:`endpoint_kind` infers from its direction and hints.
     kind: str = ""
@@ -234,6 +250,10 @@ class Endpoint:
     slot: StreamSlot | None = None
     #: What it is, for a reader outside the process: a decorated method's docstring.
     doc: str = ""
+    #: Where a decorated endpoint's options come from, for a reader outside the process: ``rate``
+    #: (``{"from": <attribute or config key>}``), ``when`` and ``family`` (the key named), each
+    #: ``"computed"`` for a callable and absent where not given. Empty on a hand-built endpoint.
+    options: dict[str, Any] = field(default_factory=dict)
 
 
 def endpoint_kind(ep: Endpoint) -> str:
@@ -252,13 +272,19 @@ def endpoint_kind(ep: Endpoint) -> str:
     return "command"
 
 
-class CommandFuture:
+_T = TypeVar("_T")
+
+
+class CommandFuture(Generic[_T]):
     """The outcome of a command submitted to the physics thread (:meth:`SimContext.submit`).
 
     A caller on another thread waits for it with a timeout. :meth:`result` returns what the command
     returned or raises what it raised; :meth:`wait` only says whether it has run. A command that
     raises while nobody is blocked in :meth:`result` is also logged, so a failure whose caller gave
     up waiting, or never asked, is not lost.
+
+    A command that answers only later returns one of its own, and declares what it resolves to:
+    ``-> CommandFuture[RunState]`` is described as a ``RunState`` result.
     """
 
     __slots__ = ("_done", "_error", "_lock", "_value", "_waiters")

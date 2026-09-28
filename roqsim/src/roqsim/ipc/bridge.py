@@ -1,9 +1,12 @@
 """The ``ipc`` bridge: every endpoint of a running simulation, served on demand over ZeroMQ.
 
 A second transport beside ROS 2, and the one ``roqsim sim`` starts by default (``--control``). It
-needs no per-endpoint type, so it wires every endpoint (:attr:`~roqsim.bridge.BridgeBase.WIRES_ALL`);
-an endpoint opts out with ``backend={"ipc": False}``. Each endpoint has a path built from the plugin
-that registered it and its name -- ``robot.lidar`` + ``scan`` is ``robot/lidar/scan``.
+carries every payload as it is, so it wires every endpoint, hand-built ones included
+(:meth:`IpcBridge._hints_for`); an endpoint opts out with ``ipc=None``. Each endpoint has a path built
+from the plugin that registered it and its name -- ``robot.lidar`` + ``scan`` is ``robot/lidar/scan``.
+``describe`` gives an endpoint's schema -- its payload type, parameters and units, and the
+attribute or config key its rate and presence come from -- and what each other bridge made of it
+(its ROS topic, type and QoS).
 
 **Nothing runs per physics step while nobody asks.** Two sockets:
 
@@ -101,7 +104,6 @@ class IpcBridge(BridgeBase):
     """Serve every endpoint over ZeroMQ at ``uri``; see the module docstring."""
 
     BACKEND = "ipc"
-    WIRES_ALL = True
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
@@ -179,7 +181,7 @@ class IpcBridge(BridgeBase):
                     f"two endpoints would share the control path {path!r}: {other.name!r} of "
                     f"{other.producer or other.owner!r} and {ep.name!r} of "
                     f"{ep.producer or ep.owner!r}. Rename one, or keep one off this transport "
-                    "with backend={'ipc': False}."
+                    "with ipc=None."
                 )
             self._paths[path] = ep
         self._inputs = {path_of(ep): cb for ep, cb in self._bound_inputs}
@@ -220,6 +222,10 @@ class IpcBridge(BridgeBase):
         self._registration = None
 
     # -- binding hooks ------------------------------------------------------------------------------
+    def _hints_for(self, ep: Endpoint) -> dict | None:
+        """Every endpoint, with its ``ipc`` hints or none; a hint block of ``None`` keeps it off."""
+        return ep.backend.get(self.BACKEND, {})
+
     def _make_output(self, ep: Endpoint, hints: dict) -> str:
         return path_of(ep)
 
@@ -374,7 +380,7 @@ class IpcBridge(BridgeBase):
             for ep in self._ctx.interface.all():
                 if id(ep) in known or ep.direction != "out" or ep.read is None:
                     continue
-                if ep.backend.get(self.BACKEND) is False:
+                if self._hints_for(ep) is None:
                     continue
                 self._paths.setdefault(path_of(ep), ep)
 
@@ -414,11 +420,19 @@ class IpcBridge(BridgeBase):
         if not full:
             return entry
         entry.update(producer=ep.producer, namespace=ep.namespace)
+        # Where a decorated endpoint's rate, presence and family come from: an attribute or config key.
+        if isinstance(ep.options.get("rate"), dict):
+            entry["rate_from"] = ep.options["rate"]["from"]
+        for key in ("when", "family"):
+            if key in ep.options:
+                entry[key] = ep.options[key]
         # The declared hints of every backend, as data: what the endpoint asks of each transport.
         entry["hints"] = {
             key: hints for key, hints in ep.backend.items() if isinstance(hints, dict)
         }
         # The typed schema, where the endpoint declares one (roqsim.endpoint).
+        if ep.payload_type is not None:
+            entry["payload"] = ep.payload_type.describe()
         if ep.params is not None:
             entry["params"] = [p.describe() for p in ep.params]
         if ep.result is not None:

@@ -15,18 +15,65 @@ control plane of its own::
 which a bridge waits on in turn: their answer is the state after the step in flight, the steps or
 the reset have run, which is later than the command itself.
 
+They are served over the control socket only (``ros2=None``): a ROS system has its own
+simulation-control services.
+
 Only the standalone driver honours it. Under scenario-execution the scenario owns stepping, and the
 adapter never adds this plugin.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
 
 from .. import control as ctl
 from .. import endpoint
 from ..context import CommandFuture, SimContext
 from ..plugin import Plugin
+from ..types import Duration
+
+
+@dataclass
+class RunState:
+    """Where the run is.
+
+    Attributes:
+        state: playing, paused, stopped or quitting
+        sim_time: simulated time
+        episode: the episode, counted by resets
+    """
+
+    state: str
+    sim_time: Duration
+    episode: int
+
+
+@dataclass
+class Stepped:
+    """What a ``step`` took.
+
+    Attributes:
+        steps: steps asked for
+        completed: all of them ran
+        sim_time: simulated time after the last
+    """
+
+    steps: int
+    completed: bool
+    sim_time: Duration
+
+
+@dataclass
+class ResetDone:
+    """Where a reset left the run.
+
+    Attributes:
+        sim_time: simulated time after the reset
+        episode: the episode it started
+    """
+
+    sim_time: Duration
+    episode: int
 
 
 class RunControlPlugin(Plugin):
@@ -38,43 +85,47 @@ class RunControlPlugin(Plugin):
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx: SimContext | None = None
-        self._reset_waiters: list[CommandFuture] = []
+        self._reset_waiters: list[CommandFuture[ResetDone]] = []
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
 
-    @endpoint.out("state")
-    def state(self) -> dict:
+    @endpoint.out(ros2=None)
+    def state(self) -> RunState:
         """The run's state (playing, paused, stopped, quitting), its sim time and its episode."""
         ctx = self._ctx
-        return {
-            "state": ctl.STATE_NAMES.get(ctx.control.state, str(ctx.control.state)),
-            "sim_time": float(ctx.sim_time),
-            "episode": int(ctx.episode),
-        }
+        return RunState(
+            ctl.STATE_NAMES.get(ctx.control.state, str(ctx.control.state)),
+            float(ctx.sim_time),
+            int(ctx.episode),
+        )
 
-    @endpoint.command("pause")
-    def pause(self) -> CommandFuture:
+    @endpoint.command(ros2=None)
+    def pause(self) -> CommandFuture[RunState]:
         """Stop stepping. Commands sent while paused still run, and time does not advance."""
         self._ctx.control.set_state(ctl.PAUSED)
         return self._after_step_in_flight()
 
-    def _after_step_in_flight(self) -> CommandFuture:
+    def _after_step_in_flight(self) -> CommandFuture[RunState]:
         # A command drains at the start of a step, which still runs: answer after it, with the
         # state and time the run actually stopped at.
         ctx, done = self._ctx, CommandFuture()
         ctx.control.at_next_loop(lambda: ctx.post(lambda _c: done._resolve(self.state())))
         return done
 
-    @endpoint.command("resume")
-    def resume(self) -> dict:
+    @endpoint.command(ros2=None)
+    def resume(self) -> RunState:
         """Step again. The pacing starts afresh, so the pause is not counted as falling behind."""
         self._ctx.control.set_state(ctl.PLAYING)
         return self.state()
 
-    @endpoint.command("step")
-    def step(self, n: Annotated[int, "steps to take"] = 1) -> CommandFuture:
-        """Take N steps (default 1) while paused; the reply comes once they ran, with the sim time."""
+    @endpoint.command(ros2=None)
+    def step(self, n: int = 1) -> CommandFuture[Stepped]:
+        """Take N steps (default 1) while paused; the reply comes once they ran, with the sim time.
+
+        Args:
+            n: steps to take
+        """
         ctx = self._ctx
         if ctx.control.state != ctl.PAUSED:
             raise RuntimeError(
@@ -89,17 +140,13 @@ class RunControlPlugin(Plugin):
         def finished(completed: bool) -> None:
             # Runs on the driver's thread just before the last step; posted, so the reply is read
             # at the next drain -- after that step, when the time it reports has been reached.
-            ctx.post(
-                lambda c: done._resolve(
-                    {"steps": count, "completed": completed, "sim_time": float(c.sim_time)}
-                )
-            )
+            ctx.post(lambda c: done._resolve(Stepped(count, completed, float(c.sim_time))))
 
         ctx.control.request_steps(count, on_done=finished)
         return done
 
-    @endpoint.command("reset")
-    def reset(self) -> CommandFuture:
+    @endpoint.command(ros2=None)
+    def reset(self) -> CommandFuture[ResetDone]:
         """Reset the world to its initial state; the reply comes once the reset has run."""
         done = CommandFuture()
         self._reset_waiters.append(done)
@@ -109,7 +156,7 @@ class RunControlPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         waiters, self._reset_waiters = self._reset_waiters, []
         for done in waiters:
-            done._resolve({"sim_time": float(ctx.sim_time), "episode": int(ctx.episode)})
+            done._resolve(ResetDone(float(ctx.sim_time), int(ctx.episode)))
 
     def validate_config(self, config: dict) -> list[str]:
         return [f"run_control takes no config, got {sorted(config)}"] if config else []

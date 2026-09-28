@@ -23,6 +23,7 @@ from roqsim.ipc.bridge import IpcBridge  # noqa: E402
 from roqsim.plugin import Plugin  # noqa: E402
 from roqsim.plugins.dummy import DummyPlugin  # noqa: E402
 from roqsim.plugins.run_control import RunControlPlugin  # noqa: E402
+from roqsim.types import AngularSpeed, Speed, Twist  # noqa: E402
 
 
 class Tank(Plugin):
@@ -32,23 +33,26 @@ class Tank(Plugin):
         super().__init__(config, **kw)
         self.reads = 0
         self.setpoints: list = []
+        self.twists: list = []
         self.verdict = "none"
         self.pending = False
+        self.level_rate_hz = 100.0
+        self.steerable = True
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
 
-    @endpoint.out(rate_hz=100.0)
+    @endpoint.out(rate="level_rate_hz")
     def level(self) -> dict:
         """How full it is."""
         self.reads += 1
         return {"litres": 3.5, "profile": np.arange(6, dtype=np.float32).reshape(2, 3)}
 
-    @endpoint.out()
+    @endpoint.out
     def report(self) -> dict:
         return {"verdict": self.verdict}
 
-    @endpoint.command("drain", confirm="report")
+    @endpoint.command(confirm="report")
     def drain(self, litres: float | None = None) -> dict:
         """Let some out."""
         if litres is not None and litres < 0:
@@ -56,13 +60,23 @@ class Tank(Plugin):
         self.pending = True
         return {"drained": litres}
 
-    @endpoint.command("stall")
+    @endpoint.command
     def stall(self) -> None:
         return None
 
-    @endpoint.stream("setpoint")
+    @endpoint.stream(name="setpoint")
     def set_setpoint(self, value: list[float]) -> None:
         self.setpoints.append(value)
+
+    @endpoint.stream(Twist, when="steerable")
+    def stir(self, vx: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Stir the water.
+
+        Args:
+            vx: paddle speed
+            wz: paddle turn rate
+        """
+        self.twists.append((vx, wz))
 
     def post_step(self, ctx: SimContext) -> None:
         if self.pending:  # the verdict a step records after the command
@@ -140,6 +154,29 @@ def test_read_describe_and_array_frames_round_trip(uri):
         assert full["doc"] == "Let some out." and full["confirm"] == "box/tank/report"
         assert [p["name"] for p in full["params"]] == ["litres"]
         assert full["params"][0]["type"] == "float" and not full["params"][0]["required"]
+        level = sim.describe("box/tank/level")
+        assert (level["rate_hz"], level["rate_from"]) == (100.0, "level_rate_hz")
+
+
+def test_describe_gives_the_payload_type_its_units_and_the_key_it_is_present_by(uri):
+    with Sim(uri) as run, Client(uri) as sim:
+        stir = sim.describe("box/tank/stir")
+        assert stir["kind"] == "stream" and stir["when"] == "steerable"
+        assert stir["payload"]["type"] == "Twist"
+        assert {f["name"]: f.get("unit") for f in stir["payload"]["fields"]}["wz"] == "rad/s"
+        assert [(p["name"], p["unit"]) for p in stir["params"]] == [("vx", "m/s"), ("wz", "rad/s")]
+        assert sim.call("box/tank/stir", {"wz": 0.5}) == {"queued": True}
+        deadline = time.monotonic() + 5
+        while not run.tank.twists and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert run.tank.twists[-1] == (0.0, 0.5)
+        assert stir["doc"] == "Stir the water.", "the Args: section is in params, not the doc"
+        state = sim.describe("sim/run_control/state")
+        assert state["result"]["type"] == "RunState"
+        units = {f["name"]: f.get("unit") for f in state["result"]["fields"]}
+        assert units["sim_time"] == "s"
+        # A command answering later declares what its future resolves to.
+        assert sim.describe("sim/run_control/step")["result"]["type"] == "Stepped"
 
 
 def test_a_command_replies_with_its_confirmation_and_a_refusal_with_its_own_text(uri):
@@ -271,9 +308,9 @@ def test_two_endpoints_on_one_path_are_refused_naming_both(uri):
             pass
 
 
-def test_an_endpoint_opts_out_with_a_false_hint(uri):
+def test_an_endpoint_opts_out_with_a_none_hint(uri):
     class Quiet(Plugin):
-        @endpoint.out(ipc=False)
+        @endpoint.out(ipc=None)
         def secret(self) -> int:
             return 1
 
@@ -318,6 +355,9 @@ def test_discovery_finds_the_only_running_simulator(uri):
 def test_describe_names_the_endpoint_on_the_other_transports(uri):
     class Wire(BridgeBase):
         BACKEND = "wire"
+
+        def _hints_for(self, ep):
+            return ep.backend.get(self.BACKEND)  # only what names this transport
 
         def _make_output(self, ep, hints):
             self._names[id(ep)] = {"topic": "/resolved/" + hints["topic"]}
