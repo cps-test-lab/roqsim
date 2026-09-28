@@ -37,13 +37,19 @@ sits rather than a config key::
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+from typing import Annotated
+
 import mujoco
 import numpy as np
 import onnxruntime as ort
 import yaml
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
-from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.endpoint import Unit
+from roqsim.odometry import CommandWatchdog, PlanarOdometry, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
 
 from ..policy import OLI_CONFIG, OLI_POLICY
@@ -139,7 +145,6 @@ class OliLocomotionPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
         self._ctx = ctx
 
@@ -197,63 +202,33 @@ class OliLocomotionPlugin(Plugin):
         self._qadr = np.array([m.jnt_qposadr[j] for j in jids], dtype=np.int32)
         self._dadr = np.array([m.jnt_dofadr[j] for j in jids], dtype=np.int32)
 
-        # -- RobotHandle + backend-neutral endpoints (identical contract to g1/diff_drive) -------
+        # -- RobotHandle for in-process consumers (teleop, standalone driver) ------------------
         ctx.blackboard.set(
             f"robot:{self.robot}",
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": "base_link",
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
 
     # -- command / readback -------------------------------------------------------------------
+    # The robot's I/O as backend-neutral endpoints, the same contract as diff_drive's. The namespace
+    # (own config, else the spawn's) scopes topics and frames per robot.
+    @endpoint.stream(
+        "cmd_vel",
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.Twist",
+            "topic": self.topic_override("cmd_vel") or "cmd_vel",
+        },
+    )
+    def command_twist(
+        self,
+        vx: Annotated[float, Unit("m/s"), "forward speed"],
+        vy: Annotated[float, Unit("m/s"), "sideways speed, to the left"] = 0.0,
+        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
+    ) -> None:
+        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step.
+
+        Clamped to the range the policy was trained on."""
+        self.drive(vx, vy, w)
+
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vx forward, vy left, w yaw-rate), clamped to the trained range."""
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
@@ -261,11 +236,38 @@ class OliLocomotionPlugin(Plugin):
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
         self.watchdog.stamp(self._ctx)
 
-    def read_odom(self):
+    @endpoint.out(
+        "odom",
+        rate_hz=50.0,
+        ros2=lambda self: {
+            "type": "nav_msgs.msg.Odometry",
+            "topic": self.topic_override("odom") or "odom",
+            "frame_id": "odom",
+            "child_frame_id": "base_link",
+            "emit_tf": True,
+        },
+    )
+    def read_odom(self) -> PlanarOdometry:
+        """Endpoint ``odom``: the base's pose and twist, from the spawn pose."""
         # Computed on demand at the endpoint rate (cf. g1). Trailing z is the pelvis height (~0.9 m).
         return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
-    def read_joint_states(self):
+    @endpoint.out(
+        "joint_states",
+        rate_hz=50.0,
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.JointState",
+            "topic": self.topic_override("joint_states") or "joint_states",
+        },
+    )
+    def read_joint_states(
+        self,
+    ) -> tuple[
+        Annotated[Sequence[str], "the driven joints, in policy order"],
+        Annotated[NDArray[np.float64], Unit("rad")],
+        Annotated[NDArray[np.float64], Unit("rad/s")],
+    ]:
+        """Endpoint ``joint_states``: the positions and velocities of the driven joints."""
         d = self._ctx.data
         return (JOINTS, d.qpos[self._qadr], d.qvel[self._dadr])
 

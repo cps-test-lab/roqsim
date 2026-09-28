@@ -24,10 +24,15 @@ sits rather than a config key::
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
 
 
@@ -51,7 +56,6 @@ class AgibotG2ControllerPlugin(Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         tag = prefix + self.POS_TAG
 
         for aid in range(m.nu):
@@ -78,38 +82,6 @@ class AgibotG2ControllerPlugin(Plugin):
         self._apply_stance(ctx)
 
         ctx.blackboard.set(f"robot_body:{self.robot}", _G2BodyHandle(self))
-
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="joint_command",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=self._on_command,
-                backend={
-                    "ros2": {
-                        "type": "trajectory_msgs.msg.JointTrajectory",
-                        "topic": self.topic_override("joint_command") or "joint_command",
-                    }
-                },
-            )
-        )
 
     def _apply_stance(self, ctx: SimContext) -> None:
         """Seed reset qpos + held target from the model's qpos0, then overlay the `rest` stance.
@@ -139,12 +111,44 @@ class AgibotG2ControllerPlugin(Plugin):
             if n in idx:
                 self._target[idx[n]] = float(p)
 
-    def _on_command(self, traj) -> None:
-        """Single-point JointTrajectory (names, points[-1].positions) -> held targets."""
-        names, positions = traj
+    # The body's I/O as backend-neutral endpoints; the namespace (own config, else the spawn's)
+    # scopes the topics per robot.
+    @endpoint.command(
+        "joint_command",
+        ros2=lambda self: {
+            "type": "trajectory_msgs.msg.JointTrajectory",
+            "topic": self.topic_override("joint_command") or "joint_command",
+        },
+    )
+    def joint_command(
+        self,
+        names: Annotated[
+            list[str], "joints to move; a name this controller does not drive is ignored"
+        ],
+        positions: Annotated[list[float], Unit("rad"), "target angle per name"],
+    ) -> None:
+        """Endpoint ``joint_command``: hold the named joints at these targets.
+
+        The joints it does not name keep theirs. A command rather than a stream, so every message is
+        applied in order: each may name only some joints."""
         self.set_targets(names, positions)
 
-    def read_joint_states(self):
+    @endpoint.out(
+        "joint_states",
+        rate_hz=50.0,
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.JointState",
+            "topic": self.topic_override("joint_states") or "joint_states",
+        },
+    )
+    def read_joint_states(
+        self,
+    ) -> tuple[
+        Annotated[list[str], "the driven joints, unprefixed, in model order"],
+        Annotated[NDArray[np.float64], Unit("rad")],
+        Annotated[NDArray[np.float64], Unit("rad/s")],
+    ]:
+        """Endpoint ``joint_states``: the body's servoed joints' positions and velocities."""
         m, d = self._ctx.model, self._ctx.data
         pos = np.array([d.qpos[m.jnt_qposadr[j]] for j in self._jids])
         vel = np.array([d.qvel[m.jnt_dofadr[j]] for j in self._jids])
