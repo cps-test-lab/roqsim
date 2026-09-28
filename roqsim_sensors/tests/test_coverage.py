@@ -221,6 +221,32 @@ def test_object_surface_points_label_the_table_not_walls():
     assert not any("wall" in n or "floor" in n for n in names)  # structure excluded by name
 
 
+@pytest.mark.parametrize("sample", ["volume", "objects", "both"])
+def test_the_cli_samples_exactly_what_the_plugins_sample(sample):
+    """One sample set for every caller: two coverage figures are comparable only if they sampled
+    the same points, so the CLI goes through the same helper the runtime plugins use."""
+    from argparse import Namespace
+
+    from roqsim_sensors.coverage import cli, sampling
+
+    m, d = _room()
+    args = Namespace(sample=sample, resolution=0.5, heights=[0.5, 1.0], per_object=16)
+    points, labels, names = cli._build_samples(m, d, args)
+    expected = sampling.sample_set(
+        m,
+        d,
+        volume=sample in ("volume", "both"),
+        objects=sample in ("objects", "both"),
+        resolution=0.5,
+        heights=(0.5, 1.0),
+        per_object=16,
+    )
+    assert len(points) > 0
+    np.testing.assert_array_equal(points, expected[0])
+    np.testing.assert_array_equal(labels, expected[1])
+    assert names == expected[2]
+
+
 def test_build_report_schema_and_gaps():
     from roqsim_sensors.coverage.report import build_report
 

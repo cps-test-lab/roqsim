@@ -20,8 +20,8 @@ There are three front doors onto the same core:
 
 The first and third ask where to put a sensor; the second asks what a sensor that moves ended up
 seeing. They are the same range → FOV → line-of-sight computation, so a number from one is
-comparable with a number from another only when both sampled the same way — which is why the two
-plugins share one sample-set builder.
+comparable with a number from another only when both sampled the same way — which is why all three
+build their points with one sample-set builder.
 
 Concepts
 --------

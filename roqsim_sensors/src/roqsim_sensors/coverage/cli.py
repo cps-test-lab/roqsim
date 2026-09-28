@@ -30,8 +30,6 @@ import json
 import sys
 from pathlib import Path
 
-import numpy as np
-
 from roqsim import exit_status
 from roqsim.override_options import (
     add_override_options,
@@ -120,25 +118,18 @@ def _read_placements(path: str) -> list[dict]:
 def _build_samples(model, data, args):
     from . import sampling
 
-    points_list = []
-    labels_list = []
-    names: list[str] = []
     want = args.sample
-    if want in ("volume", "both"):
-        heights = tuple(float(h) for h in args.heights)
-        vol = sampling.room_volume_points(model, data, resolution=args.resolution, heights=heights)
-        if len(vol):
-            points_list.append(vol)
-            labels_list.append(np.full(len(vol), -1))
-    if want in ("objects", "both"):
-        surf, lab, names = sampling.object_surface_points(model, data, per_object=args.per_object)
-        if len(surf):
-            points_list.append(surf)
-            labels_list.append(lab)
-    if not points_list:
+    points, labels, names = sampling.sample_set(
+        model,
+        data,
+        volume=want in ("volume", "both"),
+        objects=want in ("objects", "both"),
+        resolution=args.resolution,
+        heights=tuple(float(h) for h in args.heights),
+        per_object=args.per_object,
+    )
+    if len(points) == 0:
         raise SystemExit("no sample points produced -- check --sample / --heights / the world")
-    points = np.vstack(points_list)
-    labels = np.concatenate(labels_list)
     return points, labels, names
 
 
