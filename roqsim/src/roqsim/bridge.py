@@ -24,6 +24,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .endpoint import hints_for
 from .plugin import Plugin
 from .rates import SNAP_NOTABLE, SNAP_QUIET, GridRate, snap_rate
 
@@ -155,9 +156,7 @@ class BridgeBase(Plugin):
         endpoint (``Endpoint.transport``) is bound without one, with an empty block -- a backend
         overrides this to fill in what its payload type maps to.
         """
-        if self.BACKEND in ep.backend:
-            return ep.backend[self.BACKEND]
-        return {} if ep.transport else None
+        return hints_for(ep, self.BACKEND)
 
     def bound_name(self, ep: Endpoint) -> dict | None:
         """What this bridge made of *ep*: its hints, or what the backend resolved them to (a ROS

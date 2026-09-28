@@ -131,6 +131,14 @@ def _describe(sim, args) -> int:
     if rate and entry.get("rate_from"):
         rate += f" (from {entry['rate_from']})"
     print(f"  kind: {entry['kind']}{rate}")
+    lazy = entry.get("lazy")
+    if lazy is True:
+        print("  lazy: not read while nobody subscribes")
+    elif isinstance(lazy, dict):
+        default = f" (default {lazy['default']})" if "default" in lazy else ""
+        print(f"  lazy: per instance, from {lazy['from']}{default}")
+    elif lazy:
+        print(f"  lazy: {lazy} per instance")
     if entry.get("when"):
         print(f"  present when: {entry['when']}")
     if entry.get("family"):

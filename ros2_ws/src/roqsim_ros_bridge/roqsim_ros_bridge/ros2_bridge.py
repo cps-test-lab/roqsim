@@ -230,6 +230,10 @@ class _Pub:
     hints: dict
     msg: Any  # reused message instance, or None when reuse is disabled
     emit_tf: bool
+    # A `static: true` transform endpoint: no publisher of its own, its first value goes to the
+    # static broadcaster once.
+    static: bool = False
+    sent: bool = False
 
 
 class _NamespacedTfPublisher:
@@ -333,6 +337,8 @@ class Ros2Bridge(BridgeBase):
         self._peer_gate = _RateGate(1.0)
         # id(endpoint) -> its typemap.Binding, for every endpoint this bridge binds.
         self._bindings: dict[int, typemap.Binding] = {}
+        # id(endpoint) -> the handle of each `static: true` transform endpoint, read until sent.
+        self._static_outputs: dict[int, _Pub] = {}
 
     def _binding(self, ep) -> typemap.Binding | None:
         """How *ep* travels on ROS (:func:`roqsim_ros_bridge.typemap.resolve`), resolved once."""
@@ -601,13 +607,16 @@ class Ros2Bridge(BridgeBase):
         self._spin_thread = threading.Thread(target=self._executor.spin, daemon=True)
         self._spin_thread.start()
 
+    def _tf_topic(self, *, static: bool) -> str:
+        name = "tf_static" if static else "tf"
+        return f"/{self._tf_namespace}/{name}" if self._tf_namespace else f"/{name}"
+
     def _make_tf_broadcaster(self, *, static: bool):
         """A TF broadcaster whose topic is namespaced when ``tf_namespace`` is set, and the plain
         tf2_ros broadcaster (global ``/tf``) otherwise — so existing worlds are byte-for-byte
         unchanged and only a stack that opts in gets ``/<ns>/tf``."""
         if self._tf_namespace:
-            topic = f"/{self._tf_namespace}/{'tf_static' if static else 'tf'}"
-            return _NamespacedTfPublisher(self._node, topic, static=static)
+            return _NamespacedTfPublisher(self._node, self._tf_topic(static=static), static=static)
         return (StaticTransformBroadcaster if static else TransformBroadcaster)(self._node)
 
     def _gt_topic(self, topic: str) -> str:
@@ -624,6 +633,8 @@ class Ros2Bridge(BridgeBase):
         hints = binding.hints
         msg_type = reg.resolve_type(hints["type"])
         binding.prepare(msg_type)
+        if hints.get("static"):
+            return self._make_static_output(ep, hints, msg_type)
         # The endpoint's own namespace scopes its topic (relative, so any global node namespace
         # still applies on top): ep.namespace="ur10e" -> /ur10e/joint_states. An absolute hardwired
         # topic (leading "/") is used verbatim, bypassing the namespace (see _resolve_topic).
@@ -676,6 +687,52 @@ class Ros2Bridge(BridgeBase):
             msg=msg_type() if self._reuse else None,
             emit_tf=emit_tf,
         )
+
+    def _make_static_output(self, ep, hints: dict, msg_type) -> _Pub:
+        """A ``static: true`` transform endpoint: its first value goes once to the static broadcaster,
+        as a ``static_tf`` hint's transforms do (``publish_static_tf: false`` turns both off)."""
+        if self._publish_static_tf and self._static_tf is None:
+            self._static_tf = self._make_tf_broadcaster(static=True)
+        handle = _Pub(
+            publisher=None,
+            msg_type=msg_type,
+            convert=None,
+            hints={**hints, "frame_prefix": _join_ns(self._frame_prefix, self._eff_ns(ep))},
+            msg=None,
+            emit_tf=False,
+            static=True,
+            sent=not self._publish_static_tf,
+        )
+        self._static_outputs[id(ep)] = handle
+        self._names[id(ep)] = {
+            "topic": self._tf_topic(static=True),
+            "type": hints["type"],
+            "qos": hints["qos"],
+        }
+        return handle
+
+    def _skip_unsubscribed(self, ep) -> bool:
+        """Also skip a static transform endpoint once its value is sent: it is never read again."""
+        handle = self._static_outputs.get(id(ep))
+        if handle is not None:
+            return handle.sent
+        return BridgeBase._skip_unsubscribed(ep)
+
+    def _send_static(self, handle: _Pub, payload) -> None:
+        hints, prefix = handle.hints, handle.hints["frame_prefix"]
+        self._static_tf.sendTransform(
+            [
+                reg.make_static_tf(
+                    reg.to_time_msg(0.0),
+                    reg.namespaced(prefix, t.parent or hints.get("frame_id", "map")),
+                    reg.namespaced(prefix, t.child),
+                    t.translation,
+                    t.rotation,
+                )
+                for t in typemap.transforms_of(payload)
+            ]
+        )
+        handle.sent = True
 
     def _make_input(self, ep, hints: dict, on_payload) -> None:
         binding = self._binding(ep)
@@ -774,6 +831,10 @@ class Ros2Bridge(BridgeBase):
 
     def _publish(self, handle: _Pub, payload, stamp) -> None:
         if self._shutting_down():
+            return
+        if handle.static:
+            if not handle.sent:
+                self._send_static(handle, payload)
             return
         msg = handle.msg if handle.msg is not None else handle.msg_type()
         handle.convert(msg, payload, stamp, handle.hints)

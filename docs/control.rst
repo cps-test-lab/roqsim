@@ -145,9 +145,10 @@ decorator (``backend={"ipc": None}`` on a hand-built one). Three kinds:
    once; the newest value is applied at the next step, or while paused at once.
 
 ``describe`` returns the whole tree, or one endpoint: its kind, rate, docstring, payload type,
-parameters and result with their types and units, the attribute or config key its rate and its
-presence come from, what confirms it, and what the other transports call it (the ROS topic, service
-or action the ROS bridge resolved, with its type and QoS). An unknown path is refused with the nearest known path and its siblings.
+parameters and result with their types and units, the attribute or config key its rate, its laziness
+(not read while nobody subscribes) and its presence come from, what confirms it, and what the other
+transports call it (the ROS topic, service or action the ROS bridge resolved, with its type and
+QoS). An unknown path is refused with the nearest known path and its siblings.
 
 Values
 ------

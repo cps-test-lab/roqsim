@@ -290,6 +290,8 @@ def _inventory(engine) -> dict:
     """What the loaded world turned out to be -- the half of this that is not about failure."""
     import mujoco
 
+    from roqsim.endpoint import topic_of
+
     ctx = engine.ctx
     model = ctx.model
     endpoints = []
@@ -303,7 +305,7 @@ def _inventory(engine) -> dict:
                 "namespace": endpoint.namespace,
                 "type": hints.get("type") or hints.get("service"),
                 "payload": endpoint.payload_type.name if endpoint.payload_type else None,
-                "topic": endpoint.topic or hints.get("topic") or hints.get("name"),
+                "topic": topic_of(endpoint, "ros2"),
                 "rate_hz": endpoint.rate_hz,
             }
         )

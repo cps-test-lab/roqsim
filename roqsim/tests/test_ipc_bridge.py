@@ -38,6 +38,7 @@ class Tank(Plugin):
         self.pending = False
         self.level_rate_hz = 100.0
         self.steerable = True
+        self.sample_lazily = True
 
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
@@ -47,6 +48,11 @@ class Tank(Plugin):
         """How full it is."""
         self.reads += 1
         return {"litres": 3.5, "profile": np.arange(6, dtype=np.float32).reshape(2, 3)}
+
+    @endpoint.out(lazy="sample_lazily")
+    def sample(self) -> float:
+        """A reading taken only while someone listens."""
+        return 1.0
 
     @endpoint.out
     def report(self) -> dict:
@@ -177,6 +183,14 @@ def test_describe_gives_the_payload_type_its_units_and_the_key_it_is_present_by(
         assert units["sim_time"] == "s"
         # A command answering later declares what its future resolves to.
         assert sim.describe("sim/run_control/step")["result"]["type"] == "Stepped"
+
+
+def test_describe_names_the_key_an_endpoint_is_lazy_by(uri):
+    with Sim(uri) as run, Client(uri) as sim:
+        assert sim.describe("box/tank/sample")["lazy"] == {"from": "sample_lazily"}
+        assert "lazy" not in sim.describe("box/tank/level")
+        (sample,) = [ep for ep in run.engine.ctx.interface.all() if ep.name == "sample"]
+        assert sample.lazy, "the attribute the option names decides it per instance"
 
 
 def test_a_command_replies_with_its_confirmation_and_a_refusal_with_its_own_text(uri):

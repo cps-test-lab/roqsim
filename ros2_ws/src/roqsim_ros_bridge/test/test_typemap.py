@@ -70,6 +70,7 @@ VALUES = [
     T.Image(np.array([[0.5, 1.5]], dtype=np.float32), "32FC1"),
     T.CameraInfo(640, 480, 500.0, 501.0, 320.0, 240.0, [0.1, 0.0, 0.0, 0.0, 0.0]),
     T.PointCloud(np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], dtype=np.float32)),
+    T.Transform("odom", "base_link", np.array([1.0, 2.0, 0.1]), np.array([0.5, 0.5, 0.5, 0.5])),
 ]
 
 
@@ -131,6 +132,11 @@ class Push:
 
 
 @dataclass
+class PushStamped:
+    accel: Push
+
+
+@dataclass
 class Level:
     data: float
 
@@ -145,6 +151,10 @@ class Producer(Plugin):
     @endpoint.out(ros2={"type": "geometry_msgs.msg.Accel"})
     def push(self) -> Push:
         return Push(Vec(1.0, 2.0, 3.0), Vec(0.0, 0.0, 0.5))
+
+    @endpoint.out(ros2={"type": "geometry_msgs.msg.AccelStamped"})
+    def push_stamped(self) -> PushStamped:
+        return PushStamped(Push(Vec(1.0, 0.0, 0.0), Vec(0.0, 0.0, 0.0)))
 
     @endpoint.out(ros2={"type": "geometry_msgs.msg.Accel"})
     def odd(self) -> Odd:
@@ -193,6 +203,21 @@ def test_a_dataclass_without_a_row_maps_by_field_name_both_ways(eps):
     inbound.prepare(msg_cls)
     written = inbound.decode(msg)
     assert written == {"push": Push(Vec(1.0, 2.0, 3.0), Vec(0.0, 0.0, 0.5))}
+
+
+def test_a_header_the_payload_lacks_is_stamped_with_a_frame_only_where_one_is_stated(eps):
+    binding = typemap.resolve(eps["push_stamped"])
+    msg_cls = resolve_type(binding.hints["type"])
+    binding.prepare(msg_cls)
+    bare = msg_cls()
+    binding.fill(bare, eps["push_stamped"].read(), STAMP, {"frame_prefix": "r1"})
+    assert bare.header.stamp == STAMP and bare.accel.linear.x == 1.0
+    assert bare.header.frame_id == "", "no frame stated: not the bare namespace"
+    framed = msg_cls()
+    binding.fill(
+        framed, eps["push_stamped"].read(), STAMP, {"frame_prefix": "r1", "frame_id": "tool"}
+    )
+    assert framed.header.frame_id == "r1/tool"
 
 
 def test_plain_parameters_map_onto_a_named_message_by_field_name(eps):
@@ -247,6 +272,34 @@ def test_a_field_hint_publishes_that_field_as_its_own_type(eps):
 
 def test_a_command_without_parameters_is_a_trigger_service(eps):
     assert typemap.resolve(eps["zero"]).hints == {"service": "std_srvs.srv.Trigger", "name": "zero"}
+
+
+class Camera(Plugin):
+    @endpoint.out(ros2={"topic": "camera/image_raw"})
+    def image(self) -> T.Image: ...
+
+    @endpoint.out(ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"})
+    def image_compressed(self) -> T.Image: ...
+
+    @endpoint.out(ros2={"topic": "{image}/../camera_info"})
+    def camera_info(self) -> T.CameraInfo: ...
+
+
+def test_a_derived_topic_follows_a_worlds_rename_of_its_sibling():
+    def topics(config):
+        built = build(Camera(config, label="cam"), SimContext(config={}))
+        return {e.name: typemap.resolve(e).hints["topic"] for e in built}
+
+    assert topics({}) == {
+        "image": "camera/image_raw",
+        "image_compressed": "camera/image_raw/compressed",
+        "camera_info": "camera/camera_info",
+    }
+    assert topics({"topics": {"image": "/drv/rgb/image"}}) == {
+        "image": "/drv/rgb/image",
+        "image_compressed": "/drv/rgb/image/compressed",
+        "camera_info": "/drv/rgb/camera_info",
+    }
 
 
 def test_a_package_maps_its_own_type_through_the_entry_point(monkeypatch, eps):

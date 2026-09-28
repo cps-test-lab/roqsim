@@ -251,8 +251,9 @@ class Endpoint:
     #: What it is, for a reader outside the process: a decorated method's docstring.
     doc: str = ""
     #: Where a decorated endpoint's options come from, for a reader outside the process: ``rate``
-    #: (``{"from": <attribute or config key>}``), ``when`` and ``family`` (the key named), each
-    #: ``"computed"`` for a callable and absent where not given. Empty on a hand-built endpoint.
+    #: and ``lazy`` (``{"from": <attribute or config key>, "default": ...}``, or ``lazy: true``),
+    #: ``when`` and ``family`` (the key named), each ``"computed"`` for a callable and absent where
+    #: not given. Empty on a hand-built endpoint.
     options: dict[str, Any] = field(default_factory=dict)
 
 
@@ -266,8 +267,10 @@ def endpoint_kind(ep: Endpoint) -> str:
         return ep.kind
     if ep.direction == "out":
         return "out"
+    from .endpoint import is_service
+
     hints = [h for h in ep.backend.values() if isinstance(h, dict)]
-    if hints and all("type" in h and "service" not in h and "action" not in h for h in hints):
+    if hints and all("type" in h and not is_service(ep, h) for h in hints):
         return "stream"
     return "command"
 

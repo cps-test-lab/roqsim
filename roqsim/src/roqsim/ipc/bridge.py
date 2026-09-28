@@ -420,12 +420,15 @@ class IpcBridge(BridgeBase):
         if not full:
             return entry
         entry.update(producer=ep.producer, namespace=ep.namespace)
-        # Where a decorated endpoint's rate, presence and family come from: an attribute or config key.
+        # Where a decorated endpoint's rate, laziness, presence and family come from: an attribute
+        # or config key.
         if isinstance(ep.options.get("rate"), dict):
             entry["rate_from"] = ep.options["rate"]["from"]
-        for key in ("when", "family"):
+        for key in ("lazy", "when", "family"):
             if key in ep.options:
                 entry[key] = ep.options[key]
+        if ep.lazy and "lazy" not in entry:
+            entry["lazy"] = True
         # The declared hints of every backend, as data: what the endpoint asks of each transport.
         entry["hints"] = {
             key: hints for key, hints in ep.backend.items() if isinstance(hints, dict)
