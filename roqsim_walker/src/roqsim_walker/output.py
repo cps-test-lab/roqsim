@@ -20,7 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from roqsim_nav.outputs import NavOutput, OutputUnavailable
-from roqsim_walker.nav.controller import animate
+from roqsim_walker.animation import animate
 
 #: Blackboard key under which the ``walker`` plugin publishes the animation state it built. The
 #: geometry (mocap bodies, skin) and its clip set belong to the plugin that put them in the model;
