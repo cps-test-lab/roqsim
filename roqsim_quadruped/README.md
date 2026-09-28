@@ -22,7 +22,7 @@ and nav2 drive Spot with no robot-specific wiring.
   gains, 50 Hz / 0.002 s timing), transcribed from NVIDIA's Isaac `Isaac-Velocity-Flat-Spot-v0` env.
 - `policy/fetch_policy.py` — fetches the pretrained `spot_policy.pt` (see licensing below); a thin
   wrapper around the repo's external-resources system (`spot_locomotion_policy` in
-  `roqsim/external/external_assets.yaml`).
+  `external/external_assets.yaml`).
 - `plugins/spot_locomotion.py` — the controller: builds the 48-dim observation, runs the policy at
   50 Hz, and writes leg position targets to the 12 actuators.
 
@@ -46,7 +46,7 @@ var. If the policy is missing at load time, `spot_locomotion` raises an error po
 
 Needs `torch` for policy inference (declared in `pyproject.toml`). CPU torch is enough — the policy
 is a small 48→12 MLP evaluated at 50 Hz. The world must set `sim.timestep: 0.002` — Isaac trains Spot
-at a 500 Hz sim / 50 Hz policy (decimation 10); see `worlds/*spot*.yaml`.
+at a 500 Hz sim / 50 Hz policy (decimation 10); see `ros2_ws/src/roqsim_nav2_example/worlds/spot_nav2.yaml`.
 
 ## Decimated meshes
 
@@ -69,8 +69,6 @@ blender --background --python external/convert/decimate_spot_meshes.py -- <menag
     src/roqsim_quadruped/models/meshes 2000
 ```
 
-## Large files (git-lfs)
+## Files not in git
 
-The decimated `.obj` meshes are tracked with git-lfs (see the repo `.gitattributes`). Run
-`git lfs install` once before cloning/pulling this package's assets. `spot_policy.pt` is **not** in
-git at all (fetched locally; git-ignored under `policy/`).
+`spot_policy.pt` is **not** in git (fetched locally; git-ignored under `policy/`).

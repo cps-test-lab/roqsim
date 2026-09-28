@@ -112,13 +112,13 @@ held up and whether the texture is wired. It reports no geometry *facts*: measur
 roqsim assets inspect-prop models/<name>/              # report (exit non-zero on any FAIL)
 roqsim assets inspect-prop models/<name>/ --fix-origin # centre footprint on (0,0), base to z=0
 ```
-The deterministic sanity gate the `model-import` skill drives. Checks origin (footprint centred on the
+The deterministic sanity gate of the pipeline. Checks origin (footprint centred on the
 floor), scale plausibility, up-axis, single-mesh, textured MJCF, single material, licence, and leftover
 intermediates. **This is the only place geometry facts come from.** MuJoCo recentres a mesh to its centre
 of mass at compile time, so anything measured off a *compiled* model reports a nicely centred box even for
 a prop metres off origin; `inspect-prop` reads the raw OBJ (world truth = `raw × scale + geom pos`).
-`--fix-origin` bakes the correction into the OBJ vertices. FAIL = must fix; WARN = judge it (see the
-skill).
+`--fix-origin` bakes the correction into the OBJ vertices. FAIL = must fix; WARN = judge it against the
+render.
 
 ## Notes
 - **Textures:** these tools give you clean, correctly-scaled *geometry*, and the preview shows the

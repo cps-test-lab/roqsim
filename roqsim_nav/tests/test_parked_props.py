@@ -64,6 +64,22 @@ def test_a_moving_prop_is_never_a_wall_even_when_named():
     assert not grid.occupied[grid.world_to_cell(0.0, 0.0)]
 
 
+def test_a_prop_whose_origin_moves_is_not_a_wall_though_its_centre_of_mass_is_still():
+    """Rest is judged at the body, where its geometry is: sliding at 1 m/s while turning so that an
+    offset centre of mass stays put is still moving."""
+    model = mujoco.MjModel.from_xml_string(
+        _XML.replace(
+            "<freejoint/>",
+            '<freejoint/>\n      <inertial pos="0 1 0" mass="10" diaginertia="1 1 1"/>',
+        )
+    )
+    data = mujoco.MjData(model)
+    data.qvel[:] = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0]
+    mujoco.mj_forward(model, data)
+    grid = build_grid(model, data, z_lo=0.05, z_hi=0.6, resting_roots=(_crate_root(model),))
+    assert not grid.occupied[grid.world_to_cell(0.0, 0.0)]
+
+
 def test_the_set_is_part_of_the_grids_identity():
     """Two movers may only share a raster when they agree about what is in it."""
     assert grid_key(0.05, 0.1, 1.8, ()) != grid_key(0.05, 0.1, 1.8, (3,))
