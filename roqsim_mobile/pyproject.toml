@@ -48,10 +48,6 @@ ackermann_drive = "roqsim_mobile.plugins.ackermann_drive:AckermannDrivePlugin"
 # The ground-truth pose streams the Create 3 simulator stack reads (the TurtleBot 4 and its dock).
 create3_pose_publisher = "roqsim_mobile.plugins.create3_pose_publisher:Create3PosePublisherPlugin"
 
-# How the ROS 2 bridge carries this package's own payload types.
-[project.entry-points."roqsim.ros2_types"]
-roqsim_mobile = "roqsim_mobile.ros2_types:ROS_TYPES"
-
 # Bundled robot models (e.g. turtlebot4), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]
 roqsim_mobile = "roqsim_mobile.models"

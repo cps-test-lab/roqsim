@@ -821,7 +821,7 @@ def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
         for e in create3.ctx.interface.all()
         if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_pose"
     ]
-    by_child = {e.read().child_frame_id: e for e in poses}
+    by_child = {e.read().child: e for e in poses}
     assert set(by_child) == {"turtlebot4", "mouse", "ir_omni"}
     assert by_child["turtlebot4"].backend["ros2"]["frame_id"] == "map"
     pos = by_child["mouse"].read().translation
@@ -927,7 +927,7 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
         for _ in range(200):
             engine.step()
         poses = {
-            e.read().child_frame_id: e
+            e.read().child: e
             for e in engine.ctx.interface.all()
             if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
         }

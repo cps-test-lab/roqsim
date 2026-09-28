@@ -21,7 +21,7 @@ from roqsim import entity_pose
 from roqsim.config import load_config_from_dict
 from roqsim.endpoint import qos_profile
 from roqsim.engine import Engine
-from roqsim_mobile.plugins.create3_pose_publisher import FrameTransform
+from roqsim.types import Transform
 
 _ROBOT, _DOCK = "_internal/sim_ground_truth_pose", "_internal/sim_ground_truth_dock_pose"
 
@@ -105,12 +105,13 @@ def test_each_stream_is_the_reference_on_the_wire(scene):
     got = {}
     for ep in streams:
         value = ep.read()
-        got[value.child_frame_id] = (ep, value)
+        got[value.child] = (ep, value)
     for owner, topic, parent, child, pos, quat in REFERENCE:
         ep, value = got[child]
         assert ep.owner == owner and ep.namespace == ""
         assert ep.backend == {"ros2": {"topic": topic, "frame_id": parent}}
-        assert ep.payload_type.cls is FrameTransform
+        assert ep.payload_type.cls is Transform
+        assert value.parent == parent
         assert (ep.rate_hz, ep.lazy) == (62.0, True)
         assert np.allclose(value.translation, pos, rtol=0, atol=1e-12), child
         assert np.allclose(value.rotation, quat, rtol=0, atol=1e-12), child
@@ -144,7 +145,7 @@ def test_ros_carries_each_stream_as_a_one_transform_tf_message(scene):
 
 def test_the_world_pose_is_the_core_pose_endpoints(scene):
     core = scene.ctx.interface.find(entity_pose.OWNER, entity_pose.endpoint_name("robot")).read()
-    (ep,) = [e for e in _streams(scene) if e.read().child_frame_id == "turtlebot4"]
+    (ep,) = [e for e in _streams(scene) if e.read().child == "turtlebot4"]
     value = ep.read()
     pos, quat = value.translation, value.rotation
     assert np.array_equal(pos, core.position) and np.array_equal(quat, core.orientation)
