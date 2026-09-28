@@ -355,13 +355,10 @@ def test_c1_the_manifest_mounts_the_lds01_at_base_scan():
     manifest = yaml.safe_load(MANIFEST.read_text())
     (mount,) = [c for c in manifest["components"] if "spawn_sensor" in c]
     assert mount["name"] == "lds01"
-    assert mount["spawn_sensor"] == {
-        "model": "lds01",
-        "parent_frame": "base_link",
-        "pos": [*BASE_SCAN[0]],
-        "rpy": [*BASE_SCAN[1]],
-        "frame_id": "base_scan",
-    }
+    assert mount["spawn_sensor"] == {"model": "lds01", "mount": "lds01", "frame_id": "base_scan"}
+    assert manifest["mounts"] == [
+        {"name": "lds01", "parent": "base_link", "pos": [*BASE_SCAN[0]], "rpy": [*BASE_SCAN[1]]}
+    ]
     assert "components" not in mount and "frames" not in manifest
     model, _ = _build()
     assert model.nsite == 1  # base_imu

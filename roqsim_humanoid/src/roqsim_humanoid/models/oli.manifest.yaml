@@ -18,6 +18,10 @@
 # from what sits beside it: the Oli description is LimX Dynamics' (Apache-2.0, THIRD_PARTY.md).
 license: LICENSE.limx_oli
 
+mounts:
+  - {name: head_camera, parent: head_pitch_link, pos: [0.06393, 0.0, 0.0525], rpy: [0.0, 0.0, 0.0]}
+  - {name: chest_camera, parent: waist_pitch_link, pos: [0.0814, 0.0, 0.2626], rpy: [0.0, 0.0, 0.0]}
+
 components:
   - oli_locomotion: {}                             # ONNX whole-body walk policy + PD; config bundled
   - lidar:
@@ -46,9 +50,7 @@ components:
   # Depth and the cloud render from the device's depth camera, at the D435's depth FOV.
   - spawn_sensor:
       model: realsense_d435
-      parent_frame: head_pitch_link
-      pos: [0.06393, 0.0, 0.0525]
-      rpy: [0.0, 0.0, 0.0]
+      mount: head_camera
       device_name: head_camera
       namespace: head_camera
     name: head_camera
@@ -56,9 +58,7 @@ components:
       - realsense_d435: {points: true}
   - spawn_sensor:
       model: realsense_d435
-      parent_frame: waist_pitch_link
-      pos: [0.0814, 0.0, 0.2626]
-      rpy: [0.0, 0.0, 0.0]
+      mount: chest_camera
       device_name: chest_camera
       namespace: chest_camera
     name: chest_camera

@@ -40,9 +40,7 @@ components:
   # The scan frame is 0.202 m above body_link, 0.3845 m above the ground at the 0.1825 m wheel radius.
   - spawn_sensor:
       model: rplidar_s3
-      parent_frame: second_lidar_link
-      pos: [0.0, 0.0, 0.0]
-      rpy: [0.0, 0.0, 0.0]
+      mount: second_lidar
       frame_id: second_lidar_laser  # slamtec_rplidar.urdf.xacro:278, component name second_lidar
     name: second_lidar
     components:
@@ -61,3 +59,6 @@ frames:
   # config/components.yaml:10-14 @ 559e784b with slamtec_rplidar.urdf.xacro:249-253 @ 5f783f8: the
   # component's joint from mount_link to `second_lidar_link`, the S3's housing base.
   - {name: second_lidar_link, parent: mount_link, pos: [0.0, -0.1, 0.0], rpy: [0.0, 0.0, 0.0]}
+
+mounts:
+  - {name: second_lidar, parent: second_lidar_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}

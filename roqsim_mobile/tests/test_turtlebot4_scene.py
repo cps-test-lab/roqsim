@@ -469,21 +469,29 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     mount = mounts["rplidar"]
     assert mount["spawn_sensor"] == {
         "model": "rplidar_a1",
-        "parent_frame": "shell_link",
-        "pos": [*RPLIDAR_JOINT[0]],
-        "rpy": [*RPLIDAR_JOINT[1]],
+        "mount": "rplidar",
         "frame_id": "rplidar_link",
     }
+    # Each device hangs from a mount the robot declares at the vendor joint.
+    assert manifest["mounts"] == [
+        {
+            "name": "rplidar",
+            "parent": "shell_link",
+            "pos": [*RPLIDAR_JOINT[0]],
+            "rpy": [*RPLIDAR_JOINT[1]],
+        },
+        {
+            "name": "oakd",
+            "parent": "oakd_camera_bracket",
+            "pos": [*OAKD_JOINT[0]],
+            "rpy": [*OAKD_JOINT[1]],
+        },
+    ]
     assert mount["components"] == [{"lidar": {"rays": 360}}]
     assert not any("lidar" in c for c in manifest["components"])
     # The OAK-D: the vendor joint and nothing else. Its device name is the macro's default, `oakd`,
     # so the robot sets none; only the TurtleBot 4's topic names are overridden.
-    assert mounts["oakd"]["spawn_sensor"] == {
-        "model": "oakd_pro",
-        "parent_frame": "oakd_camera_bracket",
-        "pos": [*OAKD_JOINT[0]],
-        "rpy": [*OAKD_JOINT[1]],
-    }
+    assert mounts["oakd"]["spawn_sensor"] == {"model": "oakd_pro", "mount": "oakd"}
     ((camera,),) = [list(c.values()) for c in mounts["oakd"]["components"]]
     assert set(camera) == {"topics"}
     assert not any("oakd_camera" in c for c in manifest["components"])

@@ -57,9 +57,7 @@ components:
   # ---------------------------------------------------------------------------------------------
   - spawn_sensor:
       model: hokuyo_ust
-      parent_frame: bracket_0_vertical_mount   # w200_dual_laser.yaml:33
-      pos: [0.0, 0.0, 0.0]                     # :34
-      rpy: [0.0, 0.0, 0.0]                     # :35
+      mount: lidar2d_0
       frame_id: lidar2d_0_laser                # :38
     name: lidar2d_0
     components:
@@ -70,9 +68,7 @@ components:
           topics: {scan: sensors/lidar2d_0/scan}
   - spawn_sensor:
       model: hokuyo_ust
-      parent_frame: bracket_1_vertical_mount   # w200_dual_laser.yaml:46
-      pos: [0.0, 0.0, 0.0]                     # :47
-      rpy: [0.0, 0.0, 0.0]                     # :48
+      mount: lidar2d_1
       frame_id: lidar2d_1_laser                # :51
     name: lidar2d_1
     components:
@@ -100,3 +96,9 @@ frames:
   - {name: bracket_1_link, parent: rear_right_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
   - {name: bracket_1_mount, parent: bracket_1_link, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
   - {name: bracket_1_vertical_mount, parent: bracket_1_mount, pos: [0.0518, 0.0, 0.086875], rpy: [0.0, -1.570796327, 0.0]}
+
+mounts:
+  # w200_dual_laser.yaml:33-35
+  - {name: lidar2d_0, parent: bracket_0_vertical_mount, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  # w200_dual_laser.yaml:46-48
+  - {name: lidar2d_1, parent: bracket_1_vertical_mount, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}

@@ -16,6 +16,9 @@
 # Only the Omron base mesh is this package's own, in meshes/frankie/.
 assets: [roqsim_manipulation_assets]
 
+mounts:
+  - {name: lidar, parent: base_link, pos: [0.265, 0.0, 0.123], rpy: [0.0, 0.0, 0.0]}
+
 components:
   # Base: a TRUE two-wheel differential drive with passive casters -- not a skid-steer. It therefore
   # needs no `slip_factor` calibration (the husky and G2 both do, because their fixed side-by-side
@@ -74,9 +77,7 @@ components:
   # CHANNEL_Z; I611 p. 1-19).
   - spawn_sensor:
       model: omron_os32c
-      parent_frame: base_link
-      pos: [0.265, 0.0, 0.123]
-      rpy: [0.0, 0.0, 0.0]
+      mount: lidar
     name: lidar
     components:
       # Omron's setting for this robot, over the OS32C's own 270 deg: I611 p. 1-6 and p. 2-13, "a 240 deg

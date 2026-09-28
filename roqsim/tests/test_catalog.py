@@ -178,6 +178,10 @@ def test_model_details_add_the_config_a_spawn_actually_injects():
     # scanner it carries and the frame name the robot's URDF uses, and a spawn injects it verbatim.
     assert mount["spawn_sensor"]["model"] == "rplidar_a1"
     assert mount["spawn_sensor"]["frame_id"] == "rplidar_link"
+    # Where it goes is a mount the robot declares, listed so a world can put another device there.
+    placed = next(m for m in detail["mounts"] if m["name"] == mount["spawn_sensor"]["mount"])
+    assert placed["parent"] == "shell_link"
+    assert {m["name"] for m in detail["mounts"]} == {"rplidar", "oakd"}
     # A component whose entry is bare is listed too (`diff_drive: {}` -- its geometry is in the
     # plugin's defaults), because what a spawn injects is the entry, empty or not.
     assert any("diff_drive" in c for c in detail["components"])

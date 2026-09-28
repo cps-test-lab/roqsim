@@ -2,6 +2,15 @@
 #
 # `spawn_robot: {model: mpo_700}` pulls these in automatically, so a world does not re-declare the
 # robot's intrinsic kinematics/sensors.
+
+mounts:
+  # pos: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT); rpy: mpo_700_body.urdf.xacro:38,
+  # lidar_1_joint origin
+  - {name: scan_front, parent: base_link, pos: [0.327, 0.277, 0.2074], rpy: [3.14, 0.0, 0.79]}
+  # pos: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT); rpy: mpo_700_body.urdf.xacro:65,
+  # lidar_2_joint origin
+  - {name: scan_rear, parent: base_link, pos: [-0.327, -0.277, 0.2074], rpy: [3.14, 0.0, 3.93]}
+
 components:
   # HOLONOMIC via four INDEPENDENTLY STEERED wheels -- the substrate's first swerve base. It uses
   # omni_drive like the ridgeback and lgdxrobot2, because a swerve base is holonomic and the planar
@@ -71,9 +80,7 @@ components:
   # which reaches the housings even at this pose; test_mpo_700_scene.py asserts no housing touches a tyre.
   - spawn_sensor:
       model: sick_s300
-      parent_frame: base_link
-      pos: [0.327, 0.277, 0.2074]    # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
-      rpy: [3.14, 0.0, 0.79]         # mpo_700_body.urdf.xacro:38, lidar_1_joint origin rpy
+      mount: scan_front
       frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
     components:
@@ -81,9 +88,7 @@ components:
           topics: {scan: scan}       # mpo_700_gazebo.urdf.xacro:36; relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_s300
-      parent_frame: base_link
-      pos: [-0.327, -0.277, 0.2074]  # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
-      rpy: [3.14, 0.0, 3.93]         # mpo_700_body.urdf.xacro:65, lidar_2_joint origin rpy
+      mount: scan_rear
       frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear
     components:

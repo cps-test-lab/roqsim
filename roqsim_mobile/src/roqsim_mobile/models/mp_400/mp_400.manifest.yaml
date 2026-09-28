@@ -2,6 +2,12 @@
 #
 # `spawn_robot: {model: mp_400}` pulls these in automatically, so a world does not re-declare the
 # robot's intrinsic kinematics/sensors.
+
+mounts:
+  # pos: Neobotix MP-400 Positions of Sensors, LS1 (HEIGHT and X); rpy: mp_400_body.urdf.xacro:38,
+  # lidar_1_joint origin
+  - {name: scan_front, parent: base_link, pos: [0.230, 0.0, 0.1049], rpy: [3.14, 0.0, 0.0]}
+
 components:
   # A TRUE two-wheel differential drive with four passive casters -- so NO slip_factor, because it
   # does not turn by scrubbing. The same line turtlebot3_waffle, raspimouse and oomwoo_one draw, and
@@ -42,9 +48,7 @@ components:
   # above the pocket roof stands in the cover's open interior.
   - spawn_sensor:
       model: sick_s300
-      parent_frame: base_link
-      pos: [0.230, 0.0, 0.1049]      # Neobotix MP-400 Positions of Sensors, LS1; see HEIGHT and X
-      rpy: [3.14, 0.0, 0.0]          # mp_400_body.urdf.xacro:38, lidar_1_joint origin rpy
+      mount: scan_front
       frame_id: lidar_1_link         # mp_400_gazebo.urdf.xacro:41, the link the scan is stamped in
     name: scan_front
     components:

@@ -9,6 +9,9 @@ frames:
   # urdf/raspimouse.urdf.xacro:85-88: the multi-lidar mount on base_link.
   - {name: lds_multi_mount_link, parent: base_link, pos: [0.0, 0.0, 0.0855], rpy: [0.0, 0.0, 0.0]}
 
+mounts:
+  - {name: lds01, parent: lds_multi_mount_link, pos: [0.0, 0.0, 0.0345], rpy: [0.0, 0.0, 3.14]}
+
 components:
   # A TRUE two-wheel differential drive: the wheels roll, they do not scrub, so unlike husky_a200 /
   # clearpath_jackal / rosbot / panther there is NO slip_factor here -- the same line
@@ -34,8 +37,6 @@ components:
   # namespace.
   - spawn_sensor:
       model: lds01
-      parent_frame: lds_multi_mount_link
-      pos: [0.0, 0.0, 0.0345]
-      rpy: [0.0, 0.0, 3.14]
+      mount: lds01
       frame_id: laser
     name: lds01

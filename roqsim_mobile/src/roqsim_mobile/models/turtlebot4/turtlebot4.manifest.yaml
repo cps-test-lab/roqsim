@@ -16,6 +16,12 @@ frames:
   # bracket on the shell, which carries the OAK-D.
   - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257], rpy: [0.0, 0.0, 0.0]}
 
+# Where the devices below go: each vendor joint's parent link and origin. A mount is not a link, so
+# nothing publishes it; a device names it (`mount: oakd`) and states no pose of its own.
+mounts:
+  - {name: rplidar, parent: shell_link, pos: [-0.04, 0.0, 0.098715], rpy: [0.0, 0.0, 1.5707963267948966]}
+  - {name: oakd, parent: oakd_camera_bracket, pos: [0.0584, 0.0, 0.09676], rpy: [0.0, 0.0, 0.0]}
+
 components:
   # The base as the robot has it. Create 3 wheel geometry lives in the plugin defaults; the rest is
   # the Create 3's own limits and driver behaviour (create3_docs api/safety, and
@@ -47,9 +53,7 @@ components:
   # in the robot's namespace, stamped `rplidar_link`.
   - spawn_sensor:
       model: rplidar_a1
-      parent_frame: shell_link
-      pos: [-0.04, 0.0, 0.098715]
-      rpy: [0.0, 0.0, 1.5707963267948966]
+      mount: rplidar
       frame_id: rplidar_link
     name: rplidar
     components:
@@ -61,9 +65,7 @@ components:
   # and the mount publishes oakd_camera_bracket -> oakd_link -> ... as static TF.
   - spawn_sensor:
       model: oakd_pro
-      parent_frame: oakd_camera_bracket
-      pos: [0.0584, 0.0, 0.09676]
-      rpy: [0.0, 0.0, 0.0]
+      mount: oakd
     name: oakd
     components:
       - oakd_camera:                             # RGB-D (needs a GL backend, e.g. MUJOCO_GL=egl);

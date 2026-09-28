@@ -42,9 +42,7 @@ components:
   # (0.32825, 0, 0.287875), 0.4202 m above the ground at the 0.13228 m rest height.
   - spawn_sensor:
       model: hokuyo_ust
-      parent_frame: bracket_0_mount
-      pos: [0.0, 0.0, 0.0]          # a200_sample.yaml:65-67
-      rpy: [0.0, 0.0, 0.0]
+      mount: lidar2d_0
       frame_id: lidar2d_0_laser     # a200_sample.yaml:70, Clearpath's first 2D lidar
     name: lidar2d_0
     components:
@@ -68,3 +66,7 @@ frames:
   # clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:36-42, 106-110 @ 33e4b31: horizontal
   # bracket, mount mesh_thickness 0.010125 above the bracket link at top_plate_mount_d1.
   - {name: bracket_0_mount, parent: top_plate_mount_d1, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
+
+mounts:
+  # a200_sample.yaml:65-67
+  - {name: lidar2d_0, parent: bracket_0_mount, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}

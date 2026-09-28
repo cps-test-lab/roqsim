@@ -16,6 +16,12 @@
 frames:
   - {name: base_footprint, parent: base_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
 
+mounts:
+  # rox.urdf.xacro, lidar_1 origin: rpy pi, 0, pi/4
+  - {name: scan_front_left, parent: base_link, pos: [0.2995, 0.269, 0.189], rpy: [3.14159265, 0.0, 0.78539816]}
+  # rox.urdf.xacro, lidar_2 origin: rpy pi, 0, -(pi - pi/4)
+  - {name: scan_back_right, parent: base_link, pos: [-0.2995, -0.269, 0.189], rpy: [3.14159265, 0.0, -2.35619449]}
+
 components:
   - diff_drive:
       # Not the vendor's declared inertia, which is 1/2 m r^2 for r = 0.15 m -- the wheel's DIAMETER
@@ -36,9 +42,7 @@ components:
   # which the device model reproduces rather than corrects (see sick_nanoscan3.xml).
   - spawn_sensor:
       model: sick_nanoscan3
-      parent_frame: base_link
-      pos: [0.2995, 0.269, 0.189]    # rox.urdf.xacro, lidar_1 origin xyz
-      rpy: [3.14159265, 0.0, 0.78539816]   # the same origin's rpy: pi, 0, pi/4
+      mount: scan_front_left
       frame_id: lidar_1_link         # sick_nanoscan.xacro names the link after the macro's `name`
     name: scan_front_left
     components:
@@ -46,9 +50,7 @@ components:
           topics: {scan: scan}       # relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_nanoscan3
-      parent_frame: base_link
-      pos: [-0.2995, -0.269, 0.189]  # rox.urdf.xacro, lidar_2 origin xyz
-      rpy: [3.14159265, 0.0, -2.35619449]  # the same origin's rpy: pi, 0, -(pi - pi/4)
+      mount: scan_back_right
       frame_id: lidar_2_link
     name: scan_back_right
     components:
