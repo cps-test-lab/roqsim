@@ -22,10 +22,10 @@ plugins intrinsic to it, while the plugins know nothing about any particular mod
 
 **Three plugins, and that is deliberate.** The line is reuse: what is here is arm-agnostic
 *mechanism* — mount an arm, hold a joint vector, close a Cartesian loop — and none of it knows what
-the arm is doing or what counts as doing it well. Anything that answered those questions has moved
-to the experiment that was asking: `peg_in_hole` (a bored block with a swept clearance) and
-`insertion_task` (one paper's trial protocol, right down to its default `approach_height`) to the
-a downstream insertion experiment, `pick_place_metrics` to a downstream pick experiment.
+the arm is doing or what counts as doing it well. Anything that answers those questions lives with
+the experiment asking them: `peg_in_hole` (a bored block with a swept clearance) and
+`insertion_task` (one paper's trial protocol, right down to its default `approach_height`) with a
+downstream insertion experiment, `pick_place_metrics` with a downstream pick experiment.
 
 The test for a new plugin here is whether a *second* arm experiment would use it unchanged.
 
@@ -65,6 +65,13 @@ action at `<ns>/<gripper_controller_name>/gripper_cmd` — a MoveIt `moveit_simp
 `GripperCommand` controller executes against it to open/close the hand. The commanded position (the
 `gripper_joint` angle, 0 open .. 0.8 closed for the 2F-85) is mapped onto the tendon actuator's
 ctrlrange; the bridge reports `reached_goal`/`stalled` from the live finger state (a stall = a grasp).
+
+Cancelling either goal stops the motion, not just the goal: this plugin holds the last target it was
+given every tick, so the bridge commands a hold at the *measured* joint (or finger) position before
+the goal ends, and the arm stays where the cancel found it instead of finishing its way to the
+setpoint in flight. The cancelled goal's terminal status is `CANCELED`, and a `FollowJointTrajectory`
+result grades the pose it stopped in against the last waypoint — so a cancel mid-path does not report
+what a completed trajectory reports.
 
 ## Test
 

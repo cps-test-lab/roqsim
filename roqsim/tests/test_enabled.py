@@ -35,10 +35,10 @@ def test_a_manifest_component_can_be_switched_off_from_outside():
 def test_the_component_stays_addressable_and_in_the_record():
     """The reason this is a flag rather than a deletion: the run's record can still say what was
     turned off, and a later override can turn it back on."""
-    cfg = _cfg({"components": {"robot.lidar": {"enabled": False}}})
-    assert "robot.lidar" in {s.address for s in cfg.plugins}
-    back = _cfg({"components": {"robot.lidar": {"enabled": False}}, "sim": {}})
-    assert {s.address: s.enabled for s in back.plugins}["robot.lidar"] is False
+    cfg = _cfg({"components": {"robot.rplidar.lidar": {"enabled": False}}})
+    assert "robot.rplidar.lidar" in {s.address for s in cfg.plugins}
+    back = _cfg({"components": {"robot.rplidar.lidar": {"enabled": False}}, "sim": {}})
+    assert {s.address: s.enabled for s in back.plugins}["robot.rplidar.lidar"] is False
 
 
 def test_disabling_an_owner_disables_what_it_owns():
@@ -54,12 +54,12 @@ def test_enabled_must_be_a_boolean_wherever_it_is_written():
     with pytest.raises(PluginError, match="true or false"):
         load_config_from_dict({"sim": {}, "components": [{"dummy": {}, "enabled": "yes"}]})
     with pytest.raises(PluginError, match="true or false"):
-        _cfg({"components": {"robot.lidar": {"enabled": "no"}}})
+        _cfg({"components": {"robot.rplidar.lidar": {"enabled": "no"}}})
 
 
 def test_the_ceiling_plugin_refuses_enabled_by_name():
     """It is SUBTRACTIVE -- it opens a roof by removing geometry -- so `enabled: false` would leave
-    the ceiling standing, the opposite of what the key used to mean. Silence there would be a
+    the ceiling standing, the opposite of what the key means everywhere else. Silence there would be a
     world that quietly stopped doing what it said."""
     cfg = load_config_from_dict(
         {"sim": {}, "components": [{"ceiling": {"enabled": False, "above_z": 2.6}}]}

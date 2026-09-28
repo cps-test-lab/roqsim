@@ -1,15 +1,15 @@
 """Sensor plugin: OAK-D Pro RGB-D camera via ``mujoco.Renderer`` (GL, offscreen).
 
-Ported from our earlier in-house nav prototype's ``Camera``/``CameraFrame`` (``mujoco_nav/camera.py``). Mirrors the Gazebo
-TurtleBot 4 ``rgbd_camera`` topic (a ``sensor_msgs/Image`` colour + depth pair, each with its own
-``CameraInfo`` -- ``rgbd_camera/camera_info`` and ``rgbd_camera/depth/camera_info``). Bundled as a default TurtleBot 4 sensor (see ``turtlebot4.manifest.yaml`` in
-``roqsim_mobile``), reading resolution/FOV from the model's ``oakd_rgb`` camera.
+Mirrors the Gazebo TurtleBot 4 ``rgbd_camera`` topic (a ``sensor_msgs/Image`` colour + depth pair,
+each with its own ``CameraInfo`` -- ``rgbd_camera/camera_info`` and
+``rgbd_camera/depth/camera_info``). Bundled as a default TurtleBot 4 sensor (see
+``turtlebot4.manifest.yaml`` in ``roqsim_mobile``), reading resolution/FOV from the model's
+``oakd_rgb`` camera.
 
 Config (in addition to ``camera_common.CameraPlugin``'s, and ``depth_camera.DepthCameraPlugin``'s
 ``clip_near``/``clip_far``/``depth_encoding``)::
 
     oakd_camera:
-      robot: robot
       camera: oakd_rgb
       clip_near: 0.3      # m; depth outside [clip_near, clip_far] reads as "no return" (inf)
       clip_far: 100.0     # m

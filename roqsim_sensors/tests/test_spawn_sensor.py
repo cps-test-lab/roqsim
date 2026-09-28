@@ -5,7 +5,7 @@ from __future__ import annotations
 import mujoco
 import numpy as np
 import pytest
-from external_meshes import needs_mid360, needs_robin, needs_zivid
+from external_meshes import needs_robin, needs_zivid
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
@@ -78,7 +78,6 @@ def _robin_world(**spawn_config):
     return load_config_from_dict(cfg)
 
 
-@needs_mid360
 def test_no_fov_geom_without_show_fov():
     # The Mid-360 ships no baked _fov mesh; its sector is synthesised at build time, and only when
     # show_fov is set -- so a plain mount has no FOV geom at all (mirrors the camera path).
@@ -89,7 +88,6 @@ def test_no_fov_geom_without_show_fov():
     assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_GEOM, "mid360_fov") < 0
 
 
-@needs_mid360
 def test_show_fov_synthesises_the_lidar_sector():
     # show_fov synthesises the Mid-360's dome sector as a mesh geom named "<site>_fov" = "mid360_fov".
     engine = Engine(_mid360_world(show_fov=True, fov_alpha=0.2))
@@ -97,7 +95,6 @@ def test_show_fov_synthesises_the_lidar_sector():
     assert np.isclose(_fov_alpha(engine), 0.2)
 
 
-@needs_mid360
 def test_show_fov_default_alpha_maximises_overlap_contrast():
     # Default fov_alpha is ~0.25: the darkness step between single- and double-coverage under alpha
     # blending is largest near this value and vanishes at very low alpha.
@@ -106,7 +103,6 @@ def test_show_fov_default_alpha_maximises_overlap_contrast():
     assert np.isclose(_fov_alpha(engine), 0.25)
 
 
-@needs_mid360
 def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     import mujoco
 
@@ -120,7 +116,6 @@ def test_lidar_sector_geom_is_non_colliding_mesh_in_group_2():
     assert m.geom_group[gid] == 2  # FOV_GEOM_GROUP -- normally rendered (not the dropped 4/5)
 
 
-@needs_mid360
 def test_lidar_sector_vertex_count_matches_grid():
     # A closed sector shell is an inner + outer sheet over the (azimuth x elevation) grid: 2*na*ne.
     import math
@@ -133,7 +128,6 @@ def test_lidar_sector_vertex_count_matches_grid():
     assert _mesh_vertnum(engine, "mid360_fov") == 2 * na * ne
 
 
-@needs_mid360
 def test_lidar_sector_reaches_the_datasheet_range():
     # The outer shell sits at the manifest far (Mid-360: 40 m detection range), so the farthest
     # vertex from the mount is ~40 m -- the user asked for the true datasheet range, not a stub.
@@ -233,7 +227,6 @@ def test_synthesised_frustum_is_double_sided():
     assert n > 0 and n % 2 == 0
 
 
-@needs_mid360
 def test_lidar_sector_is_double_sided():
     # Same guard for the lidar dome: doubled faces so the coverage volume is visible from inside too.
     engine = Engine(_mid360_world(show_fov=True))
@@ -361,14 +354,14 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
             {
                 "spawn_sensor": {
                     "model": "d435",
-                    "name": "d435",
                     "pos": [0.0, 0.0, 1.0],  # mount looks along +y (toward the wall) at rpy 0
                     "show_fov": True,
                     "fov_near": 0.2,
                     "fov_range": 3.0,
                     "fov_rays": [16, 12],
                     **spawn,
-                }
+                },
+                "name": "d435",
             }
         ],
     }
@@ -425,7 +418,6 @@ def test_fov_occlusion_mesh_is_a_grid_not_a_hull(tmp_path):
     )  # near + far sheets, not an 8-vert hull
 
 
-@needs_mid360
 def test_camera_less_model_is_unaffected_by_unconditional_occlusion():
     # Occlusion is unconditional for cameras, but a camera-less model (mid360) has no pinhole to
     # raycast from -- it must fall through to its synthesised sector, not error.
@@ -454,14 +446,13 @@ def test_fov_rays_config_validation():
     assert any("fov_rays" in e for e in plugin.validate_config({"model": "d435", "fov_rays": [8]}))
 
 
-@needs_mid360
 def test_lidar_sector_is_clipped_by_the_walls():
-    """A synthesised lidar sector must stop at world geometry, like a camera frustum already did.
+    """A synthesised lidar sector must stop at world geometry, like a camera frustum.
 
-    It used to draw its full physical reach straight through the building. That is wrong on its own
-    terms -- the volume claims to show what the sensor sees -- and it wrecked every render of such a
-    world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bounded an otherwise 10 m room, so
-    MuJoCo's model-derived default camera framed a ~160 m box and the room came out as a few dark
+    Drawn to its full physical reach straight through the building, it would be wrong on its own
+    terms -- the volume claims to show what the sensor sees -- and would wreck every render of such
+    a world: the Mid-360's 40 m dome and the Robin W1G's 200 m cone bound an otherwise 10 m room, so
+    MuJoCo's model-derived default camera frames a ~160 m box and the room comes out as a few dark
     pixels.
 
     Asserted below the wall tops, where the default empty_room actually encloses the sensor. The room
@@ -600,7 +591,7 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
     """The claim the whole feature rests on: MuJoCo RENDERS the stated lens.
 
     A pure ``camera_info`` change would leave the image identical and tell every consumer the
-    principal point is somewhere it is not -- which is the failure this replaces, so it is the one
+    principal point is somewhere it is not -- which is the failure this prevents, so it is the one
     thing a test must not take on trust. Shifting the principal point right by N px must move the
     image content left by N px, which a column correlation reads off directly.
     """
@@ -613,8 +604,11 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
 
     def column_profile(cx):
         lens = {"fx": f, "fy": f, "cx": cx, "cy": height / 2, "width": width, "height": height}
+        # The yaw is what puts the red box in frame, and the measurement is only the box's: with the
+        # camera facing anywhere else the profile is the room, whose shading carries no feature to
+        # correlate, and the lag it reports means nothing.
         engine = Engine(_lens_world(lens, width=width, height=height, scene=True,
-                                    pos=[0, 0, 0.5], rpy=[0, 0, 1.5707963]))
+                                    pos=[0, 0, 0.5], rpy=[0, 0, -1.5707963]))
         engine.setup()
         engine.reset()
         engine.step()
@@ -678,3 +672,168 @@ def test_a_lens_without_its_resolution_is_refused():
     lens = {k: v for k, v in _CAM1.items() if k not in ("width", "height")}
     errors = SpawnSensorPlugin(None).validate_config({"model": "d435", "intrinsics": lens})
     assert any("width" in e and "height" in e for e in errors), errors
+
+
+# -- motion: who owns the mount's pose ---------------------------------------
+
+
+def _entity(engine, name="d435"):
+    return engine.ctx.entities.get(name)
+
+
+def test_a_static_mount_cannot_be_placed_and_says_so():
+    """The default, and the behaviour every existing world has.
+
+    Welded scenery has neither a mocap slot nor a joint, so a placement is refused rather than
+    quietly ignored -- which is the whole value of the refusal: a trial that tried to move a
+    sensor and got no error would record a viewpoint nobody chose.
+    """
+    from roqsim.placement import place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5]))
+    engine.setup()
+    engine.reset()
+
+    assert not place_body(engine.ctx, _entity(engine), (3.0, 0.0, 1.0), (1.0, 0.0, 0.0, 0.0))
+
+
+def test_a_driven_mount_takes_a_pose_and_keeps_it():
+    """What a sensor on a mast IS, and what a trial repositioning one needs.
+
+    A mocap body has no degrees of freedom: it holds the pose, nothing shoves it off, and -- the
+    part a free joint gets wrong -- it does not fall. Stepped for a while afterwards, because
+    "it was placed" and "it stayed" are different claims and only the second is useful.
+    """
+    from roqsim.placement import place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="driven"))
+    engine.setup()
+    engine.reset()
+
+    assert place_body(engine.ctx, _entity(engine), (3.0, 0.5, 1.25), (1.0, 0.0, 0.0, 0.0))
+    for _ in range(500):
+        engine.step()
+
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    assert np.allclose(engine.ctx.data.xpos[bid], [3.0, 0.5, 1.25], atol=1e-9)
+
+
+def test_a_free_mount_is_placed_through_the_joint_named_in_its_meta():
+    """The solver owns the pose from the next step, and the entity says how to reach it.
+
+    ``base_joint`` in the meta is not decoration: it is where the placement primitive looks, and
+    a free mount without it would be as unplaceable as a welded one while looking movable.
+    """
+    from roqsim.placement import base_joint_of, place_body
+
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine.setup()
+    engine.reset()
+
+    assert base_joint_of(_entity(engine)) == "free"
+    assert place_body(engine.ctx, _entity(engine), (3.0, 0.5, 1.25), (1.0, 0.0, 0.0, 0.0))
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    assert np.allclose(engine.ctx.data.xpos[bid], [3.0, 0.5, 1.25], atol=1e-9)
+
+
+def test_a_free_mount_falls_which_is_what_asking_for_physics_means():
+    """Stated rather than left as a surprise, and the reason ``driven`` is the mode to reach for.
+
+    An overhead camera on a free joint is a dropped camera. The contrast is what makes the
+    default and the recommendation legible.
+    """
+    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine.setup()
+    engine.reset()
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    start = float(engine.ctx.data.xpos[bid][2])
+
+    for _ in range(500):
+        engine.step()
+
+    assert float(engine.ctx.data.xpos[bid][2]) < start - 0.1
+
+
+def test_an_unknown_motion_is_refused_by_name():
+    """At config validation, before a world is built: the answer cannot depend on the model."""
+    with pytest.raises(Exception, match="static, driven, physics"):
+        Engine(_world(motion="floating"))
+
+
+# -- attach_to: riding something that moves ---------------------------------------------------
+
+
+def _arm_world(**spawn_config):
+    """A UR10e with a d435 welded to its wrist -- the eye-in-hand case, stated in a world."""
+    return load_config_from_dict({
+        "sim": {},
+        "components": [
+            {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
+            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+                              "attach_prefix": "ur10e_", **spawn_config},
+             "name": "eye"},
+        ],
+    })
+
+
+def test_a_mount_welded_to_a_wrist_rides_it():
+    """The capability this adds, and the only test of it that means anything.
+
+    A camera that compiles at the right pose and then stays behind when the arm moves is worse
+    than no camera: every frame is of somewhere the robot is not, and nothing says so.
+    """
+    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.05]))
+    engine.setup()
+    engine.reset()
+
+    mount = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    before = np.array(engine.ctx.data.xpos[mount])
+
+    handle = engine.ctx.blackboard.get("arm:ur10e")
+    handle.set_targets(handle.joint_names, [0.6] * len(handle.joint_names))
+    for _ in range(2000):
+        engine.step()
+
+    assert np.linalg.norm(np.array(engine.ctx.data.xpos[mount]) - before) > 0.1
+
+
+def test_the_pose_is_read_relative_to_the_body_it_rides():
+    """``pos``/``rpy`` mean something different once there is a carrier, and must.
+
+    Relative to the world they would be a pose the arm immediately invalidates; relative to the
+    flange they are the mount offset, which is what a datasheet or a CAD drawing states.
+    """
+    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.3]))
+    engine.setup()
+    engine.reset()
+
+    wrist = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "ur10e_wrist_3_link")
+    mount = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
+    offset = np.array(engine.ctx.data.xpos[mount]) - np.array(engine.ctx.data.xpos[wrist])
+
+    assert np.linalg.norm(offset) == pytest.approx(0.3, abs=1e-6)
+
+
+def test_a_carrier_that_is_not_in_the_scene_is_refused_by_name():
+    """Ordering is the usual mistake, so the refusal names it rather than only the body."""
+    engine = Engine(load_config_from_dict({
+        "sim": {},
+        "components": [
+            {"spawn_sensor": {"model": "d435", "attach_to": "wrist_3_link",
+                              "attach_prefix": "ur10e_"}, "name": "eye"},
+            {"spawn_arm": {"model": "ur10e", "prefix": "ur10e_"}, "name": "ur10e"},
+        ],
+    }))
+    with pytest.raises(Exception, match="BEFORE this entry"):
+        engine.setup()
+
+
+def test_a_ridden_mount_cannot_also_be_told_who_owns_its_pose():
+    """Two answers to one question, so the second is refused rather than silently ignored."""
+    with pytest.raises(Exception, match="mutually exclusive"):
+        Engine(_arm_world(motion="driven"))
+
+
+def test_attach_prefix_without_attach_to_is_refused():
+    with pytest.raises(Exception, match="attach_prefix"):
+        Engine(_world(attach_prefix="ur10e_"))

@@ -23,7 +23,9 @@ from pathlib import Path
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.catalog import get_model_details, list_models, list_worlds, main
+from roqsim.manifest import manifest_license
 from roqsim.models import ModelError, resolve_model
 from roqsim.world import _resolve_world_ref, available_worlds, resolve_world_yaml_ref
 
@@ -138,23 +140,87 @@ def test_a_model_row_names_the_components_its_manifest_brings():
     """ "What do I get when I spawn this" is not visible from the MJCF -- it is the manifest."""
     pytest.importorskip("roqsim_mobile", reason="the turtlebot4 manifest lives in roqsim_mobile")
     row = next(r for r in _rows(list_models()) if r["name"] == "turtlebot4")
-    assert {"diff_drive", "lidar"} <= set(row["components"])
+    assert {"diff_drive", "spawn_sensor"} <= set(row["components"])
     assert row["provenance"], "a vendored model ships its licence beside it"
+
+
+def test_a_model_sharing_its_directory_with_several_licences_names_its_own():
+    """Attribution cannot be left to "the file next to it" where several vendors' terms sit there.
+
+    A flat provider keeps every model and every vendored licence in one directory, so a model there
+    says which one covers it (``license:`` in its manifest). Without that the catalog reports one
+    vendor's terms for another vendor's robot, which is a wrong answer nobody would notice.
+    """
+    undeclared = []
+    for row in _rows(list_models()):
+        model_file = Path(row["path"])
+        if manifest_license(model_file):
+            continue
+        sidecars = [
+            p for p in model_file.parent.glob("*") if p.is_file() and "LICENSE" in p.name.upper()
+        ]
+        if len(sidecars) > 1 and not any(
+            model_file.stem.lower() in p.name.lower() for p in sidecars
+        ):
+            undeclared.append(row["ref"])
+    assert not undeclared, (
+        "these models share a directory with several licences and name none, so nothing can say "
+        f"which one covers them: {undeclared}"
+    )
 
 
 def test_model_details_add_the_config_a_spawn_actually_injects():
     pytest.importorskip("roqsim_mobile", reason="the turtlebot4 manifest lives in roqsim_mobile")
     detail = get_model_details("roqsim_mobile:turtlebot4")
     assert "error" not in detail
-    lidar = next(c for c in detail["components"] if "lidar" in c)
-    # The manifest's own config, not just the plugin's name: this is where a TurtleBot 4's scan gets
-    # its 360 rays and the frame name the robot's URDF uses, and a spawn injects it verbatim.
-    assert lidar["lidar"]["frame_id"] == "rplidar_link"
+    mount = next(c for c in detail["components"] if "spawn_sensor" in c)
+    # The manifest's own config, not just the plugin's name: this is where a TurtleBot 4 says which
+    # scanner it carries and the frame name the robot's URDF uses, and a spawn injects it verbatim.
+    assert mount["spawn_sensor"]["model"] == "rplidar_a1"
+    assert mount["spawn_sensor"]["frame_id"] == "rplidar_link"
     # A component whose entry is bare is listed too (`diff_drive: {}` -- its geometry is in the
     # plugin's defaults), because what a spawn injects is the entry, empty or not.
     assert any("diff_drive" in c for c in detail["components"])
     # Where meshes are searched, in order: the answer to a model that loads without its geometry.
     assert detail["mesh_dirs"] and all(Path(d).is_dir() for d in detail["mesh_dirs"][:1])
+
+
+_ARM_WITH_A_WHEEL = """
+<mujoco>
+  <worldbody>
+    <body name="base">
+      <geom name="wheel" type="sphere" size="0.05"/>
+      <joint name="spin_joint" type="hinge"/>
+      <site name="tool"/>
+    </body>
+  </worldbody>
+  <contact><pair geom1="wheel" geom2="floor" friction="1 1 0.005 0.0001 0.0001"/></contact>
+  <actuator><position name="spin" joint="spin_joint"/></actuator>
+</mujoco>
+"""
+
+
+def test_model_details_name_each_actuator_and_the_joint_it_drives(tmp_path):
+    """What ``actuators: each:`` keys on, and a contact pair naming the world's floor still compiles."""
+    model = tmp_path / "arm_with_a_wheel.xml"
+    model.write_text(_ARM_WITH_A_WHEEL)
+    names = get_model_details(str(model))["names"]
+    assert names == {
+        "bodies": ["base"],
+        "sites": ["tool"],
+        "joints": ["spin_joint"],
+        "actuators": [{"name": "spin", "joint": "spin_joint"}],
+    }
+
+
+def test_the_cli_exits_nonzero_when_a_model_does_not_compile(tmp_path, capsys):
+    model = tmp_path / "missing_mesh.xml"
+    model.write_text(
+        '<mujoco><asset><mesh name="m" file="absent.obj"/></asset>'
+        '<worldbody><geom type="mesh" mesh="m"/></worldbody></mujoco>'
+    )
+    assert main(["model", str(model)]) == exit_status.BAD_INPUT
+    assert "error" in json.loads(capsys.readouterr().out)["names"]
 
 
 def test_details_for_an_unknown_model_is_an_error_not_an_exception():
@@ -175,7 +241,7 @@ def test_the_cli_prints_json_and_refs(capsys):
 
 
 def test_the_cli_exits_nonzero_for_an_unknown_model(capsys):
-    assert main(["model", "not_a_model_xyz"]) == 1
+    assert main(["model", "not_a_model_xyz"]) == exit_status.BAD_INPUT
     assert "error" in json.loads(capsys.readouterr().out)
 
 

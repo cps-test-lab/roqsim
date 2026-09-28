@@ -1,0 +1,41 @@
+<mujoco model="rplidar_c1">
+  <!--
+    Slamtec RPLIDAR C1 2D lidar: a standalone mount (housing mesh + a `scan` site) for the
+    `spawn_sensor` plugin, mounted by a robot manifest at its vendor joint origin.
+
+    Geometry from Husarion `husarion_components_description` (urdf/slamtec_rplidar.urdf.xacro, model
+    `c1`), the scanner on the ROSbot: the body is `rplidar_link`, whose origin is the housing base, and
+    the scan is stamped in its child `laser` at xyz (0, 0, 0.032), rpy (0, 0, pi).
+
+    Body-local axes: z = up, the housing spans z 0 .. 41.3 mm. The datasheet gives the laser
+    emitting and receiving height as 29.8 mm, 2.2 mm below the vendor `laser` frame; the site
+    stays on the vendor frame.
+
+    Built by external/convert/build_scanner_devices.py from husarion_components_description @ 5f783f89961bb16098184f5381b1a76058cec19e.
+    Scan parameters and the `frames:` entry for this site are in rplidar_c1.manifest.yaml; see
+    rplidar_c1_LICENSE for the mesh licence.
+  -->
+  <compiler angle="radian" meshdir="meshes" autolimits="true"/>
+
+  <asset>
+    <material name="c1__dark_mat" rgba="0.08 0.08 0.09 1"/>
+    <material name="c1__light_mat" rgba="0.22 0.22 0.24 1"/>
+    <mesh name="c1__dark" file="c1__dark.obj"/>
+    <mesh name="c1__light" file="c1__light.obj"/>
+  </asset>
+
+  <worldbody>
+    <body name="mount">
+      <inertial pos="0 0 0.02065" mass="0.11" diaginertia="0.000044 0.000044 0.0000567"/>
+      <geom name="rplidar_c1_visual_0" type="mesh" mesh="c1__dark" material="c1__dark_mat"
+            contype="0" conaffinity="0"/>
+      <geom name="rplidar_c1_visual_1" type="mesh" mesh="c1__light" material="c1__light_mat"
+            contype="0" conaffinity="0"/>
+      <!-- The vendor's own collision box over the 55.6 x 55.6 x 41.3 mm housing. -->
+      <geom name="rplidar_c1_collision" type="box" pos="0 0 0.02065" size="0.0278 0.0278 0.02065" group="3"/>
+      <!-- The vendor scan frame `laser`: 32 mm up and turned half a revolution.
+           Keep in step with the manifest's `frames:` entry. -->
+      <site name="scan" pos="0 0 0.032" quat="0 0 0 1" size="0.005"/>
+    </body>
+  </worldbody>
+</mujoco>

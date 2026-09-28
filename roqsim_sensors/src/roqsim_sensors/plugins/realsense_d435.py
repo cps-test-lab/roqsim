@@ -35,7 +35,6 @@ differ by a fixed rotation; a world must publish the static transform from the m
 Config (also inherits ``camera_common.CameraPlugin``'s own fields, undocumented here)::
 
     realsense_d435:
-      arm: omx            # or robot: <name>
       depth: true         # publish the depth image (default: false)
       points: true        # publish a PointCloud2 -- implies depth (default: false)
       clip_near: 0.28     # m; the D435's minimum-Z. Outside [clip_near, clip_far] reads "no return"

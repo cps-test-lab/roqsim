@@ -25,6 +25,10 @@ Run::
         --obstacle cylinder --radius 0.075 --height 0.5 \\
         --out-world worlds/w0.yaml --out-map maps/w0 --origin -4.5 0.0
 
+Every prop is emitted as welded scenery (``motion: static``) unless ``--motion`` says otherwise:
+an occupancy grid describes cells a robot cannot pass through, and the plugins' own default gives a
+prop a free joint instead.
+
 Grid and frame convention (ONE convention, applied everywhere -- see the note at the bottom of this
 docstring for why that is worth being firm about):
 
@@ -159,6 +163,7 @@ def obstacle_plugins(
     shell_only: bool,
     prefix: str,
     merge: bool = False,
+    motion: str = "static",
 ) -> list[dict]:
     """One plugin entry per occupied cell (or per shell cell, or per merged rectangle).
 
@@ -208,13 +213,28 @@ def obstacle_plugins(
     entries: list[dict] = []
     for index, (x, y, size_x, size_y) in enumerate(placements):
         name = f"{prefix}{index}"
-        cfg = {"name": name, "prefix": f"{name}_", "pos": [round(x, 6), round(y, 6)]}
+        # `pose:` in the shape SpawnEntity states one, which is the only shape the `box` and
+        # `cylinder` plugins accept -- they refuse a bare `pos:` rather than translating it. z is
+        # omitted, which stands the prop ON the floor.
+        cfg = {
+            "prefix": f"{name}_",
+            "pose": {"position": {"x": round(x, 6), "y": round(y, 6)}},
+            # An occupancy grid says these cells are not passable, so the props that stand for them
+            # are welded scenery. The plugins' own default is `physics`, i.e. a free joint: a field
+            # generated from a map would then be a heap of loose boxes the robot can shove aside and
+            # the solver can topple, which contradicts the very grid it came from -- and does so
+            # silently, since the world still loads and the map still shows them.
+            "motion": motion,
+        }
         if obstacle == "cylinder":
             cfg |= {"radius": radius, "height": height, "color": list(color)}
-            entries.append({"cylinder": cfg})
         else:
             cfg |= {"size": [round(size_x, 6), round(size_y, 6), height], "color": list(color)}
-            entries.append({"box": cfg})
+        # `name` is a SIBLING of the plugin ref, not one of its config keys: the label an entry
+        # answers to is a property of the entry, and a world whose obstacles all carry the plugin's
+        # default label is refused for duplicate labels. `prefix` stays in the config, because that
+        # one really is the plugin's -- it is what keeps the generated MJCF names distinct.
+        entries.append({obstacle: cfg, "name": name})
     return entries
 
 
@@ -262,13 +282,24 @@ def build_world(
     yaw: float,
     extra_plugins: list | None,
     merge: bool = False,
+    motion: str = "static",
 ) -> dict:
     plugins: list[dict] = []
     if robot:
-        spawn = {"model": robot, "name": "robot", "yaw": yaw}
-        if start is not None:
-            spawn["pos"] = [round(start[0], 6), round(start[1], 6)]
-        plugins.append({"spawn_robot": spawn})
+        position = (
+            {"x": round(start[0], 6), "y": round(start[1], 6)}
+            if start is not None
+            else {"x": 0.0, "y": 0.0}
+        )
+        spawn = {
+            "model": robot,
+            "pose": {"position": position, "orientation": {"yaw": yaw}},
+        }
+        # `name` is a SIBLING of the plugin ref, never one of its config keys -- the label an
+        # entry answers to belongs to the entry, and a plugin's config holds only what the plugin
+        # itself reads. The obstacle entries below are written the same way, and the loader
+        # refuses the other shape outright, so a world generated with it cannot be run at all.
+        plugins.append({"spawn_robot": spawn, "name": "robot"})
     plugins.extend(
         obstacle_plugins(
             grid,
@@ -281,6 +312,7 @@ def build_world(
             shell_only=shell_only,
             prefix=prefix,
             merge=merge,
+            motion=motion,
         )
     )
     if extra_plugins:
@@ -335,6 +367,14 @@ def main(argv=None) -> int:
     )
     p.add_argument("--prefix", default="obs_", help="entity/MJCF name prefix for the obstacles")
     p.add_argument(
+        "--motion",
+        choices=("static", "physics", "driven"),
+        default="static",
+        help="who owns each prop's pose. 'static' (default) is welded scenery, which is what an "
+        "occupancy grid describes; 'physics' gives every prop a free joint so the solver and the "
+        "robot can move it; 'driven' is a mocap body a plugin writes.",
+    )
+    p.add_argument(
         "--robot", default=None, help="roqsim robot model to spawn, e.g. clearpath_jackal"
     )
     p.add_argument(
@@ -362,6 +402,7 @@ def main(argv=None) -> int:
             color=args.color,
             shell_only=args.shell_only,
             prefix=args.prefix,
+            motion=args.motion,
             robot=args.robot,
             start=tuple(args.start) if args.start else None,
             yaw=args.yaw,
@@ -372,7 +413,7 @@ def main(argv=None) -> int:
         raise SystemExit(str(exc)) from exc
     write_world(world, args.out_world, header=args.header)
 
-    n_props = sum(1 for entry in world["components"] if next(iter(entry)) in ("cylinder", "box"))
+    n_props = sum(1 for entry in world["components"] if {"cylinder", "box"} & set(entry))
     n_occ = int(grid.sum())
     if args.out_map:
         write_map(grid, args.out_map, cell_size=args.cell_size, origin=tuple(args.origin))

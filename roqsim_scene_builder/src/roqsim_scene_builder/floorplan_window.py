@@ -40,9 +40,11 @@ import copy
 import json
 import math
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from roqsim.floorplan_geometry import SKETCH_VERSION, check_sketch
 from roqsim_scene_builder.annotate_ui import (
     BG,
     BORDER,
@@ -58,6 +60,7 @@ from roqsim_scene_builder.annotate_ui import (
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 _DEFAULT_SIZE = (760, 760)
@@ -679,6 +682,9 @@ def load_sketch(initial: dict | None) -> tuple[SketchModel, str]:
     descriptions are the opposite -- persistent intent, so they *are* seeded from ``initial``.
     """
     initial = initial or {}
+    # A newer sketch is refused rather than seeded: the window would drop what it does not know and
+    # send back a sketch in this version, silently losing it.
+    check_sketch(initial, "initial sketch")
     model = SketchModel()
     model.description = initial.get("description", "") or ""
     for entry in initial.get("lines") or []:
@@ -724,8 +730,10 @@ def write_result(json_out: str | None, comment: str, sketch: SketchModel) -> dic
         return sketch.room_descriptions.get(frozenset(line_ids), "").strip()
 
     result = {
+        "version": SKETCH_VERSION,
         "comment": comment,
-        # floorplan-level placement intent -- omitted when empty so old sketches stay unchanged
+        # floorplan-level placement intent -- omitted when empty so sketches without one stay
+        # unchanged
         **({"description": desc} if (desc := sketch.description.strip()) else {}),
         "rooms": [
             {
@@ -788,8 +796,10 @@ def run_window(
     # here rather than imported because ``roqsim.viewer`` imports MuJoCo at module level, and this is
     # the one window that never needs it. A one-line env check is not worth that import.
     if not os.environ.get("DISPLAY"):
+        # On stderr: it is what the MCP tool relays when the window produced no result.
         print(
             "roqsim-scene-builder: no DISPLAY -- the floorplan-sketch window needs a graphical session.",
+            file=sys.stderr,
             flush=True,
         )
         return 2
@@ -840,6 +850,7 @@ class _SketchApp:
 
         root = tk.Tk()
         root.title("roqsim floorplan sketch")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.geometry(f"900x{self.height + 24}")  # start at a sensible width; resize keeps the 2:1
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -925,8 +936,9 @@ class _SketchApp:
             font=("TkDefaultFont", 11, "bold"),
         ).pack(fill="x", padx=8, pady=10, ipady=self._BTN_IPADY)
 
-        # Everything above the footer scrolls as one region: the title and message (which the caller
-        # sizes, and which used to push the tool row and lists down), the tool row, and the lists.
+        # Everything above the footer scrolls as one region: the title and message (whose height the
+        # caller controls, so unscrolled they push the tool row and lists down), the tool row, and
+        # the lists.
         inner, self._sync_panel = build_scrollable(tk, panel, padx=0)
 
         if title:

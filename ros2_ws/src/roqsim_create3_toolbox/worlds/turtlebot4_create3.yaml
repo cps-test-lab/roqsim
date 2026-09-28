@@ -1,0 +1,46 @@
+# The TurtleBot 4 driven by its own stack: what the Create 3 nodes and turtlebot4_node need of the
+# simulator, and its charging dock. Launch the stack beside it with
+#
+#     roqsim sim roqsim_create3_toolbox:turtlebot4_create3.yaml     (or run_bridge --world ...)
+#     ros2 launch roqsim_create3_toolbox turtlebot4_nodes.launch.py
+#
+# The model's manifest is the base: the Create 3's sensor surface (bumper zones, cliff and IR
+# grids, IMU, ground-truth streams, every joint's state) on the names the stack's adapters read,
+# its limits, its command timeout, its 62 Hz odometry, the OAK-D on the TurtleBot 4's topic names.
+# What a world states is where the command comes from once the Create 3 nodes run: motion_control
+# owns `cmd_vel` (and `cmd_vel_unstamped`), applies the safety features, and hands the clamped
+# command to the base as a TwistStamped on diffdrive_controller/cmd_vel -- as the reference
+# simulator's ros2_control controller takes it. The 0.306 m/s a safety_override of none/backup_only
+# allows is motion_control's clamp, not the base's.
+
+sim:
+  pacing: realtime
+
+components:
+  - spawn_robot:
+      model: turtlebot4
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
+    name: robot
+    components:
+      - diff_drive: {stamped_cmd_vel: true, topics: {cmd_vel: diffdrive_controller/cmd_vel}}
+
+  # The dock, 0.157 m ahead of the robot's spawn and turned to face it, as the reference simulator
+  # places it; its ground truth is what the stack's docking behaviour and dock_status range by.
+  - spawn_model:
+      model: create3_dock
+      pose:
+        position:    {x: 0.157, y: 0.0, z: 0.0}
+        orientation: {yaw: 3.141592653589793}
+    name: standard_dock
+    components:
+      - ground_truth_pose: {child_frame: standard_dock, rate_hz: 62, lazy: true,
+                            topics: {pose: _internal/sim_ground_truth_dock_pose}}
+        name: gt_dock
+      - ground_truth_pose: {site: halo_link, relative_to: base, rate_hz: 62, lazy: true,
+                            topics: {pose: _internal/sim_ground_truth_dock_pose}}
+        name: gt_halo
+
+  - ros2_bridge: {}
+  - sim_interfaces: {}

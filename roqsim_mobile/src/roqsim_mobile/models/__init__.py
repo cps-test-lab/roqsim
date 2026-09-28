@@ -3,10 +3,9 @@
 Layout is ``models/<name>/<name>.xml`` with that model's meshes in its own ``meshes/`` subdir --
 referenced bare via ``<compiler meshdir="meshes">`` -- and its manifest, licence, port log and
 thumbnail beside it. The same shape ``roqsim_manipulation_assets`` and ``roqsim_assets`` use, and a form
-:func:`roqsim.models.resolve_model` accepts directly. This replaced a flat ``models/<name>.xml`` over one
-shared ``models/meshes/``, where a model's files were spread across four globs and two robots'
-same-named link meshes could only be kept apart by a per-model mesh subdirectory anyway. A folder makes
-the grouping the filesystem's job, so adding or removing a model is one ``mv``.
+:func:`roqsim.models.resolve_model` accepts directly. A folder puts a model's files under one glob
+prefix, keeps two robots' same-named link meshes apart, and makes the grouping the filesystem's job,
+so adding or removing a model is one ``mv``.
 
 Each robot ships a ``<model>.manifest.yaml`` listing the plugins intrinsic to it -- for a wheeled base
 that is its drive (``diff_drive`` / ``omni_drive``) carrying the platform's wheel geometry and

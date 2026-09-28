@@ -95,8 +95,8 @@ def _sample(p0, v0, p1, v1, alpha: float, span: float) -> list[float]:
 #: arm never arrived. A position servo converges asymptotically, so a healthy execution ends a few
 #: hundredths of a radian out and any threshold tight enough to grade that would abort real work.
 #: Half a radian is ~29 degrees -- no arm that followed its trajectory ends there, and an arm that
-#: was blocked does. Measured on a manipulation cell that planned through its own bench: the arm
-#: stalled 5.59 rad from the last waypoint and this action still reported SUCCESSFUL.
+#: is blocked does. Measured on a manipulation cell that plans through its own bench: the arm
+#: stalls 5.59 rad from the last waypoint.
 DEFAULT_GOAL_TOLERANCE = 0.5
 #: ...and how long after the final waypoint the joints are given to get inside it.
 DEFAULT_GOAL_TIME_TOLERANCE = 1.0
@@ -153,8 +153,8 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
 
     Feedback reports ``desired`` (the commanded waypoint) against ``actual`` (what the joints are
     really at, read back through the producer's state reader) and their difference as ``error``, the
-    way a ros2_control JointTrajectoryController does. Reporting the command as both -- which this did
-    -- makes the tracking error identically zero, hiding exactly the saturation or gain problem the
+    way a ros2_control JointTrajectoryController does. Reporting the command as both would make the
+    tracking error identically zero, hiding exactly the saturation or gain problem the
     feedback exists to expose.
 
     The result is graded on where the JOINTS ended, not on the trajectory's clock running out: the
@@ -162,6 +162,17 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     deliberately loose default under both (see :data:`DEFAULT_GOAL_TOLERANCE`). Missing it aborts the
     goal with ``GOAL_TOLERANCE_VIOLATED`` and an ``error_string`` naming the joint and its error, so
     a blocked or saturated arm is a failed execution rather than a silent success.
+
+    A CANCEL ends the motion, not just the feed. Ending the feed alone would leave the arm
+    converging on the interpolated setpoint that happened to be posted at that instant -- a point of
+    a path nobody wants any more -- so the handler commands a hold at the measured joint positions
+    before it returns, the way a ros2_control JointTrajectoryController does. The cancelled goal is
+    then graded by the same rule as any other ending: the joints are where the caller stopped them,
+    so a mid-trajectory cancel reports ``GOAL_TOLERANCE_VIOLATED`` against the last waypoint and a
+    cancel that arrives with the arm already at the goal reports ``SUCCESSFUL``. Either way the
+    terminal status is ``CANCELED`` and ``error_string`` says the goal was cancelled, so a consumer
+    that reads only ``error_code`` can still tell an execution that was cut short from one that ran
+    to its end.
     """
     traj = goal_handle.request.trajectory
     names = list(traj.joint_names)
@@ -170,10 +181,24 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     # The producer's joint-state reader, so `actual` is measured rather than assumed. Same key
     # convention as the gripper handler; absent, feedback falls back to reporting the command.
     reader = None
+    handle = None
     if endpoint is not None:
         state_key = endpoint.backend.get("ros2", {}).get("arm_state_key", f"arm:{endpoint.owner}")
         handle = ctx.blackboard.get(state_key)
         reader = getattr(handle, "read_state", None)
+
+    # A deactivated controller does not execute. On real hardware it holds no command interfaces,
+    # so the goal is rejected outright -- and a scenario that hands the arm to a Cartesian
+    # controller and then sends a trajectory anyway must fail here rather than have the two fight
+    # over the joints, which is what it would do against the real robot.
+    is_active = getattr(handle, "is_active", None)
+    if is_active is not None and not is_active():
+        goal_handle.abort()
+        result.error_code = FollowJointTrajectory.Result.INVALID_GOAL
+        result.error_string = (
+            "the trajectory controller is not active; activate it before sending a goal"
+        )
+        return result
 
     def measured(commanded: list[float]) -> list[float]:
         if reader is None:
@@ -182,6 +207,60 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         by_name = dict(zip(got_names, positions, strict=False))
         # A trajectory may name a subset, or joints this controller does not own.
         return [float(by_name.get(n, c)) for n, c in zip(names, commanded, strict=True)]
+
+    # What "reached the goal" means for this arm, read before the first waypoint is fed because a
+    # cancel is graded by it too (see `cancelled` below). Both are pure functions of the goal and
+    # the endpoint's hints.
+    hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
+    tol = _goal_tolerances(goal_handle.request, hints, names)
+    final = list(traj.points[-1].positions) if traj.points else []
+
+    def hold_at_measured(commanded: list[float]) -> list[float]:
+        """Command the arm to hold where it IS, and return the positions commanded.
+
+        This handler's only output is the setpoint it posts, and the producer holds the last one it
+        was given every tick, for as long as nobody writes another. Stopping the feed is therefore
+        not stopping the arm: it keeps converging on the setpoint that was in flight. Posting the
+        MEASURED positions turns the hold into the pose the arm is in, which is the hold a
+        ros2_control JointTrajectoryController commands when its goal ends early. A position command
+        also supersedes any velocity command the producer was integrating, so nothing walks the
+        target on afterwards.
+        """
+        here = measured(commanded)
+        if reader is None:
+            logger.warning(
+                "no joint-state reader for %r, so a stop holds the last commanded setpoint rather "
+                "than the measured pose; name the producer's state key in the endpoint's "
+                "`arm_state_key` hint to stop the arm where it is",
+                getattr(endpoint, "name", "the arm"),
+            )
+        on_payload((names, here))
+        return here
+
+    def cancelled(commanded: list[float]):
+        """Stop the arm, end the goal, and grade the result on where the stop left the joints.
+
+        A cancelled execution and a completed one are different outcomes and must not read alike:
+        the status is ``CANCELED`` and ``error_string`` names the cancellation, while ``error_code``
+        answers the question this handler answers everywhere else -- did the joints end at the last
+        waypoint? A cancel mid-path did not, so it reports ``GOAL_TOLERANCE_VIOLATED`` against the
+        pose it actually holds.
+        """
+        here = hold_at_measured(commanded)
+        goal_handle.canceled()
+        violation = _worst_violation(names, final, here, tol) if tol and final else None
+        if violation is None:
+            result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
+            result.error_string = "goal cancelled; the arm holds inside the goal tolerance"
+        else:
+            joint, err, allowed = violation
+            result.error_code = FollowJointTrajectory.Result.GOAL_TOLERANCE_VIOLATED
+            result.error_string = (
+                f"goal cancelled; {joint} holds {err:.4f} rad from the last waypoint, "
+                f"tolerance {allowed:.4f} rad"
+            )
+        logger.info("trajectory cancelled: %s", result.error_string)
+        return result
 
     start = ctx.sim_time
     feedback = FollowJointTrajectory.Feedback()
@@ -206,23 +285,18 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         vels = list(point.velocities) if len(point.velocities) == len(names) else None
         span = target_t - prev_t
         last_fed = None
+        fed = prev_pos
         # Feed the trajectory as it comes due, honouring cancellation.
         while ctx.sim_time < target_t:
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
-                return result
+                return cancelled(fed)
             now = ctx.sim_time
             # Once per physics step at most: the payload goes onto the physics thread's queue, and
             # posting faster than it steps only lengthens the queue.
             if span > 0.0 and now != last_fed:
                 last_fed = now
-                on_payload(
-                    (
-                        names,
-                        _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span),
-                    )
-                )
+                fed = _sample(prev_pos, prev_vel, positions, vels, (now - prev_t) / span, span)
+                on_payload((names, fed))
             time.sleep(0.002)
         on_payload((names, positions))
         prev_t, prev_pos = target_t, positions
@@ -233,14 +307,11 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
         feedback.error.positions = [a - c for a, c in zip(actual, positions, strict=True)]
         goal_handle.publish_feedback(feedback)
 
-    # FEEDING the last waypoint is not ARRIVING at it. Without the check below this action reported
-    # SUCCESSFUL the moment the trajectory's clock ran out, whatever the arm was actually doing --
-    # so an arm held back by a collision, a saturated actuator or a plan through the furniture came
-    # back indistinguishable from one that did the job. Nothing downstream could tell: MoveIt
+    # FEEDING the last waypoint is not ARRIVING at it. Without the check below this action would
+    # report SUCCESSFUL the moment the trajectory's clock runs out, whatever the arm is actually doing
+    # -- so an arm held back by a collision, a saturated actuator or a plan through the furniture
+    # would come back indistinguishable from one that did the job. Nothing downstream can tell: MoveIt
     # forwards this verdict, so the caller sees a clean execution and a scene that did not change.
-    hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
-    tol = _goal_tolerances(goal_handle.request, hints, names)
-    final = list(traj.points[-1].positions) if traj.points else []
     violation = None
     if tol and final:
         # The joints are given until the goal time tolerance to get inside it: the trajectory ends
@@ -256,9 +327,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
             if violation is None or ctx.sim_time >= deadline:
                 break
             if goal_handle.is_cancel_requested:
-                goal_handle.canceled()
-                result.error_code = FollowJointTrajectory.Result.SUCCESSFUL
-                return result
+                return cancelled(final)
             time.sleep(0.002)
 
     if violation is not None:
@@ -290,15 +359,33 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     it (``stalled``, i.e. a gripper closed on an object / a door met an obstruction). The reader's
     blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so
     existing arms are unchanged. Without a reader we wait a fixed settle time and report the command.
+
+    ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
+    every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
+    arm_controller's ``GripperEffort``) clamps its joint effort at it; the clamp is posted before the
+    position, so both land in the same step. A producer without one, such as a door, executes the
+    position alone, as a position-interface controller does. Feedback and result report the effort
+    that entry reads.
+
+    A cancel stops the fingers rather than only the wait: the measured position is commanded back as
+    the hold before the goal ends, and the result reports that measured position with
+    ``reached_goal`` graded against it -- so a hand cancelled mid-travel does not go on closing on
+    the position the caller withdrew.
     """
     cmd = goal_handle.request.command
     target = float(cmd.position)
+    max_effort = float(cmd.max_effort)
+    result = GripperCommand.Result()
+    hints = endpoint.backend.get("ros2", {}) if endpoint is not None else {}
+    effort_key = hints.get("effort_key")
+    effort = ctx.blackboard.get(effort_key) if effort_key else None
+    if effort is not None:
+        ctx.post(lambda _ctx, value=max_effort: effort.set_max_effort(value))
     on_payload(target)
 
-    result = GripperCommand.Result()
     reader = None
     if endpoint is not None:
-        state_key = endpoint.backend.get("ros2", {}).get("state_key", f"gripper:{endpoint.owner}")
+        state_key = hints.get("state_key", f"gripper:{endpoint.owner}")
         reader = ctx.blackboard.get(state_key)
 
     pos_tol = 0.005  # rad: close enough to call the goal reached
@@ -313,14 +400,37 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     feedback = GripperCommand.Feedback()
     while ctx.sim_time - start < timeout:
         if goal_handle.is_cancel_requested:
+            # Stop the fingers, the way the trajectory handler stops the arm: the producer holds the
+            # last position it was commanded, so returning without a new one leaves the hand closing
+            # on the target the caller just cancelled. Commanding the measured position holds it
+            # where it is. Without a reader nothing measures the fingers, and the command stands.
+            if reader is not None:
+                position, _velocity = reader()
+                on_payload(position)
+                reached = abs(position - target) <= pos_tol
+            else:
+                logger.warning(
+                    "no state reader for %r, so a cancelled gripper command holds its target rather "
+                    "than the measured position; name the producer's reader in the endpoint's "
+                    "`state_key` hint",
+                    getattr(endpoint, "name", "the gripper"),
+                )
             goal_handle.canceled()
             result.position = position
+            if effort is not None:
+                result.effort = effort.read_effort()
+            # Reported as measured, not as asked for: a cancel that arrives with the fingers already
+            # at the commanded position did reach it, and one that arrives mid-travel did not.
+            result.stalled = False
+            result.reached_goal = reached
             return result
         if reader is not None:
             position, velocity = reader()
             reached = abs(position - target) <= pos_tol
             stalled = (ctx.sim_time - start) > settle and abs(velocity) <= vel_tol and not reached
             feedback.position = position
+            if effort is not None:
+                feedback.effort = effort.read_effort()
             feedback.stalled = stalled
             feedback.reached_goal = reached
             goal_handle.publish_feedback(feedback)
@@ -333,6 +443,8 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
 
     goal_handle.succeed()
     result.position = position
+    if effort is not None:
+        result.effort = effort.read_effort()
     result.stalled = stalled
     result.reached_goal = reached or stalled  # a stall on the object is a successful grasp
     return result

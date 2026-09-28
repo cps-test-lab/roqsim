@@ -3,7 +3,7 @@
 Reads the Open CASCADE OBJ (produced by cascadio from Seyond's Robin W1G STEP) and writes one
 MuJoCo-ready OBJ: the dark sensor housing (``robin_w1g_body``). The body is reframed from the CAD axes
 into roqsim's mount convention, scaled mm->m, centred on x=y=0 with its base dropped to z=0,
-decimated, and exported axes 1:1 (Z up). The sensor's FOV is no longer a baked mesh --
+decimated, and exported axes 1:1 (Z up). The sensor's FOV is not a baked mesh --
 ``spawn_sensor`` synthesises it as a bounded 120 deg x 70 deg angular sector from the datasheet angles
 in ``robin_w1g.manifest.yaml`` -- so this script produces only the housing mesh.
 

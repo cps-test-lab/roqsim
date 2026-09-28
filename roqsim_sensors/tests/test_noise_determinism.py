@@ -1,9 +1,9 @@
 """Sensor noise must be reproducible, and reproducible *from a restored state*.
 
-Before this existed, the sensors read a ``ctx.rng`` that nothing ever set, so they silently fell back to
-a module-level generator seeded from OS entropy at import -- and a run with noisy sensors could not be
-repeated at all. That matters beyond capture: for a repo whose object of study is reproducing published
-experiments, an irreproducible run is a defect on its own.
+A sensor that reads a ``ctx.rng`` nothing sets silently falls back to a module-level generator
+seeded from OS entropy at import -- and a run with noisy sensors then cannot be repeated at all.
+That matters beyond capture: for a repo whose object of study is reproducing published experiments,
+an irreproducible run is a defect on its own.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def world(tmp_path):
     return {
         "sim": {"world": str(scene)},
         "plugins": [
-            {"lidar": {"name": "front", "site": "scan", "num_rays": 64, "range_stddev": 0.05}}
+            {"lidar": {"site": "scan", "num_rays": 64, "range_stddev": 0.05}, "name": "front"}
         ],
     }
 
@@ -156,9 +156,9 @@ def test_the_seed_is_recorded_in_a_recordings_provenance(world, tmp_path):
 #
 # A process that serves several trials resets between them rather than restarting, and
 # `mj_resetData` puts `data.time` back to zero. Since the noise is a pure function of
-# (seed, sim_time, sensor), an unchanged seed made every episode replay the SAME noise
-# sequence -- so repeated trials of one configuration were identical in everything the
-# sensors contributed, while looking like independent repetitions.
+# (seed, sim_time, sensor), an unchanged seed would make every episode replay the SAME
+# noise sequence -- so repeated trials of one configuration would be identical in everything
+# the sensors contribute, while looking like independent repetitions.
 
 
 def _scans_over_episodes(world, seed, episodes=3, steps=120):
@@ -182,7 +182,7 @@ def _scans_over_episodes(world, seed, episodes=3, steps=120):
 
 
 def test_consecutive_episodes_do_not_replay_the_same_noise(world):
-    """The bug this guards: repetitions that are duplicates dressed as samples."""
+    """What this guards: repetitions that are duplicates dressed as samples."""
     first, second, third = _scans_over_episodes(world, seed=7)
     assert not np.array_equal(first, second)
     assert not np.array_equal(second, third)

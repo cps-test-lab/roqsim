@@ -10,9 +10,9 @@ on a headless node opens no display and aborts inside the first ``mujoco.Rendere
 ``mujoco.FatalError: gladLoadGL error``.
 
 That failure is invisible until something renders. A world with no camera never constructs a
-``Renderer``, so a process can run to completion against a backend that was already wrong -- which
-is how a mis-bound backend survived every campaign this substrate had ever run, and surfaced only
-when the first camera world reached a cluster. Hence :func:`select_offscreen_gl` is called from
+``Renderer``, so a process can run to completion against a backend that was already wrong -- a
+mis-bound backend passes every camera-less run and surfaces only when a camera world reaches a
+headless node. Hence :func:`select_offscreen_gl` is called from
 :mod:`roqsim`'s package ``__init__``, before any ``roqsim`` submodule -- and therefore before any
 ``import mujoco`` of ours -- can run.
 """
@@ -36,11 +36,11 @@ DEFAULT_MUJOCO_GL = "egl"
 #: them is what makes a CPU-only node different from a broken GL install, which is the
 #: distinction MuJoCo's own error message cannot draw.
 #:
-#: Any ``renderD*`` counts, and probing for the specific name ``renderD128`` was a bug: nodes
+#: Any ``renderD*`` counts, and probing for the specific name ``renderD128`` is wrong: nodes
 #: are numbered from 128 in probe order, so on a machine with an integrated chip *and* a
 #: discrete card the discrete one is ``renderD129`` -- and a container handed only that card
-#: sees no ``renderD128`` at all. That container has a perfectly good GPU, and the fixed path
-#: read it as the half-configured case below and refused to run.
+#: sees no ``renderD128`` at all. That container has a perfectly good GPU, and probing the fixed
+#: name reads it as the half-configured case below and refuses to run.
 _RENDER_NODE_DIR = "/dev/dri"
 
 #: The prefix a DRI render node's name always has (``renderD128``, ``renderD129``, ...), as

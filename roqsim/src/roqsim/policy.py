@@ -14,9 +14,9 @@ them, so it imports only ``numpy`` and ``yaml``, both already core dependencies.
 in the family plugins, which is where ``torch``/``onnxruntime`` belong and where core must not follow.
 
 Deliberately small, and deliberately not a framework: no registry, no plugin group, no base class to
-inherit. A dataclass, a term table, and one builder (see architecture.rst §9, on a generic error-model
-framework that was deleted for adding indirection without demonstrated reuse -- the guard against this
-growing into one).
+inherit. A dataclass, a term table, and one builder (see architecture.rst §9, on why there is no generic
+error-model framework: indirection without demonstrated reuse -- the guard against this growing into
+one).
 
 A spec is a YAML file next to the checkpoint::
 

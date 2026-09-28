@@ -38,6 +38,8 @@ from pathlib import Path
 
 import click
 
+from . import exit_status
+
 COMMAND_GROUP = "roqsim.commands"
 
 
@@ -75,6 +77,31 @@ def _takes_argv(main) -> bool:
         p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)
         for p in params.values()
     )
+
+
+def _input_errors() -> tuple[type[BaseException], ...]:
+    """The exceptions that mean "the input you named cannot be loaded", not "the tool is broken".
+
+    Imported only once a tool runs: the classes live beside the engine, and a listing must not pay
+    for them (see the module docstring).
+    """
+    from .capture import RecordingError
+    from .models import ModelError
+    from .plugin import PluginError
+
+    return (FileNotFoundError, PluginError, ModelError, RecordingError)
+
+
+def _sentence(err: BaseException) -> str:
+    """One line for an input error. An ``OSError`` reads as its reason and the path, not its errno."""
+    if isinstance(err, OSError) and err.filename is not None:
+        return f"{err.strerror or 'cannot read'}: {err.filename}"
+    return str(err)
+
+
+def _wants_traceback(args) -> bool:
+    """``-v``/``--verbose`` is every tool's "show me more" switch, so it is also the traceback's."""
+    return any(a in ("-v", "--verbose") for a in args)
 
 
 def summary_line(module: str) -> str:
@@ -122,19 +149,43 @@ class ToolCommand(click.Command):
             sys.argv[0] = original
 
     def _run(self, args, ctx):
-        """Call the module's ``main`` with `args`, however it expects to receive them."""
+        """Call the module's ``main`` with `args`, however it expects to receive them.
+
+        An input the tool cannot load -- a world, model or recording that does not resolve, a file
+        that is not there -- is reported as one sentence naming the command, where a tool has not
+        already said so itself, and exits with the error's status from :mod:`roqsim.exit_status`:
+        ``BAD_INPUT``, or ``RECORDING`` for a recording that exists and cannot be read. A traceback
+        there sends the reader into the tool's source to learn that a path was mistyped; ``-v`` keeps
+        it, for the case where the missing file is the tool's own fault.
+
+        A tool that refuses with ``raise SystemExit("<reason>")`` gets ``BAD_INPUT`` too. Python
+        would exit ``1`` for it, which the table keeps for a crash, and a refusal with a reason is
+        not one.
+        """
         main = self._load().main
         with self._named(ctx):
-            # `main(argv)` is the convention, but a tool whose main() reads sys.argv directly is
-            # perfectly ordinary Python -- and a package outside this repo may well ship one. Give it
-            # the arguments the way it expects them rather than a TypeError traceback.
-            if _takes_argv(main):
-                return main(list(args))
-            original, sys.argv[1:] = sys.argv[1:], list(args)
             try:
-                return main()
-            finally:
-                sys.argv[1:] = original
+                # `main(argv)` is the convention, but a tool whose main() reads sys.argv directly is
+                # perfectly ordinary Python -- and a package outside this repo may well ship one.
+                # Give it the arguments the way it expects them rather than a TypeError traceback.
+                if _takes_argv(main):
+                    return main(list(args))
+                original, sys.argv[1:] = sys.argv[1:], list(args)
+                try:
+                    return main()
+                finally:
+                    sys.argv[1:] = original
+            except _input_errors() as err:
+                if _wants_traceback(args):
+                    raise
+                name = ctx.command_path if ctx else self.name
+                click.echo(f"{name}: {_sentence(err)}", err=True)
+                return exit_status.for_error(err)
+            except SystemExit as err:
+                if not isinstance(err.code, str):
+                    raise
+                click.echo(err.code, err=True)
+                return exit_status.BAD_INPUT
 
     def _forward(self, args):
         raise SystemExit(self._run(args, click.get_current_context(silent=True)))
@@ -176,7 +227,17 @@ class BlenderToolCommand(ToolCommand):
         return spec.origin
 
     def _forward(self, args):
-        cmd = [self._blender(), "--background", "--python", self._script(), "--", *args]
+        # Blender exits 0 when the script raises, unless told otherwise.
+        cmd = [
+            self._blender(),
+            "--background",
+            "--python-exit-code",
+            "1",
+            "--python",
+            self._script(),
+            "--",
+            *args,
+        ]
         raise SystemExit(subprocess.call(cmd))
 
     def get_help(self, ctx) -> str:
@@ -221,12 +282,12 @@ _TARGET_MARKS = ("/", ".yaml", ".yml", ".xml", ":", "\\")
 
 
 class RootGroup(click.Group):
-    """The root group, with one courtesy: it recognises what used to be `roqsim <world>`.
+    """The root group, with one courtesy: it recognises the bare `roqsim <world>` form.
 
-    Running a world was the whole of this command once, so that spelling is written into other
-    people's notes, scripts and muscle memory. `No such command 'worlds/x.yaml'` is a true but
-    useless answer to it, and a stale invocation that fails obscurely is how a broken command line
-    survives in a checked-in Makefile for months.
+    That spelling lives in other people's notes, scripts and muscle memory, and it is what a reader
+    reaches for first, `sim` being the obvious thing a simulator does. `No such command
+    'worlds/x.yaml'` is a true but useless answer to it -- and an invocation that fails obscurely is
+    how a broken command line survives in a checked-in Makefile.
     """
 
     def resolve_command(self, ctx, args):
@@ -257,6 +318,7 @@ cli.add_command(tool("roqsim.state", "state"))
 cli.add_command(tool("roqsim.introspection", "plugins"))
 cli.add_command(tool("roqsim.catalog", "catalog"))
 cli.add_command(tool("roqsim.health", "health"))
+cli.add_command(tool("roqsim.check", "check"))
 
 
 @cli.group("export")
@@ -281,7 +343,7 @@ def main(argv: list | None = None) -> int:
         return cli.main(args=argv, standalone_mode=False) or 0
     except click.UsageError as err:
         click.echo(f"roqsim: {err.format_message()}", err=True)
-        return 2
+        return exit_status.BAD_INPUT
     except click.ClickException as err:
         click.echo(f"roqsim: {err.format_message()}", err=True)
         return err.exit_code

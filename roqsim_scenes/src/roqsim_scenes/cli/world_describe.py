@@ -9,13 +9,13 @@ what a caller holding an override needs to know::
      "components": [{"address": "robot.lidar", "ref": "lidar",
                      "paths": ["components.robot.lidar.rays", ...]}],
      "addresses": ["robot", "robot.lidar", ...],
-     "entities": null,
+     "entities": null, "flexes": null, "warnings": null,
      "overridable": {"fields": [{"field": "geom_friction", "does": ..., "caveats": ...}, ...],
                      "targets": null},
      "dropped_transport": [], "errors": null}
 
 Why a command and not an import, for the same reason ``inputs`` is one: the caller is usually
-*not* a roqsim process. A campaign runner validating ``plugins.floorplan.frixion`` before it
+*not* a roqsim process. A campaign runner validating ``components.floorplan.frixion`` before it
 spends an image pull has no reason to have roqsim installed, and cannot resolve a world's
 ``extends`` chain without it -- so it asks the image that does.
 
@@ -25,9 +25,9 @@ with the dotted paths into its config that already exist. ``addresses`` is that 
 it is exactly what resolution accepts: a caller can check a sweep key against it before spending an
 image pull.
 
-That equality is the point. The payload used to be built from the document's own entries, so the set
-published and the set an override could reach were the same -- and both excluded everything a model
-manifest supplied, which is precisely what a campaign wants to vary. A path not listed is still not
+That equality is the point, and it is why the payload is read off the EFFECTIVE list rather than the
+document's own entries: the two differ exactly where a model manifest supplies a component, which is
+precisely what a campaign wants to vary. A path not listed is still not
 necessarily invalid: a plugin may accept a key its world leaves at the default, so a caller reports
 an unlisted *path* as unverifiable rather than as wrong. What the list settles is the expensive
 mistake -- an *address* matching nothing, refused at load time inside the container, after the pull
@@ -37,10 +37,21 @@ and the schedule.
 the model: which entities exist is settled at compile time (roqsim never recompiles mid-run, and
 ``simulation_interfaces`` serves no ``SpawnEntity``), so there is no cheaper way to ask. A
 caller checking that a scenario only drives entities the world actually has pays for it; one
-resolving paths does not.
+resolving paths does not. **Flexes** come with them, from the same compile and for the same reason:
+one row per flex (:func:`roqsim.flex_modes.describe_flexes`), ``null`` without the flag.
+
+**Warnings** come with them too. ``--entities`` also resets the world, as a run does before each
+trial, so the answer is about the state a trial starts from: ``warnings`` lists what that state holds
+that will not stop the world from loading but is likely to make a run misbehave, in ``roqsim check``'s
+``{"check", "message", "hint"}`` shape -- two bodies placed inside one another
+(``interpenetration``, :func:`roqsim.interpenetration.as_warnings`). ``[]`` is a start state with
+nothing to say, ``null`` one that was not reset. A plugin whose ``on_reset`` raises is a world that
+cannot start a trial: the reply carries ``errors.reset`` and exits non-zero, with the build-fed keys
+still filled.
 
 **Overrides.** ``--override FILE`` applies a nested override tree before anything is described,
-the same spelling and the same file ``roqsim sim --override`` takes. It matters for the build-fed
+and ``--set PATH=VALUE`` one value over it: the same options, merged by the same function
+(:mod:`roqsim.override_options`), as ``roqsim sim`` takes, both repeatable. It matters for the build-fed
 halves: which entities a world compiles depends on its plugins' config, so a campaign whose
 obstacles come from its own overrides compiles them only with those overrides applied. Without
 the flag this command answers about the world the FILE declares, which is a different world than
@@ -69,7 +80,7 @@ tree with no indication it was cut.
 **The build has no transport in it**, and ``dropped_transport`` names what went. A describe publishes
 nothing, so a world's bridge is dead weight here exactly as it is for ``roqsim render`` and the exporters
 -- and since the ROS bridge ships in a colcon package, in a pip-only environment it does not even
-resolve, which used to fail the build over plugins that contribute no geometry. Only *identified*
+resolve at all, so requiring it would fail a describe over plugins that contribute no geometry. Only *identified*
 transport goes (:func:`roqsim.config.drop_transport`, not the lenient ``drop_transport_plugins``): a
 misspelt geometry plugin must stay the loud failure it is, because dropping it would leave an entity
 missing and let a caller conclude the world does not have it. The ``components`` list above is computed
@@ -77,9 +88,10 @@ before the drop and still reports the bridge, so an override addressing it is st
 
 **Half an answer is still an answer, and says so.** When only the build fails -- the branches above,
 not loading the world -- the reply is printed with ``errors.build`` set and the build-fed keys left
-``null``, so a caller keeps the half that cost nothing (which plugin keys exist) instead of losing the
-lot. The exit code stays non-zero: ``0`` goes on meaning "fully answered", and a caller that reads only
-the status must not be told a partial reply was a complete one.
+``null``, so a caller keeps the half that cost nothing (which plugin keys exist) instead of losing
+the lot. The exit code is ``2`` (``roqsim.exit_status.BAD_INPUT``): ``0`` goes on meaning "fully
+answered", and a caller that reads only the status must not be told a partial reply was a complete
+one.
 """
 
 from __future__ import annotations
@@ -91,13 +103,14 @@ from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
 
-import yaml
-
+from roqsim import exit_status
 from roqsim.config import drop_transport, load_config, world_sources
+from roqsim.override_options import add_override_options, overrides_from_options
+from roqsim.plugin import PluginError
 from roqsim.world import resolve_world_yaml_ref
 
 #: Depth at which a dotted path stops being a *destination* and starts being data. A campaign
-#: overrides ``plugins.floorplan.floor.reflectance``; it does not address individual members of
+#: overrides ``components.floorplan.floor.reflectance``; it does not address individual members of
 #: a list of obstacle instances, and listing those would bury the keys that matter.
 _MAX_DEPTH = 4
 
@@ -116,9 +129,9 @@ def _describe_components(config) -> list:
     """Every component that will RUN, under the address an override names it by.
 
     Read off the effective list, so a sensor a model's manifest supplies is here even though no entry
-    in the document mentions it. It used to be zipped against the document's own entries, which meant
-    the set this command published and the set an override could reach were the same -- and both
-    excluded everything a manifest contributed, which is exactly what a campaign wants to sweep.
+    in the document mentions it. Zipped against the document's own entries instead, this would publish
+    a set an override cannot reach -- one missing everything a manifest contributes, which is exactly
+    what a campaign wants to sweep.
     """
     return [
         {
@@ -147,19 +160,15 @@ def _overridable_fields() -> list:
 
 @contextmanager
 def _built(config):
-    """The world's compiled context, for the questions that need one. One build serves them all.
+    """The world's compiled engine, for the questions that need one. One build serves them all.
 
     Imported here rather than at module scope: describing a world's *paths* must not pay for
     importing the engine, and these are the only branches that need it.
     """
     from roqsim.engine import Engine
 
-    engine = Engine(config)
-    engine.setup()
-    try:
-        yield engine.ctx
-    finally:
-        engine.shutdown()
+    with Engine(config, preview=True) as engine:
+        yield engine
 
 
 def _overridable_targets(ctx, pattern: str) -> dict:
@@ -184,12 +193,14 @@ def _overridable_targets(ctx, pattern: str) -> dict:
         "body": mujoco.mjtObj.mjOBJ_BODY,
         "actuator": mujoco.mjtObj.mjOBJ_ACTUATOR,
         "joint": mujoco.mjtObj.mjOBJ_JOINT,
+        "flex": mujoco.mjtObj.mjOBJ_FLEX,
     }
     counts = {
         "geom": ctx.model.ngeom,
         "body": ctx.model.nbody,
         "actuator": ctx.model.nu,
         "joint": ctx.model.njnt,
+        "flex": ctx.model.nflex,
     }
 
     targets: dict[str, list[dict]] = {}
@@ -296,6 +307,19 @@ def _body_tree(ctx, pattern: str) -> list[dict]:
     return results
 
 
+def _flexes(ctx) -> list[dict]:
+    """Each flex the world compiles, as ``roqsim check`` lists it: dim, vertex and element counts,
+    dof mode, pins, parent body, owning entity, elastic, passive contact.
+
+    Fields of the compiled model only; the modes and damping ``roqsim check`` derives from them cost
+    an eigen solve per flex and stay there.
+    """
+    from roqsim.flex_modes import describe_flexes
+
+    bodies = {name: ctx.entities.get(name).body for name in ctx.entities.names()}
+    return describe_flexes(ctx.model, bodies)
+
+
 def _plain(value):
     """A numpy row as JSON: a list for a vector, a number for a scalar."""
     if getattr(value, "ndim", 0):
@@ -307,6 +331,11 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim scenes describe",
         description="Describe what a world provides, as JSON on stdout.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a world that loads but does not build or reset; the partial reply is "
+            "still printed, with `errors` set.",
+        ),
     )
     parser.add_argument(
         "world", help="world YAML path, or a package ref such as 'roqsim_scenes:depot'"
@@ -314,7 +343,8 @@ def main(argv=None) -> int:
     parser.add_argument(
         "--entities",
         action="store_true",
-        help="also list the entities the world compiles (builds the model)",
+        help="also list the entities the world compiles, and what its reset state warns about "
+        "(builds and resets the model)",
     )
     parser.add_argument(
         "--overridable",
@@ -323,14 +353,9 @@ def main(argv=None) -> int:
         help="also list the geoms/bodies/actuators matching GLOB that model_override can change, "
         "with their current values (builds the model)",
     )
-    parser.add_argument(
-        "--override",
-        metavar="FILE",
-        default="",
-        help="YAML file of overrides to apply before describing, exactly as `roqsim sim "
-        "--override` takes them (the answer is then about the world a run with those "
-        "overrides would load)",
-    )
+    # `roqsim sim`'s own --set/--override: the answer is then about the world a run with those
+    # overrides would load.
+    add_override_options(parser)
     parser.add_argument(
         "--body-tree",
         metavar="GLOB",
@@ -346,39 +371,37 @@ def main(argv=None) -> int:
             resolved = resolve_world_yaml_ref(target)
         except FileNotFoundError as err:
             print(f"cannot resolve world {target!r}: {err}", file=sys.stderr)
-            return 1
+            return exit_status.BAD_INPUT
         if resolved is None:
             print(
                 f"{target!r} is not a world ref (no such roqsim.worlds provider)", file=sys.stderr
             )
-            return 1
+            return exit_status.BAD_INPUT
         target, packaged = str(resolved), True
     if not Path(target).exists():
         print(f"world {target!r} does not exist", file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
 
     world = Path(target).resolve()
-    overrides = None
-    if args.override:
-        # A caller holding overrides is asking about the world its RUN will load, not about the
-        # file: the entities a campaign's own obstacle placement compiles in exist only once its
-        # overrides are applied, so describing the base world answered a different question than
-        # the one asked -- and a caller comparing entity names against that answer concluded a
-        # working campaign was broken.
-        if not Path(args.override).exists():
-            print(f"overrides file {args.override!r} does not exist", file=sys.stderr)
-            return 1
-        try:
-            with open(args.override, encoding="utf-8") as handle:
-                overrides = yaml.safe_load(handle) or {}
-        except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
-            print(f"cannot read overrides {args.override}: {err}", file=sys.stderr)
-            return 1
+    # A caller holding overrides is asking about the world its RUN will load, not about the file:
+    # the entities a campaign's own obstacle placement compiles in exist only once its overrides
+    # are applied, so describing the base world answers a different question than the one asked
+    # -- and a caller comparing entity names against that answer concludes a working campaign is
+    # broken.
+    for override_file in args.override_files or []:
+        if not Path(override_file).exists():
+            print(f"overrides file {override_file!r} does not exist", file=sys.stderr)
+            return exit_status.BAD_INPUT
+    try:
+        overrides = overrides_from_options(args)
+    except PluginError as err:
+        print(f"cannot read overrides: {err}", file=sys.stderr)
+        return exit_status.BAD_INPUT
     try:
         config = load_config(world, overrides)
     except Exception as err:  # noqa: BLE001 - the caller gets the reason, not a traceback
         print(f"cannot load world {world}: {err}", file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
 
     result = {
         "world": str(world),
@@ -391,6 +414,10 @@ def main(argv=None) -> int:
         # caller looking for a mistake that is not there.
         "addresses": sorted(spec.address for spec in config.plugins),
         "entities": None,
+        # Built with the entities, from the same compile: what each flex compiled into.
+        "flexes": None,
+        # What the reset the entities come with found in the start state -- see the module docstring.
+        "warnings": None,
         # The allowlist is world-independent, so it costs nothing and is always here. Its
         # world-specific half needs the model, hence the flag -- see the module docstring.
         "overridable": {"fields": _overridable_fields(), "targets": None},
@@ -412,24 +439,35 @@ def main(argv=None) -> int:
                 file=sys.stderr,
             )
         # ONE build, however many of these were asked for: compiling this world is the expensive part.
+        stage = "build"
         try:
-            with _built(config) as ctx:
+            with _built(config) as engine:
+                ctx = engine.ctx
                 if args.entities:
                     result["entities"] = sorted(ctx.entities.names())
+                    result["flexes"] = _flexes(ctx)
                 if args.overridable:
                     result["overridable"]["targets"] = _overridable_targets(ctx, args.overridable)
                 if args.body_tree:
                     result["body_tree"] = _body_tree(ctx, args.body_tree)
+                if args.entities:
+                    # Last, so everything above describes the model as compiled: a reset moves the
+                    # state to where a trial starts, which is what the warnings are about.
+                    from roqsim.interpenetration import as_warnings
+
+                    stage = "reset"
+                    engine.reset()
+                    result["warnings"] = as_warnings(engine.interpenetrations)
         except Exception as err:  # noqa: BLE001
-            # The half that needed no build is still worth having, so the reply is printed with the
-            # reason attached -- and the exit code still says it is not a whole answer.
-            print(f"cannot build world {world}: {err}", file=sys.stderr)
-            result["errors"] = {"build": str(err)}
+            # The half that needed no build (or no reset) is still worth having, so the reply is
+            # printed with the reason attached -- and the exit code still says it is not whole.
+            print(f"cannot {stage} world {world}: {err}", file=sys.stderr)
+            result["errors"] = {stage: str(err)}
             print(json.dumps(result))
-            return 1
+            return exit_status.BAD_INPUT
 
     print(json.dumps(result))
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

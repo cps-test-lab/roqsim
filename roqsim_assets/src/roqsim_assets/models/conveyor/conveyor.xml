@@ -6,8 +6,8 @@
     visible belt + rollers are decorative (the rollers are spun by the plugin to match).
 
     This is a BENCHTOP unit, not a floor-standing one: its feet run from z=0.76 to 0.915, so it
-    needs a ~0.76 m table under it. The table it used to bundle now lives beside it as the standalone
-    `industrial_table` prop (spawn it at this model's local [-0.13, 0.6, 0] for the source layout);
+    needs a ~0.76 m table under it. The standalone `industrial_table` prop is the table it is laid
+    out for (spawn it at this model's local [-0.13, 0.6, 0] for the source layout);
     any other ~0.76 m top works too -- `desk_diy` is 0.758.
 
     Coordinates match the source cell: belt centred at (x=0, y=0.6), belt surface at z=0.97,
@@ -32,10 +32,10 @@
     <!-- Conveyor static parts: feet, visible belt, side rails, and the end rollers
          (roller_a drive at -x, roller_b idler at +x; spun about y by the plugin). -->
     <body name="conveyor_frame" pos="0 0.6 0">
-      <geom name="conv_leg_1" type="box" size="0.03 0.03 0.0775" pos="1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_2" type="box" size="0.03 0.03 0.0775" pos="-1.1 0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_3" type="box" size="0.03 0.03 0.0775" pos="1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
-      <geom name="conv_leg_4" type="box" size="0.03 0.03 0.0775" pos="-1.1 -0.27 0.8375" material="frame" contype="0" conaffinity="0"/>
+      <geom name="conv_leg_1" type="box" size="0.03 0.03 0.0775" pos="1.1 0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_2" type="box" size="0.03 0.03 0.0775" pos="-1.1 0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_3" type="box" size="0.03 0.03 0.0775" pos="1.1 -0.27 0.8375" material="frame"/>
+      <geom name="conv_leg_4" type="box" size="0.03 0.03 0.0775" pos="-1.1 -0.27 0.8375" material="frame"/>
       <geom name="belt_visual" type="box" size="1.221 0.29 0.0275" pos="0 0 0.9425" material="belt" contype="0" conaffinity="0"/>
       <geom name="rail_near" type="box" size="1.221 0.006 0.03" pos="0 -0.296 0.9425" material="frame" contype="0" conaffinity="0"/>
       <geom name="rail_far"  type="box" size="1.221 0.006 0.03" pos="0  0.296 0.9425" material="frame" contype="0" conaffinity="0"/>

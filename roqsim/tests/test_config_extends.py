@@ -122,6 +122,56 @@ def test_disable_drops_named_plugin(tmp_path):
     assert [type(p).__name__ for p in instantiate_plugins(cfg)] == ["SpawnModelPlugin"]
 
 
+def test_disable_then_re_add_is_how_you_modify_an_inherited_plugin(tmp_path):
+    """The override pattern this module's own docstring documents: "To *modify* an inherited plugin,
+    ``disable`` it and re-add a tweaked copy in the child's ``plugins``."
+
+    It has to survive the duplicate-label check, and only just does: `disable` turns the inherited
+    entry OFF rather than removing it, so the document really does carry two entries under one
+    label. A disabled one builds nothing and registers nothing, so it cannot be what another label
+    silently stands in for -- which is the thing that check exists to catch.
+    """
+    _parent(tmp_path)
+    child = _write(
+        tmp_path,
+        "child.yaml",
+        """
+        extends: parent.yaml
+        disable: [table_2]
+        plugins:
+          - spawn_model: {model: industrial_table, pose: {position: {x: 1.0, y: 0.0, z: 0.0}}}
+            name: table_2
+        """,
+    )
+    cfg = load_config(child)
+    labels = [(s.label, s.enabled) for s in cfg.declared]
+    assert labels == [("table_1", True), ("table_2", False), ("greeter", True), ("table_2", True)]
+    # ...and exactly one table_2 is built: the tweaked copy, not the inherited one.
+    assert [type(p).__name__ for p in instantiate_plugins(cfg)] == [
+        "SpawnModelPlugin",
+        "DummyPlugin",
+        "SpawnModelPlugin",
+    ]
+
+
+def test_two_live_entries_under_one_label_still_raise(tmp_path):
+    """The guard the test above must not have loosened: two ENABLED entries sharing a label are
+    still one instance standing in for the other, and are still refused."""
+    _parent(tmp_path)
+    child = _write(
+        tmp_path,
+        "child.yaml",
+        """
+        extends: parent.yaml
+        plugins:
+          - spawn_model: {model: industrial_table}
+            name: table_1
+        """,
+    )
+    with pytest.raises(PluginError, match="two components labelled"):
+        load_config(child)
+
+
 def test_disable_unknown_selector_raises(tmp_path):
     _parent(tmp_path)
     child = _write(
@@ -175,12 +225,39 @@ def test_extends_package_ref_resolves(tmp_path):
         sim:
           timestep: 0.001
         plugins:
-          - spawn_robot: {model: turtlebot4, prefix: robot_, pos: [-8.0, 0.0]}
+          - spawn_robot: {model: turtlebot4, prefix: robot_, pose: {position: {x: -8.0, y: 0.0}}}
             name: robot
         """,
     )
     cfg = load_config(child)
     assert cfg.timestep == 0.001
     assert cfg.declared[-1].ref == "spawn_robot"
-    assert cfg.sim["world"].endswith("worlds/depot/depot.xml")
+    # Named by package, as the parent was reached: a path into this interpreter's install would be
+    # recorded into the run's provenance and rebuild nowhere else.
+    assert cfg.sim["world"] == "roqsim_scenes:depot/depot.xml"
     assert len(cfg.plugins) > 1  # the parent's own plugins are inherited
+
+
+def test_a_package_parents_world_is_inherited_by_reference_and_resolves(tmp_path, monkeypatch):
+    """The provenance of a run made from a world that extends a package's world names the MJCF as
+    `<package>:<path>`; resolving that ref finds the file wherever the package is installed."""
+    from roqsim.config import SimConfig
+    from roqsim.world import world_file
+
+    site = tmp_path / "site"
+    (site / "fake_scenes" / "worlds" / "hall").mkdir(parents=True)
+    (site / "fake_scenes" / "__init__.py").write_text(
+        "from pathlib import Path\nWORLDS_DIR = Path(__file__).parent / 'worlds'\n"
+    )
+    mjcf = site / "fake_scenes" / "worlds" / "hall" / "hall.xml"
+    mjcf.write_text("<mujoco/>")
+    (site / "fake_scenes" / "worlds" / "hall.yaml").write_text(
+        "sim: {world: hall/hall.xml}\nplugins: []\n"
+    )
+    monkeypatch.syspath_prepend(str(site))
+    child = _write(tmp_path, "child.yaml", "extends: fake_scenes:hall\nplugins: []\n")
+    cfg = load_config(child)
+    assert cfg.sim["world"] == "fake_scenes:hall/hall.xml"
+    assert world_file(cfg.sim["world"], tmp_path) == str(mjcf)
+    # A record of this run carries the ref, and rebuilding from it needs no path of this machine.
+    assert SimConfig.from_record(cfg.as_record()).sim["world"] == "fake_scenes:hall/hall.xml"

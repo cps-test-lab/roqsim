@@ -1,0 +1,606 @@
+{
+  "name": "tb3_world",
+  "source": "turtlebot3_world.world",
+  "unit_scale": 1.0,
+  "bounds_min": [
+    -3.2996,
+    -3.3985,
+    -0.5
+  ],
+  "bounds_max": [
+    4.6732,
+    3.3985,
+    1.532
+  ],
+  "objects": [
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_one",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_one.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_two",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_two.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_three",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_three.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_one",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_one.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_two",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_two.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_three",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_three.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_one",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_one.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_two",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_two.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_three",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_three.obj",
+      "rgba": [
+        0.7,
+        0.7,
+        0.72,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_head",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_head.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_left_hand",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_left_hand.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_right_hand",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_right_hand.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_left_foot",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_left_foot.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_right_foot",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_right_foot.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_000",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_000.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_001",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_001.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_002",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_002.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_003",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_003.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_004",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_004.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_005",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_005.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_006",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_006.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_007",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_007.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_008",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_008.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_009",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_009.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_010",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_010.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_011",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_011.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_012",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_012.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_013",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_013.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_014",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_014.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_015",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_015.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_016",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_016.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_017",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_017.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_018",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_018.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_019",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_019.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": true,
+      "render": false
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_one_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_one_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_two_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_two_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_one_three_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_one_three_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_one_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_one_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_two_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_two_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_two_three_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_two_three_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_one_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_one_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_two_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_two_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_three_three_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_three_three_vis.obj",
+      "rgba": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_head_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_head_vis.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_left_hand_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_left_hand_vis.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_right_hand_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_right_hand_vis.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_left_foot_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_left_foot_vis.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_right_foot_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_right_foot_vis.obj",
+      "rgba": [
+        0.392157,
+        0.976471,
+        0.121569,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    },
+    {
+      "name": "turtlebot3_world_turtlebot3_world_symbol_body_vis",
+      "mesh": "meshes/turtlebot3_world_turtlebot3_world_symbol_body_vis.obj",
+      "rgba": [
+        0.603922,
+        0.647059,
+        0.686275,
+        1.0
+      ],
+      "collide": false,
+      "render": true
+    }
+  ],
+  "ground_z": 0.0
+}

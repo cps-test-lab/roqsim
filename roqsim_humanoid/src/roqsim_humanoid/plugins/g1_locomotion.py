@@ -7,14 +7,18 @@ for standalone demos), and every physics step applies a PD torque loop to the 12
 TorchScript policy to update the leg position targets. Reports the floating base as ``odom`` and the
 leg joints as ``joint_states``.
 
+``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
+policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
+command"). The base's world pose is the ``ground_truth_pose`` plugin's.
+
 The observation/action conventions, PD gains, default angles, scales and timing are lifted verbatim
 from unitree_rl_gym's ``deploy/deploy_mujoco/deploy_mujoco.py`` + ``configs/g1.yaml`` (bundled in this
 package under ``policy/``), so the policy runs on exactly what it was trained on.
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     g1_locomotion:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       policy: g1_stand             # use a spec-driven policy instead of the bundled walk one: names a
                                    #   directory under policy/ holding <name>.spec.yaml + its checkpoint
@@ -27,6 +31,7 @@ Config::
       max_linear_vel: 1.0          # |vx| clamp (m/s)
       max_lateral_vel: 0.5         # |vy| clamp (m/s)
       max_angular_vel: 1.0         # |yaw_rate| clamp (rad/s)
+      cmd_vel_timeout: 0.0         # s; > 0 stops the robot when no command arrives for this long
       test_cmd: [0.4, 0.0, 0.0]    # optional [vx, vy, w] applied every tick (standalone demo)
       station_keeping: true        # hold position when commanded to stop (see below)
       station_gain: [2.5, 2.5, 2.0]  # P gains on [x, y, yaw] error -> body-frame twist
@@ -43,7 +48,8 @@ The hold target arms itself whenever the external command returns to (near) zero
 the robot is standing at, and releases the moment a non-zero command arrives -- so nav2 drives normally
 and only the standstill is corrected. The correction is a P term on the world-frame error rotated into
 the body frame, clamped by the same ``max_*`` limits as any other command, with a deadband so the robot
-is not permanently taking small steps to chase millimetres.
+is not permanently taking small steps to chase millimetres. A command expired by ``cmd_vel_timeout``
+is a zero command, so the hold arms there too.
 
 Measured on ``unitree_g1_dex1``, 10 s at rest -- settled offset from the armed pose, and how far the
 base still wanders in a subsequent 2 s (the number a manipulation task actually cares about):
@@ -74,6 +80,7 @@ import torch
 import yaml
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
 from roqsim.policy import ObservationState, PolicySpec
 
@@ -139,6 +146,8 @@ class G1LocomotionPlugin(Plugin):
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read by the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._odom_frame = SpawnFrame()
 
         # Station keeping: hold the pose the robot was standing at when the command went to zero.
         self.station_keeping = bool(self.config.get("station_keeping", False))
@@ -190,6 +199,7 @@ class G1LocomotionPlugin(Plugin):
                 errors.append("'gait_period' does not apply with 'policy'; it is part of the spec")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, w]")
+        errors += CommandWatchdog.validate(config)
         if "station_gain" in config and len(config["station_gain"]) != 3:
             errors.append("'station_gain' must be [x, y, yaw] gains")
         if "station_deadband" in config and len(config["station_deadband"]) != 2:
@@ -361,6 +371,7 @@ class G1LocomotionPlugin(Plugin):
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
         self._cmd[1] = float(np.clip(vy, -self.max_vy, self.max_vy))
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
+        self.watchdog.stamp(self._ctx)
 
     def _station_keeping_cmd(self, d) -> np.ndarray:
         """The command to actually give the policy: the external one, or a hold correction at rest.
@@ -400,25 +411,9 @@ class G1LocomotionPlugin(Plugin):
         )
 
     def read_odom(self):
-        # Computed on demand: the bridge calls this only at the endpoint rate, not every physics step,
-        # so there is no per-step cost. Runs on the physics thread inside the bridge's post_step,
-        # reading the same post-mj_step data. Returns (x, y, yaw, vx, vy, w, z); trailing z is the true
-        # base height (the G1 pelvis stands ~0.7 m up; the bridge tf/odom carry it, nav2 stays 2D).
-        d = self._ctx.data
-        x, y, z = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        vgx, vgy = d.qvel[self._base_dadr : self._base_dadr + 2]
-        c, s = np.cos(yaw), np.sin(yaw)
-        return (
-            float(x),
-            float(y),
-            float(yaw),
-            float(c * vgx + s * vgy),
-            float(-s * vgx + c * vgy),
-            float(d.qvel[self._base_dadr + 5]),
-            float(z),
-        )
+        # Computed on demand at the endpoint rate, from the post-mj_step data. Returns
+        # (x, y, yaw, vx, vy, w, z); z is the pelvis height (~0.7 m), nav2 stays 2D.
+        return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
     def read_joint_states(self):
         # Computed on demand (see read_odom). Fancy-indexing qpos/qvel returns fresh arrays.
@@ -433,7 +428,9 @@ class G1LocomotionPlugin(Plugin):
             d.qpos[self._leg_qadr] = self._default_angles
             d.qvel[self._leg_dadr] = 0.0
             mujoco.mj_forward(ctx.model, d)
+        self._odom_frame.capture(d.xpos[self._base_bid], d.xquat[self._base_bid])
         self._cmd[:] = 0.0
+        self.watchdog.clear()
         self._action[:] = 0.0
         self._target_q = self._default_angles.copy()
         self._counter = 0
@@ -451,6 +448,8 @@ class G1LocomotionPlugin(Plugin):
         if "test_cmd" in self.config:
             vx, vy, w = self.config["test_cmd"]
             self.drive(float(vx), float(vy), float(w))
+        if self.watchdog.expired(ctx):
+            self._cmd[:] = 0.0
 
         d = ctx.data
         cmd = self._station_keeping_cmd(d) if self.station_keeping else self._cmd

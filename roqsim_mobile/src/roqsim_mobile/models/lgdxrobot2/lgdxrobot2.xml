@@ -57,7 +57,6 @@
     <mesh file="b_Coupling_Nut_70mm_001_006__m0.obj"/>
     <mesh file="b_Coupling_Nut_70mm_001_006__m1.obj"/>
     <mesh file="b_LGDXRobot2_Board_001_.obj"/>
-    <mesh file="b_Lidar_001_.obj"/>
     <mesh file="b_M4_Nut_001_021.obj"/>
     <mesh file="b_Motor_001_001.obj"/>
     <mesh file="b_Mounting_Bracket_001_001.obj"/>
@@ -77,8 +76,8 @@
       <freejoint name="base_free"/>
       <inertial pos="0.0 0 0" mass="2.2768" diaginertia="0.0625 0.2125 0.25"/>
       <site name="base_imu" pos="-0.08351 0.00000 0.0649" size="0.005" rgba="0 0 0 0"/>
-      <!-- The scan plane, off the description's own lidar_link_joint. -->
-      <site name="lidar" pos="0.06000 -0.00000 0.15641" size="0.005" rgba="1 0 0 0.6"/>
+      <!-- No scanner here: the RPLIDAR C1 on lidar_link is the `rplidar_c1` device the manifest
+           mounts at the description's lidar_link_joint, with its own housing. -->
         <geom class="visual" mesh="b_LGDXRobot2_Board_001_" material="lgdx_pcb" pos="0 0 0"/>
         <geom class="visual" mesh="b_Mounting_Bracket_001_001" material="lgdx_black" pos="0 0 0"/>
         <geom class="visual" mesh="b_Motor_001_001" material="lgdx_aluminium" pos="0 0 0"/>
@@ -87,7 +86,6 @@
         <geom class="visual" mesh="b_Coupling_Nut_70mm_001_006__m0" material="lgdx_aluminium" pos="0 0 0"/>
         <geom class="visual" mesh="b_Coupling_Nut_70mm_001_006__m1" material="lgdx_steel" pos="0 0 0"/>
         <geom class="visual" mesh="b_Camera_001_" material="lgdx_aluminium" pos="0.108 0.00026 0.05931"/>
-        <geom class="visual" mesh="b_Lidar_001_" material="lgdx_black" pos="0.06 -0 0.13331"/>
         <geom class="collision" type="box" size="0.12 0.12 0.039" name="base_collision"
               pos="0.00000 0.00000 0.09400"/>
         <body name="wheel1_link" pos="0.08200 0.10357 0.03681" quat="0.7071055 -0.7071081 0 0">

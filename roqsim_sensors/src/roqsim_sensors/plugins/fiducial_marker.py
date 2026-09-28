@@ -18,12 +18,12 @@ emission does keep a tag legible in a dim scene, but it also lifts the *black* t
 saturates the white ones, which shifts the detector's threshold outward and makes the decoded square
 larger than the geometry. That is not cosmetic: a pose estimator scales range by (declared size /
 apparent size), so an apparently-larger tag is reconstructed closer. Measured against a world's own
-projected marker corners (1280x720, 19 cm tag with the 5 mm quiet
-zone a real 20 cm cube leaves), ``emission: 0.4`` -- the previous default -- inflated the decoded tag
-by up to **9 %**, i.e. ~13 cm of range error at 1.2 m, where ``emission: 0`` was stable to ~1.5 %.
-The effect is strongly coupled to the quiet zone: with a generous margin it disappears, which is why
-it went unnoticed at the 0.15 default ``quiet_zone``. Raise it only when a tag would otherwise not be
-found at all, and never in a run whose numbers are poses.
+projected marker corners (1280x720, 19 cm tag with the 5 mm quiet zone a real 20 cm cube leaves),
+``emission: 0.4`` inflated the decoded tag by up to **9 %**, i.e. ~13 cm of range error at 1.2 m,
+where ``emission: 0`` was stable to ~1.5 %. The effect is strongly coupled to the quiet zone: with a
+generous margin it disappears, which is why it is easy to miss at the 0.15 default ``quiet_zone``.
+Raise it only when a tag would otherwise not be found at all, and never in a run whose numbers are
+poses.
 
 Config::
 
@@ -34,7 +34,6 @@ Config::
       quiet_zone: 0.15         # white margin around the tag, as a fraction of `size` (default 0.15)
       emission: 0.0            # material emission; RAISE ONLY FOR VISIBILITY, NOT FOR DETECTION (see below)
       thickness: 0.002         # box half-thickness behind the marker face (m)
-      name: null               # texture/material/geom base name (default: "<family>_<id>")
       vflip: false             # flip the texture rows / cols if the render comes out mirrored
       hflip: false             #   (a mirrored tag will NOT decode)
       # --- placement: EXACTLY ONE of the following two forms ---
@@ -47,6 +46,9 @@ Config::
                                #   inherited automatically when this plugin ships in a model manifest
       rel_pose: [x, y, z]      # marker position in that body's frame (default [0, 0, 0])
       rel_quat: [w, x, y, z]   # marker orientation in that body's frame (or `rel_rpy`); default identity
+
+The texture, material and geom this builds are named after the entry's label (its ``name:``
+sibling, else ``fiducial_marker``), so a world carrying several markers gives each entry a label.
 """
 
 from __future__ import annotations
@@ -58,19 +60,7 @@ import numpy as np
 
 from roqsim.context import SimContext
 from roqsim.plugin import Plugin
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+from roqsim.pose import rpy_to_quat
 
 
 def _dict_name(family: str) -> str:
@@ -208,7 +198,7 @@ class FiducialMarkerPlugin(Plugin):
             return [v / n for v in q]
         if rpy_key in self.config:
             r, p, y = (float(v) for v in self.config[rpy_key])
-            return _rpy_to_quat(r, p, y)
+            return rpy_to_quat(r, p, y)
         return [1.0, 0.0, 0.0, 0.0]
 
     def _render_marker(self) -> np.ndarray:

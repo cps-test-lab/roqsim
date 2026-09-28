@@ -16,12 +16,11 @@
 
 """Sensor plugin: a strap-down IMU -- angular rate, proper acceleration, and attitude at a site.
 
-The one sensor a mobile robot carries that the substrate had no plugin for. Every wheeled platform
-here ships an IMU in reality, and the stacks these experiments run are built on it: ``robot_localization``
-fuses ``sensor_msgs/Imu`` with wheel odometry, AMCL's motion model degrades without it, and a legged
-or aerial controller reads it every cycle. Without the plugin a world could only publish *odometry*,
-so an experiment whose independent variable is sensor quality had no rate channel to degrade and a
-paper's "EKF over wheel odom + IMU" could not be reconstructed at all.
+Every wheeled platform here ships an IMU in reality, and the stacks these experiments run are built
+on it: ``robot_localization`` fuses ``sensor_msgs/Imu`` with wheel odometry, AMCL's motion model
+degrades without it, and a legged or aerial controller reads it every cycle. Without it a world can
+only publish *odometry*, so an experiment whose independent variable is sensor quality has no rate
+channel to degrade and a paper's "EKF over wheel odom + IMU" cannot be reconstructed at all.
 
 Nothing here is new physics. MuJoCo already computes all three signals; a site carries an
 ``<accelerometer>``/``<gyro>``/``<framequat>`` triple that reads them, and this plugin turns that
@@ -292,9 +291,9 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         if "seed" in config:
             # Silently ignoring it would leave a world believing it pinned the noise stream.
             errors.append(
-                "'seed' is not an imu setting: noise is drawn from the RUN's seed (`roqsim sim "
-                "--seed`, or the campaign's) via ctx.rng_for, so every sensor in a run is "
-                "reproducible together. Remove the key."
+                "'seed' is not an imu setting: noise is drawn from the RUN's seed (`sim.seed` in "
+                "the world, or `roqsim sim --seed`, or the seed the scenario adapter resolves) via "
+                "ctx.rng_for, so every sensor in a run is reproducible together. Remove the key."
             )
         return errors + self.validate_fault(config)
 
@@ -392,6 +391,9 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.owner)
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+        prefix = self.config.get("prefix")
+        if prefix is None:
+            prefix = entity.meta.get("prefix", "") if entity else ""
 
         self._site_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, self._resolved_site)
         if self._site_id < 0:
@@ -413,7 +415,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # weldid 0 is the world's weld group: this body has no degrees of freedom at all.
         self._world_fixed = int(m.body_weldid[self._mount_bid]) == 0
         if self._world_fixed:
-            # Logged, not silent: the reading no longer comes from the MJCF sensor, and a reader of
+            # Logged, not silent: the reading does not come from the MJCF sensor, and a reader of
             # the run's log should be able to see which branch produced it.
             _log.info(
                 "imu[%s]: %s is welded to the world, so MuJoCo computes no acceleration for it; "
@@ -450,13 +452,13 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
                         # look; `topic:` is how a device states its own layout.
                         "topic": self.topic_override("imu") or self.topic,
                         "frame_id": self.frame_id,
-                        "static_tf": self._mount_tf(m),
+                        "static_tf": self._mount_tf(m, prefix),
                     }
                 },
             )
         )
 
-    def _mount_tf(self, m) -> dict:
+    def _mount_tf(self, m, prefix: str) -> dict:
         """Static ``mount body -> frame_id`` transform as plain numbers, for a bridge.
 
         Read off a throwaway ``MjData`` at the reference pose: the body<-site transform is rigid, so
@@ -472,11 +474,12 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         site_mat = d0.site_xmat[self._site_id].reshape(3, 3)
         mujoco.mju_mat2Quat(rel_quat, np.ascontiguousarray(base_mat.T @ site_mat).reshape(-1))
         return {
-            # Bare name: the bridge applies any namespace prefix, and the model's body name is
-            # already prefixed per robot, so it is stripped back to what TF expects.
-            "parent": mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, self._mount_bid).split("/")[
-                -1
-            ],
+            # Bare name: the bridge applies any namespace prefix, and the model's body name carries
+            # the robot's MJCF prefix, so it is stripped back to what TF expects -- the same name
+            # every other sensor on the robot hangs its frame from (lidar_common._mount_tf).
+            "parent": mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, self._mount_bid).removeprefix(
+                prefix
+            ),
             "translation": [float(v) for v in rel_pos],
             "rotation": [float(v) for v in rel_quat],  # (w, x, y, z)
         }

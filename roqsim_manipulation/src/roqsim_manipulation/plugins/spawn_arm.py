@@ -16,6 +16,15 @@ Config::
       pos: [-0.41, 0.0, 0.76]
       rpy: [0.0, 0.0, 3.14159]   # mount orientation as roll/pitch/yaw (rad)
       home: [...]           # joint home pose (defaults per model); applied on reset
+      actuators:            # OPTIONAL: what law this arm's joints run under, and their gains.
+        control: impedance  #   position | velocity | effort | impedance; the model's own if unset
+        stiffness: 2.0      #   N*m/rad -- see roqsim.actuators for the gain of each control
+        damping: 0.02       #   N*m*s/rad
+        each:               #   per-actuator, on top of the shared keys above
+          wrist_3: {control: position, p: 2000, d: 500}
+      gravity_compensation: # OPTIONAL: whether the arm's bodies carry their own weight. Default:
+                            #   true under position/velocity/impedance (real drives hold a pose),
+                            #   false under effort (supplying the term is the controller's job).
       pedestal: false       # add a static support box under the base (floor -> mount height); only
                             # has an effect when pos[2] > 0. Leave it off when the arm mounts on a
                             # table/desk that is already there (the usual case).
@@ -102,14 +111,37 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
 ``pos``/``rpy`` are offsets within it -- matching how a real tool adapter is specified.
+
+**A tool that deforms.** The end effector's MJCF may carry a ``<flexcomp>`` -- a soft pad, a
+compliant finger -- pinned to one of its bodies (``<pin>``), or written under its ``<worldbody>``,
+in which case it is moved into a body named after the file so its pins hold on the flange. Its
+vertex bodies ride slide joints nothing drives, so gravity compensation leaves them alone
+(:func:`roqsim.actuators.apply_gravity_compensation` stops at a free-swinging joint) and the tool
+sags under its own weight while the arm holds its pose; the joints are unnamed, so a prefix scan
+(``arm_controller``'s joint report) does not pick them up under a non-empty ``prefix``.
+``sim.integrator: auto`` picks the integrator the flex needs, and the entity lists the flex by name
+in ``meta["flexes"]``. A ``force_torque`` sensor above such a tool is refused unless the world
+states ``flex_reaction: excluded`` -- see that plugin.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import mujoco
 
+from roqsim.actuators import (
+    apply_gravity_compensation,
+)
+from roqsim.actuators import (
+    resolve as resolve_actuators,
+)
+from roqsim.actuators import (
+    validate_override as validate_actuators,
+)
 from roqsim.config import parse_plugin_entry
 from roqsim.context import Entity, SimContext
+from roqsim.flex import entity_flex_ids, flex_label, lift_top_level_flexes
 from roqsim.manifest import expand_manifest, load_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
@@ -166,6 +198,7 @@ class SpawnArmPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
     provides_entity = True
+    expansion_keys = frozenset({"model", "default_plugins", "prefix", "end_effector"})
 
     @classmethod
     def expand(cls, spec, world, base_dir):
@@ -254,6 +287,9 @@ class SpawnArmPlugin(Plugin):
         ee = self.config.get("end_effector") or {}
         self.ee_model = ee.get("model")
         self.ee_site = ee.get("site", "attachment_site")
+        #: Every actuator's final law and gains, filled in :meth:`build` and published at
+        #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
+        self.actuator_table: list = []
         self.ee_prefix = ee.get("prefix", "")
         ee_pos = ee.get("pos", [0.0, 0.0, 0.0])
         self.ee_pos = [float(v) for v in (*ee_pos, 0.0, 0.0)][:3]
@@ -270,6 +306,11 @@ class SpawnArmPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
+        errors += validate_actuators(config.get("actuators"))
+        if "gravity_compensation" in config and not isinstance(
+            config["gravity_compensation"], bool
+        ):
+            errors.append("'gravity_compensation' must be true or false")
         if "rpy" in config and len(config["rpy"]) != 3:
             errors.append("'rpy' must be [roll, pitch, yaw] in radians")
         if len(config.get("pos", [0, 0, 0])) not in (2, 3):
@@ -337,11 +378,30 @@ class SpawnArmPlugin(Plugin):
         # plus any borrowed via the manifest's `assets:`), so a model from another package -- or one
         # drawing meshes from several packages -- compiles regardless of CWD/attach order.
         apply_assets(child, asset)
+        # Before the gripper: `actuators:` names the actuators THIS MODEL declares, and the graft
+        # below puts the gripper's tendon actuator into the same spec. Resolved after it, a shared
+        # `control:` would fall on that tendon -- which has no joint stiffness -- and refuse a block
+        # whose gains were only ever about the arm.
+        self.actuator_table = resolve_actuators(
+            child, self.config.get("actuators"), model_name=str(self.config["model"])
+        )
         # The gripper goes on BEFORE the arm is attached to the world, so it ends up inside the arm's
         # subtree and under the arm's prefix -- which is what lets arm_controller find its tendon
         # actuator by the same prefix scan that works for the pre-assembled gen3.
         if self.ee_model:
             self._attach_end_effector(child)
+        # After the gripper, and for the opposite reason: `body_gravcomp` is per body and does not
+        # cascade, so an arm compensated before its tool was attached would sag by exactly the tool's
+        # weight. Compensating the tool is also what a real controller does with a payload it has
+        # been told about.
+        stated = self.config.get("gravity_compensation")
+        if stated is None:
+            apply_gravity_compensation(child, self.actuator_table)
+        elif stated:
+            # Stated true means the whole mechanism, which is the only thing it can mean for an
+            # arm whose law carries no gravity term of its own -- there is no driven joint for
+            # the per-body rule to find.
+            apply_gravity_compensation(child)
 
         parent = self._mount_parent(spec)
         frame = parent.add_frame()
@@ -453,6 +513,9 @@ class SpawnArmPlugin(Plugin):
         ee_asset = resolve_model(self.ee_model, base_dir=self.base_dir)
         ee = mujoco.MjSpec.from_file(str(ee_asset.path))
         apply_assets(ee, ee_asset)
+        # A tool whose <flexcomp> sits under <worldbody> and pins vertices there would lose the flex
+        # in the attach below (roqsim.flex, rule 4); this puts it in a body on the flange instead.
+        ee = lift_top_level_flexes(ee, ee_asset.path.stem)
         # Whatever tool the arm model ships with goes first, or the new one is welded into it. The
         # ur10e carries a `ee_plate` 60 mm past its flange for the conveyor demo; a gripper attached
         # at `attachment_site` (0.1 m) lands inside it, so the two collide from the first step.
@@ -480,12 +543,16 @@ class SpawnArmPlugin(Plugin):
         frame.quat = self.ee_quat
 
     def configure(self, ctx: SimContext) -> None:
+        # A tool with a <flexcomp> (a soft pad, a compliant finger) makes the arm an entity with
+        # flexes; they are listed by name, as spawn_model lists a prop's.
+        flexes = entity_flex_ids(ctx.model, self.prefix + self.base_body)
         ctx.entities.add(
             Entity(
                 name=self.arm_name,
                 kind="arm",
                 body=self.prefix + self.base_body,
                 meta={
+                    **({"flexes": [flex_label(ctx.model, f) for f in flexes]} if flexes else {}),
                     "prefix": self.prefix,
                     "model": self.config["model"],
                     "home": self._home_vector(),
@@ -498,6 +565,15 @@ class SpawnArmPlugin(Plugin):
                 },
             )
         )
+        # Under the names the compiled model has, so a reader can join the table to `nu`.
+        ctx.actuator_tables[self.arm_name] = [
+            replace(
+                row,
+                name=self.prefix + row.name,
+                joint=(self.prefix + row.joint) if row.joint else "",
+            )
+            for row in self.actuator_table
+        ]
         self._apply_home(ctx)
 
     def on_reset(self, ctx: SimContext) -> None:

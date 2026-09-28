@@ -1,11 +1,10 @@
 """Every wheeled base's wheels must ROLL, not spin backwards. One invariant, all models.
 
-This file exists because a real defect survived a full suite. ``omni_drive`` derived its wheel roll
-sign from ``-axis_y`` where the physics gives ``+axis_y``, so all five holonomic bases span their
-wheels exactly backwards from 2026-08-28 and earlier. Nothing caught it: the wheels of an
-``omni_drive`` base are deliberately near-frictionless load carriers and the base is driven through
-planar actuators, so the sign never touched the dynamics. It was wrong only where those servos
-actually matter — the viewer, and ``joint_states``.
+A backwards roll sign survives every other test. The wheels of an ``omni_drive`` base are
+deliberately near-frictionless load carriers and the base is driven through planar actuators, so the
+sign never touches the dynamics: deriving it from ``-axis_y`` where the physics gives ``+axis_y``
+spins every holonomic base's wheels exactly backwards and shows only where those servos actually
+matter — the viewer, and ``joint_states``.
 
 The check is the definition of rolling rather than a convention, which is the point. For a wheel
 rolling without slip the **contact point is stationary**:
@@ -13,9 +12,9 @@ rolling without slip the **contact point is stationary**:
     v_contact = v_centre + omega x r,  r = (0, 0, -R)  ->  0
 
 Get the sign backwards and ``|v_contact|`` is twice the base speed instead of nearly zero. That is
-measurable without agreeing on which way is positive, which is what made it able to settle a
-question two plugins disagreed about: at 0.2 m/s the diff_drive bases read 0.0001-0.002 m/s and the
-omni_drive bases read 0.379-0.383.
+measurable without agreeing on which way is positive, so it can arbitrate between plugins that
+derive the sign independently: at 0.2 m/s a rolling wheel reads a few mm/s at most, and a backwards
+one about 0.38 m/s.
 
 Per-model scene tests check each robot against its own vendor's numbers. This one checks every robot
 against physics, and is deliberately indifferent to which drive plugin it uses.
@@ -70,8 +69,11 @@ def _driven_wheel_joint(engine) -> str:
     raise AssertionError("no drive plugin attached")
 
 
-def _step(engine, n: int, model: str) -> None:
+def _step(engine, n: int, model: str, drive=None) -> None:
     """Step *n* times, skipping the test if this process has no offscreen GL backend.
+
+    *drive* re-issues the command every step: a base with a command watchdog (the TurtleBot 4's
+    expires one after 0.5 s, as its driver does) would otherwise stop before the check.
 
     MuJoCo binds its GL backend during ``import mujoco``, once per process, and a camera-carrying
     model renders in ``post_step`` -- so turtlebot4's OAK-D needs one. This file imports roqsim
@@ -81,6 +83,8 @@ def _step(engine, n: int, model: str) -> None:
     without a camera.
     """
     for _ in range(n):
+        if drive is not None:
+            drive()
         try:
             engine.step()
         except Exception as exc:  # noqa: BLE001 -- re-raised unless it is the backend error
@@ -99,6 +103,9 @@ def test_the_wheels_roll_rather_than_spin_backwards(model):
         "components": [{"spawn_robot": {"model": model, "prefix": "z_"}, "name": "z"}],
     }
     engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: a model whose sensors
+    # carry noise refuses to step without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     try:
@@ -115,8 +122,7 @@ def test_the_wheels_roll_rather_than_spin_backwards(model):
         gid = gids[0]
         handle = engine.ctx.blackboard.get("robot:z")
         _step(engine, 400, model)
-        handle.drive(SPEED, 0.0, 0.0)
-        _step(engine, 1600, model)
+        _step(engine, 1600, model, drive=lambda: handle.drive(SPEED, 0.0, 0.0))
 
         base_speed = abs(float(d.qvel[0]))
         assert base_speed > 0.5 * SPEED, (

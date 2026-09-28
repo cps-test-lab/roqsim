@@ -103,7 +103,7 @@ build_image() {
   local platforms; platforms=$(platforms_for "${name}")
 
   # A multi-platform build has to go straight to the registry under its final name: there is no
-  # local image to `docker tag` afterwards. A host build keeps the old two-step behaviour so an
+  # local image to `docker tag` afterwards. A host build keeps the build-then-tag two steps so an
   # untagged local build still works with no --project.
   if [[ -n "${platforms}" && "${platforms}" == *,* ]]; then
     echo "==> Building ${PROJECT}${tag} for ${platforms} (-f ${dockerfile})"

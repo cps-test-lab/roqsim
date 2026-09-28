@@ -7,10 +7,12 @@ marker raises)."""
 
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
 
+from roqsim import exit_status
 from roqsim_scenes.cli import floorplan_to_world as fw
 from roqsim_scenes.cli import scene_to_floorplan as s2f
 
@@ -146,10 +148,10 @@ def test_world_doc_spawns_mapped_markers():
         {
             "spawn_model": {
                 "model": "industrial_table",
-                "name": "marker_1",
                 "prefix": "marker_1_",
-                "pos": [2.5, 3.0, 0.0],
-            }
+                "pose": {"position": {"x": 2.5, "y": 3.0, "z": 0.0}},
+            },
+            "name": "marker_1",
         }
     ]
 
@@ -172,17 +174,17 @@ def test_world_doc_yaw_from_map_and_sketch_with_map_override():
         "2": "plant",
         "3": {"model": "desk", "yaw_deg": 0},
     }
-    plugins = [
-        p["spawn_model"]
-        for p in fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["components"]
-    ]
-    assert plugins[0]["model"] == "bed" and plugins[0]["rpy"] == pytest.approx(
-        [0, 0, math.pi], abs=1e-4
-    )
-    assert plugins[1]["model"] == "plant" and plugins[1]["rpy"] == pytest.approx(
-        [0, 0, math.radians(90)], abs=1e-4
-    )
-    assert "rpy" not in plugins[2]  # heading resolved to 0 -> axis-aligned, no rpy emitted
+    entries = fw.world_doc("r", "r/r.xml", (0.0, 0.0, 4.0, 4.0), markers, mmap)["components"]
+    plugins = [p["spawn_model"] for p in entries]
+    # Each marker answers to its own label, so the world loads with more than one of them.
+    assert [p["name"] for p in entries] == ["marker_1", "marker_2", "marker_3"]
+    assert plugins[0]["model"] == "bed"
+    assert plugins[0]["pose"]["orientation"]["yaw"] == pytest.approx(math.pi, abs=1e-4)
+    assert plugins[1]["model"] == "plant"
+    assert plugins[1]["pose"]["orientation"]["yaw"] == pytest.approx(math.radians(90), abs=1e-4)
+    # A heading resolved to 0 leaves the prop axis-aligned, and the pose says so by omission --
+    # `orientation` defaults to the identity, so writing a zero yaw would state nothing extra.
+    assert "orientation" not in plugins[2]["pose"]
 
 
 def test_world_doc_errors_on_map_dict_without_model():
@@ -196,7 +198,9 @@ def test_door_placements_defaults_to_a_passive_wooden_door():
     doors = [{"id": 1, "line_id": 1, "t": 0.5, "width_m": 0.9}]
     (entry,) = fw.door_placements(lines, doors, {}, ceiling_h=2.5, opening_h=2.0)
     d = entry["door"]
-    assert d["name"] == "door_1" and d["model"] == "door"
+    assert entry["name"] == "door_1"  # a sibling of the ref, not one of the door's config keys
+    assert "name" not in d
+    assert d["model"] == "door"
     assert d["pos"] == [2.0, 0.0, 0.0]  # opening centre on the wall
     assert d["rpy"][2] == pytest.approx(0.0)  # yaw along the +x wall
     assert d["width"] == 0.9 and d["hinge_side"] == "left"
@@ -230,11 +234,11 @@ def test_door_placements_skips_full_height_openings():
 
 def test_world_doc_emits_doors_before_markers():
     markers = [{"id": 1, "x_m": 2.5, "y_m": 3.0}]
-    doors = [{"door": {"name": "door_1"}}]
+    doors = [{"door": {}, "name": "door_1"}]
     plugins = fw.world_doc(
         "r", "r/r.xml", (0.0, 0.0, 8.0, 6.0), markers, {"1": "industrial_table"}, doors=doors
     )["components"]
-    assert list(plugins[0]) == ["door"] and list(plugins[1]) == ["spawn_model"]
+    assert list(plugins[0])[0] == "door" and list(plugins[1])[0] == "spawn_model"
 
 
 def test_cut_openings_splits_and_drops_slivers():
@@ -321,3 +325,77 @@ def test_scene_to_floorplan_errors_loudly_when_not_floorplan_authored(tmp_path):
     (tmp_path / "scene.json").write_text(json.dumps({"name": "r", "source": "lab.usd"}))
     with pytest.raises(ValueError, match="no 'floorplan' reference|not authored"):
         s2f.floorplan_of(tmp_path)
+
+
+def _fp_json(tmp_path, doc: dict, name="fp.json") -> str:
+    path = tmp_path / name
+    path.write_text(json.dumps(doc))
+    return str(path)
+
+
+def _argv(tmp_path, floorplan: str, *extra: str) -> list[str]:
+    return [
+        "--floorplan",
+        floorplan,
+        "--out-dir",
+        str(tmp_path / "scene"),
+        "--scene-name",
+        "t",
+        "--world-out",
+        str(tmp_path / "t.yaml"),
+        *extra,
+    ]
+
+
+@pytest.mark.parametrize(
+    ("floorplan", "extra", "expect"),
+    [
+        ("/no/such/floorplan.json", (), "floorplan '/no/such/floorplan.json' cannot be read"),
+        ("NOT_JSON", (), "is not JSON"),
+        ({"lines": []}, (), "no wall lines"),
+        (
+            {
+                "lines": [{"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}],
+                "markers": [{"id": 1, "x_m": 1, "y_m": 1, "comment": "table"}],
+            },
+            (),
+            "markers ['1'] have no model",
+        ),
+        (
+            {
+                "lines": [{"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}],
+                "doors": [{"id": 1, "line_id": 9, "t": 0.5, "width_m": 0.9}],
+            },
+            (),
+            "line 9",
+        ),
+    ],
+)
+def test_main_reports_a_bad_input_on_one_line_and_exits_2(
+    tmp_path, capsys, floorplan, extra, expect
+):
+    """The caller is a loop that greps stderr and branches on the status, so a wrong input is one
+    `roqsim scenes floorplan-to-world:` line and exit 2 -- never a traceback, whose status is a crash's."""
+    if floorplan == "NOT_JSON":
+        target = tmp_path / "fp.json"
+        target.write_text("{not json")
+        floorplan = str(target)
+    elif isinstance(floorplan, dict):
+        floorplan = _fp_json(tmp_path, floorplan)
+    assert fw.main(_argv(tmp_path, floorplan, *extra)) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1, err
+    assert err[0].startswith("roqsim scenes floorplan-to-world: ")
+    assert expect in err[0]
+    assert not (tmp_path / "scene").exists(), "nothing is written for an input that was refused"
+
+
+def test_main_says_where_the_world_and_the_scene_went(tmp_path, capsys, monkeypatch):
+    """A caller reads the stdout line for the two paths it needs next."""
+    monkeypatch.setattr(fw, "generate", lambda *a, **k: tmp_path / "t.yaml")
+    floorplan = _fp_json(
+        tmp_path, {"lines": [{"id": 1, "x0_m": 0, "y0_m": 0, "x1_m": 4, "y1_m": 0}]}
+    )
+    assert fw.main(_argv(tmp_path, floorplan)) == 0
+    out = capsys.readouterr().out.strip()
+    assert out == f"wrote world {tmp_path / 't.yaml'} (scene dir {tmp_path / 'scene'})"

@@ -11,8 +11,11 @@ exercise the manifest logic in isolation without registering a roqsim.models pro
 from __future__ import annotations
 
 import textwrap
+from pathlib import Path
 
-from roqsim.config import PluginSpec
+import pytest
+
+from roqsim.config import PluginError, PluginSpec
 from roqsim.manifest import expand_manifest, load_manifest
 
 
@@ -87,11 +90,11 @@ def test_world_entry_overrides_manifest(tmp_path):
 def test_world_entry_merges_manifest_defaults(tmp_path):
     """A PARTIAL override keeps the rest of the model's defaults.
 
-    The bug this pins: the world declaring a plugin used to make expand_manifest skip the manifest
-    entry entirely, so `diff_drive: {robot, test_cmd}` silently dropped the model's wheel geometry and
-    actuator names and fell back to the plugin's own (TurtleBot) defaults -- which then failed to
-    resolve against the husky's MJCF. roqsim_mobile's own husky_demo.yaml crashed on exactly this,
-    while docs/plugins.rst documented the merge ("add test_cmd, or change lidar rays").
+    What this pins: a world declaring a plugin must not make expand_manifest skip the manifest
+    entry, or `diff_drive: {robot, test_cmd}` silently drops the model's wheel geometry and
+    actuator names and falls back to the plugin's own (TurtleBot) defaults -- which then fail to
+    resolve against the husky's MJCF. docs/plugins.rst documents the merge ("add test_cmd, or
+    change lidar rays").
     """
     model = _write_model(
         tmp_path,
@@ -109,7 +112,7 @@ def test_world_entry_merges_manifest_defaults(tmp_path):
     out = _expand(spec, [spec, world_dd])
 
     assert out == []  # still not injected: the world's entry is the one that runs
-    # ...but it now carries the model's description instead of the plugin's generic defaults.
+    # ...but it carries the model's description instead of the plugin's generic defaults.
     assert world_dd.config["wheel_radius"] == 0.17775
     assert world_dd.config["slip_factor"] == 3.0
     assert world_dd.config["left_actuators"] == ["front_left_wheel_motor", "rear_left_wheel_motor"]
@@ -138,7 +141,7 @@ def test_world_value_wins_over_manifest(tmp_path):
 
 
 def test_two_entities_do_not_collide(tmp_path):
-    # The bug this fixes: two arms must each get their own controller, not have one deduped away.
+    # Two arms must each get their own controller, not have one deduped away.
     ur_model = _write_model(tmp_path, "ur10e", ARM_MANIFEST)
     pa_model = _write_model(tmp_path, "panda", ARM_MANIFEST)
     ur = _spawn(ur_model, "ur10e")
@@ -161,7 +164,7 @@ def test_default_plugins_false_and_missing_manifest(tmp_path):
 
 
 def test_the_entity_is_the_spawns_label_whatever_family_it_is(tmp_path):
-    """No per-family key any more: a mobile spawn and an arm spawn wire their components the same
+    """No per-family key: a mobile spawn and an arm spawn wire their components the same
     way, because ownership is where an entry sits rather than a key each family chose."""
     model = _write_model(
         tmp_path,
@@ -198,3 +201,45 @@ def test_a_model_shipping_two_of_a_kind_keeps_both(tmp_path):
 
 def test_load_manifest_missing_returns_empty(tmp_path):
     assert load_manifest(tmp_path / "nope.xml") == []
+
+
+def test_refuses_a_top_level_key_nothing_reads(tmp_path):
+    """A misspelt key would otherwise load as a manifest without it -- `frame:` for `frames:` is a
+    model with no frames, and nothing says so until a mount cannot find one."""
+    model = _write_model(
+        tmp_path,
+        "cam",
+        """
+        frame: [{name: optical, parent: link, pos: [0, 0, 0], rpy: [0, 0, 0]}]
+        components:
+          - arm_controller: {}
+        """,
+    )
+    with pytest.raises(PluginError, match=r"unknown key\(s\) 'frame' \(did you mean 'frames'\?\)"):
+        load_manifest(Path(model))
+
+
+def test_refuses_an_unknown_key_without_guessing_a_far_one(tmp_path):
+    model = _write_model(tmp_path, "cam", "banana: 1\ncomponents: []\n")
+    with pytest.raises(
+        PluginError, match=r"unknown key\(s\) 'banana'; it takes assets, components"
+    ):
+        load_manifest(Path(model))
+
+
+def test_every_known_key_loads(tmp_path):
+    """The allowlist names what the readers consume, so a manifest using all of it is not refused."""
+    model = _write_model(
+        tmp_path,
+        "dev",
+        """
+        assets: roqsim_sensors
+        fov: {near: 0.1, far: 5.0}
+        frames: []
+        frame_id: optical
+        license: []
+        components:
+          - arm_controller: {}
+        """,
+    )
+    assert [list(e) for e in load_manifest(Path(model))] == [["arm_controller"]]

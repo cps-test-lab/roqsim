@@ -28,6 +28,7 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
 from . import image_codec
+from .frames import namespaced
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
@@ -129,13 +130,8 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     return Quaternion(z=math.sin(yaw * 0.5), w=math.cos(yaw * 0.5))
 
 
-def namespaced(prefix: str, name: str) -> str:
-    """Prefix a frame id with the bridge namespace so multi-robot TF trees stay unique."""
-    return f"{prefix}/{name}" if prefix else name
-
-
 def frame(hints: dict, key: str, default: str) -> str:
-    """Frame id from a hint, prefixed by the bridge namespace so multi-robot TF trees stay unique."""
+    """Frame id from a hint, prefixed by the bridge namespace unless global (see :mod:`.frames`)."""
     return namespaced(hints.get("frame_prefix", ""), hints.get(key, default))
 
 
@@ -364,6 +360,47 @@ def _diag3(variance: float) -> list:
     return [v, 0.0, 0.0, 0.0, v, 0.0, 0.0, 0.0, v]
 
 
+#: sensor_msgs/NavSatStatus and NavSatFix constants, by value so this module keeps its rule of
+#: resolving message types by string rather than importing them.
+NAVSAT_STATUS_NO_FIX = -1
+NAVSAT_STATUS_FIX = 0
+NAVSAT_SERVICE_GPS = 1
+NAVSAT_COVARIANCE_UNKNOWN = 0
+NAVSAT_COVARIANCE_DIAGONAL_KNOWN = 2
+
+
+@converter("sensor_msgs.msg.NavSatFix")
+def fill_navsatfix(msg, payload, stamp: Time, hints: dict) -> None:
+    """A GNSS fix (the mapping ``roqsim_sensors.plugins.gnss.GnssPlugin.read_fix`` returns).
+
+    ``valid`` decides the message's *status*, not whether it is sent: a receiver with no fix still
+    publishes, with ``status.status = NO_FIX`` and an unknown covariance, which is what a real
+    driver does and what lets a consumer tell "denied" from "unplugged". The position fields are
+    passed through as the producer reports them; with no fix that is zeros, and the status is the
+    field a consumer must read first.
+
+    The covariance is built from the producer's declared ``eph``/``epv`` (1-sigma metres), squared
+    onto the diagonal, and marked DIAGONAL_KNOWN -- the same policy as :func:`fill_imu`: the filter
+    downstream weights the channel by the noise the world configured.
+    """
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "gnss_link")
+    valid = bool(payload.get("valid", True))
+    msg.status.service = NAVSAT_SERVICE_GPS
+    msg.latitude = float(payload["lat"])
+    msg.longitude = float(payload["lon"])
+    msg.altitude = float(payload["alt"])
+    if not valid:
+        msg.status.status = NAVSAT_STATUS_NO_FIX
+        msg.position_covariance = [0.0] * 9
+        msg.position_covariance_type = NAVSAT_COVARIANCE_UNKNOWN
+        return
+    msg.status.status = NAVSAT_STATUS_FIX
+    eph, epv = float(payload.get("eph", 0.0)), float(payload.get("epv", 0.0))
+    msg.position_covariance = [eph * eph, 0.0, 0.0, 0.0, eph * eph, 0.0, 0.0, 0.0, epv * epv]
+    msg.position_covariance_type = NAVSAT_COVARIANCE_DIAGONAL_KNOWN
+
+
 @converter("vision_msgs.msg.Detection2DArray")
 def fill_detection2d_array(msg, payload, stamp: Time, hints: dict) -> None:
     """2D image-space detections from a mask.
@@ -484,6 +521,55 @@ def fill_joint_state(msg, payload, stamp: Time, hints: dict) -> None:
     msg.velocity = _as_f64(velocities)
     if rest:
         msg.effort = _as_f64(rest[0])
+
+
+@converter("geometry_msgs.msg.PointStamped")
+def fill_point_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A point, from either an ``(x, y, z)`` sequence or any payload carrying ``.x``/``.y``/``.z``.
+
+    Both shapes because a producer of a point usually has more to say than the point -- a contact
+    report carries what kind of contact it was and how spread out -- and the message can only carry
+    the centre. Reading the attributes off the richer payload keeps the producer's own type intact.
+    """
+    if hasattr(payload, "x"):
+        x, y, z = payload.x, payload.y, payload.z
+    else:
+        x, y, z = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.point.x, msg.point.y, msg.point.z = float(x), float(y), float(z)
+
+
+@converter("geometry_msgs.msg.WrenchStamped")
+def fill_wrench_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A six-axis force/torque reading, ``(force_xyz, torque_xyz)``.
+
+    The frame matters as much as the numbers: a wrench reported in the sensor frame and consumed as
+    if it were the world's produces a controller that drifts sideways under load. The producer states
+    which frame it resolved into, and it lands here as the header frame so a subscriber can tell.
+    """
+    force, torque = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.wrench.force.x, msg.wrench.force.y, msg.wrench.force.z = (float(v) for v in force)
+    msg.wrench.torque.x, msg.wrench.torque.y, msg.wrench.torque.z = (float(v) for v in torque)
+
+
+@converter("geometry_msgs.msg.PoseStamped")
+def fill_pose_stamped(msg, payload, stamp: Time, hints: dict) -> None:
+    """A pose as ``(position_xyz, quaternion_wxyz)`` -- MuJoCo's quaternion order, not ROS's.
+
+    The reorder is the whole reason this is not a reflective fill: MuJoCo puts w first and ROS puts
+    it last, and a quaternion passed straight through is a rotation nobody commanded, wrong in a way
+    that still looks like a valid orientation.
+    """
+    position, quat = payload
+    msg.header.stamp = stamp
+    msg.header.frame_id = frame(hints, "frame_id", "world")
+    msg.pose.position.x, msg.pose.position.y, msg.pose.position.z = (float(v) for v in position)
+    w, x, y, z = (float(v) for v in quat)
+    msg.pose.orientation.x, msg.pose.orientation.y = x, y
+    msg.pose.orientation.z, msg.pose.orientation.w = z, w
 
 
 @converter("control_msgs.msg.JointTrajectoryControllerState")
@@ -640,14 +726,54 @@ def decode_twist_stamped(msg) -> tuple[float, float, float]:
     return decode_twist(msg.twist)
 
 
+@decoder("ackermann_msgs.msg.AckermannDrive")
+def decode_ackermann(msg) -> tuple[float, float]:
+    """Car-like command -> neutral ``(steering_angle, speed)``.
+
+    Not converted to a twist on the way through, which would be the obvious thing and is wrong here.
+    A twist states a curvature, and turning a steering angle into one needs the wheelbase -- robot
+    geometry, which this module deliberately does not know. It also loses the case the message
+    exists to carry: at zero speed a curvature says nothing, while a steering angle still says which
+    way the wheels point. The consumer knows its own wheelbase and can do neither badly.
+    """
+    return (msg.steering_angle, msg.speed)
+
+
+@decoder("ackermann_msgs.msg.AckermannDriveStamped")
+def decode_ackermann_stamped(msg) -> tuple[float, float]:
+    return decode_ackermann(msg.drive)
+
+
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[float, float, float, float]:
-    """Position setpoint -> neutral ``(x, y, z, yaw)``. Yaw is projected out of the quaternion: a
-    setpoint names where to be and which way to face, and no consumer of this payload commands
-    pitch or roll -- an airframe holds those to fly, it is not told them."""
+def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...], str]:
+    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz, frame_id)``, in MuJoCo's
+    quaternion order.
+
+    The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
+    division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
+    every consumer of the type, and a Cartesian controller commanded to hold its tool upright needs
+    exactly the part that would have been thrown away. The frame is passed on for the same reason:
+    only the consumer knows which frames it can read a pose in.
+    """
     q = msg.pose.orientation
-    yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y), 1.0 - 2.0 * (q.y * q.y + q.z * q.z))
-    return (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z, yaw)
+    return (
+        (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
+        (q.w, q.x, q.y, q.z),
+        msg.header.frame_id,
+    )
+
+
+def yaw_of(quat) -> float:
+    """Yaw from a ``(w, x, y, z)`` quaternion, for a consumer that commands only heading."""
+    w, x, y, z = quat
+    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+@decoder("geometry_msgs.msg.WrenchStamped")
+def decode_wrench_stamped(msg) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Wrench setpoint -> neutral ``(force_xyz, torque_xyz)``, the shape a wrench reader reads out."""
+    f, t = msg.wrench.force, msg.wrench.torque
+    return ((f.x, f.y, f.z), (t.x, t.y, t.z))
 
 
 @decoder("trajectory_msgs.msg.JointTrajectory")

@@ -2,22 +2,28 @@
 
 The generic, family-free counterpart to ``spawn_robot``/``spawn_arm``/``spawn_sensor``: it resolves
 any ``roqsim.models`` entry -- notably the reusable props in ``roqsim_assets`` (an office table,
-a chair, a fire extinguisher) -- and attaches it at a mount pose. By default there is no free joint, so
-the model is welded in place (static scenery); it is the world-YAML alternative to ``<include>``-ing the
-prop's MJCF into a baked scene. The prop's own MJCF is used unchanged. Set ``free: true`` for a prop
-physics should move (a box to be picked up).
+a chair, a fire extinguisher) -- and attaches it at a mount pose. It is the world-YAML alternative to
+``<include>``-ing the prop's MJCF into a baked scene, and the prop's own MJCF is used unchanged. By
+default the prop gets a ``<freejoint/>`` and physics owns its pose (``motion: physics``), which is
+what a box to be picked up needs; ``motion: static`` welds it in place as scenery, which is what a
+bench or a shelf wants -- and what puts it in a MoveIt planning scene, since only a welded prop has a
+pose that stays true.
 
 Config::
 
     spawn_model:
       model: industrial_table        # bundled model name, filename, or absolute path
       prefix: ""                     # MJCF name prefix (use distinct prefixes for >1 of the model)
-      pos: [0.0, 0.0, 0.0]           # [x, y] or [x, y, z]
-      rpy: [0.0, 0.0, 0.0]           # orientation as roll/pitch/yaw (rad)
+      pose:                          # the mount pose, as SpawnEntity states one (see below)
+        position:    {x: 0.0, y: 0.0, z: 0.0}
+        orientation: {roll: 0.0, pitch: 0.0, yaw: 0.0}
       scale: 1.0                     # uniform geometric scale factor (see below)
-      free: false                    # give the prop a free joint: a movable body, not scenery
-      mass: 0.5                      # override the root body's total geom mass (kg)
-      friction: [1.2, 0.005, 0.0001] # override the root body's geom friction (or a single sliding val)
+      motion: physics                # who owns the pose: physics (default; a movable body),
+                                     #   static (welded scenery), driven (a plugin writes it)
+      mocap: false                   # make it a mocap body: moved by a plugin, not by physics
+      present: true                  # false: compiled in, but absent until it is spawned
+      mass: 0.5                      # override the total mass (kg): root-body geoms + flex vertices
+      friction: [1.2, 0.005, 0.0001] # override root-body geom and flex friction (or a single sliding val)
       publish_tf: false              # publish the root body's world pose as TF (see below)
       tf_rate: 30.0                  # publish_tf: dynamic -- stream rate (Hz)
 
@@ -32,8 +38,20 @@ masses in proportion, keeping the mass distribution of a multi-geom prop; ``fric
 sliding coefficient or the full ``[sliding, torsional, rolling]`` triple. Both are refused when the prop
 has nothing to scale, rather than silently doing nothing.
 
-``free: true`` adds a ``<freejoint/>`` to the prop's root body, turning it from welded scenery into a
-body physics moves -- a box a robot can pick up. It also registers the joint as the entity's
+A prop is in one of three states, and they are mutually exclusive: **welded** scenery (the default),
+a **free** body physics moves, or a **mocap** body some plugin drives. ``free`` and ``mocap`` name the
+two non-default ones.
+
+``motion: driven`` makes the prop's root body a MuJoCo mocap body: it has **no degrees of freedom**, so
+it costs the solver nothing and nothing can push it, but it is still collision geometry a lidar sees
+and a robot bumps into. Its pose is written every step by whoever owns it -- a ``navigator``
+component nested under this entry, say -- rather than integrated. That is what a *controlled* obstacle
+is: it goes where the experiment says, and the robot under test cannot shove it off course. Like
+``free``, it is re-seated at its spawn pose on ``on_reset`` (through ``mocap_pos``/``mocap_quat``
+rather than a joint), so a repetition never inherits where the last one left it.
+
+``motion: physics`` adds a ``<freejoint/>`` to the prop's root body, making it a body physics moves --
+a box a robot can pick up. It also registers the joint as the entity's
 ``base_joint``, which is what lets ``simulation_interfaces``' ``SetEntityState`` teleport or re-seat it
 (the service rejects any entity without one), and what ``on_reset`` uses to put it back at its spawn
 pose between episodes instead of leaving it wherever the last run dropped it.
@@ -55,8 +73,64 @@ different scales stay distinct assets: the dedup key in :mod:`roqsim.assets` inc
 It is deliberately a single **uniform** factor. Non-uniform scaling is ill-defined for a sphere or a
 capsule and silently shears any child body that is rotated relative to its parent, so a prop that must
 be stretched on one axis needs a purpose-built plugin instead (as ``door`` does for its leaf).
-``scale`` is geometry only -- it does not touch mass or inertia, which is why it suits the static
-scenery this plugin places (there is no free joint) and not a dynamic body.
+``scale`` is geometry only -- it does not touch mass or inertia, so a ``motion: physics`` prop keeps
+the mass it was modelled with at every size; state ``mass`` beside ``scale`` when the two belong
+together.
+
+``pose:`` is the mount pose, in the shape ``SpawnEntity.srv`` gives its ``initial_pose``. Its
+orientation may be a quaternion or Euler angles, so a prop turned about +Z stays short::
+
+    - spawn_model: {model: industrial_table, pose: {position: {x: -0.13, y: 0.6},
+                                                    orientation: {yaw: 1.5708}}}
+
+It is the only way to state one, for the reason :mod:`roqsim.pose` gives: a document declaring where
+a thing sits and a ``SpawnEntity`` call placing it are the same pose, so they are written the same
+way. Omitting it mounts the prop at the origin, unrotated; an omitted ``position.z`` is the floor,
+which is what a prop's frame means by z (a robot's is its model's resting height, since a wheeled
+base has one and a prop does not). ``scale``, ``mass`` and ``friction`` are unaffected -- they are
+properties of the prop, not of where it is.
+
+``present: false`` compiles the prop in and starts it **absent**: nothing sees or touches it, and the
+control plane does not list it, until ``SpawnEntity`` brings it in at the pose that call states. This
+is how a world provides the spares for an obstacle that must *appear* mid-trial -- roqsim never
+recompiles, so everything a trial may bring in is declared up front (see :mod:`roqsim.presence`). The
+declared value is restored on ``on_reset``, so a spare spawned in one episode is a spare again in the
+next; without that, repetitions after the first would begin with an obstacle already in the room.
+
+It is not a way to leave a prop out: ``enabled: false`` does that, and does it properly, by never
+building the body at all. An absent prop still costs its geometry in the compiled model -- that is
+what makes it spawnable.
+
+**A model with a** ``<flexcomp>`` -- a soft block, a sheet, a cable -- is a prop like any other; the
+model is MuJoCo's own MJCF, and roqsim adds what the prop needs around it:
+
+- ``motion: physics`` on a model whose root body holds nothing but free flexes (no geom, no joint,
+  no pinned vertex) means **free vertices**: every vertex already has its own slide joints, so no
+  free joint is added, and none of them is ``base_joint`` -- ``SetEntityState`` cannot re-seat such
+  a prop, and ``on_reset`` needs nothing, since ``mj_resetData`` puts every vertex back where the
+  model declared it. A flex pinned to a rigid root body is carried by that body's free joint, as
+  any part of a prop is.
+- ``motion: static`` or ``driven`` on a model with a free flex is refused: welding or driving the
+  root holds nothing that is not pinned to it. Pin the vertices that should be held (``<pin>``) to
+  a body, or use ``motion: physics``.
+- A ``<flexcomp>`` directly under ``<worldbody>`` is moved into a body named after the model file,
+  at its origin and with no joint, so the prop has a root body like any other; a vertex it pins to
+  the world is pinned to that body, which is welded where the prop is spawned.
+- ``scale`` covers the flex too: its vertex and node bodies are bodies, and its pinned or
+  interpolated vertex positions, ``radius``, ``margin``, ``gap`` and shell ``thickness`` scale with
+  them.
+- ``mass`` counts the flex: the total it sets is the root body's geoms plus every vertex body, and
+  both are rescaled in proportion. ``friction`` is written to every flex as well as to the root
+  body's geoms. A model whose only collision is a flex can rest, so ``motion: physics`` accepts it.
+- The registered entity lists its flexes by name in ``meta["flexes"]``, and ``present: false``
+  hides them with the rest of it (:mod:`roqsim.presence`).
+- A mesh or gmsh ``<flexcomp>`` reads its ``file`` while MuJoCo parses the model, relative to the
+  model's own folder and ``<compiler meshdir>``, so that file lives beside the model: the
+  directories a manifest borrows through ``assets:`` are not searched for it (:mod:`roqsim.flex`,
+  rule 5).
+
+What a flex requires of the rest of the world -- the integrator and solver -- is
+:mod:`roqsim.flex`'s, and ``sim.integrator: auto`` (the default) already chooses it.
 
 Unlike the ``spawn_*`` plugins for robots/sensors this does **not** pull in a model manifest -- a prop
 is inert geometry with no intrinsic controller or sensors. Place several by listing the plugin
@@ -77,13 +151,20 @@ gets the frame. It has no effect on the baked web scene, which already seats the
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 
 from roqsim.context import Endpoint, Entity, SimContext
+from roqsim.flex import (
+    entity_flex_ids,
+    flex_is_free,
+    flex_label,
+    lift_top_level_flexes,
+    owned_bodies,
+    pin_bodies,
+)
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import PoseError, parse_pose
 
 _TF_MODES = (False, "dynamic", "static")
 
@@ -95,6 +176,10 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
     rail is a ``<geom type="box">``) or from parts offset inside their body, and scaling only the
     meshes would shrink those parts while leaving their offsets and sizes untouched -- the prop would
     come apart rather than get smaller. Inertial properties are left alone; see the module docstring.
+
+    A flex's vertex and node bodies are bodies, so their positions scale above; what a flex keeps in
+    its own fields is the position of a vertex that has no body of its own (a pinned vertex, or any
+    vertex of an interpolated flex, in its parent's frame) and the sizes of its collision shell.
     """
     for mesh in spec.meshes:
         mesh.scale = [c * factor for c in mesh.scale]
@@ -111,19 +196,14 @@ def _scale_spec(spec: mujoco.MjSpec, factor: float) -> None:
         light.pos = [c * factor for c in light.pos]
     for joint in spec.joints:
         joint.pos = [c * factor for c in joint.pos]
-
-
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
+    for flex in spec.flexes:
+        flex.vert = [c * factor for c in flex.vert]
+        flex.node = [c * factor for c in flex.node]
+        flex.radius *= factor
+        flex.margin *= factor
+        flex.gap *= factor
+        if flex.thickness > 0:  # -1 is MuJoCo's "unset"
+            flex.thickness *= factor
 
 
 class SpawnModelPlugin(Plugin):
@@ -136,19 +216,32 @@ class SpawnModelPlugin(Plugin):
         self.model_ref = self.config.get("model", "")
         self.prefix = self.config.get("prefix", "")
         self.entity_name = self.address
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = _rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos = [0.0, 0.0, 0.0]
+        self.quat = [1.0, 0.0, 0.0, 0.0]
+        if (pose := self.config.get("pose")) is not None:
+            position, self.quat = parse_pose(pose)
+            # A prop is attached at a frame, so an unstated z is the frame's own: 0.0, the floor.
+            # (spawn_robot reads the same omission as the model's resting height, because a wheeled
+            # base has one and a prop does not.)
+            self.pos = [position[0], position[1], position[2] or 0.0]
         self.scale = float(self.config.get("scale", 1.0))
-        self.free = bool(self.config.get("free", False))
+        # `motion` names who owns this body's pose -- one question with three answers, rather
+        # than two booleans whose fourth combination ("physics moves it AND a plugin writes it")
+        # is meaningless and would have to be refused wherever they were offered.
+        self.motion = self.config.get("motion", "physics")
+        self.free = self.motion == "physics"
+        self.mocap = self.motion == "driven"
         self.mass = self.config.get("mass")
         friction = self.config.get("friction")
         if friction is not None and not isinstance(friction, (list, tuple)):
             friction = [friction]  # a bare number means the sliding coefficient
         self.friction = [float(v) for v in friction] if friction is not None else None
         self._base_joint = ""
+        #: Whether build gave the root a free joint -- not so for a model of free flexes, whose
+        #: vertices carry their own joints (module docstring).
+        self._freejoint = False
         self._spawn_qpos: list[float] = []
+        self._mocapid = -1
         # publish_tf: false | "dynamic" | "static"; `true` is an alias for "dynamic".
         mode = self.config.get("publish_tf", False)
         self.publish_tf = "dynamic" if mode is True else mode
@@ -167,10 +260,20 @@ class SpawnModelPlugin(Plugin):
                 resolve_model(config["model"], base_dir=self.base_dir)
             except ModelError as exc:
                 errors.append(str(exc))
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        for gone in ("pos", "yaw"):
+            if gone in config:
+                # Not a second spelling -- INERT. This plugin reads only `pose`, so a world
+                # stating `pos:` was placed at the origin: stated, ignored, nothing raised.
+                errors.append(
+                    f"'{gone}' is not read by spawn_model and never was -- state the whole pose "
+                    "under 'pose': pose: {position: {x, y, z}, orientation: {yaw}}. A world that "
+                    "set it was silently placing the prop at the origin."
+                )
+        if "pose" in config:
+            try:
+                parse_pose(config["pose"])
+            except PoseError as exc:
+                errors.append(str(exc))
         scale = config.get("scale", 1.0)
         if isinstance(scale, (list, tuple)):
             errors.append(
@@ -199,19 +302,78 @@ class SpawnModelPlugin(Plugin):
                 errors.append("'friction' must be a number or [sliding, torsional, rolling]")
             elif any(float(v) < 0.0 for v in values):
                 errors.append("'friction' components must be >= 0")
-        if config.get("free") and ("dynamic" if mode is True else mode) == "static":
-            # A latched one-shot pose for a body that moves is a frame frozen at the spawn pose.
+        static_tf = ("dynamic" if mode is True else mode) == "static"
+        for gone, replacement in (
+            ("free", "motion: physics (or motion: static)"),
+            ("mocap", "motion: driven"),
+        ):
+            if gone in config:
+                # Refused rather than translated: a removed key that quietly still worked would
+                # leave two vocabularies for one question.
+                errors.append(
+                    f"'{gone}' is gone -- use {replacement}. 'motion' says who owns this "
+                    "body's pose: 'physics' (the solver moves it, and SetEntityState can re-seat "
+                    "it), 'static' (welded scenery, which a planner's grid holds), 'driven' (a "
+                    "plugin writes the pose each step: solid, immovable, and NOT in the grid)."
+                )
+        if "motion" in config and config["motion"] not in {"physics", "static", "driven"}:
             errors.append(
-                "'publish_tf: static' contradicts 'free: true' -- a movable body's pose is not "
+                f"'motion' must be one of physics, static, driven -- got {config['motion']!r}."
+            )
+        motion = config.get("motion", "physics")
+        if motion == "driven" and static_tf:
+            errors.append(
+                "'publish_tf: static' contradicts 'motion: driven' -- a driven body's pose is not "
                 "model-fixed; use publish_tf: dynamic"
             )
+        if motion == "physics" and static_tf:
+            # A latched one-shot pose for a body that moves is a frame frozen at the spawn pose.
+            errors.append(
+                "'publish_tf: static' contradicts 'motion: physics' -- a movable body's pose is "
+                "not model-fixed. Use 'motion: static' for a prop that never moves, or "
+                "publish_tf: dynamic for one that does."
+            )
         return errors
+
+    def _refuse_a_free_body_that_cannot_rest(self, child) -> None:
+        """Refuse ``motion: physics`` on a model with nothing that can touch anything.
+
+        Such a prop does not sit wrong, it LEAVES: nothing stops it, so it accelerates out of the
+        world and is absent from every frame after the first, with no error raised, the entity
+        still listed and its pose still published.
+
+        A model with no colliding geometry is not broken -- it is trim, meant to be welded into
+        something that does collide (a door casing around an opening whose wall is solid). So this
+        names the model and the fix rather than guessing which was meant.
+        """
+        collides = any(
+            (g.contype or g.conaffinity)
+            for body in getattr(child, "bodies", [])
+            for g in getattr(body, "geoms", [])
+        ) or any((f.contype or f.conaffinity) for f in child.flexes)
+        if not collides:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: this model has no colliding geometry, so under "
+                f"'motion: physics' nothing holds it up -- it falls out of the world and is absent "
+                f"from every later frame, silently. Use 'motion: static' to weld it in place "
+                f"(which is what visual-only trim wants), or give the model collision geometry."
+            )
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         asset = resolve_model(self.model_ref, base_dir=self.base_dir)
         try:
             child = mujoco.MjSpec.from_file(str(asset.path))
         except ValueError as exc:
+            if "flexcomp" in str(exc):
+                # A mesh/gmsh flexcomp reads its file at parse time, before apply_assets could
+                # resolve it (roqsim.flex, rule 5), so its "Error opening file" lands here.
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: MuJoCo could not parse {asset.path}: {exc}. "
+                    f"A <flexcomp file=...> is read while the model is parsed, relative to the "
+                    f"model's own folder and its <compiler meshdir>; the directories a manifest "
+                    f"borrows through `assets:` are not searched for it. Keep the file beside the "
+                    f"model."
+                ) from exc
             # MuJoCo raises a bare "could not decode content" that names neither the file nor the
             # cause. Point at the resolved path and the likely reason (not an MJCF, or malformed XML).
             raise ModelError(
@@ -222,15 +384,23 @@ class SpawnModelPlugin(Plugin):
         # Resolve mesh/texture refs to absolute paths across the model's asset dirs (the prop's own
         # folder is included as a fallback), so compilation does not depend on CWD.
         apply_assets(child, asset)
+        # A flexcomp under <worldbody> gets a body of its own, so the prop has a root to register,
+        # hide and weld (and a world pin survives the attach -- roqsim.flex, rule 4).
+        child = lift_top_level_flexes(child, asset.path.stem)
         if self.scale != 1.0:
             _scale_spec(child, self.scale)
         # Best-effort root body name (for the entity's pose lookups); props are named after their file.
         bodies = getattr(child.worldbody, "bodies", [])
         self._root_body = bodies[0].name if bodies else asset.path.stem
         if self.mass is not None or self.friction is not None:
-            self._apply_physics_overrides(bodies, asset)
+            self._apply_physics_overrides(child, bodies, asset)
+        self._refuse_a_weld_that_holds_no_flex(child)
         if self.free:
-            self._add_freejoint(child, bodies, asset)
+            self._refuse_a_free_body_that_cannot_rest(child)
+            if not self._holds_only_free_flexes(child, bodies):
+                self._add_freejoint(child, bodies, asset)
+        if self.mocap:
+            self._make_mocap(child, bodies, asset)
         if not self.entity_name:
             self.entity_name = asset.path.stem
         frame = spec.worldbody.add_frame()
@@ -238,16 +408,27 @@ class SpawnModelPlugin(Plugin):
         frame.quat = self.quat
         spec.attach(child, prefix=self.prefix, frame=frame)
 
-    def _apply_physics_overrides(self, bodies, asset) -> None:
-        """Rescale root-body geom mass and/or set geom friction, so both are campaign factors."""
+    def _apply_physics_overrides(self, child: mujoco.MjSpec, bodies, asset) -> None:
+        """Rescale the prop's mass and/or set its friction, so both are campaign factors.
+
+        The mass is the root body's declared geom masses plus the explicit mass of every body a flex
+        owns (its vertex or node bodies, never a pin body), and all of it is rescaled by one factor
+        -- a soft block on a rigid base keeps its split. Friction goes to the root body's geoms and
+        to every flex, whose own ``friction`` is what its contacts use.
+        """
         if not bodies:
             raise ModelError(
                 f"spawn_model {self.model_ref!r}: mass/friction override needs a root body, but "
                 f"{asset.path} declares none."
             )
         geoms = list(bodies[0].geoms)
+        flex_bodies = [
+            child.body(name)
+            for name in dict.fromkeys(n for f in child.flexes for n in owned_bodies(child, f))
+        ]
         if self.mass is not None:
             total = sum(float(getattr(g, "mass", 0.0) or 0.0) for g in geoms)
+            total += sum(float(b.mass) for b in flex_bodies)
             if total <= 0.0:
                 raise ModelError(
                     f"spawn_model {self.model_ref!r}: mass override needs the prop's geoms to declare "
@@ -257,44 +438,143 @@ class SpawnModelPlugin(Plugin):
             factor = float(self.mass) / total
             for g in geoms:
                 g.mass = float(g.mass) * factor
+            for b in flex_bodies:
+                b.mass = float(b.mass) * factor
+                b.inertia = [float(c) * factor for c in b.inertia]
         if self.friction is not None:
+            for flex in child.flexes:
+                flex.friction = [*self.friction, *list(flex.friction)[len(self.friction) :]]
+            if not geoms and not len(child.flexes):
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: friction override needs geoms on the prop's root "
+                    f"body, or a flex, to carry it, but {asset.path} gives that body none (its geoms "
+                    f"sit on child bodies). Put the colliding geoms on the root body, or drop the "
+                    f"override."
+                )
             for g in geoms:
                 # MuJoCo's geom friction is [sliding, torsional, rolling]; keep the prop's own value
                 # for any component the world did not name.
                 g.friction = [*self.friction, *list(g.friction)[len(self.friction) :]]
 
+    @staticmethod
+    def _holds_only_free_flexes(child: mujoco.MjSpec, bodies) -> bool:
+        """Whether the root body is nothing but the place free flexes were declared in.
+
+        Such a root has no geom, no joint and no body that is not a flex's vertex (or node) body,
+        and no flex is pinned anywhere. Its vertices are the prop's degrees of freedom; a free joint
+        on it would be a massless body MuJoCo refuses to compile.
+        """
+        if not bodies or not len(child.flexes):
+            return False
+        root = bodies[0]
+        if len(root.geoms) or len(root.joints):
+            return False
+        if not all(flex_is_free(child, f) for f in child.flexes):
+            return False
+        owned = {n for f in child.flexes for n in owned_bodies(child, f)}
+        return all(b.name in owned for b in root.bodies)
+
+    def _refuse_a_weld_that_holds_no_flex(self, child: mujoco.MjSpec) -> None:
+        """Refuse ``static``/``driven`` on a model with a flex nothing holds, naming the fix."""
+        if self.motion == "physics":
+            return
+        free = [f.name or f"#{i}" for i, f in enumerate(child.flexes) if flex_is_free(child, f)]
+        if free:
+            what = "welds" if self.motion == "static" else "drives"
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: 'motion: {self.motion}' {what} the prop's root "
+                f"body, but flex {', '.join(map(repr, free))} has no vertex pinned to it or to "
+                f"anything else, so its vertices would move on their own regardless. Pin the "
+                f"vertices that should be held (<pin> in the <flexcomp>) to a body, or use "
+                f"'motion: physics'."
+            )
+
     def _add_freejoint(self, child: mujoco.MjSpec, bodies, asset) -> None:
         """Make the prop's root body a free body, refusing the cases that go silently wrong."""
         if not bodies:
             raise ModelError(
-                f"spawn_model {self.model_ref!r}: free: true needs a root body to attach the free "
+                f"spawn_model {self.model_ref!r}: motion: physics needs a root body to attach the free "
                 f"joint to, but {asset.path} declares none (its geoms sit directly on worldbody)."
             )
         root = bodies[0]
         if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
             raise ModelError(
-                f"spawn_model {self.model_ref!r}: free: true, but {asset.path} already gives its root "
+                f"spawn_model {self.model_ref!r}: motion: physics, but {asset.path} already gives its root "
                 f"body a joint. Spawn it without `free` -- the prop defines its own articulation."
             )
+        if not len(root.geoms) and not float(root.mass):
+            pinned = [
+                f.name or f"#{i}"
+                for i, f in enumerate(child.flexes)
+                if root.name in pin_bodies(child, f)
+            ]
+            if pinned:
+                raise ModelError(
+                    f"spawn_model {self.model_ref!r}: motion: physics gives the root body "
+                    f"{root.name!r} a free joint, but it has no mass of its own -- flex "
+                    f"{', '.join(map(repr, pinned))} is pinned to it, and pinned vertices carry "
+                    f"none. Give {asset.path} a geom on that body (a rigid core), or use "
+                    f"'motion: static' to hold the pinned vertices where the prop is spawned."
+                )
         root.add_freejoint(name="free")
         self._base_joint = f"{self.prefix}free"
+        self._freejoint = True
+
+    def _make_mocap(self, child: mujoco.MjSpec, bodies, asset) -> None:
+        """Make the prop's root body a mocap body, refusing the cases that go silently wrong."""
+        if not bodies:
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: motion: driven needs a root body to drive, but "
+                f"{asset.path} declares none (its geoms sit directly on worldbody)."
+            )
+        root = bodies[0]
+        if any(getattr(j, "type", None) is not None for j in getattr(root, "joints", [])):
+            # MuJoCo compiles a jointed mocap body without complaint and then never moves the joints,
+            # so an articulated prop would arrive looking correct and be frozen.
+            raise ModelError(
+                f"spawn_model {self.model_ref!r}: motion: driven, but {asset.path} gives its root body "
+                f"a joint. A mocap body has no degrees of freedom, so the articulation would be "
+                f"inert -- spawn it without `mocap`."
+            )
+        root.mocap = True
 
     def configure(self, ctx: SimContext) -> None:
         self._body_frame = self.prefix + self._root_body
         meta = {"prefix": self.prefix, "model": self.model_ref}
-        if self.free:
+        if flexes := entity_flex_ids(ctx.model, self._body_frame):
+            # By name, which is what a flex is addressed by everywhere else (a contact scope, an
+            # override); the ids are the compiled model's and are one entity_flex_ids call away.
+            meta["flexes"] = [flex_label(ctx.model, f) for f in flexes]
+        if self._freejoint:
             # simulation_interfaces' SetEntityState only accepts an entity whose base_joint is a free
             # joint, so without this a movable prop could not be teleported or reset between episodes.
             meta["base_joint"] = self._base_joint
+        if self.mocap:
+            # `mocap` in the meta is how a component nested under this entry -- a `navigator`, say --
+            # discovers that it may write this body's pose, without having to re-derive it from the
+            # compiled model.
+            meta["mocap"] = True
         ctx.entities.add(
             Entity(
                 name=self.entity_name,
-                kind="object" if self.free else "prop",
+                # Not "prop": a prop is scenery, and both of the other two states MOVE. What differs
+                # is who moves them, which `meta` says.
+                kind="prop",
                 body=self._body_frame,
                 meta=meta,
             )
         )
-        if self.free:
+        if self.mocap:
+            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, self._body_frame)
+            if bid < 0:
+                raise RuntimeError(f"spawn_model: body {self._body_frame!r} not found for mocap")
+            self._mocapid = int(ctx.model.body_mocapid[bid])
+            if self._mocapid < 0:
+                raise RuntimeError(
+                    f"spawn_model: body {self._body_frame!r} is not a mocap body after compile"
+                )
+
+        if self._freejoint:
             jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
             if jid < 0:
                 raise RuntimeError(f"spawn_model: free joint {self._base_joint!r} not found")
@@ -358,12 +638,21 @@ class SpawnModelPlugin(Plugin):
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
 
-        Only for ``free: true``: a welded prop cannot drift, but a movable one is wherever the last
-        episode left it -- on the floor, if the robot knocked it off the table. Repetitions of a trial
-        would then not be repetitions. ``mj_resetData`` restores ``qpos0``, which already holds the
-        spawn pose, but velocity is cleared per-joint here so a prop reset mid-flight does not keep it.
+        A welded prop cannot drift, but a ``free`` one is wherever the last episode left it -- on the
+        floor, if the robot knocked it off the table -- so repetitions of a trial would not be
+        repetitions.
+
+        Only ``free`` needs anything done here. ``mj_resetData`` restores ``qpos0``, which already
+        holds the spawn pose, so all that is left is clearing velocity per-joint, so a prop reset
+        mid-flight does not keep it.
+
+        A ``mocap`` prop needs nothing, and that is worth stating because it looks like it should:
+        ``mj_resetData`` re-initialises ``mocap_pos``/``mocap_quat`` from the body's ``body_pos`` /
+        ``body_quat``, which *is* the spawn pose (this plugin attaches the prop at a frame there).
+        So a driven prop is already back where it started before any ``on_reset`` runs, and an
+        explicit re-seat here would be dead code asserting a false claim about MuJoCo.
         """
-        if not self.free or not self._spawn_qpos:
+        if not self._freejoint or not self._spawn_qpos:
             return
         adr, *pose = self._spawn_qpos
         adr = int(adr)

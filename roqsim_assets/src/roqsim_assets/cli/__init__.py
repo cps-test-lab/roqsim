@@ -2,8 +2,13 @@
 
 The pipeline runs in one direction and each step is independently useful::
 
-    sketchfab-helper download  ->  reduce-mesh  ->  finalize-mujoco  ->  inspect-prop
-    licence-checked source         triangle budget   origin + textures   the verdict
+    sketchfab-helper download  ->  reduce-mesh  ->  finalize-mujoco  ->  collision  ->  inspect-prop
+    licence-checked source         triangle budget   origin + textures   what it hits   the verdict
+
+``finalize-mujoco`` writes ONE mesh geom, and MuJoCo collides a mesh as its convex hull -- so a prop
+with a span under it (a desk, a shelf, a chair) leaves that step solid right through the opening.
+``collision audit`` says whether this prop is one of those and ``collision diff`` measures a
+replacement against the mesh; neither is optional for a prop something has to drive past.
 
 ``inspect-prop`` is the one that decides: it is the deterministic ground truth on scale, origin and
 materials, and a prop that has not passed it is not ready to place. For a *look* at a mesh, use
@@ -32,4 +37,5 @@ assets.add_command(tool("roqsim_assets.sketchfab", "sketchfab-helper"))
 assets.add_command(tool("roqsim_assets.cli.reduce_mesh"))
 assets.add_command(tool("roqsim_assets.cli.finalize_mujoco"))
 assets.add_command(tool("roqsim_assets.cli.inspect_prop"))
+assets.add_command(tool("roqsim_assets.cli.collision"))
 assets.add_command(tool("roqsim_assets.cli.render_thumbnails"))

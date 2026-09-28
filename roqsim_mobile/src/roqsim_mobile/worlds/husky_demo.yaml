@@ -8,12 +8,13 @@ sim:
   pacing: realtime      # realtime | asap | {factor: N}
 
 components:
-  # diff_drive (skid-steer, 4 driven wheels + slip_factor) and the 360 deg / 30 Hz lidar come from
-  # the husky_a200 model manifest (models/husky_a200/husky_a200.manifest.yaml).
+  # diff_drive (skid-steer, 4 driven wheels + slip_factor) and the Hokuyo UST-10LX on its PACS bracket
+  # come from the husky_a200 model manifest (models/husky_a200/husky_a200.manifest.yaml).
   - spawn_robot:
       model: husky_a200
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
   # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this

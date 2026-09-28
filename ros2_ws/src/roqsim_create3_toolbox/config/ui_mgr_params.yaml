@@ -1,0 +1,13 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_common_bringup/config/ui_mgr_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation), so the node runs with the parameters its
+# maintainers ship; roqsim's TurtleBot 4 publishes on the topics named here.
+/**:
+  ui_mgr:
+    ros__parameters:
+      # Buttons publisher topic
+      button_topic: interface_buttons
+      # Publishers rate
+      buttons_publish_rate: 1.0
+      # Subscription topics
+      lightring_topic: cmd_lightring
+      audio_topic: cmd_audio

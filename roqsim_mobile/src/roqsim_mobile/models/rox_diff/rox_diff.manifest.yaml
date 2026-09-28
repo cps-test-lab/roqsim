@@ -1,0 +1,56 @@
+# Neobotix ROX-Diff: the differential-drive variant of the ROX line -- two driven wheels on the
+# centre line, four passive casters, two SICK nanoScan3 safety scanners.
+#
+# Geometry, masses and joint origins: neobotix/rox, rox_description (see rox_diff.xml for the pin).
+# Drive limits: the same repository's rox_navigation/configs/navigation_diff.yaml, which is the
+# vendor's own Nav2 profile for THIS variant -- the omni and trike profiles carry different numbers.
+#
+# The data sheet's 1.5 m/s is the platform's top speed; the 0.8 m/s below is what the vendor's own
+# navigation profile commands, and that is the figure a stack would actually use. Both are real; they
+# answer different questions, and the profile is the one this model is configured against.
+
+# base_link is an empty link in the vendor description and base_footprint carries the whole body
+# through a fixed joint at the identity, so the MJCF folds the two into one root body. Re-declared
+# here because the vendor's navigation profile plants its costmaps on base_footprint
+# (navigation_diff.yaml: `base_frame: "base_footprint"`), so the name has to survive the flattening.
+frames:
+  - {name: base_footprint, parent: base_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+
+components:
+  - diff_drive:
+      # Not the vendor's declared inertia, which is 1/2 m r^2 for r = 0.15 m -- the wheel's DIAMETER
+      # in the radius's place. The collision sphere, the joint's 0.075 m mounting height and the
+      # 0.1499 m visual mesh all agree on 0.075 m. See rox_diff.xml and the port log.
+      wheel_radius: 0.075
+      wheel_separation: 0.634        # rox.urdf.xacro, the diff branch's wheel_separation property
+      max_linear_vel: 0.8            # navigation_diff.yaml FollowPath max_vel_x
+      max_angular_vel: 0.8           # navigation_diff.yaml FollowPath max_rot_vel
+      wheel_accel_limit: 0.25        # navigation_diff.yaml FollowPath acc_lim_x
+      left_actuators:  [wheel_left_motor]
+      right_actuators: [wheel_right_motor]
+      left_joints:  [wheel_left_joint]
+      right_joints: [wheel_right_joint]
+
+  # Two scanners at opposite corners, each turned 45 degrees outward, so the pair covers 360 degrees
+  # between them. Both mounts carry the vendor's roll of pi: lidar_*_link is z-DOWN on this robot,
+  # which the device model reproduces rather than corrects (see sick_nanoscan3.xml).
+  - spawn_sensor:
+      model: sick_nanoscan3
+      parent_frame: base_link
+      pos: [0.2995, 0.269, 0.189]    # rox.urdf.xacro, lidar_1 origin xyz
+      rpy: [3.14159265, 0.0, 0.78539816]   # the same origin's rpy: pi, 0, pi/4
+      frame_id: lidar_1_link         # sick_nanoscan.xacro names the link after the macro's `name`
+    name: scan_front_left
+    components:
+      - lidar:
+          topics: {scan: scan}       # relative, so the namespace scopes it
+  - spawn_sensor:
+      model: sick_nanoscan3
+      parent_frame: base_link
+      pos: [-0.2995, -0.269, 0.189]  # rox.urdf.xacro, lidar_2 origin xyz
+      rpy: [3.14159265, 0.0, -2.35619449]  # the same origin's rpy: pi, 0, -(pi - pi/4)
+      frame_id: lidar_2_link
+    name: scan_back_right
+    components:
+      - lidar:
+          topics: {scan: scan2}

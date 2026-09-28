@@ -33,7 +33,6 @@ uprights are at the back (+Y), the drawer fronts and the power strip face the op
 Config::
 
     workbench:
-      name: workbench       # entity name (default 'workbench')
       prefix: ""            # MJCF name prefix (distinct prefixes for >1 bench)
       pos: [0.0, 0.0, 0.0]  # [x, y] or [x, y, z] world placement
       rpy: [0.0, 0.0, 0.0]  # orientation as roll/pitch/yaw (rad)
@@ -51,12 +50,11 @@ scene does not cost contacts for decoration.
 
 from __future__ import annotations
 
-import math
-
 import mujoco
 
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 # The electric column's real stroke (datasheet: 695 mm nominal, 695-995 mm adjustable). Outside it the
 # bench is no longer this product, so it is refused rather than silently clamped.
@@ -100,19 +98,6 @@ _LIGHT_RGBA = [0.95, 0.95, 0.88, 1.0]  # the luminaire's diffuser
 _CABINET_SIDES = ("left", "right", "none")
 
 
-def _rpy_to_quat(roll: float, pitch: float, yaw: float) -> list[float]:
-    """(w, x, y, z) quaternion from roll/pitch/yaw (rad), fixed-axis XYZ (ROS/URDF convention)."""
-    cr, sr = math.cos(roll / 2), math.sin(roll / 2)
-    cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)
-    cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)
-    return [
-        cr * cp * cy + sr * sp * sy,
-        sr * cp * cy - cr * sp * sy,
-        cr * sp * cy + sr * cp * sy,
-        cr * cp * sy - sr * sp * cy,
-    ]
-
-
 class WorkbenchPlugin(Plugin):
     #: Registers an entity, so its label names that entity and it may own a
     #: ``components:`` block of sensors, controllers and monitors that attach to it.
@@ -131,9 +116,7 @@ class WorkbenchPlugin(Plugin):
         else:
             self.pos = [0.0, 0.0, 0.0]
         rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = (
-            _rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
-        )
+        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports them
         # with a friendly message rather than crashing construction.
         self.height = self._float(self.config.get("height"), _HEIGHT_MIN)

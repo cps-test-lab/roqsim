@@ -6,7 +6,7 @@ auto-repeat stream it does forward is unusable as a hold signal: measured agains
 mid-flight and cannot know when to stop. ``XQueryKeymap`` answers the actual question -- it returns
 the keyboard's live bitmap, so a held key flies for exactly as long as it is down.
 
-Best-effort and X11-only, like :mod:`roqsim.window_title`: :meth:`KeyState.open` returns ``None`` on
+Best-effort and X11-only, like :mod:`roqsim.window_branding`: :meth:`KeyState.open` returns ``None`` on
 Wayland/macOS, without a ``DISPLAY``, or when libX11 is missing, and the caller falls back to the
 event stream. Keys are only reported while a window of *this* process has the input focus, so arrows
 typed into another application never fly our camera.
@@ -201,7 +201,7 @@ _IGNORE_X_ERRORS = _X_ERROR_HANDLER(_log_and_ignore_x_error)
 
 
 def _load_xlib() -> ctypes.CDLL:
-    """libX11 with the prototypes this module calls (see also :mod:`roqsim.window_title`)."""
+    """libX11 with the prototypes this module calls (see also :mod:`roqsim.window_branding`)."""
     xlib = ctypes.CDLL("libX11.so.6")
     ulong_p = ctypes.POINTER(ctypes.c_ulong)
     xlib.XOpenDisplay.restype = ctypes.c_void_p

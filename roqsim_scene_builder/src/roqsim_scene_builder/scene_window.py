@@ -28,8 +28,8 @@ roqsim docs forbid at runtime. Instead the drag redraws the prop's own mesh at t
 transforming its geoms in the *render scene* (the transient ``MjvScene``, not ``model``/``data``); on
 release the prop's pose is written into its ``spawn_model`` config entry and the engine is **rebuilt**
 (recompiling between edits is sanctioned; mutating a live model is not), making the same move
-permanent. The final poses come back under ``moves``; the caller (the ``scene-update`` skill) writes
-them into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
+permanent. The final poses come back under ``moves``; the caller writes them
+into the world YAML. Only props move -- walls and floor are baked into their meshes and have no
 editable pose.
 
 The non-GUI parts -- loading, the dot bookkeeping (:class:`DotModel`), and the pose helpers
@@ -39,6 +39,7 @@ headless; only :func:`run_window` needs a display.
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
@@ -80,10 +81,11 @@ from roqsim_scene_builder.annotate_ui import (  # theme + shared widgets live in
     enable_edit_shortcuts,
     renumber,
     rgba_hex,
+    set_window_icon,
 )
 
 # color_for / rgba_hex are re-exported here so callers (and tests) can import the whole annotation
-# vocabulary from the 3D window module as before the theme moved to annotate_ui.
+# vocabulary from the 3D window module, although the theme lives in annotate_ui.
 __all__ = [
     "Dot",
     "DotModel",
@@ -157,6 +159,7 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
     """Load ``target`` the way ``roqsim`` does and return ``(engine, view)``.
 
     ``settle_steps`` optionally advances physics so a dropped scene comes to rest before review.
+    The engine is returned set up, and the caller shuts it down.
 
     A review is about geometry, so transport plugins are dropped (``skip_transport``, see
     :func:`roqsim.config.drop_transport_plugins`) -- which is what lets a ``*_ros`` world be reviewed in
@@ -165,7 +168,7 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
     """
     import sys
 
-    from roqsim import Engine, config_for_input, drop_transport_plugins
+    from roqsim import config_for_input, drop_transport_plugins
 
     cfg = config_for_input(target)
     if skip_transport:
@@ -180,12 +183,23 @@ def load_engine(target: str, settle_steps: int = 0, skip_transport: bool = True)
                     file=sys.stderr,
                     flush=True,
                 )
-    engine = Engine(cfg)
-    engine.setup()
-    engine.reset()
-    for _ in range(max(0, settle_steps)):
-        engine.step()
-    return engine, getattr(cfg, "view", None)
+    return _settled(cfg, settle_steps), getattr(cfg, "view", None)
+
+
+def _settled(cfg, settle_steps: int):
+    """A set-up engine for *cfg*, reset and stepped *settle_steps* times; shut down on failure."""
+    from roqsim import Engine
+
+    # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
+    # one rather than the driver's to resolve.
+    engine = Engine(cfg, preview=True)
+    with contextlib.ExitStack() as stack:
+        stack.enter_context(engine)
+        engine.reset()
+        for _ in range(max(0, settle_steps)):
+            engine.step()
+        stack.pop_all()
+    return engine
 
 
 @dataclass
@@ -367,7 +381,8 @@ def run_window(
 
     Returns an exit code: 0 (pass, or a neutral Enter-submitted comment), 1 (fail), 2 (no display /
     load error), 3 (closed without a verdict). On any submit the result JSON is written to
-    ``json_out`` (when given).
+    ``json_out`` (when given). The reason for a 2 goes to **stderr**, which is what the MCP tool
+    relays when the window produced no result -- on stdout it would be read by nobody.
     """
     import os
     import sys
@@ -377,6 +392,7 @@ def run_window(
     if not has_display():
         print(
             "roqsim-scene-builder: no DISPLAY -- the scene-review window needs a graphical session.",
+            file=sys.stderr,
             flush=True,
         )
         return 2
@@ -387,39 +403,50 @@ def run_window(
     import tkinter as tk  # imported here so the module stays importable headless
 
     from roqsim import FrameRenderer
+    from roqsim.models import ModelError
+    from roqsim.plugin import PluginError
     from roqsim.rendering import focus_camera, preview_camera
     from roqsim.runner import is_model_ref
 
-    engine, view = load_engine(target, settle_steps)
-    width, height = size
-    fr = FrameRenderer(engine.ctx.model, width, height)
-    ctx = engine.ctx
-    entity = ctx.entities.get(focus_object) if focus_object else None
-    if focus_object and entity is None:
-        print(
-            f"roqsim-scene-builder: no object {focus_object!r} in scene; "
-            f"available: {', '.join(ctx.entities.names()) or '(none)'}. Using default camera.",
-            file=sys.stderr,
-            flush=True,
-        )
-    if entity is not None and entity.body:
-        # Open looking at the requested object, from an angle with a clear line of sight to it.
-        bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
-        fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
-    elif is_model_ref(target) and not view:
-        # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.
-        fr.camera = preview_camera(ctx.model, ctx.data, ctx.entities.all(), aspect=width / height)
-    else:
-        apply_view(fr.camera, view)
-
-    app = _ReviewApp(tk, engine, fr, message, json_out, width, height, title, settle_steps)
     try:
+        engine, view = load_engine(target, settle_steps)
+    except (FileNotFoundError, PluginError, ModelError, ValueError) as err:
+        # A scene that does not load is the documented exit 2, said in one line: the window exists
+        # to show the scene, so there is nothing for a traceback to add. MuJoCo reports a model that
+        # will not compile as a ValueError.
+        print(f"roqsim-scene-builder: cannot load {target!r}: {err}", file=sys.stderr, flush=True)
+        return 2
+    with contextlib.ExitStack() as stack:
+        stack.callback(engine.shutdown)
+        width, height = size
+        fr = FrameRenderer(engine.ctx.model, width, height)
+        stack.callback(fr.close)
+        ctx = engine.ctx
+        entity = ctx.entities.get(focus_object) if focus_object else None
+        if focus_object and entity is None:
+            print(
+                f"roqsim-scene-builder: no object {focus_object!r} in scene; "
+                f"available: {', '.join(ctx.entities.names()) or '(none)'}. Using default camera.",
+                file=sys.stderr,
+                flush=True,
+            )
+        if entity is not None and entity.body:
+            # Open looking at the requested object, from an angle with a clear line of sight to it.
+            bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, entity.body)
+            fr.camera = focus_camera(ctx.model, ctx.data, [bid], aspect=width / height)
+        elif is_model_ref(target) and not view:
+            # A single model/robot shown by itself: zoom onto it, not the empty room it stands in.
+            fr.camera = preview_camera(
+                ctx.model, ctx.data, ctx.entities.all(), aspect=width / height
+            )
+        else:
+            apply_view(fr.camera, view)
+
+        app = _ReviewApp(tk, engine, fr, message, json_out, width, height, title, settle_steps)
+        # A prop move replaces the app's engine and renderer; close the ones it holds at the end.
+        stack.callback(lambda: app.engine.shutdown())
+        stack.callback(lambda: app.fr.close())
         app.root.mainloop()
-    finally:
-        # A prop move rebuilds the engine/renderer, so close whatever the app now holds (which may no
-        # longer be the originals created above) rather than the stale locals.
-        app.fr.close()
-        app.engine.shutdown()
     return app.exit_code
 
 
@@ -464,6 +491,7 @@ class _ReviewApp:
 
         root = tk.Tk()
         root.title("roqsim scene review")
+        set_window_icon(root)
         root.configure(bg=BG)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root = root
@@ -520,12 +548,12 @@ class _ReviewApp:
 
         # Footer FIRST, pinned to the bottom, so Pass/Fail are reachable however long the caller's
         # message is and however many dots are dropped. Tk hands out parcels in packing order: packed
-        # last, as this was, the buttons got whatever cavity the text above had not already eaten.
+        # last, the buttons get whatever cavity the text above has not already eaten.
         footer = tk.Frame(panel, bg=PANEL)
         footer.pack(side="bottom", fill="x")
         self.comment = build_comment_box(tk, footer)
-        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes,
-        # like the media-review windows; Shift+Enter keeps the textarea's newline. Pass/Fail stay on
+        # Enter (no Shift) with a non-empty comment submits a neutral "comment" verdict and closes;
+        # Shift+Enter keeps the textarea's newline. Pass/Fail stay on
         # their buttons.
         self.comment.bind("<Return>", self._on_comment_return)
 
@@ -1071,17 +1099,16 @@ class _ReviewApp:
     def _rebuild_engine(self) -> None:
         """Recompile the world from the edited config (the sanctioned way to realise a pose change --
         never a live ``model.body_pos`` write) and re-point the renderer, keeping the camera."""
-        from roqsim import Engine, FrameRenderer
+        from roqsim import FrameRenderer
 
         cfg = self.engine.config
         cam = self.fr.camera
-        new = Engine(cfg)
-        new.setup()
-        new.reset()
-        for _ in range(max(0, self.settle_steps)):
-            new.step()
-        self.fr.close()
-        self.fr = FrameRenderer(new.ctx.model, self.width, self.height, camera=cam)
+        new = _settled(cfg, self.settle_steps)
+        with contextlib.ExitStack() as stack:
+            stack.callback(new.shutdown)
+            self.fr.close()
+            self.fr = FrameRenderer(new.ctx.model, self.width, self.height, camera=cam)
+            stack.pop_all()
         self.engine.shutdown()
         self.engine = new
         self._build_movable()

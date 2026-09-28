@@ -14,7 +14,7 @@ tight fit to concave CAD is exactly what the visual mesh is for.
 envelope for a prismatic link, so a radius that merely bounds the widest point over-reports
 self-collision badly, and a motion planner then refuses configurations that are physically fine.
 Measured on the xArm 7 over 3000 uniform joint samples: upstream's exact hulls 8.0%, scale 1.00 →
-35.3%, 0.93 → 21.1%, 0.86 → 16.8%. 0.86 was chosen because it puts that arm level with the package's
+35.3%, 0.93 → 21.1%, 0.86 → 16.8%. 0.86, because it puts that arm level with the package's
 own reference arms (ur10e 17.4%, ur5e 17.5%) measured identically. **Re-measure per robot** rather
 than inheriting the number -- ``roqsim_manipulation_assets/tests/test_xarm7.py`` shows the shape of
 that measurement.

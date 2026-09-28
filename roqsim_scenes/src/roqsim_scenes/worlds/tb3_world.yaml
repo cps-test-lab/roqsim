@@ -1,0 +1,43 @@
+# The ROS 2 `turtlebot3_world` -- the hexagonal room with nine pillars that nav2's and TurtleBot 3's
+# own tutorials navigate -- as a plain MuJoCo world (a baked MJCF). Loadable by roqsim OR any MuJoCo
+# tool:
+#   roqsim sim roqsim_scenes/src/roqsim_scenes/worlds/tb3_world.yaml
+#   python -m mujoco.viewer --mjcf roqsim_scenes/src/roqsim_scenes/worlds/tb3_world/tb3_world.xml
+#
+# Ported from the ROBOTIS `turtlebot3_simulations` Gazebo model, geometry and poses unchanged
+# (Apache-2.0; the repository, commit and per-file licence are in scenes/tb3_world/CREDITS.txt, and
+# what the port had to decide is in scenes/tb3_world/port_log.md). The room is what a robot drives in:
+#
+#   wall      hexagonal fence, 0.3175 m thick, 0.97 m above the floor (its mesh runs from
+#             z = -0.30, as in the source). Vertex-to-vertex 5.866 m, flat-to-flat 5.080 m INSIDE.
+#   pillars   nine cylinders, r = 0.15 m, 0.50 m tall, on a 3x3 grid at x, y in {-1.1, 0, 1.1}.
+#   outside   five hexagonal blocks (the ROS logo the model draws around the room). Beyond the wall,
+#             so a robot never reaches them; they are why the drawn floor sits 0.5 m low (the largest
+#             is buried that far in the source).
+#
+# The wall COLLIDES as 20 convex prisms over its own footprint, not as one mesh: MuJoCo collides a
+# mesh by its convex hull, and this wall is a closed ring whose hull is the filled room. The prisms
+# are exact (their volume is the ring's, to 6 decimals) -- see scene_mesh_io.split_extruded_shell.
+# The visual stays the single source mesh, so what is drawn is the source geometry.
+#
+# There is no robot here; add spawn_robot below, or extend this world.
+#
+# Regenerate the MJCF (paths relative to the roqsim_scenes package root):
+#   roqsim scenes scene-to-mjcf --scene src/roqsim_scenes/scenes/tb3_world/scene.json \
+#       --out src/roqsim_scenes/worlds/tb3_world/tb3_world.xml
+# Re-import from the pinned upstream model (fetches it, then runs both stages):
+#   python external/convert/build_tb3_world_scene.py
+
+sim:
+  name: TurtleBot3 World          # model + viewer title ("Roqsim: TurtleBot3 World")
+  world: tb3_world/tb3_world.xml  # MJCF file (relative to this YAML), loaded as the base scene
+  pacing: realtime                # realtime | asap | {factor: N}
+  view:                           # initial free-camera framing (windowed runner only)
+    lookat: [0.0, 0.0, 0.0]
+    distance: 12.0
+    azimuth: 90.0
+    elevation: -55.0
+
+# No components: the room is the world. Add a robot with, e.g.
+#   components:
+#     - spawn_robot: {model: turtlebot3_waffle, name: robot, pose: {position: {x: 0.0, y: -2.0}}}

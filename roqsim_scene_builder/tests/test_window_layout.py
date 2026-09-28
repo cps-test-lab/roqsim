@@ -2,10 +2,10 @@
 """The review panel must keep its controls on screen whatever the caller writes in ``message``.
 
 ``message`` and ``title`` come from the agent calling ``review_scene_by_human``, and nothing bounds
-their length. Tk's packer hands out parcels in packing order, so while the Pass/Fail row was packed
-last it got whatever cavity the text above it had not already eaten -- with a few hundred words, that
-was nothing, and the window opened with no visible way to answer it. These tests measure the real
-mapped geometry, because that is the only place the bug existed: every model and handler was fine.
+their length. Tk's packer hands out parcels in packing order, so a Pass/Fail row packed last gets
+whatever cavity the text above it has not already eaten -- with a few hundred words, that is
+nothing, and the window opens with no visible way to answer it. These tests measure the real mapped
+geometry, because that is the only place this failure shows: every model and handler is fine.
 """
 
 from __future__ import annotations
@@ -73,8 +73,8 @@ def test_verdict_buttons_stay_on_screen_under_a_long_message(label):
 def test_a_long_message_does_not_inflate_the_window():
     """The panel must fit the window rather than resize it.
 
-    This is the failure as a person meets it: the pre-fix panel had no scroll region, so its requested
-    height was the height of the whole message and the window grew to match -- 2282px for the message
+    This is the failure as a person meets it: a panel without a scroll region requests the height of
+    the whole message, and the window grows to match -- 2282px for the message
     below. A window manager caps that at the screen, and everything past the cap, the verdict buttons
     included, is simply off the bottom edge. Measured on a 1280x1024 virtual display, so a window that
     tall cannot hide inside the screen.

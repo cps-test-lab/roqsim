@@ -108,6 +108,11 @@ def _engine(
         }
     )
     engine = Engine(cfg)
+    # A test driving an Engine IS the driver, and `ctx.seed` is driver-owned: `rng_for`
+    # refuses an unset one. The world's own `sim.seed` is honoured so declaring one here
+    # does what it looks like it does; the fallback is fixed, not drawn, so a noisy test
+    # stays reproducible.
+    engine.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     engine.setup()
     engine.reset()
     for _ in range(0 if capture_only else steps):
@@ -259,6 +264,11 @@ def test_two_imus_on_one_robot_get_their_own_sites():
         }
     )
     engine = Engine(cfg)
+    # A test driving an Engine IS the driver, and `ctx.seed` is driver-owned: `rng_for`
+    # refuses an unset one. The world's own `sim.seed` is honoured so declaring one here
+    # does what it looks like it does; the fallback is fixed, not drawn, so a noisy test
+    # stays reproducible.
+    engine.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     engine.setup()
     engine.reset()
     sites = [
@@ -370,3 +380,26 @@ def test_an_absolute_hardwire_still_wins():
         if e.name == "imu"
     )
     assert endpoint.backend["ros2"]["topic"] == "/hardware/imu"
+
+
+class _PrefixedScene(Plugin):
+    """The robot as spawn_robot attaches one: every MJCF name carries the entity's prefix."""
+
+    provides_entity = True
+
+    def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
+        base = spec.worldbody.add_body(name="r_base_link", pos=[0, 0, 0.15])
+        base.add_freejoint()
+        base.add_geom(type=mujoco.mjtGeom.mjGEOM_BOX, size=[0.15, 0.15, 0.1], mass=5.0)
+
+    def configure(self, ctx: SimContext) -> None:
+        ctx.entities.add(
+            Entity(name=self.name, kind="robot", body="r_base_link", meta={"prefix": "r_"})
+        )
+
+
+def test_the_static_transform_hangs_from_the_unprefixed_body():
+    """The frame TF knows is ``base_link``; ``r_base_link`` is a name only the MJCF has."""
+    engine = _engine(f"{__name__}:_PrefixedScene", capture_only=True, body="base_link")
+    endpoint = next(e for e in engine.ctx.interface.all() if e.name == "imu")
+    assert endpoint.backend["ros2"]["static_tf"]["parent"] == "base_link"

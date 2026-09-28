@@ -3,19 +3,33 @@
 The whole point of generating the URDF instead of shipping a vendor one is that MoveIt then plans
 against the kinematics MuJoCo simulates. That claim is only worth anything if it is measured, so the
 central test here is the FK round trip: load the exported URDF back into MuJoCo, pose both models at
-the same joint values, and compare every link. It caught a real 2.5 m error (a gimbal-lock branch in
-the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e uses on four links).
+the same joint values, and compare every link. It exposes a 2.5 m error from a gimbal-lock branch in
+the quaternion->rpy conversion, hit by exactly the ``quat="1 0 1 0"`` the UR10e uses on four links.
 """
 
 from __future__ import annotations
 
+import logging
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
 import mujoco
 import numpy as np
 import pytest
+import yaml
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
-from roqsim.export_urdf import UrdfExporter, _quat_to_rpy, round_trip_error
+from roqsim.export_urdf import (
+    UrdfExporter,
+    _quat_to_rpy,
+    combine_urdfs,
+    main,
+    round_trip_error,
+    unshippable_mesh_uris,
+    warn_on_unshippable_meshes,
+)
 
 
 def _rpy_to_mat(roll, pitch, yaw):
@@ -69,16 +83,22 @@ def _mobile_manipulator(tmp_path, gripper="robotiq_2f85"):
         {
             "sim": {},
             "plugins": [
-                {"spawn_robot": {"model": "husky_a200", "name": "husky", "pos": [0.0, 0.0]}},
+                {
+                    "spawn_robot": {
+                        "model": "husky_a200",
+                        "pose": {"position": {"x": 0.0, "y": 0.0}},
+                    },
+                    "name": "husky",
+                },
                 {
                     "spawn_arm": {
                         "model": "ur10e",
-                        "name": "arm",
                         "prefix": "ur10e_",
                         "mount": {"robot": "husky", "body": "base_link"},
                         "pos": [0.25, 0.0, 0.2587],
                         "end_effector": {"model": gripper, "replaces": ["ee_plate"]},
-                    }
+                    },
+                    "name": "arm",
                 },
             ],
         },
@@ -126,6 +146,160 @@ def test_export_round_trips_to_the_mjcf(tmp_path, robot):
     assert err < 1e-6, f"URDF diverges from the MJCF by {err:.3e} m at {where!r}"
 
 
+def _mesh_refs(tree):
+    return [m.get("filename") for m in tree.iter("mesh") if m.get("filename")]
+
+
+def test_a_mesh_is_referenced_as_the_file_it_was_written_to(tmp_path, robot):
+    """The default: URDF and meshes are read out of the tree they were written into."""
+    _out, exporter, tree = _export(tmp_path, robot)
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r == f"file://{exporter.mesh_dir / Path(r).name}" for r in refs)
+
+
+def test_a_mesh_package_is_referenced_by_package_and_file(tmp_path, robot):
+    _out, _exporter, tree = _export(tmp_path, robot, mesh_package="my_robot_description")
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r.startswith("package://my_robot_description/meshes/") for r in refs)
+
+
+def test_a_mesh_prefix_names_where_the_mesh_will_be_read(tmp_path, robot):
+    """Where a URDF is consumed somewhere its meshes were never written -- a campaign stages them
+    into the container that plans -- neither the written path nor an ament package can name them."""
+    _out, _exporter, tree = _export(tmp_path, robot, mesh_prefix="file:///config/files/gen/meshes/")
+    refs = _mesh_refs(tree)
+    assert refs
+    assert all(r == f"file:///config/files/gen/meshes/{Path(r).name}" for r in refs)
+
+
+def test_the_round_trip_check_reads_the_geometry_however_it_is_referenced(tmp_path, robot):
+    """The check must measure the real meshes, not pass because it found none.
+
+    A URDF referencing a path that exists only in the container that will read it still has to be
+    checkable here -- otherwise the one test that proves the export correct is silently skipped for
+    exactly the export that needs it most, and move_group is handed links with no geometry.
+    """
+    for kwargs in (
+        {},
+        {"mesh_package": "my_robot_description"},
+        {"mesh_prefix": "file:///nowhere/on/this/host/meshes"},
+    ):
+        out, exporter, _tree = _export(
+            tmp_path / str(len(kwargs)),
+            robot,
+            collapse=("base_mount",),
+            gripper_joint="robotiq_85_left_knuckle_joint",
+            **kwargs,
+        )
+        err, where = round_trip_error(out, robot, "ur10e_", samples=8, mesh_dir=exporter.mesh_dir)
+        assert err < 1e-6, f"{kwargs}: diverges by {err:.3e} m at {where!r}"
+
+
+def test_a_default_export_into_a_temporary_directory_says_so(robot, caplog):
+    """The consequence of a URI nobody else can resolve is silent, so the export has to speak.
+
+    ``move_group`` does not refuse a mesh it cannot fetch: it logs the failure, builds the robot with
+    links that carry no collision geometry, and plans a straight line through the bench. A build
+    therefore learns nothing from the planner and everything from this line.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        _out, _exporter, tree = _export(Path(tmp), robot)
+        log = logging.getLogger("roqsim.export_urdf")
+        with caplog.at_level(logging.WARNING, logger=log.name):
+            unshippable = warn_on_unshippable_meshes(tree, log)
+        assert unshippable == _mesh_refs(tree), "every default URI names the temporary directory"
+        assert "--mesh-prefix" in caplog.text, "the warning has to name the way out"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"mesh_prefix": "file:///config/files/gen/meshes"},
+        {"mesh_package": "my_robot_description"},
+    ],
+)
+def test_an_export_that_names_the_consumers_path_is_silent(robot, caplog, kwargs):
+    """Saying where the meshes will be READ is the whole answer, so it must not also be nagged at."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _out, _exporter, tree = _export(Path(tmp), robot, **kwargs)
+        log = logging.getLogger("roqsim.export_urdf")
+        with caplog.at_level(logging.WARNING, logger=log.name):
+            assert warn_on_unshippable_meshes(tree, log) == []
+        assert caplog.text == ""
+
+
+def test_only_a_temporary_path_counts_as_unshippable():
+    """A URDF generated and consumed in one tree is the case ``file://`` is right for, and a prefix
+    naming a path that exists only in the container that reads it is not this export's to doubt."""
+    tmp_dir = Path(tempfile.gettempdir())
+    tree = ET.ElementTree(
+        ET.fromstring(
+            f"""
+            <robot name="r">
+              <link name="a"><visual><geometry>
+                <mesh filename="file://{tmp_dir}/gen/meshes/a.stl"/>
+              </geometry></visual></link>
+              <link name="b"><visual><geometry>
+                <mesh filename="file:///opt/robot_description/meshes/b.stl"/>
+              </geometry></visual></link>
+              <link name="c"><visual><geometry>
+                <mesh filename="package://robot_description/meshes/c.stl"/>
+              </geometry></visual></link>
+              <link name="d"><visual><geometry>
+                <mesh filename="file:///config/files/gen/meshes/d.stl"/>
+              </geometry></visual></link>
+            </robot>
+            """
+        )
+    )
+    assert unshippable_mesh_uris(tree) == [f"file://{tmp_dir}/gen/meshes/a.stl"]
+
+
+_ARM_WORLD = {
+    "sim": {},
+    "plugins": [
+        {
+            "spawn_arm": {"model": "ur5e", "prefix": "ur5e_", "pos": [0.0, 0.0, 0.0]},
+            "name": "ur5e",
+        }
+    ],
+}
+
+
+def _run_cli(tmp: Path, *extra):
+    """Drive the CLI the way a build step does: a world file in, a .urdf out."""
+    (tmp / "cell.yaml").write_text(yaml.safe_dump(_ARM_WORLD), encoding="utf-8")
+    out = tmp / "gen" / "robot.urdf"
+    return main(["--world", str(tmp / "cell.yaml"), "--out", str(out), "--prefix", "ur5e_", *extra])
+
+
+def test_the_check_reports_that_it_did_not_resolve_the_uris(caplog):
+    """``--check`` proves the geometry and the kinematics by reading the meshes where they were
+    written, whatever the URIs say -- which is what lets it measure an export aimed at a consumer
+    this host has never seen. A green check therefore says nothing about whether the description can
+    be read anywhere else, and that is the half a build has to be told."""
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_urdf"):
+            assert _run_cli(Path(tmp), "--check") == 0
+        assert "unshippable" in caplog.text
+        assert "--check" in caplog.text, "the check has to disclaim what it did not measure"
+
+
+def test_the_check_of_an_export_that_names_the_consumers_path_is_silent(caplog):
+    with tempfile.TemporaryDirectory() as tmp:
+        with caplog.at_level(logging.WARNING, logger="roqsim.export_urdf"):
+            assert _run_cli(Path(tmp), "--check", "--mesh-prefix", "file:///config/meshes") == 0
+        assert caplog.text == ""
+
+
+def test_the_two_mesh_reference_flags_are_mutually_exclusive():
+    """Two schemes would mean the URDF says where its meshes are twice."""
+    with tempfile.TemporaryDirectory() as tmp, pytest.raises(SystemExit):
+        _run_cli(Path(tmp), "--mesh-prefix", "file:///config/meshes", "--mesh-package", "pkg")
+
+
 def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path, robot):
     _out, exporter, tree = _export(
         tmp_path,
@@ -154,18 +328,18 @@ def test_export_keeps_the_arm_chain_and_the_gripper_dof(tmp_path, robot):
 def test_round_trip_survives_a_rotated_root_body(tmp_path):
     """A robot whose ROOT body carries a rotation must still round-trip.
 
-    Regression. The UR arms follow the vendor convention of a base yawed 180 deg
+    The UR arms follow the vendor convention of a base yawed 180 deg
     (``ur5e.xml``: ``<body name="base" quat="0 0 0 -1">``); ``ur10e.xml`` has no such quat, and the
-    round-trip test above happens to use the ur10e -- so every rotated-root export went unchecked.
-    The comparison offset each link by the root's POSITION but left the root's ORIENTATION in, which
-    is not a property the two models share: in the MJCF every link is rotated with the base, while
-    in the URDF the base IS the frame they are expressed in. A ur5e whose URDF matched its MJCF body
-    for body was reported as diverging by 1.7 m, i.e. the check condemned a correct export.
+    round-trip test above uses the ur10e -- so without this test no rotated-root export is checked.
+    Offsetting each link by the root's POSITION but leaving the root's ORIENTATION in compares
+    something the two models do not share: in the MJCF every link is rotated with the base, while
+    in the URDF the base IS the frame they are expressed in. A ur5e whose URDF matches its MJCF body
+    for body then reads as diverging by 1.7 m, i.e. the check condemns a correct export.
     """
     cfg = load_config_from_dict(
         {
             "sim": {},
-            "plugins": [{"spawn_arm": {"model": "ur5e", "name": "arm", "prefix": "ur5e_"}}],
+            "plugins": [{"spawn_arm": {"model": "ur5e", "prefix": "ur5e_"}, "name": "arm"}],
         },
         base_dir=tmp_path,
     )
@@ -483,3 +657,104 @@ def test_an_unknown_tip_site_names_the_sites_the_model_has(tmp_path, robot):
     with pytest.raises(ValueError, match="names no site") as err:
         _tip_export(tmp_path, robot, tip_site="pnich")
     assert "pinch" in str(err.value), "the error should list what was available"
+
+
+# -- several robots in one description -----------------------------------------------------------
+
+_PAIR = """
+<mujoco>
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="a_base" pos="0.3 -0.4 0.1" quat="0 0 0 1">
+      <geom name="a_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="a_link" pos="0 0 0.2">
+        <joint name="a_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="a_g2" type="box" size="0.05 0.2 0.05" mass="1"/>
+      </body>
+    </body>
+    <body name="b_base" pos="0 0.4 0">
+      <geom name="b_g" type="box" size="0.1 0.1 0.1" mass="1"/>
+      <body name="b_link" pos="0 0 0.2">
+        <joint name="b_j" type="hinge" axis="0 0 1" range="-3 3"/>
+        <geom name="b_g2" type="box" size="0.05 0.2 0.05" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _pair_parts(model, mesh_dir):
+    parts = []
+    for prefix in ("a_", "b_"):
+        exporter = UrdfExporter(
+            model,
+            prefix=prefix,
+            name=f"part_{prefix}",
+            root_link=f"{prefix}base",
+            mesh_dir=mesh_dir,
+            strip="",
+            link_strip="",
+        )
+        parts.append(
+            (exporter.export(), mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base"))
+        )
+    return parts
+
+
+def test_two_robots_hang_off_one_root_at_the_pose_the_model_puts_them(tmp_path):
+    """One description, one root, and each robot where the compiled world has it -- including its
+    ORIENTATION, or a plan for the pair is right about each arm and wrong about the cell."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    tree = combine_urdfs(
+        model, _pair_parts(model, tmp_path / "meshes"), name="pair", root_link="base_link"
+    )
+    root = tree.getroot()
+    links = {link.get("name") for link in root.findall("link")}
+    assert links == {"base_link", "a_base", "a_link", "b_base", "b_link"}
+    mounts = {
+        j.find("child").get("link"): j for j in root.findall("joint") if j.get("type") == "fixed"
+    }
+    assert mounts["a_base"].find("parent").get("link") == "base_link"
+    assert mounts["a_base"].find("origin").get("xyz") == "0.3 -0.4 0.1"
+    assert mounts["b_base"].find("origin").get("xyz") == "0 0.4 0"
+    assert mounts["a_base"].find("origin").get("rpy") != mounts["b_base"].find("origin").get("rpy")
+
+
+def test_the_combined_urdf_agrees_with_the_model_it_came_from(tmp_path):
+    """The round trip is what proves the mount poses are right rather than merely present: a second
+    robot placed by the wrong transform shows up here as centimetres."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    out = tmp_path / "pair.urdf"
+    tree = combine_urdfs(
+        model, _pair_parts(model, tmp_path / "meshes"), name="pair", root_link="base_link"
+    )
+    ET.indent(tree, space="  ")
+    tree.write(out, encoding="utf-8", xml_declaration=True)
+    err, where = round_trip_error(out, model, "", mesh_dir=tmp_path / "meshes")
+    assert err < 1e-6, f"combined URDF diverges from the MJCF at {where}"
+
+
+def test_a_name_two_robots_both_claim_is_refused(tmp_path):
+    """One URDF is one flat namespace. Keeping only one of the two would parse and then plan around
+    a robot that is not there."""
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    parts = [
+        (
+            UrdfExporter(
+                model, prefix=prefix, name="part", root_link="base", mesh_dir=tmp_path / "meshes"
+            ).export(),
+            mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, f"{prefix}base"),
+        )
+        for prefix in ("a_", "b_")
+    ]
+    with pytest.raises(ValueError, match="claimed by both"):
+        combine_urdfs(model, parts, name="pair", root_link="base_link")
+
+
+def test_one_robot_is_exported_directly_rather_than_combined(tmp_path):
+    model = mujoco.MjModel.from_xml_string(_PAIR)
+    with pytest.raises(ValueError, match="at least two parts"):
+        combine_urdfs(
+            model, _pair_parts(model, tmp_path / "meshes")[:1], name="one", root_link="base_link"
+        )

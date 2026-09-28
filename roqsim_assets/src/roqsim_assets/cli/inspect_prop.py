@@ -28,7 +28,7 @@ redistributable ``CREDITS.txt`` is present.
 
 Pure stdlib, no MuJoCo/GL -- geometry comes straight from the OBJ (honouring any ``scale`` on the
 ``<mesh>`` in the MJCF). Pair it with ``roqsim render <prop> --out check.png`` for the visual eyeball;
-this is the deterministic ground truth the ``model-import`` skill drives.
+this is the deterministic ground truth of the import pipeline.
 
 Usage::
 
@@ -36,7 +36,7 @@ Usage::
     roqsim assets inspect-prop path/to/models/free_chipboard_shelf --fix-origin   # ground + centre, then re-report
     roqsim assets inspect-prop path/to/models/free_chipboard_shelf --json     # machine-readable only
 
-Exits non-zero if any check is FAIL (so a CI/agent step fails loudly on a bad prop).
+Exits ``5`` (``roqsim.exit_status``) if any check is FAIL (so a CI/agent step fails loudly on a bad prop).
 """
 
 from __future__ import annotations
@@ -47,6 +47,8 @@ import os
 import re
 import sys
 import xml.etree.ElementTree as ET
+
+from roqsim import exit_status
 
 # Redistributable licence slugs (mirrors roqsim_assets.sketchfab._REDISTRIBUTABLE); anything else is a WARN.
 _REDISTRIBUTABLE = {"cc0", "by", "by-sa"}
@@ -111,12 +113,22 @@ def _obj_geometry(obj_path: str) -> dict:
     return {"lo": lo, "hi": hi, "faces": n_faces, "objects": n_objects, "usemtl": n_usemtl}
 
 
+def _without_comments(xml_path: str) -> str:
+    """The MJCF's text with every comment removed.
+
+    MuJoCo's parser accepts ``--`` inside a comment and the models here use it freely as a dash;
+    XML forbids it, so :mod:`xml.etree` rejects a file the simulator loads happily. Reading the
+    structure past the prose keeps this check as tolerant as the thing it is checking for.
+    """
+    return re.sub(r"<!--.*?-->", "", open(xml_path, encoding="utf-8").read(), flags=re.DOTALL)
+
+
 def _mjcf_info(prop_dir: str, name: str) -> dict:
     """Read the finalized ``<name>.xml``: mesh scale + whether the geom is textured. Absent => not finalized."""
     xml = os.path.join(prop_dir, f"{name}.xml")
     if not os.path.isfile(xml):
         return {"exists": False, "scale": 1.0, "textured": False, "pos": [0.0, 0.0, 0.0]}
-    root = ET.parse(xml).getroot()
+    root = ET.fromstring(_without_comments(xml))
     scale = 1.0
     mesh = root.find(".//asset/mesh")
     if mesh is not None and mesh.get("scale"):
@@ -193,7 +205,7 @@ def _analyze(prop_dir: str, name: str, obj_path: str) -> tuple[list[Check], dict
 
     # --- origin: footprint centred on x/y, base on the floor (min z == 0) ---
     # x/y off-centre is a real defect: the origin is off the geometry, so a scene placing the body over
-    # a point puts the prop somewhere else (the shelf-at-y=-5.86 bug). => FAIL.
+    # a point puts the prop somewhere else (a shelf whose origin sits at y=-5.86). => FAIL.
     # z-not-grounded is a *convention* question: an origin at the centroid (base = -height/2) is correct
     # for a wall/ceiling-mounted prop and wrong for floor-standing furniture -- the tool can't tell
     # which, so it WARNs and points at --fix-origin (which grounds it) rather than failing.
@@ -396,7 +408,12 @@ _STATUS_ORDER = {"FAIL": 0, "WARN": 1, "PASS": 2}
 
 
 def main(argv: list | None = None) -> None:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT, exit_status.FINDING, note="5 is any check that is FAIL."
+        ),
+    )
     ap.add_argument("prop", help="prop directory (models/<name>/) or a .obj path")
     ap.add_argument(
         "--fix-origin",
@@ -436,7 +453,7 @@ def main(argv: list | None = None) -> None:
             mark = {"PASS": "ok  ", "WARN": "WARN", "FAIL": "FAIL"}[c.status]
             print(f"  [{mark}] {c.name}: {c.msg}")
 
-    sys.exit(1 if worst == _STATUS_ORDER["FAIL"] else 0)
+    sys.exit(exit_status.FINDING if worst == _STATUS_ORDER["FAIL"] else exit_status.OK)
 
 
 if __name__ == "__main__":

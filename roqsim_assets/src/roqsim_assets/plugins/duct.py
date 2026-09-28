@@ -16,7 +16,6 @@ order.
 Config::
 
     duct:
-      name: duct          # entity name (default 'duct')
       prefix: ""          # MJCF name prefix (distinct prefixes for >1 run)
       start: [x, y]       # run start, world (REQUIRED)
       end: [x, y]         # run end, world (REQUIRED)

@@ -1,0 +1,11 @@
+# Run the route a roqsim navigator was configured with (its `goals:`), and finish when it does.
+#
+# The goal carries nothing: the route belongs to the world, and only the moment it starts belongs to
+# the caller. A mover with no configured route serves no such action. Cancelling stops the mover
+# where it stands, and a newer goal on the same mover aborts this one.
+---
+---
+# The same progress fields nav2's NavigateThroughPoses reports, so a client reads both alike.
+int16 number_of_poses_remaining
+float32 distance_remaining
+builtin_interfaces/Duration navigation_time

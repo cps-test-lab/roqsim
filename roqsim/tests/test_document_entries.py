@@ -4,8 +4,8 @@
 
 """The document key that holds a list of entries: ``components:``.
 
-``plugins:`` is the former spelling, still accepted so worlds and manifests can be swept over
-separately from the behaviour change. Both in one document is refused rather than merged -- two
+``plugins:`` is accepted as an alias, so a world or manifest spelled that way keeps loading until
+it is swept over. Both in one document is refused rather than merged -- two
 spellings of one key in one file is a merge nobody can predict.
 """
 

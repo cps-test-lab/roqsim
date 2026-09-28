@@ -1,8 +1,8 @@
 """A sensor's ``fault:`` block: what may be written at run time, and what must not be.
 
-The physics channel has been switchable mid-run since ``set_model_override``; the report channel had
-no trigger at all, so ``dropout_percent`` was fixed for a whole run and a lidar that fails *halfway
-down a corridor* could not be expressed. These tests pin the three properties that make the new
+The physics channel is switchable mid-run through ``set_model_override``; this block is the report
+channel's switch, so ``dropout_percent`` need not hold for a whole run and a lidar that fails
+*halfway down a corridor* can be expressed. These tests pin the three properties that make the
 switch trustworthy rather than merely present:
 
 * a key that is not read per frame is **refused by name**, because writing one takes effect nowhere
@@ -54,7 +54,11 @@ def _world(tmp_path, lidar_cfg):
 
 
 def _engine(world):
-    engine = Engine(load_config_from_dict(world))
+    cfg = load_config_from_dict(world)
+    engine = Engine(cfg)
+    # A test driving an Engine IS the driver, and applying `sim.seed` is the driver's job -- the
+    # world above declares one, and nothing else would carry it to `ctx`.
+    engine.ctx.seed = 0 if cfg.seed is None else int(cfg.seed)
     engine.setup()
     engine.reset()
     return engine
@@ -269,7 +273,7 @@ def test_a_sensor_owned_by_a_robot_is_addressed_through_it(tmp_path):
         "sim": {"world": str(scene), "seed": 3},
         "components": [
             {
-                "spawn_model": {"model": str(rover), "free": False},
+                "spawn_model": {"model": str(rover), "motion": "static"},
                 "name": "rover",
                 "components": [
                     {

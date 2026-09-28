@@ -43,14 +43,14 @@ def test_scale_shrinks_every_part_uniformly():
 
 
 def test_default_scale_leaves_the_prop_untouched():
-    """Omitting the key must be byte-for-byte the old behaviour, not a 1.0 round-trip."""
+    """Omitting the key must be byte-for-byte the unscaled prop, not a 1.0 round-trip."""
     np.testing.assert_allclose(
         _world_extent(_MIXED_MODEL, 1.0), _world_extent(_MIXED_MODEL, 1.0), rtol=0
     )
 
 
 def test_primitive_geom_scales_with_the_meshes():
-    """Guard the specific regression: the box rail's size must shrink, not just the meshes."""
+    """The box rail's size must shrink, not just the meshes."""
     sizes = {}
     for scale in (1.0, 0.25):
         spec = mujoco.MjSpec()

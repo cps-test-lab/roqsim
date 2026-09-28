@@ -35,16 +35,25 @@ components:
       # wheel4 back-right.
       wheels: [wheel1_link, wheel2_link, wheel3_link, wheel4_link]
       wheel_actuators: [wheel1_motor, wheel2_motor, wheel3_motor, wheel4_motor]
-  # The description ships a lidar_link with a mesh and a mount pose but no scan parameters -- no
-  # Gazebo ray sensor and no SDF. MOUNT is the vendor's (lidar_link_joint, 0.156 m, rotated pi);
-  # the SCAN is ours. These are LDS-class values for a 0.24 m indoor platform -- see the port log.
-  - lidar:
-      site: lidar
-      frame_id: laser
-      rays: 360
-      angle_min: 0.0
-      angle_max: 6.283185307
-      range_min: 0.12
-      max_range: 12.0
-      rate_hz: 10.0
-      exclude_body: base_link
+  # The scanner the vendor's bringup runs on the real robot: a Slamtec RPLIDAR C1, through
+  # `lgdx_rplidar_c1`'s `rplidar_c1_node` with `frame_id: lidar_link`
+  # (lgdxrobot2_bringup/launch/bringup_launch.py:76-83 and nav_launch.py:162-169 @ b821040). The
+  # description's lidar_link mesh is the C1 housing (55.6 x 55.6 x 41.3 mm, the rplidar_c1 device's).
+  # The scan is stamped at the vendor's lidar_link: lidar_link_joint, xyz (0.06, 0, 0.15641),
+  # rpy (0, 0, -3.14159) on base_link (description/lgdxrobot2.urdf:18-22). The device's scan frame
+  # sits 0.032 m above its housing base and half a turn about z, so its mount is 0.032 m lower and
+  # unrotated. The description draws the housing base 0.0231 m below lidar_link (its visual origin),
+  # so the device's housing stands 8.9 mm lower than the description's; the scan frame, which is what
+  # a consumer reads, is the vendor's. Field, rays, range, rate and noise are the C1 data sheet's.
+  - spawn_sensor:
+      model: rplidar_c1
+      parent_frame: base_link
+      pos: [0.06, 0.0, 0.12441]     # lidar_link_joint xyz, less the device's 0.032 m to its scan frame
+      rpy: [0.0, 0.0, 0.0]          # lidar_link_joint yaw -3.14159, less the device's pi
+      frame_id: lidar_link          # bringup_launch.py:81, the driver's frame_id
+    name: rplidar
+    components:
+      - lidar:
+          # Relative, so the robot's namespace scopes it: `<ns>/scan`, the topic the vendor's Nav2
+          # profile reads (lgdxrobot2_bringup/param/loc/nav2.yaml:237).
+          topics: {scan: scan}

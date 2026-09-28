@@ -1,6 +1,6 @@
 """Sensor plugin: a six-axis force/torque sensor at a site.
 
-The substrate's first *contact-force* observable. Every sensor here so far reports geometry —
+The substrate's *contact-force* observable. Every other sensor here reports geometry —
 where things are (lidar, cameras, fiducials, ground-truth pose). None of them reports what a robot
 is pushing against, and for a contact-rich manipulation task that is the whole measurement: an
 insertion, a polishing pass, or a compliant assembly is judged by its wrench, not by its trajectory.
@@ -8,39 +8,99 @@ insertion, a polishing pass, or a compliant assembly is judged by its wrench, no
 MuJoCo computes the constraint wrench already; a ``<force>``/``<torque>`` sensor pair on a site
 reads it, and this plugin turns that pair into a first-class observable — a rate-limited endpoint, a
 blackboard reader for in-process controllers, and an optional per-trial log. Nothing here is novel
-physics. It is the plumbing that was missing.
+physics; it is plumbing.
 
 **Where the sensor goes matters more than it looks.** A site sensor measures the wrench transmitted
 *through* that site's body from its children, so it must sit on a body between the tool flange and
 whatever touches the world — exactly where a real FT sensor is bolted. Put it on the flange itself
 and the tool's own contacts are on the wrong side of the cut, and the sensor reads nothing.
 
-Config::
+Config -- a component of the entry that spawns the arm whose prefix and namespace it inherits, since ownership is where the entry
+sits rather than a config key::
 
     force_torque:
-      name: ft                  # sensor id; also the endpoint / blackboard key suffix
       site: fts_site            # REQUIRED: MJCF site to measure at (prefixed with the arm's prefix)
-      arm: ur5e                 # entity whose prefix/namespace to inherit (or `robot:`)
       frame: base               # sensor | base | world -- the frame the wrench is REPORTED in
       invert: true              # negate the reading (report the force the ENVIRONMENT applies to the
                                 #   tool, the sign convention a real FT sensor and its users assume;
-                                #   MuJoCo's site sensor reports the opposite)
+                                #   MuJoCo's site sensor reports the opposite). Whichever is chosen,
+                                #   the blackboard reader says which it is in `measures`, so a
+                                #   consumer never has to assume.
+      tare_at_s: null           # sim time (s) at which to capture the zero offset, once per
+                                #   episode; null (default) never tares. The `tare` service and
+                                #   `WrenchReader.tare()` are the better doors -- see "Taring"
+                                #   below, and note the offset is only valid at the pose it was
+                                #   captured at.
       noise_force_stddev: 0.0   # N, additive Gaussian white noise on the three force channels
       noise_torque_stddev: 0.0  # Nm, likewise on the three torque channels
       rate_hz: 100.0            # endpoint publish rate
       namespace: ""             # transport scope (default: inherited from the entity)
       topics: {wrench: /ft}     # optional absolute-topic hardwire
+      flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
+                                #   cannot see" below); refused without it where one could occur
+
+Endpoint ``tare`` (in) is that zero button as a service; it takes no argument and its reply is
+what lets a scenario fail rather than measure against an offset it only assumed was applied.
 
 Endpoint ``wrench`` (out) reads ``(force[3], torque[3])`` and carries a
 ``geometry_msgs/WrenchStamped`` backend hint. A ``WrenchReader`` is published on the blackboard
-under ``ft:<name>`` for in-process consumers — the admittance controller is one — exposing
+under ``ft:<entry label>`` for in-process consumers — the admittance controller is one — exposing
 ``read()`` and the resolved ``frame``.
 
 **Frames.** ``sensor`` returns MuJoCo's raw site-frame reading. ``base`` rotates it into the owning
 entity's base body frame, and ``world`` into the world frame. The choice is not cosmetic for
 metrics that split the wrench into an insertion axis and the plane orthogonal to it: ``|F_z|`` and
 ``||F_x, F_y||`` are frame-dependent, and a tool that tilts reports a different split in its own
-frame than in the world's.
+frame than in the world's. The ``WrenchStamped`` header names that frame as TF knows it: the site's
+name without the entity's MJCF prefix, published with the fixed transform from the body it sits on;
+the entity's root body, likewise unprefixed; or ``world``.
+
+**Taring: zeroing the tool's own load.** The sensor reads everything below the cut, which for a
+loaded flange is mostly the tool's own weight -- so a contact task measuring a 5 N push starts from
+20 N of tool.
+
+Zeroing is a **command**, the way it is on real hardware: an FT driver exposes a service taking no
+argument (``zero_ftsensor``) and this exposes the same thing three ways onto one implementation --
+the ``tare`` endpoint (``std_srvs/Trigger`` over ROS), ``WrenchReader.tare()`` for an in-process
+controller, and ``tare_at_s`` for a world that wants it done once at a stated time without anything
+to press the button. Prefer one of the first two: a time is a number that has to stay in step with
+a scenario's own timing, and if the approach runs long it fires mid-motion and zeroes against a
+contact.
+
+All three re-arm on ``on_reset``: an offset carried into the next episode is a measurement of the
+previous one, and repetitions of a trial would not be repetitions.
+
+**A tare is not gravity compensation, and the difference is a trap.** The offset is captured in
+the raw sensor frame and subtracted there, exactly as a real FT sensor's zero button works -- so it
+is valid at *the pose the tool was in when it was captured*. Rotate the tool ninety degrees and the
+weight reappears, up to twice the tool's load in the worst case, because the tool's weight is fixed
+in the WORLD frame while the sensor frame turns with it. Compensating at every pose needs the
+tool's mass and centre of mass estimated, which is a calibration, not a tare; roqsim does not do
+it, and a tare that quietly claimed to would leave a contact controller chasing a bias that grows
+with the tool's tilt. Tare at the pose you are about to make contact in, or tare per approach.
+
+The offset is the reading BEFORE noise is added, so what is left after taring is the noise alone
+rather than the noise plus one sample's worth of it -- a real tare averages many samples, and this
+is that average exactly. Capture happens on the first read at or after ``tare_at_s``, so a sensor
+nobody reads is never tared and one read at 100 Hz tares within a step of the time asked for.
+
+**A flex the sensor cannot see.** MuJoCo's site force/torque sensor does not see a contact with a
+flex (:mod:`roqsim.flex`, rule 6): the reading carries on as though the contact were not there.
+Measured on MuJoCo 3.14.0 (``tests/test_force_torque_flex.py``): a rigid probe pressed 9 mm into a
+block reads its weight minus the 5.5 N contact against a rigid block, and its weight alone against a
+flex block of the same size that pushes back with 4.8 N; a pinned elastic cantilever below the
+sensor, propped up by a support carrying 1.5 N of it, still reads its whole weight. The rest of what
+a flex does reaches the sensor -- its weight, its elastic reaction at rest and in motion, a force
+applied to a vertex -- so a tool that deforms is not invisible, only its contacts are, and a contact
+is what a contact task measures.
+
+So ``configure`` refuses a sensor where a flex contact could fall into the reading: a colliding flex
+in the sensed subtree (a soft pad on the tool, whose every contact would be missing) or one whose
+contact mask pairs with a geom there (a tool that presses into a soft object). Stating
+``flex_reaction: excluded`` accepts the reading as it is -- for a world whose wrench of interest does
+not pass through a flex contact, say, or one that reads the flex's contacts some other way -- and
+the world then says so where a reader of its results can see it. A flex with collision disabled
+(``contype``/``conaffinity`` both zero) makes no contact and needs neither.
 
 **Noise is per-sensor config, deliberately.** There is no generic error-model framework in roqsim (see
 ``docs/architecture.rst`` §9); a sensor that wants noise declares its own, as the lidar's
@@ -66,9 +126,15 @@ import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.controllers import ACTIVE, Controller, registry_for
+from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
 from roqsim.plugin import Plugin
+from roqsim.presence import entity_body_ids
 
 _FRAMES = ("sensor", "base", "world")
+
+#: The one value ``flex_reaction`` takes: the world accepts a reading without flex contacts.
+_FLEX_EXCLUDED = "excluded"
 
 
 @dataclass
@@ -79,11 +145,26 @@ class WrenchReader:
     with the reader because a consumer that integrates the wrench into a motion command has to know
     which frame it is commanding in, and getting that wrong produces a controller that pushes in a
     plausible-looking wrong direction rather than one that fails.
+
+    ``measures`` is carried for exactly the same reason: a wrench has a
+    direction as well as a frame, and the two conventions are negatives of each other. It is
+    ``"environment_on_tool"`` (what a real FT sensor and its users assume, this sensor's default)
+    or ``"tool_on_environment"`` (MuJoCo's raw site sensor). A consumer comparing a measured wrench
+    against a target it *commands* must put both in one convention first; subtracting one from the
+    other turns a contact controller's negative feedback into positive, which does not look like a
+    sign error -- it looks like the contact getting away from the controller.
+
+    ``tare()`` captures the current reading as the zero offset, the way a real sensor's zero button
+    does -- and with the same limit: the offset is valid at the pose it was captured at, not at
+    every pose. See "Taring" in the module docstring before reaching for it. ``None`` on a reader
+    built by something other than this plugin.
     """
 
     name: str
     frame: str
     read: Callable[[], tuple[np.ndarray, np.ndarray]]
+    measures: str = "environment_on_tool"
+    tare: Callable[[], None] | None = None
 
 
 class ForceTorquePlugin(Plugin):
@@ -91,15 +172,24 @@ class ForceTorquePlugin(Plugin):
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
-        # No config `name:` of its own: this instance is identified by its label, like every other
-        # entry. It used to overwrite `Plugin.name` from config, which meant a force_torque could be
-        # called one thing by the document and another by its blackboard key and its topic.
+        # No config `name:` of its own: this instance is identified by its label, like every
+        # other entry, so the document, the blackboard key and the topic cannot disagree about
+        # what this sensor is called.
         self.site = self.config.get("site", "")
         self.owner = self.entity
         self.frame = self.config.get("frame", "sensor")
         self.invert = bool(self.config.get("invert", True))
         self.noise_f = float(self.config.get("noise_force_stddev", 0.0))
         self.noise_t = float(self.config.get("noise_torque_stddev", 0.0))
+        tare_at = self.config.get("tare_at_s")
+        self.tare_at_s = None if tare_at is None else float(tare_at)
+        #: The captured zero, in the RAW sensor frame and before the sign convention is applied --
+        #: which is where it has to live: an offset stored after the rotation would be re-rotated
+        #: on every read and would drift with the tool, and one stored after `invert` would flip
+        #: with a config change that is meant to affect only how the reading is reported.
+        self._offset_force = np.zeros(3)
+        self._offset_torque = np.zeros(3)
+        self._tared = False
         self.rate_hz = float(self.config.get("rate_hz", 100.0))
         self._ctx: SimContext | None = None
         self._force_adr = -1
@@ -107,6 +197,7 @@ class ForceTorquePlugin(Plugin):
         self._site_id = -1
         self._ref_bid = -1  # body whose frame the wrench is rotated into (frame: base)
         self._resolved_site = ""  # set in build(), reused in configure()
+        self.flex_reaction = self.config.get("flex_reaction")
 
     def validate_config(self, config: dict) -> list[str]:
         errors = self.validate_topics(config)
@@ -119,12 +210,21 @@ class ForceTorquePlugin(Plugin):
         for key in ("noise_force_stddev", "noise_torque_stddev"):
             if float(config.get(key, 0.0)) < 0:
                 errors.append(f"'{key}' must be >= 0")
+        if config.get("tare_at_s") is not None and float(config["tare_at_s"]) < 0:
+            errors.append("'tare_at_s' must be >= 0: it is a sim time, not an offset")
+        if config.get("flex_reaction", _FLEX_EXCLUDED) != _FLEX_EXCLUDED:
+            errors.append(
+                f"'flex_reaction' takes one value, {_FLEX_EXCLUDED!r} -- it states that the world "
+                "accepts a reading without the contacts of a flex, which MuJoCo's sensor does not "
+                "see. Remove it where no flex can touch the sensed tool."
+            )
         if "seed" in config:
             # Silently ignoring it would leave a world believing it pinned the noise stream.
             errors.append(
                 "'seed' is not a force_torque setting: noise is drawn from the RUN's seed "
-                "(`roqsim sim --seed`, or the campaign's) via ctx.rng_for, so every sensor in a run "
-                "is reproducible together. Remove the key."
+                "(`sim.seed` in the world, or `roqsim sim --seed`, or the seed the scenario "
+                "adapter resolves) via ctx.rng_for, so every sensor in a run is reproducible "
+                "together. Remove the key."
             )
         return errors
 
@@ -186,6 +286,7 @@ class ForceTorquePlugin(Plugin):
                     f"force_torque[{self.name}]: sensor {site_name}_{suffix!r} missing after compile"
                 )
             setattr(self, attr, int(m.sensor_adr[sid]))
+        self._refuse_a_flex_contact_it_cannot_see(m, site_name)
 
         if self.frame == "base":
             body_name = entity.body if entity and entity.body else f"{prefix}base"
@@ -206,8 +307,74 @@ class ForceTorquePlugin(Plugin):
                 f"force_torque: blackboard key {key!r} is already registered. Two FT sensors need "
                 f"distinct labels, else a controller silently reads the wrong one."
             )
-        ctx.blackboard.set(key, WrenchReader(name=self.label, frame=self.frame, read=self.read))
+        ctx.blackboard.set(
+            key,
+            WrenchReader(
+                name=self.label,
+                frame=self.frame,
+                read=self.read,
+                measures="environment_on_tool" if self.invert else "tool_on_environment",
+                tare=self.tare,
+            ),
+        )
 
+        # A broadcaster: it claims NO command interface, which is exactly why it can read the same
+        # hardware a command controller is driving without blocking it.
+        registry_for(ctx).register(
+            Controller(
+                name=self.config.get("controller_name", f"{self.name}_broadcaster"),
+                type="force_torque_sensor_broadcaster/ForceTorqueSensorBroadcaster",
+                reads=(f"{self.name}/force.x", f"{self.name}/force.y", f"{self.name}/force.z"),
+                state=ACTIVE,
+                namespace=ns,
+                owner=self.owner,
+            )
+        )
+
+        ctx.interface.add(
+            Endpoint(
+                name="tare",
+                direction="in",
+                owner=self.owner,
+                namespace=ns,
+                # The payload is ignored: zeroing takes no argument, and the call IS the request.
+                write=lambda _payload=None: ctx.post(lambda _ctx: self.tare()),
+                backend={
+                    "ros2": {
+                        # A service, not a topic, and `Trigger` rather than `SetBool`: this is the
+                        # zero button, which a real FT driver also exposes as a service taking no
+                        # argument (`zero_ftsensor`). A caller needs the outcome -- a scenario that
+                        # tared and carried on regardless would measure against an offset it only
+                        # assumed was applied.
+                        "service": "std_srvs.srv.Trigger",
+                        "name": self.topic_override("tare") or f"{self.name}/tare",
+                    }
+                },
+            )
+        )
+
+        # The frame the wrench is stated in, as TF names it: bare, like every frame a bridge
+        # publishes (it applies the namespace), so never the MJCF name with the entity's prefix.
+        # `sensor` is the site's own frame, which nothing else publishes, so it comes with the
+        # fixed transform from the body it is on; `base` is the entity's root body.
+        ros2 = {
+            "type": "geometry_msgs.msg.WrenchStamped",
+            "topic": self.topic_override("wrench") or f"{self.name}/wrench",
+        }
+        if self.frame == "sensor":
+            ros2["frame_id"] = site_name.removeprefix(prefix)
+            body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
+            ros2["static_tf"] = {
+                "parent": body.removeprefix(prefix),
+                "translation": [float(v) for v in m.site_pos[self._site_id]],
+                "rotation": [float(v) for v in m.site_quat[self._site_id]],  # (w, x, y, z)
+            }
+        elif self.frame == "base":
+            ros2["frame_id"] = mujoco.mj_id2name(
+                m, mujoco.mjtObj.mjOBJ_BODY, self._ref_bid
+            ).removeprefix(prefix)
+        else:
+            ros2["frame_id"] = "world"
         ctx.interface.add(
             Endpoint(
                 name="wrench",
@@ -216,14 +383,51 @@ class ForceTorquePlugin(Plugin):
                 namespace=ns,
                 read=self.read_pair,
                 rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.WrenchStamped",
-                        "topic": self.topic_override("wrench") or f"{self.name}/wrench",
-                        "frame_id": site_name if self.frame == "sensor" else self.frame,
-                    }
-                },
+                backend={"ros2": ros2},
             )
+        )
+
+    def _refuse_a_flex_contact_it_cannot_see(self, m, site_name: str) -> None:
+        """Refuse a sensor a flex contact could reach unseen, unless ``flex_reaction`` accepts it.
+
+        See "A flex the sensor cannot see" in the module docstring for the measurement.
+        """
+        if self.flex_reaction == _FLEX_EXCLUDED or not m.nflex:
+            return
+        body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
+        sensed = set(entity_body_ids(m, body))
+        geoms = [g for g in range(m.ngeom) if int(m.geom_bodyid[g]) in sensed]
+        carried, touchable = [], []
+        for f in range(m.nflex):
+            if not flex_collides(m, f):
+                continue
+            if set(flex_dof_body_ids(m, f)) & sensed:
+                carried.append(flex_label(m, f))
+            elif any(
+                (int(m.flex_contype[f]) & int(m.geom_conaffinity[g]))
+                or (int(m.geom_contype[g]) & int(m.flex_conaffinity[f]))
+                for g in geoms
+            ):
+                touchable.append(flex_label(m, f))
+        if not carried and not touchable:
+            return
+        where = []
+        if carried:
+            where.append(
+                f"flex {', '.join(map(repr, carried))} hangs below it, so every contact that flex "
+                "makes would be missing"
+            )
+        if touchable:
+            where.append(
+                f"flex {', '.join(map(repr, touchable))} can collide with the geometry below it, so "
+                "a contact between the two would be missing"
+            )
+        raise RuntimeError(
+            f"force_torque[{self.name}]: site {site_name!r} measures a subtree a flex contact can "
+            f"reach, and MuJoCo's site force/torque sensor does not see a contact with a flex: "
+            f"{'; '.join(where)} from the reading, with nothing to say so. State "
+            f"`flex_reaction: {_FLEX_EXCLUDED}` on this sensor to accept that reading, or disable "
+            f"the flex's collision (contype/conaffinity 0) where it plays no part."
         )
 
     def read(self) -> tuple[np.ndarray, np.ndarray]:
@@ -231,6 +435,14 @@ class ForceTorquePlugin(Plugin):
         d = self._ctx.data
         force = np.array(d.sensordata[self._force_adr : self._force_adr + 3], dtype=float)
         torque = np.array(d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float)
+        if not self._tared and self.tare_at_s is not None and self._ctx.sim_time >= self.tare_at_s:
+            # Captured here, from the raw pair, so the offset is the reading's MEAN: the noise is
+            # added below and is what remains after the subtraction. A tare taken after the noise
+            # would bake one sample's draw into every reading for the rest of the episode.
+            self._offset_force, self._offset_torque = force.copy(), torque.copy()
+            self._tared = True
+        force = force - self._offset_force
+        torque = torque - self._offset_torque
         if self.invert:
             force, torque = -force, -torque
         if self.frame != "sensor":
@@ -255,3 +467,36 @@ class ForceTorquePlugin(Plugin):
         """Endpoint ``read``: the same wrench as plain lists, for a transport-neutral payload."""
         force, torque = self.read()
         return (force.tolist(), torque.tolist())
+
+    def tare(self) -> None:
+        """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
+
+        What a real sensor's zero button does, with the same limit: this cancels the load as it is
+        right now, not the tool's weight at every pose. See "Taring" in the module docstring.
+
+        Re-tares an already-tared sensor, deliberately: an approach that tares per contact is the
+        way to use this on a tool that turns, and refusing the second call would make that the one
+        thing it cannot do.
+        """
+        d = self._ctx.data
+        # From the raw pair rather than through `read`, which has already subtracted whatever
+        # offset is standing -- taring twice would otherwise capture the residual and leave the
+        # first tare's offset in place forever.
+        self._offset_force = np.array(
+            d.sensordata[self._force_adr : self._force_adr + 3], dtype=float
+        )
+        self._offset_torque = np.array(
+            d.sensordata[self._torque_adr : self._torque_adr + 3], dtype=float
+        )
+        self._tared = True
+
+    def on_reset(self, ctx: SimContext) -> None:
+        """Forget the zero, so the next episode captures its own.
+
+        An offset carried across a reset is a measurement of the previous episode, and the whole
+        point of a repetition is that it repeats -- the same reason the noise is keyed on the
+        episode. A `tare_at_s` sensor re-arms and tares again at that time.
+        """
+        self._offset_force = np.zeros(3)
+        self._offset_torque = np.zeros(3)
+        self._tared = False

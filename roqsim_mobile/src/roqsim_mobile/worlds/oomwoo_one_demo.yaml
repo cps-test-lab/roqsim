@@ -11,8 +11,9 @@ components:
   # come from the oomwoo_one model manifest. Everything in it is the vendor's own number.
   - spawn_robot:
       model: oomwoo_one
-      pos: [0.0, 0.0]
-      yaw: 0.0
+      pose:
+        position:    {x: 0.0, y: 0.0}
+        orientation: {yaw: 0.0}
     name: robot
 
     components:

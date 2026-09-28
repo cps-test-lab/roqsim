@@ -53,8 +53,8 @@
       <freejoint name="base_free"/>
       <inertial pos="0 0 0" mass="2.5" diaginertia="0.019952708333333333 0.019952708333333333 0.038062812499999994"/>
       <site name="base_imu" pos="0 0 0.03325" size="0.005" rgba="0 0 0 0"/>
-      <!-- The scan plane, off the description's own scan_joint - not an assumption, unlike every
-           other mobile port in this batch. -->
+      <!-- The scan plane, off the description's own scan_joint - not an assumption, unlike most
+           other mobile models here. -->
       <site name="lidar" pos="0 0 0.0755" size="0.005" rgba="1 0 0 0.6"/>
         <geom class="visual" type="cylinder" size="0.1745 0.03325" material="oomwoo_grey" pos="0 0 0.03325"/>
         <geom class="visual" type="box" size="0.0261934 0.005 0.03325" material="oomwoo_dark" pos="0.17300712703194032 0.022776830248172442 0.03325" quat="0.6593455 0 0 0.75184"/>

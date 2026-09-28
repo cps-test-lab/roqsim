@@ -1,0 +1,97 @@
+# SICK nanoScan3 safety laser scanner, as a device `spawn_sensor` mounts -- on its own, or nested in
+# a robot manifest at the vendor joint origin.
+#
+# Mesh, link frame and inertial: Neobotix `rox` (see sick_nanoscan3.xml). Scan values: SICK data sheet
+# NANS3-AAAZ30AN1 (nanoScan3 Core I/O, part no. 1100333),
+# https://www.sick.com/media/pdf/9/79/979/dataSheet_NANS3-AAAZ30AN1_1100333_en.pdf ("data sheet"), and
+# the nanoScan3 I/O operating instructions 8024596,
+# https://www.sick.com/media/docs/7/37/137/operating_instructions_nanoscan3_i_o_en_im0087137.pdf
+# ("OI"), Table 33 "Features" and Table 43 "Measurement data". Published values: the driver named at
+# the lidar component.
+#
+# NOTHING here is carried over from sick_microscan3. The two devices differ in angular resolution,
+# scan cycle and measured-value count, and the microScan3's own range-vs-remission figures do not
+# apply to this one -- each value below names the table it came from.
+#
+# Which nanoScan3 a ROX carries is not stated by rox_description; the Core I/O stands in. OI Table 33
+# and Table 43 give one value per row for Core I/O and Pro I/O alike across every field used here, so
+# the choice moves nothing below; it is recorded because the field counts, which this model does not
+# use, do differ.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below; a robot's
+# second scanner names its own (a ROX calls it lidar_2_link). `exclude_body: mount` skips this
+# device's housing and nothing else; `emit_static_tf: false` because spawn_sensor publishes the
+# `frames:` chain.
+frame_id: lidar_1_link      # the Neobotix link name of a ROX's first scanner
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame: the mount itself
+    parent: mount
+    pos: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: SICKAG/sick_safetyscanners2 @ f30c60105d ("driver"), with
+      # SICKAG/sick_safetyscanners_base @ 08ae4b75d3. That Neobotix runs it for the nanoScan3 is
+      # verified rather than assumed: rox_bringup/launch/bringup_launch.py at the pinned commit
+      # launches `sick_safetyscanners2_node` twice, against
+      # rox_bringup/configs/sick_lidar/nanoscan_{1,2}.yaml.
+      #
+      # Layout: angle_min is the first beam's angle and angle_max the last beam's
+      # (src/utils/MessageCreator.cpp), so the last ray sits at angle_max. OI Table 33: scanning
+      # angle 275 deg (-47.5 .. 227.5 deg in SICK's bearing convention, which the driver's -90 deg
+      # offset centres on straight ahead).
+      #
+      # OI Table 43 states the beam count outright -- "Angular resolution 0.17 deg (1,651 safeHDDM
+      # measured values)" -- so this is published, not derived from the resolution. It is also self
+      # consistent: 275 deg over 1650 intervals is 1/6 deg, which is what 0.17 deg rounds.
+      rays: 1651
+      angle_min: -2.399827721   # -137.5 deg
+      angle_max: 2.399827721    # +137.5 deg
+      # Header: range_min is hard-coded 0.1 (src/SickSafetyscanners.cpp). range_max is the device
+      # type code's maximum range, which for every non-"90" type code is sick_safetyscanners_base's
+      # E_NORMAL_RANGE = 40 m -- the same 40 m the data sheet gives as "Distance measuring range".
+      #
+      # OI Table 43 also gives what the device can actually measure to: <= 27.4 m at 100 % remission
+      # and <= 8.7 m at 10 %. The ray cast has no remission model, so the driver's header figure
+      # bounds it and those two are recorded rather than applied. (The microScan3's 12 m at 10 % is a
+      # different device's number and is deliberately not carried over.) The OI states no minimum
+      # distance, so the driver's range_min is also the near detection limit (unverified).
+      range_min: 0.1
+      max_range: 40.0
+      # The driver publishes the raw distance for a near beam (the scanner's valid/infinite/glare
+      # bits are parsed but unused for LaserScan); what the scanner reports there is unverified, so
+      # the REP 117 default stands. A beam at or beyond 0.999 * range_max, or with reflectivity 0,
+      # is published as +inf (src/utils/MessageCreator.cpp).
+      too_close: -inf           # unverified device output; REP 117 default
+      no_return: +inf           # src/utils/MessageCreator.cpp
+      # OI Table 33: "Scan cycle time 30 ms". Table 43's "Scan rate 33 Hz" is that rounded, so the
+      # cycle time is the exact figure and this is its reciprocal.
+      rate_hz: 33.333333
+      # OI Table 43, total measurement error (statistical and systematic) at 1 sigma: +-13 mm. SICK
+      # tabulates 1 to 5 sigma for this device (+-13 / 16 / 19 / 22 / 25 mm), so the sigma is stated
+      # rather than interpreted. The +-10 mm systematic part has no stated distribution, so no
+      # per-instance bias is modelled. Footnote: typical at 20 C, remission 1.8 %, at the protective
+      # field range.
+      range_stddev: 0.013
+      # Not modelled: the reflectivity (0-255) the driver publishes as intensities.
+      #
+      # Not applied here: a ROX narrows the field in the driver, not in the device --
+      # rox_bringup/configs/sick_lidar/nanoscan_1.yaml sets angle_start -2.1 and angle_end 2.1. A
+      # robot that reproduces that overrides angle_min/angle_max at its mount; the device itself
+      # declares the full 275 deg it is built with.
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own field
+# and its physical detection limits.
+fov:
+  near: 0.1
+  far: 40.0
+  h_min: -2.399827721
+  h_max: 2.399827721
+  v_min: 0.0
+  v_max: 0.0

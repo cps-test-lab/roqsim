@@ -148,3 +148,60 @@ def test_a_mesh_with_no_json_ld_is_refused_not_degraded(tmp_path):
     _stl(mesh, [[(0, 0, 0), (1, 0, 0), (0, 1, 0)]])
     with pytest.raises(SystemExit, match="json-ld"):
         jsonld_to_scene.build(mesh, tmp_path / "mujoco")
+
+
+def _typed(prefix, kind):
+    """The typed part entity the generator emits beside a polyhedron, linked by ``3d-shape``."""
+    return {"@id": f"w:{prefix}", "@type": kind, "3d-shape": f"w:{prefix}-polyhedron"}
+
+
+def _floorplan_typed(env, name, gap=0.9, s=4.0, t=0.1, h=2.2):
+    """The same room, but the parts carry their declared types and the opening is named ``name``.
+
+    ``name`` deliberately contains none of "door"/"entry": a generator is free to name an opening
+    after the space it joins, and the type is what says it is one.
+    """
+    graph = []
+    for wall in ("north-wall", "south-wall", "west-wall", "east-wall"):
+        graph.append(_typed(wall, "Wall"))
+    graph += _part("north-wall", (-s, s - t, 0), (s, s, h))
+    graph += _part("south-wall", (-s, -s, 0), (s, -s + t, h))
+    graph += _part("west-wall", (-s, -s, 0), (-s + t, s, h))
+    graph += _part("east-wall", (s - t, -s, 0), (s, s, h))
+    graph.append(_typed(name, "Entryway"))
+    graph += _part(name, (-gap / 2, s - t, 0), (gap / 2, s, h))
+    jdir = env / "json-ld"
+    jdir.mkdir(parents=True)
+    (jdir / "floorplan.fpm.json").write_text(json.dumps({"@context": {}, "@graph": graph}))
+
+
+def test_an_entryway_is_an_opening_whatever_its_id_is_called(tmp_path):
+    """An ``Entryway`` named after the space, not after a door, must still be a gap.
+
+    Classifying by a substring of the ``@id`` makes this one solid: a full-height slab standing
+    where the fused mesh and the occupancy grid both show an opening. Nothing downstream reports
+    that -- the lidar raycasts the mesh and sees through it, the planner's map is free -- so the
+    only symptom is a robot hitting geometry no sensor can see. The declared type is the answer.
+    """
+    from roqsim.floorplan_collision import wall_colliders
+
+    s_, t_ = 4.0, 0.1
+    env = tmp_path / "typed"
+    _floorplan_typed(env, "north_corridor_opening", s=s_, t=t_)
+    mesh = env / "3d-mesh" / "room.stl"
+    _stl(mesh, [[(0, 0, 0), (1, 0, 0), (0, 1, 0)]])
+
+    colliders = wall_colliders(str(mesh))
+
+    # The middle of the opening, inside the north wall's thickness and below its top.
+    x, y, z = 0.0, s_ - t_ / 2, 1.0
+    covering = [
+        c
+        for c in colliders
+        if c[:, 0].min() <= x <= c[:, 0].max()
+        and c[:, 1].min() <= y <= c[:, 1].max()
+        and c[:, 2].min() <= z <= c[:, 2].max()
+    ]
+    assert not covering, (
+        f"{len(covering)} collider(s) seal an opening the mesh and the map show open"
+    )

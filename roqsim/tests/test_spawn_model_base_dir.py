@@ -1,17 +1,17 @@
 """A world resolves a model file beside itself, from whatever directory it is loaded from.
 
-``spawn_model`` resolved its ``model:`` with no ``base_dir``, so a filesystem path fell back to the
-CWD -- and a world referencing a sibling asset then loaded only from its own directory. That is not
+Resolved with no ``base_dir``, a ``spawn_model`` ``model:`` path falls back to the CWD -- and a
+world referencing a sibling asset then loads only from its own directory. That is not
 a niche case: the working directory is not the document's directory in general, and need not be the
-same twice. Measured, on one world and one reference:
+same twice. Measured without a ``base_dir``, on one world and one reference:
 
     from the world's own directory    ``roqsim sim world/cell.yaml``            -> resolved
     by absolute path from elsewhere   ``roqsim sim /abs/proj/world/cell.yaml``  -> NOT FOUND
     copied under a different root     the document mirrored by a staging tool   -> NOT FOUND
 
-The mechanism was already there and simply unused: ``Config.base_dir`` is the document's directory
-and ``resolve_model`` has taken a ``base_dir`` all along -- ``spawn_arm`` passes one for its
-end-effector. This makes the world's own directory the anchor, which is the only one that does not
+The mechanism is ``Config.base_dir``, the document's directory, which ``resolve_model`` takes as
+its ``base_dir`` -- as ``spawn_arm`` does for its end-effector. The world's own directory is the
+anchor, which is the only one that does not
 depend on who is doing the loading.
 """
 
@@ -44,7 +44,7 @@ def world(tmp_path):
     (tmp_path / "world" / "cell.yaml").write_text(
         textwrap.dedent("""
         components:
-          - spawn_model: {model: sibling_prop.xml, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: sibling_prop.xml, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: prop
     """),
         encoding="utf-8",
@@ -59,7 +59,7 @@ def _compile(path):
 
 
 def test_a_sibling_model_resolves_from_an_unrelated_cwd(world, monkeypatch, tmp_path):
-    """THE regression. The run's CWD is not the world's directory, and never was."""
+    """The run's CWD is not the world's directory."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
@@ -70,8 +70,8 @@ def test_a_sibling_model_resolves_from_an_unrelated_cwd(world, monkeypatch, tmp_
 
 
 def test_validation_resolves_it_too_not_just_the_build(world, monkeypatch, tmp_path):
-    """The failure was reported by `validate_config`, before `build` ever ran -- so fixing only
-    the build path would have changed nothing a caller could see."""
+    """`validate_config` resolves the model before `build` ever runs -- so resolving it only on
+    the build path would change nothing a caller can see."""
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
@@ -85,9 +85,9 @@ def test_validation_resolves_it_too_not_just_the_build(world, monkeypatch, tmp_p
 def test_the_cwd_is_not_a_second_anchor(world, monkeypatch, tmp_path):
     """There is exactly one anchor, so a file under the working directory is never consulted.
 
-    While the CWD was a fallback, a world naming a sibling that did not exist picked up an unrelated
-    file of the same name from wherever the process happened to start -- and compiled it. Measured:
-    the same document and the same string gave a 0.5 m box from one directory and "not found" from
+    With the CWD as a fallback, a world naming a sibling that does not exist picks up an unrelated
+    file of the same name from wherever the process happens to start -- and compiles it. Measured:
+    the same document and the same string give a 0.5 m box from one directory and "not found" from
     another, with nothing downstream able to tell which it got.
 
     Pinned as ABSENCE rather than precedence: precedence would still leave a world that resolves
@@ -98,13 +98,13 @@ def test_the_cwd_is_not_a_second_anchor(world, monkeypatch, tmp_path):
     (decoy / "world" / "ghost.xml").write_text(BIN_MJCF, encoding="utf-8")
     (decoy / "world" / "cell.yaml").write_text(textwrap.dedent("""
         components:
-          - spawn_model: {model: world/ghost.xml, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: world/ghost.xml, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: prop
     """), encoding="utf-8")
     monkeypatch.chdir(decoy)
 
     # The world is `decoy/world/cell.yaml`, so its sibling is `decoy/world/world/ghost.xml` --
-    # which does not exist. `decoy/world/ghost.xml` does, and used to be found from this CWD.
+    # which does not exist. `decoy/world/ghost.xml` does, and a CWD fallback would find it.
     from roqsim.plugin import PluginError
 
     with pytest.raises(PluginError, match="ghost.xml"):
@@ -117,7 +117,7 @@ def test_a_bundled_model_name_is_unaffected(tmp_path, monkeypatch):
     (tmp_path / "cell.yaml").write_text(
         textwrap.dedent("""
         components:
-          - spawn_model: {model: graspable_box, pos: [0.0, 0.0, 0.0]}
+          - spawn_model: {model: graspable_box, pose: {position: {x: 0.0, y: 0.0, z: 0.0}}}
             name: parcel
     """),
         encoding="utf-8",

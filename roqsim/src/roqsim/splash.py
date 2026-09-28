@@ -8,7 +8,7 @@ first, so this covers the whole world compile, not just the first-frame mesh/tex
 Cosmetic and dependency-soft: it needs ``numpy`` (always present with MuJoCo) and ``Pillow`` for the
 image. Missing Pillow, or with the asset absent, every function is a silent no-op -- a loading
 overlay is not an artifact, so best-effort is the right altitude (same stance as
-:mod:`roqsim.window_title`).
+:mod:`roqsim.window_branding`).
 """
 
 from __future__ import annotations

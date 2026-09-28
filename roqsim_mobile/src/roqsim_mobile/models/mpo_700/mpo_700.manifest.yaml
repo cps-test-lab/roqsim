@@ -37,32 +37,55 @@ components:
       steer_joints: [mpo_700_caster_front_left_joint, mpo_700_caster_front_right_joint,
                      mpo_700_caster_back_left_joint, mpo_700_caster_back_right_joint]
       steer_actuators: [steer_front_left, steer_front_right, steer_back_left, steer_back_right]
-  # TWO scanners, diagonally opposite, which is what the vendor ships -- and the first model here to
-  # declare more than one. Neither covers 360 degrees alone; together they see around the robot. A
-  # single centre-mounted 360 scan would have been simpler and would have given the robot a sensor it
-  # does not have, with no blind corners.
+  # TWO SICK S300s, diagonally opposite, which is what the vendor ships. Neither covers 360 degrees
+  # alone; together they see around the robot. A single centre-mounted 360 scan would have been
+  # simpler and would have given the robot a sensor it does not have, with no blind corners.
   #
-  # Mounts are the vendor's (lidar_1_joint / lidar_2_joint). The SICK S300's published field is 270
-  # degrees; its range and rate here are ours -- see the port log.
-  - lidar:
-      site: lidar_1
-      frame_id: lidar_1_link
-      rays: 541
-      angle_min: -2.356194490
-      angle_max: 2.356194490
-      range_min: 0.1
-      max_range: 29.0
-      rate_hz: 12.5
-      exclude_body: base_link
+  # Each is the `sick_s300` device model at the vendor's joint rotation (neo_simulation2 @ 8320414,
+  # robots/mpo_700/urdf/mpo_700_body.urdf.xacro, lidar_1_joint :36-41 and lidar_2_joint :63-68).
+  # Both hang upside down (roll 3.14) and face out of their corners (yaw 0.79 front-left, 3.93
+  # rear-right); the values are kept as the vendor writes them. Field, rays, range, rate and noise are
+  # the device's datasheet values. The vendor's Gazebo sensors (720 rays over +-1.48 rad at 40 Hz,
+  # sigma 0.01, mpo_700_gazebo.urdf.xacro:25-50) come from a macro whose noise comment derives the
+  # value for a Hokuyo (components/common_macro/gazebo_lidar_macro.xacro:41-44) and which the
+  # MPO-500's microScan3s share, so none is a value for the S300 on this robot and none is copied;
+  # their topics are the robot's ROS interface and are: one topic per scanner, `scan` and `scan2`.
+  #
+  # POSE: Neobotix's hardware documentation, not the description's joint xyz. The MPO-700 "Mechanical
+  # Properties" page (https://neobotix-docs.de/hardware/en/platforms/mpo-700/mechanical.html, Positions
+  # of Sensors) puts the optional diagonal scanners at X +-327, Y +-277, Z 201.5 mm in the platform frame.
+  #
+  # HEIGHT (applied): Z is the height of the scan plane above the floor (the same table's centre
+  # scanners are Z 181, "Height of scan plane"). The page's wheels are 180 mm across (D) and the
+  # description's wheel centres sit 0.10 above base_link, so base_link is 10 mm below the floor and the
+  # plane is at z 0.2115. The sick_s300 device casts 4.1 mm above its frame on these upside-down mounts,
+  # so the frame is at z 0.2074. The description writes 0.223.
+  #
+  # X, Y (applied): the page measures X +-327 / Y +-277 from the platform centre, which the
+  # description's steering axes (+-0.24, +-0.18) share, so they apply unchanged in base_link; the
+  # description's joints write +-0.338 / +-0.288, 11 mm further out on each axis. There the sick_s300
+  # device, which collides as the convex hulls of its housing block and optics head, clears the corner
+  # wheel by 7 mm at every steer angle -- see the port log.
+  #
+  # The wheels collide as the same page's 30 mm wide wheel (B), not the vendor's 180 mm tyre sphere,
+  # which reaches the housings even at this pose; test_mpo_700_scene.py asserts no housing touches a tyre.
+  - spawn_sensor:
+      model: sick_s300
+      parent_frame: base_link
+      pos: [0.327, 0.277, 0.2074]    # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
+      rpy: [3.14, 0.0, 0.79]         # mpo_700_body.urdf.xacro:38, lidar_1_joint origin rpy
+      frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
-  - lidar:
-      site: lidar_2
-      frame_id: lidar_2_link
-      rays: 541
-      angle_min: -2.356194490
-      angle_max: 2.356194490
-      range_min: 0.1
-      max_range: 29.0
-      rate_hz: 12.5
-      exclude_body: base_link
+    components:
+      - lidar:
+          topics: {scan: scan}       # mpo_700_gazebo.urdf.xacro:36; relative, so the namespace scopes it
+  - spawn_sensor:
+      model: sick_s300
+      parent_frame: base_link
+      pos: [-0.327, -0.277, 0.2074]  # Neobotix MPO-700 Positions of Sensors; see X, Y and HEIGHT
+      rpy: [3.14, 0.0, 3.93]         # mpo_700_body.urdf.xacro:65, lidar_2_joint origin rpy
+      frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear
+    components:
+      - lidar:
+          topics: {scan: scan2}      # mpo_700_gazebo.urdf.xacro:50

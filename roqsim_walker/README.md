@@ -5,13 +5,18 @@ Kinematic pedestrian **walkers** for roqsim. Pure Python + MuJoCo: **no ROS depe
 A walker is a character mesh skinned onto a 17-joint skeleton of MuJoCo **mocap bodies**.
 Blueprints are discovered across every installed `roqsim.models` provider, so a downstream
 package can ship its own characters and a world still names only the walker. Body
-pose comes from motion clips; the nav root comes from an A\* planner + a py-trees behaviour tree +
-(optionally) ORCA local avoidance. Because it is fully kinematic it adds **zero DOFs** to the solver,
-yet its per-limb collision capsules are what the robot's lidar and contacts see.
+pose comes from motion clips. Because it is fully kinematic it adds **zero DOFs** to the solver, yet
+its per-limb collision capsules are what the robot's lidar and contacts see — and, because the solver
+treats a mocap body as immovable, a walker will shove anything free that it walks into.
+
+**Navigation is not here.** A walker is one *embodiment* of `roqsim_nav`'s navigator — the `walker`
+output this package registers — so a pedestrian, a robot and a driven prop are moved by the same
+plugin and differ only in what the motion is written into. This package owns the body: the skeleton,
+the skin, the blueprints and the motion clips.
 
 It either **patrols** a configured route, or is **driven to goals** through a backend-neutral
-endpoint — which the ROS 2 bridge serves as `nav2_msgs/NavigateThroughPoses`
-(see `ros2_ws/src/roqsim_walker_ros`).
+endpoint — which the ROS 2 bridge serves as `nav2_msgs/NavigateToPose` and
+`NavigateThroughPoses` (see `ros2_ws/src/roqsim_nav_ros`).
 
 ## Quick start
 
@@ -26,7 +31,6 @@ roqsim sim roqsim_walker/src/roqsim_walker/worlds/walker_patrol.yaml
 components:
   - walker:
       walker: MaleVisitorWalk  # blueprint folder under models/people/ (required)
-      name: pedestrian         # entity name
       namespace: ""            # transport scope for the goal endpoint
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
@@ -38,44 +42,33 @@ components:
         - [ 2.0,  2.0]
       loop: true               # cycle the patrol forever
       arrival_radius: 0.25
-      avoidance: false         # ORCA local avoidance (needs the [avoidance] extra)
-      robot_body: base_link    # body to yield to (default: the robot entity's base)
+      avoidance: false         # true -> steers round others through the shared local model
       action_name: navigate_through_poses
-      orca:     {neighbor_dist: 4.0, time_horizon: 3.0, radius: 0.26, max_speed: 1.6}
+      orca:     {radius: 0.26, max_speed: 1.6}   # the disc it presents to avoidance; speed cap
       planner:  {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion:   {walk: /abs/walk.npz}   # override a resolved locomotion clip
+    name: pedestrian           # entity name (a sibling of the plugin ref, not config)
 ```
 
 ### Navigation layers
 
 | Layer | Module | What it does |
 |---|---|---|
-| Global plan | `nav/planner.py`, `nav/occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
-| Behaviour | `nav/behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
-| Local avoidance | `nav/controller.py` (ORCA) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
+| Global plan | `roqsim_nav`'s `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
+| Behaviour | `roqsim_nav`'s `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
+| Local avoidance | `roqsim_nav`'s `avoidance/` | Gives way to the robot and other movers |
 
-Walls are read straight from the compiled model (`nav/obstacles.py`), so the planner and ORCA always
-agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
-wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
+Walls are read straight from the compiled model (`roqsim_nav`'s `obstacles.py`). The default
+`empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
 legs. A `floorplan` mesh adds its own walls the same way.
 
 ### Avoidance
 
-`avoidance: true` turns on ORCA for that walker. It needs the optional extra (built from source):
-
-```bash
-pip install -e 'roqsim_walker[avoidance]'
-```
-
-`rvo2` publishes no wheel, so the extra is a git direct reference and needs **git + a compiler**. Two
-places that bites: a PyPI upload of this package cannot carry the extra (PyPI rejects direct-URL
-metadata), and a wheel-only or air-gapped build — a campaign image — cannot resolve it. Install the
-base package in those, and enable avoidance only where the toolchain exists.
-
-Without `rvo2` installed the walker logs a warning once and navigates without collision avoidance.
-The shared ORCA simulation is created when *any* walker enables it; a walker with `avoidance: false`
-still occupies an ORCA agent (so peers steer around it) but is never pushed off its own path.
+`avoidance: true` gives the walker's navigator `roqsim_nav`'s default local model, `give_way`
+(pure Python, no extra), with `stop: false`: it steers round the robot and other walkers, and never
+stops for them. For ORCA, write a `navigator` for the walker with
+`avoidance: {steer: orca}` and install `roqsim_nav[avoidance]` (see `roqsim_nav`'s README).
 
 ### Goals at runtime
 
@@ -92,9 +85,6 @@ A route overrides the patrol; on arrival the walker resumes patrolling from its 
 waypoint (or stands, if it had no patrol). `status()` latches `finished` under the route's own
 sequence number, so a caller can distinguish *its* completion from a stale or preempted one — this is
 exactly what the `NavigateThroughPoses` action handler polls.
-
-Multiple `walker` plugins share one controller (one ORCA simulation sees every walker, the robot and
-any mocap props). The first to initialise owns the per-step tick.
 
 ## Assets
 

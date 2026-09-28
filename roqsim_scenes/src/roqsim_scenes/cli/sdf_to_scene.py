@@ -15,12 +15,12 @@ What makes SDF worlds different from USD: **they usually contain no geometry**. 
 world is a bill of materials of ``<include><uri>`` entries pointing into a model registry, with only
 ``<pose>`` pinned locally. So this tool spends most of its effort resolving and pinning assets
 (``fuel_fetch``), then composing the SDF pose tree (world -> include -> model -> link -> visual) into
-the flat world-space that ``scene.json`` expects.
+the flat world-space that ``scene.json`` expects. An include's pose replaces the included model's own.
 
 Deliberately mechanical. Everything here is determinate: parse, resolve, compose, tessellate, write.
 The judgement calls -- which world maps to which paper scene, whether a missing asset is link rot or
 never-published, what an absent ``<actor>`` means for a paper's claimed dynamic obstacle -- belong to
-the `scene-porting` skill and the spec, not to this script. Accordingly it **fails loudly** rather
+whoever runs it, not to this script. Accordingly it **fails loudly** rather
 than guessing: an unresolvable asset is an error with a message, never a silent omission or a
 substitution.
 
@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import shutil
 import sys
@@ -42,6 +43,8 @@ from pathlib import Path
 import numpy as np
 from lxml import etree
 
+from roqsim import exit_status
+from roqsim_scenes import scene_manifest as scene_manifest_format
 from roqsim_scenes import scene_mesh_io as mio
 
 from . import fuel_fetch
@@ -73,6 +76,26 @@ def _enclosed_volume(verts: np.ndarray, faces: np.ndarray) -> float:
     return float(np.einsum("ij,ij->i", tri[:, 0], np.cross(tri[:, 1], tri[:, 2])).sum() / 6.0)
 
 
+def _hull_ratio(pv: np.ndarray, pf: np.ndarray) -> float | None:
+    """Convex-hull volume over the part's own enclosed volume, or None when there is nothing to judge.
+
+    ``None`` is the honest answer for an open patch (a wall skin from an STL) and for a coplanar or
+    degenerate part: neither encloses a volume, so a hull has nothing to swallow. Callers must not
+    read it as "fine" -- see ``_check_nothing_is_walled_off`` for the check that covers those.
+    """
+    from scipy.spatial import ConvexHull  # local: only the hull checks need scipy
+
+    if len(pv) < 4 or not _is_closed(pv, pf):
+        return None
+    mesh_vol = abs(_enclosed_volume(pv, pf))
+    if mesh_vol <= 1e-9:
+        return None
+    try:
+        return float(ConvexHull(pv).volume) / mesh_vol
+    except Exception:  # degenerate/coplanar: no volume to swallow
+        return None
+
+
 def _ln(el) -> str:
     # Comments/PIs have a callable .tag and are not QNames; real worlds are full of commented-out models.
     return etree.QName(el).localname if isinstance(el.tag, str) else ""
@@ -92,8 +115,55 @@ def _text(el, name: str, default: str | None = None) -> str | None:
     return k.text.strip() if k is not None and k.text else default
 
 
+# The frames a `<pose relative_to>` may name that are the one the pose is composed onto anyway: the
+# enclosing model, or the world at world level.
+_PARENT_FRAMES = ("", "__model__", "world")
+
+
 def _pose_of(el) -> np.ndarray:
-    return mio.pose_to_matrix(_text(el, "pose"))
+    """*el*'s ``<pose>`` as a 4x4 in its parent's frame.
+
+    Reads ``degrees="true"`` and ``rotation_format="quat_xyzw"``. A pose ``relative_to`` any other
+    frame needs the model's frame graph, which this importer does not build, so it raises rather
+    than composing the pose onto the parent.
+    """
+    pose = _kid(el, "pose")
+    if pose is None or not (pose.text or "").strip():
+        return np.eye(4)
+    rel = pose.get("relative_to", "").strip()
+    if rel not in _PARENT_FRAMES:
+        raise fuel_fetch.FuelError(
+            f"<{_ln(el)} name='{el.get('name')}'> has a <pose relative_to='{rel}'>; only poses "
+            "relative to the parent frame are supported"
+        )
+    fmt = pose.get("rotation_format", "euler_rpy").strip()
+    v = [float(x) for x in pose.text.split()]
+    if fmt == "quat_xyzw":
+        if len(v) != 7:
+            raise fuel_fetch.FuelError(f"a quat_xyzw <pose> takes 7 values, got {pose.text!r}")
+        m = np.eye(4)
+        m[:3, 3] = v[:3]
+        m[:3, :3] = _quat_xyzw_to_matrix(*v[3:])
+        return m
+    if fmt != "euler_rpy":
+        raise fuel_fetch.FuelError(f"<pose rotation_format='{fmt}'> is not an SDF rotation format")
+    if pose.get("degrees", "false").strip().lower() in ("true", "1"):
+        v[3:6] = [math.radians(a) for a in v[3:6]]
+    return mio.pose_to_matrix(" ".join(str(x) for x in v))
+
+
+def _quat_xyzw_to_matrix(x: float, y: float, z: float, w: float) -> np.ndarray:
+    n = math.sqrt(x * x + y * y + z * z + w * w)
+    if n == 0:
+        raise fuel_fetch.FuelError("a quat_xyzw <pose> has a zero quaternion")
+    x, y, z, w = x / n, y / n, z / n, w / n
+    return np.array(
+        [
+            [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+            [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+            [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+        ]
+    )
 
 
 def _slug(name: str, used: set[str]) -> str:
@@ -175,12 +245,21 @@ class Importer:
             # <submesh> narrows a shared mesh file to one named piece (Warehouse re-uses warehouse.dae
             # for its drop zone). Ignoring it silently duplicates the whole file at the visual's pose.
             sm = _kid(m, "submesh")
+            # A file whose <up_axis> contradicts its own geometry, asserted per file by the caller.
+            # Announced rather than applied quietly: it overrides what the asset says about itself,
+            # so the run log has to show which mesh was read against its declaration.
+            as_authored = any(pat in str(path) for pat in self.args.ignore_up_axis)
+            if as_authored:
+                print(
+                    f"  reading {path.name} as authored (its <up_axis> declaration is overridden)"
+                )
             subs = mio.read_mesh(
                 path,
                 submesh=_text(sm, "name") if sm is not None else None,
                 center=(_text(sm, "center", "false").strip().lower() in ("1", "true"))
                 if sm is not None
                 else False,
+                ignore_up_axis=as_authored,
             )
             sc = _text(m, "scale")
             scale = np.array([float(x) for x in sc.split()]) if sc else None
@@ -342,7 +421,7 @@ class Importer:
                             f"vertices) — the convex split destroyed this collision mesh instead of "
                             f"cutting it. Re-run with --no-split-components to keep it whole."
                         )
-                    parts = solid
+                    parts = self._cut_extruded_shells(solid, base)
                     self._check_hulls_are_faithful(parts, base, model_name)
                 else:
                     parts = [(sub.verts, sub.faces, sub.uv)]
@@ -369,6 +448,46 @@ class Importer:
                     self.objects.append(obj)
                 if len(parts) > 1:
                     print(f"  split {base} -> {len(parts)} components")
+
+    def _cut_extruded_shells(self, parts, base: str):
+        """Re-cut any part whose hull still swallows a void, where that part is an extruded footprint.
+
+        The two cuts in ``_emit`` are graph cuts, and a *ring* of walls defeats both: one component,
+        and reflex edges at the inner corners leave the outer faces connected the long way round. What
+        does cut it is the part's own 2D footprint (``scene_mesh_io.split_extruded_shell``), which is
+        exact for the shape most building shells actually are -- two horizontal planes, vertical walls
+        between them.
+
+        Applied only to parts that FAIL the hull test, so nothing already faithful is multiplied into
+        strips, and it is a refinement of the refusal rather than a replacement for it: a cut that does
+        not apply, or that leaves a piece still swallowing a void, falls through to
+        :meth:`_check_hulls_are_faithful` and its message.
+        """
+        out = []
+        for pv, pf, puv in parts:
+            ratio = _hull_ratio(pv, pf)
+            if ratio is None or ratio <= self._MAX_HULL_RATIO:
+                out.append((pv, pf, puv))
+                continue
+            try:
+                cut = mio.split_extruded_shell(pv, pf)
+            except ValueError as exc:
+                print(f"  footprint cut declined {base}: {exc}")
+                cut = None
+            worst = (
+                max((_hull_ratio(cv, cf) or 1.0 for cv, cf, _ in cut), default=None)
+                if cut
+                else None
+            )
+            if not cut or worst is None or worst > self._MAX_HULL_RATIO:
+                out.append((pv, pf, puv))
+                continue
+            print(
+                f"  cut {base} into {len(cut)} convex prisms over its own footprint "
+                f"(hull/mesh {ratio:.1f} -> {worst:.2f})"
+            )
+            out.extend(cut)
+        return out
 
     def _check_nothing_is_walled_off(self) -> None:
         """Refuse a scene whose collision hulls seal off floor its own geometry leaves reachable.
@@ -428,7 +547,7 @@ class Importer:
         Only CLOSED parts are judged. An open patch has no meaningful enclosed volume, so there is
         nothing to compare a hull against and the check abstains rather than guessing.
 
-        **That abstention is why this is not the whole story**, and why it is no longer the only check.
+        **That abstention is why this is not the whole story**, and why it is not the only check.
         A building's walls arrive from an STL as open skins, so this one never looks at them -- and it
         would clear them anyway, because a doorway is negligible next to a wall's volume. Whether a way
         through survived is asked separately and scene-wide, by
@@ -436,21 +555,12 @@ class Importer:
         (the AWS warehouse, ratio 31.7) cheaply and by name; that one catches what only the finished
         scene can show.
         """
-        from scipy.spatial import ConvexHull  # local: only this check needs it
-
         for pv, pf, _ in parts:
-            if len(pv) < 4 or not _is_closed(pv, pf):
+            ratio = _hull_ratio(pv, pf)
+            if ratio is None or ratio <= self._MAX_HULL_RATIO:
                 continue
             mesh_vol = abs(_enclosed_volume(pv, pf))
-            if mesh_vol <= 1e-9:
-                continue
-            try:
-                hull_vol = float(ConvexHull(pv).volume)
-            except Exception:  # degenerate/coplanar: no volume to swallow
-                continue
-            ratio = hull_vol / mesh_vol
-            if ratio <= self._MAX_HULL_RATIO:
-                continue
+            hull_vol = ratio * mesh_vol
             raise SystemExit(
                 f"{model_name}: collision part of {base!r} encloses a void that its convex hull would "
                 f"fill (hull {hull_vol:.1f} m^3 vs mesh {mesh_vol:.1f} m^3, ratio {ratio:.1f}).\n"
@@ -458,7 +568,10 @@ class Importer:
                 f"through the interior -- a robot spawned inside cannot move, and every trial reports "
                 f"a collision on step 1 while still looking like a valid run.\n"
                 f"This is the ring case the reflex-edge split cannot cut: it separates faces by "
-                f"dihedral, and a closed loop stays connected the long way round.\n"
+                f"dihedral, and a closed loop stays connected the long way round. The footprint cut "
+                f"that does get a ring (scene_mesh_io.split_extruded_shell) did not apply here, so "
+                f"this part is not an extrusion of a 2D footprint -- it has a slope, a chamfer, a "
+                f"third z level or a doubled skin.\n"
                 f"Ways forward:\n"
                 f"  --no-collide {model_name}   import this model's geometry as VISUAL only, and\n"
                 f"                              declare its collision as primitives in the world YAML\n"
@@ -493,10 +606,23 @@ class Importer:
             self.textures.add(dst.name)
         return rel
 
-    def _model(self, model, parent: np.ndarray, name_prefix: str, model_dir: Path) -> None:
+    def _model(
+        self, model, parent: np.ndarray, name_prefix: str, model_dir: Path, *, placed=False
+    ) -> None:
+        """Import one ``<model>`` at *parent*.
+
+        ``placed`` is an ``<include>`` that states its own ``<pose>``: SDF has that pose REPLACE the
+        included model's top-level one rather than compose with it -- the model file's pose is its
+        author's default placement, not an offset.
+        """
+        if model.get("placement_frame"):
+            raise fuel_fetch.FuelError(
+                f"model '{model.get('name')}' sets placement_frame, which this importer does not "
+                "support: its pose would be applied to the model frame instead"
+            )
         prev = getattr(self, "_current_model_dir", None)
         self._current_model_dir = model_dir
-        world_model = parent @ _pose_of(model)
+        world_model = parent if placed else parent @ _pose_of(model)
         # Names come from `name_prefix`, not from the SDF's own <model name>: nesting and repeated
         # includes make the latter ambiguous, and the prefix is what --no-collide matches against.
         for link in _kids(model, "link"):
@@ -513,6 +639,11 @@ class Importer:
         uri = _text(inc, "uri")
         if not uri:
             raise fuel_fetch.FuelError("<include> without <uri>")
+        if _kid(inc, "placement_frame") is not None:
+            raise fuel_fetch.FuelError(
+                f"<include> of {uri} sets <placement_frame>, which this importer does not support: "
+                "its pose would be applied to the model frame instead"
+            )
         name = inc.get("name") or _text(inc, "name") or uri.rstrip("/").split("/")[-1]
         model_dir = self._model_dir(uri)
         sdf_file = model_dir / "model.sdf"
@@ -523,9 +654,12 @@ class Importer:
             sdf_file = cands[0]
         root = etree.parse(str(sdf_file)).getroot()
         world_inc = parent @ _pose_of(inc)
+        placed = _kid(inc, "pose") is not None
         for model in [c for c in root.iter() if _ln(c) == "model"]:
             if _ln(model.getparent()) == "sdf":  # top-level models only; nesting handled in _model
-                self._model(model, world_inc, _slug_prefix(name_prefix, name), model_dir)
+                self._model(
+                    model, world_inc, _slug_prefix(name_prefix, name), model_dir, placed=placed
+                )
 
     # ---------------- entry
 
@@ -549,7 +683,7 @@ class Importer:
         if not self.objects:
             raise SystemExit(
                 "no geometry emitted. If the world is pure <include> and every asset failed to "
-                "resolve, that is a provenance finding for the spec -- not an empty scene."
+                "resolve, the world's assets are missing -- not an empty scene."
             )
 
         self._check_nothing_is_walled_off()
@@ -566,6 +700,7 @@ class Importer:
             manifest["ground_z"] = round(self.ground_z, 6)
         out = Path(self.args.out_dir)
         out.mkdir(parents=True, exist_ok=True)
+        manifest = scene_manifest_format.stamp(manifest)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
         if self.args.lock and self.assets:
@@ -590,7 +725,13 @@ def _slug_prefix(prefix: str, name: str) -> str:
 
 
 def main(argv: list | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes a Fuel model the world names that did not resolve.",
+        ),
+    )
     ap.add_argument("--world", type=Path, required=True, help="the SDF world file")
     ap.add_argument(
         "--out-dir", type=Path, required=True, help="scene dir to write (scene.json + meshes/)"
@@ -611,6 +752,15 @@ def main(argv: list | None = None) -> int:
         "hull check for axis-aligned buildings.",
     )
     ap.add_argument(
+        "--ignore-up-axis",
+        action="append",
+        default=[],
+        metavar="MESH_SUBSTRING",
+        help="read matching mesh files as authored, ignoring their <up_axis> (repeatable). For an "
+        "asset whose declaration contradicts its own data -- the tell is a building that lands on "
+        "edge. Assert it per file; never as a blanket setting.",
+    )
+    ap.add_argument(
         "--collision-only",
         action="store_true",
         help="emit ONLY collidable geometry, skipping the rendered visuals: fastest, ugliest",
@@ -626,17 +776,22 @@ def main(argv: list | None = None) -> int:
     ap.add_argument("--collision", default="visual", choices=["visual"], help=argparse.SUPPRESS)
     args = ap.parse_args(argv)
     args.scene_name = args.scene_name or Path(args.out_dir).name
+    if not Path(args.world).is_file():
+        # Checked here rather than left to the XML parser, whose OSError for a missing file is a
+        # traceback through lxml that never says "no such file".
+        print(f"roqsim scenes sdf-to-scene: no such SDF world: {args.world}", file=sys.stderr)
+        return exit_status.BAD_INPUT
 
     try:
         Importer(args).run()
     except fuel_fetch.FuelError as e:
         print(
-            f"\nFAILED: {e}\n\nThis is a finding, not a bug: record it as a resolution_attempt in "
-            f"the spec's gap record. Do not substitute a lookalike asset.",
+            f"\nFAILED: {e}\n\nThe world names an asset that cannot be fetched. Point --model-path at a "
+            f"local copy of it; do not substitute a lookalike asset.",
             file=sys.stderr,
         )
-        return 2
-    return 0
+        return exit_status.BAD_INPUT
+    return exit_status.OK
 
 
 if __name__ == "__main__":

@@ -26,6 +26,8 @@ pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``get_entity_s
                                                                  entity NAME
 apply/restore fault ``F``    blackboard ``model_override:F``      ``F/override`` (``SetBool``)
 did it land                  ``read_state().verified``            the same service's reply
+report ``R`` of ``X``        ``ctx.interface.find(X, R)``        the bridge's endpoint map, then
+                             ``.read()``, any field              ``R``'s topic; its published field
 time                         the runner's ``clock``               the runner's ``clock``
 ===========================  ==================================  ====================================
 
@@ -43,7 +45,10 @@ action takes the clock it is handed and never knows which.
 
 What DOES differ, and is stated rather than hidden: over ROS a pose is a service round-trip, so the
 instant a threshold is crossed is resolved at the tick period rather than at the physics step. A dwell
-shorter than one tick means "the first tick past the threshold" on both paths.
+shorter than one tick means "the first tick past the threshold" on both paths. And a plugin's report
+travels over ROS as the one field its endpoint publishes, so the other fields of a report are
+readable in a stepped run only -- asked for over ROS, they are refused by name rather than read as
+something else.
 """
 
 from __future__ import annotations
@@ -91,7 +96,26 @@ class OverrideOutcome:
     detail: str
 
 
-class OverrideCall(ABC):
+class PendingCall(ABC):
+    """Shared by every in-flight call: why it is still waiting, when it can say.
+
+    ``poll()`` returning ``None`` means "not yet", and "not yet" has two very different causes: the
+    write is queued and will drain next step, or the thing that would answer does not exist. The
+    second is indistinguishable from the first until a timeout fires, at which point the trial has
+    spent its whole budget and reports only that it ran out -- which is what a world that served no
+    control plane looked like.
+    """
+
+    @abstractmethod
+    def poll(self):
+        """The outcome, or ``None`` while it is not yet known."""
+
+    def pending_reason(self) -> str | None:
+        """A phrase naming what is missing, or ``None`` when waiting is simply progress."""
+        return None
+
+
+class OverrideCall(PendingCall):
     """An apply/restore in flight. ``poll()`` returns ``None`` until the outcome is known.
 
     Two-phase on both transports, for the same reason the plugin's inbound endpoint is a service
@@ -109,7 +133,7 @@ class OverrideCall(ABC):
 class TeleportOutcome:
     """What became of a teleport. ``ok`` is false only for an authoring-adjacent runtime fact that
     is still a result rather than a raise -- the named entity has no free joint to place (e.g. a
-    static prop), which :meth:`WorldAccess.set_entity_pose` reports here rather than as
+    static prop), which :meth:`WorldAccess.set_entity_state` reports here rather than as
     :class:`AccessError`, because "this entity cannot be teleported" is a fact about the WORLD a
     campaign chose, not about the call being malformed.
     """
@@ -118,7 +142,7 @@ class TeleportOutcome:
     detail: str
 
 
-class TeleportCall(ABC):
+class TeleportCall(PendingCall):
     """A pose write in flight. ``poll()`` returns ``None`` until the outcome is known.
 
     Two-phase for the same reason :class:`OverrideCall` is: in-process the wait is for ``ctx.post``
@@ -127,6 +151,99 @@ class TeleportCall(ABC):
 
     @abstractmethod
     def poll(self) -> TeleportOutcome | None: ...
+
+
+@dataclass(frozen=True)
+class SpawnOutcome:
+    """What became of a spawn. ``ok`` is false for a runtime fact rather than a raise, on the same
+    terms as :class:`TeleportOutcome`: the world compiled no such entity to activate, or it has no
+    free joint and the pose asked for is not the one it is welded at. Both are facts about the
+    WORLD a campaign chose.
+    """
+
+    ok: bool
+    detail: str
+
+
+class SpawnCall(PendingCall):
+    """A presence flip in flight. ``poll()`` returns ``None`` until the outcome is known."""
+
+    @abstractmethod
+    def poll(self) -> SpawnOutcome | None: ...
+
+
+@dataclass(frozen=True)
+class NavOutcome:
+    """What became of a navigation route.
+
+    ``ok`` false is a trial fact, not an authoring one: the route was preempted by a newer goal, or
+    the navigator gave up on it. An entity that has no navigator at all raises instead -- that is a
+    world that cannot answer, which is the distinction :class:`AccessError` exists to keep.
+    """
+
+    ok: bool
+    detail: str = ""
+
+
+class NavCall(PendingCall):
+    """A route in flight. ``poll()`` returns ``None`` until the outcome is known.
+
+    Keyed on the navigator's **sequence number**, not on a bare "finished" flag, and that is the
+    whole reason this is a call object rather than a boolean read. A navigator that has completed
+    whatever it was doing before is *already* finished when a new route is queued, so a caller
+    watching the flag would report an arrival that had not happened. The sequence says whose arrival
+    it is: equal and finished means yours; larger means something preempted you.
+    """
+
+    @abstractmethod
+    def poll(self) -> NavOutcome | None: ...
+
+    def cancel(self) -> None:
+        """Stop the mover. Idempotent -- an action's ``request_cancel`` may fire more than once."""
+
+
+@dataclass(frozen=True)
+class ReportReading:
+    """The value a plugin's report holds now, and which field of it that is.
+
+    ``field`` is the field that was read: the one the scenario named, or for a bare report the one
+    its endpoint publishes (``""`` where the publication is the whole payload, a plain number or
+    flag). ``source`` says where it was read from, for a message.
+    """
+
+    value: object
+    field: str
+    source: str
+
+
+class ReportCall(PendingCall):
+    """A report being watched. ``poll()`` returns the current :class:`ReportReading`, or ``None``
+    while no value is known yet -- over ROS, before the map or the first message has arrived."""
+
+    @abstractmethod
+    def poll(self) -> ReportReading | None: ...
+
+
+def plain(value):
+    """A report value as the Python value a literal compares against.
+
+    A NumPy scalar becomes its Python scalar and an array (or a ROS ``array.array``) a list, so
+    ``expected_value: 'True'`` or ``'[0.0, 1.0]'`` compares by value, not by NumPy's element-wise
+    rules -- an array compared with ``==`` is an array, whose truth is an error.
+    """
+    if isinstance(value, np.generic):
+        return value.item()
+    tolist = getattr(value, "tolist", None)
+    return tolist() if callable(tolist) else value
+
+
+def published_field(backend: dict) -> str:
+    """The field of a report its ROS publication carries (the ``field`` hint), ``""`` for all of it.
+
+    What a bare ``report: '<endpoint>'`` means on both transports, so the short form compares the
+    same value in a stepped run as over ROS.
+    """
+    return str((backend.get("ros2") or {}).get("field") or "")
 
 
 class WorldAccess(ABC):
@@ -169,14 +286,78 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def set_entity_pose(self, name: str, pos: np.ndarray, quat: np.ndarray) -> TeleportCall:
-        """Teleport a free-jointed entity to ``pos`` (metres) / ``quat`` (w, x, y, z). Never blocks.
+    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+        """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
 
-        For placing a robot at a per-configuration pose a MuJoCo compile cannot vary (a campaign's
-        random start pose, unlike ``spawn_robot.pos`` in the world YAML): the mechanism a
-        ``config_generation``-time factor cannot reach because it is decided per RUN, after the
-        world already compiled. Zeroes the entity's velocity, matching a fresh spawn rather than a
-        mid-flight relocation.
+        ``goal_poses`` must not be empty; running the route the entity was configured with is
+        :meth:`start_route`, not a route with no poses.
+
+        This drives the simulator's own mover. It is not ``osc.nav2``'s ``nav_to_pose``, which
+        commands an external nav2 stack: that one is the subject of the experiment, this one is the
+        apparatus around it.
+        """
+
+    @abstractmethod
+    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+        """Run the route ``name`` was configured with (``navigator: {goals: [...]}``). Never blocks.
+
+        What lets a world own an opponent's trajectory -- identical in every repetition, and visible
+        in a campaign's config diff -- while the scenario owns only its timing. An entity with no
+        configured route raises :class:`AccessError`: there is nothing to run, and succeeding would
+        read as an arrival.
+        """
+
+    @abstractmethod
+    def set_entity_state(
+        self, name: str, pos: np.ndarray, quat: np.ndarray, lin=None, ang=None
+    ) -> TeleportCall:
+        """Place a free-jointed entity at ``pos`` (metres) / ``quat`` (w, x, y, z), moving at
+        ``lin``/``ang``. Never blocks.
+
+        The state an entity is *in*, which is pose and velocity together -- the shape
+        ``simulation_interfaces``' ``EntityState`` has, and the reason this is not called a
+        teleport: the same call serves placing a robot at a per-configuration start pose (a
+        per-RUN value a MuJoCo compile cannot vary) and handing a body a velocity it should be
+        moving with.
+
+        ``lin``/``ang`` default to **zero**, which is what placing something means: a body put
+        somewhere is not still carrying the velocity it had. A caller that wants motion states it,
+        rather than the state being half-settable.
+        """
+
+    @abstractmethod
+    def set_entity_presence(self, name: str, present: bool, pos=None, quat=None) -> SpawnCall:
+        """Make an entity perceivable (or not), placing it as it appears. Never blocks.
+
+        Presence is what a per-RUN start pose should go through, rather than a teleport: the pose is
+        applied in the SAME transaction as the flip, so the entity is never perceivable at a pose
+        nobody asked for. A teleport can only spawn-at-nominal-then-move, which is visible for a
+        step and accelerates a free body under gravity in between.
+
+        A pose is **required when making an entity present**, and refused when making it absent.
+        That is not this layer's preference: ``SpawnEntity.srv`` states ``initial_pose``
+        unconditionally -- a default-constructed request carries the origin and the identity
+        rotation -- so there is no way to spawn over ROS without asking for *some* pose, and a
+        transport that quietly sent the origin would move the entity somewhere nobody named.
+        ``DeleteEntity`` takes no pose at all, and an absent entity keeps the one it had, which is
+        what lets it come back where it was.
+
+        Making an already-present entity present again is not an error: the caller asked for a
+        state and got it.
+        """
+
+    @abstractmethod
+    def entity_report(self, entity: str, report: str, field: str = "") -> ReportCall:
+        """Watch one value a plugin publishes: field *field* of *entity*'s endpoint *report*.
+
+        Addressed as the world names it -- the entity that owns the endpoint and the endpoint's name
+        (``'ur5e'``, ``'force_limit'``), never a topic. An empty *field* means the one the
+        endpoint's ROS publication carries (``LimitReport.tripped`` for ``force_limit``), so the
+        short form compares one value on both transports. In-process every field of the report is
+        readable; over ROS only the published one travels, and another is refused naming it.
+
+        Raises :class:`AccessError`, from this call or from ``poll()``, for an entity, report or
+        field that does not exist, listing what does -- over ROS once the bridge's map has said so.
         """
 
     def teardown(self) -> None:

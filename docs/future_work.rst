@@ -17,8 +17,8 @@ so every captured frame *blocks* a physics step. Rendering is far more expensive
 (GL scene update + rasterisation, and it grows with scene/mesh complexity -- e.g. the Unitree G1's
 multi-MB link meshes), so a subscribed camera at meaningful resolution/rate pulls the real-time
 factor below 1: the whole sim -- including the robot's motion -- runs in slow motion. This is the
-sensor analogue of the interactive-viewer slowdown already fixed in the runner (rendering was
-decoupled from the 500 Hz step to a fixed display cadence).
+sensor analogue of the interactive-viewer slowdown the runner avoids by rendering at a fixed display
+cadence, decoupled from the 500 Hz step.
 
 The plugin is ``parallel_safe = False`` and holds its own renderer, so it cannot be moved to the
 (planned) parallel ``post_step`` executor as-is.
@@ -79,13 +79,13 @@ Per-tick memoisation of lazy endpoint reads
 ``read()`` **callback**, not eagerly in ``post_step``: ``BridgeBase.post_step`` only calls
 ``read()`` when the endpoint's ``_RateGate`` is due (``roqsim/bridge.py``), so the work then
 happens at the endpoint rate (e.g. 50 Hz odom) instead of every 500 Hz physics step. The locomotion
-and arm plugins follow this ("compute-on-read"); it removed a per-robot per-step cost that otherwise
+and arm plugins follow this ("compute-on-read"); it avoids a per-robot per-step cost that otherwise
 multiplies as robots are added.
 
 **Gap.** ``read()`` is called **once per consumer per due-tick**. If two transports read the same
 endpoint (e.g. a second bridge, or a bridge plus an in-process ``RobotHandle`` consumer) in the same
 step, the payload is computed **twice**. Today this never happens -- each endpoint is ``owner``-scoped
-to exactly one domain bridge -- so compute-on-read is strictly cheaper than the old cache. But the
+to exactly one domain bridge -- so compute-on-read is strictly cheaper than an eager cache. But the
 pattern quietly assumes a single reader.
 
 **Proposed fix.** Memoise ``Endpoint.read`` per sim-time: cache ``(sim_time, value)`` and return the
@@ -94,6 +94,33 @@ makes lazy reads inherently single-compute for **any** multi-consumer topology, 
 in one place (the bridge), and lets every producer keep a plain ``read()`` with no caching logic of
 its own. Small change local to ``context.Endpoint`` / ``BridgeBase``; the alternative (each producer
 re-adding its own cache) is exactly the eager-``post_step`` coupling this pattern removed.
+Plugin-declared viewer keys
+---------------------------
+
+**Context.** The keys roqsim adds to the viewer window are declared as :class:`roqsim.keys.KeyBinding`
+records, and a handler says which it owns in a ``key_bindings`` attribute. ``keys.merge()`` reads that
+attribute off *anything* with ``getattr``, so a handler, its class and a plugin are already sources on
+the same footing, and the F1 overlay renders whatever it is handed. A plugin that wanted a key --
+drop a waypoint, arm a trigger, mark the interesting moment of a long run -- is one attribute away
+from having one listed and conflict-checked.
+
+**Gap: dispatch, not declaration.** The key callback runs on MuJoCo's UI thread, while a plugin's
+state change must happen on the physics thread (§7, single-writer). Every core handler already
+resolves that the same way -- ``key_callback`` debounces and counts, ``take_pending`` is read by the
+driver -- so the plugin base wants that split *offered* rather than reimplemented per plugin, or the
+first plugin to take a key will write ``model`` from the UI thread and mostly get away with it.
+
+**Also open.**
+
+- The sources would be ``Engine.plugins``, which the viewer layer cannot see: ``SimContext`` carries
+  no plugin list and nothing viewer-related. They are also only known after ``engine.setup()``, which
+  is *after* the loading window has opened -- so either the list is rebuilt when the world is adopted,
+  or the window is opened later than it is now (it is deliberately early, to cover a slow compile).
+- Whether two plugins claiming one key refuses the load or refuses the second key. ``merge`` raises
+  today, which is right for a fixed core set and may be too blunt for a world someone assembled.
+- Whether a plugin may claim a key Simulate owns. It cannot suppress one, so at best it shares --
+  which is exactly what F1 does deliberately, and what nothing else should do by accident.
+
 Exporting a model as CAD geometry (STEP)
 ----------------------------------------
 

@@ -9,6 +9,10 @@ Spot's MuJoCo position actuators (kp=60 / kv=1.5 in ``spot.xml`` close the PD lo
 per-step torque loop, unlike the G1). Reports the floating base as ``odom`` and the leg joints as
 ``joint_states``.
 
+``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
+policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
+command"). The base's world pose is the ``ground_truth_pose`` plugin's.
+
 The observation/action convention, default pose, action scale and joint order are transcribed from
 NVIDIA's Isaac ``Isaac-Velocity-Flat-Spot-v0`` env (bundled as ``policy/spot.yaml``), so the policy
 runs on exactly what it was trained on.
@@ -17,16 +21,17 @@ Policy weights are NVIDIA-licensed and *not committed*: fetch them with
 ``python -m roqsim_quadruped.policy.fetch_policy`` or point ``policy_path`` / ``$SPOT_POLICY_PATH``
 at a local ``spot_policy.pt``.
 
-Config::
+Config -- a component of the entry that spawns the robot, since ownership is where the entry
+sits rather than a config key::
 
     spot_locomotion:
-      robot: robot                 # entity name registered by spawn_robot
       namespace: ""                # transport scope (default: inherited from spawn_robot's namespace)
       policy_path: <fetched>       # TorchScript policy (default: $SPOT_POLICY_PATH or policy/spot_policy.pt)
       config_path: <bundled>       # deploy config (default: policy/spot.yaml)
       max_linear_vel: 1.5          # |vx| clamp (m/s)
       max_lateral_vel: 0.8         # |vy| clamp (m/s)
       max_angular_vel: 1.5         # |yaw_rate| clamp (rad/s)
+      cmd_vel_timeout: 0.0         # s; > 0 stops the robot when no command arrives for this long
       test_cmd: [0.5, 0.0, 0.0]    # optional [vx, vy, w] applied every tick (standalone demo)
 """
 
@@ -40,6 +45,7 @@ import torch
 import yaml
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
 
 from ..policy import DEFAULT_CONFIG, DEFAULT_POLICY
@@ -83,6 +89,8 @@ class SpotLocomotionPlugin(Plugin):
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read by the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._odom_frame = SpawnFrame()
 
         # Loaded/resolved in configure().
         self._policy = None
@@ -118,6 +126,7 @@ class SpotLocomotionPlugin(Plugin):
                 errors.append(f"'{key}' must be > 0")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, w]")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -251,27 +260,12 @@ class SpotLocomotionPlugin(Plugin):
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
         self._cmd[1] = float(np.clip(vy, -self.max_vy, self.max_vy))
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
-        # Computed on demand: the bridge calls this only at the endpoint rate (50 Hz), not every
-        # physics step, so there is no per-step cost. Runs on the physics thread inside the bridge's
-        # post_step, reading the same post-mj_step data. Returns (x, y, yaw, vx, vy, w, z); trailing z
-        # is the true base height (Spot stands ~0.5 m up; the bridge tf/odom carry it, nav2 stays 2D).
-        d = self._ctx.data
-        x, y, z = d.xpos[self._base_bid]
-        qw, qx, qy, qz = d.xquat[self._base_bid]
-        yaw = np.arctan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz))
-        vgx, vgy = d.qvel[self._base_dadr : self._base_dadr + 2]
-        c, s = np.cos(yaw), np.sin(yaw)
-        return (
-            float(x),
-            float(y),
-            float(yaw),
-            float(c * vgx + s * vgy),
-            float(-s * vgx + c * vgy),
-            float(d.qvel[self._base_dadr + 5]),
-            float(z),
-        )
+        # Computed on demand at the endpoint rate, from the post-mj_step data. Returns
+        # (x, y, yaw, vx, vy, w, z); z is the base height (Spot stands ~0.5 m up), nav2 stays 2D.
+        return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
     def read_joint_states(self):
         # Computed on demand (see read_odom). Fancy-indexing qpos/qvel returns fresh arrays.
@@ -287,7 +281,9 @@ class SpotLocomotionPlugin(Plugin):
             d.qvel[self._leg_dadr] = 0.0
             d.ctrl[self._leg_aid] = self._default_angles
             mujoco.mj_forward(ctx.model, d)
+        self._odom_frame.capture(d.xpos[self._base_bid], d.xquat[self._base_bid])
         self._cmd[:] = 0.0
+        self.watchdog.clear()
         self._action[:] = 0.0
         self._target_q = self._default_angles.copy()
         self._counter = 0
@@ -302,6 +298,8 @@ class SpotLocomotionPlugin(Plugin):
         if "test_cmd" in self.config:
             vx, vy, w = self.config["test_cmd"]
             self.drive(float(vx), float(vy), float(w))
+        if self.watchdog.expired(ctx):
+            self._cmd[:] = 0.0
 
         d = ctx.data
         qj = d.qpos[self._leg_qadr]

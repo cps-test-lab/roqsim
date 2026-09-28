@@ -6,7 +6,7 @@
   <a href="https://github.com/cps-test-lab/roqsim/actions"><img src="https://github.com/cps-test-lab/roqsim/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="Apache-2.0"></a>
   <img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+">
-  <img src="https://img.shields.io/badge/MuJoCo-3.0%2B-orange.svg" alt="MuJoCo 3.0+">
+  <img src="https://img.shields.io/badge/MuJoCo-3.14-orange.svg" alt="MuJoCo 3.14">
 </p>
 
 **roqsim** — **ro**bots, **q**uickly **sim**ulated (in [MuJoCo](https://mujoco.org)) — is a
@@ -17,7 +17,7 @@ scene, is declared in a **single YAML file**.
 sim:
   world: empty_room
 components:
-  - spawn_robot: {model: turtlebot4, pos: [0, 0]}
+  - spawn_robot: {model: turtlebot4, pose: {position: {x: 0, y: 0}}}
 ```
 
 That is a driving, sensing robot: the TurtleBot 4 brings its own differential drive, lidar and RGB-D
@@ -26,18 +26,22 @@ hand-assemble.
 
 ## Features
 
-- **One YAML file per world.** Robots, sensors, props and scene declared together; **51 plugins** hook
+- **One YAML file per world.** Robots, sensors, props and scene declared together; plugins hook
   a MuJoCo step loop at well-defined lifecycle points. Write your own in a file next to the world.
-- **18 robot models across 5 families** — 4 wheeled bases (TurtleBot 4, TurtleBot 3 Waffle, Husky A200,
-  Jackal), 5 arms and 2 grippers (UR10e, UR5e, Panda, Gen3, OpenManipulator-X; Robotiq 2F-85, Schunk
-  PG+70), 2 mobile manipulators (Tiago Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli,
-  AgiBot G2), and Boston Dynamics Spot — each vendored with pinned upstream provenance.
-- **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with six
-  vendor-CAD sensor models. The IMU reports proper acceleration, true attitude (or none, marked as
-  such) and covariances built from its declared noise, so a `robot_localization` stack has the input
-  it expects; a segmentation camera adds per-pixel class and instance labels with tight 2D boxes,
-  measured from the mask, so a perception experiment has ground truth to be scored against. Coverage
-  analysis answers the question that actually blocks you: *how many cameras, and where?*
+- **37 robot models across 6 families** — 17 wheeled bases (TurtleBot 4 and 3 Waffle, Husky A200,
+  Jackal, Ridgeback, Warthog, Panther, ROSbot, MP-400, MPO-500/700, ROX-Diff, LGDXRobot2,
+  MakerSpet Mini, Raspimouse, OOMWOO ONE, PiRacer), 9 arms and 2 grippers (UR10e, UR5e, Panda,
+  Gen3, xArm7, M1013, OpenManipulator-X, ViperX 300s, WidowX 250s; Robotiq 2F-85, Schunk PG+70),
+  2 mobile manipulators (TIAGo Pro, Frankie), 4 humanoids (Unitree G1, G1 + Dex1, LimX Oli,
+  AgiBot G2), Boston Dynamics Spot, the Crazyflie 2 and an X500 — each vendored with pinned
+  upstream provenance, the X500 authored from PX4's own airframe definition.
+- **Sensors, and where to put them.** Lidar, RGB-D, IMU, force-torque and fiducial markers, with
+  19 bundled sensor device models. The IMU reports proper acceleration, true attitude (or none,
+  marked as such) and covariances built from its declared noise, so a `robot_localization` stack
+  has the input it expects; a segmentation camera adds per-pixel class and instance labels with
+  tight 2D boxes, measured from the mask, so a perception experiment has ground truth to be scored
+  against. Coverage analysis answers the question that actually blocks you: *how many cameras, and
+  where?*
 - **Scenes from what you already have.** Import Gazebo SDF, USD or CAD — or draw a floorplan in a window
   and get a world back.
 - **People as dynamic obstacles.** Kinematic pedestrians with A\* and behaviour-tree navigation, plus
@@ -62,8 +66,9 @@ make help     # list all targets
 .venv/bin/roqsim sim roqsim_mobile:turtlebot4_demo      # a viewer opens
 ```
 
-**21 ready-to-run worlds** ship in the box — robot demos, a warehouse scene, sensor rigs and nav2
-setups. `roqsim --help` lists the command groups; `roqsim <group> --help` gives one line per tool.
+**Ready-to-run worlds** ship in the box, named by a `<package>:<world>` ref that `roqsim sim`
+takes. Every robot model also registers a `<name>_demo` world that shows that
+one robot in an empty room, which is how the commands above run. `roqsim --help` lists the core's commands and the command groups; `roqsim <group> --help` gives one line per tool.
 
 Headless, as fast as the machine allows, with timings:
 
@@ -73,7 +78,9 @@ Headless, as fast as the machine allows, with timings:
 
 ## Documentation
 
-Start with [getting started](docs/getting_started.rst), then:
+The documentation is published at **<https://cps-test-lab.github.io/roqsim/>**, rebuilt from
+`main` — read the model catalog there, where each model shows its preview. The sources:
+start with [getting started](docs/getting_started.rst), then:
 
 | | |
 | --- | --- |

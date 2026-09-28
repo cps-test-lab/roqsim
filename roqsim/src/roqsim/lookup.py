@@ -84,7 +84,7 @@ def resolve_body_id(ctx: SimContext, name: str, *, movable: bool = True, what: s
     if movable and not _can_move(ctx.model, bid):
         raise LookupError_(
             f"{label}{origin} is welded to the world, so its pose is a compile-time constant and "
-            "waiting for it to move never ends. Give it a free joint (`free: true` on a "
+            "waiting for it to move never ends. Give it a free joint (`motion: physics` on a "
             "spawn_model), or name something that can actually move."
         )
     return bid

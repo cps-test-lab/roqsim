@@ -47,22 +47,39 @@ Usage::
 ``--prefix`` selects the robot: every body whose MJCF name starts with it. The prefix is stripped from
 the emitted names, so the URDF carries the model's own names (``shoulder_pan_joint``) and matches the
 joint names ``arm_controller`` publishes in ``/joint_states``.
+
+Several robots in one description
+=================================
+``--prefix a_,b_`` exports several robots into ONE URDF, each hanging off a common ``--root-link`` by
+a fixed joint at the pose the compiled model puts it at (``combine_urdfs``). That is what a planner
+needs to plan two arms *together* rather than one after the other: MoveIt reasons over a single robot
+description, so two chains it must check against each other have to be in the same one. Names are
+then KEPT rather than stripped -- one URDF is one flat namespace, and two arms of the same model
+would otherwise both claim ``base``, ``shoulder_link``, ``shoulder_pan_joint``. A name two parts both
+claim is refused rather than resolved.
 """
 
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import logging
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
 from .export_mesh import _quat_to_mat
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +147,10 @@ class UrdfExporter:
         gripper_joint: str = "",
         strip: str | None = None,
         mesh_package: str = "",
+        mesh_prefix: str = "",
         tip_site: str = "",
         tip_link: str = "tcp",
+        link_strip: str | None = None,
     ):
         self.m = model
         self.prefix = prefix
@@ -143,6 +162,12 @@ class UrdfExporter:
         # unstripped URDF leaves every arm link frozen at zero and MoveIt plans from a pose the arm is
         # not in. Defaults to `prefix`, which is the single-robot case.
         self.strip_prefix = prefix if strip is None else strip
+        # What is removed from emitted LINK names. Defaults to the selection prefix, so one robot's
+        # URDF carries the model's own link names. Set to "" when several robots go into ONE
+        # description: a URDF is a flat namespace, and two arms of the same model would otherwise
+        # both claim `base`, `shoulder_link`, ... Keeping each arm's MJCF prefix is what makes those
+        # names unique, and `collapse` is then read in that same (unstripped) spelling.
+        self.link_strip = self.prefix if link_strip is None else link_strip
         self.name = name
         self.root_link = root_link
         # Parent for a root body that is itself jointed (a rail carriage, a gantry). Only emitted
@@ -153,6 +178,8 @@ class UrdfExporter:
         self.mesh_dir = mesh_dir
         # Non-empty -> meshes are referenced as package://<pkg>/... instead of file://<abs path>.
         self.mesh_package = mesh_package
+        # Non-empty -> meshes are referenced as <prefix>/<file>: where they will be READ.
+        self.mesh_prefix = mesh_prefix
         self.dropped_dofs: list[str] = []
         self.mesh_files: dict[int, Path] = {}
         # body id -> the frame shift its URDF link absorbed (non-zero only for a joint anchor).
@@ -172,16 +199,28 @@ class UrdfExporter:
         ``file://<abs path>`` by default, which is right for a URDF generated and consumed in the same
         tree. It is wrong for one that SHIPS: an ament package installs to a different prefix, and a
         container to a different path again, so a baked absolute path resolves to nothing there.
-        ``--mesh-package`` emits ``package://<pkg>/<mesh-dir name>/<file>`` instead, which resolves
-        wherever the package is installed.
+
+        Two ways to say where the meshes will actually be read:
+
+        * ``--mesh-package`` emits ``package://<pkg>/<mesh-dir name>/<file>``, which resolves
+          wherever the package is installed.
+        * ``--mesh-prefix`` emits ``<prefix>/<file>``, for a consumer that is neither this tree nor
+          an ament package -- a campaign stages the meshes into the container that plans, at a path
+          that exists only there, and nothing about where they were WRITTEN can name it.
+
+        Neither is cosmetic: a reference that does not resolve gives ``move_group`` a robot whose
+        links have no geometry, and it plans through the table and reports success.
         """
         if self.mesh_package:
             return f"package://{self.mesh_package}/{Path(path).parent.name}/{Path(path).name}"
+        if self.mesh_prefix:
+            return f"{self.mesh_prefix.rstrip('/')}/{Path(path).name}"
         return f"file://{path}"
 
     def _strip(self, s: str) -> str:
-        """Strip the SELECTION prefix. Used for link names, which only have to be unique."""
-        return s[len(self.prefix) :] if self.prefix and s.startswith(self.prefix) else s
+        """Strip the LINK naming prefix. Used for link names, which only have to be unique."""
+        sp = self.link_strip
+        return s[len(sp) :] if sp and s.startswith(sp) else s
 
     def _strip_joint(self, s: str) -> str:
         """Strip the naming prefix. Used for JOINT names, which have to match /joint_states.
@@ -589,7 +628,7 @@ class UrdfExporter:
         )
 
         # Type and effort come from the MODEL, exactly as `_write_joint` derives them for every other
-        # joint. Hardcoding `revolute` here was wrong for the common case: a parallel-jaw gripper's
+        # joint. A hardcoded `revolute` is wrong for the common case: a parallel-jaw gripper's
         # commanded DOF is usually a SLIDE (the PAL PRO's `gripper_*_finger_joint` is a 0..0.07 m
         # travel), and calling it revolute silently turns 70 mm of jaw opening into 0.07 rad of
         # rotation in every planning-side computation, while the number in /joint_states stays the
@@ -706,6 +745,106 @@ class UrdfExporter:
             self.mesh_files[mesh_id] = out.resolve()
 
 
+class _MergedExporters:
+    """The exported parts' totals, so one combined export reports like a single one."""
+
+    def __init__(self, exporters: list[UrdfExporter]):
+        self.mesh_files = {k: v for e in exporters for k, v in e.mesh_files.items()}
+        self.dropped_dofs = [d for e in exporters for d in e.dropped_dofs]
+        self.mesh_dir = exporters[0].mesh_dir
+        self.strip_prefix = ""
+
+
+def _first_body(model: mujoco.MjModel, prefix: str) -> int:
+    """The first (topmost) body whose name carries ``prefix`` -- that robot's root."""
+    for b in range(1, model.nbody):
+        if _name(model, mujoco.mjtObj.mjOBJ_BODY, b).startswith(prefix):
+            return b
+    raise ValueError(f"no bodies match prefix {prefix!r}")
+
+
+def body_reference_pose(model: mujoco.MjModel, body: int) -> tuple[np.ndarray, np.ndarray]:
+    """``(pos, quat)`` of ``body`` in the world, in the model's REFERENCE configuration.
+
+    Composed from ``body_pos``/``body_quat`` up to the world body, not from ``MjData``: a URDF joint
+    origin is the pose at zero, so this needs no simulator state and cannot drift with it.
+    """
+    rot = np.eye(3)
+    pos = np.zeros(3)
+    cur = body
+    while cur > 0:
+        r = _quat_to_mat(model.body_quat[cur])
+        pos = r @ pos + np.asarray(model.body_pos[cur], dtype=float)
+        rot = r @ rot
+        cur = int(model.body_parentid[cur])
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, rot.reshape(9))
+    return pos, quat
+
+
+def combine_urdfs(
+    model: mujoco.MjModel,
+    parts: list[tuple[ET.ElementTree, int]],
+    *,
+    name: str,
+    root_link: str,
+) -> ET.ElementTree:
+    """Join several exported robots into ONE URDF hanging off a common root link.
+
+    A URDF is a single tree with a single root, so two robots that must be planned for TOGETHER --
+    two arms whose motions have to be checked against each other -- need one description with one
+    root. ``root_link`` is that root: a pure frame with no geometry, and each part's own root link
+    becomes its fixed child at the pose the compiled model puts it at, so the two robots stand in the
+    URDF exactly where they stand in the simulated cell.
+
+    ``parts`` pairs each part's tree with the MuJoCo body its root link represents. Link and joint
+    names must already be unique across the parts (that is what ``link_strip=""`` is for); a name two
+    parts both claim is refused here rather than silently keeping one of them, because a URDF that
+    parses with a link missing plans against a robot that is not there.
+    """
+    if len(parts) < 2:
+        raise ValueError("combine_urdfs needs at least two parts; export the single robot directly")
+
+    robot = ET.Element("robot", name=name)
+    ET.SubElement(ET.SubElement(robot, "mujoco"), "compiler", discardvisual="false")
+    ET.SubElement(robot, "link", name=root_link)
+
+    seen: dict[str, str] = {}
+    for tree, body in parts:
+        part = tree.getroot()
+        part_name = part.get("name") or "?"
+        for element in part:
+            if element.tag not in ("link", "joint"):
+                continue  # the <mujoco> compiler hint; one copy is emitted above
+            ename = element.get("name")
+            if ename in seen:
+                raise ValueError(
+                    f"{element.tag} {ename!r} is claimed by both {seen[ename]!r} and {part_name!r}. "
+                    "One URDF is one flat namespace, so the robots going into it must carry distinct "
+                    "link and joint names -- keep each one's MJCF prefix instead of stripping it."
+                )
+            seen[ename] = part_name
+            robot.append(element)
+
+        # Which link is this part's root: the one no joint in the part has as its child.
+        children = {j.find("child").get("link") for j in part.findall("joint")}
+        roots = [
+            link.get("name") for link in part.findall("link") if link.get("name") not in children
+        ]
+        if len(roots) != 1:
+            raise ValueError(
+                f"part {part_name!r} has {len(roots)} root links ({sorted(roots)}); each part joined "
+                "into a combined URDF must itself be a single tree"
+            )
+        pos, quat = body_reference_pose(model, body)
+        joint = ET.SubElement(robot, "joint", name=f"{roots[0]}_mount", type="fixed")
+        ET.SubElement(joint, "parent", link=root_link)
+        ET.SubElement(joint, "child", link=roots[0])
+        _origin(joint, pos, quat)
+
+    return ET.ElementTree(robot)
+
+
 def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
     """Dump a compiled mesh as binary STL.
 
@@ -743,6 +882,66 @@ def _write_stl(model: mujoco.MjModel, mesh_id: int, out: Path) -> None:
         fh.write(rec.tobytes())
 
 
+def _temp_roots() -> set[Path]:
+    """Directory roots whose contents belong to the process that made them.
+
+    A path under one of these is readable by this export and by nothing that comes after it, which is
+    what makes a mesh URI naming it unshippable.
+    """
+    roots: set[Path] = set()
+    for root in (Path(tempfile.gettempdir()), Path("/tmp"), Path("/var/tmp")):
+        roots.add(root)
+        with contextlib.suppress(OSError):
+            roots.add(root.resolve())
+    return roots
+
+
+def unshippable_mesh_uris(tree: ET.ElementTree | ET.Element) -> list[str]:
+    """The emitted mesh URIs that resolve nowhere but where this export wrote them.
+
+    A ``file://`` URI under a temporary directory names a path that exists for as long as the export
+    does, and only in the process tree that ran it: a campaign generates the description in one
+    container and reads it in another. Anything but ``file://`` (``package://``, a ``--mesh-prefix``
+    naming the consumer's own path) is somebody else's to resolve and is left alone.
+    """
+    root = tree.getroot() if isinstance(tree, ET.ElementTree) else tree
+    temp_roots = _temp_roots()
+    unshippable = []
+    for mesh in root.iter("mesh"):
+        uri = mesh.get("filename") or ""
+        if not uri.startswith("file://"):
+            continue
+        path = Path(uri[len("file://") :])
+        if path.is_absolute() and any(path.is_relative_to(r) for r in temp_roots):
+            unshippable.append(uri)
+    return unshippable
+
+
+def warn_on_unshippable_meshes(tree: ET.ElementTree | ET.Element, log: logging.Logger) -> list[str]:
+    """Say so when the description carries mesh URIs only this export can resolve. Returns them.
+
+    The consequence is not a crash and so has to be said out loud: ``move_group`` logs one ``Error
+    retrieving file`` per mesh, builds the robot with links that have NO collision geometry, and then
+    plans a straight line through the bench and reports success.
+    """
+    unshippable = unshippable_mesh_uris(tree)
+    if unshippable:
+        root = tree.getroot() if isinstance(tree, ET.ElementTree) else tree
+        total = sum(1 for mesh in root.iter("mesh") if mesh.get("filename"))
+        log.warning(
+            "%d of %d mesh URIs are file:// paths under a temporary directory (%s), which no "
+            "consumer of this description can be expected to have. move_group resolves none of "
+            "them, comes up with links that have no collision geometry, and plans through what it "
+            "cannot see. Pass --mesh-prefix <where the meshes will be READ> -- for a campaign, the "
+            "path it stages them to in the planning container -- or --mesh-package <pkg> where an "
+            "ament package carries them.",
+            len(unshippable),
+            total,
+            Path(unshippable[0][len("file://") :]).parent,
+        )
+    return unshippable
+
+
 def round_trip_error(
     urdf: Path,
     model: mujoco.MjModel,
@@ -765,26 +964,28 @@ def round_trip_error(
     # (<urdf>/../), which is the source-tree layout `--mesh-package` is emitted for -- without this,
     # --mesh-package would silently disable the only check that proves the export is correct.
     import re
-    import tempfile
 
-    text = Path(urdf).read_text(encoding="utf-8").replace('filename="file://', 'filename="')
-    # A `package://` URI is resolved against the directory the meshes were WRITTEN to, not by guessing
-    # a package root from the URDF's location. Guessing assumed `--mesh-package` was a bare package
+    text = Path(urdf).read_text(encoding="utf-8")
+    # Every mesh URI is resolved against the directory the meshes were WRITTEN to, not by guessing
+    # a package root from the URDF's location. Guessing assumes `--mesh-package` is a bare package
     # name with the mesh dir one level under the URDF; a value carrying a subpath (needed when the
-    # installed layout is share/<pkg>/config/<platform>/meshes) then produced `config/config/...` and
-    # the check failed on a file that was never missing. Only the basename is taken from the URI, so
-    # any `--mesh-package` value works and the check stays honest about the geometry it loads.
+    # installed layout is share/<pkg>/config/<platform>/meshes) then produces `config/config/...` and
+    # the check fails on a file that is not missing. Only the basename is taken from the URI, so
+    # any `--mesh-package` or `--mesh-prefix` value works -- including one naming a path that exists
+    # only in the container that will read it -- and the check stays honest about the geometry it
+    # loads rather than passing because it found none.
     if mesh_dir is not None:
         # Absolute: the rewritten copy is compiled from a temporary directory, so a relative
         # --mesh-dir (the CLI's default is the bare `meshes`) would resolve against the temp dir and
         # the check would fail on files that are present.
         abs_mesh_dir = Path(mesh_dir).resolve()
         text = re.sub(
-            r'filename="package://[^"]*/([^/"]+)"',
+            r'filename="(?:package|file)://[^"]*?([^/"]+)"',
             lambda m: f'filename="{abs_mesh_dir}/{m.group(1)}"',
             text,
         )
     else:
+        text = text.replace('filename="file://', 'filename="')
         text = re.sub(
             r'filename="package://[^/"]+/', f'filename="{Path(urdf).resolve().parent.parent}/', text
         )
@@ -836,9 +1037,9 @@ def round_trip_error(
         # models do not share it: a model whose root body carries a rotation (the UR arms' base is
         # `quat="0 0 0 -1"`, the standard UR convention) has every link rotated with it in world
         # coordinates, while the URDF's root -- correctly -- is the frame those links are expressed
-        # in. That showed up as a ~1.7 m "error" on a UR5e whose URDF matched the MJCF exactly, body
+        # in. Left in, it reads as a ~1.7 m "error" on a UR5e whose URDF matches the MJCF exactly, body
         # for body: a false alarm that condemns a correct export. Rotating into the root frame makes
-        # the check what its comment always claimed it was, a frame-independent shape comparison.
+        # the check a frame-independent shape comparison.
         uroot, mroot = ud.xpos[body_pairs[0][1]], md.xpos[body_pairs[0][2]]
         urot = ud.xmat[body_pairs[0][1]].reshape(3, 3)
         mrot = md.xmat[body_pairs[0][2]].reshape(3, 3)
@@ -855,13 +1056,27 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export urdf",
         description="Export one robot's kinematic tree from a compiled roqsim world to URDF for MoveIt.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="5 is --check finding the URDF's kinematics off the MJCF's by more than --tolerance.",
+        ),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="path to a bare MJCF file (compiled directly)")
+    source.add_argument(
+        "--mjcf",
+        help="path to a bare MJCF file (compiled directly, with no plugins, so --set, --override "
+        "and --skip-plugins are refused with it)",
+    )
     parser.add_argument("--out", required=True, help="output .urdf path")
     parser.add_argument(
-        "--prefix", default="", help="MJCF name prefix selecting the robot (stripped in the output)"
+        "--prefix",
+        default="",
+        help="MJCF name prefix selecting the robot (stripped in the output). Several prefixes, "
+        "comma-separated, export several robots into ONE description hanging off --root-link -- "
+        "what a planner needs to reason about two arms at once. Their names are then KEPT rather "
+        "than stripped, since one URDF is one flat namespace",
     )
     parser.add_argument("--name", default="robot", help="robot name in the URDF")
     parser.add_argument(
@@ -908,12 +1123,20 @@ def main(argv: list | None = None) -> int:
         default="tcp",
         help="name of the link --tip-site emits (ignored without it)",
     )
-    parser.add_argument(
+    # One reference scheme per export: two would mean the URDF says where its meshes are twice.
+    where = parser.add_mutually_exclusive_group()
+    where.add_argument(
         "--mesh-package",
         default="",
         help="emit meshes as package://<PKG>/<mesh-dir>/<file> instead of file://<abs path>. Use "
         "when the URDF ships inside an ament package, where a baked absolute path resolves to "
         "nothing after install",
+    )
+    where.add_argument(
+        "--mesh-prefix",
+        default="",
+        help="emit meshes as <PREFIX>/<file>: where they will be READ, when that is neither this "
+        "tree nor an ament package -- a campaign stages them into the container that plans",
     )
     parser.add_argument(
         "--mesh-dir",
@@ -933,12 +1156,17 @@ def main(argv: list | None = None) -> int:
         help="extra plugin names/refs to drop before compiling; transport/bridge plugins are always "
         "dropped (they contribute no geometry)",
     )
+    add_override_options(parser)
     parser.add_argument(
         "--manifest",
         help="also write {'inputs': [...]} so a caller can tell when this output is stale",
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        refuse_world_options(
+            parser, args, "--mjcf compiles a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_urdf")
@@ -949,26 +1177,66 @@ def main(argv: list | None = None) -> int:
     if args.mjcf:
         model, _data, _view = _compile_from_mjcf(Path(args.mjcf))
     else:
-        model, _data, _view = _compile_from_world(args.world, skip, {}, log)
+        model, _data, _view = _compile_from_world(
+            args.world, skip, overrides_from_options(args), log
+        )
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     mesh_dir = Path(args.mesh_dir) if args.mesh_dir else out.parent / "meshes"
-    exporter = UrdfExporter(
-        model,
-        prefix=args.prefix,
-        name=args.name,
-        root_link=args.root_link,
-        collapse=tuple(s.strip() for s in args.collapse.split(",") if s.strip()),
-        mesh_dir=mesh_dir,
-        world_link=args.world_link,
-        gripper_joint=args.gripper_joint,
-        strip=args.strip,
-        mesh_package=args.mesh_package,
-        tip_site=args.tip_site,
-        tip_link=args.tip_link,
-    )
-    tree = exporter.export()
+    prefixes = [s.strip() for s in args.prefix.split(",") if s.strip()] or [args.prefix]
+    collapse = tuple(s.strip() for s in args.collapse.split(",") if s.strip())
+    if len(prefixes) == 1:
+        exporter = UrdfExporter(
+            model,
+            prefix=prefixes[0],
+            name=args.name,
+            root_link=args.root_link,
+            collapse=collapse,
+            mesh_dir=mesh_dir,
+            world_link=args.world_link,
+            gripper_joint=args.gripper_joint,
+            strip=args.strip,
+            mesh_package=args.mesh_package,
+            mesh_prefix=args.mesh_prefix,
+            tip_site=args.tip_site,
+            tip_link=args.tip_link,
+        )
+        tree = exporter.export()
+    else:
+        if args.strip is not None:
+            print(
+                "roqsim export urdf: --strip cannot be used with several --prefix values. Each "
+                "robot keeps its own MJCF prefix there, which is what makes the combined "
+                "description's link and joint names unique.",
+                file=sys.stderr,
+            )
+            return exit_status.BAD_INPUT
+        parts, exporters = [], []
+        for prefix in prefixes:
+            root_body = _first_body(model, prefix)
+            exporter = UrdfExporter(
+                model,
+                prefix=prefix,
+                name=f"{args.name}_{prefix.rstrip('_')}",
+                # Names are kept, so the root link keeps the model's own (prefixed) body name and
+                # --root-link names the COMMON root the parts hang off instead.
+                root_link=_name(model, mujoco.mjtObj.mjOBJ_BODY, root_body),
+                collapse=tuple(prefix + c for c in collapse),
+                mesh_dir=mesh_dir,
+                world_link=f"{prefix}{args.world_link}",
+                gripper_joint=f"{prefix}{args.gripper_joint}" if args.gripper_joint else "",
+                strip="",
+                link_strip="",
+                mesh_package=args.mesh_package,
+                mesh_prefix=args.mesh_prefix,
+                tip_site=args.tip_site,
+                tip_link=f"{prefix}{args.tip_link}",
+            )
+            parts.append((exporter.export(), root_body))
+            exporters.append(exporter)
+        tree = combine_urdfs(model, parts, name=args.name, root_link=args.root_link)
+        exporter = _MergedExporters(exporters)
     ET.indent(tree, space="  ")
     tree.write(out, encoding="utf-8", xml_declaration=True)
     log.info(
@@ -981,10 +1249,23 @@ def main(argv: list | None = None) -> int:
         if exporter.dropped_dofs
         else "",
     )
+    unshippable = warn_on_unshippable_meshes(tree, log)
 
     if args.check:
-        err, where = round_trip_error(out, model, exporter.strip_prefix, mesh_dir=mesh_dir)
+        err, where = round_trip_error(
+            out, model, exporter.strip_prefix if len(prefixes) == 1 else "", mesh_dir=mesh_dir
+        )
         log.info("round-trip FK error: %.3e m (worst link: %s)", err, where)
+        if unshippable:
+            # The check reads the meshes out of --mesh-dir whatever the URIs say, which is what lets
+            # it measure an export whose URIs name the consumer's path. Saying so is the difference
+            # between "this export is correct" and "this export is deliverable".
+            log.warning(
+                "--check measured the geometry and the kinematics against the meshes where they "
+                "were WRITTEN. It does not resolve the URIs the URDF carries, so it says nothing "
+                "about the %d unshippable ones above.",
+                len(unshippable),
+            )
         if err > args.tolerance:
             log.error(
                 "URDF disagrees with the MJCF by %.3e m at %r (tolerance %.1e). MoveIt would plan "
@@ -993,7 +1274,7 @@ def main(argv: list | None = None) -> int:
                 where,
                 args.tolerance,
             )
-            return 1
+            return exit_status.FINDING
 
     if args.manifest:
         from .config import world_sources
@@ -1006,7 +1287,7 @@ def main(argv: list | None = None) -> int:
         Path(args.manifest).parent.mkdir(parents=True, exist_ok=True)
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

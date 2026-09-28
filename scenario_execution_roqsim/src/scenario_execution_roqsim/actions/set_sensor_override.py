@@ -79,7 +79,8 @@ class SetSensorOverride(SimAction):
             # future has not completed. Either way one tick, and neither may be waited on by blocking.
             return self.waiting(
                 f"{'applying' if self._active else 'restoring'} the fault on {self._instance!r} "
-                f"({self.transport})"
+                f"({self.transport})",
+                self._call,
             )
 
         what = "applied" if self._active else "restored"

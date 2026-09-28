@@ -17,7 +17,6 @@ a belt-driven **CoreXY** stage executing g-code, i.e. two orthogonal prescribed 
 Config::
 
     prop_trajectory:
-      name: object_stage         # entity name (default: 'prop_trajectory')
       prefix: ""                 # MJCF name prefix (distinct prefixes for >1 stage)
       path: trajectories/t1.csv  # 2-column "x,y" CSV, resolved relative to the world YAML
       units: mm                  # mm | m -- the CSV's units (default mm)
@@ -34,7 +33,7 @@ is infinitely stiff and its motion is exactly the commanded path regardless of t
 is the right model for a stepper-driven gantry and the wrong one for a compliant conveyor.
 
 ``Props carried by the plate need their own free joint`` -- spawn them with
-``spawn_model: {..., free: true}`` and place them just above the plate's top surface.
+``spawn_model: {..., motion: physics}`` and place them just above the plate's top surface.
 """
 
 from __future__ import annotations

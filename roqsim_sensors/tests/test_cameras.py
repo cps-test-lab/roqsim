@@ -322,7 +322,7 @@ def test_d455_model_fov_matches_datasheet():
 
     MuJoCo stores only fovy (vertical); the horizontal FOV falls out of fovy + the resolution
     aspect, so this locks BOTH: fovy == 62 and the derived horizontal FOV ~= 87 deg."""
-    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455", "name": "d455"}}]}
+    cfg = {"sim": {}, "plugins": [{"spawn_sensor": {"model": "d455"}, "name": "d455"}]}
     engine = Engine(load_config_from_dict(cfg))
     engine.setup()
     engine.reset()
@@ -346,6 +346,7 @@ class _FakeEndpoint:
 class _FakeCtx:
     def __init__(self, sim_time: float):
         self.sim_time = sim_time
+        self.dt = 0.002
 
 
 def test_due_gates_on_rate_and_has_subscribers():
@@ -365,8 +366,8 @@ def test_due_gates_on_rate_and_has_subscribers():
 def test_due_gates_on_every_endpoint_the_render_feeds_not_just_colour():
     """A depth-only or cloud-only consumer must keep the renderer running.
 
-    This is a regression: gating on ``image`` alone starved exactly the consumer that never subscribes
-    to colour -- MoveIt's octomap updater takes the point cloud -- and the symptom was not an error
+    Gating on ``image`` alone starves exactly the consumer that never subscribes to colour --
+    MoveIt's octomap updater takes the point cloud -- and the symptom is not an error
     but an empty world, published forever at the configured rate.
     """
     plugin = RealsenseD435Plugin({"rate_hz": 10.0})
@@ -702,3 +703,19 @@ def test_a_reset_lets_the_next_trial_render_again():
     assert _endpoint(engine, "image").read() is not None, "the first step of a trial must capture"
     assert _endpoint(engine, "depth").read() is not None
     assert _endpoint(engine, "points").read() is not None
+
+
+def test_a_rate_the_timestep_divides_renders_on_every_period():
+    """10 Hz on a 2 ms step is every fiftieth step. The sim clock is a float sum of timesteps, so
+    the step a period after the last capture can read a hair short of it; the gate must take it."""
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._image_ep = _FakeEndpoint(has_subscribers=None)
+    ctx = _FakeCtx(0.0)
+    due = []
+    for step in range(1, 5001):  # 10 s
+        ctx.sim_time += ctx.dt
+        if plugin._due(ctx):
+            plugin._last_capture = ctx.sim_time
+            due.append(step)
+    gaps = {b - a for a, b in zip(due, due[1:], strict=False)}
+    assert gaps == {50}, f"capture spacing in steps: {sorted(gaps)}"

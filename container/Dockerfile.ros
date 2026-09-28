@@ -1,8 +1,8 @@
 # syntax=docker/dockerfile:1
 #
-# roqsim-ros (full) — ROS 2 Jazzy + nav2 + full MoveIt2 + rviz2, with ALL roqsim_* packages
-# (incl. quadruped/humanoid + CPU-only torch) and a colcon-built ros2_ws (bridge, nav2 example,
-# walker_ros).
+# roqsim-ros (full) — ROS 2 Jazzy + nav2 + full MoveIt2 + rviz2, with every roqsim package except
+# those container/packages.py excludes for this image (incl. quadruped/humanoid + CPU-only torch), and
+# a colcon-built ros2_ws (bridge, nav2 example, walker_ros).
 #
 # The roqsim_* pip packages are installed into the ROS *system* interpreter (via
 # --break-system-packages) so nodes launched with /usr/bin/python3 can import them — this mirrors the
@@ -23,6 +23,12 @@ WORKDIR /ws
 #    simulation_interfaces the bridge needs, plus GL libs for headless MuJoCo. BOTH offscreen
 #    backends: egl needs a DRI render device and a CPU-only node has none, so the choice belongs to
 #    the node (roqsim.gl.select_offscreen_gl) and the image must be able to satisfy either answer.
+#    The MoveIt planner plugins are named alongside the metapackage rather than left to it:
+#    `roqsim export moveit --pipelines` can offer move_group more than one planning pipeline, and a
+#    pipeline whose plugin is absent makes move_group fail at START-UP rather than fail the request.
+#    The Create 3 / TurtleBot 4 stack (irobot_create_nodes, its simulator adapters, turtlebot4_node)
+#    is what roqsim_create3_toolbox launches over the TurtleBot 4 model, unchanged from its release;
+#    the gz toolbox pulls only ros_gz_interfaces, not a Gazebo runtime.
 # hadolint ignore=DL3008
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
@@ -42,12 +48,18 @@ RUN apt-get update && \
         ros-${ROS_DISTRO}-simulation-interfaces \
         ros-${ROS_DISTRO}-vision-msgs \
         ros-${ROS_DISTRO}-moveit \
+        ros-${ROS_DISTRO}-moveit-planners-ompl \
+        ros-${ROS_DISTRO}-moveit-planners-chomp \
         ros-${ROS_DISTRO}-ros2-control \
         ros-${ROS_DISTRO}-ros2-controllers \
         ros-${ROS_DISTRO}-controller-manager \
         ros-${ROS_DISTRO}-joint-trajectory-controller \
         ros-${ROS_DISTRO}-gripper-controllers \
-        ros-${ROS_DISTRO}-rviz2 && \
+        ros-${ROS_DISTRO}-rviz2 \
+        ros-${ROS_DISTRO}-irobot-create-msgs \
+        ros-${ROS_DISTRO}-irobot-create-nodes \
+        ros-${ROS_DISTRO}-irobot-create-gz-toolbox \
+        ros-${ROS_DISTRO}-turtlebot4-node && \
     rm -rf /var/lib/apt/lists/*
 
 # Pin numpy to the version ROS/apt already provides so pip never tries to replace the debian-managed
@@ -66,7 +78,7 @@ RUN pip install --no-cache-dir --break-system-packages \
 # 3) Stable layer: third-party runtime deps (mirrors the sub-package pyproject deps; scipy gives the
 #    walker its KD-tree fast path).
 RUN pip install --no-cache-dir --break-system-packages \
-        "mujoco>=3.0" \
+        "mujoco>=3.14,<3.15" \
         "numpy>=1.24" \
         "pyyaml>=6.0" \
         "click>=8.1" \
@@ -77,40 +89,17 @@ RUN pip install --no-cache-dir --break-system-packages \
         "opencv-python-headless>=4.6" \
         "requests>=2.25" \
         "onnxruntime>=1.16" \
-        "scipy>=1.11"
+        "scipy>=1.11" \
+        "fastmcp>=3.4"
 
-# 4) Volatile layer: all roqsim_* sources -> install with deps already present (--no-deps). Core
-#    first, then dependents. The Spot policy fetch is fail-soft (needs network; image still builds
-#    offline).
-COPY roqsim              ./roqsim
-COPY roqsim_assets       ./roqsim_assets
-COPY roqsim_sensors      ./roqsim_sensors
-COPY roqsim_mobile       ./roqsim_mobile
-COPY roqsim_manipulation ./roqsim_manipulation
-# The arm/gripper MODELS, and the robots that are a base AND an arm (frankie, tiago_pro). Both were
-# missing here while the published image carried them, so this file did not rebuild the image it
-# names: a rebuild would have dropped the tiago_pro model and broken every campaign that spawns it.
-COPY roqsim_manipulation_assets   ./roqsim_manipulation_assets
-COPY roqsim_mobile_manipulation   ./roqsim_mobile_manipulation
-COPY roqsim_scenes       ./roqsim_scenes
-COPY roqsim_walker       ./roqsim_walker
-COPY roqsim_webctrl          ./roqsim_webctrl
-COPY roqsim_quadruped    ./roqsim_quadruped
-COPY roqsim_humanoid     ./roqsim_humanoid
+# 4) Volatile layer: the sources, and every roqsim package container/packages.py finds for this
+#    image, installed with deps already present (--no-deps); --check compares that with what is
+#    installed. The Spot policy fetch is fail-soft (needs network; image still builds offline).
+COPY . .
 RUN pip install --no-cache-dir --break-system-packages --no-deps \
-        ./roqsim \
-        ./roqsim_assets \
-        ./roqsim_sensors \
-        ./roqsim_mobile \
-        ./roqsim_manipulation \
-        ./roqsim_manipulation_assets \
-        ./roqsim_mobile_manipulation \
-        ./roqsim_scenes \
-        ./roqsim_walker \
-        ./roqsim_webctrl \
-        ./roqsim_quadruped \
-        ./roqsim_humanoid && \
-    python3 -m roqsim_quadruped.policy.fetch_policy || true
+        $(python3 container/packages.py ros) && \
+    python3 container/packages.py ros --check && \
+    { python3 -m roqsim_quadruped.policy.fetch_policy || true; }
 
 # Same guard as the lean image, and for the same reason: every install above is --no-deps, so the
 # hand-written third-party list two layers up is load-bearing and nothing else would notice it
@@ -118,8 +107,8 @@ RUN pip install --no-cache-dir --break-system-packages --no-deps \
 COPY container/files/check_runtime_deps.py /tmp/check_runtime_deps.py
 RUN python3 /tmp/check_runtime_deps.py && rm /tmp/check_runtime_deps.py
 
-# 5) Volatile layer: colcon-build the ROS 2 workspace (bridge + nav2 example + walker_ros).
-COPY ros2_ws/src ./ros2_ws/src
+# 5) Volatile layer: colcon-build the ROS 2 workspace (bridge, nav2 example, goal actions), copied
+#    with the sources above.
 RUN source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ros2_ws && \
     colcon build --event-handlers console_direct+

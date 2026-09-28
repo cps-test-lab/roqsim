@@ -82,8 +82,8 @@ def test_scene_window_selects_the_gl_backend_before_importing_mujoco():
     MUJOCO_GL is read once, while ``import mujoco`` runs. This module imports mujoco directly rather
     than through roqsim, so it has to call ``select_offscreen_gl`` itself first -- and isort sorts
     first-party ``roqsim`` *below* third-party ``mujoco``, so the ordering is one re-sort away from
-    breaking. When it broke, every review window died in ``check_gl_backend`` with "MuJoCo bound the
-    glfw (on-screen) GL backend", which names neither this module nor the ordering.
+    breaking. Broken, it makes every review window die in ``check_gl_backend`` with "MuJoCo bound
+    the glfw (on-screen) GL backend", which names neither this module nor the ordering.
 
     Run in a subprocess with MUJOCO_GL unset: the variable is bound at first import, so an in-process
     check would only observe whatever the test session already bound.
@@ -106,3 +106,28 @@ def test_scene_window_selects_the_gl_backend_before_importing_mujoco():
         check=True,
     )
     assert proc.stdout.strip().splitlines()[-1] != "glfw"
+
+
+def test_a_load_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkeypatch):
+    """The ``dummy`` plugin counts its own shutdowns."""
+    from roqsim_scene_builder.scene_window import load_engine
+
+    from roqsim.engine import Engine
+
+    seen: list[Engine] = []
+    setup = Engine.setup
+
+    def recording_setup(self):
+        seen.append(self)
+        setup(self)
+
+    def fails(self, **params):
+        raise RuntimeError("injected after setup")
+
+    monkeypatch.setattr(Engine, "setup", recording_setup)
+    monkeypatch.setattr(Engine, "reset", fails)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    with pytest.raises(RuntimeError, match="injected"):
+        load_engine(str(world))
+    assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]

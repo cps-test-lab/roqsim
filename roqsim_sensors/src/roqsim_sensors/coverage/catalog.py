@@ -11,13 +11,13 @@ names*: ``fovy``/``resolution`` off its MJCF camera, ``near``/``far`` off its ma
 block (see :func:`_model_optics`). Lidar templates stay empty for the same reason by another route --
 their adapters instantiate the plugin and read its resolved defaults.
 
-Restating those numbers here is what this module used to do, and they had already drifted: the zivid
-entry claimed 704x704 against the model's 480x480. A hand-written copy cannot be kept true by
-attention, so there is no longer a place to write one.
+Restating those numbers here is what an entry must not do: a hand-written copy of a model's optics
+cannot be kept true by attention, and a catalog that disagrees with the model it names is worse than
+one that says nothing. There is deliberately no field to write one in.
 
-Every camera entry derives; there is no exception. ``oakd_camera`` was one until the OAK-D Pro got a
-model of its own here -- its plugin had been reading ``roqsim_mobile``'s turtlebot4 camera, which this
-package cannot depend on.
+Every camera entry derives; there is no exception. That includes ``oakd_camera``, which needs the
+OAK-D Pro model in this package to derive from -- reading ``roqsim_mobile``'s turtlebot4 camera would
+mean depending on a package this one cannot depend on.
 """
 
 from __future__ import annotations

@@ -1,15 +1,14 @@
 <mujoco model="graspable_box">
   <!-- A small parcel sized and tuned to be picked up by a parallel gripper.
 
-       The substrate's first prop meant to be grasped. Every other prop in roqsim_assets is welded
-       scenery, and the only free body was the conveyor's package, which rides a belt rather than
-       being held. Spawn it with `spawn_model: {model: graspable_box, free: true, publish_tf: dynamic}`
-       -- `free` adds the <freejoint/>, so this file deliberately declares none and the same prop can
-       still be placed as static scenery.
+       A prop meant to be grasped. The rest of roqsim_assets is welded scenery, and the conveyor's
+       package rides a belt rather than being held. Spawn it with `spawn_model: {model:
+       graspable_box, free: true, publish_tf: dynamic}` -- `free` adds the <freejoint/>, so this
+       file deliberately declares none and the same prop can still be placed as static scenery.
 
        Grasp dimension is Y, 0.06 m across the jaws. Sized from the MEASURED aperture range of the
        Unitree Dex1, 5.9 mm to 94.9 mm: 60 mm sits mid-range, so the jaws have travel on both sides of
-       contact. A 40 mm box was tried first and is a trap -- only 6 mm inside the closed limit, so the
+       contact. A 40 mm box is a trap -- only 6 mm inside the closed limit, so the
        position servo has almost no room, and any overshoot on closing extrudes the box sideways out of
        the pads instead of gripping it.
 
