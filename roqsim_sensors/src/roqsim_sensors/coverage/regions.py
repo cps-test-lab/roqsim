@@ -22,6 +22,8 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim.floorplan_geometry import check_sketch
+
 
 @dataclass
 class Region:
@@ -114,8 +116,10 @@ def regions_from_sketch(sketch, *, bridge: float = 1.6) -> list[Region]:
     gaps up to ``bridge`` metres (door openings leave the wall in two pieces). A room whose walls will
     not chain into >= 3 vertices is skipped rather than yielding a bogus polygon.
     """
+    where = str(sketch) if isinstance(sketch, (str, Path)) else "floorplan sketch"
     if isinstance(sketch, (str, Path)):
         sketch = json.loads(Path(sketch).read_text())
+    check_sketch(sketch, where)
     lines = {line["id"]: line for line in sketch.get("lines", [])}
     out: list[Region] = []
     for room in sketch.get("rooms", []):

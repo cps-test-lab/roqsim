@@ -90,6 +90,25 @@ def test_it_is_not_cvel_which_is_measured_at_the_subtree_com():
     assert not np.allclose(body_twist(model, data, rim).linear, data.cvel[rim][3:], atol=1e-6)
 
 
+def test_it_is_not_the_bodys_own_centre_of_mass():
+    """A single body spinning about its origin, with its centre of mass off it: the origin is still
+    while the centre of mass moves."""
+    model = mujoco.MjModel.from_xml_string(
+        """
+        <mujoco><worldbody><body name="b" pos="0 0 1">
+          <freejoint/>
+          <inertial pos="0.2 0 0" mass="1" diaginertia=".01 .01 .01"/>
+        </body></worldbody></mujoco>
+        """
+    )
+    data = mujoco.MjData(model)
+    data.qvel[:] = [0.0, 0.0, 0.0, 0.0, 0.0, 3.0]
+    mujoco.mj_forward(model, data)
+    twist = body_twist(model, data, _bid(model, "b"))
+    assert np.allclose(twist.linear, [0.0, 0.0, 0.0], atol=1e-9)
+    assert np.allclose(twist.angular, [0.0, 0.0, 3.0], atol=1e-9)
+
+
 def test_pure_translation_along_a_tilted_axis_has_no_rotation():
     model, data = _spun(_SLIDE_XML, 3.0)
     twist = body_twist(model, data, _bid(model, "b"))
@@ -108,7 +127,7 @@ def test_the_named_fields_survive_a_round_trip_through_mujocos_slot_order():
     model, data = _spun(_TILTED_XML, 1.5)
     rim = _bid(model, "rim")
     raw = np.zeros(6)
-    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_BODY, rim, raw, 0)
+    mujoco.mj_objectVelocity(model, data, mujoco.mjtObj.mjOBJ_XBODY, rim, raw, 0)
     twist = body_twist(model, data, rim)
     assert np.allclose(twist.angular, raw[:3], atol=1e-12)
     assert np.allclose(twist.linear, raw[3:], atol=1e-12)

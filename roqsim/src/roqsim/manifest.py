@@ -15,9 +15,18 @@ from pathlib import Path
 import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
+from .document import refuse_unknown_keys
 from .frames import substitute
 from .models import resolve_model
 from .registry import resolve_plugin
+
+#: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
+#: ``extends`` read here, ``assets`` in :mod:`roqsim.models`, ``fov``/``frames``/``frame_id``/``license``
+#: by the accessors below. :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would
+#: load a model with no frames.
+MANIFEST_KEYS = frozenset(
+    {"components", "plugins", "extends", "assets", "fov", "frames", "frame_id", "license"}
+)
 
 
 def manifest_path(model_file: Path) -> Path:
@@ -131,7 +140,8 @@ def load_manifest(
     carried geometry, ``sim.world`` did, and a manifest may not carry ``sim:`` at all (see below).
 
     The base is named the way anything else names a model (a ``roqsim.models`` ref, or a path
-    relative to this manifest), and cycles raise rather than recursing forever.
+    relative to this manifest), and cycles raise rather than recursing forever. A top-level key
+    outside :data:`MANIFEST_KEYS` is refused here, the path every spawn takes.
     """
     path = manifest_path(model_file)
     if not path.exists():
@@ -148,6 +158,7 @@ def load_manifest(
             f"model included in it: a manifest cannot set the run's seed, pacing or contact "
             f"overrides. Move those keys to the world that spawns this model."
         )
+    refuse_unknown_keys(data, MANIFEST_KEYS, f"manifest {path}", error=PluginError)
     inherited: list[dict] = []
     ext = data.get("extends")
     if ext is not None:

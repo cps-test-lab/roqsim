@@ -295,6 +295,9 @@ class ArmControllerPlugin(Plugin):
         # that never switches behaves exactly as it always has; `inactive` is what ros2_control's
         # `spawner --inactive` leaves behind.
         self._active = str(self.config.get("initial_state", "active")) != "inactive"
+        #: What a reset returns `_active` to: `initial_state`, or inactive once a command source has
+        #: claimed the arm at configure.
+        self._configured_active = self._active
         self._vel_stamp = -1.0  # sim time of the last velocity command; -1 = never
         self._jnt_range: dict[
             str, tuple[float, float]
@@ -781,6 +784,11 @@ class ArmControllerPlugin(Plugin):
             d.ctrl[aid] = self._gripper_ctrl_target
 
     def on_reset(self, ctx: SimContext) -> None:
+        # A trial's controller switches end with it.
+        self._active = self._configured_active
+        if self._registered is not None:
+            state = ACTIVE if self._active else INACTIVE
+            registry_for(ctx).restore(self._registered, state, ctx.sim_time)
         # spawn_arm re-applies the home qpos on reset; resync targets to hold there.
         m = ctx.model
         for name, (_, jid) in zip(self._ctrl_names, self._joint_acts, strict=True):
@@ -823,7 +831,7 @@ class ArmControllerPlugin(Plugin):
         # arm. Leaving the trajectory role active as well would come up in a state real
         # ros2_control refuses outright -- two active controllers claiming the same command
         # interfaces -- so it releases them here and a scenario switches back when it wants them.
-        self._active = False
+        self._active = self._configured_active = False
         if self._registered is not None:
             self._registered.state = INACTIVE
 

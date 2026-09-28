@@ -1,8 +1,8 @@
 """PAL TIAGo Pro verification battery — dual-arm holonomic mobile-manipulator port.
 
-Follows robot-porting's `references/mobile_manipulator.md`: the base battery (A static, B drive,
-C sensors) plus the arm battery (E), run through the REAL plugins with the REAL manifest config, so
-the model, its four controllers and their limits are verified together.
+The base battery (A static, B drive, C sensors) plus the arm battery (E), run through the REAL plugins
+with the REAL manifest config, so the model, its four controllers and their limits are verified
+together.
 
 Two things make this battery different from the husky/frankie/G2 ones:
 
