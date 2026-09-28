@@ -576,7 +576,7 @@ def test_the_lens_scales_to_whatever_resolution_the_plugin_renders():
 
 
 def test_two_mounts_of_one_model_carry_two_different_lenses():
-    """The reason this lives on the placement: one d435.xml, two units, two calibrations."""
+    """The reason this lives on the placement: one realsense_d435.xml, two units, two calibrations."""
     import mujoco
 
     from roqsim_sensors.plugins.camera_common import intrinsics_from_model
@@ -784,7 +784,7 @@ def test_an_unknown_motion_is_refused_by_name():
 
 
 def _arm_world(**spawn_config):
-    """A UR10e with a d435 welded to its wrist -- the eye-in-hand case, stated in a world."""
+    """A UR10e with a realsense_d435 welded to its wrist -- the eye-in-hand case, stated in a world."""
     return load_config_from_dict({
         "sim": {},
         "components": [

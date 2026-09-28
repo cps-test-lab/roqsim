@@ -9,7 +9,7 @@ model at ``T_old`` becomes ``T_old * D``, for the ``D`` its builder derives.
 This module holds what every such builder needs and nothing device-specific: rotations in the URDF
 convention, a reader for one xacro macro's properties and fixed joints, the splice that rewrites a
 manifest's generated block, and :func:`rewrite_mounts`, which applies a ``D`` to the world files it
-is given. Builders: ``build_realsense_devices.py``, ``build_oakd_pro.py``.
+is given. Builder: ``build_realsense_devices.py``.
 """
 
 from __future__ import annotations
