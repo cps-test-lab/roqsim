@@ -688,6 +688,19 @@ class Importer:
 
         self._check_nothing_is_walled_off()
 
+        if self.args.lock and not self.assets:
+            # Refused before anything is written: an import that succeeded without the lock it was
+            # asked for would leave a loadable scene with nothing recording where its geometry came
+            # from. Such a world's provenance is the source tree it was read from, which this tool
+            # cannot digest.
+            raise NothingToPin(
+                f"--lock {self.args.lock}: nothing to pin. Every model in this world is inline or "
+                f"resolved locally through --model-path, so there is no fetched asset whose URI and "
+                f"digest could be recorded. Pin the source tree it was read from (repository, "
+                f"revision, per-path digest and licence) beside the scene instead, and do not pass "
+                f"--lock."
+            )
+
         manifest = {
             "name": self.args.scene_name,
             "source": Path(self.args.world).name,
@@ -703,7 +716,7 @@ class Importer:
         manifest = scene_manifest_format.stamp(manifest)
         (out / "scene.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
-        if self.args.lock and self.assets:
+        if self.args.lock:
             fuel_fetch.write_lock(
                 Path(self.args.lock), list(self.assets.values()), world=str(self.args.world)
             )
@@ -720,6 +733,10 @@ class Importer:
         return manifest
 
 
+class NothingToPin(Exception):
+    """``--lock`` was given, but no model was fetched, so there is no asset to record."""
+
+
 def _slug_prefix(prefix: str, name: str) -> str:
     return f"{prefix}_{name}" if prefix else name
 
@@ -729,7 +746,8 @@ def main(argv: list | None = None) -> int:
         description=__doc__.split("\n")[0],
         epilog=exit_status.epilog(
             exit_status.BAD_INPUT,
-            note="2 includes a Fuel model the world names that did not resolve.",
+            note="2 includes a Fuel model the world names that did not resolve, and --lock for a "
+            "world with no fetched model to pin.",
         ),
     )
     ap.add_argument("--world", type=Path, required=True, help="the SDF world file")
@@ -738,7 +756,9 @@ def main(argv: list | None = None) -> int:
     )
     ap.add_argument("--scene-name", help="scene.json `name` (default: out-dir basename)")
     ap.add_argument(
-        "--lock", type=Path, help="write assets.lock.json here (pins every fetched model)"
+        "--lock",
+        type=Path,
+        help="write assets.lock.json here (pins every fetched model; refused when none was fetched)",
     )
     ap.add_argument("--cache", type=Path, default=fuel_fetch._DEFAULT_CACHE)
     ap.add_argument("--model-path", action="append", default=[], help="extra dir for model:// URIs")
@@ -791,6 +811,8 @@ def main(argv: list | None = None) -> int:
             file=sys.stderr,
         )
         return exit_status.BAD_INPUT
+    except NothingToPin as e:
+        return exit_status.fail("roqsim scenes sdf-to-scene", e)
     return exit_status.OK
 
 
