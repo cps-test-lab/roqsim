@@ -249,7 +249,7 @@ an overlap that is meant is excluded from collision and is then not reported
 An **eye-in-hand** camera, or any sensor that rides something that moves, is
 ``spawn_sensor: {attach_to: <body>, attach_prefix: <carrier prefix>}`` -- the same spelling
 ``fiducial_marker`` uses, welding the mount to a body of a robot or arm declared earlier in the
-document, with ``pos``/``rpy`` then read relative to that body -- which is what a datasheet or a
+document, with ``pose`` then read relative to that body -- which is what a datasheet or a
 CAD drawing states, and what a world-frame pose cannot be once the carrier moves. An arm whose own
 MODEL ships a camera needs none of this (three do, and their manifests offer the capture plugin);
 this is how every other arm gets one, without a per-trial MJCF edit that travels badly and is
@@ -257,45 +257,51 @@ invisible to anyone reading the world. It is mutually exclusive with ``motion:``
 rides a body has its pose from that body, so moving the sensor means moving what carries it.
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
-in the robot's own manifest. It names one of the robot's **mounts** and states no pose: a mount is
-an entry of the robot manifest's ``mounts:`` block, ``{name, parent, pos, rpy}``, whose ``parent`` is
-the vendor's parent link (a body, or a link the robot declares in its ``frames:``) and whose
-``pos``/``rpy`` are the ``origin`` the robot description passes the device's vendor macro. A device
-model's ``mount`` body is the frame that origin places, so the device sits where
-``robot_state_publisher`` would put it. A mount is not a link: nothing builds or publishes it, so
-the TF tree stays the robot description's, and the robot keeps every number of where its devices
-sit. ``mount:`` resolves to ``parent_frame``/``pos``/``rpy`` when the document expands; a name the
-robot does not declare is refused with its mounts listed, and so is ``mount:`` beside any of
-``parent_frame``, ``attach_to``, ``pos`` or ``rpy`` -- from the manifest, the world or an override,
-so nothing moves a device off the mount its robot names. ``roqsim catalog model <robot>`` lists a
-robot's mounts. It
-inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
-are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
-the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
-else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
-parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
-own, as a second instance of the macro would: two mounts that would publish any one frame name are
-refused. A device that declares no ``frames:`` chain has no vendor frame to hang from, and a robot
-mount of it is refused naming the device. The ``spawn_sensor`` and
+in the robot's own manifest. It hangs from a **frame** of the robot with ``parent_frame`` and states
+no pose: the robot declares where each device goes as an entry of its manifest's ``frames:`` block
+whose ``parent`` is the vendor's parent link (a body, or a link the robot also declares) and whose
+``pose`` is the ``origin`` the robot description passes the device's vendor macro. A device model's
+``mount`` body is the frame that origin places, so the device sits where ``robot_state_publisher``
+would put it, and the robot keeps every number of where its devices sit. Such a frame is a place,
+not a link of the description, so it says ``tf: false``: it is built as a site a device can hang
+from, but not published, and the TF tree stays the robot description's -- the device's chain is
+published from the frame's nearest published ancestor instead. A ``parent_frame`` that is neither a
+body nor a frame of the robot is refused when the document expands, with a did-you-mean and the
+robot's frames listed; ``roqsim catalog model <robot>`` lists them too, each marked ``published``
+or not.
+
+A ``pose`` beside ``parent_frame`` is an offset from that frame: a ``geometry_msgs/Pose`` in the
+shape ``roqsim.pose`` reads everywhere, whose omitted components are **zero** -- the frame is where
+the device goes, so there is no resting height to fall back on as there is for a world spawn of a
+robot. That is also how a world or a campaign moves a device: it overrides the device's ``pose``
+(``robot.rplidar.pose.position.z=0.05``), and the record states the frame and the offset.
+``pos``/``rpy`` keys are refused with the ``pose:`` they mean.
+
+A mounted device inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace.
+Its components are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by
+nesting it under the device. The device publishes its frame chain as static TF. Its scan frame is
+the mount's ``frame_id``, else the vendor default the device manifest declares as ``frame_id:``; a
+device whose vendor names none needs one on every mount. A device whose vendor macro prefixes its
+links with a ``name`` parameter declares that default as ``device_name:``, and a second mount of it
+on one robot sets its own, as a second instance of the macro would: two mounts that would publish
+any one frame name are refused. A device that declares no ``frames:`` chain has no vendor frame to
+hang from, and a robot mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
 
-A world puts another device on a spawned robot's mount the way the robot's manifest does, by
+A world puts another device on a spawned robot's frame the way the robot's manifest does, by
 nesting it in that robot's ``components:`` -- in the document, or added under the robot's address
-from an override -- with ``mount:`` naming the mount. The world repeats no offset of the robot's.
-To replace the robot's own device there rather than add beside it, switch that one off by its label::
+from an override -- with ``parent_frame`` naming the frame. The world repeats no offset of the
+robot's. To replace the robot's own device there rather than add beside it, switch that one off by
+its label::
 
    - spawn_robot: {model: turtlebot4}
      name: tb4
      components:
-       - spawn_sensor: {model: realsense_d435, mount: oakd}
+       - spawn_sensor: {model: realsense_d435, parent_frame: oakd}
          name: d435
        - spawn_sensor: {}
          name: oakd
          enabled: false
-
-A device the robot declares no mount for is placed with ``parent_frame`` and an explicit
-``pos``/``rpy``.
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
 is what a trial needs to place a sensor at run time -- a viewpoint the campaign varies, a camera a
@@ -343,7 +349,7 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
   plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
-  ``assets``, ``fov``, ``frames``, ``mounts``, ``frame_id``, ``device_name`` and ``license`` and
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name`` and ``license`` and
   nothing else: a key outside that
   set is refused with the nearest known one named, since nothing reads it and a manifest loaded
   without it would look configured. The entity name is filled in for you, and each
@@ -368,24 +374,28 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
-   frames:                            # vendor fixed links this MJCF flattens into base_link
-     - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942]}
-     - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257]}
-   mounts:                            # where its devices go: vendor joint origins, not published
-     - {name: rplidar, parent: shell_link, pos: [-0.04, 0.0, 0.098715], rpy: [0.0, 0.0, 1.5707963267948966]}
-     - {name: oakd, parent: oakd_camera_bracket, pos: [0.0584, 0.0, 0.09676]}
+   frames:
+     # vendor fixed links this MJCF flattens into base_link: published
+     - {name: shell_link, parent: base_link, pose: {position: {z: 0.0942}}}
+     - {name: oakd_camera_bracket, parent: shell_link, pose: {position: {x: -0.118, z: 0.05257}}}
+     # where its devices go, the vendor joint origins: places, not links, so not published
+     - name: rplidar
+       parent: shell_link
+       pose: {position: {x: -0.04, z: 0.098715}, orientation: {yaw: 1.5707963267948966}}
+       tf: false
+     - {name: oakd, parent: oakd_camera_bracket, pose: {position: {x: 0.0584, z: 0.09676}}, tf: false}
    components:
      - diff_drive: {max_linear_vel: 0.46, max_angular_vel: 1.9, wheel_accel_limit: 0.9,
                     cmd_vel_timeout: 0.5, odom_rate_hz: 62.0, publish_joint_states: false}
      - joint_state_publisher: {rate_hz: 62}   # every joint, wheels and suspension, in one message
-     - spawn_sensor:                  # the RPLIDAR A1 device model, on its mount
+     - spawn_sensor:                  # the RPLIDAR A1 device model, on its frame
          model: rplidar_a1
-         mount: rplidar
+         parent_frame: rplidar
          frame_id: rplidar_link
        name: rplidar
-     - spawn_sensor:                  # the OAK-D Pro device model, on its mount
+     - spawn_sensor:                  # the OAK-D Pro device model, on its frame
          model: oakd_pro
-         mount: oakd
+         parent_frame: oakd
        name: oakd
        components:
          - oakd_camera:               # renders: needs a GL backend (roqsim selects one on import)

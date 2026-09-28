@@ -22,7 +22,7 @@
 # sector (dome / forward wedge), and every camera mount — the RealSenses, the Zivid and the OAK-D —
 # gets a synthesised frustum.
 #
-# A RealSense mount's pos/rpy is the pose of `camera_bottom_screw_frame`, the frame the vendor macro
+# A RealSense mount's pose is that of `camera_bottom_screw_frame`, the frame the vendor macro
 # places at its origin (x along the lens normal, z up; `camera_link` sits at a fixed offset from it),
 # and each publishes its vendor frame chain (camera_bottom_screw_frame -> camera_link ->
 # camera_color_optical_frame, ...) as static TF. The three share the realsense-ros names, so each
@@ -39,7 +39,7 @@ components:
   - spawn_sensor:
       model: mid360
       prefix: "mid360_"
-      pos: [0.0, 0.0, 0.5]
+      pose: {position: {z: 0.5}}
       show_fov: true          # synthesise the Mid-360's translucent 360° dome FOV sector
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 6.0           # override the manifest far (40 m) to fit this room, as the cameras do
@@ -67,8 +67,8 @@ components:
       model: realsense_d435
       prefix: "d435_"
       namespace: d435
-      pos: [1.5149, 0.0000000547, 0.4875]
-      rpy: [0, 0, -3.1415889804]  # camera_link's x faces -x (toward the centre)
+      # camera_link's x faces -x (toward the centre)
+      pose: {position: {x: 1.5149, y: 0.0000000547, z: 0.4875}, orientation: {yaw: -3.1415889804}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5            # override the manifest far (6 m) to fit this room; near stays 0.28 m
@@ -79,8 +79,8 @@ components:
       model: realsense_d415
       prefix: "d415_"
       namespace: d415
-      pos: [0, -1.50987, 0.4885]
-      rpy: [0, 0, 1.5707963268]  # camera_link's x faces +y (toward the centre)
+      # camera_link's x faces +y (toward the centre)
+      pose: {position: {y: -1.50987, z: 0.4885}, orientation: {yaw: 1.5707963268}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
@@ -92,8 +92,8 @@ components:
       model: realsense_d455
       prefix: "d455_"
       namespace: d455
-      pos: [0.0000000419, 1.5158, 0.4855]
-      rpy: [0, 0, -1.5707989804]  # camera_link's x faces -y (toward the centre)
+      # camera_link's x faces -y (toward the centre)
+      pose: {position: {x: 0.0000000419, y: 1.5158, z: 0.4855}, orientation: {yaw: -1.5707989804}}
       show_fov: true
       fov_alpha: 0.25          # ~0.25 maximises the darkness step between single- and multi-sensor overlap
       fov_range: 1.5
@@ -109,8 +109,8 @@ components:
   - spawn_sensor:
       model: zivid
       prefix: "zivid_"
-      pos: [-1.5, 0.0, 0.5]
-      rpy: [0.0, 0.0, -1.5708]   # yaw -90° so the camera's +y optical axis faces +x (the centre)
+      # yaw -90° so the camera's +y optical axis faces +x (the centre)
+      pose: {position: {x: -1.5, z: 0.5}, orientation: {yaw: -1.5708}}
       show_fov: true
       fov_alpha: 0.25
     name: zivid
@@ -119,13 +119,13 @@ components:
   # Its manifest auto-attaches `oakd_camera` -> `image` + `depth` + `camera_info` (RGB-D). The model
   # is a box at the source URDF's collision dimensions rather than a mesh (see
   # models/oakd_pro/oakd_pro.xml); what it provides is the camera. The TurtleBot 4 mounts the same
-  # device. pos/rpy are the pose of the vendor `oakd_link` (x along the lens normal, z up), and the
+  # device. Its pose is that of the vendor `oakd_link` (x along the lens normal, z up), and the
   # mount publishes its vendor frame chain (oakd_link -> oakd_rgb_camera_optical_frame, ...).
   - spawn_sensor:
       model: oakd_pro
       prefix: "oakd_"
-      pos: [-1.5, -1.5, 0.6]
-      rpy: [0, 0, 0.7853963268]  # oakd_link's x faces the centre
+      # oakd_link's x faces the centre
+      pose: {position: {x: -1.5, y: -1.5, z: 0.6}, orientation: {yaw: 0.7853963268}}
       show_fov: true
       fov_alpha: 0.25
       fov_range: 4.0             # override the manifest far (8 m) to fit this room, as the others do
@@ -138,8 +138,8 @@ components:
   - spawn_sensor:
       model: robin_w1g
       prefix: "robin_"
-      pos: [1.5, 1.5, 0.7]
-      rpy: [0.0, 0.0, -2.35619]   # yaw -135° so the +x boresight points from this corner to the centre
+      # yaw -135° so the +x boresight points from this corner to the centre
+      pose: {position: {x: 1.5, y: 1.5, z: 0.7}, orientation: {yaw: -2.35619}}
       show_fov: true
       fov_alpha: 0.25
       fov_range: 6.0             # as for the Mid-360 above: the datasheet far is 200 m, which indoors

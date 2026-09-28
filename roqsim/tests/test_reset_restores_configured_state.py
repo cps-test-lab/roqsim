@@ -90,7 +90,11 @@ def _arm(*components: dict) -> dict:
 def _sensor(model: str, *components: dict) -> dict:
     return _world(
         {
-            "spawn_sensor": {"model": model, "prefix": f"{model}_", "pos": [0.0, 0.0, 0.5]},
+            "spawn_sensor": {
+                "model": model,
+                "prefix": f"{model}_",
+                "pose": {"position": {"z": 0.5}},
+            },
             "name": model,
             "components": list(components),
         },

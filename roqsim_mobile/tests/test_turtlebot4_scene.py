@@ -42,7 +42,9 @@ import scan_mount_utils as scan_mount
 import yaml
 
 from roqsim.context import Entity, SimContext
+from roqsim.frames import parse_frames
 from roqsim.models import apply_assets, resolve_model
+from roqsim.pose import rpy_to_quat
 from roqsim_mobile.plugins.diff_drive import DiffDrivePlugin
 
 MODELS = Path(__file__).resolve().parents[1] / "src" / "roqsim_mobile" / "models"
@@ -450,48 +452,32 @@ def test_c2_manifest_ships_the_platforms_own_sensors():
     is the RPLIDAR A1 device's.
     """
     manifest = yaml.safe_load(MANIFEST.read_text())
-    assert manifest["frames"] == [
-        {
-            "name": "shell_link",
-            "parent": "base_link",
-            "pos": [*SHELL_LINK[0]],
-            "rpy": [*SHELL_LINK[1]],
-        },
-        {
-            "name": "oakd_camera_bracket",
-            "parent": "shell_link",
-            "pos": [*CAMERA_BRACKET[0]],
-            "rpy": [*CAMERA_BRACKET[1]],
-        },
+    # The vendor's flattened links, published, then where each device goes, not published.
+    frames = [
+        (f.name, f.parent, f.pos, f.quat, f.tf) for f in parse_frames(manifest["frames"], "tb4")
+    ]
+    assert frames == [
+        (name, parent, pos, tuple(rpy_to_quat(*rpy)), tf)
+        for name, parent, (pos, rpy), tf in (
+            ("shell_link", "base_link", SHELL_LINK, True),
+            ("oakd_camera_bracket", "shell_link", CAMERA_BRACKET, True),
+            ("rplidar", "shell_link", RPLIDAR_JOINT, False),
+            ("oakd", "oakd_camera_bracket", OAKD_JOINT, False),
+        )
     ]
     mounts = {c["name"]: c for c in manifest["components"] if "spawn_sensor" in c}
     assert set(mounts) == {"rplidar", "oakd"}
     mount = mounts["rplidar"]
     assert mount["spawn_sensor"] == {
         "model": "rplidar_a1",
-        "mount": "rplidar",
+        "parent_frame": "rplidar",
         "frame_id": "rplidar_link",
     }
-    # Each device hangs from a mount the robot declares at the vendor joint.
-    assert manifest["mounts"] == [
-        {
-            "name": "rplidar",
-            "parent": "shell_link",
-            "pos": [*RPLIDAR_JOINT[0]],
-            "rpy": [*RPLIDAR_JOINT[1]],
-        },
-        {
-            "name": "oakd",
-            "parent": "oakd_camera_bracket",
-            "pos": [*OAKD_JOINT[0]],
-            "rpy": [*OAKD_JOINT[1]],
-        },
-    ]
     assert mount["components"] == [{"lidar": {"rays": 360}}]
     assert not any("lidar" in c for c in manifest["components"])
     # The OAK-D: the vendor joint and nothing else. Its device name is the macro's default, `oakd`,
     # so the robot sets none; only the TurtleBot 4's topic names are overridden.
-    assert mounts["oakd"]["spawn_sensor"] == {"model": "oakd_pro", "mount": "oakd"}
+    assert mounts["oakd"]["spawn_sensor"] == {"model": "oakd_pro", "parent_frame": "oakd"}
     ((camera,),) = [list(c.values()) for c in mounts["oakd"]["components"]]
     assert set(camera) == {"topics"}
     assert not any("oakd_camera" in c for c in manifest["components"])

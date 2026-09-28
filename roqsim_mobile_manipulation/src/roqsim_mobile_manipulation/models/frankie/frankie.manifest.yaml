@@ -16,8 +16,10 @@
 # Only the Omron base mesh is this package's own, in meshes/frankie/.
 assets: [roqsim_manipulation_assets]
 
-mounts:
-  - {name: lidar, parent: base_link, pos: [0.265, 0.0, 0.123], rpy: [0.0, 0.0, 0.0]}
+# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
+# description, so not published (`tf: false`); a device names one as its `parent_frame`.
+frames:
+  - {name: lidar, parent: base_link, pose: {position: {x: 0.265, z: 0.123}}, tf: false}
 
 components:
   # Base: a TRUE two-wheel differential drive with passive casters -- not a skid-steer. It therefore
@@ -77,7 +79,7 @@ components:
   # CHANNEL_Z; I611 p. 1-19).
   - spawn_sensor:
       model: omron_os32c
-      mount: lidar
+      parent_frame: lidar
     name: lidar
     components:
       # Omron's setting for this robot, over the OS32C's own 270 deg: I611 p. 1-6 and p. 2-13, "a 240 deg

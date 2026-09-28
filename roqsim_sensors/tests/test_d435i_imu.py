@@ -19,6 +19,7 @@ from roqsim_sensors.plugins.imu import ImuPlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.pose import pose_mapping
 
 # -- the vendor's own numbers, and only these ------------------------------------------------
 # realsense2_description/urdf/_d435.urdf.xacro
@@ -47,7 +48,7 @@ def _spawn(*, overrides=None):
                     "spawn_sensor": {
                         "model": "realsense_d435",
                         "prefix": "d435_",
-                        "pos": [1.0, 0.0, 0.5],
+                        "pose": pose_mapping([1.0, 0.0, 0.5]),
                     },
                     "name": "cam",
                 }

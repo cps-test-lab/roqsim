@@ -188,9 +188,9 @@ def get_model_details(name: str) -> dict:
     Accepts anything :func:`roqsim.models.resolve_model` does -- a qualified ref, a bare short name,
     or a path -- so a caller can hand back a row's ``ref`` unchanged. Adds to the list row the
     manifest's full component config (what a spawn actually injects, with its defaults), the
-    ``fov`` block a sensor model publishes for coverage analysis, the vendor ``frames`` it publishes
-    and the ``mounts`` a device can name (:func:`roqsim.manifest.resolve_mount`), and the ``names``
-    a world keys on (:func:`_model_names`).
+    ``fov`` block a sensor model publishes for coverage analysis, the ``frames`` a device can hang
+    from (``parent_frame``), each marked ``published`` or not (:mod:`roqsim.frames`), and the
+    ``names`` a world keys on (:func:`_model_names`).
     """
     from roqsim.models import ModelError, resolve_model
 
@@ -216,8 +216,10 @@ def get_model_details(name: str) -> dict:
         "components": manifest.get("components") or [],
         "assets": manifest.get("assets"),
         "fov": manifest.get("fov"),
-        "frames": manifest.get("frames") or [],
-        "mounts": manifest.get("mounts") or [],
+        "frames": [
+            {**frame, "published": frame.get("tf", True)} if isinstance(frame, dict) else frame
+            for frame in manifest.get("frames") or []
+        ],
         "provenance": _provenance(path),
         "thumbnail": str(thumb) if thumb.is_file() else None,
         "names": _model_names(asset),

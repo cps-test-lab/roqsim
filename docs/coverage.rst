@@ -48,7 +48,10 @@ camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars
 .. code:: yaml
 
    components:
-     - spawn_sensor: {model: mid360, name: cam_a, pos: [3, 1, 2.4], rpy: [3.14159, 0, 0]}
+     - spawn_sensor:
+         model: mid360
+         pose: {position: {x: 3, y: 1, z: 2.4}, orientation: {roll: 3.14159}}
+       name: cam_a
      - sensor_coverage_probe:
          sensors: auto              # or a list of {type, pos, rpy, config}
          target: {k: 1, frac: 0.95}

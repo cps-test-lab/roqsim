@@ -16,13 +16,13 @@ import yaml
 
 from .config import PluginError, PluginSpec, document_entries, parse_plugin_entry
 from .document import nearest, refuse_unknown_keys
-from .frames import FrameDecl, parse_frames, substitute
+from .frames import parse_frames, substitute
 from .models import resolve_model
 from .registry import resolve_plugin
 
 #: Every key a manifest may carry at its top level: ``components`` (or its alias ``plugins``) and
 #: ``extends`` read here, ``assets`` in :mod:`roqsim.models`,
-#: ``fov``/``frames``/``mounts``/``frame_id``/``device_name``/``license`` by the accessors below.
+#: ``fov``/``frames``/``frame_id``/``device_name``/``license`` by the accessors below.
 #: :func:`load_manifest` refuses any other: ``frame:`` for ``frames:`` would load a model with no
 #: frames.
 MANIFEST_KEYS = frozenset(
@@ -33,7 +33,6 @@ MANIFEST_KEYS = frozenset(
         "assets",
         "fov",
         "frames",
-        "mounts",
         "frame_id",
         "device_name",
         "license",
@@ -80,64 +79,42 @@ def manifest_frames(model_file: Path) -> list:
     data = yaml.safe_load(path.read_text()) or {}
     frames = data.get("frames")
     if frames is not None and not isinstance(frames, list):
-        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pos, rpy}}")
+        raise PluginError(f"manifest {path}: 'frames' must be a list of {{name, parent, pose, tf}}")
     return list(frames or [])
 
 
-def manifest_mounts(model_file: Path) -> list:
-    """The ``mounts:`` block from a model's manifest, as written (``[]`` when there is none).
-
-    A mount is a named place a device goes: ``{name, parent, pos, rpy}`` like a frame, but not a
-    link of the model, so nothing builds or publishes it. A device names it (``spawn_sensor:
-    {mount: oakd}``) and hangs from ``parent`` at ``pos``/``rpy``, so the carrier's description
-    keeps every number of where its devices sit. Validated by :func:`resolve_mount`. Not inherited
-    through ``extends:``, for the reason :func:`manifest_frames` gives.
-    """
-    path = manifest_path(model_file)
-    if not path.exists():
-        return []
-    data = yaml.safe_load(path.read_text()) or {}
-    mounts = data.get("mounts")
-    if mounts is not None and not isinstance(mounts, list):
-        raise PluginError(f"manifest {path}: 'mounts' must be a list of {{name, parent, pos, rpy}}")
-    return list(mounts or [])
-
-
-def resolve_mount(model_file: Path, name: str, frames=None, where: str = "") -> FrameDecl:
-    """The mount *name* of a carrier model: the ``parent`` it hangs from and the ``pos``/``rpy`` there.
+def resolve_parent_frame(model_file: Path, name: str, frames=None, where: str = "") -> None:
+    """Refuse a ``parent_frame`` that is neither a body nor a declared frame of a carrier model.
 
     *frames* are frames the carrier's spawn declares beside its manifest's (``spawn_robot``'s
-    ``frames:``). Every mount of the model is checked, not only *name*: two of one name, or a
-    ``parent`` that is neither a body of the model nor a declared frame, is refused. A name the
-    model does not declare is refused with its mounts listed.
+    ``frames:``). An unknown name is refused with a did-you-mean and the carrier's frames listed,
+    so a device is not left to fail at build with a missing site. Every declared frame is checked
+    too: two of one name, or a ``parent`` that is neither a body of the model nor a frame declared
+    before it, is refused.
     """
+    import mujoco
+
     path = manifest_path(model_file)
     at = f"{where}: " if where else ""
-    mounts = parse_frames(manifest_mounts(model_file), f"manifest {path}", "mounts")
-    by_name = {m.name: m for m in mounts}
-    if name not in by_name:
-        guess = nearest(name, by_name)
-        hint = f" Did you mean {guess!r}?" if guess else ""
-        offered = ", ".join(sorted(by_name)) or "none"
-        raise PluginError(
-            f"{at}mount {name!r} is not one {model_file.stem} declares.{hint} Its mounts: "
-            f"{offered} (the 'mounts:' block of {path.name})."
-        )
-    declared = {
-        f.name
-        for f in parse_frames(manifest_frames(model_file) + list(frames or []), f"manifest {path}")
-    }
-    if any(m.parent not in declared for m in mounts):
-        import mujoco
-
-        bodies = {b.name for b in mujoco.MjSpec.from_file(str(model_file)).bodies if b.name}
-        for m in mounts:
-            if m.parent not in declared and m.parent not in bodies:
-                raise PluginError(
-                    f"manifest {path}: mount {m.name!r} hangs from {m.parent!r}, which is neither "
-                    f"a body of {model_file.stem} nor a frame it declares."
-                )
-    return by_name[name]
+    declared = parse_frames(manifest_frames(model_file) + list(frames or []), f"manifest {path}")
+    bodies = {b.name for b in mujoco.MjSpec.from_file(str(model_file)).bodies if b.name}
+    seen: set[str] = set()
+    for frame in declared:
+        if frame.parent not in seen and frame.parent not in bodies:
+            raise PluginError(
+                f"manifest {path}: frame {frame.name!r} hangs from {frame.parent!r}, which is "
+                f"neither a body of {model_file.stem} nor a frame declared before it."
+            )
+        seen.add(frame.name)
+    if name in seen or name in bodies:
+        return
+    guess = nearest(name, seen | bodies)
+    hint = f" Did you mean {guess!r}?" if guess else ""
+    listed = ", ".join(f.name + ("" if f.tf else " (tf: false)") for f in declared) or "none"
+    raise PluginError(
+        f"{at}parent_frame {name!r} is neither a body nor a frame of {model_file.stem}.{hint} "
+        f"Its frames: {listed} (the 'frames:' block of {path.name})."
+    )
 
 
 def manifest_frame_id(model_file: Path) -> str | None:

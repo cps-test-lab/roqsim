@@ -13,8 +13,6 @@ frame_id: livox_frame       # driver launch_ROS2/msg_MID360_launch.py `frame_id 
 frames:
   - name: "{frame_id}"      # the point-cloud frame O-XYZ (manual p. 12): the mount itself
     parent: mount
-    pos: [0.0, 0.0, 0.0]
-    rpy: [0.0, 0.0, 0.0]
 
 components:
   - livox_mid360:

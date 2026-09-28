@@ -6,8 +6,10 @@
 # entirely, set `spawn_robot` config `default_plugins: false`. Each entry below attaches to the
 # spawned entity because it is nested under it -- there is no ownership key to fill in.
 
-mounts:
-  - {name: lds01, parent: base_link, pos: [-0.064, 0.0, 0.122], rpy: [0.0, 0.0, 0.0]}
+# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
+# description, so not published (`tf: false`); a device names one as its `parent_frame`.
+frames:
+  - {name: lds01, parent: base_link, pose: {position: {x: -0.064, z: 0.122}}, tf: false}
 
 components:
   # True 2-wheel differential drive with passive rear casters -- no skid-steer scrub, hence NO
@@ -37,6 +39,6 @@ components:
   # namespace, stamped `base_scan`.
   - spawn_sensor:
       model: lds01
-      mount: lds01
+      parent_frame: lds01
       frame_id: base_scan
     name: lds01

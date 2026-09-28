@@ -14,13 +14,11 @@
 # here because the vendor's navigation profile plants its costmaps on base_footprint
 # (navigation_diff.yaml: `base_frame: "base_footprint"`), so the name has to survive the flattening.
 frames:
-  - {name: base_footprint, parent: base_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
-
-mounts:
+  - {name: base_footprint, parent: base_link}
   # rox.urdf.xacro, lidar_1 origin: rpy pi, 0, pi/4
-  - {name: scan_front_left, parent: base_link, pos: [0.2995, 0.269, 0.189], rpy: [3.14159265, 0.0, 0.78539816]}
+  - {name: scan_front_left, parent: base_link, pose: {position: {x: 0.2995, y: 0.269, z: 0.189}, orientation: {roll: 3.14159265, yaw: 0.78539816}}, tf: false}
   # rox.urdf.xacro, lidar_2 origin: rpy pi, 0, -(pi - pi/4)
-  - {name: scan_back_right, parent: base_link, pos: [-0.2995, -0.269, 0.189], rpy: [3.14159265, 0.0, -2.35619449]}
+  - {name: scan_back_right, parent: base_link, pose: {position: {x: -0.2995, y: -0.269, z: 0.189}, orientation: {roll: 3.14159265, yaw: -2.35619449}}, tf: false}
 
 components:
   - diff_drive:
@@ -42,7 +40,7 @@ components:
   # which the device model reproduces rather than corrects (see sick_nanoscan3.xml).
   - spawn_sensor:
       model: sick_nanoscan3
-      mount: scan_front_left
+      parent_frame: scan_front_left
       frame_id: lidar_1_link         # sick_nanoscan.xacro names the link after the macro's `name`
     name: scan_front_left
     components:
@@ -50,7 +48,7 @@ components:
           topics: {scan: scan}       # relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_nanoscan3
-      mount: scan_back_right
+      parent_frame: scan_back_right
       frame_id: lidar_2_link
     name: scan_back_right
     components:

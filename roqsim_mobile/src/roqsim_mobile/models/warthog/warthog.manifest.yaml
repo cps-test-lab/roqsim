@@ -57,7 +57,7 @@ components:
   # ---------------------------------------------------------------------------------------------
   - spawn_sensor:
       model: hokuyo_ust
-      mount: lidar2d_0
+      parent_frame: bracket_0_vertical_mount   # w200_dual_laser.yaml:33
       frame_id: lidar2d_0_laser                # :38
     name: lidar2d_0
     components:
@@ -68,7 +68,7 @@ components:
           topics: {scan: sensors/lidar2d_0/scan}
   - spawn_sensor:
       model: hokuyo_ust
-      mount: lidar2d_1
+      parent_frame: bracket_1_vertical_mount   # w200_dual_laser.yaml:46
       frame_id: lidar2d_1_laser                # :51
     name: lidar2d_1
     components:
@@ -83,22 +83,16 @@ components:
 frames:
   # w200_dual_laser.yaml:14-17, as clearpath_platform_description urdf/links/frame.urdf.xacro:3-11
   # @ b0f6d92 names it.
-  - {name: front_left_link, parent: left_diff_unit_link, pos: [0.68, -0.03, 0.35], rpy: [0.0, 1.5707, 0.0]}
+  - {name: front_left_link, parent: left_diff_unit_link, pose: {position: {x: 0.68, y: -0.03, z: 0.35}, orientation: {pitch: 1.5707}}}
   # w200_dual_laser.yaml:24-25, clearpath_mounts_description urdf/pacs/bracket.urdf.xacro:81-111
   # @ 33e4b31: the bracket link at the parent, its mount mesh_thickness 0.010125 above it (:52-57), and
   # the vertical mount on the upright plate (:59-64).
-  - {name: bracket_0_link, parent: front_left_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
-  - {name: bracket_0_mount, parent: bracket_0_link, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
-  - {name: bracket_0_vertical_mount, parent: bracket_0_mount, pos: [0.0518, 0.0, 0.086875], rpy: [0.0, -1.570796327, 0.0]}
+  - {name: bracket_0_link, parent: front_left_link}
+  - {name: bracket_0_mount, parent: bracket_0_link, pose: {position: {z: 0.010125}}}
+  - {name: bracket_0_vertical_mount, parent: bracket_0_mount, pose: {position: {x: 0.0518, z: 0.086875}, orientation: {pitch: -1.570796327}}}
   # w200_dual_laser.yaml:18-21
-  - {name: rear_right_link, parent: right_diff_unit_link, pos: [-0.68, 0.03, 0.35], rpy: [3.1415, 1.5707, 0.0]}
+  - {name: rear_right_link, parent: right_diff_unit_link, pose: {position: {x: -0.68, y: 0.03, z: 0.35}, orientation: {roll: 3.1415, pitch: 1.5707}}}
   # w200_dual_laser.yaml:26-27, bracket.urdf.xacro as above
-  - {name: bracket_1_link, parent: rear_right_link, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
-  - {name: bracket_1_mount, parent: bracket_1_link, pos: [0.0, 0.0, 0.010125], rpy: [0.0, 0.0, 0.0]}
-  - {name: bracket_1_vertical_mount, parent: bracket_1_mount, pos: [0.0518, 0.0, 0.086875], rpy: [0.0, -1.570796327, 0.0]}
-
-mounts:
-  # w200_dual_laser.yaml:33-35
-  - {name: lidar2d_0, parent: bracket_0_vertical_mount, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
-  # w200_dual_laser.yaml:46-48
-  - {name: lidar2d_1, parent: bracket_1_vertical_mount, pos: [0.0, 0.0, 0.0], rpy: [0.0, 0.0, 0.0]}
+  - {name: bracket_1_link, parent: rear_right_link}
+  - {name: bracket_1_mount, parent: bracket_1_link, pose: {position: {z: 0.010125}}}
+  - {name: bracket_1_vertical_mount, parent: bracket_1_mount, pose: {position: {x: 0.0518, z: 0.086875}, orientation: {pitch: -1.570796327}}}

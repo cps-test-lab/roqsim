@@ -22,11 +22,13 @@
 # Every limit below is PAL's own, from omni_base_controller_configuration/config/
 # mobile_base_controller.yaml and the source URDF <limit> tags -- not a substrate guess.
 
-mounts:
+# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
+# description, so not published (`tf: false`); a device names one as its `parent_frame`.
+frames:
   # base_sensors.urdf.xacro:71: rpy -180, 0, -45 deg
-  - {name: base_front_laser, parent: base_link, pos: [0.27512, -0.18297, 0.13244], rpy: [-3.141592654, 0.0, -0.785398163]}
+  - {name: base_front_laser, parent: base_link, pose: {position: {x: 0.27512, y: -0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: -0.785398163}}, tf: false}
   # base_sensors.urdf.xacro:66: rpy -180, 0, 135 deg
-  - {name: base_rear_laser, parent: base_link, pos: [-0.27512, 0.18297, 0.13244], rpy: [-3.141592654, 0.0, 2.356194490]}
+  - {name: base_rear_laser, parent: base_link, pose: {position: {x: -0.27512, y: 0.18297, z: 0.13244}, orientation: {roll: -3.141592654, yaw: 2.356194490}}, tf: false}
 
 components:
   # ---------------------------------------------------------------------------------------------
@@ -172,7 +174,7 @@ components:
   # ---------------------------------------------------------------------------------------------
   - spawn_sensor:
       model: sick_tim571
-      mount: base_front_laser
+      parent_frame: base_front_laser
       frame_id: base_front_laser_link          # `${name}_link`, name base_front_laser (:70)
     name: base_front_laser
     components:
@@ -189,7 +191,7 @@ components:
 
   - spawn_sensor:
       model: sick_tim571
-      mount: base_rear_laser
+      parent_frame: base_rear_laser
       frame_id: base_rear_laser_link           # `${name}_link`, name base_rear_laser (:65)
     name: base_rear_laser
     components:

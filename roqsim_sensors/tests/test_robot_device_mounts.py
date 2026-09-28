@@ -1,4 +1,4 @@
-"""Every robot mounts its devices by name, and every device sits where ``robot_device_poses.json`` says.
+"""Every robot hangs its devices from its frames, and every device sits where ``robot_device_poses.json`` says.
 
 The fixture holds, per robot, each device body's parent and its pose in that parent, as compiled
 from the robot's manifest. A device a manifest moves fails here, naming the robot and the body;
@@ -14,14 +14,11 @@ import mujoco
 import numpy as np
 import pytest
 
-from roqsim.config import (
-    PluginError,
-    instantiate_plugins,
-    load_config_from_dict,
-    overrides_from_dotlist,
-)
+from roqsim.config import instantiate_plugins, load_config_from_dict
 from roqsim.context import SimContext
-from roqsim.manifest import load_manifest, manifest_mounts, resolve_mount
+from roqsim.engine import Engine
+from roqsim.frames import parse_frames
+from roqsim.manifest import load_manifest, manifest_frames, resolve_parent_frame
 from roqsim.models import ModelError, resolve_model
 
 POSES = json.loads((Path(__file__).parent / "robot_device_poses.json").read_text())
@@ -68,26 +65,57 @@ def test_every_device_body_is_where_it_was(model):
         assert np.allclose(m.body_quat[b], want["quat"], atol=1e-9), name
 
 
-@pytest.mark.parametrize("model", sorted(POSES))
-def test_a_robot_mounts_each_device_by_name_and_every_mount_resolves(model):
+def _manifest(model: str):
     pytest.importorskip("roqsim_mobile", reason="spawn_robot lives in roqsim_mobile")
     try:
-        path = resolve_model(model).path
+        return resolve_model(model).path
     except ModelError:  # the package shipping this robot is not installed
         pytest.skip(f"{model} is not installed")
+
+
+@pytest.mark.parametrize("model", sorted(POSES))
+def test_each_device_hangs_from_a_frame_of_its_robot_with_no_pose_of_its_own(model):
+    path = _manifest(model)
     devices = [e["spawn_sensor"] for e in load_manifest(path) if "spawn_sensor" in e]
     assert devices
     for device in devices:
-        assert "mount" in device and not {"parent_frame", "pos", "rpy"} & set(device), device
-    for mount in manifest_mounts(path):
-        resolve_mount(path, mount["name"])
+        assert "parent_frame" in device and "pose" not in device, device
+        resolve_parent_frame(path, device["parent_frame"])
 
 
-def test_a_world_puts_another_device_on_a_robots_mount_without_its_offset():
-    """The TurtleBot 4's OAK-D swapped for a D435 on the same mount: the D435 sits where the OAK-D did."""
+@pytest.mark.parametrize("model", sorted(POSES))
+def test_unpublished_frames_are_in_no_transform(model):
+    """A ``tf: false`` frame is a site of the robot, but neither a parent nor a child in TF."""
+    path = _manifest(model)
+    frames = parse_frames(manifest_frames(path), model)
+    hidden = {f.name for f in frames if not f.tf}
+    engine = Engine(
+        load_config_from_dict(
+            {
+                "sim": {},
+                "components": [{"spawn_robot": {"model": model, "prefix": "r_"}, "name": "r"}],
+            }
+        )
+    )
+    engine.setup()
+    for name in hidden:
+        assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, f"r_{name}") >= 0, name
+    transforms = [
+        (t["parent"], t["child"])
+        for e in engine.ctx.interface.all()
+        if e.name == "frames"
+        for t in e.backend["ros2"]["static_tf"]
+    ]
+    published = {f.name for f in frames if f.tf}
+    assert published <= {child for _, child in transforms}
+    assert not hidden & {name for pair in transforms for name in pair}, model
+
+
+def test_a_world_puts_another_device_on_a_robots_frame_without_its_offset():
+    """The TurtleBot 4's OAK-D swapped for a D435 on the same frame: the D435 sits where the OAK-D did."""
     m = _compiled(
         "turtlebot4",
-        {"spawn_sensor": {"model": "realsense_d435", "mount": "oakd"}, "name": "d435"},
+        {"spawn_sensor": {"model": "realsense_d435", "parent_frame": "oakd"}, "name": "d435"},
         {"spawn_sensor": {}, "name": "oakd", "enabled": False},
     )
     b = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "r_d435_mount")
@@ -96,14 +124,3 @@ def test_a_world_puts_another_device_on_a_robots_mount_without_its_offset():
     assert mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.body_parentid[b]) == want["parent"]
     assert np.allclose(m.body_pos[b], want["pos"], atol=1e-9)
     assert np.allclose(m.body_quat[b], want["quat"], atol=1e-9)
-
-
-@pytest.mark.parametrize("key", ["pos=[0,0,0.5]", "rpy=[0,0,0]", "parent_frame=base_link"])
-def test_an_override_cannot_move_a_device_off_the_robots_mount(key):
-    """A late override would land after the mount resolved and leave `mount:` naming where it is not."""
-    pytest.importorskip("roqsim_mobile", reason="the turtlebot4 manifest lives in roqsim_mobile")
-    with pytest.raises(PluginError, match=r"read while that component expands"):
-        load_config_from_dict(
-            {"sim": {}, "components": [{"spawn_robot": {"model": "turtlebot4"}, "name": "robot"}]},
-            overrides=overrides_from_dotlist([f"components.robot.rplidar.{key}"]),
-        )

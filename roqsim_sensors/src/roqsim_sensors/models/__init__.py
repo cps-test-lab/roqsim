@@ -40,7 +40,7 @@ def _vendor_link(new: str) -> RetiredModel:
             "convention pointing the lens along +y)"
         ),
         then=(
-            "Update the name, and re-express this mount's pos/rpy as the vendor macro's origin; "
+            "Update the name, and re-express this mount's pose as the vendor macro's origin; "
             "see roqsim_sensors/README.md."
         ),
     )

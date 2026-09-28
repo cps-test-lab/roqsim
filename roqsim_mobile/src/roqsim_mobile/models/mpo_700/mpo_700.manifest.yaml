@@ -3,13 +3,15 @@
 # `spawn_robot: {model: mpo_700}` pulls these in automatically, so a world does not re-declare the
 # robot's intrinsic kinematics/sensors.
 
-mounts:
-  # pos: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT); rpy: mpo_700_body.urdf.xacro:38,
-  # lidar_1_joint origin
-  - {name: scan_front, parent: base_link, pos: [0.327, 0.277, 0.2074], rpy: [3.14, 0.0, 0.79]}
-  # pos: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT); rpy: mpo_700_body.urdf.xacro:65,
-  # lidar_2_joint origin
-  - {name: scan_rear, parent: base_link, pos: [-0.327, -0.277, 0.2074], rpy: [3.14, 0.0, 3.93]}
+# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
+# description, so not published (`tf: false`); a device names one as its `parent_frame`.
+frames:
+  # position: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT);
+  # orientation: mpo_700_body.urdf.xacro:38, lidar_1_joint origin
+  - {name: scan_front, parent: base_link, pose: {position: {x: 0.327, y: 0.277, z: 0.2074}, orientation: {roll: 3.14, yaw: 0.79}}, tf: false}
+  # position: Neobotix MPO-700 Positions of Sensors (X, Y and HEIGHT);
+  # orientation: mpo_700_body.urdf.xacro:65, lidar_2_joint origin
+  - {name: scan_rear, parent: base_link, pose: {position: {x: -0.327, y: -0.277, z: 0.2074}, orientation: {roll: 3.14, yaw: 3.93}}, tf: false}
 
 components:
   # HOLONOMIC via four INDEPENDENTLY STEERED wheels -- the substrate's first swerve base. It uses
@@ -80,7 +82,7 @@ components:
   # which reaches the housings even at this pose; test_mpo_700_scene.py asserts no housing touches a tyre.
   - spawn_sensor:
       model: sick_s300
-      mount: scan_front
+      parent_frame: scan_front
       frame_id: lidar_1_link         # mpo_700_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
     components:
@@ -88,7 +90,7 @@ components:
           topics: {scan: scan}       # mpo_700_gazebo.urdf.xacro:36; relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_s300
-      mount: scan_rear
+      parent_frame: scan_rear
       frame_id: lidar_2_link         # mpo_700_gazebo.urdf.xacro:41
     name: scan_rear
     components:
