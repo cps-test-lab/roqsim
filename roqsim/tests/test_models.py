@@ -5,6 +5,7 @@ different package (e.g. spawning a model shipped by one package via another pack
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import mujoco
@@ -42,7 +43,7 @@ def test_package_qualified_ref():
 
 
 def test_filename_form_resolves():
-    assert resolve_model("d435.xml").path.name == "d435.xml"
+    assert resolve_model("realsense_d435.xml").path.name == "realsense_d435.xml"
 
 
 def test_filesystem_path(tmp_path):
@@ -186,6 +187,10 @@ def test_a_provider_declares_its_own_retired_names(monkeypatch):
             resolve_model("old_scanner")
         with pytest.raises(ModelError, match="renamed to 'new_scanner'"):
             resolve_model("fake:old_scanner")
+        # The same provider named by its module path rather than its registered name.
+        monkeypatch.setitem(sys.modules, "fake_provider_module", _Provider)
+        with pytest.raises(ModelError, match="renamed to 'new_scanner'"):
+            resolve_model("fake_provider_module:old_scanner")
         _Provider.RETIRED_MODELS = {"bad": "new_scanner"}
         with pytest.raises(ModelError, match="must be a roqsim.models.RetiredModel"):
             resolve_model("bad")

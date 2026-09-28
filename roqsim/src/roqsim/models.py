@@ -194,7 +194,7 @@ def _find_in_dir(models_dir: Path, name: str) -> Path | None:
         models_dir / name,
         models_dir / f"{name}.xml",
         models_dir / name / f"{name}.xml",
-        # Filename form against the nested layout ("d435.xml" -> d435/d435.xml). Without this the two
+        # Filename form against the nested layout ("mid360.xml" -> mid360/mid360.xml). Without this the two
         # forms this function documents do not compose, and a provider that migrates from flat to
         # one-folder-per-model silently stops answering to `<name>.xml`.
         models_dir / Path(name).stem / name,
@@ -343,6 +343,7 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
             raise ModelError(f"module {left!r} is not a model provider (no MODELS_DIR)") from exc
         found = _find_in_dir(models_dir, modelname)
         if found is None:
+            _refuse_retired(modelname)
             raise ModelError(f"model {modelname!r} not found in provider {left!r} ({models_dir})")
         return _finalize(found, meshdir, texturedir)
 

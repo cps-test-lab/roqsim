@@ -11,9 +11,8 @@
 #
 # lidar comes from roqsim_sensors (a dependency of this package) -- borrowed by name so the Oli
 # publishes /scan for nav2 exactly like the turtlebot/G1 do. The two depth cameras are the Oli's
-# real head + chest RealSense D435s; rendered RGB-D via the generic oakd_camera depth renderer (the
-# substrate's RealSense plugins are colour-only), each on its own namespace
-# so their topics don't collide.
+# real head + chest RealSense D435s: the `realsense_d435` device model, mounted twice below, each with
+# its own device_name and namespace so their frames and topics don't collide.
 
 # The models directory is flat, so the licence this model carries is named rather than guessed
 # from what sits beside it: the Oli description is LimX Dynamics' (Apache-2.0, THIRD_PARTY.md).
@@ -25,15 +24,40 @@ components:
       site: lidar
       rays: 360
       max_range: 12.0
-  # Two cameras, so two labels: a label is what an override addresses and what the entity is
-  # registered under, and two entries answering to `oakd_camera` is one hiding the other.
-  - oakd_camera:
-      camera: head_camera
+  # The head and chest RealSense D435s, as the `realsense_d435` device mounted by its vendor
+  # camera_link. `parent_frame` is a moving body; the device's own chain stays rigid on it.
+  #
+  # Where they sit, from HU_D04_01.urdf @ humanoid-description a90f734 (whose camera joints are both
+  # inside one commented-out block, :2063-2091): head_camera_joint on head_pitch_link at
+  # xyz (0.07453, 0.0175, 0.065), rpy (0, 1.5708, 0). The link carries the vendor's d435_link.STL at
+  # identity, and that mesh's axes say what the link is: its lens normal is +z, its long (baseline)
+  # axis +y, and its origin is 4.2 mm behind the glass and 17.5 mm from the housing centre -- the
+  # D435's depth origin, which is realsense camera_link's. So head_camera_link is camera_link pitched
+  # +90 deg (z forward, y along the baseline), and the rpy undoes itself: camera_link sits at the
+  # joint origin with head_pitch_link's own orientation, looking forward, upright.
+  #
+  # waist_camera_joint (rpy 0, 2.1818, 0 on waist_pitch_link, read the same way a 35 deg downward
+  # tilt) is recorded as a deviation: the chest camera keeps the forward axis at the joint origin.
+  #
+  # Each also brings the D435i's IMU (lazy, on `<namespace>/camera/imu`): the real module has one.
+  # `fovy: 58` is the D435's depth vertical FOV, the stream this port renders for.
+  - spawn_sensor:
+      model: realsense_d435
+      parent_frame: head_pitch_link
+      pos: [0.07453, 0.0175, 0.065]
+      rpy: [0.0, 0.0, 0.0]
+      device_name: head_camera
       namespace: head_camera
-      frame_id: head_camera_optical_frame
     name: head_camera
-  - oakd_camera:
-      camera: chest_camera
+    components:
+      - realsense_d435: {points: true, fovy: 58.0}
+  - spawn_sensor:
+      model: realsense_d435
+      parent_frame: waist_pitch_link
+      pos: [0.092, 0.0175, 0.2751]
+      rpy: [0.0, 0.0, 0.0]
+      device_name: chest_camera
       namespace: chest_camera
-      frame_id: chest_camera_optical_frame
     name: chest_camera
+    components:
+      - realsense_d435: {points: true, fovy: 58.0}

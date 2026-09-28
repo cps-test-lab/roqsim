@@ -354,7 +354,9 @@ def test_a_stream_left_by_an_earlier_run_is_not_adopted(tmp_path, moving):
     model, data = moving
     _record(tmp_path, model, data)  # a complete earlier run
     stale = tmp_path / ("run.npz" + STREAM_SUFFIX)
-    stale.write_bytes(b"\x00" * (record_dtype(mujoco.mj_stateSize(model, STATE_SPEC), False).itemsize * 3))
+    stale.write_bytes(
+        b"\x00" * (record_dtype(mujoco.mj_stateSize(model, STATE_SPEC), False).itemsize * 3)
+    )
     (tmp_path / "run.npz").unlink()
 
     ctx = _Ctx(model, data)
@@ -683,7 +685,9 @@ def test_the_pose_record_carries_every_named_body_not_only_roots(tmp_path, caplo
     data = mujoco.MjData(model)
     ctx = _Ctx(model, data)
     rec = StateRecorder(
-        ctx, tmp_path / "run.npz", snap_fps(1 / model.opt.timestep, model.opt.timestep),
+        ctx,
+        tmp_path / "run.npz",
+        snap_fps(1 / model.opt.timestep, model.opt.timestep),
         sim_poses=True,
     )
     with caplog.at_level(logging.INFO):
@@ -787,3 +791,62 @@ def _recorded(tmp_path, model, data, *, fps: int, samples: int):
     path = tmp_path / f"src-{fps}-{samples}.npz"
     np.savez(path, meta=np.array(json.dumps(meta)), samples=rows)
     return open_recording(path)
+
+
+# A flex's vertex bodies are one row each per sample, and no success rule reads one by name: the pose
+# record leaves them out, keeps the body the flex hangs from, and says so once per flex.
+_FLEX_XML = """
+<mujoco>
+  <option timestep="0.002"/>
+  <worldbody>
+    <body name="table" pos="0 0 .5">
+      <geom type="box" size=".1 .1 .01"/>
+      <flexcomp name="pad" type="grid" count="3 3 1" spacing=".05 .05 .05" dim="2" radius=".001"
+                pos="0 0 .05">
+        <edge equality="true"/><pin id="0 1 2"/>
+      </flexcomp>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_the_pose_record_leaves_a_flexs_own_bodies_out(tmp_path, caplog):
+    model = mujoco.MjModel.from_xml_string(_FLEX_XML)
+    data = mujoco.MjData(model)
+    ctx = _Ctx(model, data)
+    rate = snap_fps(1 / model.opt.timestep, model.opt.timestep)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", rate, sim_poses=True)
+    with caplog.at_level(logging.INFO):
+        for _ in range(5):
+            mujoco.mj_step(model, data)
+            rec.sample(ctx)
+    rec.close()
+
+    rows = [line.split(",") for line in (tmp_path / "sim_poses.csv").read_text().splitlines()[1:]]
+    # The pinned vertices sit on `table`, which stays; the six free vertices' bodies (pad_3..pad_8)
+    # are the flex's own.
+    assert {r[2] for r in rows} == {"table"}
+    assert "omits the 6 bodies of flex 'pad'" in caplog.text
+    assert "0 unnamed bodies have no row" in caplog.text
+
+
+def test_every_sample_lands_on_the_capture_grid_over_a_long_run(tmp_path, moving):
+    """The gate must not slip a step when accumulated float time falls a hair short of the due time.
+
+    ``data.time`` sums dt per step and the due time sums the period per sample, so after some
+    seconds the step that lands on the due time reads a few ulp below it. The first sample is taken
+    at the first step; every later one must be taken a whole number of ``every`` steps after it.
+    """
+    model, data = moving
+    mujoco.mj_resetData(model, data)
+    ctx = _Ctx(model, data)
+    rate = snap_fps(25, model.opt.timestep)
+    rec = StateRecorder(ctx, tmp_path / "run.npz", rate, world="w")
+    off_grid = []
+    for step in range(1, 15_001):  # 30 s of sim time at dt=0.002
+        mujoco.mj_step(model, data)
+        if rec.sample(ctx) and (step - 1) % rate.every != 0:
+            off_grid.append((step, float(data.time)))
+    rec.close()
+    assert not off_grid, f"{len(off_grid)} samples taken a step late, first at {off_grid[:2]}"

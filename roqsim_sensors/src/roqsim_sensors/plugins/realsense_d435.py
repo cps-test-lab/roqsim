@@ -15,8 +15,9 @@ IMU (D435i)      ``<ns>/camera/imu``                          ``camera_imu_optic
 ===============  ==========================================  =============================
 
 The IMU is not this plugin's: the D435i's inertial module is a separate device inside the same
-housing, so it is an ``imu`` component in ``d435.manifest.yaml`` (with the vendor's extrinsic) rather
-than another stream rendered here. It arrives with ``spawn_sensor: {model: d435}`` and is switched off
+housing, so it is an ``imu`` component in ``realsense_d435.manifest.yaml`` (at the vendor's gyro
+optical frame) rather than another stream rendered here. It arrives with ``spawn_sensor: {model:
+realsense_d435}`` and is switched off
 per world with ``enabled: false``; the row is listed because a consumer looking for the device's
 topics should find all of them in one table.
 
@@ -29,8 +30,10 @@ the OM-X palm-harvesting benchmark reconstructs, which is D435 -> PCL cloud -> O
 Reference frames. The cloud is emitted in the **ROS optical convention** -- x right, y down, z along
 the view direction -- because that is what ``realsense-ros`` publishes and what every depth-image
 consumer assumes. A MuJoCo camera looks down its own ``-z`` with ``+y`` up, so the two conventions
-differ by a fixed rotation; a world must publish the static transform from the mount body to
-``camera_depth_optical_frame`` itself (this plugin publishes no TF, like every other sensor here).
+differ by a fixed rotation. This plugin publishes no TF: a ``spawn_sensor`` mount of the
+``realsense_d435`` model publishes the vendor chain (``camera_link`` -> ``camera_color_optical_frame``,
+``camera_depth_optical_frame``, ...), and a robot whose own MJCF carries the camera publishes its
+own.
 
 Config (also inherits ``camera_common.CameraPlugin``'s own fields, undocumented here)::
 

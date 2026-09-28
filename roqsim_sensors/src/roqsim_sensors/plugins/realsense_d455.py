@@ -11,8 +11,9 @@ to publish. Both are opt-in (``depth:``/``points:``), and ``points`` implies ``d
 reprojects every valid pixel, so it is not free.
 
 What is D455-specific: a distinctly wider-FOV, longer-range camera (87 x 62 deg colour, 95 mm stereo
-baseline, 0.6-6 m ideal range) against the D435's 69 x 42 deg and 0.3-3 m. The bundled ``d455`` model
-(``models/d455.xml``) provides a ``d455_color`` camera with that wide FOV baked in, and the clip
+baseline, 0.6-6 m ideal range) against the D435's 69 x 42 deg and 0.3-3 m. The bundled
+``realsense_d455`` model (``models/realsense_d455/realsense_d455.xml``) provides a ``d455_color``
+camera with that wide FOV baked in, and the clip
 range below is the D455's own -- which is what decides whether a wall 4 m away is a depth return or
 a "no return". Attach it to a robot or mount it standalone with ``spawn_sensor``.
 

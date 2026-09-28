@@ -49,12 +49,15 @@ def _vendor_link(new: str) -> RetiredModel:
 #: Model names this provider retired, refused by :func:`roqsim.models.resolve_model` with the name
 #: that replaced them. An entry is deleted once downstream has moved.
 RETIRED_MODELS = {
+    "d415": _vendor_link("realsense_d415"),
+    "d435": _vendor_link("realsense_d435"),
+    "d455": _vendor_link("realsense_d455"),
     "oakd": _vendor_link("oakd_pro"),
 }
 
 
 def model_path(name: str) -> Path:
-    """Resolve a bundled model file (accepts a bare name like ``d435`` or a filename)."""
+    """Resolve a bundled model file (accepts a bare name like ``realsense_d435`` or a filename)."""
     p = Path(name)
     if p.is_absolute() and p.exists():
         return p
