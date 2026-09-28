@@ -653,8 +653,8 @@ of sight leaves a free body accelerating under gravity for as long as it is away
 back with whatever velocity it accumulated. See :mod:`roqsim.presence` for the three model fields
 this flips (on its geoms, and on a flex's own copies of them) and why disabling contact alone is
 not enough: ``mj_multiRay`` ignores ``contype``/``conaffinity`` and tests the real triangles, so
-it is the zeroed alpha, and the absent geom group every roqsim raycast masks, that take an absent
-obstacle out of a lidar's returns.
+it is the zeroed alpha, and the absent geom group that roqsim's raycasts mask by default, that take
+an absent obstacle out of a lidar's returns.
 
 A world can declare an entity absent from the start, with ``present: false`` on the entry that
 registers it::
@@ -675,9 +675,9 @@ Moving one needs a free joint
 
 ``SetEntityState`` places an entity by writing its base free joint, and ``SpawnEntity`` writes the
 same joint with its ``initial_pose`` -- always, since a request that states no pose asks for the
-origin; to bring an entity back where it was, state that pose. A body compiled without one is welded scenery: it holds the
-pose the world gave it, and both services refuse to move it, naming the weld and the
-``motion: physics`` that resolves it.
+origin; to bring an entity back where it was, state that pose. A body compiled without one is
+welded scenery: it holds the pose the world gave it, and both services refuse to move it, naming the
+weld and the ``motion: physics`` that resolves it.
 
 This is worth stating because nothing else about such a world looks wrong. It compiles, the entity
 exists under the name the caller uses, and ``GetEntities`` lists it -- so a world that parks an
