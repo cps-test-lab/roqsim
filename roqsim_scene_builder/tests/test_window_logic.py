@@ -201,3 +201,26 @@ def test_arrow_keys_are_aliases_of_the_walk_letters():
     assert [_walk_key(k) for k in ("w", "A", "q")] == ["w", "a", "q"]
     assert _walk_key("Return") == "return"  # anything else passes through, to be ignored downstream
     assert _walk_key("") == ""
+
+
+def test_a_dragged_prop_redraws_its_whole_subtree_and_nothing_beside_it():
+    import types
+
+    import mujoco
+    from roqsim_scene_builder.scene_window import _ReviewApp
+
+    spec = mujoco.MjSpec()
+    prop = spec.worldbody.add_body(name="prop")
+    prop.add_geom(name="prop_g", size=[0.1, 0.1, 0.1])
+    prop.add_body(name="lid").add_geom(name="lid_g", size=[0.1, 0.1, 0.1])
+    spec.worldbody.add_body(name="shelf").add_geom(name="shelf_g", size=[0.1, 0.1, 0.1])
+    model = spec.compile()
+
+    def geom(name):
+        return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name)
+
+    app = types.SimpleNamespace(
+        engine=types.SimpleNamespace(ctx=types.SimpleNamespace(model=model))
+    )
+    root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "prop")
+    assert _ReviewApp._prop_geom_ids(app, root) == {geom("prop_g"), geom("lid_g")}
