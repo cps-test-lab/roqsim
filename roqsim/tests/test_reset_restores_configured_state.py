@@ -49,6 +49,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
 from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegistry
+from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 
@@ -216,7 +217,21 @@ def _write_every_in_endpoint(engine: Engine) -> None:
         payload = PAYLOADS[endpoint.name]
         if callable(payload):
             payload = payload(engine, endpoint)
+        if endpoint.params is not None:
+            payload = _named(endpoint, payload)
         engine.ctx.post(lambda _ctx, e=endpoint, p=payload: e.write(p))
+
+
+def _named(endpoint, payload) -> dict:
+    """*payload*, positional as in :data:`PAYLOADS`, as the named parameters a typed endpoint takes.
+
+    Checked here: a typed write refuses a misfit into a future or a log line, which a trial would
+    not notice, and the endpoint would go unused.
+    """
+    values = () if payload is None else payload if isinstance(payload, tuple) else (payload,)
+    named = dict(zip((p.name for p in endpoint.params), values, strict=False))
+    bind(endpoint.params, named, f"{endpoint.owner}/{endpoint.name}")
+    return named
 
 
 def _switch_every_controller(engine: Engine) -> None:
