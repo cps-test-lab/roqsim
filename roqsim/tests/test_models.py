@@ -140,12 +140,12 @@ def test_a_retired_model_name_is_refused_naming_its_replacement(monkeypatch):
         plugin="spawn_sensor",
         renamed_to="realsense_d455",
         because=(
-            "when its mount frame became the vendor link (it was a display convention pointing "
-            "the lens along +y)"
+            "when its mount frame became the one its vendor macro places (it was a display "
+            "convention pointing the lens along +y)"
         ),
         then=(
-            "Update the name, and re-express this mount's pos/rpy against the vendor link; see "
-            "roqsim_sensors/README.md."
+            "Update the name, and re-express this mount's pos/rpy as the vendor macro's origin; "
+            "see roqsim_sensors/README.md."
         ),
     )
     monkeypatch.setitem(models.RETIRED_MODELS, "retired_cam", entry)
@@ -157,9 +157,9 @@ def test_a_retired_model_name_is_refused_naming_its_replacement(monkeypatch):
         resolve_model.cache_clear()
     assert str(exc.value) == (
         "spawn_sensor: model 'retired_cam' — renamed to 'realsense_d455' when its mount frame "
-        "became the vendor link (it was a display convention pointing the lens along +y). Update "
-        "the name, and re-express this mount's pos/rpy against the vendor link; see "
-        "roqsim_sensors/README.md."
+        "became the one its vendor macro places (it was a display convention pointing the lens "
+        "along +y). Update the name, and re-express this mount's pos/rpy as the vendor macro's "
+        "origin; see roqsim_sensors/README.md."
     )
 
 
