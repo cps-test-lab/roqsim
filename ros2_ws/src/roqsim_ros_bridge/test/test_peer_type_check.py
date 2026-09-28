@@ -78,29 +78,33 @@ def test_a_twist_published_at_a_stamped_base_fails_the_run(tmp_path):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    engine = Engine(load_config_from_dict(with_transport(raw, ros=True), base_dir=tmp_path))
-    engine.setup()
-    engine.reset()
     failure: list[BaseException] = []
     stop = threading.Event()
-
-    def run():
-        try:
-            while not stop.is_set():
-                engine.step()
-        except BaseException as exc:  # noqa: BLE001  the failure is what the test reads
-            failure.append(exc)
-
-    threading.Thread(target=run, daemon=True).start()
     try:
-        deadline = time.monotonic() + 30.0
-        while not failure and time.monotonic() < deadline:
-            time.sleep(0.1)
+        cfg = load_config_from_dict(with_transport(raw, ros=True), base_dir=tmp_path)
+        with Engine(cfg) as engine:
+            engine.reset()
+
+            def run():
+                try:
+                    while not stop.is_set():
+                        engine.step()
+                except BaseException as exc:  # noqa: BLE001  the failure is what the test reads
+                    failure.append(exc)
+
+            stepper = threading.Thread(target=run, daemon=True)
+            stepper.start()
+            try:
+                deadline = time.monotonic() + 30.0
+                while not failure and time.monotonic() < deadline:
+                    time.sleep(0.1)
+            finally:
+                # The stepper stops before the engine shuts down under it.
+                stop.set()
+                stepper.join(timeout=5.0)
     finally:
-        stop.set()
         stack.terminate()
         stack.wait(timeout=10)
-        engine.shutdown()
     assert failure, "the wrong type on cmd_vel went unnoticed"
     message = str(failure[0])
     assert isinstance(failure[0], RuntimeError)

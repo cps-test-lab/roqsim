@@ -15,6 +15,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from roqsim import export_web
 from roqsim.export_web import export_scene
 
 # A compact world exercising every FK path: a hinge, a slide, a free body, a textured plane, a box,
@@ -105,6 +106,11 @@ def test_descriptor_structure(tmp_path):
     disk = json.loads((tmp_path / "scene.json").read_text())
     assert disk == scene
     bin_len = (tmp_path / "scene.bin").stat().st_size
+
+    # The descriptor says what it is, so a reader can refuse one written to a later contract, and
+    # tell it from the scene manifest that shares its file name.
+    assert (scene["format"], scene["version"]) == (export_web.FORMAT, export_web.FORMAT_VERSION)
+    assert scene["format"] == "roqsim.web_scene" and scene["version"] == 1
 
     # Named joints present with correct types/metadata.
     joints = {j["name"]: j for j in scene["joints"]}
