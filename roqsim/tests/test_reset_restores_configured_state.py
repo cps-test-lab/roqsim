@@ -351,9 +351,9 @@ CASES: dict[str, Case] = {
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
     "oakd_camera": Case(lambda _: _sensor("oakd")),
-    "realsense_d415": Case(lambda _: _sensor("d415")),
-    "realsense_d435": Case(lambda _: _sensor("d435")),
-    "realsense_d455": Case(lambda _: _sensor("d455")),
+    "realsense_d415": Case(lambda _: _sensor("realsense_d415")),
+    "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
+    "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
     "fiducial_marker": _static(
         {
@@ -392,10 +392,10 @@ CASES: dict[str, Case] = {
     ),
     "sensor_coverage_probe": Case(
         lambda tmp: (
-            _sensor("d435")
+            _sensor("realsense_d435")
             | {
                 "components": [
-                    *_sensor("d435")["components"],
+                    *_sensor("realsense_d435")["components"],
                     {
                         "sensor_coverage_probe": {
                             "sample": {
