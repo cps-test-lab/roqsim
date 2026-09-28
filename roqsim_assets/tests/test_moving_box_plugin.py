@@ -204,7 +204,7 @@ def test_reset_restores_the_pose_and_a_repeated_episode_repeats_the_walk():
 
 def test_each_episode_walks_its_own_path():
     """The walk draws through ctx.rng_for, keyed on the episode: repetitions of a trial in one
-    process are samples, not one walk replayed -- CLAUDE.md's rule for every random draw."""
+    process are samples, not one walk replayed."""
     walls = ((0, 2.15, 4.6, 0.3), (0, -2.15, 4.6, 0.3), (2.15, 0, 0.3, 4.6), (-2.15, 0, 0.3, 4.6))
     _, _, plugin, ctx = _build(walls, **_cfg(speed=0.4, random_walk={"seed": 3, "clearance": 0.3}))
     first = _run(plugin, ctx, 20.0)
