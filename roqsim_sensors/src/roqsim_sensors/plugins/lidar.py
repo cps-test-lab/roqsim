@@ -236,7 +236,7 @@ class LidarPlugin(RayCastSensorPlugin):
         angles = np.linspace(self.angle_min, self.angle_max, self._num_rays)
         return np.stack([np.cos(angles), np.sin(angles), np.zeros(self._num_rays)], axis=1)
 
-    @endpoint.out(rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    @endpoint.out(rate="rate_hz", lazy="lazy", ros2=lambda self: self._ros2_hints())
     def scan(self) -> LaserScan | None:
         """The latest sweep; nothing before the first cast of a trial."""
         return self._payload_value

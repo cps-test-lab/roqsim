@@ -206,18 +206,6 @@ def join_topic(*parts: str) -> str:
     return "/".join(p for p in parts if p)
 
 
-def sibling_topic(topic: str, name: str) -> str:
-    """The topic called ``name`` in ``topic``'s own namespace.
-
-    ROS's convention for a ``camera_info`` beside its image, and the reason this is not
-    :func:`join_topic` on the split parts: that drops empty parts, which turns an ABSOLUTE topic
-    (``/cam/depth/image_raw``, as a world hardwires to match a driver) into a relative one that the
-    bridge then puts under the robot's namespace.
-    """
-    namespace, slash, _ = topic.rpartition("/")
-    return f"{namespace}{slash}{name}" if slash else name
-
-
 class CameraPlugin(Plugin):
     """Base for a ``post_step`` RGB(-D) camera rendered from a named MuJoCo ``<camera>``.
 
@@ -358,14 +346,6 @@ class CameraPlugin(Plugin):
         ]
         return endpoints
 
-    def _image_topic(self) -> str:
-        """Where ``image`` is published: the world's ``topics:`` rename, else the default.
-
-        ``image_compressed`` is derived from it, so a world that hardwires ``topics: {image: ...}``
-        to match an external driver gets the matching ``/compressed`` for free.
-        """
-        return self.topic_override("image") or join_topic(self.DEFAULT_TOPIC_PREFIX, "image_raw")
-
     # The colour stream. A full raw frame is the most expensive thing this plugin can put on the wire
     # (2.8 MB at 1280x720), so it is not serialised while nothing is listening.
     @endpoint.out(
@@ -384,14 +364,15 @@ class CameraPlugin(Plugin):
     # Same payload as `image` -- one array, two wire formats. The bridge's converter owns the codec,
     # so this plugin never imports one, and `lazy` means the encode is paid only while something
     # subscribes to THIS topic (a raw-image consumer must not trigger it). `<image topic>/compressed`
-    # is image_transport's convention, which is what makes a driver-shaped consumer find it.
+    # is image_transport's convention, which is what makes a driver-shaped consumer find it, and it
+    # follows a world's rename of `image`.
     @endpoint.out(
         rate="rate_hz",
         lazy=True,
         when=lambda self: self.color and self.compressed,
         ros2=lambda self: {
             "type": "sensor_msgs.msg.CompressedImage",
-            "topic": join_topic(self._image_topic(), "compressed"),
+            "topic": "{image}/compressed",
             "frame_id": self.frame_id,
             "format": "jpeg",
             "quality": self.jpeg_quality,

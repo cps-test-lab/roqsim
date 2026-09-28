@@ -152,7 +152,7 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
             -1, 3
         )
 
-    @endpoint.out(rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    @endpoint.out(rate="rate_hz", lazy="lazy", ros2=lambda self: self._ros2_hints())
     def cloud(self) -> PointCloud | None:
         """The latest frame of returns; nothing before the first cast of a trial."""
         return self._payload_value

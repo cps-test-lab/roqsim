@@ -143,7 +143,7 @@ class RangeSensorPlugin(LidarPlugin):
         return dirs.reshape(-1, 3)
 
     # The scanner's endpoint, renamed: redefining `scan` replaces the scanner's declaration.
-    @endpoint.out(name="range", rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    @endpoint.out(name="range", rate="rate_hz", lazy="lazy", ros2=lambda self: self._ros2_hints())
     def scan(self) -> LaserScan | None:
         """The latest reading, one LaserScan of the cone's rays; nothing before the first cast."""
         return self._payload_value

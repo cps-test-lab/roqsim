@@ -232,8 +232,6 @@ class RayCastSensorPlugin(FaultableSensorMixin, Plugin):
         endpoints = super().register_endpoints(ctx)
         for ep in endpoints:
             if ep.name == self.ENDPOINT_NAME:
-                # Per instance: see `lazy` in __init__.
-                ep.lazy = self.lazy
                 self._endpoint = ep
         return endpoints
 

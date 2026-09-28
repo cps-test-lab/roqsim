@@ -62,13 +62,7 @@ from roqsim.context import SimContext
 from roqsim.rendering import FrameRenderer
 from roqsim.types import CameraInfo, Image
 
-from .camera_common import (
-    CameraPlugin,
-    Intrinsics,
-    camera_info_of,
-    intrinsics_from_model,
-    sibling_topic,
-)
+from .camera_common import CameraPlugin, Intrinsics, camera_info_of, intrinsics_from_model
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -186,14 +180,6 @@ class DepthCameraPlugin(CameraPlugin):
         self._depth_topic = topic
         self._depth_frame_id = frame_id
 
-    def _resolved_depth_topic(self) -> str:
-        """Where ``depth`` is published: the world's rename, else the device's topic.
-
-        The depth ``camera_info`` and ``compressedDepth`` topics are derived from it, so a world that
-        hardwires the depth topic to match a driver gets the matching ones without naming them twice.
-        """
-        return self.topic_override("depth") or self._depth_topic
-
     # As expensive to serialise as the colour frame; see camera_common's `image`.
     @endpoint.out(
         name="depth",
@@ -220,7 +206,7 @@ class DepthCameraPlugin(CameraPlugin):
         rate="rate_hz",
         when="_depth_topic",
         ros2=lambda self: {
-            "topic": sibling_topic(self._resolved_depth_topic(), "camera_info"),
+            "topic": "{depth}/../camera_info",
             "frame_id": self._depth_frame_id,
         },
     )
@@ -239,7 +225,7 @@ class DepthCameraPlugin(CameraPlugin):
         ),
         ros2=lambda self: {
             "type": "sensor_msgs.msg.CompressedImage",
-            "topic": f"{self._resolved_depth_topic()}/compressedDepth",
+            "topic": "{depth}/compressedDepth",
             "frame_id": self._depth_frame_id,
             "format": self.depth_codec,
         },

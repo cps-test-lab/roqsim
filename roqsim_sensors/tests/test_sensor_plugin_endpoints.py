@@ -73,6 +73,14 @@ def test_a_sensor_offers_its_fault_switch_only_with_a_fault_block():
     assert [(p["name"], p["type"]) for p in rows["override"]["params"]] == [("data", "bool")]
 
 
+@pytest.mark.parametrize(
+    ("cls", "name"),
+    [(LidarPlugin, "scan"), (RangeSensorPlugin, "range"), (LivoxMid360Plugin, "cloud")],
+)
+def test_a_ray_sensor_is_lazy_per_instance_from_its_config(cls, name):
+    assert _described(cls)[name]["lazy"] == {"from": "lazy"}
+
+
 def _units(row) -> dict[str, str]:
     return {f["name"]: f.get("unit", "") for f in row["result"].get("fields", [])}
 
