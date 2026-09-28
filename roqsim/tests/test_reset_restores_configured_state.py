@@ -350,7 +350,7 @@ CASES: dict[str, Case] = {
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
-    "oakd_camera": Case(lambda _: _sensor("oakd")),
+    "oakd_camera": Case(lambda _: _sensor("oakd_pro")),
     "realsense_d415": Case(lambda _: _sensor("realsense_d415")),
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
