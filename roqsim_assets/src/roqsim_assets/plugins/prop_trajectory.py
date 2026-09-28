@@ -39,16 +39,31 @@ is the right model for a stepper-driven gantry and the wrong one for a compliant
 from __future__ import annotations
 
 import csv
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Annotated
 
 import mujoco
 import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import Entity, SimContext
-from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.types import Length
+
+
+@dataclass
+class Progress:
+    """How far the stage has run along its path.
+
+    Attributes:
+        s: arc length travelled
+        total: length of the path
+        done: whether the path is finished
+    """
+
+    s: Length
+    total: Length
+    done: bool
 
 
 class PropTrajectoryPlugin(Plugin):
@@ -223,21 +238,15 @@ class PropTrajectoryPlugin(Plugin):
         """The stage entity this plugin registers."""
         return self.entity_name
 
-    # The stage's progress, so a trial can be gated on it (and so a run's log records what the
-    # object actually did, not just what it was asked to do).
-    @endpoint.out(
-        "stage_progress",
-        rate_hz=30.0,
-        ros2={"type": "std_msgs.msg.Float64", "topic": "stage_progress"},
-    )
-    def read_progress(
-        self,
-    ) -> tuple[
-        Annotated[float, Unit("m"), "arc length travelled"],
-        Annotated[float, Unit("m"), "total path length"],
-        Annotated[bool, "whether the path is finished"],
-    ]:
-        """Endpoint ``stage_progress``: how far along its path the stage is."""
+    # The stage's progress, so a trial can be gated on it and a run's log records what the object
+    # actually did. A Float64 carries one number: the arc length travelled.
+    @endpoint.out(rate=30.0, ros2={"field": "s"})
+    def stage_progress(self) -> Progress:
+        """Arc length travelled and path length, and whether the path is finished."""
+        return Progress(*self.read_progress())
+
+    def read_progress(self):
+        """(arc length travelled [m], total path length [m], finished?)."""
         return float(self._s), float(self._cum[-1] if len(self._cum) else 0.0), bool(self._done)
 
     def on_reset(self, ctx: SimContext) -> None:

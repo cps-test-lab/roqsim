@@ -24,14 +24,13 @@ def _endpoints(engine):
     return {(e.owner, e.name): e for e in engine.ctx.interface.all() if e.owner != "sim"}
 
 
-def test_conveyor_speed_is_a_stream_and_the_package_pose_is_the_packages():
+def test_conveyor_speed_is_a_stream_on_the_conveyor():
     engine = _engine({"conveyor": {"namespace": "belt"}, "name": "conveyor"})
     try:
         eps = _endpoints(engine)
         speed = eps[("conveyor", "speed")]
         assert speed.namespace == "belt"
         assert [(p.name, p.type.unit) for p in speed.params] == [("data", "m/s")]
-        assert eps[("package", "package_pose")].namespace == ""
         conveyor = engine.ctx.blackboard.get("conveyor:conveyor")
         speed.write({"data": -0.3})
         assert conveyor.get_speed() != -0.3, "a stream is applied on the physics thread"
@@ -58,18 +57,21 @@ def test_door_cmd_is_a_stream_and_door_a_command():
         engine.shutdown()
 
 
-@pytest.mark.parametrize(
-    ("plugin", "name", "units"),
-    [
-        ("prop_trajectory", "stage_progress", ["m", "m", None]),
-        ("conveyor", "package_pose", None),
-    ],
-)
-def test_the_out_endpoints_describe_their_payload(plugin, name, units):
-    rows = {row["name"]: row for row in get_plugin_details(plugin)["endpoints"]}
-    result = rows[name]["result"]
-    if units is not None:
-        assert [i.get("unit") for i in result["items"]] == units
-    else:
-        (bone,) = result["items"]
-        assert [i.get("unit") for i in bone["items"]] == [None, "m", None]
+@pytest.mark.parametrize("config", [{"controllable": False}, {"leaf": False}])
+def test_a_passive_or_leafless_door_declares_no_endpoints(config):
+    engine = _engine({"door": config, "name": "door"})
+    try:
+        assert not {n for (o, n) in _endpoints(engine) if o == "door"} & {"cmd", "state", "door"}
+    finally:
+        engine.shutdown()
+
+
+def test_stage_progress_publishes_the_distance_travelled():
+    rows = {row["name"]: row for row in get_plugin_details("prop_trajectory")["endpoints"]}
+    fields = rows["stage_progress"]["result"]["fields"]
+    assert [(f["name"], f.get("unit")) for f in fields] == [
+        ("s", "m"),
+        ("total", "m"),
+        ("done", None),
+    ]
+    assert rows["stage_progress"]["payload"] == "Progress"

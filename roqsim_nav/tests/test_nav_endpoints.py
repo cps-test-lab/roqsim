@@ -29,15 +29,16 @@ def _engine(**navigator):
     return engine
 
 
+GOALS = ("navigate_to_pose", "navigate_through_poses", "start_route")
+
+
 def _goal_endpoints(engine):
-    return {
-        e.name: e for e in engine.ctx.interface.all() if e.owner == "bot" and e.direction == "in"
-    }
+    return {e.name: e for e in engine.ctx.interface.all() if e.owner == "bot" and e.name in GOALS}
 
 
 def test_the_goal_endpoints_are_one_family_described_once():
     rows = {row["name"]: row for row in get_plugin_details("navigator")["endpoints"]}
-    assert rows["{item}"]["family"] and rows["{item}"]["kind"] == "command"
+    assert rows["{item}"]["family"] == "goal_actions" and rows["{item}"]["kind"] == "command"
     assert [p["name"] for p in rows["{item}"]["params"]] == ["poses"]
     assert rows["start_route"]["kind"] == "command" and rows["start_route"]["params"] == []
 
@@ -79,5 +80,23 @@ def test_start_route_releases_a_held_route():
         future = _goal_endpoints(engine)["start_route"].write(None)
         engine.step()
         assert future.result(0) is None and nav.started
+    finally:
+        engine.shutdown()
+
+
+def test_goal_endpoint_false_declares_none_and_actions_selects():
+    engine = _engine(goals=[[1.0, 0.0]], goal_endpoint=False)
+    try:
+        assert not _goal_endpoints(engine)
+    finally:
+        engine.shutdown()
+    engine = _engine(goals=[[1.0, 0.0]], actions=["navigate_through_poses", "start_route"])
+    try:
+        assert set(_goal_endpoints(engine)) == {"navigate_through_poses", "start_route"}
+    finally:
+        engine.shutdown()
+    engine = _engine()
+    try:
+        assert "start_route" not in _goal_endpoints(engine), "no route, nothing to release"
     finally:
         engine.shutdown()

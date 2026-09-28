@@ -88,7 +88,6 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated
 
 import mujoco
 
@@ -177,6 +176,8 @@ class DoorPlugin(Plugin):
         self.max_angle = math.radians(self._float(self.config.get("max_angle"), 120.0))
         self.open0 = min(max(self._float(self.config.get("open"), 0.0), 0.0), 1.0)
         self.controllable = bool(self.config.get("controllable", True))
+        # The ROS surface needs something to command: a controllable door with a leaf.
+        self.commandable = self.leaf and self.controllable
         self.kp = self._float(self.config.get("kp"), 40.0)
         self.kv = self._float(self.config.get("kv"), 8.0)
         # An automatic door only pushes *gently*: the actuator force is capped, so an obstacle
@@ -477,57 +478,41 @@ class DoorPlugin(Plugin):
         # it without the door pretending to be a gripper (see roqsim_ros_bridge.actions).
         ctx.blackboard.set(f"door:{self.door_name}:state", self.read_state)
 
+    # -- endpoints, declared only when `commandable` -------------------------------------------
     @property
     def endpoint_owner(self) -> str:
         """The door entity this plugin registers."""
         return self.door_name
 
-    def _commanded(self) -> bool:
-        """Whether this door has a ROS surface: a leaf that is ``controllable``."""
-        return self.leaf and self.controllable
+    @endpoint.stream(when="commandable", ros2={"type": "std_msgs.msg.Float64"})
+    def cmd(self, data: float) -> None:
+        """Target openness, fire-and-forget; applied once per step.
 
-    @endpoint.stream(
-        "cmd",
-        when=_commanded,
-        ros2=lambda self: {
-            "type": "std_msgs.msg.Float64",
-            "topic": self.topic_override("cmd") or "cmd",
-        },
-    )
-    def command_openness(
-        self, data: Annotated[float, "target openness, 0 closed to 1 fully open; clamped"]
-    ) -> None:
-        """Endpoint ``cmd``: the latest target openness, applied once per step."""
+        Args:
+            data: openness, 0 closed to 1 fully open; clamped
+        """
         self.set_openness(data)
 
-    @endpoint.out(
-        "state",
-        rate_hz=10.0,
-        when=_commanded,
-        ros2=lambda self: {
-            "type": "std_msgs.msg.Float64",
-            "topic": self.topic_override("state") or "state",
-        },
-    )
-    def read_openness(self) -> Annotated[float, "openness, 0 closed to 1 fully open"]:
-        """Endpoint ``state``: the door's current openness."""
+    @endpoint.out(rate=10.0, when="commandable")
+    def state(self) -> float:
+        """Current openness, 0 closed to 1 fully open."""
         return self._target if self._ctx is None else self.read_state()[0]
 
-    # The GripperCommand handler reports reached/stalled by watching the door's own state reader
-    # (`state_key`), not a gripper's (it defaults to gripper:<owner>).
+    # Served by the GripperCommand action, which reports reached or stalled by watching the door's
+    # own state reader (`state_key`) rather than a gripper's.
     @endpoint.command(
-        "door",
-        when=_commanded,
+        when="commandable",
         ros2=lambda self: {
             "action": "control_msgs.action.GripperCommand",
-            "name": self.topic_override("door") or "door",
             "state_key": f"door:{self.door_name}:state",
         },
     )
-    def command_door(
-        self, position: Annotated[float, "target openness, 0 closed to 1 fully open; clamped"]
-    ) -> None:
-        """Endpoint ``door``: move to a target openness, with feedback until it settles."""
+    def door(self, position: float) -> None:
+        """Move to an openness and report when it is reached or the leaf stalls.
+
+        Args:
+            position: openness, 0 closed to 1 fully open; clamped
+        """
         self.set_openness(position)
 
     def set_openness(self, openness: float) -> None:

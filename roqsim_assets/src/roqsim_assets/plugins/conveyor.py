@@ -9,10 +9,10 @@ under it, spawned separately (``industrial_table`` is the matching prop, and ``d
 also works). Nothing here places or checks that table -- a conveyor with no
 table under it simply floats.
 
-The belt speed is live-controllable: this plugin declares a backend-neutral ``speed`` input
-endpoint (``std_msgs/Float64`` under ROS) that the generic ``ros2_bridge`` drives, and also
-registers a :class:`ConveyorHandle` on the blackboard under ``conveyor:<name>`` exposing
-``set_speed(float)`` (m/s, sign = direction) for in-process/standalone drivers.
+The belt speed is live-controllable: this plugin declares a ``speed`` stream (``std_msgs/Float64``
+under ROS) that the generic ``ros2_bridge`` drives, and also registers a :class:`ConveyorHandle` on
+the blackboard under ``conveyor:<name>`` exposing ``set_speed(float)`` (m/s, sign = direction) for
+in-process/standalone drivers.
 
 Config::
 
@@ -36,18 +36,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated
 
 import mujoco
 import numpy as np
-from numpy.typing import NDArray
 
 from roqsim import endpoint
-from roqsim.context import Entity, SimContext
-from roqsim.endpoint import Unit
+from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import rpy_to_quat
+from roqsim.types import Speed
 
 
 @dataclass
@@ -88,7 +86,7 @@ class ConveyorPlugin(Plugin):
         self.width = self.config.get("width")
         self._half_len = self._half_extent(self.length, self._L0)
         self._half_wid = self._half_extent(self.width, self._W0)
-        self.speed = float(self.config.get("speed", 0.1))
+        self.belt_speed = float(self.config.get("speed", 0.1))
         self.roller_radius = float(self.config.get("roller_radius", 0.0275))
         self.belt_wrap = float(self.config.get("belt_wrap", 0.025))
         # Default free-body start pose tracks the +x (feed) end so the package starts on the belt
@@ -253,69 +251,65 @@ class ConveyorPlugin(Plugin):
                     meta={"prefix": p, "base_joint": p + "package_free"},
                 )
             )
+            # Stream the package's true world pose as a TF transform so a viewer binds it to the scene
+            # body by name (child_frame_id == the exported body name). This is ground truth: the belt
+            # object's pose is not a joint, so nothing else publishes it. The topic is *relative* (`tf`)
+            # so the bridge's ground-truth namespace can map it to `/gt/tf` -- see the `gt` config on
+            # the ros2_bridge plugin. Without that config it resolves to the plain `/tf`.
+            ctx.interface.add(
+                Endpoint(
+                    name="package_pose",
+                    direction="out",
+                    owner=self.object_name,
+                    namespace="",
+                    read=self.read_package_pose,
+                    rate_hz=30.0,
+                    backend={
+                        "ros2": {
+                            "type": "tf2_msgs.msg.TFMessage",
+                            "topic": "tf",
+                            "frame_id": "world",
+                        }
+                    },
+                )
+            )
         ctx.blackboard.set(
             f"conveyor:{self.conveyor_name}",
             ConveyorHandle(
-                name=self.conveyor_name, set_speed=self.set_speed, get_speed=lambda: self.speed
+                name=self.conveyor_name, set_speed=self.set_speed, get_speed=lambda: self.belt_speed
             ),
         )
+
+    def read_package_pose(self):
+        """Endpoint ``read`` (physics thread): the package's world pose as a one-entry TF payload
+        ``[(frame, pos[3], quat_wxyz[4])]``. ``frame`` is the MuJoCo body name (== the exported scene
+        body name) so a viewer binds the transform to its node by name. ``quat`` is MuJoCo (w, x, y, z).
+        """
+        d = self._ctx.data
+        return [(self._pkg_frame, d.xpos[self._pkg_bid], d.xquat[self._pkg_bid])]
 
     @property
     def endpoint_owner(self) -> str:
         """The conveyor entity this plugin registers."""
         return self.conveyor_name
 
-    # The belt speed as a backend-neutral input endpoint (no ROS import here). A bridge resolves the
-    # Float64 type string and applies it to the belt; the namespace scopes the topic so several
-    # conveyors can share a world under one bridge.
-    @endpoint.stream(
-        "speed",
-        ros2=lambda self: {
-            "type": "std_msgs.msg.Float64",
-            "topic": self.topic_override("speed") or "speed",
-        },
-    )
-    def command_speed(
-        self, data: Annotated[float, Unit("m/s"), "belt speed; negative reverses"]
-    ) -> None:
-        """Endpoint ``speed``: the latest belt speed, applied once per step."""
+    # A setpoint, so the latest one is applied once per step. Its namespace (own config, else none)
+    # scopes the topic so several conveyors can share a world under one bridge.
+    @endpoint.stream(ros2={"type": "std_msgs.msg.Float64"})
+    def speed(self, data: Speed) -> None:
+        """Belt speed; negative reverses.
+
+        Args:
+            data: belt surface speed
+        """
         self.set_speed(data)
 
-    # The package's true world pose as a TF transform, so a viewer binds it to the scene body by
-    # name (child_frame_id == the exported body name). This is ground truth: the belt object's pose
-    # is not a joint, so nothing else publishes it. It belongs to the package entity, in no
-    # namespace, and its topic is *relative* (`tf`) so the bridge's ground-truth namespace can map it
-    # to `/gt/tf` -- see the `gt` config on the ros2_bridge plugin. Without that config it resolves
-    # to the plain `/tf`.
-    @endpoint.out(
-        "package_pose",
-        rate_hz=30.0,
-        when=lambda self: self._pkg_qadr >= 0,
-        owner=lambda self: self.object_name,
-        namespace="",
-        ros2={"type": "tf2_msgs.msg.TFMessage", "topic": "tf", "frame_id": "world"},
-    )
-    def read_package_pose(
-        self,
-    ) -> list[
-        tuple[
-            Annotated[str, "the package's body name, which the exported scene body has too"],
-            Annotated[NDArray[np.float64], Unit("m"), "world position"],
-            Annotated[NDArray[np.float64], "world orientation (w, x, y, z)"],
-        ]
-    ]:
-        """Endpoint ``package_pose``: the package's world pose, as a one-entry TF payload.
-
-        The frame is the MuJoCo body name, so a viewer binds the transform to its node by name."""
-        d = self._ctx.data
-        return [(self._pkg_frame, d.xpos[self._pkg_bid], d.xquat[self._pkg_bid])]
-
     def set_speed(self, speed: float) -> None:
-        self.speed = float(speed)
+        self.belt_speed = float(speed)
 
     def on_reset(self, ctx: SimContext) -> None:
         # A speed set through the endpoint or the handle belongs to the episode that set it.
-        self.speed = float(self.config.get("speed", 0.1))
+        self.belt_speed = float(self.config.get("speed", 0.1))
         ctx.data.qpos[self._belt_qadr] = 0.0
         if self._pkg_qadr >= 0:
             ctx.data.qpos[self._pkg_qadr : self._pkg_qadr + 7] = self._package_pose_world
@@ -323,8 +317,8 @@ class ConveyorPlugin(Plugin):
 
     def pre_step(self, ctx: SimContext) -> None:
         # Ideal constant-velocity belt motor: force the joint velocity every step.
-        ctx.data.qvel[self._belt_dadr] = self.speed
-        omega = self.speed / self.roller_radius
+        ctx.data.qvel[self._belt_dadr] = self.belt_speed
+        omega = self.belt_speed / self.roller_radius
         for dadr in self._roller_dadr:
             ctx.data.qvel[dadr] = omega
 
