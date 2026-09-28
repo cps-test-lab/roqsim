@@ -235,7 +235,8 @@ def _tick(engine: Engine, pacer: Pacer) -> bool:
         pacer.wait()
         engine.step()
         return True
-    time.sleep(0.005)  # idle while paused
+    engine.idle()  # posted commands still run while paused; time does not advance
+    time.sleep(0.005)
     return None  # paused, not quitting
 
 

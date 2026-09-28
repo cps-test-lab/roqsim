@@ -172,7 +172,7 @@ def test_a_block_written_as_a_components_list_entry_parses_too():
         "Spawn a sensor.\n\n"
         "Config::\n\n"
         "    - spawn_sensor:\n"
-        "        model: d435            # bundled model name\n"
+        "        model: realsense_d435  # bundled model name\n"
         "        prefix: \"\"\n"
     )
     assert set(_fields(doc)) == {"model", "prefix"}
