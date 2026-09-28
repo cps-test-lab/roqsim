@@ -14,7 +14,8 @@ How to find where sim time goes. Three different questions, three different tool
 
 The single-writer model (§7) means there is effectively **one hot thread** — the one calling
 ``engine.step()``. Everything a plugin does in ``pre_step``/``post_step``, plus the ROS bridge's
-publishing, runs on it, serially, **500 times per sim-second**. That thread is what to profile.
+publishing, runs on it, serially, **once per physics step** (500 times per sim-second at a
+0.002 s timestep). That thread is what to profile.
 
 Built-in per-hook profiler
 --------------------------
@@ -54,9 +55,10 @@ slow-loading world can be attributed without waiting for the run to end:
    load-phase timing (totals, ms):
      resolve_plugins              812.3
      world_load                     3.2
-     setup_total                 9821.0
+     dedup_assets                 120.6
      compile                     7654.4
      make_data                     12.3
+     setup_total                 9821.0
    per-plugin build/configure (count / total ms / max ms):
      SpawnModelPlugin         build        276     1234.5      45.6
      ShelfPlugin              build          5      123.4      80.1
@@ -67,7 +69,7 @@ Reading it:
   ``validate_config`` (which for spawn-style plugins includes model resolution).
 * ``world_load`` — resolving ``sim.world`` and parsing the base MJCF.
 * ``dedup_assets`` — the pre-compile pass that merges byte-identical file-backed meshes/materials
-  from repeated ``spawn_model`` attaches (§ world definition in :doc:`architecture`). Its cost buys a
+  from repeated ``spawn_model`` attaches (:doc:`architecture` › *Asset de-duplication*). Its cost buys a
   much smaller ``compile``; ``sim.dedup_assets: false`` disables it.
 * ``compile`` — ``MjSpec.compile()``, which includes all mesh/texture asset processing. With dedup
   off, worlds that attach many copies of the same model pay for each copy's assets here
@@ -95,8 +97,9 @@ Thread/wall attribution with py-spy
 ``py-spy`` samples native + Python stacks of a **running** process without instrumenting it — the way
 to see how the physics thread splits and whether a second thread overlaps.
 
-It needs ``CAP_SYS_PTRACE``. Add it to the ``sim`` service temporarily (a throwaway compose override,
-not the committed file)::
+It needs ``CAP_SYS_PTRACE``. For a simulator running in a compose deployment (here a service named
+``sim`` in your own ``docker-compose.yml``), add it temporarily with a throwaway override rather than
+editing the deployment's file::
 
    # ptrace.override.yml
    services:

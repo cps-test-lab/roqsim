@@ -40,6 +40,9 @@ same schema from something that already exists, leaving the generator downstream
   be the former rather than inventing walls through them.
 * ``roqsim scenes dxf-to-floorplan`` — when the layout exists as a CAD drawing.
 
+Every ``roqsim scenes`` tool, including the SDF/USD/json-ld importers and ``fuel-fetch``, is listed
+with where it is covered in ``roqsim_scenes/README.md`` (*Commands*).
+
 The image and grid tools emit axis-aligned walls only; the DXF tool keeps each drawn LINE/LWPOLYLINE
 segment at its own angle. A hand-drawn plan still belongs in the sketch window — the generator itself
 places a wall at any angle.
