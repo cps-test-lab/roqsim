@@ -1342,7 +1342,8 @@ level, not under ``TYPE_CHECKING``.
   with ``{item}`` substituted); the method gets the item as its first argument.
 * ``owner=`` / ``namespace=`` -- an endpoint that belongs to another entity than the one the plugin
   is nested under (``endpoint_owner``, ``endpoint_namespace``).
-* ``lazy=True`` -- an ``out`` whose read is skipped while nobody subscribes.
+* ``lazy=True`` -- an ``out`` whose read is skipped while nobody subscribes; ``lazy="lazy"`` reads
+  it per instance from that attribute (else config key), and describe names the key.
 
 Each also takes a callable of the plugin (``(plugin, item)`` in a family) for a value that has to be
 computed.
@@ -1353,6 +1354,18 @@ rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, ``static``, a ``topi
 endpoint's name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
 maps to by field name (see below). A dict, a callable of the plugin returning one -- for a value
 ``configure`` resolves -- or ``None`` to keep the endpoint off ROS.
+
+**A topic derived from another endpoint's.** A hint's ``topic`` (a service's ``name``) may name
+another endpoint of the same plugin in braces: it is rendered when the plugin registers, from the
+topic that endpoint is carried on after the world's ``topics:``, so renaming the one moves the other
+with it. ``..`` steps out of that topic's last segment, as in a path. A name the plugin does not
+register fails the world::
+
+   @endpoint.out(ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"})
+   def image_compressed(self) -> Image: ...        # topics: {image: /cam/rgb} -> /cam/rgb/compressed
+
+   @endpoint.out(ros2={"topic": "{depth}/../camera_info"})
+   def depth_camera_info(self) -> CameraInfo: ...  # beside the depth image
 
 **Transforms.** An endpoint returning a ``Transform`` (``parent``, ``child``, ``translation`` in m,
 ``rotation`` as ``(w, x, y, z)``) or a ``Transforms`` (a list of them) publishes a
@@ -1436,9 +1449,11 @@ and its ROS interface -- topic, type, service, action, frames, rate, QoS -- stay
    or a dataclass of the plugin's. An ``in`` endpoint's parameters become that type's fields by name
    (``vx``, ``vy``, ``wz`` of a ``Twist``).
 3. **The hints.** Delete ``type`` (the payload's mapping gives it), ``topic`` where it is the
-   endpoint's name, ``self.topic_override(...)`` (the framework applies ``topics:``), and any value
-   the mapping defaults to (``frame_id: odom`` on odometry). What stays is a real deviation. A
-   ``rate_hz=lambda self: self.x`` becomes ``rate="x"``, a surrounding ``if`` becomes ``when="x"``.
+   endpoint's name, ``self.topic_override(...)`` (the framework applies ``topics:``; a topic built
+   from another endpoint's becomes a ``{name}`` template), and any value the mapping defaults to
+   (``frame_id: odom`` on odometry). What stays is a real deviation. A ``rate_hz=lambda self:
+   self.x`` becomes ``rate="x"``, a surrounding ``if`` becomes ``when="x"``, and a per-instance
+   ``lazy`` becomes ``lazy="x"``.
 4. **Owner and namespace.** Delete them where they are the entity the plugin is nested under;
    otherwise override ``endpoint_owner`` or pass ``owner=`` / ``namespace=``.
 5. **The kind.** A setpoint topic is a ``stream``, a service a ``command``, and an input that must
