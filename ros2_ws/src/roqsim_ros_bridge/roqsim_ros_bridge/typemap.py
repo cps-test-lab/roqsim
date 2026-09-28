@@ -53,7 +53,7 @@ producer's own hints -- and the converters. For a decorated endpoint:
 * with neither, the endpoint is not on ROS: :func:`describe` says so and the bridge logs it;
 * a command without parameters is a ``std_srvs/Trigger`` service;
 * the topic is the world's ``topics:`` name (``Endpoint.topic``), else the hint's, else the
-  endpoint's name; the QoS is the world's ``qos:`` (``Endpoint.qos``), else the hint's, else
+  endpoint's name (:func:`roqsim.endpoint.topic_of`); the QoS is the world's ``qos:`` (``Endpoint.qos``), else the hint's, else
   ``default``.
 
 A hand-built endpoint without a schema keeps its hint block as it is, with the per-message-type
@@ -72,7 +72,7 @@ from typing import Any
 import numpy as np
 
 from roqsim import types as T
-from roqsim.endpoint import ValueType, qos_profile
+from roqsim.endpoint import ValueType, hints_for, is_service, qos_profile, topic_of
 
 from .frames import namespaced
 
@@ -778,9 +778,6 @@ class Binding:
         self.decode = lambda msg: to_write(_decode_by_name(msg, fields, cls))
 
 
-_MISSING = object()
-
-
 def _is_typed(ep) -> bool:
     return bool(ep.transport) or ep.params is not None or ep.payload_type is not None
 
@@ -813,20 +810,15 @@ def _qos(ep, hints: dict) -> dict:
 def resolve(ep) -> Binding | None:
     """How *ep* is carried on ROS, or ``None`` when it is not meant to be (no hint block for ROS and
     not a decorated endpoint, or a hint block of ``None``)."""
-    raw = ep.backend.get("ros2", _MISSING)
-    if raw is None:
+    hints = hints_for(ep, "ros2")
+    if hints is None:
         return None
-    if raw is _MISSING:
-        if not ep.transport:
-            return None
-        raw = {}
-    hints = dict(raw)
+    required = bool(hints)  # the endpoint asked for ROS
     if not _is_typed(ep):
         return _legacy(ep, hints)
-    if "service" in hints or "action" in hints:
-        return _service(ep, hints)
-    if ep.direction == "in" and ep.params == () and "type" not in hints:
-        hints["service"] = "std_srvs.srv.Trigger"
+    if is_service(ep, hints):
+        if "service" not in hints and "action" not in hints:
+            hints["service"] = "std_srvs.srv.Trigger"
         return _service(ep, hints)
 
     carried = ep.payload_type if ep.payload_type is not None else ep.result
@@ -836,7 +828,7 @@ def resolve(ep) -> Binding | None:
     rostype = lookup(carried.cls if carried is not None else None)
     stamped = hints.pop("stamped", None)
     msg = hints.get("type")
-    binding = Binding(hints=None, required=bool(raw))
+    binding = Binding(hints=None, required=required)
     if rostype is not None and (msg is None or rostype.wire(msg) is not None):
         if msg is None:
             if stamped is not None:
@@ -883,7 +875,7 @@ def resolve(ep) -> Binding | None:
     if hints.get("static"):
         _static(ep, carried, hints)
     else:
-        hints["topic"] = ep.topic or hints.get("topic") or ep.name
+        hints["topic"] = topic_of(ep, "ros2")
         hints["qos"] = _qos(ep, hints)
     binding.hints = hints
     return binding
@@ -909,7 +901,7 @@ def _static(ep, carried: ValueType | None, hints: dict) -> None:
 
 
 def _service(ep, hints: dict) -> Binding:
-    hints["name"] = ep.topic or hints.get("name") or ep.name
+    hints["name"] = topic_of(ep, "ros2")
     if ep.qos is not None or "qos" in hints:
         hints["qos"] = _qos(ep, hints)
     return Binding(hints=hints)
@@ -917,12 +909,12 @@ def _service(ep, hints: dict) -> Binding:
 
 def _legacy(ep, hints: dict) -> Binding:
     """A hand-built endpoint's hint block, with the bridge's defaults and the registry's converters."""
-    if "service" in hints or "action" in hints:
-        hints.setdefault("name", ep.name)
+    if is_service(ep, hints):
+        hints["name"] = topic_of(ep, "ros2")
         if ep.qos is not None or "qos" in hints:
             hints["qos"] = _qos(ep, hints)
         return Binding(hints=hints)
-    hints.setdefault("topic", ep.name)
+    hints["topic"] = topic_of(ep, "ros2")
     hints["qos"] = _qos(ep, hints)
     msg = hints.get("type")
 
