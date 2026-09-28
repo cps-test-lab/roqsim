@@ -6,12 +6,13 @@ MCP server exposes two native-window tools a *human* answers in —
 
 * ``review_scene_by_human`` — a **3D** window showing whatever ``roqsim`` can load; the human
   walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass,
-  Fail, or a neutral comment (Enter in the comment box: a note without a call). Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
-  placement, a world under review.
+  Fail, or a neutral comment (Enter in the comment box: a note without a call). Use it when a
+  single rendered image cannot convey a 3D layout — a ported scene, a robot placement, a world
+  under review.
 * ``sketch_floorplan_by_human`` — a **2D** top-view window for authoring a floorplan's walls; it
   returns a finished **structured sketch** (rooms + lines + doors + prop markers, plus free-text
-  descriptions) that the deterministic generator
-  ``roqsim scenes floorplan-to-world`` turns into a world. The floorplan is the single
+  descriptions) that the deterministic generator ``roqsim scenes floorplan-to-world`` turns into a
+  world. The floorplan is the single
   source of truth: the generator writes it to the scene's ``floorplan.json`` and the generated
   ``scene.json`` only **references** it (its ``floorplan`` field is the relative path
   ``floorplan.json``, never an embedded copy), so ``roqsim scenes scene-to-floorplan``

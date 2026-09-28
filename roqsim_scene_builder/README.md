@@ -7,15 +7,15 @@ Eyes on an roqsim scene, an agent's and a human's. Its MCP server exposes two na
   load (a world YAML, a baked MJCF `.xml`, or a model/robot reference `roqsim_assets:<name>`),
   lets a human navigate it first-person — **left-drag looks, WASD or the arrow keys walk** (Q/E or
   PgUp/PgDn down/up, Shift fast), wheel flies, right-drag pans — drop numbered **comment dots**,
-  and — in **Move Objects** mode — grab
-  a `spawn_model` prop and drag it across the floor (Shift-drag to rotate, Ctrl-drag to raise/lower). **Blocks** until Pass, Fail, or
-  a neutral comment (Enter in the comment box); repositioned props come back under `moves`.
+  and — in **Move Objects** mode — grab a `spawn_model` prop and drag it across the floor
+  (Shift-drag to rotate, Ctrl-drag to raise/lower). **Blocks** until Pass, Fail, or a neutral
+  comment (Enter in the comment box); repositioned props come back under `moves`.
 - **`sketch_floorplan_by_human`** — opens a **2D** top-view window where a human draws the walls of a
   floorplan (freehand drag straightened into lines immediately, or click-start/click-end for a
-  straight wall), places non-overlapping door openings, and names rooms, and returns a finished
-  **structured sketch** (rooms + lines + doors + prop markers, plus free-text descriptions) that feeds
-  the deterministic world generator
-  `roqsim scenes floorplan-to-world` (from `roqsim_scenes`).
+  straight wall), places non-overlapping door openings and prop markers, and names rooms, and
+  returns a finished **structured sketch** (rooms + lines + doors + prop markers, plus free-text
+  descriptions) that feeds the deterministic world generator `roqsim scenes floorplan-to-world`
+  (from `roqsim_scenes`).
 
 …and one tool that needs neither a window nor a person:
 
