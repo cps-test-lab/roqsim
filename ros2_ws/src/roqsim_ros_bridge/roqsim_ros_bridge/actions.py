@@ -74,6 +74,14 @@ def get_action_handler(type_path: str) -> Callable[[Any, Any, Callable[[Any], No
     return fn
 
 
+def _hints(endpoint) -> dict:
+    """The producer's ``ros2`` hints (keys such as ``arm_state_key`` and ``goal_tolerance``).
+
+    Empty for a decorated endpoint that states none, and for no endpoint at all.
+    """
+    return (endpoint.backend.get("ros2") if endpoint is not None else None) or {}
+
+
 def _send(on_payload, endpoint, **params) -> None:
     """Hand *params* to the endpoint's write, in the form it takes (see the module docstring)."""
     on_payload(payload_for(endpoint, params))
@@ -212,7 +220,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     reader = None
     handle = None
     if endpoint is not None:
-        state_key = endpoint.backend.get("ros2", {}).get("arm_state_key", f"arm:{endpoint.owner}")
+        state_key = _hints(endpoint).get("arm_state_key", f"arm:{endpoint.owner}")
         handle = ctx.blackboard.get(state_key)
         reader = getattr(handle, "read_state", None)
 
@@ -252,7 +260,7 @@ def follow_joint_trajectory(goal_handle, ctx, on_payload, endpoint=None):
     # What "reached the goal" means for this arm, read before the first waypoint is fed because a
     # cancel is graded by it too (see `cancelled` below). Both are pure functions of the goal and
     # the endpoint's hints.
-    hints = (endpoint.backend.get("ros2", {}) if endpoint is not None else {}) or {}
+    hints = _hints(endpoint)
     tol = _goal_tolerances(goal_handle.request, hints, names)
     final = list(traj.points[-1].positions) if traj.points else []
 
@@ -423,7 +431,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
         logger.error("gripper goal refused: %s", refusal)
         goal_handle.abort()
         return result
-    hints = endpoint.backend.get("ros2", {}) if endpoint is not None else {}
+    hints = _hints(endpoint)
     effort_key = hints.get("effort_key")
     effort = ctx.blackboard.get(effort_key) if effort_key else None
     if effort is not None:

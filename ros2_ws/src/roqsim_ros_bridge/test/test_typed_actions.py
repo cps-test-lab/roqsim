@@ -8,6 +8,7 @@ same goal must end the same way through either.
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 from control_msgs.action import FollowJointTrajectory
 from test_cancel_stops_the_arm import (
@@ -24,6 +25,7 @@ from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.endpoint import build
 from roqsim.plugin import Plugin
+from roqsim.types import Angle, JointPositions
 from roqsim_ros_bridge.actions import follow_joint_trajectory, gripper_command
 
 FJT_HINTS = {
@@ -41,22 +43,34 @@ GRIPPER_HINTS = {
 
 
 class _TypedArm(Plugin):
-    """Takes a waypoint by the names the handler sends."""
+    """Takes each setpoint as a JointPositions' fields, the names the handler sends."""
 
     def __init__(self, arm: _Arm) -> None:
         super().__init__({}, label="ur5e")
         self.arm = arm
 
-    @endpoint.command("follow_joint_trajectory", ros2=FJT_HINTS)
-    def follow(self, names: list[str], positions: list[float]) -> None:
-        self.arm.set_targets(names, positions)
+    @endpoint.command(JointPositions, ros2=FJT_HINTS)
+    def follow_joint_trajectory(self, names: list[str], positions: np.ndarray) -> None:
+        """A setpoint.
+
+        Args:
+            names: joint names
+            positions: one per name
+        """
+        self.arm.set_targets(names, list(positions))
 
 
 class _MisnamedArm(_TypedArm):
     """Declares parameters the handler does not send."""
 
-    @endpoint.command("follow_joint_trajectory", ros2=FJT_HINTS)
-    def follow(self, joints: list[str], targets: list[float]) -> None:
+    @endpoint.command(ros2=FJT_HINTS)
+    def follow_joint_trajectory(self, joints: list[str], targets: list[float]) -> None:
+        """A setpoint.
+
+        Args:
+            joints: joint names
+            targets: one per joint
+        """
         self.arm.set_targets(joints, targets)
 
 
@@ -65,14 +79,37 @@ class _TypedHand(Plugin):
         super().__init__({}, label="ur5e")
         self.fingers = fingers
 
-    @endpoint.command("gripper_cmd", ros2=GRIPPER_HINTS)
-    def grip(self, position: float) -> None:
+    @endpoint.command(ros2=GRIPPER_HINTS)
+    def gripper_cmd(self, position: Angle) -> None:
+        """The finger position.
+
+        Args:
+            position: finger joint target
+        """
+        self.fingers.set_gripper(position)
+
+
+class _PlainHand(_TypedHand):
+    """States no ros2 hints: the handler falls back on its default keys."""
+
+    @endpoint.command
+    def gripper_cmd(self, position: Angle) -> None:
+        """The finger position.
+
+        Args:
+            position: finger joint target
+        """
         self.fingers.set_gripper(position)
 
 
 class _MisnamedHand(_TypedHand):
-    @endpoint.command("gripper_cmd", ros2=GRIPPER_HINTS)
-    def grip(self, openness: float) -> None:
+    @endpoint.command(ros2=GRIPPER_HINTS)
+    def gripper_cmd(self, openness: float) -> None:
+        """The finger position.
+
+        Args:
+            openness: 0 closed, 1 open
+        """
         self.fingers.set_gripper(openness)
 
 
@@ -141,6 +178,18 @@ def test_a_typed_hand_reaches_its_position():
     assert handle.status == "succeeded"
     assert result.reached_goal is True
     assert result.position == pytest.approx(0.4, abs=5e-3)
+
+
+def test_a_typed_hand_without_hints_is_watched_at_the_default_key():
+    fingers = _Fingers(0.0, converge=0.5)
+    ctx, ep, on_payload = _served(_PlainHand(fingers), "gripper:ur5e", fingers.read_state)
+    assert "ros2" not in ep.backend
+    handle = _GoalHandle(_gripper_goal(0.4), ctx)
+
+    with _Physics(ctx, fingers):
+        result = gripper_command(handle, ctx, on_payload, ep)
+
+    assert handle.status == "succeeded" and result.reached_goal is True
 
 
 def test_a_typed_hand_that_would_refuse_the_position_aborts_the_goal_unmoved():
