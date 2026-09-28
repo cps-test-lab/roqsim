@@ -1349,12 +1349,24 @@ computed.
 
 **Transport hints are deviations.** ``ros2=`` gives only what the type's mapping does not: a frame
 id (``frame_id``, ``child_frame_id``), ``stamped`` (``TwistStamped`` for a ``Twist``, ``Pose``
-rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, a ``topic`` other than the endpoint's
-name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
+rather than ``PoseStamped``), ``emit_tf``, a ``static_tf``, ``static``, a ``topic`` other than the
+endpoint's name, a ``qos``, a ``field`` of a structure to publish alone, or ``type`` naming a message the type
 maps to by field name (see below). A dict, a callable of the plugin returning one -- for a value
 ``configure`` resolves -- or ``None`` to keep the endpoint off ROS. An ``out`` that returns nothing
 exists to carry fixed frames: its ``static_tf`` hint (a list of ``{parent, child, translation,
 rotation}``) is published once on ``/tf_static``, as ``spawn_robot``'s ``frames`` does.
+
+**Transforms.** An endpoint returning a ``Transform`` (``parent``, ``child``, ``translation`` in m,
+``rotation`` as ``(w, x, y, z)``) or a ``Transforms`` (a list of them) publishes a
+``tf2_msgs/TFMessage`` stamped with sim time: the parent is the value's, or the ``frame_id`` hint
+(default ``map``) where the value leaves it empty, namespaced as every frame id is; the child is
+published as given. On ``/tf`` it takes ``topic: /tf``. With ``static: true`` the endpoint's first
+value is sent once on the latched ``/tf_static`` instead, parent and child namespaced, as a
+``static_tf`` hint's transforms are::
+
+   @endpoint.out(ros2={"static": True, "frame_id": "base_link"})
+   def mounts(self) -> Transforms:
+       """The fixed links of the sensor mount."""
 
 **Registration is the engine's.** After a plugin's ``configure`` returns, the engine registers its
 endpoints (``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a

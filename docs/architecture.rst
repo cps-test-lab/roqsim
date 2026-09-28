@@ -823,7 +823,7 @@ parameters (types with the unit aliases of :mod:`roqsim.types`, defaults, docs f
 ``Args:`` section) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
 bridge reads. **Payloads are neutral types**: the dataclasses of :mod:`roqsim.types` (``Twist``,
 ``Pose``, ``Odometry``, ``JointState``, ``JointPositions``, ``Wrench``, ``Imu``, ``LaserScan``,
-``Image``, ``CameraInfo``, ``PointCloud``) or any dataclass of the plugin's own, never positional
+``Image``, ``CameraInfo``, ``PointCloud``, ``Transform``, ``Transforms``) or any dataclass of the plugin's own, never positional
 tuples; an ``in`` endpoint names its type (``@endpoint.stream(Twist)``) and takes the fields it uses
 by name, and ``Endpoint.payload_type`` says what a transport carries. A bridge passes parameters by
 name, and ``write`` refuses a missing, unknown or mistyped one before queueing
