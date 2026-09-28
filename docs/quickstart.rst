@@ -599,6 +599,13 @@ computations over a run, use :mod:`roqsim.recording`:
 The ``with`` closes the rebuilt world's plugins on the way out (``rec.close()`` does the same): a
 replayed camera holds an offscreen renderer exactly as a live one does, and only its shutdown releases it.
 
+Beside it the recorder streams ``run.clock_map.csv`` (the recording's stem plus
+``.clock_map.csv``): a ``wall_ts,sim_ts`` header and one row per sample, flushed per row while the run
+proceeds. ``sim_ts`` is ``t``; ``wall_ts``, unlike ``w``, is a Unix timestamp, because the file's
+readers are outside the process and relate it to calendar stamps of their own. It is the clock record
+:ref:`roqsim health <checking-a-run>` reads, and it survives a run killed outright, which the ``.npz``
+does not.
+
 ``--record`` is for a run you launch yourself. A run launched *for* you — an orchestrator starting this
 world through a ROS launch file, where the command line belongs to that file — asks for the same thing
 through the environment, which both drivers honour:
@@ -770,6 +777,8 @@ fine for rendering and for pose estimation, which need a silhouette and an appea
 need a repair pass before ``mesh -> solid``. So the summary counts boundary and non-manifold edges per
 geom rather than asserting a solid, and ``--weld`` (default 1e-6 m) first merges vertices that are
 merely duplicated, which is the common reason a mesh that looks closed is not.
+
+.. _checking-a-run:
 
 Checking a run is healthy
 -------------------------
@@ -1059,3 +1068,11 @@ ROS 2 bridge
 
 The bridge publishes ``/clock``; run other nodes with ``use_sim_time:=true``. See
 :doc:`nav2_example` for a full navigation stack.
+
+Log lines for an aggregator
+---------------------------
+
+``roqsim``'s commands log ``LEVEL logger: message``, which suits a terminal. Where roqsim is one
+producer in an aggregated log, ``ROQSIM_LOG_FORMAT=stamped`` switches to
+``[LEVEL] [epoch] [logger]: message`` -- the shape ROS tooling writes, stamped with the time the
+event happened. ``plain`` is the default; any other value is an error rather than a fallback.

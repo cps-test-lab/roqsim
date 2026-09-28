@@ -113,6 +113,40 @@ because the MJCF loads and steps happily in every case:
 Meshes keep the source's **UVs and diffuse textures** (one submesh per material, since a MuJoCo geom
 has exactly one material). Source JPEGs are re-encoded to PNG on the way in — MuJoCo reads PNG only.
 
+## Commands
+
+Every tool is `roqsim scenes <tool>`; `roqsim scenes <tool> --help` gives its options, and
+`python -m pydoc` on the module it wraps (e.g. `roqsim_scenes.cli.gridmap_to_world`) the reasoning
+behind it.
+
+| tool | what it does | where it is covered |
+|---|---|---|
+| `sdf-to-scene` | Gazebo/Ignition SDF world → static scene (`scene.json` + OBJs) | [General import path](#general-import-path-other-scenes) |
+| `usd-to-scene` | IsaacSim/USD world → static scene (runs in Blender) | [Importing another USD](#importing-another-usd) |
+| `jsonld-to-scene` | Floorplan-DSL json-ld + its mesh → `scene.json`: the mesh as the visual, one convex collider per wall with doorways left open | below |
+| `scene-to-mjcf` | static scene → a plain MuJoCo MJCF world | [General import path](#general-import-path-other-scenes) |
+| `mjcf-to-world` | an already-materialled MJCF building → a packaged roqsim world | [Regenerating the world](#regenerating-the-world) |
+| `scene-to-map` | a scene → Nav2 occupancy grid (`map.pgm` + `map.yaml`) | its `--help` |
+| `fuel-fetch` | resolve, download and pin the Fuel models an SDF world includes | below |
+| `cad-to-png`, `dxf-to-floorplan` | look at, then convert, a 2D CAD floorplan | [From a 2D CAD drawing](#from-a-2d-cad-drawing-dxf) |
+| `floorplan-to-png` | a floorplan JSON → PNG plan view with a scale bar | [Look at a floorplan](#look-at-a-floorplan-roqsim-floorplan-to-png) |
+| `mapimage-to-floorplan`, `gridmap-to-floorplan`, `gridmap-to-world` | a map picture or occupancy grid → floorplan JSON, or a grid → world + map | `docs/scene_builder.rst` |
+| `floorplan-to-world`, `scene-to-floorplan` | floorplan JSON → world, and back | `docs/scene_builder.rst` |
+| `describe`, `inputs` | what a world provides, and every file it is defined by, as JSON | `docs/interfaces.rst` |
+
+**`jsonld-to-scene`** exists because MuJoCo collides a mesh by its convex hull, so a wall with a door
+cut into it imported as a mesh is a solid slab to physics while every picture and `/scan` shows the
+doorway open. It splits a Floorplan-DSL environment by role — `roqsim scenes jsonld-to-scene --mesh
+<env>/3d-mesh/<name>.stl --out-dir <env>/mujoco`, then `scene-to-mjcf` — or use the `floorplan`
+plugin, which reads the same json-ld at load time.
+
+**`fuel-fetch`** fetches each Fuel model an SDF world `<include>`s once into a local cache and records
+version, sha256 and licence in an `assets.lock.json`, so a port rebuilds byte-identically without
+the registry: `roqsim scenes fuel-fetch --world <world.sdf> --lock <scene>/assets.lock.json`. The
+cache is `--cache DIR`, else `ROQSIM_FUEL_CACHE`, else `~/.cache/roqsim/fuel`. Only Fuel URIs are
+fetched; a `model://` include is local, and `sdf-to-scene` resolves it on `--model-path` and the
+Gazebo resource path variables, never over the network.
+
 ## What's here
 
 - `scenes/tb3_world/` — the ROS 2 `turtlebot3_world` port: `scene.json`, `assets.lock.json`,

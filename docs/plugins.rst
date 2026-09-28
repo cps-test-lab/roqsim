@@ -74,10 +74,22 @@ catalog above once ROS is sourced and the workspace is on the path.
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
        physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
-       (see the note below).
+       (see the note below). Also: ``node_name`` (default ``roqsim_bridge``); ``frame_prefix``
+       (prefix for frame ids, default the ``namespace``); ``publish_static_tf`` (default ``true``;
+       ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
+       (an isolated ROS context on that domain, so several bridges can run in one process) with
+       ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
+       local names on its domain); ``gt: {prefix, exempt}`` (the ground-truth topic prefix and the
+       topics exempt from it, :doc:`ground_truth`). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
-     - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
-       required config; reuses the bridge's node when co-loaded.
+     - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
+       ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
+       ``get_entity_state``, ``set_entity_state``, ``get_simulation_state``,
+       ``set_simulation_state``, ``step_simulation`` and ``reset_simulation`` (relative names).
+       Listed after a ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``
+       (plugins configure in world order, and the bridge shares its node when it configures);
+       otherwise on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
+       required config. What each does is in :doc:`interfaces`.
 
 .. note::
 
@@ -201,9 +213,9 @@ Model plugin manifests
 A robot's controller and sensors are intrinsic to the *model*, not the *world*, so they ship with
 the model in a ``<model>.manifest.yaml`` manifest next to its MJCF. A spawn plugin pulls them in
 automatically, so a world just spawns the robot -- and the same applies to a *device* with more than
-one sensor in it: the bundled ``d435`` is a D435i, so its manifest carries the ``imu`` component with
-the inertial module's own extrinsic, and ``spawn_sensor: {model: d435}`` yields both ``camera/imu``
-and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
+one sensor in it: the bundled ``realsense_d435`` is a D435i, so its manifest carries the ``imu``
+component at the inertial module's own frame, and ``spawn_sensor: {model: realsense_d435}`` yields
+both ``camera/imu`` and the colour stream. A world that models the IMU-less D435 sets ``enabled: false`` on that
 component (which is also how "does this device have an IMU" becomes a campaign factor):
 
 .. code:: yaml
@@ -211,7 +223,7 @@ component (which is also how "does this device have an IMU" becomes a campaign f
    components:
      - spawn_robot:
          model: turtlebot4
-         pose: {position: {x: 0, y: 0}}   # diff_drive + lidar + oakd_camera come with it
+         pose: {position: {x: 0, y: 0}}   # diff_drive, the RPLIDAR and the OAK-D come with it
      - ros2_bridge: {}
 
 An arm's manifest can also carry an **eye-in-hand sensor**: a camera among the arm's components rides
@@ -222,8 +234,8 @@ but deliberately leaves ``realsense_d435`` OUT of its manifest -- the arm provid
 decides whether anything renders from it, at what rate, and whether it reprojects to a point cloud.
 
 The same applies to ``spawn_arm`` (``roqsim_manipulation``): ``{model: ur10e}`` pulls in that
-arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: d435}`` pulls
-in its ``realsense_d435`` capture plugin.
+arm's ``arm_controller``; and to ``spawn_sensor`` (``roqsim_sensors``): ``{model: realsense_d435}``
+pulls in its ``realsense_d435`` capture plugin.
 
 **Where a spawn puts things is checked at every reset.** An arm's ``home``, a model's keyframe, a
 robot's or a prop's ``pose`` -- once every plugin's ``on_reset`` has applied them, the engine reports
@@ -246,12 +258,18 @@ rides a body has its pose from that body, so moving the sensor means moving what
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
 in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
-robot declares in its manifest's ``frames:``) with the vendor joint origin as ``pos``/``rpy``. It
+robot declares in its manifest's ``frames:``) with the ``origin`` the robot description passes the
+device's vendor macro as ``pos``/``rpy``: a device model's ``mount`` is the frame that origin places,
+so the device sits where ``robot_state_publisher`` would put it. It
 inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
 are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
 the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
 else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. The ``spawn_sensor`` and
+none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
+parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
+own, as a second instance of the macro would: two mounts that would publish any one frame name are
+refused. A device that declares no ``frames:`` chain has no vendor frame to hang from, and a robot
+mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
@@ -278,7 +296,7 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   with ``default_plugins: false`` and declare the plugin fully.
 - **Switch one off** with ``enabled: false`` -- as a sibling in the document, or from an override::
 
-     roqsim sim world.yaml --set components.robot.oakd_camera.enabled=false
+     roqsim sim world.yaml --set components.robot.oakd.oakd_camera.enabled=false
 
   The component is not deleted: it stays addressable, stays in the run's record saying it was turned
   off, and a later override can turn it back on. Disabling an entry disables everything it owns.
@@ -300,9 +318,9 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
   plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
-  ``assets``, ``fov``, ``frames``, ``frame_id``, ``license`` and, on an arm, ``end_effector`` (where
-  ``spawn_arm`` mounts a tool) and nothing else: a key outside that
-  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  ``assets``, ``fov``, ``frames``, ``frame_id``, ``device_name``, ``license`` and, on an arm,
+  ``end_effector`` (where ``spawn_arm`` mounts a tool) and nothing else: a key outside that set is
+  refused with the nearest known one named, since nothing reads it and a manifest loaded
   without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
@@ -325,6 +343,9 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
 .. code:: yaml
 
    # turtlebot4.manifest.yaml — shipped next to turtlebot4.xml (abridged)
+   frames:                            # vendor fixed links this MJCF flattens into base_link
+     - {name: shell_link, parent: base_link, pos: [0.0, 0.0, 0.0942]}
+     - {name: oakd_camera_bracket, parent: shell_link, pos: [-0.118, 0.0, 0.05257]}
    components:
      - diff_drive: {max_linear_vel: 0.46, max_angular_vel: 1.9, wheel_accel_limit: 0.9,
                     cmd_vel_timeout: 0.5, odom_rate_hz: 62.0, publish_joint_states: false}
@@ -336,9 +357,15 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
          rpy: [0.0, 0.0, 1.5707963267948966]
          frame_id: rplidar_link
        name: rplidar
-     - oakd_camera:                   # renders: needs a GL backend (roqsim selects one on import)
-         camera: oakd_rgb
-         topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
+     - spawn_sensor:                  # the OAK-D Pro device model, at the vendor joint origin
+         model: oakd_pro
+         parent_frame: oakd_camera_bracket
+         pos: [0.0584, 0.0, 0.09676]
+         rpy: [0.0, 0.0, 0.0]
+       name: oakd
+       components:
+         - oakd_camera:               # renders: needs a GL backend (roqsim selects one on import)
+             topics: {image: oakd/rgb/preview/image_raw, ...}   # the TurtleBot 4's names
      - bumper: {geoms: [body_collision], zones: {bump_front_center: [-0.314, 0.314], ...}}
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
@@ -1334,7 +1361,7 @@ reports which PIXELS an object covers -- what an IoU, a mask AP or a training se
        name: robot
        components:
          - segmentation_camera:
-             camera: oakd_rgb
+             camera: oakd_oakd_rgb      # the OAK-D's camera, behind its mount's `oakd_` prefix
              classes:
                - {class_id: 1, name: parcel, bodies: ["graspable_*"]}
                - {class_id: 2, name: person, entities: [walker_1]}

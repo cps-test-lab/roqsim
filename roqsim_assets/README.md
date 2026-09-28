@@ -95,8 +95,8 @@ reusing prop's `CREDITS.txt` (point at the donor's `CREDITS.txt`; don't duplicat
 
 For borrowing meshes across *packages*, the core offers an `assets:` key in a model's
 `.manifest.yaml` (see `roqsim/models.py` docstring) — but note it only resolves through the
-spawn/loader path, **not** in a standalone compile (thumbnails, opening the XML directly), so prefer
-relative sibling refs whenever donor and reuser live in the same package.
+spawn/loader path and the thumbnail tool, **not** in a standalone compile (opening the XML
+directly), so prefer relative sibling refs whenever donor and reuser live in the same package.
 
 ## Plugins
 

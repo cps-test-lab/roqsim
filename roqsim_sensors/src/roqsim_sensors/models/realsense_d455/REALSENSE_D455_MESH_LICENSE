@@ -1,4 +1,4 @@
-The visual mesh roqsim_sensors/models/d455/meshes/d455.obj is converted (binary STL -> OBJ, scaled
+The visual mesh roqsim_sensors/models/realsense_d455/meshes/d455.obj is converted (binary STL -> OBJ, scaled
 mm -> m and decimated to ~6k triangles for real-time rendering) from d455.stl in:
 
     https://github.com/IntelRealSense/realsense-ros
@@ -22,6 +22,8 @@ The STL is exported in its native frame (identity axes: x = the ~124 mm long bar
 arrayed across, y = height ~29 mm, z = depth ~26 mm with the front glass at z=0 and +z the lens
 outward normal), which already matches the d435/d415 mesh convention -- no reorientation was applied.
 
-The `d455_color` camera offset baked into roqsim_sensors/models/d455/d455.xml is derived from the same
-repository's realsense2_description/urdf/_d455.urdf.xacro (the color-optical-frame transform, mapped
-from the URDF link frame into this mesh-local frame), not measured off the mesh directly.
+Every pose in roqsim_sensors/models/realsense_d455/realsense_d455.xml and in the `frames:` block of
+realsense_d455.manifest.yaml -- the mesh in camera_link, the `d455_color` camera at the colour
+optical frame, the depth frames -- is read from the same repository's
+realsense2_description/urdf/_d455.urdf.xacro by external/convert/build_realsense_devices.py, not
+measured off the mesh.
