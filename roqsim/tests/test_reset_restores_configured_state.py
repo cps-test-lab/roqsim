@@ -196,6 +196,7 @@ PAYLOADS: dict[str, Any] = {
     "navigate_to_pose": [(0.8, 0.3, 0.0)],
     "navigate_through_poses": [(0.5, 0.0, 0.0), (0.8, 0.4, 0.0)],
     "start_route": None,
+    "cancel_route": None,
     "cmd_pos": ([0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]),
     "motor_cmd": _motor_command,
     "speed": 0.2,
@@ -533,6 +534,8 @@ SKIPPED: dict[str, str] = {
     "transport_only, holding no simulation state",
     "run_control": "the driver's pause/step/reset served as endpoints: its state is the driver's "
     "RunControl, and a reset is one of its commands (test_ipc_bridge drives it)",
+    "entity_control": "entity placement and presence served as commands; it holds no state of its "
+    "own (test_entity_control drives it)",
 }
 
 # -- what a plugin's state is ------------------------------------------------------------------------

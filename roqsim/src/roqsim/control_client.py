@@ -63,6 +63,8 @@ class Client:
         self._sock.linger = 0
         self._sock.connect(self.uri)
         self._next = 0
+        self._late: set[int] = set()  # requests sent and not yet collected
+        self._replies: dict[int, tuple[dict, Any]] = {}
         self._pub: str | None = None
 
     def close(self) -> None:
@@ -77,30 +79,56 @@ class Client:
     # -- the protocol -------------------------------------------------------------------------------
     def request(self, op: str, value: Any = _NO_VALUE, *, timeout: float | None = None, **fields):
         """Send one request and return its value; raises :class:`ControlError` on a refusal."""
-        zmq = _zmq()
-        self._next += 1
-        rid = self._next
         wait = self.timeout if timeout is None else float(timeout)
-        header = {"op": op, "id": rid, "timeout": wait, **fields}
-        frames = wire.pack(header, None if value is _NO_VALUE else value)
-        self._sock.send_multipart(frames, copy=False)
+        rid = self.send(op, value, timeout=wait, **fields)
         deadline = time.monotonic() + wait + _GRACE_S
         while True:
-            left = deadline - time.monotonic()
-            if left <= 0 or not self._sock.poll(int(left * 1000), zmq.POLLIN):
+            done, result = self.poll(rid, max(0.0, deadline - time.monotonic()))
+            if done:
+                return result
+            if time.monotonic() >= deadline:
+                self._late.discard(rid)
                 raise ControlError(
                     f"no reply from {self.uri} within {wait + _GRACE_S:g} s: is a simulator "
                     "serving it? `roqsim ls` lists the running ones.",
                     "unreachable",
                 )
+
+    def send(self, op: str, value: Any = _NO_VALUE, *, timeout: float | None = None, **fields):
+        """Send a request without waiting; returns its id for :meth:`poll`."""
+        self._next += 1
+        header = {
+            "op": op,
+            "id": self._next,
+            "timeout": self.timeout if timeout is None else timeout,
+        }
+        frames = wire.pack({**header, **fields}, None if value is _NO_VALUE else value)
+        self._sock.send_multipart(frames, copy=False)
+        self._late.add(self._next)
+        return self._next
+
+    def poll(self, rid: int, wait: float = 0.0) -> tuple[bool, Any]:
+        """``(True, value)`` once request *rid* is answered, ``(False, None)`` until then.
+
+        Waits up to *wait* seconds (0: not at all). A refusal raises :class:`ControlError`. Replies
+        to other requests of this client that arrive meanwhile are kept for their own ``poll``.
+        """
+        zmq = _zmq()
+        deadline = time.monotonic() + wait
+        while rid not in self._replies:
+            left = deadline - time.monotonic()
+            if not self._sock.poll(max(0, int(left * 1000)), zmq.POLLIN):
+                return False, None
             reply, result = wire.unpack(self._sock.recv_multipart(copy=False))
-            if reply.get("id") != rid:
-                continue  # the late answer to a request that already timed out
-            if not reply.get("ok"):
-                raise ControlError(
-                    reply.get("message", "refused"), reply.get("error", "error"), result or {}
-                )
-            return result
+            if reply.get("id") in self._late:
+                self._replies[reply["id"]] = (reply, result)
+        self._late.discard(rid)
+        reply, result = self._replies.pop(rid)
+        if not reply.get("ok"):
+            raise ControlError(
+                reply.get("message", "refused"), reply.get("error", "error"), result or {}
+            )
+        return True, result
 
     def hello(self) -> dict:
         """Who is serving: pid, world, URIs, run state and the number of endpoints."""

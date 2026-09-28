@@ -65,6 +65,11 @@ From Python::
        with sim.subscribe("robot/diff_drive/odom") as odom:
            path, t, value = odom.get(timeout=1.0)
 
+A scenario reaches it too: ``osc.roqsim``'s actions, run against a simulator in another process,
+talk to its control socket, and ``endpoint_call`` sends any command a world declares::
+
+   endpoint_call(entity: 'grip_fault', endpoint: 'override', value: 'true')
+
 An MCP client reaches the same calls through ``roqsim mcp serve``: ``list_endpoints``,
 ``describe_endpoint``, ``read_endpoint``, ``call_endpoint``, ``pause``, ``resume`` and ``step``.
 
@@ -102,8 +107,12 @@ Paths and kinds
 An endpoint's path is the address of the plugin that registered it, with its dots as slashes, then
 the endpoint's name: the ``lidar`` nested under ``robot`` publishing ``scan`` is ``robot/lidar/scan``;
 a ``model_override`` named ``grip_fault`` at the top of a world is ``grip_fault/override``. Run
-control is ``sim/run_control/{pause, resume, step, reset, state}``, and every entity's ground-truth
-pose is the core's ``sim/entities/<name>/pose``. Two endpoints that would share a path are refused
+control is ``sim/run_control/{pause, resume, step, reset, state}``; every entity's ground-truth
+pose is the core's ``sim/entities/<name>/pose``, and ``sim/entities/set_state`` and
+``sim/entities/set_presence`` place an entity and make it present or absent (what a scenario's
+``set_entity_state``, ``spawn_entity`` and ``delete_entity`` do). A navigator's route is
+``<entity>/<navigator>/navigate_through_poses``, followed by ``route_status`` and stopped by
+``cancel_route``. Two endpoints that would share a path are refused
 when the simulation starts, naming both.
 
 Every endpoint is served unless it opts out with ``backend={"ipc": False}`` (``ipc=False`` on a

@@ -31,6 +31,7 @@ from scenario_execution.actions.base_action import ActionError  # noqa: E402
 from roqsim.context import Entity, SimContext  # noqa: E402
 from roqsim.plugins.model_override import ModelOverridePlugin  # noqa: E402
 from scenario_execution_roqsim.actions.delete_entity import DeleteEntity  # noqa: E402
+from scenario_execution_roqsim.actions.endpoint_call import EndpointCall  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
@@ -39,8 +40,6 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
 from scenario_execution_roqsim.actions.entity_reports import EntityReports  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.actions.set_entity_state import SetEntityState  # noqa: E402
-from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
-from scenario_execution_roqsim.actions.set_sensor_override import SetSensorOverride  # noqa: E402
 from scenario_execution_roqsim.actions.spawn_entity import SpawnEntity  # noqa: E402
 
 RUNNING = py_trees.common.Status.RUNNING
@@ -343,7 +342,19 @@ def test_an_angle_beyond_pi_is_refused(world):
         action.execute(entities=["parcel"], angle=7.0, dwell=0.0, require="all")
 
 
-# -- set_model_override ---------------------------------------------------------------------------
+# -- endpoint_call, on a model_override's `override` ---------------------------------------------
+def _call(sim, clock, value="true", require_verified=True, entity="grip_fault"):
+    return _start(
+        EndpointCall(),
+        sim,
+        clock,
+        entity=entity,
+        endpoint="override",
+        value=value,
+        require_verified=require_verified,
+    )
+
+
 def test_the_fault_is_applied_and_the_verdict_read_back(world):
     """SUCCESS only after the queued write has landed AND the plugin has verified it."""
     ctx, clock, sim = world
@@ -352,9 +363,7 @@ def test_the_fault_is_applied_and_the_verdict_read_back(world):
         ctx, clock, plugin, seconds=2.0
     )  # let the crate settle onto the ramp, so a contact exists
 
-    action = _start(
-        SetModelOverride(), sim, clock, instance="grip_fault", active=True, require_landed=True
-    )
+    action = _call(sim, clock)
     assert action.update() is RUNNING, "the write is queued, not yet applied"
     assert _handle(ctx).is_active() is False
 
@@ -375,9 +384,7 @@ def test_a_fault_that_changed_nothing_fails_the_trial_instead_of_raising(world):
     plugin = _override(ctx, select=("ramp",))
     _step(ctx, clock, plugin, seconds=2.0)
 
-    action = _start(
-        SetModelOverride(), sim, clock, instance="grip_fault", active=True, require_landed=True
-    )
+    action = _call(sim, clock)
     action.update()
     _step(ctx, clock, plugin)
     assert plugin.read_state().verified == "no_effect", "precondition: the write did nothing"
@@ -389,53 +396,50 @@ def test_no_effect_is_tolerated_when_the_scenario_says_so(world):
     ctx, clock, sim = world
     plugin = _override(ctx, select=("ramp",))
     _step(ctx, clock, plugin, seconds=2.0)
-    action = _start(
-        SetModelOverride(), sim, clock, instance="grip_fault", active=True, require_landed=False
-    )
+    action = _call(sim, clock, require_verified=False)
     action.update()
     _step(ctx, clock, plugin)
     assert action.update() is SUCCESS
 
 
-def test_asking_for_the_state_it_is_already_in_succeeds_immediately(world):
-    """`set_active` returns early when the state matches, so `changes` never moves.
-
-    An action waiting for a transition would hang here forever -- which is why completion is keyed on
-    `changes` and this case is answered without posting anything at all.
-    """
-    ctx, clock, sim = world
-    _override(ctx)  # armed but inert, which is the state the action is about to ask for
-    action = _start(
-        SetModelOverride(), sim, clock, instance="grip_fault", active=False, require_landed=True
-    )
-    assert action.update() is SUCCESS, "already nominal"
-    assert "already" in action.feedback_message
-
-
 def test_a_restore_completes_although_there_is_nothing_to_verify(world):
-    """`active: false` writes saved values back; the plugin reports `untested`, which is not a failure."""
+    """`false` writes saved values back; the plugin reports `untested`, which is not a failure."""
     ctx, clock, sim = world
     plugin = _override(ctx)
     _step(ctx, clock, plugin, seconds=2.0)
     plugin.set_active(True)
     _step(ctx, clock, plugin)
 
-    action = _start(
-        SetModelOverride(), sim, clock, instance="grip_fault", active=False, require_landed=True
-    )
+    action = _call(sim, clock, value="false")
     assert action.update() is RUNNING
     _step(ctx, clock, plugin)
     assert _handle(ctx).is_active() is False
     assert action.update() is SUCCESS
 
 
-def test_an_unknown_instance_raises_and_says_where_it_comes_from(world):
-    _ctx, clock, sim = world
-    action = _start(
-        SetModelOverride(), sim, clock, instance="typo_fault", active=True, require_landed=True
-    )
-    with pytest.raises(ActionError, match="model_override:typo_fault"):
+def test_an_unknown_endpoint_raises_and_lists_what_the_entity_takes(world):
+    ctx, clock, sim = world
+    _override(ctx)
+    action = _call(sim, clock, entity="typo_fault")
+    with pytest.raises(ActionError, match="no command or stream 'override' of 'typo_fault'"):
         action.update()
+
+
+def test_a_command_the_producer_refuses_fails_with_its_own_text(world):
+    ctx, clock, sim = world
+    _override(ctx)
+
+    def refuse(_payload):
+        raise ValueError("the gripper is not armed")
+
+    from roqsim.context import Endpoint
+
+    ctx.interface.add(Endpoint(name="arm", direction="in", owner="grip_fault", write=refuse))
+    action = _start(EndpointCall(), sim, clock, entity="grip_fault", endpoint="arm", value="")
+    action.update()
+    _step(ctx, clock)
+    assert action.update() is FAILURE
+    assert "the gripper is not armed" in action.feedback_message
 
 
 # -- set_entity_state --------------------------------------------------------------------------------
@@ -901,19 +905,17 @@ def test_spawn_raises_on_an_entity_the_world_never_declared(teleport_world):
         action.update()
 
 
-# -- set_sensor_override --------------------------------------------------------------------------
+# -- endpoint_call, on a sensor's `fault:` override ------------------------------------------------
 #
-# The report channel's action, driven through the SAME access seam as set_model_override. A sensor
-# publishes its handle under `sensor_fault:<address>` rather than `model_override:<name>`, which is
-# the only thing that differs in-process -- so these tests are mostly about proving that, and about
-# the two verdicts a scenario is allowed to act on.
+# The report channel, driven through the SAME action: a sensor's override is addressed by the
+# component that declares it (`rig.lidar`), since one entity may carry two faultable sensors.
 
 
 def _sensor(ctx, fault, address="rig.lidar", nominal=None):
-    """A lidar carrying a `fault:` block, configured far enough to publish its handle.
+    """A lidar carrying a `fault:` block, its endpoints registered as the engine would.
 
-    Built directly rather than through an Engine: the action only ever touches the blackboard handle,
-    so a full world would be scaffolding around the one seam under test.
+    Built directly rather than through an Engine, with the registry stamping the component's
+    address on what it registers -- which is what the engine does around ``configure``.
     """
     from roqsim_sensors.plugins.lidar import LidarPlugin
 
@@ -921,7 +923,9 @@ def _sensor(ctx, fault, address="rig.lidar", nominal=None):
     cfg = {"site": "sensor_site", "rays": 8, "exclude_body": "", "fault": dict(fault)}
     cfg.update(nominal or {})
     plugin = LidarPlugin(cfg, name=label, entity=entity or None, label=label)
+    ctx.interface.producer = address
     plugin.register_fault_endpoints(ctx, namespace="")
+    ctx.interface.producer = ""
     return plugin
 
 
@@ -931,13 +935,16 @@ def _sensor_handle(ctx, address="rig.lidar"):
     return ctx.blackboard.get(blackboard_key(address))
 
 
+def _sensor_call(sim, clock, entity="rig.lidar"):
+    return _start(EndpointCall(), sim, clock, entity=entity, endpoint="override", value="true")
+
+
 def test_a_sensor_fault_is_applied_and_the_verdict_read_back(world):
+    pytest.importorskip("roqsim_sensors")
     ctx, clock, sim = world
     _sensor(ctx, fault={"dropout_percent": 60.0}, nominal={"dropout_percent": 2.0})
 
-    action = _start(
-        SetSensorOverride(), sim, clock, instance="rig.lidar", active=True, require_landed=True
-    )
+    action = _sensor_call(sim, clock)
     assert action.update() is RUNNING, "the write is queued, not yet applied"
     assert _sensor_handle(ctx).is_active() is False
 
@@ -949,39 +956,37 @@ def test_a_sensor_fault_is_applied_and_the_verdict_read_back(world):
 
 def test_a_sensor_fault_that_changed_nothing_fails_the_trial(world):
     """A `fault:` block restating the nominal leaves a run recorded as faulted that was not."""
+    pytest.importorskip("roqsim_sensors")
     ctx, clock, sim = world
     _sensor(ctx, fault={"dropout_percent": 2.0}, nominal={"dropout_percent": 2.0})
 
-    action = _start(
-        SetSensorOverride(), sim, clock, instance="rig.lidar", active=True, require_landed=True
-    )
+    action = _sensor_call(sim, clock)
     action.update()
     _step(ctx, clock)
     assert action.update() is FAILURE
-    assert "no_effect" in action.feedback_message or "changed nothing" in action.feedback_message
+    assert "no_effect" in action.feedback_message
 
 
 def test_an_unknown_sensor_address_names_what_the_world_offers(world):
     """A bare `lidar` against an owned sensor is the mistake the address exists to prevent."""
+    pytest.importorskip("roqsim_sensors")
     ctx, clock, sim = world
     _sensor(ctx, fault={"dropout_percent": 60.0})
 
-    action = _start(
-        SetSensorOverride(), sim, clock, instance="lidar", active=True, require_landed=True
-    )
-    with pytest.raises(Exception) as err:
+    action = _sensor_call(sim, clock, entity="rig")
+    action.update()  # `rig` owns it: found by owner and name
+    action = _sensor_call(sim, clock, entity="lidar")
+    with pytest.raises(ActionError) as err:
         action.update()
-    assert "rig.lidar" in str(err.value), "the refusal must name the address that does exist"
+    assert "no command or stream 'override' of 'lidar'" in str(err.value)
 
 
-def test_an_empty_sensor_address_is_refused_at_execute(world):
+def test_an_empty_endpoint_is_refused_at_execute(world):
     _, clock, sim = world
-    action = SetSensorOverride()
-    action.name = "set_sensor_override"
-    action.setup(simulation=sim, clock=clock, action_name="set_sensor_override")
-    with pytest.raises(Exception) as err:
-        action.execute(instance="", active=True, require_landed=True)
-    assert "COMPONENT ADDRESS" in str(err.value)
+    action = EndpointCall()
+    action.setup(simulation=sim, clock=clock)
+    with pytest.raises(ActionError, match="both required"):
+        action.execute(entity="rig.lidar", endpoint="", value="true")
 
 
 # -- entity_navigate ------------------------------------------------------------------------------
@@ -1169,7 +1174,7 @@ def test_a_waiting_action_names_what_is_missing_when_the_call_can_say():
 
     A queued write drains next step; a service nobody serves never answers. They look identical
     until the scenario's timeout fires, at which point the trial has spent its budget and reports
-    only that it ran out -- which is exactly what a world serving no `sim_interfaces` looked like.
+    only that it ran out.
     """
     from scenario_execution_roqsim.access import PendingCall
 
@@ -1203,14 +1208,14 @@ def test_every_call_type_can_be_asked_why_it_is_waiting():
     """The contract is shared, so an action never has to know which kind of call it holds --
     and every call type has to answer."""
     from scenario_execution_roqsim.access import (
+        CommandCall,
         NavCall,
-        OverrideCall,
         ReportCall,
         SpawnCall,
         TeleportCall,
     )
 
-    for cls in (OverrideCall, TeleportCall, SpawnCall, NavCall, ReportCall):
+    for cls in (CommandCall, TeleportCall, SpawnCall, NavCall, ReportCall):
         assert hasattr(cls, "pending_reason"), cls.__name__
 
 

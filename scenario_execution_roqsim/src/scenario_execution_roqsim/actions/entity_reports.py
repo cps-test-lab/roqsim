@@ -19,7 +19,7 @@ waiting. ``dwell`` is ``entity_moved``'s: the comparison must hold continuously 
 and restarts when it stops holding.
 
 Works over both transports -- see :meth:`scenario_execution_roqsim.access.WorldAccess.entity_report`.
-In a stepped run every field of the report is readable; over ROS only the published one travels.
+Every field of the report is readable, in a stepped run and over the control socket alike.
 """
 
 from __future__ import annotations

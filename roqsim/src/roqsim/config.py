@@ -1685,21 +1685,26 @@ def drop_transport(cfg: SimConfig) -> list[str]:
     return dropped
 
 
-#: What :func:`with_control` adds: the driver's run control, at ``sim.run_control``, and the bridge.
+#: What :func:`with_control` adds: the driver's run control at ``sim.run_control``, entity placement
+#: and presence at ``sim.entities``, and the bridge.
 _RUN_CONTROL = "run_control"
+_ENTITY_CONTROL = "entity_control"
 _CONTROL_BRIDGE = "ipc_bridge"
 
 
 def with_control(cfg: SimConfig, uri: str, *, world: str = "") -> str:
-    """Serve *cfg*'s endpoints at control URI *uri*: add ``run_control`` and the ``ipc`` bridge.
+    """Serve *cfg*'s endpoints at control URI *uri*: add ``run_control``, ``entity_control`` and
+    the ``ipc`` bridge.
 
-    ``run_control`` goes first, so its endpoints exist before any bridge binds, and the bridge
+    The two control plugins go first, so their endpoints exist before any bridge binds, and the bridge
     last, after every producer. Added by the driver rather than written into a world, like
     :func:`with_transport`: how a run is reached is a property of the run. A world that already
     declares either keeps its own. Returns the URI the run will serve -- the world's own bridge's,
     where it declares one.
     """
     refs = {spec.ref for spec in cfg.plugins}
+    if _ENTITY_CONTROL not in refs:
+        cfg.plugins.insert(0, PluginSpec(_ENTITY_CONTROL, "entities", {}, entity="sim"))
     if _RUN_CONTROL not in refs:
         cfg.plugins.insert(0, PluginSpec(_RUN_CONTROL, "run_control", {}, entity="sim"))
     declared = next((s for s in cfg.plugins if s.ref == _CONTROL_BRIDGE), None)

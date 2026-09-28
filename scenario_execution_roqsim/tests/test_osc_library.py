@@ -28,6 +28,7 @@ from scenario_execution.model.model_to_py_tree import create_py_tree  # noqa: E4
 from scenario_execution.model.osc2_parser import OpenScenario2Parser  # noqa: E402
 from scenario_execution.utils.logging import Logger  # noqa: E402
 
+from scenario_execution_roqsim.actions.endpoint_call import EndpointCall  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: E402
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
@@ -35,7 +36,6 @@ from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
 )
 from scenario_execution_roqsim.actions.entity_reports import OPERATORS, EntityReports  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
-from scenario_execution_roqsim.actions.set_model_override import SetModelOverride  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
 from scenario_execution_roqsim.get_osc_library import get_osc_library  # noqa: E402
 
@@ -72,7 +72,7 @@ def _entry_points(group):
             EntryPointStub("entity_moved", EntityMoved, "scenario_execution_roqsim"),
             EntryPointStub("entity_reports", EntityReports, "scenario_execution_roqsim"),
             EntryPointStub("entity_rotated", EntityRotated, "scenario_execution_roqsim"),
-            EntryPointStub("set_model_override", SetModelOverride, "scenario_execution_roqsim"),
+            EntryPointStub("endpoint_call", EndpointCall, "scenario_execution_roqsim"),
             EntryPointStub("entity_navigate", EntityNavigate, "scenario_execution_roqsim"),
             EntryPointStub(
                 "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
@@ -103,11 +103,11 @@ def test_the_library_is_importable_and_every_action_binds():
         "    do serial:\n"
         "        entity_moved(entities: ['parcel'], threshold: 0.05)\n"
         "        entity_rotated(entities: ['parcel'], angle: 0.5)\n"
-        "        set_model_override(instance: 'grip_fault')\n"
+        "        endpoint_call(entity: 'grip_fault', endpoint: 'override', value: 'true')\n"
     )
     assert len(_nodes(tree, EntityMoved)) == 1
     assert len(_nodes(tree, EntityRotated)) == 1
-    assert len(_nodes(tree, SetModelOverride)) == 1
+    assert len(_nodes(tree, EndpointCall)) == 1
 
 
 @pytest.mark.parametrize("mode", MODES)
@@ -166,8 +166,7 @@ def test_a_missing_required_argument_arrives_as_none_and_the_action_rejects_it()
         "mode: displacement_mode = displacement_mode!distance",
         "dwell: float = 0.0",
         "require: entity_quantifier = entity_quantifier!all",
-        "active: bool = true",
-        "require_landed: bool = true",
+        "require_verified: bool = true",
         "comparison_operator: comparison_operator = comparison_operator!eq",
         "dwell: time = 0s",
         "fail_if_bad_comparison: bool = false",
@@ -176,7 +175,7 @@ def test_a_missing_required_argument_arrives_as_none_and_the_action_rejects_it()
 def test_the_defaults_are_the_documented_ones(declaration):
     """A changed default silently changes what every scenario that omits it measures.
 
-    `require_landed: false` would turn a fault that never landed into a passing trial; `require: any`
+    `require_verified: false` would turn a fault that never landed into a passing trial; `require: any`
     would satisfy a multi-entity condition on one of them. Both are legitimate settings and neither is
     a safe default, so the defaults are pinned here rather than trusted to review.
     """
@@ -196,11 +195,11 @@ def test_omitting_every_optional_argument_still_parses():
         "    do serial:\n"
         "        entity_moved(entities: ['parcel'], threshold: 0.05)\n"
         "        entity_rotated(entities: ['parcel'], angle: 0.5)\n"
-        "        set_model_override(instance: 'grip_fault')\n"
+        "        endpoint_call(entity: 'grip_fault', endpoint: 'override')\n"
     )
     assert len(_nodes(tree, EntityMoved)) == 1
     assert len(_nodes(tree, EntityRotated)) == 1
-    assert len(_nodes(tree, SetModelOverride)) == 1
+    assert len(_nodes(tree, EndpointCall)) == 1
 
 
 # -- entity_navigate ---------------------------------------------------------------------------
@@ -227,8 +226,7 @@ scenario test:
             goal_poses: [
                 pose_3d(position: position_3d(x: 2.0, y: 0.0)),
                 pose_3d(position: position_3d(x: 2.0, y: 2.0))],
-            success_on_acceptance: true,
-            action_name: '/traffic/navigate_through_poses')
+            success_on_acceptance: true)
 """
     )
 

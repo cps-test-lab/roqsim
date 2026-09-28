@@ -7,48 +7,46 @@ An roqsim simulation is driven two ways, and a scenario action must work in both
 
 * **stepped, in-process** -- scenario-execution's own runner owns the loop, the simulator shares its
   process, and the action is handed the adapter in ``setup(**kwargs)`` as ``simulation``.
-* **over ROS** -- the simulator is in another container. The action is handed a ``node`` instead, and
-  everything it needs is a topic or a service.
+* **over the control socket** -- the simulator is another process (``roqsim sim``, under the ROS
+  runner or on its own), and every endpoint it has is reached over the socket it serves
+  (:mod:`roqsim.control_client`).
 
 Writing an action twice would be the obvious answer and the wrong one: the *semantics* are identical,
 only the plumbing differs. So the plumbing is the abstraction, and the actions are written once
 against it.
 
-It works out cleanly because both transports already speak the same vocabulary -- which is not an
-accident, it is :mod:`roqsim.context`'s ``Endpoint`` design one layer down (architecture.rst §13: a
-capability is declared once, in-process callables plus inert per-backend hints the bridge turns into
-topics and services). This module is the same idea on the scenario side:
+It works out cleanly because both transports speak the same vocabulary -- the world's endpoints
+(architecture.rst §13), addressed by the entity that owns one and its name:
 
 ===========================  ==================================  ====================================
-need                         in-process                          over ROS
+need                         in-process                          over the control socket
 ===========================  ==================================  ====================================
-pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``get_entity_state``, keyed by
-                                                                 entity NAME
-apply/restore fault ``F``    blackboard ``model_override:F``      ``F/override`` (``SetBool``)
-did it land                  ``read_state().verified``            the same service's reply
-report ``R`` of ``X``        ``ctx.interface.find(X, R)``        the bridge's endpoint map, then
-                             ``.read()``, any field              ``R``'s topic; its published field
+pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``sim/entities/X/pose``
+call command ``C`` of ``X``  ``ctx.interface``, its ``write``     ``call``, which waits for it
+did it land                  its confirming endpoint, read       the same, in the reply
+                             after the step that applied it
+report ``R`` of ``X``        ``ctx.interface.find(X, R)``        ``read`` of the same endpoint,
+                             ``.read()``, any field              any field
+place / spawn / delete       :mod:`roqsim.entity_control`         ``sim/entities/set_state`` and
+                                                                 ``set_presence``: the same code
+drive ``X``'s navigator      its handle                          its route endpoints
 time                         the runner's ``clock``               the runner's ``clock``
 ===========================  ==================================  ====================================
 
-Two things make it hold:
-
-**The names do not change.** ``simulation_interfaces`` is keyed on ENTITY names, exactly like
-``ctx.entities``, so ``'parcel'`` means one thing on both paths and no frame naming enters. TF is
-deliberately not the ROS pose source: it would arrive with ``map -> odom`` localisation error folded
-in (43 mm in x, 73 mm in y, measured -- the reason ``object_detector`` exists in the tiago world),
-while ``get_entity_state`` is ground truth like the in-process read.
+**One refusal, one text.** A refusal comes from the producer -- a plugin's command raising, a
+placement :mod:`roqsim.entity_control` refuses -- or from the resolution in this module, which
+builds its messages from the same list of endpoints on both routes. So a scenario reads the same
+message whichever shape it ran in.
 
 **Time is not asked of the transport.** ``Clock.now()`` is already the framework's abstraction:
 ``SimulationClock`` under the stepped runner, ``RosClock`` (i.e. ``/clock``) under the ROS one. An
 action takes the clock it is handed and never knows which.
 
-What DOES differ, and is stated rather than hidden: over ROS a pose is a service round-trip, so the
-instant a threshold is crossed is resolved at the tick period rather than at the physics step. A dwell
-shorter than one tick means "the first tick past the threshold" on both paths. And a plugin's report
-travels over ROS as the one field its endpoint publishes, so the other fields of a report are
-readable in a stepped run only -- asked for over ROS, they are refused by name rather than read as
-something else.
+What DOES differ, and is stated rather than hidden: over the socket a read is a round-trip, so the
+instant a threshold is crossed is resolved at the tick period rather than at the physics step. A
+dwell shorter than one tick means "the first tick past the threshold" on both paths. And a pose over
+the socket is an entity's (``sim/entities/<name>/pose``), where in-process a raw body name is
+accepted as well.
 """
 
 from __future__ import annotations
@@ -82,18 +80,24 @@ class Pose:
 
 
 @dataclass(frozen=True)
-class OverrideOutcome:
-    """What became of an apply/restore.
+class CommandOutcome:
+    """What became of a command.
 
-    ``ok`` is about the TRANSPORT and the simulator ("the command was applied"); ``verified`` is the
-    plugin's own verdict about the physics (``landed`` / ``no_effect`` / ``untested``). They are
-    separate because "the simulator never applied it" and "it applied and changed nothing" call for
-    different messages, and only the caller knows whether either should fail the trial.
+    ``ok`` is about the TRANSPORT and the simulator: the command ran and returned ``result``, or
+    ``detail`` says why not -- the producer's own refusal, or no outcome in time. ``confirmation``
+    is the value of the endpoint that confirms the command, read after the step that applied it,
+    and ``verified`` its verdict where it has one (``landed`` / ``no_effect`` / ``untested``);
+    ``confirmed`` is false when a confirmation was due and could not be read (a paused run). They
+    are separate because "the simulator never applied it" and "it applied and changed nothing" call
+    for different messages, and only the caller knows whether either should fail the trial.
     """
 
     ok: bool
-    verified: str
-    detail: str
+    detail: str = ""
+    result: object = None
+    confirmation: object = None
+    verified: str = ""
+    confirmed: bool = True
 
 
 class PendingCall(ABC):
@@ -115,18 +119,16 @@ class PendingCall(ABC):
         return None
 
 
-class OverrideCall(PendingCall):
-    """An apply/restore in flight. ``poll()`` returns ``None`` until the outcome is known.
+class CommandCall(PendingCall):
+    """A command in flight. ``poll()`` returns ``None`` until the outcome is known.
 
-    Two-phase on both transports, for the same reason the plugin's inbound endpoint is a service
-    rather than a topic: this is a command whose outcome the caller needs. In-process the wait is for
-    ``ctx.post`` to be drained and the next ``post_step`` to have run; over ROS it is for the service
-    future. Neither may block -- an action that blocks the tick either stalls the tree or, in the
-    stepped shape, deadlocks the very step it is waiting for.
+    Two-phase on both transports: a command is a request with an outcome, and its confirmation is
+    read after the step that applied it. Neither may block -- an action that blocks the tick either
+    stalls the tree or, in the stepped shape, deadlocks the very step it is waiting for.
     """
 
     @abstractmethod
-    def poll(self) -> OverrideOutcome | None: ...
+    def poll(self) -> CommandOutcome | None: ...
 
 
 @dataclass(frozen=True)
@@ -145,8 +147,8 @@ class TeleportOutcome:
 class TeleportCall(PendingCall):
     """A pose write in flight. ``poll()`` returns ``None`` until the outcome is known.
 
-    Two-phase for the same reason :class:`OverrideCall` is: in-process the wait is for ``ctx.post``
-    to be drained by the next ``pre_step``; over ROS it is for the ``SetEntityState`` future.
+    Two-phase for the same reason :class:`CommandCall` is: in-process the wait is for ``ctx.post``
+    to be drained by the next ``pre_step``; over the socket it is for the reply.
     """
 
     @abstractmethod
@@ -218,7 +220,7 @@ class ReportReading:
 
 class ReportCall(PendingCall):
     """A report being watched. ``poll()`` returns the current :class:`ReportReading`, or ``None``
-    while no value is known yet -- over ROS, before the map or the first message has arrived."""
+    while no value is known yet -- over the socket, before the first reply has arrived."""
 
     @abstractmethod
     def poll(self) -> ReportReading | None: ...
@@ -227,9 +229,9 @@ class ReportCall(PendingCall):
 def plain(value):
     """A report value as the Python value a literal compares against.
 
-    A NumPy scalar becomes its Python scalar and an array (or a ROS ``array.array``) a list, so
-    ``expected_value: 'True'`` or ``'[0.0, 1.0]'`` compares by value, not by NumPy's element-wise
-    rules -- an array compared with ``==`` is an array, whose truth is an error.
+    A NumPy scalar becomes its Python scalar and an array a list, so ``expected_value: 'True'`` or
+    ``'[0.0, 1.0]'`` compares by value, not by NumPy's element-wise rules -- an array compared with
+    ``==`` is an array, whose truth is an error.
     """
     if isinstance(value, np.generic):
         return value.item()
@@ -241,9 +243,155 @@ def published_field(backend: dict) -> str:
     """The field of a report its ROS publication carries (the ``field`` hint), ``""`` for all of it.
 
     What a bare ``report: '<endpoint>'`` means on both transports, so the short form compares the
-    same value in a stepped run as over ROS.
+    same value whichever way the world is reached.
     """
     return str((backend.get("ros2") or {}).get("field") or "")
+
+
+def parse_value(text: str):
+    """A scenario's ``value`` string as a payload: JSON where it parses, else the string itself.
+
+    ``'true'`` is ``True``, ``'{"vx": 0.5}'`` a mapping, ``'fast'`` the word.
+    """
+    import json
+
+    try:
+        return json.loads(text)
+    except (TypeError, ValueError):
+        return text
+
+
+# -- resolving what a scenario names ----------------------------------------------------------------
+# Both transports resolve against the same rows -- one per endpoint: its path, owner, name and kind
+# -- so an unknown name is refused with the same text whichever one a scenario runs over.
+
+
+def find_endpoint(rows: list[dict], entity: str, endpoint: str, *, kind: str) -> dict:
+    """The row *entity*'s *endpoint* names, of *kind* (``out``, or ``in`` for a command or stream).
+
+    Addressed as the world names it: the entity that owns the endpoint and its name (``grip_fault``,
+    ``override``), or a component address and a name (``robot.lidar``, ``override``) -- the path
+    ``robot/lidar/override`` -- where one entity owns two endpoints of that name.
+    """
+    path = f"{entity.replace('.', '/')}/{endpoint}"
+    direction = "out" if kind == "out" else "in"
+    matches = [
+        row
+        for row in rows
+        if (row["path"] == path or (row["owner"] == entity and row["name"] == endpoint))
+        and (row["kind"] == "out") == (direction == "out")
+    ]
+    unique = {row["path"]: row for row in matches}
+    if len(unique) == 1:
+        return next(iter(unique.values()))
+    if unique:
+        raise AccessError(
+            f"{entity!r} has {len(unique)} endpoints named {endpoint!r}: "
+            f"{', '.join(sorted(unique))}. Name one by the address of the component that declares "
+            f"it (entity 'robot.lidar' for robot/lidar/{endpoint})."
+        )
+    what = "command or stream" if direction == "in" else "report"
+    own = sorted(
+        row["path"]
+        for row in rows
+        if (row["owner"] == entity or row["path"].startswith(entity.replace(".", "/") + "/"))
+        and (row["kind"] == "out") == (direction == "out")
+    )
+    listed = ", ".join(own) if own else "(none)"
+    plural = "commands and streams" if direction == "in" else "reports"
+    raise AccessError(
+        f"no {what} {endpoint!r} of {entity!r}. Its {plural}: {listed}. An endpoint is addressed by "
+        "the entity that owns it (the world's `name:`) or the component that declares it, and its "
+        "name."
+    )
+
+
+def no_report(rows: list[dict], entity: str, report: str, *, is_entity: bool) -> AccessError:
+    """Why *entity* has no report *report*, listing the reports this world does publish."""
+    offered: dict[str, list[str]] = {}
+    for row in rows:
+        if row["kind"] == "out":
+            offered.setdefault(row["owner"], []).append(row["name"])
+    if entity in offered:
+        return AccessError(
+            f"entity {entity!r} publishes no report {report!r}. It publishes: "
+            f"{', '.join(sorted(offered[entity]))}."
+        )
+    what = (
+        f"{entity!r} is an entity, but no plugin on it publishes a report"
+        if is_entity
+        else f"no entity {entity!r} publishes a report"
+    )
+    listed = "; ".join(
+        f"{owner or '(no entity)'}: {', '.join(sorted(names))}"
+        for owner, names in sorted(offered.items())
+    )
+    return AccessError(
+        f"{what}. A report is an endpoint a plugin declares on the entity it watches, addressed by "
+        f"that entity's `name:`. This world publishes: {listed or '(none)'}."
+    )
+
+
+#: What a report's value may be when neither the scenario nor the endpoint names a field.
+_SCALARS = (bool, int, float, str, np.generic)
+
+
+def _fields_of(payload) -> list[str]:
+    """The named fields of a report, for a refusal that lists what can be asked for."""
+    import dataclasses
+
+    if isinstance(payload, dict):
+        return [str(k) for k in payload]
+    if dataclasses.is_dataclass(payload):
+        return [f.name for f in dataclasses.fields(payload)]
+    if hasattr(payload, "_fields"):  # a namedtuple
+        return list(payload._fields)
+    try:
+        return sorted(k for k in vars(payload) if not k.startswith("_"))
+    except TypeError:  # a tuple, an array, a number: no names to offer
+        return []
+
+
+def report_value(name: str, payload, field: str, published: str, source: str) -> ReportReading:
+    """Field *field* of a report (else the field its endpoint publishes), as a reading.
+
+    One function for both transports: in-process *payload* is the producer's object, over the
+    socket the mapping it arrived as, and a field is looked up the same way in either.
+    """
+    field = field or published
+    report = name.rpartition(".")[2]
+    if not field:
+        if isinstance(payload, _SCALARS):
+            return ReportReading(plain(payload), "", source)
+        fields = _fields_of(payload)
+        raise AccessError(
+            f"{name} publishes no single field (its endpoint names none for ROS), so name the "
+            f"one to compare: report: '{report}.<field>', with <field> one of: "
+            f"{', '.join(fields) if fields else '(none -- a single value)'}."
+        )
+    if isinstance(payload, dict):
+        found = field in payload
+        value = payload.get(field)
+    else:
+        found = hasattr(payload, field)
+        value = getattr(payload, field, None)
+    if not found:
+        fields = _fields_of(payload)
+        raise AccessError(
+            f"{name} has no field {field!r}. It has: "
+            f"{', '.join(fields) if fields else '(no named fields)'}."
+        )
+    return ReportReading(plain(value), field, source)
+
+
+def no_navigator(name: str, offered: list[str]) -> AccessError:
+    """Why *name* cannot be driven, naming what this world can drive."""
+    return AccessError(
+        f"entity {name!r} has no navigator, so nothing can drive it. A `navigator` component "
+        f"must be nested under the entry that provides it (spawn_robot, spawn_model with "
+        f"`mocap: true`, or walker). This world can navigate: "
+        f"{', '.join(sorted(offered)) if offered else '(nothing)'}."
+    )
 
 
 class WorldAccess(ABC):
@@ -257,7 +405,8 @@ class WorldAccess(ABC):
         """Can the world be asked anything yet?
 
         False in the stepped shape until the world is built -- the tree is set up before the first
-        ``reset()``, and a caller must wait a tick rather than trigger a compile.
+        ``reset()``, and a caller must wait a tick rather than trigger a compile. False over the
+        socket until the simulator has answered.
         """
 
     @abstractmethod
@@ -268,25 +417,18 @@ class WorldAccess(ABC):
         not knowing yet and must not be confused with it.
         """
 
-    #: Blackboard prefix per fault channel, and the only thing that differs between them in-process.
-    #: The ROS backend needs no entry: it addresses a fault by its endpoint, which both channels
-    #: scope the same way.
-    OVERRIDE_KINDS = {
-        "model": "model_override",  # roqsim.plugins.model_override -- a PHYSICS fault
-        "sensor": "sensor_fault",  # roqsim_sensors.live_config -- a sensor's REPORT fault
-    }
-
     @abstractmethod
-    def apply_override(self, instance: str, active: bool, kind: str = "model") -> OverrideCall:
-        """Switch a fault on or off. Never blocks.
+    def call_endpoint(self, entity: str, endpoint: str, value=None) -> CommandCall:
+        """Write *value* to *entity*'s command or stream *endpoint*. Never blocks.
 
-        *kind* selects the channel (see :attr:`OVERRIDE_KINDS`); *instance* names the fault within
-        it -- a ``model_override`` instance's ``name:`` for the physics channel, a component
-        **address** (``robot.lidar``) for the sensor channel.
+        Addressed by :func:`find_endpoint`. A command's outcome carries what it returned, and the
+        value of the endpoint that confirms it where it names one; a stream's is known once the
+        value is queued. *value* is the payload: for an endpoint declared with typed parameters, a
+        mapping of their names.
         """
 
     @abstractmethod
-    def navigate(self, name: str, goal_poses, *, wait: bool, action_name: str = "") -> NavCall:
+    def navigate(self, name: str, goal_poses, *, wait: bool) -> NavCall:
         """Send ``name`` through ``goal_poses`` (world-frame ``(x, y, yaw)``). Never blocks.
 
         ``goal_poses`` must not be empty; running the route the entity was configured with is
@@ -298,7 +440,7 @@ class WorldAccess(ABC):
         """
 
     @abstractmethod
-    def start_route(self, name: str, *, wait: bool, action_name: str = "") -> NavCall:
+    def start_route(self, name: str, *, wait: bool) -> NavCall:
         """Run the route ``name`` was configured with (``navigator: {goals: [...]}``). Never blocks.
 
         What lets a world own an opponent's trajectory -- identical in every repetition, and visible
@@ -322,7 +464,8 @@ class WorldAccess(ABC):
 
         ``lin``/``ang`` default to **zero**, which is what placing something means: a body put
         somewhere is not still carrying the velocity it had. A caller that wants motion states it,
-        rather than the state being half-settable.
+        rather than the state being half-settable. The placement is
+        :func:`roqsim.entity_control.set_state` on both transports.
         """
 
     @abstractmethod
@@ -334,16 +477,13 @@ class WorldAccess(ABC):
         nobody asked for. A teleport can only spawn-at-nominal-then-move, which is visible for a
         step and accelerates a free body under gravity in between.
 
-        A pose is **required when making an entity present**, and refused when making it absent.
-        That is not this layer's preference: ``SpawnEntity.srv`` states ``initial_pose``
-        unconditionally -- a default-constructed request carries the origin and the identity
-        rotation -- so there is no way to spawn over ROS without asking for *some* pose, and a
-        transport that quietly sent the origin would move the entity somewhere nobody named.
-        ``DeleteEntity`` takes no pose at all, and an absent entity keeps the one it had, which is
-        what lets it come back where it was.
+        A pose is **required when making an entity present**, and refused when making it absent: a
+        transport that quietly sent the origin would move the entity somewhere nobody named, and an
+        absent entity keeps the pose it had, which is what lets it come back where it was.
 
-        Making an already-present entity present again is not an error: the caller asked for a
-        state and got it.
+        Making an entity present that already is (or absent that already is) is refused, as a
+        result rather than a raise. The flip is :func:`roqsim.entity_control.set_presence` on both
+        transports.
         """
 
     @abstractmethod
@@ -353,12 +493,16 @@ class WorldAccess(ABC):
         Addressed as the world names it -- the entity that owns the endpoint and the endpoint's name
         (``'ur5e'``, ``'force_limit'``), never a topic. An empty *field* means the one the
         endpoint's ROS publication carries (``LimitReport.tripped`` for ``force_limit``), so the
-        short form compares one value on both transports. In-process every field of the report is
-        readable; over ROS only the published one travels, and another is refused naming it.
+        short form compares one value whichever way the world is reached. Every field of the report
+        is readable on both transports.
 
         Raises :class:`AccessError`, from this call or from ``poll()``, for an entity, report or
-        field that does not exist, listing what does -- over ROS once the bridge's map has said so.
+        field that does not exist, listing what does.
         """
+
+    def pending_reason(self) -> str | None:
+        """Why :meth:`ready` is still false, when that is more than the world not being built yet."""
+        return None
 
     def teardown(self) -> None:
         """Drop anything the transport allocated. Called from the action's ``shutdown``."""
@@ -369,29 +513,22 @@ def select(kwargs: dict, *, what: str) -> WorldAccess:
 
     Not from configuration: which transport is present is a property of how the scenario is being
     executed, and a scenario that had to declare it would have to be edited to move between the two.
-    ``simulation`` is offered by the stepped runner, ``node`` by the ROS one.
+    ``simulation`` is offered by the stepped runner and makes this in-process; otherwise the
+    simulator is another process, reached over the control socket it serves -- found the way
+    ``roqsim ls`` finds it (``ROQSIM_CONTROL``, the run directory, or the only one running), once
+    it answers, so a simulator that is still starting is waited for rather than refused.
 
-    Imported lazily, per backend, so that :mod:`scenario_execution_roqsim.access.ros` -- and with
-    it ``rclpy`` and ``simulation_interfaces`` -- is never imported in a plain venv, and the
-    in-process path never pays for MuJoCo at tree-build time either.
+    Imported lazily, per backend, so the in-process path never pays for MuJoCo at tree-build time
+    and the socket path never imports ZeroMQ unless it is taken.
     """
     sim = kwargs.get("simulation")
     if sim is not None:
         from .in_process import InProcessAccess
 
         return InProcessAccess(sim)
-    node = kwargs.get("node")
-    if node is not None:
-        from .ros import RosAccess
+    from .ipc import IpcAccess
 
-        return RosAccess(node)
-    raise AccessError(
-        f"{what} needs a simulation to talk to and the runner offered none. Either run the stepped "
-        "runner with `--simulation <module>:<Class>` (scenario-execution's own binary), or run "
-        "under the ROS runner, where the simulator is reached over "
-        "simulation_interfaces. Note this action can never run under `remote()`: a remote server is "
-        "handed neither."
-    )
+    return IpcAccess()
 
 
 def clock_of(kwargs: dict):

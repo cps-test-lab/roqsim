@@ -1429,13 +1429,15 @@ there and needs no plugin of its own::
                  fault: {dropout_percent: 60.0, range_stddev: 0.35}   # held while active
 
 The sensor is nominal until the fault is switched on, so adding a ``fault:`` block changes nothing
-about a run that never fires it. A scenario switches it by the sensor's **address**::
+about a run that never fires it. A scenario switches it through the ``override`` command of the
+sensor's **address**::
 
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: true)
+   endpoint_call(entity: 'robot.rplidar.lidar', endpoint: 'override', value: 'true')
    wait elapsed(8s)
-   set_sensor_override(instance: 'robot.rplidar.lidar', active: false)
+   endpoint_call(entity: 'robot.rplidar.lidar', endpoint: 'override', value: 'false')
 
-and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
+which the control socket serves as ``robot/rplidar/lidar/override`` (confirmed by its
+``override_verified`` report), and over ROS 2 the same switch is a ``std_srvs/SetBool`` at ``robot/rplidar/lidar/override``, with
 ``robot/rplidar/lidar/override_state`` and ``.../override_verified`` reporting back. The address is the dotted
 path of labels with dots as slashes, because a dot is not legal in a ROS name; a bare ``lidar`` would
 name neither of a robot's two lidars.
@@ -1448,7 +1450,7 @@ It mirrors ``model_override`` in the three ways that matter, rather than re-deci
 * **The world never decides when.** No time trigger, no condition trigger; a fault's timing is the
   experiment's independent variable.
 * **A fault that changed nothing is reported as such.** Applying a block whose values already equal
-  the nominal reports ``no_effect``, and ``set_sensor_override``'s ``require_landed`` fails the trial
+  the nominal reports ``no_effect``, and ``endpoint_call``'s ``require_verified`` fails the trial
   on it — an unfaulted outcome wearing a faulted label is worse than a failed run. A *restore* has
   nothing to verify and reports ``untested``.
 

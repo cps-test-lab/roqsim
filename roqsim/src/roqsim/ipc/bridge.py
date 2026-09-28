@@ -42,7 +42,7 @@ from ..document import nearest
 from ..endpoint import ParameterError
 from ..plugin import PluginError
 from ..rates import snap_rate
-from . import PROTOCOL, pub_uri, register, unregister, wire
+from . import PROTOCOL, path_of, pub_uri, register, unregister, wire
 
 if TYPE_CHECKING:
     from ..context import Endpoint, SimContext
@@ -51,12 +51,6 @@ if TYPE_CHECKING:
 DEFAULT_TIMEOUT_S = 5.0
 #: Threads that wait on the physics thread for requests, so one slow call does not hold the rest.
 WORKERS = 4
-
-
-def path_of(ep: Endpoint) -> str:
-    """``<producer address, dots as slashes>/<name>``: ``robot.lidar`` + ``scan`` -> ``robot/lidar/scan``."""
-    producer = ep.producer or ep.owner
-    return f"{producer.replace('.', '/')}/{ep.name}" if producer else ep.name
 
 
 class _Refusal(Exception):
@@ -414,11 +408,16 @@ class IpcBridge(BridgeBase):
             gate = self._gates.get(id(ep))
             entry["rate_hz"] = float(gate.rate_hz) if gate is not None else float(ep.rate_hz)
         entry["doc"] = doc if full else (doc.splitlines()[0] if doc else "")
-        if not full:
-            return entry
-        entry.update(owner=ep.owner, producer=ep.producer, name=ep.name, namespace=ep.namespace)
+        entry.update(owner=ep.owner, name=ep.name)
         if path in self._confirm_of:
             entry["confirm"] = path_of(self._confirm_of[path])
+        if not full:
+            return entry
+        entry.update(producer=ep.producer, namespace=ep.namespace)
+        # The declared hints of every backend, as data: what the endpoint asks of each transport.
+        entry["hints"] = {
+            key: hints for key, hints in ep.backend.items() if isinstance(hints, dict)
+        }
         # The typed schema, where the endpoint declares one (roqsim.endpoint).
         if ep.params is not None:
             entry["params"] = [p.describe() for p in ep.params]
