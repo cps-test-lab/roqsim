@@ -343,6 +343,7 @@ def resolve_model(model: str, base_dir: Path | None = None) -> ModelAsset:
             raise ModelError(f"module {left!r} is not a model provider (no MODELS_DIR)") from exc
         found = _find_in_dir(models_dir, modelname)
         if found is None:
+            _refuse_retired(modelname)
             raise ModelError(f"model {modelname!r} not found in provider {left!r} ({models_dir})")
         return _finalize(found, meshdir, texturedir)
 

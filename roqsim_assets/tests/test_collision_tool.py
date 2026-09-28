@@ -11,6 +11,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from roqsim import exit_status
 from roqsim_assets.cli import collision
 
 # A table: a top on two legs, with a span underneath meant to stay open. The visual mesh is a box
@@ -179,7 +180,7 @@ def test_the_exit_code_is_the_verdict(tmp_path, capsys):
         "<mujoco><asset><mesh name='w' vertex='0 0 0  1 0 0  0 1 0  0 0 1'/></asset>"
         "<worldbody><body name='p'><geom type='mesh' mesh='w'/></body></worldbody></mujoco>"
     )
-    assert collision.main(["diff", str(hull)]) == 1
+    assert collision.main(["diff", str(hull)]) == exit_status.FINDING
     capsys.readouterr()
 
 
