@@ -10,8 +10,9 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.introspection import get_plugin_details
+from roqsim.types import JointState, Odometry
 
-#: model, its plugin, the step its controller is tuned for
+#: plugin -> its model and the step its controller is tuned for
 CASES = {
     "g1_locomotion": ("unitree_g1", 0.002),
     "oli_locomotion": ("oli", 0.001),
@@ -48,17 +49,17 @@ def _endpoints(engine):
 
 
 @pytest.mark.parametrize("plugin", ["g1_locomotion", "oli_locomotion"])
-def test_cmd_vel_is_a_typed_stream_the_policy_receives(plugin):
+def test_cmd_vel_is_a_twist_stream_the_policy_receives(plugin):
     engine = _engine(plugin)
     try:
         cmd_vel = _endpoints(engine)["cmd_vel"]
         assert [(p.name, p.type.unit, p.required) for p in cmd_vel.params] == [
             ("vx", "m/s", True),
             ("vy", "m/s", False),
-            ("w", "rad/s", False),
+            ("wz", "rad/s", False),
         ]
         loco = _plugin(engine)
-        cmd_vel.write({"vx": 0.2, "w": 0.1})
+        cmd_vel.write({"vx": 0.2, "wz": 0.1})
         assert not loco._cmd.any(), "a stream is applied on the physics thread, not by write"
         engine.step()
         assert loco._cmd.tolist() == pytest.approx([0.2, 0.0, 0.1])
@@ -67,14 +68,25 @@ def test_cmd_vel_is_a_typed_stream_the_policy_receives(plugin):
 
 
 @pytest.mark.parametrize("plugin", ["g1_locomotion", "oli_locomotion"])
-def test_odom_and_joint_states_describe_their_units(plugin):
+def test_odom_and_joint_states_are_neutral_types(plugin):
     rows = {row["name"]: row for row in get_plugin_details(plugin)["endpoints"]}
     assert set(rows) == {"cmd_vel", "odom", "joint_states"}
-    odom = rows["odom"]["result"]["items"]
-    assert [i["unit"] for i in odom] == ["m", "m", "rad", "m/s", "m/s", "rad/s", "m"]
-    joints = rows["joint_states"]["result"]["items"]
-    assert [i.get("unit") for i in joints] == [None, "rad", "rad/s"]
-    assert rows["odom"]["rate_hz"] == 50.0 and rows["joint_states"]["rate_hz"] == 50.0
+    assert rows["cmd_vel"]["payload"] == "Twist"
+    assert rows["odom"]["payload"] == "Odometry" and rows["odom"]["rate_hz"] == 50.0
+    assert rows["joint_states"]["payload"] == "JointState"
+    assert rows["joint_states"]["rate_hz"] == 50.0
+
+    engine = _engine(plugin)
+    try:
+        eps = _endpoints(engine)
+        odom = eps["odom"].read()
+        assert isinstance(odom, Odometry)
+        assert odom.position[2] > 0.5, "the pelvis height is carried as z"
+        joints = eps["joint_states"].read()
+        assert isinstance(joints, JointState)
+        assert len(joints.names) == len(joints.positions) == len(joints.velocities) > 0
+    finally:
+        engine.shutdown()
 
 
 def test_agibot_joint_command_is_a_command_applied_in_order():
@@ -82,8 +94,8 @@ def test_agibot_joint_command_is_a_command_applied_in_order():
     try:
         eps = _endpoints(engine)
         command = eps["joint_command"]
-        names = eps["joint_states"].read()[0]
-        first, second = names[0], names[1]
+        assert command.payload_type.cls.__name__ == "JointPositions"
+        first, second = eps["joint_states"].read().names[:2]
         # Two partial commands within one step: a stream would keep only the second.
         a = command.write({"names": [first], "positions": [0.3]})
         b = command.write({"names": [second], "positions": [-0.2]})
@@ -99,9 +111,10 @@ def test_agibot_joint_command_is_a_command_applied_in_order():
 def test_agibot_joint_states_reads_the_driven_joints():
     engine = _engine("agibot_g2_controller")
     try:
-        names, pos, vel = _endpoints(engine)["joint_states"].read()
-        assert len(names) == len(pos) == len(vel) > 0
-        assert not any(n.startswith("r_") for n in names)
-        assert isinstance(pos, np.ndarray)
+        joints = _endpoints(engine)["joint_states"].read()
+        assert isinstance(joints, JointState)
+        assert len(joints.names) == len(joints.positions) == len(joints.velocities) > 0
+        assert not any(n.startswith("r_") for n in joints.names)
+        assert isinstance(joints.positions, np.ndarray)
     finally:
         engine.shutdown()

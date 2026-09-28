@@ -15,24 +15,10 @@ velocity -- keeps two promises to the stack driving it, whatever moves it:
 from __future__ import annotations
 
 import math
-from typing import Annotated
 
 import numpy as np
 
-from .endpoint import Unit
 from .pose import yaw_of
-
-#: What :func:`planar_odom` returns: the planar pose and body-frame twist of a floating base in the
-#: odometry frame, with the base height last. The payload type of a legged robot's ``odom`` endpoint.
-PlanarOdometry = tuple[
-    Annotated[float, Unit("m"), "x"],
-    Annotated[float, Unit("m"), "y"],
-    Annotated[float, Unit("rad"), "yaw"],
-    Annotated[float, Unit("m/s"), "forward speed"],
-    Annotated[float, Unit("m/s"), "sideways speed"],
-    Annotated[float, Unit("rad/s"), "yaw rate"],
-    Annotated[float, Unit("m"), "base height"],
-]
 
 
 class CommandWatchdog:
@@ -112,7 +98,7 @@ class SpawnFrame:
         return (cw * w - cz * z, cw * x - cz * y, cw * y + cz * x, cw * z + cz * w)
 
 
-def planar_odom(frame: SpawnFrame, data, body: int, dof: int) -> PlanarOdometry:
+def planar_odom(frame: SpawnFrame, data, body: int, dof: int) -> tuple[float, ...]:
     """``(x, y, yaw, vx, vy, w, z)`` of a free-floating base in ``frame``, the twist in the body frame.
 
     ``body`` is the base body and ``dof`` the first dof of its free joint, whose linear velocity is

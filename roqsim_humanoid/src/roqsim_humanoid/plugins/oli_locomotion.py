@@ -37,20 +37,16 @@ sits rather than a config key::
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-from typing import Annotated
-
 import mujoco
 import numpy as np
 import onnxruntime as ort
 import yaml
-from numpy.typing import NDArray
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
-from roqsim.endpoint import Unit
-from roqsim.odometry import CommandWatchdog, PlanarOdometry, SpawnFrame, planar_odom
+from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
+from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
 from ..policy import OLI_CONFIG, OLI_POLICY
 
@@ -208,27 +204,31 @@ class OliLocomotionPlugin(Plugin):
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
 
+    # -- endpoints: the same contract as diff_drive's, under the robot's namespace ------------
+    @endpoint.stream(Twist)
+    def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+        """Body-frame velocity command, applied once per step and clamped to the trained range.
+
+        Args:
+            vx: forward speed
+            vy: sideways speed, to the left
+            wz: yaw rate
+        """
+        self.drive(vx, vy, wz)
+
+    @endpoint.out(rate=50.0, ros2={"emit_tf": True})
+    def odom(self) -> Odometry:
+        """The pelvis's pose and twist from the spawn pose; z is its height, about 0.9 m."""
+        x, y, yaw, vx, vy, w, z = self.read_odom()
+        return Odometry.planar(x, y, yaw, vx, vy, w, z=z)
+
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The leg joints' positions and velocities, in the policy's order."""
+        names, positions, velocities = self.read_joint_states()
+        return JointState(list(names), positions, velocities)
+
     # -- command / readback -------------------------------------------------------------------
-    # The robot's I/O as backend-neutral endpoints, the same contract as diff_drive's. The namespace
-    # (own config, else the spawn's) scopes topics and frames per robot.
-    @endpoint.stream(
-        "cmd_vel",
-        ros2=lambda self: {
-            "type": "geometry_msgs.msg.Twist",
-            "topic": self.topic_override("cmd_vel") or "cmd_vel",
-        },
-    )
-    def command_twist(
-        self,
-        vx: Annotated[float, Unit("m/s"), "forward speed"],
-        vy: Annotated[float, Unit("m/s"), "sideways speed, to the left"] = 0.0,
-        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
-    ) -> None:
-        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step.
-
-        Clamped to the range the policy was trained on."""
-        self.drive(vx, vy, w)
-
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vx forward, vy left, w yaw-rate), clamped to the trained range."""
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
@@ -236,38 +236,11 @@ class OliLocomotionPlugin(Plugin):
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
         self.watchdog.stamp(self._ctx)
 
-    @endpoint.out(
-        "odom",
-        rate_hz=50.0,
-        ros2=lambda self: {
-            "type": "nav_msgs.msg.Odometry",
-            "topic": self.topic_override("odom") or "odom",
-            "frame_id": "odom",
-            "child_frame_id": "base_link",
-            "emit_tf": True,
-        },
-    )
-    def read_odom(self) -> PlanarOdometry:
-        """Endpoint ``odom``: the base's pose and twist, from the spawn pose."""
+    def read_odom(self):
         # Computed on demand at the endpoint rate (cf. g1). Trailing z is the pelvis height (~0.9 m).
         return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
-    @endpoint.out(
-        "joint_states",
-        rate_hz=50.0,
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.JointState",
-            "topic": self.topic_override("joint_states") or "joint_states",
-        },
-    )
-    def read_joint_states(
-        self,
-    ) -> tuple[
-        Annotated[Sequence[str], "the driven joints, in policy order"],
-        Annotated[NDArray[np.float64], Unit("rad")],
-        Annotated[NDArray[np.float64], Unit("rad/s")],
-    ]:
-        """Endpoint ``joint_states``: the positions and velocities of the driven joints."""
+    def read_joint_states(self):
         d = self._ctx.data
         return (JOINTS, d.qpos[self._qadr], d.qvel[self._dadr])
 

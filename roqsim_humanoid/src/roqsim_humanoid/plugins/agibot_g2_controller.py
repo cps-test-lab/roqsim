@@ -5,10 +5,10 @@ roll actuators); this plugin owns everything *above* the base -- the 5-DoF torso
 two 7-DoF arms and the two single-DoF omnipicker grippers. It is the manipulation analogue of
 ``diff_drive``: it resolves the robot's *position* actuators (named ``<prefix>p_*`` by the port,
 which excludes the ``<prefix>m_*`` wheel velocity servos ``diff_drive`` owns), holds a target joint
-vector every ``pre_step``, and declares backend-neutral :class:`~roqsim.context.Endpoint`s a
-bridge serves: a ``joint_states`` output and a ``joint_command`` input (a single-point
-``JointTrajectory`` that sets the held targets -- the same interface a ros2_control
-JointTrajectoryController exposes, so one config drives sim and hardware alike).
+vector every ``pre_step``, and declares the endpoints a bridge serves: a ``joint_states`` output and
+a ``joint_command`` input (a single-point ``JointTrajectory`` that sets the held targets -- the same
+interface a ros2_control JointTrajectoryController exposes, so one config drives sim and hardware
+alike).
 
 It also registers a handle on the blackboard under ``robot_body:<name>`` exposing ``joint_names``,
 ``set_targets(names, positions)`` and ``read_state()`` for in-process consumers (tests, teleop).
@@ -24,16 +24,14 @@ sits rather than a config key::
 
 from __future__ import annotations
 
-from typing import Annotated
-
 import mujoco
 import numpy as np
 from numpy.typing import NDArray
 
 from roqsim import endpoint
 from roqsim.context import SimContext
-from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.types import JointPositions, JointState
 
 
 class AgibotG2ControllerPlugin(Plugin):
@@ -111,44 +109,25 @@ class AgibotG2ControllerPlugin(Plugin):
             if n in idx:
                 self._target[idx[n]] = float(p)
 
-    # The body's I/O as backend-neutral endpoints; the namespace (own config, else the spawn's)
-    # scopes the topics per robot.
-    @endpoint.command(
-        "joint_command",
-        ros2=lambda self: {
-            "type": "trajectory_msgs.msg.JointTrajectory",
-            "topic": self.topic_override("joint_command") or "joint_command",
-        },
-    )
-    def joint_command(
-        self,
-        names: Annotated[
-            list[str], "joints to move; a name this controller does not drive is ignored"
-        ],
-        positions: Annotated[list[float], Unit("rad"), "target angle per name"],
-    ) -> None:
-        """Endpoint ``joint_command``: hold the named joints at these targets.
+    @endpoint.out(rate=50.0)
+    def joint_states(self) -> JointState:
+        """The driven joints' positions and velocities."""
+        names, positions, velocities = self.read_joint_states()
+        return JointState(names, positions, velocities)
 
-        The joints it does not name keep theirs. A command rather than a stream, so every message is
-        applied in order: each may name only some joints."""
+    # A command rather than a stream: a single-point trajectory may name only some joints, so every
+    # one must be applied, in order, where a stream would keep only the last of a step.
+    @endpoint.command(JointPositions)
+    def joint_command(self, names: list[str], positions: NDArray[np.float64]) -> None:
+        """Hold the named joints at these positions; joints not named keep their targets.
+
+        Args:
+            names: joint names, unprefixed
+            positions: one target per name
+        """
         self.set_targets(names, positions)
 
-    @endpoint.out(
-        "joint_states",
-        rate_hz=50.0,
-        ros2=lambda self: {
-            "type": "sensor_msgs.msg.JointState",
-            "topic": self.topic_override("joint_states") or "joint_states",
-        },
-    )
-    def read_joint_states(
-        self,
-    ) -> tuple[
-        Annotated[list[str], "the driven joints, unprefixed, in model order"],
-        Annotated[NDArray[np.float64], Unit("rad")],
-        Annotated[NDArray[np.float64], Unit("rad/s")],
-    ]:
-        """Endpoint ``joint_states``: the body's servoed joints' positions and velocities."""
+    def read_joint_states(self):
         m, d = self._ctx.model, self._ctx.data
         pos = np.array([d.qpos[m.jnt_qposadr[j]] for j in self._jids])
         vel = np.array([d.qvel[m.jnt_dofadr[j]] for j in self._jids])
