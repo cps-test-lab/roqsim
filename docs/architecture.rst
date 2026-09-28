@@ -597,7 +597,7 @@ identical across arms.
 
 **Single-writer rule:** only the physics thread (the one calling ``engine.step()``) ever touches ``model``/``data``. This is non-negotiable — ``MjData`` is not thread-safe.
 
-External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on.
+External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on.
 
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
