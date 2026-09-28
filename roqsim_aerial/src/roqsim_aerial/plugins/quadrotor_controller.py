@@ -72,11 +72,14 @@ from __future__ import annotations
 
 import logging
 import math
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.endpoint import Unit
 from roqsim.kinematics import body_twist
 from roqsim.odometry import CommandWatchdog, SpawnFrame
 from roqsim.plugin import Plugin
@@ -154,7 +157,6 @@ class QuadrotorControllerPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         model = ctx.model
         self._ctx = ctx
 
@@ -216,30 +218,6 @@ class QuadrotorControllerPlugin(Plugin):
             f"robot:{self.robot}",
             RobotHandle(name=self.robot, drive=self.drive, read_odom=self.read_odom),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_pos",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                # (position, quaternion): an airframe holds pitch and roll to fly, so only the
-                # heading out of the commanded orientation is a setpoint for it. The projection is
-                # here, with the consumer that wants it, rather than in the decoder -- a Cartesian
-                # controller subscribing to the same type needs the full orientation.
-                write=self._write_pose,
-                backend={"ros2": {"type": "geometry_msgs.msg.PoseStamped", "topic": "cmd_pos"}},
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom6,
-                backend={"ros2": {"type": "nav_msgs.msg.Odometry", "topic": "odom"}},
-            )
-        )
 
     # -- commands ----------------------------------------------------------------------------
 
@@ -260,11 +238,26 @@ class QuadrotorControllerPlugin(Plugin):
         if yaw is not None:
             self._yaw = float(yaw)
 
-    def _write_pose(self, payload) -> None:
-        """``cmd_pos``: ``(position, quaternion[, frame_id])``."""
-        yaw = _yaw_of(payload[1]) if len(payload) > 1 else None
-        frame = payload[2] if len(payload) > 2 else ""
-        self.set_target(*payload[0], yaw, frame=frame)
+    # The drone's I/O as backend-neutral endpoints; the namespace (own config, else the spawn's)
+    # scopes the topics per robot.
+    @endpoint.stream("cmd_pos", ros2={"type": "geometry_msgs.msg.PoseStamped", "topic": "cmd_pos"})
+    def command_pose(
+        self,
+        position: Annotated[tuple[float, float, float], Unit("m"), "setpoint (x, y, z)"],
+        orientation: Annotated[
+            tuple[float, float, float, float] | None,
+            "quaternion (w, x, y, z); only its heading is flown, and none keeps the current one",
+        ] = None,
+        frame_id: Annotated[str, "'odom' (the spawn frame), or 'world', 'map' or ''"] = "",
+    ) -> None:
+        """Endpoint ``cmd_pos``: the latest position setpoint, in the frame it names.
+
+        An airframe holds pitch and roll to fly, so only the heading of the orientation is a
+        setpoint for it. The projection is here, with the consumer that wants it, rather than in
+        the decoder: a Cartesian controller subscribing to the same type needs the full orientation.
+        A frame other than those listed is refused and logged, and the setpoint is not changed."""
+        yaw = _yaw_of(orientation) if orientation is not None else None
+        self.set_target(*position, yaw, frame=frame_id)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """:class:`RobotHandle` contract: body-frame planar velocity, altitude held.
@@ -285,13 +278,21 @@ class QuadrotorControllerPlugin(Plugin):
         o = self.read_odom6()
         return (o["x"], o["y"], self._odom_frame.yaw(self._quat), *self._planar_vel, o["wz"])
 
-    def read_odom6(self):
-        """Full 6-DOF odometry payload (the bridge's ``ODOM6_KEYS`` mapping).
+    @endpoint.out("odom", ros2={"type": "nav_msgs.msg.Odometry", "topic": "odom"})
+    def read_odom6(
+        self,
+    ) -> Annotated[
+        dict[str, float],
+        "x, y, z (m) and qx, qy, qz, qw in the spawn frame; vx, vy, vz (m/s) and wx, wy, wz "
+        "(rad/s) in the body frame",
+    ]:
+        """Endpoint ``odom``: the full 6-DOF odometry, from the spawn pose.
 
-        The planar tuple ``read_odom`` returns satisfies :class:`RobotHandle`, whose consumers are
-        2D by construction; it must NOT be what reaches the odometry topic. Flattened to yaw, a
-        quadrotor publishes zero tilt and no vertical speed -- which reads not as a coarse
-        measurement but as a level, hovering aircraft whatever it is actually doing.
+        The mapping carries the bridge's ``ODOM6_KEYS``. The planar tuple ``read_odom`` returns
+        satisfies :class:`RobotHandle`, whose consumers are 2D by construction; it must NOT be what
+        reaches the odometry topic. Flattened to yaw, a quadrotor publishes zero tilt and no
+        vertical speed -- which reads not as a coarse measurement but as a level, hovering aircraft
+        whatever it is actually doing.
         """
         x, y, z = self._odom_frame.position(self._state[:3])
         qw, qx, qy, qz = self._odom_frame.orientation(self._quat)

@@ -67,9 +67,7 @@ def test_commands_are_clipped():
     ctx, plugin = _harness()
     plugin.set_normalized([2.0, -1.0, 0.5, 0.0])
     _settle(ctx, plugin, 1.0)
-    assert ctx.data.ctrl == pytest.approx(
-        np.array([1.0, 0.0, 0.5, 0.0]) * MAX_THRUST, rel=1e-3
-    )
+    assert ctx.data.ctrl == pytest.approx(np.array([1.0, 0.0, 0.5, 0.0]) * MAX_THRUST, rel=1e-3)
 
 
 def test_the_lag_actually_lags():
@@ -160,8 +158,9 @@ def test_missing_actuator_fails_loudly():
     ctx = SimContext({})
     ctx.model = model
     ctx.data = mujoco.MjData(model)
-    plugin = MultirotorMotorsPlugin({"rotors": ["rotor0_thrust", "nope", "also_nope"],
-                                     "spin": [1, 1, -1]}, entity="drone")
+    plugin = MultirotorMotorsPlugin(
+        {"rotors": ["rotor0_thrust", "nope", "also_nope"], "spin": [1, 1, -1]}, entity="drone"
+    )
     with pytest.raises(RuntimeError, match="nope"):
         plugin.configure(ctx)
 
@@ -189,9 +188,23 @@ def test_handle_and_endpoint_are_registered():
     endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
     assert endpoint.direction == "in"
     assert endpoint.backend["ros2"]["type"] == "std_msgs.msg.Float32MultiArray"
-    # The bridge hands over the message; a bare sequence must work too, for in-process callers.
-    endpoint.write([1.0, 1.0, 1.0, 1.0])
+    assert [(p.name, p.type.kind) for p in endpoint.params] == [("data", "array")]
+    # The bridge hands over the message's `data`; the stream applies it on the physics thread.
+    endpoint.write({"data": [1.0, 1.0, 1.0, 1.0]})
+    ctx.drain_commands()
     assert plugin._cmd == pytest.approx(np.ones(4))
+
+
+def test_a_motor_command_of_the_wrong_length_is_refused(caplog):
+    ctx, plugin = _harness()
+    endpoint = next(e for e in ctx.interface.all() if e.name == "motor_cmd")
+    endpoint.write({"data": [0.5, 0.5, 0.5, 0.5]})
+    ctx.drain_commands()
+    endpoint.write({"data": [1.0, 1.0]})
+    with caplog.at_level(logging.ERROR):
+        ctx.drain_commands()
+    assert "expected 4 normalized commands, got 2" in caplog.text
+    assert plugin._cmd == pytest.approx(np.full(4, 0.5))
 
 
 def test_reset_clears_the_external_torque():

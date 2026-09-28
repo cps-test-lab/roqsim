@@ -83,11 +83,14 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
 
 logger = logging.getLogger(__name__)
@@ -163,7 +166,6 @@ class MultirotorMotorsPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         model = ctx.model
 
         rotors = list(self.cfg("rotors"))
@@ -239,18 +241,23 @@ class MultirotorMotorsPlugin(Plugin):
                 read_normalized=self.read_normalized,
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="motor_cmd",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda msg: self.set_normalized(getattr(msg, "data", msg)),
-                backend={"ros2": {"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}},
-            )
-        )
 
     # -- commands --------------------------------------------------------------------------------
+
+    # The rotors' command as a backend-neutral endpoint; the namespace (own config, else the
+    # spawn's) scopes the topic per robot.
+    @endpoint.stream(
+        "motor_cmd", ros2={"type": "std_msgs.msg.Float32MultiArray", "topic": "motor_cmd"}
+    )
+    def command_motors(
+        self,
+        data: Annotated[NDArray[np.float64], "normalized output per rotor, 0..1, in rotor order"],
+    ) -> None:
+        """Endpoint ``motor_cmd``: the latest normalized rotor outputs, applied once per step.
+
+        One value per configured rotor; a command of another length is refused and logged, and the
+        rotors keep the previous one. Values outside 0..1 are clipped."""
+        self.set_normalized(data)
 
     def set_normalized(self, values) -> None:
         """Command the rotors with normalized 0..1 outputs, in the model's rotor order.
