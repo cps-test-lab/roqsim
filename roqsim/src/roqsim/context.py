@@ -517,6 +517,8 @@ class SimContext:
     def post(self, command: Callable[[SimContext], None]) -> None:
         """Enqueue a callable to run on the physics thread at the start of the next ``pre_step``.
 
+        While the run is paused the driver runs it from its idle loop (:meth:`roqsim.engine.Engine.idle`).
+
         This is the ONLY safe way for a non-physics thread (e.g. a ROS executor) to cause a change
         to ``model``/``data``. The command receives this context when it runs. An exception it
         raises is logged; use :meth:`submit` when the caller needs the outcome.
