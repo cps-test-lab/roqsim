@@ -276,7 +276,7 @@ class SpawnRobotPlugin(Plugin):
         """
         missing = [
             n
-            for n in getattr(self, "_world_pair_geoms", [])
+            for n in self._world_pair_geoms
             if mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_GEOM, n) < 0
         ]
         if missing:
