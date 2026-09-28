@@ -9,6 +9,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.introspection import get_plugin_details
+from roqsim.types import Transform
 
 
 def _engine(*components):
@@ -36,6 +37,17 @@ def test_conveyor_speed_is_a_stream_on_the_conveyor():
         assert conveyor.get_speed() != -0.3, "a stream is applied on the physics thread"
         engine.step()
         assert conveyor.get_speed() == -0.3
+    finally:
+        engine.shutdown()
+
+
+def test_the_package_pose_is_the_packages_own_transform():
+    engine = _engine({"conveyor": {"namespace": "belt", "object_name": "box"}, "name": "conveyor"})
+    try:
+        ep = _endpoints(engine)[("box", "package_pose")]
+        assert ep.namespace == ""
+        pose = ep.read()
+        assert isinstance(pose, Transform) and pose.child == "package" and pose.parent == ""
     finally:
         engine.shutdown()
 

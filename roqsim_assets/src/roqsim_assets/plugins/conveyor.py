@@ -41,11 +41,11 @@ import mujoco
 import numpy as np
 
 from roqsim import endpoint
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim.context import Entity, SimContext
 from roqsim.models import apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import rpy_to_quat
-from roqsim.types import Speed
+from roqsim.types import Speed, Transform
 
 
 @dataclass
@@ -92,10 +92,10 @@ class ConveyorPlugin(Plugin):
         # Default free-body start pose tracks the +x (feed) end so the package starts on the belt
         # for any length (1.0 == base 1.221 - 0.221). Explicit package_pose still wins.
         default_pkg_x = self._half_len - 0.221
-        self.package_pose = list(
+        self._package_pose = list(
             self.config.get("package_pose", [default_pkg_x, 0.6, 0.996, 1, 0, 0, 0])
         )
-        self._package_pose_world = self._to_world(self.package_pose)
+        self._package_pose_world = self._to_world(self._package_pose)
         # resolved in configure()
         self._belt_dadr = self._belt_qadr = -1
         self._roller_dadr: list[int] = []
@@ -241,7 +241,8 @@ class ConveyorPlugin(Plugin):
         # the free joint). This is the ground-truth object pose an off-board planner (e.g. MoveIt
         # Task Constructor) reads to sort the box; ``base_joint`` points at the free joint so a
         # set is applied to the box rather than silently rejected.
-        if self._pkg_qadr >= 0:
+        self.has_package = self._pkg_qadr >= 0
+        if self.has_package:
             self.object_name = self.config.get("object_name", "package")
             ctx.entities.add(
                 Entity(
@@ -251,28 +252,6 @@ class ConveyorPlugin(Plugin):
                     meta={"prefix": p, "base_joint": p + "package_free"},
                 )
             )
-            # Stream the package's true world pose as a TF transform so a viewer binds it to the scene
-            # body by name (child_frame_id == the exported body name). This is ground truth: the belt
-            # object's pose is not a joint, so nothing else publishes it. The topic is *relative* (`tf`)
-            # so the bridge's ground-truth namespace can map it to `/gt/tf` -- see the `gt` config on
-            # the ros2_bridge plugin. Without that config it resolves to the plain `/tf`.
-            ctx.interface.add(
-                Endpoint(
-                    name="package_pose",
-                    direction="out",
-                    owner=self.object_name,
-                    namespace="",
-                    read=self.read_package_pose,
-                    rate_hz=30.0,
-                    backend={
-                        "ros2": {
-                            "type": "tf2_msgs.msg.TFMessage",
-                            "topic": "tf",
-                            "frame_id": "world",
-                        }
-                    },
-                )
-            )
         ctx.blackboard.set(
             f"conveyor:{self.conveyor_name}",
             ConveyorHandle(
@@ -280,18 +259,27 @@ class ConveyorPlugin(Plugin):
             ),
         )
 
-    def read_package_pose(self):
-        """Endpoint ``read`` (physics thread): the package's world pose as a one-entry TF payload
-        ``[(frame, pos[3], quat_wxyz[4])]``. ``frame`` is the MuJoCo body name (== the exported scene
-        body name) so a viewer binds the transform to its node by name. ``quat`` is MuJoCo (w, x, y, z).
-        """
-        d = self._ctx.data
-        return [(self._pkg_frame, d.xpos[self._pkg_bid], d.xquat[self._pkg_bid])]
-
     @property
     def endpoint_owner(self) -> str:
         """The conveyor entity this plugin registers."""
         return self.conveyor_name
+
+    # The package's true world pose as a TF transform, so a viewer binds it to the scene body by name
+    # (the child is the exported body name). This is ground truth: the package's pose is not a joint,
+    # so nothing else publishes it. It belongs to the package, with no namespace, and the topic is
+    # *relative* (`tf`) so the bridge's ground-truth namespace can map it to `/gt/tf` -- see the `gt`
+    # config on the ros2_bridge plugin. Without that config it resolves to the plain `/tf`.
+    @endpoint.out(
+        rate=30.0,
+        when="has_package",
+        owner=lambda self: self.object_name,
+        namespace="",
+        ros2={"topic": "tf", "frame_id": "world"},
+    )
+    def package_pose(self) -> Transform:
+        """The package's world pose."""
+        d = self._ctx.data
+        return Transform("", self._pkg_frame, d.xpos[self._pkg_bid], d.xquat[self._pkg_bid])
 
     # A setpoint, so the latest one is applied once per step. Its namespace (own config, else none)
     # scopes the topic so several conveyors can share a world under one bridge.
