@@ -49,6 +49,7 @@ from . import entity_pose
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
+from .endpoint import apply_world_qos
 from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
 from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
@@ -333,11 +334,14 @@ class Engine:
         try:
             for plugin in self.plugins:
                 configured.append(plugin)
+                before = len(self.ctx.interface.all())
                 self._timed(plugin, "configure", plugin.configure, self.ctx)
-                # For a plugin with no configure of its own; a configure registers its endpoints
-                # itself. Either way before the next plugin configures: a bridge binds the
-                # interface in its own configure, and is listed after its producers.
+                # After its configure, so an endpoint's options read what configure resolved, and
+                # before the next plugin's: a bridge binds the interface in its own configure, and
+                # is listed after its producers.
                 plugin.register_endpoints(self.ctx)
+                # The world's `qos:` for what this plugin registered, hand-built endpoints included.
+                apply_world_qos(plugin, self.ctx.interface.all()[before:])
                 # Each entity the plugin registered gets its core pose endpoint, likewise before a
                 # bridge listed next binds.
                 entity_pose.register(self.ctx)
