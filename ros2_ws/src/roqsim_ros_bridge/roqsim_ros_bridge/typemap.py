@@ -21,7 +21,7 @@ ROS.
 ``PointCloud``         ``sensor_msgs/PointCloud2`` (x, y, z float32)
 ``Transform``          ``tf2_msgs/TFMessage`` (one transform; inbound, exactly one)
 ``Transforms``         ``tf2_msgs/TFMessage`` (one transform per entry)
-``bool`` ``float``     ``std_msgs/Bool``, ``std_msgs/Float64``,
+``bool`` ``float``     ``std_msgs/Bool``, ``std_msgs/Float64`` (or ``type: std_msgs.msg.Float32``),
 ``int`` ``str``        ``std_msgs/Int64``, ``std_msgs/String``
 =====================  =================================================================
 
@@ -31,6 +31,10 @@ empty, namespaced as every frame id is; its ``child`` is published verbatim, so 
 by the name the producer gave. With the hint ``static: true`` the endpoint's first value is instead
 sent once through the bridge's static broadcaster -- latched (transient-local) ``/tf_static``, parent
 and child both namespaced, stamp zero -- exactly as a ``static_tf`` hint's transforms are.
+
+The reports of core plugins that a ROS stack reads as a standard message travel as that message:
+``energy_monitor``'s ``EnergyReport`` as ``sensor_msgs/BatteryState``, ``contact_location``'s
+``ContactLocation`` as ``geometry_msgs/PointStamped`` (its centre).
 
 A package adds its own type once through the ``roqsim.ros2_types`` entry-point group
 (:data:`ENTRY_POINT_GROUP`): the entry loads a :class:`RosType`, or an iterable of them.
@@ -428,14 +432,33 @@ def transforms_of(value) -> list[T.Transform]:
     return list(value.transforms) if isinstance(value, T.Transforms) else [value]
 
 
-def _scalar(cls: type, msg: str) -> RosType:
+def _published_only(what: str) -> Decode:
+    def decode(msg):
+        raise TypeError(f"{what} is published, not taken")
+
+    return decode
+
+
+def _fill_with(converter: str) -> Fill:
+    """A fill that hands the payload to one of :mod:`roqsim_ros_bridge.registry`'s converters, which
+    read a report by its attribute names."""
+
+    def fill(msg, v, stamp, hints):
+        from . import registry
+
+        getattr(registry, converter)(msg, v, stamp, hints)
+
+    return fill
+
+
+def _scalar(cls: type, *msgs: str) -> RosType:
     def fill(m, v, stamp, hints):
         m.data = cls(v)
 
     def decode(m):
         return cls(m.data)
 
-    return RosType(cls, (Wire(msg, fill, decode),))
+    return RosType(cls, tuple(Wire(msg, fill, decode) for msg in msgs))
 
 
 #: The neutral types' ROS mapping (see the module docstring), keyed by class.
@@ -524,10 +547,42 @@ for _rostype in (
         hints={"frame_id": "map"},
     ),
     _scalar(bool, "std_msgs.msg.Bool"),
-    _scalar(float, "std_msgs.msg.Float64"),
+    _scalar(float, "std_msgs.msg.Float64", "std_msgs.msg.Float32"),
     _scalar(int, "std_msgs.msg.Int64"),
     _scalar(str, "std_msgs.msg.String"),
 ):
+    register(_rostype)
+
+
+def _core_reports() -> tuple[RosType, ...]:
+    from roqsim.plugins.contact_location import ContactLocation
+    from roqsim.plugins.energy_monitor import EnergyReport
+
+    return (
+        RosType(
+            EnergyReport,
+            (
+                Wire(
+                    "sensor_msgs.msg.BatteryState",
+                    _fill_with("fill_battery_state"),
+                    _published_only("a BatteryState"),
+                ),
+            ),
+        ),
+        RosType(
+            ContactLocation,
+            (
+                Wire(
+                    "geometry_msgs.msg.PointStamped",
+                    _fill_with("fill_point_stamped"),
+                    _published_only("a contact location"),
+                ),
+            ),
+        ),
+    )
+
+
+for _rostype in _core_reports():
     register(_rostype)
 
 

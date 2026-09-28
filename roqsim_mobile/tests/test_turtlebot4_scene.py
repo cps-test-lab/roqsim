@@ -763,8 +763,11 @@ def create3():
 
 
 def _by_topic(engine, topic):
+    """The endpoint on *topic*: the world's rename, else its ros2 hint's topic, else its name."""
     return next(
-        e for e in engine.ctx.interface.all() if e.backend.get("ros2", {}).get("topic") == topic
+        e
+        for e in engine.ctx.interface.all()
+        if (e.topic or (e.backend.get("ros2") or {}).get("topic") or e.name) == topic
     )
 
 
@@ -788,7 +791,8 @@ def test_e2_the_cliff_sensors_read_the_floor_and_the_ir_sensors_read_nothing(cre
 def test_e3_one_joint_states_message_carries_wheels_and_suspension(create3):
     """E3: the message a consumer derives the wheel state from also carries the suspension."""
     (js,) = [e for e in create3.ctx.interface.all() if e.name == "joint_states"]
-    names, pos, vel, eff = js.read()
+    state = js.read()
+    names, pos = state.names, state.positions
     assert set(names) == {
         "left_wheel_joint",
         "right_wheel_joint",
@@ -848,7 +852,8 @@ def test_e5_lifting_the_robot_drops_the_wheels_and_opens_the_cliffs():
             d.qvel[:6] = 0.0
             engine.step()
         (js,) = [e for e in engine.ctx.interface.all() if e.name == "joint_states"]
-        names, pos, *_ = js.read()
+        state = js.read()
+        names, pos = state.names, state.positions
         for side in ("left", "right"):
             assert pos[names.index(f"wheel_drop_{side}_joint")] >= 0.0285
         for name in ("cliff_front_left", "cliff_side_right"):

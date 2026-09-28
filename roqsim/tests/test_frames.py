@@ -121,10 +121,14 @@ def test_substitute_fills_known_placeholders_and_refuses_the_rest():
             substitute(bad, values, "w")
 
 
-def test_a_static_tf_endpoint_carries_only_its_list():
-    ep = static_tf_endpoint("frames", "robot", "ns", [{"parent": "p", "child": "c"}])
-    assert ep.read() is None and ep.namespace == "ns" and ep.owner == "robot"
-    assert ep.backend["ros2"]["static_tf"] == [{"parent": "p", "child": "c"}]
+def test_a_static_tf_endpoint_carries_only_its_transforms():
+    link = {"parent": "p", "child": "c", "translation": [1.0, 0.0, 0.5], "rotation": [1, 0, 0, 0]}
+    ep = static_tf_endpoint("frames", "robot", "ns", [link])
+    assert ep.namespace == "ns" and ep.owner == "robot"
+    assert ep.backend["ros2"] == {"static": True}
+    (t,) = ep.read().transforms
+    assert (t.parent, t.child) == ("p", "c")
+    assert t.translation.tolist() == [1.0, 0.0, 0.5] and t.rotation.tolist() == [1.0, 0, 0, 0]
 
 
 def _write(tmp_path, manifest):

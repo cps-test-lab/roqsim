@@ -193,7 +193,7 @@ def test_the_device_chain_is_published_from_its_parent_frame(tmp_path):
     engine = _engine(_world(_carrier(tmp_path, _front(_device(tmp_path)))))
     ep = _endpoint(engine, "frames", "robot.scan_front")
     assert ep.namespace == "tb"
-    root, optical = ep.backend["ros2"]["static_tf"]
+    root, optical = [vars(t) for t in ep.read().transforms]
     assert (root["parent"], root["child"]) == ("cover_link", "scanner_link")
     assert np.allclose(root["translation"], [0, 0, 0.05])
     assert (optical["parent"], optical["child"]) == ("scanner_link", "scanner_link_optical")
@@ -211,7 +211,7 @@ def test_parent_frame_may_be_a_frame_the_carrier_declares(tmp_path):
     # shell_link is (-0.1, 0, 0.2) yawed 90 deg; 0.1 along ITS x is +y in the carrier's frame.
     assert np.allclose(pos, [-0.1, 0.1, 0.2], atol=1e-9)
     assert np.allclose(mat[:, 0], [0, 1, 0], atol=1e-9)
-    root = _endpoint(engine, "frames", "robot.scan_front").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "robot.scan_front").read().transforms[0])
     assert root["parent"] == "shell_link" and np.allclose(root["translation"], [0.1, 0, 0])
 
 
@@ -237,7 +237,7 @@ def test_two_identical_devices_on_one_carrier_resolve_distinct_names(tmp_path):
     rear = _plugin(engine, "robot.scan_rear.lidar")
     assert front._bodyexclude != rear._bodyexclude and front._site_id != rear._site_id
     frames = {
-        e.owner: e.backend["ros2"]["static_tf"][0]["child"]
+        e.owner: e.read().transforms[0].child
         for e in engine.ctx.interface.all()
         if e.name == "frames"
     }
@@ -296,7 +296,7 @@ def test_a_world_declared_mount_sets_frame_id_before_the_device_expands(tmp_path
     # frame_id reached the device's templated components; namespace is read at configure, so an
     # override of it on the mount is fine either way.
     assert scan.namespace == "other" and scan.backend["ros2"]["frame_id"] == "laser"
-    root = _endpoint(engine, "frames", "robot.scan_front").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "robot.scan_front").read().transforms[0])
     assert root["child"] == "laser"
 
 
@@ -352,7 +352,7 @@ def test_a_world_level_device_hangs_its_chain_off_the_world(tmp_path):
         }
     )
     engine = _engine(cfg)
-    root = _endpoint(engine, "frames", "tripod").backend["ros2"]["static_tf"][0]
+    root = vars(_endpoint(engine, "frames", "tripod").read().transforms[0])
     assert (root["parent"], root["child"]) == ("world", "laser")
     assert np.allclose(root["translation"], [0, 0, 1.0])
 
@@ -385,7 +385,7 @@ def _mount(device, name, parent="cover_link", extra=""):
 
 
 def _chain(engine, owner):
-    tfs = _endpoint(engine, "frames", owner).backend["ros2"]["static_tf"]
+    tfs = [vars(t) for t in _endpoint(engine, "frames", owner).read().transforms]
     return [(t["parent"], t["child"]) for t in tfs]
 
 
