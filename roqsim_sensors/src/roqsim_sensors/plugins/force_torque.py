@@ -67,7 +67,9 @@ under ``ft:<entry label>`` for in-process consumers — the admittance controlle
 entity's base body frame, and ``world`` into the world frame. The choice is not cosmetic for
 metrics that split the wrench into an insertion axis and the plane orthogonal to it: ``|F_z|`` and
 ``||F_x, F_y||`` are frame-dependent, and a tool that tilts reports a different split in its own
-frame than in the world's.
+frame than in the world's. The ``WrenchStamped`` header names that frame as TF knows it: the site's
+name without the entity's MJCF prefix, published with the fixed transform from the body it sits on;
+the entity's root body, likewise unprefixed; or ``world``.
 
 **Taring: zeroing the tool's own load.** The sensor reads everything below the cut, which for a
 loaded flange is mostly the tool's own weight -- so a contact task measuring a 5 N push starts from
@@ -368,6 +370,28 @@ class ForceTorquePlugin(Plugin):
             )
         )
 
+        # The frame the wrench is stated in, as TF names it: bare, like every frame a bridge
+        # publishes (it applies the namespace), so never the MJCF name with the entity's prefix.
+        # `sensor` is the site's own frame, which nothing else publishes, so it comes with the
+        # fixed transform from the body it is on; `base` is the entity's root body.
+        ros2 = {
+            "type": "geometry_msgs.msg.WrenchStamped",
+            "topic": self.topic_override("wrench") or f"{self.name}/wrench",
+        }
+        if self.frame == "sensor":
+            ros2["frame_id"] = site_name.removeprefix(prefix)
+            body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
+            ros2["static_tf"] = {
+                "parent": body.removeprefix(prefix),
+                "translation": [float(v) for v in m.site_pos[self._site_id]],
+                "rotation": [float(v) for v in m.site_quat[self._site_id]],  # (w, x, y, z)
+            }
+        elif self.frame == "base":
+            ros2["frame_id"] = mujoco.mj_id2name(
+                m, mujoco.mjtObj.mjOBJ_BODY, self._ref_bid
+            ).removeprefix(prefix)
+        else:
+            ros2["frame_id"] = "world"
         ctx.interface.add(
             Endpoint(
                 name="wrench",
@@ -376,13 +400,7 @@ class ForceTorquePlugin(Plugin):
                 namespace=ns,
                 read=self.read_pair,
                 rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.WrenchStamped",
-                        "topic": self.topic_override("wrench") or f"{self.name}/wrench",
-                        "frame_id": site_name if self.frame == "sensor" else self.frame,
-                    }
-                },
+                backend={"ros2": ros2},
             )
         )
 

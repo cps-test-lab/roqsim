@@ -346,6 +346,7 @@ class _FakeEndpoint:
 class _FakeCtx:
     def __init__(self, sim_time: float):
         self.sim_time = sim_time
+        self.dt = 0.002
 
 
 def test_due_gates_on_rate_and_has_subscribers():
@@ -702,3 +703,19 @@ def test_a_reset_lets_the_next_trial_render_again():
     assert _endpoint(engine, "image").read() is not None, "the first step of a trial must capture"
     assert _endpoint(engine, "depth").read() is not None
     assert _endpoint(engine, "points").read() is not None
+
+
+def test_a_rate_the_timestep_divides_renders_on_every_period():
+    """10 Hz on a 2 ms step is every fiftieth step. The sim clock is a float sum of timesteps, so
+    the step a period after the last capture can read a hair short of it; the gate must take it."""
+    plugin = RealsenseD435Plugin({"rate_hz": 10.0})
+    plugin._image_ep = _FakeEndpoint(has_subscribers=None)
+    ctx = _FakeCtx(0.0)
+    due = []
+    for step in range(1, 5001):  # 10 s
+        ctx.sim_time += ctx.dt
+        if plugin._due(ctx):
+            plugin._last_capture = ctx.sim_time
+            due.append(step)
+    gaps = {b - a for a, b in zip(due, due[1:], strict=False)}
+    assert gaps == {50}, f"capture spacing in steps: {sorted(gaps)}"

@@ -86,9 +86,9 @@ Deliberately not in it: the scenario's behaviour tree. That lives in a different
 over the whole file rather than a tail read, and belongs to whoever owns it -- while this command has
 to stay cheap enough to poll.
 
-Exit status: ``0`` nothing wrong (warnings are still printed), ``5`` an error-level finding, ``2``
-the checks could not run at all. Exiting on a finding is how a backgrounded invocation reports one:
-its output is invisible until it exits.
+Exit status, from :mod:`roqsim.exit_status`: ``0`` nothing wrong (warnings are still printed), ``5``
+an error-level finding, ``2`` the checks could not run at all. Exiting on a finding is how a
+backgrounded invocation reports one: its output is invisible until it exits.
 """
 
 from __future__ import annotations
@@ -104,11 +104,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from . import exit_status
 
-EXIT_OK = 0
-EXIT_BAD_ARGS = 2
-EXIT_FINDING = 5
+log = logging.getLogger(__name__)
 
 #: Where the recorder puts each record. Duplicated from :mod:`roqsim.capture` rather than imported:
 #: that module imports MuJoCo, and nothing in this one needs it. ``test_health.py`` asserts the two
@@ -861,7 +859,7 @@ class Report:
                 "skipped": self.skipped,
                 "notes": self.notes,
                 "state": self.state,
-                "exit": EXIT_FINDING if self.failed else EXIT_OK,
+                "exit": exit_status.FINDING if self.failed else exit_status.OK,
             },
             indent=2,
         )
@@ -1126,7 +1124,15 @@ def _await_clock(run_dir: Path, deadline: float, poll: float) -> Path | None:
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim health", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim health",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 includes a run with no record to check; a warning-level finding exits 0.",
+        ),
+    )
     parser.add_argument(
         "run_dir",
         nargs="?",
@@ -1185,7 +1191,7 @@ def main(argv: list | None = None) -> int:
         )
     if error:
         print(f"roqsim health: {error}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+        return exit_status.BAD_INPUT
 
     source = FileSource(clock_path, poses_path)
     # The roster answers "which of these bodies is a robot" so nobody has to pass the names per
@@ -1290,7 +1296,7 @@ def main(argv: list | None = None) -> int:
             )
         if not report.findings:
             print("ok    nothing wrong observed")
-    return EXIT_FINDING if report.failed else EXIT_OK
+    return exit_status.FINDING if report.failed else exit_status.OK
 
 
 if __name__ == "__main__":  # pragma: no cover
