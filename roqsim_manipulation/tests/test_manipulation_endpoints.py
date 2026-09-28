@@ -14,12 +14,13 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin
+from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin, ControllerState
 from roqsim_manipulation.plugins.cartesian_admittance import CartesianAdmittancePlugin
 
 from roqsim.config import load_config_from_dict
 from roqsim.endpoint import ParameterError, declared
 from roqsim.engine import Engine
+from roqsim.types import JointPositions, JointState, Pose, Wrench
 
 JOINTS = ("shoulder_pan_joint", "shoulder_lift_joint")
 
@@ -70,6 +71,26 @@ def test_arm_kinds_follow_what_each_input_must_keep():
         "current_pose": "out",
         "tracking_error": "out",
     }
+
+
+def test_the_payloads_are_the_neutral_types():
+    engine = _engine(
+        {"cartesian_admittance": {"site": "tool_site", "ft": "ft"}},
+        ctrl={"stream_commands": True, "velocity_commands": True},
+    )
+    eps = _endpoints(engine)
+    for name in ("follow_joint_trajectory", "joint_command", "joint_velocity"):
+        assert eps[name].payload_type.cls is JointPositions
+    joints = eps["joint_states"].read()
+    assert isinstance(joints, JointState) and len(joints.efforts) == len(joints.names)
+    state = eps["controller_state"].read()
+    assert isinstance(state, ControllerState)
+    assert state.error.positions == pytest.approx(
+        [r - f for r, f in zip(state.reference.positions, state.feedback.positions, strict=True)]
+    )
+    assert eps["target_frame"].payload_type.cls is Pose
+    assert eps["target_wrench"].payload_type.cls is Wrench
+    assert isinstance(eps["current_pose"].read(), Pose)
 
 
 @pytest.mark.parametrize("name", ["follow_joint_trajectory", "joint_command"])
