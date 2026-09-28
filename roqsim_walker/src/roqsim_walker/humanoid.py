@@ -1,7 +1,7 @@
 """A kinematic, mocap-driven articulated human (capsule skeleton).
 
 The walker's *body pose* comes from a motion clip while its *nav root* (x, y, heading) comes from
-the nav stack (see :mod:`roqsim_walker.nav`). To stay perfectly kinematic and add zero DOFs to
+the navigator (``roqsim_nav``, through :mod:`roqsim_walker.output`). To stay perfectly kinematic and add zero DOFs to
 the physics solver, the human is **not** a joint tree: it is a flat set of MuJoCo **mocap bodies**
 (one per skeleton joint), each posed directly in the world frame every step by forward kinematics
 from the clip's per-joint rotations. Per-limb collision capsules ride those bodies and are what the

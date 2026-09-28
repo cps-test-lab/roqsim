@@ -24,6 +24,7 @@ import mujoco
 import numpy as np
 import pytest
 
+from roqsim import exit_status
 from roqsim.export_mesh import (
     MeshExporter,
     MeshExportError,
@@ -304,7 +305,7 @@ def test_an_unknown_extension_is_a_usage_error(tmp_path, capsys):
     mjcf = tmp_path / "fixture.xml"
     mjcf.write_text(MJCF.format(tet=_TET, base_pos="0 0 0", base_quat="1 0 0 0"))
     out = tmp_path / "robot.step"
-    assert main(["--mjcf", str(mjcf), "--out", str(out)]) == 2
+    assert main(["--mjcf", str(mjcf), "--out", str(out)]) == exit_status.BAD_INPUT
     assert not out.exists()
 
 
@@ -312,7 +313,7 @@ def test_a_refused_export_writes_nothing(tmp_path, capsys):
     mjcf = tmp_path / "fixture.xml"
     mjcf.write_text(MJCF.format(tet=_TET, base_pos="0 0 0", base_quat="1 0 0 0"))
     out = tmp_path / "robot.stl"
-    assert main(["--mjcf", str(mjcf), "--out", str(out), "--groups", "2"]) == 1
+    assert main(["--mjcf", str(mjcf), "--out", str(out), "--groups", "2"]) == exit_status.BAD_INPUT
     assert not out.exists()
 
 

@@ -457,7 +457,7 @@ class SimContext:
         `roqsim sim` honours it. Under scenario-execution the scenario owns when a run ends and the
         adapter does not read it, so a trial that must end a scenario run publishes its outcome for
         the scenario to condition on. The engine itself does not act on it -- a request, not a kill
-        switch. Physics-thread only, like every other write on this object.
+        switch. Physics-thread only, like every other write on this object. A reset withdraws it.
         """
         if not self.stop_requested:
             self.stop_requested = True

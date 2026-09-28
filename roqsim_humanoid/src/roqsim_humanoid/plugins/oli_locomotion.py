@@ -7,6 +7,10 @@ builds the 102-dim observation, pushes it onto a 5-deep history buffer, and eval
 ONNX policy (input 510 = 102x5, output 31) to refresh the joint position targets. Reports the floating
 base as ``odom`` and the joints as ``joint_states``.
 
+``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
+policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
+command"). The base's world pose is the ``ground_truth_pose`` plugin's.
+
 The observation layout, PD gains, default angles, scales, torque limits and timing are lifted verbatim
 from humanoid-rl-deploy-python's ``walk_controller.py`` + ``walk_param.yaml`` (bundled under
 ``policy/oli/``), so the policy runs on exactly the conventions it was trained on. Unlike the vendor
@@ -27,6 +31,7 @@ sits rather than a config key::
       max_linear_vel: 0.5          # |vx| clamp (m/s)   -- vendor max_vx
       max_lateral_vel: 0.3         # |vy| clamp (m/s)   -- vendor max_vy
       max_angular_vel: 0.5         # |yaw_rate| clamp (rad/s) -- vendor max_vz
+      cmd_vel_timeout: 0.0         # s; > 0 stops the robot when no command arrives for this long
       test_cmd: [0.3, 0.0, 0.0]    # optional [vx, vy, w] applied every tick (standalone demo)
 """
 
@@ -38,8 +43,8 @@ import onnxruntime as ort
 import yaml
 
 from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim.odometry import CommandWatchdog, SpawnFrame, planar_odom
 from roqsim.plugin import Plugin
-from roqsim.pose import yaw_of
 
 from ..policy import OLI_CONFIG, OLI_POLICY
 
@@ -98,6 +103,8 @@ class OliLocomotionPlugin(Plugin):
 
         # Command (body-frame [vx, vy, yaw_rate]); written by drive(), read into the policy obs.
         self._cmd = np.zeros(3, dtype=np.float32)
+        self.watchdog = CommandWatchdog.from_config(self.config)
+        self._odom_frame = SpawnFrame()
 
         # Resolved in configure().
         self._session = self._in_name = None
@@ -126,6 +133,7 @@ class OliLocomotionPlugin(Plugin):
                 errors.append(f"'{key}' must be > 0")
         if "test_cmd" in config and len(config["test_cmd"]) != 3:
             errors.append("'test_cmd' must be [vx, vy, w]")
+        errors += CommandWatchdog.validate(config)
         return errors
 
     def configure(self, ctx: SimContext) -> None:
@@ -251,24 +259,11 @@ class OliLocomotionPlugin(Plugin):
         self._cmd[0] = float(np.clip(vx, -self.max_v, self.max_v))
         self._cmd[1] = float(np.clip(vy, -self.max_vy, self.max_vy))
         self._cmd[2] = float(np.clip(w, -self.max_w, self.max_w))
+        self.watchdog.stamp(self._ctx)
 
     def read_odom(self):
-        # Computed on demand at the endpoint rate (cf. g1). Trailing z is the true base height (the
-        # Oli pelvis stands ~0.9 m up); the bridge tf/odom carry it, nav2 stays 2D.
-        d = self._ctx.data
-        x, y, z = d.xpos[self._base_bid]
-        yaw = yaw_of(d.xquat[self._base_bid])
-        vgx, vgy = d.qvel[self._base_dadr : self._base_dadr + 2]
-        c, s = np.cos(yaw), np.sin(yaw)
-        return (
-            float(x),
-            float(y),
-            float(yaw),
-            float(c * vgx + s * vgy),
-            float(-s * vgx + c * vgy),
-            float(d.qvel[self._base_dadr + 5]),
-            float(z),
-        )
+        # Computed on demand at the endpoint rate (cf. g1). Trailing z is the pelvis height (~0.9 m).
+        return planar_odom(self._odom_frame, self._ctx.data, self._base_bid, self._base_dadr)
 
     def read_joint_states(self):
         d = self._ctx.data
@@ -282,7 +277,9 @@ class OliLocomotionPlugin(Plugin):
             d.qpos[self._qadr] = self._default_angle
             d.qvel[self._dadr] = 0.0
             mujoco.mj_forward(ctx.model, d)
+        self._odom_frame.capture(d.xpos[self._base_bid], d.xquat[self._base_bid])
         self._cmd[:] = 0.0
+        self.watchdog.clear()
         self._action[:] = 0.0
         self._target_q = self._default_angle.copy()
         self._hist = None
@@ -298,6 +295,8 @@ class OliLocomotionPlugin(Plugin):
         if "test_cmd" in self.config:
             vx, vy, w = self.config["test_cmd"]
             self.drive(float(vx), float(vy), float(w))
+        if self.watchdog.expired(ctx):
+            self._cmd[:] = 0.0
 
         d = ctx.data
         qj = d.qpos[self._qadr]

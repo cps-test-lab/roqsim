@@ -145,7 +145,8 @@ catalog above once ROS is sourced and the workspace is on the path.
 
    It must match the namespace the consuming stack uses, and it is **all or nothing**: every publisher
    of a link in the chain has to agree on one topic. Note this scopes the TF *topics* only — frame ids
-   (``map``, ``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed.
+   (``odom``, ``base_link``) are untouched; namespace those with ``frame_prefix`` if needed. The
+   global frames ``world`` and ``map`` are never namespaced.
    Setting the bridge's ``namespace`` does **not** do this: tf2_ros's broadcasters hardwire the
    absolute ``/tf``, which is exactly why this option exists.
 
@@ -298,11 +299,15 @@ the floor; ask for it only when the mount is meant to fall, be pushed or be carr
   being run rather than to something included in it.
 
 - **Add a manifest** for your own model: drop a ``<model>.manifest.yaml`` beside the MJCF listing the
-  plugins (same shape as a world's ``components:``); the entity name is filled in for you, and each
+  plugins (same shape as a world's ``components:``). Its top level takes ``components``, ``extends``,
+  ``assets``, ``fov``, ``frames``, ``frame_id`` and ``license`` and nothing else: a key outside that
+  set is refused with the nearest known one named, since nothing reads it and a manifest loaded
+  without it would look configured. The entity name is filled in for you, and each
   injected plugin also inherits the spawn's ``prefix`` — so a build-time plugin that welds geometry
   onto a spawned body (e.g. ``fiducial_marker`` with ``attach_to: wrist_3_link``) resolves the
-  prefixed body name without the world having to know it. ``ur10e_custom.manifest.yaml`` ships an
-  ``arm_controller``, an eye-in-hand ``realsense_d415``, and a ``fiducial_marker`` on the wrist.
+  prefixed body name without the world having to know it. A downstream ``ur10e_custom.manifest.yaml``
+  could, for instance, ship an ``arm_controller``, an eye-in-hand ``realsense_d415``, and a
+  ``fiducial_marker`` on the wrist (:doc:`architecture` §4, *Model discovery*).
 
 A ``model:`` name is resolved across **all** installed packages, so a world can spawn a model that
 lives in a different package from the spawn plugin. Register a package's models once::
@@ -581,7 +586,7 @@ contact against a geom outside its ``ignore`` list::
      components:
        - contact_monitor: {ignore: [floor], min_force: 1.0}
 
-Two things are worth knowing before reaching for a proximity check instead:
+Three things are worth knowing before reaching for a proximity check instead:
 
 * **Define the exception, not the rule.** A wheeled robot is in permanent, intended contact with the
   ground, so the plugin's contract is "everything counts except what you list". Listing what a robot
@@ -599,10 +604,28 @@ Two things are worth knowing before reaching for a proximity check instead:
   ``[e<i>]`` for an element). The ``-1`` is never looked up as a geom, which would have made every
   flex contact a collision of the model's last geom.
 
-**Where is it touching me?** ``contact_location`` is the third of the set, and the only one a
-*controller* reads. ``contact_monitor`` latches a verdict for the end of a trial; this one is
-replaced every step and reports the region being touched — its centre in the robot's own frame, and
-whether that region is a point or a line::
+The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
+failure is attributable rather than merely flagged.
+
+Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
+contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
+unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
+with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
+to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
+"did anything hit something" signal but tells you nothing about which robot — and one monitor's
+``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
+
+.. note::
+
+   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
+   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
+   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
+   contact makes "wait for any message" look correct; it is not portable.
+
+**Where is it touching me?** ``contact_location`` is the one a *controller* reads.
+``contact_monitor`` latches a verdict for the end of a trial; this one is replaced every step and
+reports the region being touched — its centre in the robot's own frame, and whether that region is a
+point or a line::
 
    - spawn_robot: {model: ridgeback}
      name: robot
@@ -623,10 +646,11 @@ Three things about it:
   there for logging against a map.
 * **Read it through the blackboard inside a control loop.** The endpoint is rate-limited for
   logging; ``ctx.blackboard.get(f"contact_location:{address}")`` hands back a callable giving the
-  current reading at full step rate — the same convention ``contact_monitor`` and ``force_torque``
-  use, and the one a per-step control law needs.
+  current reading at full step rate — the same convention ``contact_monitor``
+  (``contact:{address}``) and ``force_torque`` (``ft:{label}``) use, and the one a per-step control
+  law needs.
 
-**Which switch?** ``bumper`` is the fourth, and the one a base's *safety stack* reads. A real bumper
+**Which switch?** ``bumper`` is the one a base's *safety stack* reads. A real bumper
 is a shell with a few switches behind it: it reports which zone is depressed, not where. Each zone is
 a range of bearings of the base frame, a contact whose bearing falls in it presses it, and every
 zone is its own ``bool`` endpoint under ``bumper/<zone>``::
@@ -729,6 +753,12 @@ Three things about it:
   oracle exists to avoid. A scenario that *wants* to stop on a near-miss reads the endpoint and
   decides — with the threshold then stated in the experiment, where it belongs.
 
+``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
+distance query per geom pair, a real share of the step budget if done every physics step, while
+200 Hz resolves ~1.5 mm at walking pace — finer than anything downstream consumes. Beyond
+``distmax`` the report reads that cutoff with ``saturated`` set, which says "at least this far"
+rather than offering a number that looks measured.
+
 **How hard did it hit?** ``contact_impulse`` is the severity beside the verdict and the gradient.
 A bit orders nothing: a brush against a doorframe and a crash into a wall are one report. This
 integrates the normal force of the very same contacts at the physics step, and reports the impulse,
@@ -778,9 +808,9 @@ neither plugin keeps a contact the other has forgotten). A trial that touched no
 ``impulse_ns`` as a ``std_msgs/Float64``; the peak, the contact time and the geoms the peak was
 against are read in-process.
 
-**Is it still standing on the floor at all?** ``upright_monitor`` is the third of the set, and it
-guards an assumption the other two take for granted. A trial that drives something around a floor
-assumes throughout that the thing is on the floor -- and when that broke, the run did not. It kept
+**Is it still standing on the floor at all?** ``upright_monitor`` guards an assumption the other
+observation plugins take for granted. A trial that drives something around a floor assumes
+throughout that the thing is on the floor -- and when that breaks, the run does not. It keeps
 producing positions, distances and clearances about a body lying on its side or airborne, all of
 them plausible, none of them about the trial anyone designed::
 
@@ -795,7 +825,7 @@ model that was wrong, and fixing the model is the experiment's job -- ``roqsim_w
 pedestrian is the answer for pedestrians, a low centre of mass or a planar joint for anything
 hand-rolled. What the substrate owes is that nobody finds out from the results.
 
-Three things about it:
+Four things about it:
 
 * **Both thresholds are departures, not limits.** ``max_rise_m`` is symmetric, because a body
   sinking through the floor has left the plane exactly as much as one taking off. ``max_tilt_deg``
@@ -813,30 +843,6 @@ Three things about it:
   driven prop and a walker, and nothing that moves them needs to know it exists.
 * **Nothing infers that an entity should be upright.** A quadruped mid-gait, a banking drone and an
   arm's wrist all leave the plane on purpose. It watches what somebody nested it under.
-
-``compute_rate_hz`` (default 200) is separate from the publish ``rate_hz`` because measuring is a
-distance query per geom pair: every physics step it cost about a fifth of the step budget on a nav
-world, against a budget the simulator may already be over, while 200 Hz resolves ~1.5 mm at walking
-pace — finer than anything downstream consumes. Beyond ``distmax`` the report reads that cutoff with
-``saturated`` set, which says "at least this far" rather than offering a number that looks measured.
-
-The endpoint payload carries the geom pair and the time of the *first* qualifying contact, so a
-failure is attributable rather than merely flagged.
-
-Over ROS 2 it is a ``std_msgs/Bool`` on ``collision`` — the same topic and type a Gazebo stack's
-contact-sensor aggregator publishes, so a scenario's failure check ports between simulators
-unchanged. The topic is *relative*, so it is scoped by the entity's namespace: two robots spawned
-with ``namespace: a`` / ``namespace: b`` get ``/a/collision`` and ``/b/collision``, each attributable
-to its own robot. Un-namespaced, two monitors publish on one ``/collision``, which is still a usable
-"did anything hit something" signal but tells you nothing about which robot — and one monitor's
-``False`` interleaves with the other's ``True``, so only a test *for* ``True`` is meaningful there.
-
-.. note::
-
-   Check the **value**, not the arrival of a message. The monitor publishes at ``rate_hz`` from the
-   first step, including ``False``, so a scenario action that merely waits for data on ``/collision``
-   fires immediately and fails every trial. A Gazebo aggregator that only starts publishing after a
-   contact makes "wait for any message" look correct; it is not portable.
 
 What a robot carries
 --------------------
@@ -935,14 +941,17 @@ Three things to know before writing one:
   nothing either — select the geoms that *own* the contact, or select both sides. Use
   ``roqsim scenes describe <world> --overridable 'gripper_right*'`` to see the names, their current
   friction and their priority, rather than guessing.
-* **A fault that did nothing says so.** One step after the change the plugin compares the *applied*
-  contact against what it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed
-  service reply) or ``untested`` — the last meaning nothing was touching the selected geoms, which is
-  not a failure. It is published as ``override_verified`` too, because a service call leaves no trace
-  in a rosbag and ``mjModel`` is in neither the bag nor the state recording.
-* **A reset returns the world to the configured state**, exactly, from the values read at startup.
-  Without that, repetition 2 of a sweep cell would start already faulted and report a plausible
-  wrong number — ``Engine.reset`` resets ``MjData`` and never touches ``MjModel``.
+* **A fault that did nothing says so.** One step after the change — or after a trial begins, for
+  an override configured ``active: true`` — the plugin compares the *applied* contact against what
+  it asked for and reports ``landed``, ``no_effect`` (a warning, and a failed service reply) or
+  ``untested`` — the last meaning nothing was touching the selected geoms, which is not a failure.
+  It is published as ``override_verified`` too, because a service call leaves no trace in a rosbag
+  and ``mjModel`` is in neither the bag nor the state recording.
+* **A reset returns the world to the configured state**, exactly, from the values read when the
+  override was applied. Without that, repetition 2 of a sweep cell would start already faulted and
+  report a plausible wrong number — ``Engine.reset`` resets ``MjData`` and never touches
+  ``MjModel``. An override the trial left as configured writes nothing, so a value another plugin
+  set on the same rows (a ``payload``'s mass) is kept.
 
 Not every model value can be written at runtime; ``geom_size`` and the ``opt.*`` globals are refused
 by name, with the reason and with what to use instead (for the globals, ``sim.contact_override``,
@@ -1038,7 +1047,7 @@ unlabelled geom, so it is refused at load.
 What a run cost
 ---------------
 
-``energy_monitor`` is the third observation plugin, beside the two that watch geometry: it meters the
+``energy_monitor`` is the observation plugin that watches effort rather than geometry: it meters the
 actuators that move a robot and integrates their mechanical power, so "energy per metre", "how far on
 a charge" and "which planner is cheaper" become numbers a run produces rather than numbers an
 analysis fits::
@@ -1089,10 +1098,11 @@ forces -- the effort metric a paper falls back on where its platform's electrica
 published, accumulated here at the physics rate rather than at whatever rate ``/joint_states`` was
 published at.
 
-Which actuators count is derived, not configured: every actuator driving a body of the robot's
-kinematic subtree, so a world's other machines are not on this robot's bill and a model that gains a
-joint does not need the world edited. An entity with no actuators is an error, because a meter
-reading zero forever looks exactly like a robot that costs nothing to drive.
+Which actuators count is derived by default (``actuators:`` narrows it to named ones): every
+actuator driving a body of the robot's kinematic subtree, so a world's other machines are not on
+this robot's bill and a model that gains a joint does not need the world edited. An entity with no
+actuators is an error, because a meter reading zero forever looks exactly like a robot that costs
+nothing to drive.
 
 **It reports; it does not intervene.** A depleted battery latches and is published; the robot keeps
 driving. Ending a trial is the experiment's decision, the same line ``contact_monitor`` draws about a
@@ -1275,9 +1285,11 @@ place**, and ``cmd_vel`` with ``v = 0`` and a yaw rate moves it nowhere at all. 
 that command is a planner that would not move the real vehicle, and approximating a car with a
 differential base and a small angular limit hides exactly the failure the experiment is looking for.
 
-**What a real base offers its stack.** Three keys on ``diff_drive`` (and ``omni_drive``) are the
-base driver's behaviour rather than the kinematics', and a model that states its robot's interface
-states them in its manifest -- the TurtleBot 4's does::
+**What a real base offers its stack.** Three keys on ``diff_drive`` are the base driver's
+behaviour rather than the kinematics', and a model that states its robot's interface states them in
+its manifest -- the TurtleBot 4's does. ``cmd_vel_timeout`` is on every plugin that takes a
+``cmd_vel`` (see `A velocity command: odometry and the watchdog`_); the other two are
+``diff_drive``'s alone::
 
    - diff_drive:
        cmd_vel_timeout: 0.5          # the watchdog every base driver has; 0 (default) holds a command
@@ -1362,6 +1374,38 @@ is left visible rather than corrected by a scrub factor: a skid-steer's scrub is
 for ``diff_drive``'s ``slip_factor``, while a tyre's slip angle varies with speed and load, so a
 constant would only make the estimate look better than the sensor it stands for.
 
+A velocity command: odometry and the watchdog
+---------------------------------------------
+
+Every plugin that takes a body-frame twist keeps the same two promises to the stack driving it --
+``diff_drive``, ``omni_drive``, ``ackermann_drive``, ``spot_locomotion``, ``g1_locomotion``,
+``oli_locomotion``, and ``quadrotor_controller`` for its velocity command. Both are in
+:mod:`roqsim.odometry`, for a plugin of your own to keep too.
+
+**Odometry starts at zero where the robot was spawned.** The ``odom`` frame is the spawn pose: the
+first ``odom`` message reads ``(0, 0, 0)`` whatever the world's ``pose:``, and driving forward reads
+as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from zero, so its
+odometry drifts as wheel odometry does. A legged controller reads its base pose from the simulator
+and states it relative to the spawn pose, so its odometry is exact, and its ``z`` stays the base
+height, so ``base_link`` stands where the robot does. The true pose is not in ``odom``: it is the
+``ground_truth_pose`` plugin (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
+only for a robot spawned at the map origin facing ``+x``.
+
+**A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once
+the last one is older, the robot stops, through the same limits as any command to zero; a
+locomotion policy is given a zero command and walks to a stop. ``0``, the default, holds a command
+until the next one, because an in-process driver sets a twist once and steps; a world that runs a
+real stack sets the stack's value (``ros2_control``'s ``diff_drive_controller`` ships 0.5 s). Reset
+clears the command and its stamp, so no trial starts with the last one's.
+
+**A quadrotor, in three dimensions.** ``quadrotor_controller``'s ``odom`` is 6-DOF in the same frame:
+x and y from the spawn point along the spawn heading, ``z`` the altitude, tilt kept, and the twist
+in the body frame. A stale velocity command brakes the drone at its altitude setpoint and then holds
+where it stopped: a hover. A position setpoint (``target``, ``cmd_pos``) does not expire, since
+holding one already is a hover. ``cmd_pos`` is read in the frame its header names: ``odom`` is this
+spawn frame, ``world`` or ``map`` (or no frame) the world, and any other frame is refused. The
+configured ``target`` is a world position.
+
 Manipulation: an arm on a linear axis
 -------------------------------------
 
@@ -1372,11 +1416,11 @@ arm to a body that already exists, while a rail has to introduce the moving carr
    components:
      - spawn_arm:
          model: ur10e
-         name: ur10e
          prefix: "ur10e_"
          pos: [0.0, 0.0, 2.6]              # where the axis sits
          rpy: [3.14159265, 0.0, 0.0]       # rolled 180 deg: the arm hangs from the ceiling
          rail: {axis: [1, 0, 0], range: [-2.0, 2.0], home: 0.0}
+       name: ur10e
 
 What this buys is **kinematic redundancy**: a 6-DOF arm on a rail is a 7-DOF system, so a task pose
 has a one-parameter family of solutions and a planner can trade base travel against arm posture.
@@ -1627,7 +1671,8 @@ than a second controller. Two controllers cannot claim the same joints, so an ex
 its search or its scan as a "controller" is writing something that cannot run on the arm -- ship a
 node that publishes ``target_frame`` instead.
 
-``law: admittance | position`` is the older spelling and still works, deriving a ``controller_type``.
+``law: admittance | position`` is accepted as well and derives a ``controller_type`` when none is
+named; prefer ``controller_type``.
 
 **A streamed frame is tracked, not trailed.** A node that publishes ``target_frame`` as a moving
 setpoint -- a path sent one pose at a time -- is driving a goal with a velocity, and a law that only
@@ -1670,7 +1715,7 @@ and the feedforward in use through ``CartesianHandle.read_tracking_error()``.
 **Zeroing is not optional.** The sensor reads everything below the cut, so an arm starts from the
 weight of its own wrist -- and a force controller has no stiffness and therefore no equilibrium
 anywhere, so an untared tool sinks at that force over the damping for as long as the trial runs.
-Tare through the service (see "Taring" above) before commanding anything.
+Tare through the service (see "Gravity and tool mass" below) before commanding anything.
 
 **A limit that stops the trial** is ``force_limit``: a measured wrench magnitude above a threshold
 latches, reports, releases whatever was driving the arm and asks the driver to stop. Named for the
@@ -1682,14 +1727,18 @@ controller switch would put a fiction in a results table's failure-mode column.
 
 ``contact_monitor`` (above) treats contact as the failure, and ``model_override`` (above) can take a
 contact away on command. A contact-rich manipulation task inverts both: contact *is* the task, and the
-measurement is the wrench, not the trajectory. Four plugins make
+measurement is the wrench, not the trajectory. Five plugins make
 that chain, and they are listed in a world in this order because each needs the previous one's
-blackboard handle::
+blackboard handle. The sensor and the control law belong to the arm, so they sit in its
+``components:`` and need no key naming it::
 
-   - spawn_arm:            {model: ur5e, name: ur5e, prefix: "ur5e_"}
-   - force_torque:         {name: ft, arm: ur5e, site: fts_site, frame: world}
+   - spawn_arm: {model: ur5e, prefix: "ur5e_"}
+     name: ur5e
+     components:
+       - force_torque: {site: fts_site, frame: world}
+         name: ft
+       - cartesian_admittance: {ft: ft, controller_type: cartesian_force_controller, site: tool_site}
    - peg_in_hole.py:PegInHolePlugin: {arm: ur5e, clearance: 0.001, hole_pos: [-0.49, -0.13, 0.0]}
-   - cartesian_admittance: {arm: ur5e, ft: ft, law: admittance, site: tool_site}
    - insertion_task.py:InsertionTaskPlugin: {arm: ur5e, ft: ft, law: admittance, target_pos: [...]}
 
 **Read the refs, not the order.** Three are named — ``spawn_arm`` and ``cartesian_admittance`` from
@@ -1779,9 +1828,10 @@ they cost something a navigation world should not pay:
    world-YAML keys, so an ordinary parameter sweep varies them and needs no new
    variation plugin.
 
-``unitree_g1_dex1``'s manifest is a worked example of (3): two ``arm_controller`` instances on one
-entity, each owning its seven arm joints and its own Dex1 gripper, alongside ``g1_locomotion`` on the
-twelve leg motors.
+``unitree_g1_dex1``'s manifest is a worked example of (3): three ``arm_controller`` instances on one
+entity -- one per arm, each owning its seven arm joints and its own Dex1 gripper, and a
+``waist_controller`` on the three waist joints -- alongside ``g1_locomotion`` on the twelve leg
+motors.
 
 Two more if the target **moves** (dynamic grasping):
 
@@ -1803,7 +1853,7 @@ An arm carried by ``spawn_robot`` also needs ``arm_controller``'s ``rest`` stanc
 the base pose and no joint stance, so the arm falls back to ``qpos0``. For the Panda that is not neutral
 but an actively bad pose — its ``link5`` and ``hand`` collision geoms overlap by 0.030 m at all-zeros.
 ``rest`` seeds the spawn ``qpos`` *and* the held target by joint name, and re-seats on reset so repeated
-trials start identically. ``frankie``'s manifest is the worked example of (5), (6) and ``rest``.
+trials start identically. ``frankie``'s manifest is the worked example of (6) and ``rest``.
 
 Scoring the trial, not self-reporting it
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
