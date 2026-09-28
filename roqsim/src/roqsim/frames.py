@@ -218,25 +218,35 @@ def static_transforms(model, links: list[tuple[str, str, str, str]], where: str)
     return out
 
 
-def static_tf_endpoint(name: str, owner: str, namespace: str, transforms: list[dict]) -> Endpoint:
-    """An output endpoint that carries only static transforms, published once by a bridge.
+def static_tf_hint(transforms: list[dict]) -> dict:
+    """The ``ros2`` hint of an output endpoint that carries only static transforms.
 
-    The shape ``spawn_model`` uses for a welded prop's frame, generalised to a chain: ``read`` has
-    nothing to stream, and ``static_tf`` is a list of ``{parent, child, translation, rotation}``.
-    Frame names are bare; the bridge scopes them by ``namespace``.
+    A bridge publishes them once. The shape ``spawn_model`` uses for a welded prop's frame,
+    generalised to a chain: ``static_tf`` is a list of ``{parent, child, translation, rotation}``.
+    Frame names are bare; the bridge scopes them by the endpoint's namespace. The endpoint's ``read``
+    has nothing to stream::
+
+        @endpoint.out("frames", when=lambda self: bool(self.links),
+                      ros2=lambda self: static_tf_hint(self.links))
+        def frames(self) -> None:
+            ...
     """
+    return {
+        "type": "tf2_msgs.msg.TFMessage",
+        "topic": "tf",
+        "frame_id": transforms[0]["parent"] if transforms else "",
+        "static_tf": transforms,
+    }
+
+
+def static_tf_endpoint(name: str, owner: str, namespace: str, transforms: list[dict]) -> Endpoint:
+    """An output endpoint carrying :func:`static_tf_hint`, for a plugin that builds its endpoints
+    by hand."""
     return Endpoint(
         name=name,
         direction="out",
         owner=owner,
         namespace=namespace,
         read=lambda: None,
-        backend={
-            "ros2": {
-                "type": "tf2_msgs.msg.TFMessage",
-                "topic": "tf",
-                "frame_id": transforms[0]["parent"] if transforms else "",
-                "static_tf": transforms,
-            }
-        },
+        backend={"ros2": static_tf_hint(transforms)},
     )

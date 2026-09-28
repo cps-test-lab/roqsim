@@ -151,9 +151,15 @@ gets the frame. It has no effect on the baked web scene, which already seats the
 
 from __future__ import annotations
 
-import mujoco
+from typing import Annotated
 
-from roqsim.context import Endpoint, Entity, SimContext
+import mujoco
+import numpy as np
+from numpy.typing import NDArray
+
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
+from roqsim.endpoint import Shape, Unit
 from roqsim.flex import (
     entity_flex_ids,
     flex_is_free,
@@ -588,52 +594,70 @@ class SpawnModelPlugin(Plugin):
         if self._body_id < 0:
             raise RuntimeError(f"spawn_model: body {self._body_frame!r} not found for publish_tf")
 
-        if self.publish_tf == "dynamic":
-            # Stream the live world pose as a one-entry TF payload. child_frame_id == the exported body
-            # name so a name-binding viewer animates the node; the relative `tf` topic lets the bridge's
-            # gt namespace map it to /gt/tf and a gateway federate it. Nothing else publishes a free
-            # body's pose, so without this a viewer freezes it at the baked spawn pose.
-            ctx.interface.add(
-                Endpoint(
-                    name=f"{self.entity_name}_pose",
-                    direction="out",
-                    owner=self.entity_name,
-                    read=self.read_pose,
-                    rate_hz=self.tf_rate,
-                    backend={
-                        "ros2": {
-                            "type": "tf2_msgs.msg.TFMessage",
-                            "topic": "tf",
-                            "frame_id": "world",
-                        }
-                    },
-                )
-            )
-        else:  # static: a welded prop's frame, published once on the latched /tf_static.
+        if self.publish_tf == "static":
             # A welded body's world pose is model-fixed, so one mj_forward (configure runs before the
-            # engine's) resolves data.xpos/xquat. read is a no-op -- the bridge sends the static_tf hint
-            # once at bind and never streams.
+            # engine's) resolves data.xpos/xquat.
             mujoco.mj_forward(ctx.model, ctx.data)
-            ctx.interface.add(
-                Endpoint(
-                    name=f"{self.entity_name}_pose",
-                    direction="out",
-                    owner=self.entity_name,
-                    read=lambda: None,
-                    backend={
-                        "ros2": {
-                            "type": "tf2_msgs.msg.TFMessage",
-                            "topic": "tf",
-                            "frame_id": self._body_frame,
-                            "static_tf": {
-                                "parent": "world",
-                                "translation": ctx.data.xpos[self._body_id].tolist(),
-                                "rotation": ctx.data.xquat[self._body_id].tolist(),
-                            },
-                        }
-                    },
-                )
-            )
+            self._static_tf = {
+                "parent": "world",
+                "translation": ctx.data.xpos[self._body_id].tolist(),
+                "rotation": ctx.data.xquat[self._body_id].tolist(),
+            }
+
+    # -- endpoints -----------------------------------------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The entity this plugin spawns."""
+        return self.entity_name
+
+    # Each endpoint is named after the spawned entity, so it is a family of that one entity. The
+    # namespace is empty: the pose is the world's ground truth, and the bridge's `gt` config scopes it.
+    @endpoint.out(
+        "{item}_pose",
+        each=lambda self: (self.entity_name,),
+        when=lambda self, _entity: self.publish_tf == "dynamic",
+        namespace="",
+        rate_hz=lambda self, _entity: self.tf_rate,
+        # child_frame_id == the exported body name so a name-binding viewer animates the node; the
+        # relative `tf` topic lets the bridge's gt namespace map it to /gt/tf and a gateway federate
+        # it. Nothing else publishes a free body's pose, so without this a viewer freezes it at the
+        # baked spawn pose.
+        ros2={"type": "tf2_msgs.msg.TFMessage", "topic": "tf", "frame_id": "world"},
+    )
+    def read_pose(
+        self, entity: str
+    ) -> list[
+        tuple[
+            Annotated[str, "the root body's frame, the MuJoCo body name"],
+            Annotated[NDArray[np.float64], Shape(3), Unit("m"), "position in the world frame"],
+            Annotated[NDArray[np.float64], Shape(4), "orientation quaternion (w, x, y, z)"],
+        ]
+    ]:
+        """The prop's live world pose, as a one-entry transform list (``publish_tf: dynamic``).
+
+        The frame is the MuJoCo body name (== the exported scene body name) so a viewer binds the
+        transform to its node by name. Runs on the physics thread.
+        """
+        d = self._ctx.data
+        return [(self._body_frame, d.xpos[self._body_id], d.xquat[self._body_id])]
+
+    # A welded prop's frame, published once on the latched /tf_static: the bridge sends the
+    # static_tf hint once at bind and never streams.
+    @endpoint.out(
+        "{item}_pose",
+        each=lambda self: (self.entity_name,),
+        when=lambda self, _entity: self.publish_tf == "static",
+        namespace="",
+        ros2=lambda self, _entity: {
+            "type": "tf2_msgs.msg.TFMessage",
+            "topic": "tf",
+            "frame_id": self._body_frame,
+            "static_tf": self._static_tf,
+        },
+    )
+    def static_pose(self, entity: str) -> None:
+        """The welded prop's world pose, sent once as a static transform (``publish_tf: static``)."""
+        return None
 
     def on_reset(self, ctx: SimContext) -> None:
         """Re-seat a free prop at its spawn pose, and stop it moving.
@@ -660,10 +684,3 @@ class SpawnModelPlugin(Plugin):
         jid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_JOINT, self._base_joint)
         dofadr = int(ctx.model.jnt_dofadr[jid])
         ctx.data.qvel[dofadr : dofadr + 6] = 0.0
-
-    def read_pose(self):
-        """Endpoint ``read`` (physics thread): the root body's world pose as a one-entry TF payload
-        ``[(frame, pos[3], quat_wxyz[4])]``. ``frame`` is the MuJoCo body name (== the exported scene
-        body name) so a viewer binds the transform to its node by name."""
-        d = self._ctx.data
-        return [(self._body_frame, d.xpos[self._body_id], d.xquat[self._body_id])]

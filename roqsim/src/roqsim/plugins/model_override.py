@@ -93,12 +93,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import side_name
-from ..context import Endpoint, SimContext
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 from ..presence import ABSENT_GEOM_GROUP, entity_geom_ids
 from ._flex_material import refuse_damping_from_zero
@@ -345,10 +348,12 @@ def refusal_reasons() -> dict[str, str]:
 class OverrideReport:
     """Neutral payload for the two out endpoints."""
 
-    active: bool
-    since: float  # sim time the override last became active; -1.0 if it never has
-    changes: int  # how many times the state actually changed since reset
-    verified: str  # LANDED | NO_EFFECT | UNTESTED
+    active: Annotated[bool, "whether the override is applied"]
+    since: Annotated[
+        float, Unit("s"), "sim time the override last became active; -1.0 if it never has"
+    ]
+    changes: Annotated[int, "how many times the state actually changed since reset"]
+    verified: Annotated[str, "'landed', 'no_effect' or 'untested'"]
 
 
 @dataclass
@@ -443,17 +448,26 @@ class ModelOverridePlugin(Plugin):
                 )
         return errors
 
+    # -- endpoints -----------------------------------------------------------------------------
+    @property
+    def endpoint_owner(self) -> str:
+        """The override speaks for itself, not for an entity: its endpoints are owned by its name."""
+        return self.name
+
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """This instance's ``namespace:``, else its NAME, else unscoped.
+
+        Two faults in one world -- a grip fault and a traction fault, which is the ordinary case --
+        would otherwise both serve `/override`, and two services on one name is a collision rather
+        than redundancy. An instance the world never named stays unscoped, since `self.name` is then
+        just the class name.
+        """
+        named = self.name != type(self).__name__
+        return self.config.get("namespace") or (self.name if named else "")
+
     # -- lifecycle -----------------------------------------------------------------------------
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
-        # Scope the endpoints by this instance's NAME unless the world says otherwise. Two faults in
-        # one world -- a grip fault and a traction fault, which is the ordinary case -- would
-        # otherwise both serve `/override`, and two services on one name is a collision rather than
-        # redundancy. An explicit `namespace:` still wins; an instance the world never named stays
-        # unscoped, since `self.name` is then just the class name.
-        named = self.name != type(self).__name__
-        ns = self.config.get("namespace") or (self.name if named else "")
-
         self._targets = [self._resolve(ctx, i, entry) for i, entry in enumerate(self.overrides)]
         self._check_mask_pairs()
 
@@ -471,49 +485,6 @@ class ModelOverridePlugin(Plugin):
                 read_state=self.read_state,
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="override",
-                direction="in",
-                owner=self.name,
-                namespace=ns,
-                write=lambda payload: self.set_active(bool(payload)),
-                backend={
-                    "ros2": {
-                        # A service, not a topic: apply/restore is a command with an outcome, and the
-                        # reply is what lets a scenario fail the trial when a fault did not land.
-                        "service": "std_srvs.srv.SetBool",
-                        "name": self.topic_override("override") or "override",
-                        # Where the handler reads the verdict it replies with.
-                        "state_key": f"model_override:{self.name}",
-                    }
-                },
-            )
-        )
-        for endpoint_name, field, msg in (
-            ("override_state", "active", "std_msgs.msg.Bool"),
-            ("override_verified", "verified", "std_msgs.msg.String"),
-        ):
-            ctx.interface.add(
-                Endpoint(
-                    name=endpoint_name,
-                    direction="out",
-                    owner=self.name,
-                    namespace=ns,
-                    read=lambda: self._report,
-                    rate_hz=self.rate_hz,
-                    backend={
-                        "ros2": {
-                            "type": msg,
-                            # The report is a structure and these types carry one value, so the
-                            # endpoint says WHICH field rather than the bridge holding a converter
-                            # that knows this plugin's attribute names.
-                            "field": field,
-                            "topic": self.topic_override(endpoint_name) or endpoint_name,
-                        }
-                    },
-                )
-            )
         _log.info(
             "model_override %r: %d override(s) over %d row(s), active=%s",
             self.name,
@@ -641,11 +612,25 @@ class ModelOverridePlugin(Plugin):
                 )
 
     # -- the trigger ---------------------------------------------------------------------------
+    # A service, not a topic: apply/restore is a command with an outcome, and the reply is what lets
+    # a scenario fail the trial when a fault did not land.
+    @endpoint.command(
+        "override",
+        ros2=lambda self: {
+            "service": "std_srvs.srv.SetBool",
+            "name": self.topic_override("override") or "override",
+            # Where the handler reads the verdict it replies with.
+            "state_key": f"model_override:{self.name}",
+        },
+    )
+    def override(self, data: Annotated[bool, "true applies the override, false restores"]) -> None:
+        """Apply the configured overrides, or restore the nominal values."""
+        self.set_active(data)
+
     def set_active(self, on: bool) -> None:
         """Apply the configured targets, or restore nominal. Physics thread only.
 
-        The ROS side reaches this through the bridge, which marshals every inbound payload through
-        ``ctx.post`` -- so this always runs on the physics thread at the start of a step, and the
+        The ``override`` command runs it on the physics thread at the start of a step, so the
         single-writer rule holds without this plugin doing anything about it.
         """
         ctx = self._ctx
@@ -685,7 +670,28 @@ class ModelOverridePlugin(Plugin):
             ", ".join(t.spec.field for t in self._targets),
         )
 
+    # The report is a structure and these types carry one value, so each endpoint says WHICH field
+    # rather than the bridge holding a converter that knows this plugin's attribute names.
+    @endpoint.out(
+        "override_verified",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.String",
+            "field": "verified",
+            "topic": self.topic_override("override_verified") or "override_verified",
+        },
+    )
+    @endpoint.out(
+        "override_state",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Bool",
+            "field": "active",
+            "topic": self.topic_override("override_state") or "override_state",
+        },
+    )
     def read_state(self) -> OverrideReport:
+        """Whether the override is applied, since when, and whether it was seen to take effect."""
         return self._report
 
     def on_reset(self, ctx: SimContext) -> None:

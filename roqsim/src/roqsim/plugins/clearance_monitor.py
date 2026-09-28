@@ -74,10 +74,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 
-from ..context import Endpoint, SimContext
+from .. import endpoint
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -87,11 +90,13 @@ _log = logging.getLogger(__name__)
 class ClearanceReport:
     """Neutral payload for the ``clearance`` endpoint."""
 
-    current: float  # distance now [m]; <= 0 while overlapping
-    minimum: float  # closest approach since the last reset
-    at_time: float  # sim time of that closest approach; -1.0 before the first step
-    geom: str  # what the closest approach was to ("" until measured)
-    saturated: bool  # current is the distmax cutoff, not a measured distance
+    current: Annotated[float, Unit("m"), "distance now; <= 0 while overlapping"]
+    minimum: Annotated[float, Unit("m"), "closest approach since the last reset"]
+    at_time: Annotated[
+        float, Unit("s"), "sim time of that closest approach; -1.0 before the first step"
+    ]
+    geom: Annotated[str, "what the closest approach was to (empty until measured)"]
+    saturated: Annotated[bool, "current is the distmax cutoff, not a measured distance"]
 
 
 class ClearanceMonitorPlugin(Plugin):
@@ -135,7 +140,6 @@ class ClearanceMonitorPlugin(Plugin):
         model = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         body_name = (
             (prefix + self.body)
@@ -198,27 +202,6 @@ class ClearanceMonitorPlugin(Plugin):
         # handles ("robot.clearance_monitor", "forklift.clearance_monitor") rather than
         # colliding on a class name.
         ctx.blackboard.set(f"clearance:{self.address}", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="clearance",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        # Float32 and the CURRENT distance: a running minimum is derivable
-                        # from a recorded series, while the series is not derivable from a
-                        # minimum. Publishing the reducible half would throw away the shape
-                        # of the approach, which is what a reader wants to see.
-                        "type": "std_msgs.msg.Float32",
-                        "field": "current",
-                        "topic": self.topic_override("clearance") or "clearance",
-                    }
-                },
-            )
-        )
         _log.info(
             "clearance_monitor: watching %d geom(s) of %r against %d candidate(s), distmax %.2f m",
             len(self._watched),
@@ -227,8 +210,22 @@ class ClearanceMonitorPlugin(Plugin):
             self.distmax,
         )
 
+    @endpoint.out(
+        "clearance",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            # Float32 and the CURRENT distance: a running minimum is derivable from a recorded
+            # series, while the series is not derivable from a minimum. Publishing the reducible
+            # half would throw away the shape of the approach, which is what a reader wants to see.
+            "type": "std_msgs.msg.Float32",
+            "field": "current",
+            "topic": self.topic_override("clearance") or "clearance",
+        },
+    )
     def read_state(self) -> ClearanceReport:
-        """The latest report; the blackboard handle hands this to an in-process consumer.
+        """Distance to the nearest thing the entity could hit, and its closest approach so far.
+
+        The blackboard handle hands this to an in-process consumer too.
 
         A callable rather than the report, because ``post_step`` REPLACES it each step and a
         consumer holding the object would keep reading the first one it saw.

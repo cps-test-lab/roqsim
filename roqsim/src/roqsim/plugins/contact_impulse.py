@@ -104,12 +104,15 @@ and ``peak_time = -1.0`` -- a measured zero, which is what "nothing was hit" is.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 
 
@@ -117,14 +120,24 @@ from ..plugin import Plugin
 class ContactImpulseReport:
     """Neutral payload for the ``contact_impulse`` endpoint."""
 
-    impulse_ns: float = 0.0  # integral of the summed normal force since reset [N s]
-    peak_normal_n: float = 0.0  # largest summed normal force of any one step since reset [N]
-    contact_time_s: float = 0.0  # sim time spent with at least one qualifying contact [s]
-    normal_n: float = 0.0  # summed normal force this step [N] -- the integrand right now
-    count: int = 0  # qualifying contacts this step
-    peak_time: float = -1.0  # sim time of the peak; -1.0 while nothing has been touched
-    peak_geom_a: str = ""  # strongest single contact at the peak step ("" until one happens)
-    peak_geom_b: str = ""
+    impulse_ns: Annotated[float, Unit("N*s"), "summed normal force integrated since reset"] = 0.0
+    peak_normal_n: Annotated[
+        float, Unit("N"), "largest summed normal force of any one step since reset"
+    ] = 0.0
+    contact_time_s: Annotated[
+        float, Unit("s"), "sim time spent with at least one qualifying contact"
+    ] = 0.0
+    normal_n: Annotated[
+        float, Unit("N"), "summed normal force this step -- the integrand right now"
+    ] = 0.0
+    count: Annotated[int, "qualifying contacts this step"] = 0
+    peak_time: Annotated[
+        float, Unit("s"), "sim time of the peak; -1.0 while nothing has been touched"
+    ] = -1.0
+    peak_geom_a: Annotated[
+        str, "one side of the strongest single contact at the peak step (empty until one happens)"
+    ] = ""
+    peak_geom_b: Annotated[str, "the other side of that contact"] = ""
 
 
 class ContactImpulsePlugin(Plugin):
@@ -183,7 +196,6 @@ class ContactImpulsePlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # The rule is contact_monitor's, held in one place rather than restated here: resolving it
         # through the shared scope is what stops the two plugins counting different contacts.
@@ -204,29 +216,24 @@ class ContactImpulsePlugin(Plugin):
         # `self.name` falls back to the class name and two unnamed instances in one world would
         # write to a single key, reporting one robot's impulse as another's.
         ctx.blackboard.set(f"contact_impulse:{self.address}", self.read)
-        ctx.interface.add(
-            Endpoint(
-                name="contact_impulse",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        # The report is a structure and Float64 carries one field, so the endpoint
-                        # says WHICH rather than the bridge holding a converter that knows this
-                        # plugin's attribute names. The other fields stay readable in-process.
-                        "field": "impulse_ns",
-                        "topic": self.topic_override("contact_impulse") or "contact_impulse",
-                    }
-                },
-            )
-        )
 
+    @endpoint.out(
+        "contact_impulse",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Float64",
+            # The report is a structure and Float64 carries one field, so the endpoint says WHICH
+            # rather than the bridge holding a converter that knows this plugin's attribute names.
+            # The other fields stay readable in-process.
+            "field": "impulse_ns",
+            "topic": self.topic_override("contact_impulse") or "contact_impulse",
+        },
+    )
     def read(self) -> ContactImpulseReport:
-        """The report as it stands. What the blackboard handle hands an in-process consumer."""
+        """How hard the entity has been touched: the contact impulse and peak load since reset.
+
+        The report as it stands; what the blackboard handle hands an in-process consumer.
+        """
         return self._report
 
     def on_reset(self, ctx: SimContext) -> None:

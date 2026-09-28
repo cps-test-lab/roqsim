@@ -169,3 +169,47 @@ def test_static_publish_tf_is_refused_for_a_free_prop(tmp_path):
 
     with pytest.raises(PluginError, match="publish_tf: static"):
         instantiate_plugins(_world(tmp_path, motion="physics", publish_tf="static"))
+
+
+def _pose_endpoints(engine):
+    return [
+        e
+        for e in engine.ctx.interface.all()
+        if e.owner == "box" and not e.name.startswith("entities/")
+    ]
+
+
+def test_dynamic_publish_tf_streams_the_pose_on_tf(tmp_path):
+    engine = Engine(_world(tmp_path, motion="physics", publish_tf="dynamic", tf_rate=20.0))
+    engine.setup()
+    (ep,) = _pose_endpoints(engine)
+    assert (ep.name, ep.direction, ep.namespace, ep.rate_hz) == ("box_pose", "out", "", 20.0)
+    assert ep.backend == {
+        "ros2": {"type": "tf2_msgs.msg.TFMessage", "topic": "tf", "frame_id": "world"}
+    }
+    ((frame, pos, quat),) = ep.read()
+    bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, frame)
+    assert frame.startswith("b_") and bid >= 0
+    assert list(pos) == list(engine.ctx.data.xpos[bid]) and len(quat) == 4
+
+
+def test_static_publish_tf_sends_the_welded_pose_once(tmp_path):
+    engine = Engine(_world(tmp_path, motion="static", publish_tf="static"))
+    engine.setup()
+    (ep,) = _pose_endpoints(engine)
+    assert (ep.name, ep.direction, ep.namespace, ep.rate_hz) == ("box_pose", "out", "", 0.0)
+    hint = ep.backend["ros2"]
+    assert (hint["type"], hint["topic"], hint["static_tf"]["parent"]) == (
+        "tf2_msgs.msg.TFMessage",
+        "tf",
+        "world",
+    )
+    assert hint["static_tf"]["translation"] == pytest.approx([0.0, 0.0, 0.9], abs=0.2)
+    assert len(hint["static_tf"]["rotation"]) == 4
+    assert ep.read() is None
+
+
+def test_no_publish_tf_no_pose_endpoint(tmp_path):
+    engine = Engine(_world(tmp_path))
+    engine.setup()
+    assert _pose_endpoints(engine) == []

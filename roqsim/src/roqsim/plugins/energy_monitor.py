@@ -107,11 +107,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
 
 #: Joules per watt-hour, so a datasheet number (Wh) and the integral (J) can be one quantity.
@@ -133,16 +136,20 @@ class EnergyReport:
     much of its bill was holding rather than moving.
     """
 
-    energy_j: float = 0.0
-    power_w: float = 0.0
-    mechanical_w: float = 0.0
-    resistive_w: float = 0.0
-    torque_integral_nms: float = 0.0
-    charge_fraction: float = -1.0
-    depleted: bool = False
-    voltage: float = 0.0
-    current_a: float = 0.0
-    capacity_wh: float = 0.0
+    energy_j: Annotated[float, Unit("J"), "energy drawn since reset"] = 0.0
+    power_w: Annotated[float, Unit("W"), "what reaches the pack now"] = 0.0
+    mechanical_w: Annotated[float, Unit("W"), "signed mechanical power of the actuators"] = 0.0
+    resistive_w: Annotated[float, Unit("W"), "the winding-loss part of power_w"] = 0.0
+    torque_integral_nms: Annotated[
+        float, Unit("N*m*s"), "integral of the summed absolute actuator forces"
+    ] = 0.0
+    charge_fraction: Annotated[
+        float, "charge left, 0..1; -1.0 without a configured capacity"
+    ] = -1.0
+    depleted: Annotated[bool, "latched once the configured capacity is used up"] = False
+    voltage: Annotated[float, Unit("V"), "nominal voltage; 0.0 = unknown"] = 0.0
+    current_a: Annotated[float, Unit("A"), "power_w / voltage; 0.0 without a voltage"] = 0.0
+    capacity_wh: Annotated[float, Unit("W*h"), "configured capacity; 0.0 = none"] = 0.0
 
 
 @dataclass
@@ -223,7 +230,7 @@ class EnergyMonitorPlugin(Plugin):
         m = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
+        self._frame_id = entity.body if entity and entity.body else "base_link"
 
         self._actuators = (
             self._named_actuators(m, prefix)
@@ -241,23 +248,6 @@ class EnergyMonitorPlugin(Plugin):
         self._resistive_k = self._resistive_coefficients(m, prefix)
 
         ctx.blackboard.set(f"energy:{self.address}", EnergyReader(name=self.label, read=self.read))
-        ctx.interface.add(
-            Endpoint(
-                name="battery",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.BatteryState",
-                        "topic": self.topic_override("battery") or "battery_state",
-                        "frame_id": entity.body if entity and entity.body else "base_link",
-                    }
-                },
-            )
-        )
 
     def _resistive_coefficients(self, m, prefix: str) -> np.ndarray:
         """``k`` per metered actuator, aligned with :attr:`_actuators`.
@@ -424,8 +414,20 @@ class EnergyMonitorPlugin(Plugin):
             # full again on the next downhill metre is not a fact a trial can act on.
             self._depleted = True
 
+    @endpoint.out(
+        "battery",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.BatteryState",
+            "topic": self.topic_override("battery") or "battery_state",
+            "frame_id": self._frame_id,
+        },
+    )
     def read(self) -> EnergyReport:
-        """The report as it stands. Runs on the physics thread."""
+        """Energy drawn since reset, the power now, and the charge left when a capacity is set.
+
+        The report as it stands. Runs on the physics thread.
+        """
         capacity_j = self.capacity_wh * JOULES_PER_WH
         fraction = -1.0
         if capacity_j > 0.0:

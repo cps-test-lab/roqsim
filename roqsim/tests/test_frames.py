@@ -14,6 +14,7 @@ from roqsim.frames import (
     add_frame_sites,
     parse_frames,
     static_tf_endpoint,
+    static_tf_hint,
     static_transforms,
     substitute,
 )
@@ -125,6 +126,17 @@ def test_a_static_tf_endpoint_carries_only_its_list():
     ep = static_tf_endpoint("frames", "robot", "ns", [{"parent": "p", "child": "c"}])
     assert ep.read() is None and ep.namespace == "ns" and ep.owner == "robot"
     assert ep.backend["ros2"]["static_tf"] == [{"parent": "p", "child": "c"}]
+
+
+def test_the_static_tf_hint_names_the_chain_root_and_carries_the_list():
+    chain = [{"parent": "base_link", "child": "a"}, {"parent": "a", "child": "b"}]
+    assert static_tf_hint(chain) == {
+        "type": "tf2_msgs.msg.TFMessage",
+        "topic": "tf",
+        "frame_id": "base_link",
+        "static_tf": chain,
+    }
+    assert static_tf_hint([])["frame_id"] == ""
 
 
 def _write(tmp_path, manifest):

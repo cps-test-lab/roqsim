@@ -68,12 +68,15 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, contact_side_names, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -84,10 +87,14 @@ class ContactReport:
     """Neutral payload for the ``contact`` endpoint."""
 
     in_contact: bool
-    first_time: float  # sim time of the first qualifying contact since reset; -1.0 if none
-    count: int  # qualifying contacts in the most recent step
-    geom_a: str  # sides of the FIRST qualifying contact ("" until one happens); see side_name
-    geom_b: str
+    first_time: Annotated[
+        float, Unit("s"), "sim time of the first qualifying contact since reset; -1.0 if none"
+    ]
+    count: Annotated[int, "qualifying contacts in the most recent step"]
+    geom_a: Annotated[
+        str, "one side of the FIRST qualifying contact (empty until one happens); see side_name"
+    ]
+    geom_b: Annotated[str, "the other side of that contact"]
 
 
 class ContactMonitorPlugin(Plugin):
@@ -133,7 +140,6 @@ class ContactMonitorPlugin(Plugin):
         entity = ctx.entities.get(self.robot)
         self._entity = entity
         self._was_present = bool(getattr(entity, "present", True)) if entity else True
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's, resolved once and shared: contact_impulse measures the
         # severity of the very contacts this reports, and a rule restated in each would be two.
@@ -155,29 +161,22 @@ class ContactMonitorPlugin(Plugin):
         # first -- one robot's collisions reported as another's.
         ctx.blackboard.set(f"contact:{self.address}", self.read_state)
 
-        ctx.interface.add(
-            Endpoint(
-                name="contact",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._report,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Bool",
-                        # The report is a structure and Bool carries one field, so the endpoint says
-                        # WHICH -- rather than the bridge holding a converter that knows this
-                        # plugin's attribute names. The other fields stay readable in-process.
-                        "field": "in_contact",
-                        "topic": self.topic_override("contact") or "collision",
-                    }
-                },
-            )
-        )
-
+    @endpoint.out(
+        "contact",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Bool",
+            # The report is a structure and Bool carries one field, so the endpoint says WHICH --
+            # rather than the bridge holding a converter that knows this plugin's attribute names.
+            # The other fields stay readable in-process.
+            "field": "in_contact",
+            "topic": self.topic_override("contact") or "collision",
+        },
+    )
     def read_state(self) -> ContactReport:
-        """The latest report. What the blackboard handle hands an in-process consumer.
+        """Whether the entity is touching something, and the first contact since reset.
+
+        The latest report; what the blackboard handle hands an in-process consumer.
 
         A callable rather than the report object, because ``post_step`` REPLACES the report each
         step -- a consumer holding the dataclass would read one frozen step forever.

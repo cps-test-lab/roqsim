@@ -388,7 +388,13 @@ def test_the_endpoints_and_the_handle():
     }
     assert endpoints["override_verified"].backend["ros2"]["field"] == "verified"
 
-    inbound.write(True)  # what the bridge's service handler does, via ctx.post
+    # A command taking SetBool's `data`; the bridge hands it the named parameter.
+    assert inbound.marshalled and [(p.name, p.type.kind) for p in inbound.params] == [
+        ("data", "bool")
+    ]
+    outcome = inbound.write({"data": True})  # what the bridge's service handler does
+    ctx.drain_commands()
+    assert outcome.done() and outcome.result() is None
     _run(ctx, plugin, 0.05)
     assert endpoints["override_state"].read().active is True
     assert endpoints["override_verified"].read().verified == "landed"

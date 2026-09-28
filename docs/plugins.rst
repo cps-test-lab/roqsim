@@ -1347,6 +1347,10 @@ What stays hand-built: a port whose name or number is only known *during* the ru
 ``ctx.interface.add``), and a plugin's own transport thread (``px4_sitl``'s socket reader posts what
 it received; that is not an endpoint).
 
+An endpoint that carries only static transforms, published once (a model's ``frames``), is an
+``out`` whose method returns ``None`` and whose hint is
+``roqsim.frames.static_tf_hint(transforms)``.
+
 **The follow-ups.** One pull request per package, each leaving every ROS interface unchanged:
 
 .. list-table::
@@ -1356,14 +1360,6 @@ it received; that is not an endpoint).
    * - Package
      - Plugins (endpoints)
      - Needs
-   * - ``roqsim`` (core plugins and helpers)
-     - ``bumper`` (``bumper/<zone>``), ``clearance_monitor``, ``contact_impulse``,
-       ``contact_location``, ``contact_monitor``, ``energy_monitor`` (``battery``),
-       ``joint_state_publisher``, ``model_override`` (``override`` command, one ``out`` per
-       target), ``spawn_model`` (``<entity>_pose``), and ``roqsim.frames.static_tf_endpoint``
-       (``frames``, used by ``spawn_robot`` and ``spawn_sensor``)
-     - families: ``bumper``, ``model_override``; owner: ``model_override`` (its own name),
-       ``spawn_model`` (the entity it spawns)
    * - ``roqsim_sensors``
      - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
        (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),

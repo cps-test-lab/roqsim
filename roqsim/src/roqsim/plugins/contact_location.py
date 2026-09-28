@@ -64,12 +64,15 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
+from .. import endpoint
 from ..contact_scope import ContactScope, resolve_contact_scope
-from ..context import Endpoint, SimContext
+from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -80,13 +83,13 @@ class ContactLocation:
     """Neutral payload for the ``contact_location`` endpoint."""
 
     in_contact: bool
-    kind: str  # "none" | "point" | "line"
-    x: float  # region centre, in the configured frame
-    y: float
-    z: float
-    extent: float  # m between the two furthest members; 0.0 for a point contact
-    count: int  # distinct sensing areas in contact this step (after merge_radius)
-    time: float  # sim time of this reading
+    kind: Annotated[str, "'none', 'point' or 'line'"]
+    x: Annotated[float, Unit("m"), "region centre, in the configured frame"]
+    y: Annotated[float, Unit("m")]
+    z: Annotated[float, Unit("m")]
+    extent: Annotated[float, Unit("m"), "between the two furthest members; 0.0 for a point contact"]
+    count: Annotated[int, "distinct sensing areas in contact this step (after merge_radius)"]
+    time: Annotated[float, Unit("s"), "sim time of this reading"]
 
 
 class ContactLocationPlugin(Plugin):
@@ -143,7 +146,6 @@ class ContactLocationPlugin(Plugin):
         self._ctx = ctx
         model = ctx.model
         entity = ctx.entities.get(self.robot)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
         # Which contacts are this entity's: contact_monitor's rule, resolved by the same code, so
         # "where" and "whether" are about the same contacts. It fails loudly on a body that does not
@@ -160,27 +162,22 @@ class ContactLocationPlugin(Plugin):
         self._root = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, self._scope.body)
 
         ctx.blackboard.set(f"contact_location:{self.address}", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="contact_location",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=lambda: self._reading,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PointStamped",
-                        "topic": self.topic_override("contact_location") or "contact_location",
-                    }
-                },
-            )
-        )
         _log.info("contact_location: reporting in the %s frame", self.frame)
 
+    @endpoint.out(
+        "contact_location",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.PointStamped",
+            "topic": self.topic_override("contact_location") or "contact_location",
+        },
+    )
     def read_state(self) -> ContactLocation:
-        """The current reading. A callable, not the dataclass: ``post_step`` REPLACES it each step,
-        so a consumer holding the object would read one frozen step forever."""
+        """Where on the entity it is being touched this step: a point, or a line and its extent.
+
+        A callable, not the dataclass: ``post_step`` REPLACES it each step, so a consumer holding the
+        object would read one frozen step forever.
+        """
         return self._reading
 
     def on_reset(self, ctx: SimContext) -> None:

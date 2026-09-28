@@ -52,12 +52,15 @@ entity, raises -- a state nobody publishes is a consumer reading zeros as a fact
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
+from .. import endpoint
 from ..contact_scope import resolve_base_body
-from ..context import Endpoint, SimContext
+from ..context import SimContext
 from ..plugin import Plugin
 from ..presence import entity_body_ids
 
@@ -95,7 +98,6 @@ class JointStatePublisherPlugin(Plugin):
         model = ctx.model
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         body_name = resolve_base_body(entity)
         bodies = set(entity_body_ids(model, body_name))
         if not bodies:
@@ -139,25 +141,25 @@ class JointStatePublisherPlugin(Plugin):
         self._vel = np.zeros(len(jids))
         self._eff = np.zeros(len(jids))
 
-        ctx.interface.add(
-            Endpoint(
-                name="joint_states",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_joint_states,
-                rate_hz=self.rate_hz,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.JointState",
-                        "topic": self.topic_override("joint_states") or "joint_states",
-                    }
-                },
-            )
-        )
         _log.info("joint_state_publisher: %d joints of %r", len(jids), body_name)
 
-    def read_joint_states(self):
+    @endpoint.out(
+        "joint_states",
+        rate_hz=lambda self: self.rate_hz,
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.JointState",
+            "topic": self.topic_override("joint_states") or "joint_states",
+        },
+    )
+    def read_joint_states(
+        self,
+    ) -> tuple[
+        Annotated[list[str], "joint names, without the spawn prefix"],
+        Annotated[NDArray[np.float64], "positions: rad for a hinge, m for a slide"],
+        Annotated[NDArray[np.float64], "velocities: rad/s for a hinge, m/s for a slide"],
+        Annotated[NDArray[np.float64], "efforts: N*m for a hinge, N for a slide"],
+    ]:
+        """Position, velocity and effort of every hinge and slide joint of the entity."""
         return (self._names, self._pos, self._vel, self._eff)
 
     def on_reset(self, ctx: SimContext) -> None:
