@@ -2,8 +2,8 @@
 
 `arm_controller._apply_rest` writes joint positions during on_reset; the engine's closing forward
 pass runs only after every plugin's hook. A Cartesian controller declared after the arm anchors on
-`site_xpos` in its own on_reset, so without a forward pass in between it anchored on the pose from
-BEFORE the stance and pulled the tool toward it from the first step.
+`site_xpos` in its own on_reset, so without a forward pass in between it would anchor on the pose
+from BEFORE the stance and pull the tool toward it from the first step.
 """
 
 from __future__ import annotations
