@@ -115,8 +115,9 @@ has exactly one material). Source JPEGs are re-encoded to PNG on the way in — 
 
 ## Commands
 
-Every tool is `roqsim scenes <tool>`; `roqsim scenes <tool> --help` gives its options and
-`python -m pydoc roqsim_scenes.cli.<tool_with_underscores>` the reasoning behind it.
+Every tool is `roqsim scenes <tool>`; `roqsim scenes <tool> --help` gives its options, and
+`python -m pydoc` on the module it wraps (e.g. `roqsim_scenes.cli.gridmap_to_world`) the reasoning
+behind it.
 
 | tool | what it does | where it is covered |
 |---|---|---|
@@ -142,8 +143,9 @@ plugin, which reads the same json-ld at load time.
 **`fuel-fetch`** fetches each Fuel model an SDF world `<include>`s once into a local cache and records
 version, sha256 and licence in an `assets.lock.json`, so a port rebuilds byte-identically without
 the registry: `roqsim scenes fuel-fetch --world <world.sdf> --lock <scene>/assets.lock.json`. The
-cache is `~/.cache/roqsim/fuel`, or `--cache DIR`, or `ROQSIM_FUEL_CACHE`. `model://` URIs resolve
-from the local model path variables, never the network.
+cache is `--cache DIR`, else `ROQSIM_FUEL_CACHE`, else `~/.cache/roqsim/fuel`. Only Fuel URIs are
+fetched; a `model://` include is local, and `sdf-to-scene` resolves it on `--model-path` and the
+Gazebo resource path variables, never over the network.
 
 ## What's here
 
