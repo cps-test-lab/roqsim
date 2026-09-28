@@ -76,6 +76,7 @@ from dataclasses import replace
 
 import mujoco
 
+from roqsim import endpoint
 from roqsim.actuators import (
     apply_gravity_compensation,
 )
@@ -86,7 +87,7 @@ from roqsim.actuators import (
     validate_override as validate_actuators,
 )
 from roqsim.context import Entity, SimContext
-from roqsim.frames import add_frame_sites, parse_frames, static_tf_endpoint, static_transforms
+from roqsim.frames import add_frame_sites, parse_frames, static_transforms
 from roqsim.manifest import expand_manifest, manifest_frames
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
@@ -198,6 +199,8 @@ class SpawnRobotPlugin(Plugin):
         self.actuator_table: list = []
         #: The manifest's and this config's fixed frames, read in :meth:`build`.
         self.frames: list = []
+        #: Their static transforms, and those joining them to the root, read at :meth:`configure`.
+        self.frame_transforms: list[dict] = []
 
     def validate_config(self, config: dict) -> list[str]:
         errors = []
@@ -307,7 +310,7 @@ class SpawnRobotPlugin(Plugin):
             for row in self.actuator_table
         ]
         if self.frames:
-            transforms = static_transforms(
+            self.frame_transforms = static_transforms(
                 ctx.model,
                 self._root_links(ctx, base_body)
                 + [
@@ -316,12 +319,30 @@ class SpawnRobotPlugin(Plugin):
                 ],
                 f"spawn_robot {self.robot_name}",
             )
-            ctx.interface.add(
-                static_tf_endpoint(
-                    "frames", self.robot_name, self.config.get("namespace", ""), transforms
-                )
-            )
         self._apply_initial_pose(ctx)
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The robot entity this spawn registers."""
+        return self.robot_name
+
+    @endpoint.out(
+        "frames",
+        when=lambda self: bool(self.frames),
+        ros2=lambda self: {
+            "type": "tf2_msgs.msg.TFMessage",
+            "topic": "tf",
+            "frame_id": self.frame_transforms[0]["parent"],
+            "static_tf": self.frame_transforms,
+        },
+    )
+    def read_frames(self) -> None:
+        """Endpoint ``frames``: the robot's fixed frames, published once as static transforms.
+
+        Each is ``parent -> name`` read from the compiled model, with frame names bare and scoped
+        by the robot's namespace. There is nothing to stream, so the read returns ``None``.
+        """
+        return None
 
     def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
         """``root -> body`` for each body other than the root that a frame chain hangs from.

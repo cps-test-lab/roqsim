@@ -104,15 +104,29 @@ skid-steer's characteristic error source is absent here by design, not by accide
 from __future__ import annotations
 
 import math
+from typing import Annotated
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, RobotHandle, SimContext
+from roqsim import endpoint
+from roqsim.context import RobotHandle, SimContext
+from roqsim.endpoint import Unit
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
 
 WHEEL_ORDER = ("front_left", "front_right", "rear_left", "rear_right")
+
+#: The ``odom`` payload: the planar pose in the odometry frame and the body-frame twist.
+Odometry = tuple[
+    Annotated[float, Unit("m"), "x"],
+    Annotated[float, Unit("m"), "y"],
+    Annotated[float, Unit("rad"), "yaw"],
+    Annotated[float, Unit("m/s"), "forward speed"],
+    Annotated[float, Unit("m/s"), "sideways speed"],
+    Annotated[float, Unit("rad/s"), "yaw rate"],
+]
 
 
 class OmniDrivePlugin(Plugin):
@@ -218,7 +232,6 @@ class OmniDrivePlugin(Plugin):
         self._ctx = ctx
         entity = ctx.entities.get(self.robot)
         prefix = entity.meta.get("prefix", "") if entity else ""
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
 
         def act(n):
@@ -312,59 +325,24 @@ class OmniDrivePlugin(Plugin):
                 kinematics="holonomic",
             ),
         )
-        ctx.interface.add(
-            Endpoint(
-                name="cmd_vel",
-                direction="in",
-                owner=self.robot,
-                namespace=ns,
-                write=lambda twist: self.drive(twist[0], twist[1], twist[2]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.TwistStamped"
-                        if self.stamped_cmd_vel
-                        else "geometry_msgs.msg.Twist",
-                        "topic": self.topic_override("cmd_vel") or "cmd_vel",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="odom",
-                direction="out",
-                owner=self.robot,
-                namespace=ns,
-                read=self.read_odom,
-                rate_hz=50.0,
-                backend={
-                    "ros2": {
-                        "type": "nav_msgs.msg.Odometry",
-                        "topic": self.topic_override("odom") or "odom",
-                        "frame_id": "odom",
-                        "child_frame_id": self.odom_child_frame,
-                        "emit_tf": True,
-                    }
-                },
-            )
-        )
-        if self._js_names:
-            ctx.interface.add(
-                Endpoint(
-                    name="joint_states",
-                    direction="out",
-                    owner=self.robot,
-                    namespace=ns,
-                    read=self.read_joint_states,
-                    rate_hz=50.0,
-                    backend={
-                        "ros2": {
-                            "type": "sensor_msgs.msg.JointState",
-                            "topic": self.topic_override("joint_states") or "joint_states",
-                        }
-                    },
-                )
-            )
+
+    @endpoint.stream(
+        "cmd_vel",
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.TwistStamped"
+            if self.stamped_cmd_vel
+            else "geometry_msgs.msg.Twist",
+            "topic": self.topic_override("cmd_vel") or "cmd_vel",
+        },
+    )
+    def command_twist(
+        self,
+        vx: Annotated[float, Unit("m/s"), "forward speed"],
+        vy: Annotated[float, Unit("m/s"), "sideways speed"] = 0.0,
+        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
+    ) -> None:
+        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step."""
+        self.drive(vx, vy, w)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target. Unlike a differential drive, ``vy`` is honoured."""
@@ -379,12 +357,39 @@ class OmniDrivePlugin(Plugin):
         self._target[:] = (vx, vy, float(np.clip(w, -self.max_w, self.max_w)))
         self.watchdog.stamp(self._ctx)
 
-    def read_odom(self):
+    @endpoint.out(
+        "odom",
+        rate_hz=50.0,
+        ros2=lambda self: {
+            "type": "nav_msgs.msg.Odometry",
+            "topic": self.topic_override("odom") or "odom",
+            "frame_id": "odom",
+            "child_frame_id": self.odom_child_frame,
+            "emit_tf": True,
+        },
+    )
+    def read_odom(self) -> Odometry:
+        """Endpoint ``odom``: integrated from the base's achieved twist."""
         x, y, yaw, vx, vy, w = self._odom
         return (x, y, yaw, vx, vy, w)
 
-    def read_joint_states(self):
-        """``(names, positions, velocities)`` for every joint this plugin drives.
+    @endpoint.out(
+        "joint_states",
+        rate_hz=50.0,
+        when=lambda self: bool(self._js_names),
+        ros2=lambda self: {
+            "type": "sensor_msgs.msg.JointState",
+            "topic": self.topic_override("joint_states") or "joint_states",
+        },
+    )
+    def read_joint_states(
+        self,
+    ) -> tuple[
+        Annotated[list[str], "wheel joints, then steer joints"],
+        Annotated[NDArray[np.float64], Unit("rad")],
+        Annotated[NDArray[np.float64], Unit("rad/s")],
+    ]:
+        """Endpoint ``joint_states``: every joint this plugin drives, the steer joints included.
 
         The steer joints are in here as well as the rolls, and on a swerve base that is the half
         that matters: they are position-actuated, so a consumer left without them (a
