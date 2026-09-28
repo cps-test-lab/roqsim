@@ -28,6 +28,7 @@ from builtin_interfaces.msg import Time
 from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
 from . import image_codec
+from .frames import namespaced
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
@@ -129,13 +130,8 @@ def yaw_to_quat(yaw: float) -> Quaternion:
     return Quaternion(z=math.sin(yaw * 0.5), w=math.cos(yaw * 0.5))
 
 
-def namespaced(prefix: str, name: str) -> str:
-    """Prefix a frame id with the bridge namespace so multi-robot TF trees stay unique."""
-    return f"{prefix}/{name}" if prefix else name
-
-
 def frame(hints: dict, key: str, default: str) -> str:
-    """Frame id from a hint, prefixed by the bridge namespace so multi-robot TF trees stay unique."""
+    """Frame id from a hint, prefixed by the bridge namespace unless global (see :mod:`.frames`)."""
     return namespaced(hints.get("frame_prefix", ""), hints.get(key, default))
 
 
@@ -749,18 +745,21 @@ def decode_ackermann_stamped(msg) -> tuple[float, float]:
 
 
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...]]:
-    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz)``, in MuJoCo's quaternion order.
+def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...], str]:
+    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz, frame_id)``, in MuJoCo's
+    quaternion order.
 
     The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
     division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
     every consumer of the type, and a Cartesian controller commanded to hold its tool upright needs
-    exactly the part that would have been thrown away.
+    exactly the part that would have been thrown away. The frame is passed on for the same reason:
+    only the consumer knows which frames it can read a pose in.
     """
     q = msg.pose.orientation
     return (
         (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
         (q.w, q.x, q.y, q.z),
+        msg.header.frame_id,
     )
 
 
