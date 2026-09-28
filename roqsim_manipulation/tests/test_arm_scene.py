@@ -53,8 +53,9 @@ def test_arm_endpoints_inherit_spawn_namespace(tmp_path):
     assert fjt.direction == "in"
     assert fjt.backend["ros2"]["action"] == "control_msgs.action.FollowJointTrajectory"
     assert fjt.backend["ros2"]["name"] == "arm_controller/follow_joint_trajectory"
-    # The action endpoint's write takes the neutral (names, positions) waypoint payload.
-    fjt.write((["shoulder_pan_joint"], [0.5]))
+    # The action endpoint is a command taking a waypoint's names and positions.
+    assert [p.name for p in fjt.params] == ["names", "positions"]
+    assert fjt.write({"names": ["shoulder_pan_joint"], "positions": [0.5]}) is not None
 
 
 def test_stream_commands_declares_joint_trajectory_topic(tmp_path):
@@ -73,11 +74,11 @@ def test_stream_commands_declares_joint_trajectory_topic(tmp_path):
     assert ep.direction == "in" and ep.namespace == "ur10e"
     assert ep.backend["ros2"]["type"] == "trajectory_msgs.msg.JointTrajectory"
     assert ep.backend["ros2"]["topic"] == "arm_controller/joint_trajectory"
-    # Same neutral (names, positions) payload as the action -> set_targets.
-    ep.write((["shoulder_pan_joint"], [0.4]))
+    # The same names and positions as the action -> set_targets.
+    ep.write({"names": ["shoulder_pan_joint"], "positions": [0.4]})
     handle = engine.ctx.blackboard.require("arm:ur10e")
     engine.reset()
-    ep.write((["shoulder_pan_joint"], [0.4]))
+    ep.write({"names": ["shoulder_pan_joint"], "positions": [0.4]})
     for _ in range(400):
         engine.step()
     _, pos, *_ = handle.read_state()

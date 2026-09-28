@@ -126,12 +126,16 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
+from roqsim.endpoint import Shape, Unit
 from roqsim.plugin import Plugin
 
 #: The three ros2_control-shaped identities this implementation backs, and which terms each makes
@@ -274,11 +278,15 @@ class TrackingError:
     ``feedforward`` is the goal velocity being commanded this instant, zeros when none is.
     """
 
-    linear: tuple[float, float, float]
-    angular: tuple[float, float, float]
-    distance: float
-    angle: float
-    feedforward: tuple[float, ...]
+    linear: Annotated[tuple[float, float, float], Unit("m"), "goal - pose"]
+    angular: Annotated[
+        tuple[float, float, float], Unit("rad"), "rotation from the tool to the goal, as a vector"
+    ]
+    distance: Annotated[float, Unit("m"), "magnitude of linear"]
+    angle: Annotated[float, Unit("rad"), "magnitude of angular"]
+    feedforward: Annotated[
+        tuple[float, ...], "goal velocity fed forward: m/s then rad/s, world frame; zeros if none"
+    ]
 
 
 @dataclass
@@ -442,7 +450,7 @@ class CartesianAdmittancePlugin(Plugin):
         self._qposadr = np.array(qposadr, dtype=int)
         self._kin = mujoco.MjData(m)
 
-        ns = entity.meta.get("namespace", "") if entity else ""
+        ns = self.endpoint_namespace(ctx)
 
         # Listed and switched like any other controller. It claims the SAME command interfaces as
         # the trajectory controller, which is what makes handing the arm from one to the other a
@@ -479,79 +487,50 @@ class CartesianAdmittancePlugin(Plugin):
             ),
         )
 
-        # Named as FZI's cartesian_controllers name them: a node that drives this controller drives
-        # the real one unchanged. The setpoints are topics rather than services because they are a
-        # stream -- a reference a task republishes as it moves, not a command with an outcome.
-        ctx.interface.add(
-            Endpoint(
-                name="target_frame",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_goal(payload[0], payload[1]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("target_frame")
-                        or f"{self.controller_name}/target_frame",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="target_wrench",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_target_wrench(
-                    np.concatenate([payload[0], payload[1]])
-                ),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.WrenchStamped",
-                        "topic": self.topic_override("target_wrench")
-                        or f"{self.controller_name}/target_wrench",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="current_pose",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_pose_quat,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("current_pose")
-                        or f"{self.controller_name}/current_pose",
-                        "frame_id": "world",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="tracking_error",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_tracking_error,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "field": "distance",
-                        "topic": self.topic_override("tracking_error")
-                        or f"{self.controller_name}/tracking_error",
-                    }
-                },
-            )
-        )
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """The arm's namespace: this controller has no ``namespace`` key of its own."""
+        entity = ctx.entities.get(owner or self.endpoint_owner)
+        return entity.meta.get("namespace", "") if entity else ""
+
+    # Named as FZI's cartesian_controllers name them: a node that drives this controller drives the
+    # real one unchanged. The setpoints are streams rather than commands: a reference a task
+    # republishes as it moves, of which only the latest matters.
+    @endpoint.stream(
+        "target_frame",
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.PoseStamped",
+            "topic": self.topic_override("target_frame") or f"{self.controller_name}/target_frame",
+        },
+    )
+    def command_target_frame(
+        self,
+        position: Annotated[NDArray[np.float64], Shape(3), Unit("m"), "goal position, world frame"],
+        orientation: Annotated[
+            NDArray[np.float64], Shape(4), "goal orientation as a quaternion (w, x, y, z)"
+        ],
+        frame_id: Annotated[str, "the frame the pose is stated in; read as the world frame"] = "",
+    ) -> None:
+        """Endpoint ``target_frame``: the latest goal pose of the controlled site.
+
+        Goals that arrive as a steady stream have their velocity fed forward (``feedforward``).
+        """
+        self.set_goal(position, orientation)
+
+    @endpoint.stream(
+        "target_wrench",
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.WrenchStamped",
+            "topic": self.topic_override("target_wrench")
+            or f"{self.controller_name}/target_wrench",
+        },
+    )
+    def command_target_wrench(
+        self,
+        force: Annotated[NDArray[np.float64], Shape(3), Unit("N"), "what the tool applies"],
+        torque: Annotated[NDArray[np.float64], Shape(3), Unit("N*m"), "what the tool applies"],
+    ) -> None:
+        """Endpoint ``target_wrench``: the latest wrench the tool is to apply, ``w_d``."""
+        self.set_target_wrench(np.concatenate([force, torque]))
 
     # -- handle API ------------------------------------------------------------------------------
 
@@ -586,15 +565,40 @@ class CartesianAdmittancePlugin(Plugin):
             np.array(d.site_xmat[self._site_id], dtype=float).reshape(3, 3),
         )
 
-    def read_pose_quat(self) -> tuple[list[float], list[float]]:
-        """Endpoint ``read``: the controlled pose as transport-neutral ``(position, quaternion)``."""
+    @endpoint.out(
+        "current_pose",
+        rate_hz=lambda self: self.config.get("pose_rate_hz", 50.0),
+        ros2=lambda self: {
+            "type": "geometry_msgs.msg.PoseStamped",
+            "topic": self.topic_override("current_pose") or f"{self.controller_name}/current_pose",
+            "frame_id": "world",
+        },
+    )
+    def read_pose_quat(
+        self,
+    ) -> tuple[
+        Annotated[list[float], Unit("m"), "position, world frame"],
+        Annotated[list[float], "orientation as a quaternion (w, x, y, z)"],
+    ]:
+        """Endpoint ``current_pose``: the controlled site's pose in the world frame."""
         pos, mat = self.read_pose()
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, mat.reshape(9))
         return (pos.tolist(), quat.tolist())
 
+    @endpoint.out(
+        "tracking_error",
+        rate_hz=lambda self: self.config.get("pose_rate_hz", 50.0),
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Float64",
+            "field": "distance",
+            "topic": self.topic_override("tracking_error")
+            or f"{self.controller_name}/tracking_error",
+        },
+    )
     def read_tracking_error(self) -> TrackingError:
-        """``goal - pose`` for the controlled site, and the goal velocity being fed forward.
+        """Endpoint ``tracking_error``: ``goal - pose`` for the controlled site, and the goal
+        velocity being fed forward; over ROS, the distance.
 
         The goal is the commanded ``target_frame`` and, before one is commanded, the pose this
         controller took the arm at -- the same anchor the stiffness term pulls toward.

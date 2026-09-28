@@ -236,7 +236,8 @@ def test_a_commanded_wrench_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_wrench")
 
-    ep.write(((1.0, 2.0, -8.0), (0.0, 0.0, 0.5)))
+    ep.write({"force": (1.0, 2.0, -8.0), "torque": (0.0, 0.0, 0.5)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     plugin = engine.ctx.blackboard.require("cartesian:ur5e")
     assert plugin.controller_name
@@ -250,7 +251,8 @@ def test_a_commanded_frame_reaches_the_law(tmp_path):
     engine.reset()
     ep = next(e for e in engine.ctx.interface.all() if e.name == "target_frame")
 
-    ep.write(((0.4, 0.1, 0.3), (1.0, 0.0, 0.0, 0.0)))
+    ep.write({"position": (0.4, 0.1, 0.3), "orientation": (1.0, 0.0, 0.0, 0.0)})
+    engine.step()  # a stream is applied on the physics thread, once per step
 
     law = next(p for p in engine.plugins if isinstance(p, CartesianAdmittancePlugin))
     assert law._goal_pos == pytest.approx([0.4, 0.1, 0.3])
