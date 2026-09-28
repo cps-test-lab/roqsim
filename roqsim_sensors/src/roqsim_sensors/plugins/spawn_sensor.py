@@ -153,7 +153,8 @@ and stays on the capture plugin's ``distortion:``, which warps the render to mat
 
 **FOV visualisation.** ``show_fov: true`` makes the sensor's field of view visible. Three paths, tried
 in order: (1) if the model has cameras (e.g. the RealSense/Zivid mounts) a translucent view **frustum**
-is synthesised per camera from its ``fovy``/aspect spanning the valid detection band
+is synthesised per camera -- a RealSense's depth camera aside, which is the same device's other
+stream -- from its ``fovy``/aspect spanning the valid detection band
 ``fov_near``..``fov_range``, **always clipped against world geometry** into a visibility volume that
 stops at walls and objects (see *Occlusion* below); (2) otherwise (a camera-less model), if it ships
 FOV geoms -- non-colliding, name ending :data:`FOV_GEOM_SUFFIX` (``_fov``), hidden at rgba alpha 0 --
@@ -235,6 +236,8 @@ from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import rpy_to_quat
 from roqsim.registry import resolve_plugin
 from roqsim.schema import Field
+
+from .camera_common import DEPTH_CAMERA_SUFFIX
 
 #: Name suffix marking a sensor model's FOV-visualisation geoms (non-colliding, hidden until
 #: revealed). A name convention, not a geom group -- see the module docstring for why.
@@ -491,6 +494,18 @@ _INTRINSICS_KEYS = _LENS_KEYS + ("camera",)
 #: :func:`~roqsim_sensors.plugins.camera_common.intrinsics_from_model` alike -- uses the focal and
 #: principal lengths only as a RATIO to it. 1 um/px merely keeps a 1920-wide sensor a legible 1.92 mm.
 _PIXEL_PITCH_M = 1e-6
+
+
+def _view_cameras(cameras: list) -> list:
+    """A model's cameras less a device's depth camera: one per view it draws or calibrates.
+
+    A depth camera (:data:`~roqsim_sensors.plugins.camera_common.DEPTH_CAMERA_SUFFIX`) beside the
+    colour camera is another stream of the same device, so a frustum for it would draw one device's
+    view twice and read as two sensors' overlap.
+    """
+    if len(cameras) < 2:
+        return cameras
+    return [c for c in cameras if not c.name.endswith(DEPTH_CAMERA_SUFFIX)]
 
 
 def _intrinsics_errors(intr) -> list[str]:
@@ -1022,7 +1037,11 @@ class SpawnSensorPlugin(Plugin):
         cam.principal_pixel = [cx - width / 2.0, height / 2.0 - cy]
 
     def _lens_camera(self, child: mujoco.MjSpec):
-        """The camera ``intrinsics:`` describes: the named one, or the only one there is."""
+        """The camera ``intrinsics:`` describes: the named one, or the only one there is.
+
+        A device's depth camera (:data:`~roqsim_sensors.plugins.camera_common.DEPTH_CAMERA_SUFFIX`)
+        does not count: a unit's lens is the one it images colour through unless named.
+        """
         cameras = list(child.cameras)
         wanted = self._intrinsics.get("camera")
         if wanted:
@@ -1033,8 +1052,9 @@ class SpawnSensorPlugin(Plugin):
                 f"spawn_sensor: 'intrinsics.camera' is {wanted!r}, which model "
                 f"{self.config['model']!r} does not have. It has: {[c.name for c in cameras]}"
             )
-        if len(cameras) == 1:
-            return cameras[0]
+        views = _view_cameras(cameras)
+        if len(views) == 1:
+            return views[0]
         if not cameras:
             raise RuntimeError(
                 f"spawn_sensor: 'intrinsics' states a lens but model {self.config['model']!r} has no "
@@ -1107,7 +1127,7 @@ class SpawnSensorPlugin(Plugin):
         A ray grid (:func:`_visibility_grid`) is cast from the camera against a snapshot of ``world_spec``
         (the world built so far) and each ray clamped at its hit, so the drawn mesh is a *visibility
         volume* that stops at walls and objects (:func:`_visibility_mesh`)."""
-        cameras = list(child.cameras)
+        cameras = _view_cameras(list(child.cameras))
         if not cameras:
             return 0
         # A copy of CHILD rather than a re-read of the model file: a placement may have written its

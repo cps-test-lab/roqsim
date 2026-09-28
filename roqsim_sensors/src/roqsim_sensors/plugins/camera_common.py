@@ -60,6 +60,30 @@ class Intrinsics:
     d: tuple[float, ...] = (0.0, 0.0, 0.0, 0.0, 0.0)
 
 
+#: The name suffix of a device model's depth camera: the second MuJoCo camera of a device that images
+#: depth through its own optics, beside the colour camera on the same body (a RealSense's
+#: ``d435_depth`` beside ``d435_color``). It is a stream of that one device, not another viewpoint,
+#: so what counts or draws a device's view -- ``spawn_sensor``'s ``show_fov`` frustums and the lens
+#: ``intrinsics:`` it defaults to, ``sensor_coverage_probe``'s ``sensors: auto`` -- skips it.
+DEPTH_CAMERA_SUFFIX = "_depth"
+
+
+def depth_stream_cameras(model) -> set[int]:
+    """Ids of the depth cameras (:data:`DEPTH_CAMERA_SUFFIX`) that share a body with another camera."""
+    by_body: dict[int, list[int]] = {}
+    for cid in range(model.ncam):
+        by_body.setdefault(int(model.cam_bodyid[cid]), []).append(cid)
+    return {
+        cid
+        for cids in by_body.values()
+        if len(cids) > 1
+        for cid in cids
+        if (mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_CAMERA, cid) or "").endswith(
+            DEPTH_CAMERA_SUFFIX
+        )
+    }
+
+
 def intrinsics_from_model(
     model,
     cam_id: int,
@@ -255,6 +279,7 @@ class CameraPlugin(Plugin):
         self._distortion_cfg = self.config.get("distortion")
         # The forward-distortion remap, built once in configure() -- see _build_distortion_map().
         self._dist_map: tuple[np.ndarray, np.ndarray] | None = None
+        self._prefix = ""
         self._cam_id = -1
         self._intr: Intrinsics | None = None
         self._frames: FrameRenderer | None = None
@@ -299,6 +324,7 @@ class CameraPlugin(Plugin):
         prefix = entity.meta.get("prefix", "") if entity else ""
         ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         m = ctx.model
+        self._prefix = prefix
         self._cam_id = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_CAMERA, prefix + self.camera)
         if self._cam_id < 0:
             raise RuntimeError(f"{type(self).__name__}: camera {prefix + self.camera!r} not found")

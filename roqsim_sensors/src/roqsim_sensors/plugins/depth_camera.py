@@ -8,9 +8,23 @@ endpoint through :meth:`DepthCameraPlugin._add_depth_endpoints`.
 Config (in addition to ``camera_common.CameraPlugin``'s)::
 
     <plugin short name>:
+      depth_camera: <DEFAULT_DEPTH_CAMERA>  # the MuJoCo camera depth is rendered from; default:
+                              #   the device's own, else the colour `camera`
+      depth_width: null       # override the depth camera's MJCF resolution (a separate depth
+      depth_height: null      #   camera only; through the colour camera, `width`/`height` apply)
       clip_near: 0.3          # m; outside [clip_near, clip_far] a pixel reads "no return"
       clip_far: 100.0         # m
       depth_encoding: 32FC1   # or 16UC1 -- see below
+
+**Which camera depth comes from.** Depth is rendered from the camera at the frame it is stamped in.
+A device that images depth through its own optics -- a RealSense's stereo pair, whose depth frame is
+not its colour frame -- has a second MuJoCo camera at its depth optical frame
+(:data:`~camera_common.DEPTH_CAMERA_SUFFIX`), and a subclass names it as ``DEFAULT_DEPTH_CAMERA``:
+depth, the depth ``camera_info`` and anything reprojected from them then come from that camera, at
+its own FOV and resolution, while colour stays on ``camera``. A device whose driver aligns depth to
+the colour image (an OAK-D's default) or whose depth and colour share one imager (a Zivid) renders
+depth through ``camera`` itself, off the colour pass. A world overrides it with ``depth_camera:``,
+and a camera that does not exist is refused at configure rather than replaced by the colour one.
 
 **The two depth encodings, and why the choice exists.** ``self._depth`` is always float32 metres with
 ``inf`` for "no return": that is what a reprojection wants, and the point-cloud path consumes it
@@ -40,11 +54,13 @@ depth topics that disagree.
 
 from __future__ import annotations
 
+import mujoco
 import numpy as np
 
 from roqsim.context import Endpoint, SimContext
+from roqsim.rendering import FrameRenderer
 
-from .camera_common import CameraPlugin, sibling_topic
+from .camera_common import CameraPlugin, Intrinsics, intrinsics_from_model, sibling_topic
 
 #: uint16 millimetres saturate here, so this is the largest range `16UC1` can carry.
 MAX_16UC1_RANGE_M = 65.535
@@ -67,9 +83,20 @@ DEFAULT_DEPTH_CODEC = "png"
 class DepthCameraPlugin(CameraPlugin):
     DEFAULT_DEPTH_ENCODING = "32FC1"
     DEPTH_ENCODINGS = ("32FC1", "16UC1")
+    #: The camera depth is rendered from; ``None`` is the colour camera (see the module docstring).
+    DEFAULT_DEPTH_CAMERA: str | None = None
 
     def __init__(self, config=None, *, name=None, entity=None, label=None):
         super().__init__(config, name=name, entity=entity, label=label)
+        self.depth_camera = (
+            self.config.get("depth_camera") or self.DEFAULT_DEPTH_CAMERA or self.camera
+        )
+        self._depth_width_cfg = self.config.get("depth_width")
+        self._depth_height_cfg = self.config.get("depth_height")
+        self._depth_cam_id = -1
+        self._depth_intr: Intrinsics | None = None
+        #: The depth camera's own renderer, when it is not the colour camera.
+        self._depth_frames: FrameRenderer | None = None
         self.clip_near = float(self.config.get("clip_near", 0.3))
         self.clip_far = float(self.config.get("clip_far", 100.0))
         self.depth_encoding = str(self.config.get("depth_encoding", self.DEFAULT_DEPTH_ENCODING))
@@ -85,6 +112,18 @@ class DepthCameraPlugin(CameraPlugin):
 
     def validate_config(self, config: dict) -> list[str]:
         errors = super().validate_config(config)
+        for key in ("depth_width", "depth_height"):
+            if config.get(key) is not None and int(config[key]) <= 0:
+                errors.append(f"'{key}' must be > 0")
+        depth_camera = config.get("depth_camera") or self.DEFAULT_DEPTH_CAMERA
+        camera = config.get("camera", self.DEFAULT_CAMERA)
+        if (depth_camera in (None, camera)) and (
+            config.get("depth_width") is not None or config.get("depth_height") is not None
+        ):
+            errors.append(
+                "'depth_width'/'depth_height' size a separate depth camera; this one renders depth "
+                f"through the colour camera {camera!r}, which 'width'/'height' size"
+            )
         if float(config.get("clip_near", 0.3)) < 0:
             errors.append("'clip_near' must be >= 0")
         if float(config.get("clip_far", 100.0)) <= float(config.get("clip_near", 0.3)):
@@ -134,6 +173,7 @@ class DepthCameraPlugin(CameraPlugin):
         topic (each device has its own layout, which is why the endpoint is not built here from a
         prefix).
         """
+        self._resolve_depth_camera(ctx)
         self._depth_ep = Endpoint(
             name="depth",
             direction="out",
@@ -162,17 +202,16 @@ class DepthCameraPlugin(CameraPlugin):
         # topic is derived from the resolved depth topic rather than spelled out per device -- a world
         # that hardwires the depth topic to match a driver gets the matching info topic with it.
         #
-        # The payload is the colour intrinsics, because both streams come off ONE MuJoCo camera: real
-        # hardware images depth through different optics with different intrinsics, and a plugin
-        # rendering one camera cannot pretend otherwise. NOT in `_gate_endpoints`, and not lazy, for
-        # the same reasons the colour info is neither: it needs no render and costs six floats.
+        # The payload is the depth camera's intrinsics -- the colour camera's only where depth is
+        # rendered through it. NOT in `_gate_endpoints`, and not lazy, for the same reasons the
+        # colour info is neither: it needs no render and costs six floats.
         ctx.interface.add(
             Endpoint(
                 name="depth_camera_info",
                 direction="out",
                 owner=self.robot,
                 namespace=ns,
-                read=lambda: self._intr,
+                read=lambda: self._depth_intr,
                 rate_hz=self.rate_hz,
                 backend={
                     "ros2": {
@@ -212,6 +251,27 @@ class DepthCameraPlugin(CameraPlugin):
             self._extra_outputs.append(self._depth_compressed_ep)
         return self._depth_ep
 
+    def _resolve_depth_camera(self, ctx: SimContext) -> None:
+        """The depth camera's id and intrinsics: the colour camera's own when depth renders through it."""
+        if self.depth_camera == self.camera:
+            self._depth_cam_id, self._depth_intr = self._cam_id, self._intr
+            return
+        name = self._prefix + self.depth_camera
+        self._depth_cam_id = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
+        if self._depth_cam_id < 0:
+            raise RuntimeError(
+                f"{type(self).__name__}: depth camera {name!r} not found. A model that renders "
+                f"depth through its colour camera says so with 'depth_camera: {self.camera}'."
+            )
+        self._depth_intr = intrinsics_from_model(
+            ctx.model,
+            self._depth_cam_id,
+            width=self._depth_width_cfg,
+            height=self._depth_height_cfg,
+            default_width=self.DEFAULT_WIDTH,
+            default_height=self.DEFAULT_HEIGHT,
+        )
+
     def _depth_payload(self) -> np.ndarray | None:
         """The depth image in the encoding this camera advertises.
 
@@ -242,8 +302,15 @@ class DepthCameraPlugin(CameraPlugin):
         return mm.astype(np.uint16)
 
     def _capture_extra(self, ctx: SimContext, renderer) -> None:
+        if self._depth_cam_id != self._cam_id:
+            if self._depth_frames is None:
+                intr = self._depth_intr
+                self._depth_frames = FrameRenderer(
+                    ctx.model, intr.width, intr.height, camera=self._depth_cam_id
+                )
+            renderer = self._depth_frames.raw
         renderer.enable_depth_rendering()
-        renderer.update_scene(ctx.data, camera=self._cam_id)
+        renderer.update_scene(ctx.data, camera=self._depth_cam_id)
         depth = renderer.render().astype(np.float32)
         renderer.disable_depth_rendering()
         self._invalid = (depth < self.clip_near) | (depth > self.clip_far)
@@ -254,3 +321,9 @@ class DepthCameraPlugin(CameraPlugin):
     def _reset_extra(self, ctx: SimContext) -> None:
         self._depth = None
         self._depth_wire = None
+
+    def shutdown(self, ctx: SimContext) -> None:
+        if self._depth_frames is not None:
+            self._depth_frames.close()
+            self._depth_frames = None
+        super().shutdown(ctx)
