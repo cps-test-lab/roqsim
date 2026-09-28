@@ -23,7 +23,7 @@ Config::
                                #   `fiducial_marker`'s, and mutually exclusive with `motion:`.
         attach_prefix: "ur10e_" # the carrier's MJCF prefix, prepended to `attach_to`/`parent_frame`
         parent_frame: cover_link # OPTIONAL, instead of `attach_to`: a body OR a declared frame of
-                               #   the carrier to hang from; `pos`/`rpy` are the vendor joint origin
+                               #   the carrier to hang from; `pos`/`rpy` are the vendor macro's origin
         frame_id: laser        # the device's scan frame name, filled into its manifest; default: the
                                #   vendor name its manifest's `frame_id:` declares (see below)
         device_name: camera    # the vendor macro's `name` param, which prefixes the device's frame
@@ -73,6 +73,11 @@ identity, so a robot manifest states a vendor mount and nothing else::
   plugin's ``topics:`` still overrides a topic outright.
 * A nested mount is welded: ``motion`` other than ``static`` is refused.
 
+**The mount frame.** A device model's ``mount`` body is the frame its vendor macro's ``origin``
+places -- the link the macro attaches to its ``parent`` (a RealSense's ``<name>_bottom_screw_frame``,
+the tripod screw) -- and ``pos``/``rpy`` are that origin. A pose copied from a robot description's
+call of the macro therefore places the device where ``robot_state_publisher`` would.
+
 **Frames and placeholders.** A device manifest may declare a ``frames:`` chain relative to its own
 bodies (:mod:`roqsim.frames`), first entry hanging from the mount and the scan frame named
 ``{frame_id}``, plus the vendor's default name for that frame as ``frame_id:``::
@@ -104,7 +109,7 @@ mount's namespace.
 
 Mounts on one carrier share its namespace, so two of them that would publish any one frame name --
 the scan frame or any link of the chain -- are refused, naming the frames. And a carrier mount of a
-device that declares no ``frames:`` is refused, naming the device: it has no vendor link to hang
+device that declares no ``frames:`` is refused, naming the device: it has no vendor frame to hang
 from, so nothing would connect the frame its data is stamped in to the carrier's tree.
 
 **Moving a mount after the world is built.** ``motion:`` is the same three-answer key
@@ -692,7 +697,7 @@ class SpawnSensorPlugin(Plugin):
     def _refuse_carrier_mount_without_frames(spec, model_file) -> None:
         """Refuse a carrier mount of a device that declares no vendor frame chain.
 
-        Such a device has no vendor link to hang from: its ``pos``/``rpy`` would place a body whose
+        Such a device has no vendor frame to hang from: its ``pos``/``rpy`` would place a body whose
         frame no vendor description names, and nothing would publish a transform between the
         carrier and the frame its data is stamped in.
         """
@@ -700,7 +705,7 @@ class SpawnSensorPlugin(Plugin):
             return
         raise PluginError(
             f"spawn_sensor '{spec.address}': device {spec.config['model']!r} declares no "
-            f"'frames:' chain in {manifest_path(model_file).name}, so it has no vendor link for "
+            f"'frames:' chain in {manifest_path(model_file).name}, so it has no vendor frame for "
             f"'{spec.entity}' to carry it by and nothing would connect the frame its data is "
             f"stamped in to the carrier's tree. Mount it at world level (attach_to a body), or "
             f"give the device its vendor frame chain."

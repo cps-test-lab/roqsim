@@ -40,11 +40,11 @@ never be shadowed by same-named provider files), then the listed providers in or
 provider default and the model file's dir.
 
 **A retired name is refused, not missing.** When a model is renamed because what its numbers mean
-changed -- a mount frame re-seated on the vendor link, say -- a world naming it by the old name must
-not keep loading with its old pose silently reinterpreted; a pose change cannot be caught at load,
-but a name can. A provider module may declare ``RETIRED_MODELS``, a mapping of old name to
-:class:`RetiredModel`, and :func:`resolve_model` refuses the old name with the new one, why it
-changed and what the world must re-express. The table beside this module (:data:`RETIRED_MODELS`)
+changed -- a mount frame re-seated on the frame its vendor macro's origin places, say -- a world
+naming it by the old name must not keep loading with its old pose silently reinterpreted; a pose
+change cannot be caught at load, but a name can. A provider module may declare ``RETIRED_MODELS``, a
+mapping of old name to :class:`RetiredModel`, and :func:`resolve_model` refuses the old name with
+the new one, why it changed and what the world must re-express. The table beside this module (:data:`RETIRED_MODELS`)
 holds the core's own, and an entry is deleted once downstream has moved.
 
 A **provider** is a module exposing a ``MODELS_DIR`` path (and optionally ``MESHES_DIR`` /
@@ -76,8 +76,8 @@ class RetiredModel:
     """A model name that was retired, and what a world that still names it has to do.
 
     The refusal reads ``<plugin>: model '<old>' — renamed to '<renamed_to>' <because>. <then>``, so
-    ``because`` is a clause (``"when its mount frame became the vendor link"``) and ``then`` whole
-    sentences.
+    ``because`` is a clause (``"when its mount frame became the one its vendor macro places"``) and
+    ``then`` whole sentences.
     """
 
     plugin: str
