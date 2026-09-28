@@ -55,12 +55,12 @@ Six stages, each of which can fail without the next being meaningless:
     every plugin's ``on_reset`` runs, as it does before each trial, and leaves the state the trial
     starts from: keyframes and home poses applied, props re-seated.
 
-What it does **not** do is step the simulation, or start a transport: a plugin that declares
-``transport_only`` (the ROS bridge, an autopilot link) has its config validated and is then left
-out, with a ``transport`` warning naming it, because its ``configure`` would connect to -- or wait
-for -- a process a check does not run.
+What it does **not** do is start a transport: a plugin that declares ``transport_only`` (the ROS
+bridge, an autopilot link) has its config validated and is then left out, with a ``transport``
+warning naming it, because its ``configure`` would connect to -- or wait for -- a process a check
+does not run.
 
-It does not step the simulation either. A world that passes here can still behave wrongly;
+Nor does it step the simulation. A world that passes here can still behave wrongly;
 what it cannot do is fail to start, which is the failure worth catching before a campaign queues a
 thousand of them.
 
