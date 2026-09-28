@@ -36,15 +36,26 @@ from pathlib import Path
 
 import numpy as np
 
+from roqsim_scenes import scene_manifest
+
 _OCC, _FREE, _UNKNOWN = 0, 254, 205
 
 
+def _read_manifest(scene_dir: Path) -> dict:
+    path = scene_dir / "scene.json"
+    manifest = json.loads(path.read_text())
+    scene_manifest.check(manifest, path)
+    return manifest
+
+
 def _load_scene(scene_dir: Path) -> list[tuple[np.ndarray, np.ndarray]]:
-    manifest = json.loads((scene_dir / "scene.json").read_text())
+    manifest = _read_manifest(scene_dir)
     out = []
+    # Every object, collidable or not -- the same rule as the world path (`_load_world`). A 2D
+    # costmap is built from what the lidar returns, and the raycaster hits a visual-only mesh as
+    # surely as a collidable one; `sdf-to-scene --no-collide` imports a building shell exactly that
+    # way, and promises it still generates the occupancy grid.
     for obj in manifest["objects"]:
-        if not obj.get("collide", True):
-            continue  # visual-only geometry is not an obstacle
         verts, faces = [], []
         for line in (scene_dir / obj["mesh"]).read_text().splitlines():
             s = line.split()
@@ -145,19 +156,20 @@ def _load_world(
             "spelling if you expected one.",
             file=sys.stderr,
         )
-    engine = Engine(cfg, preview=True)
-    engine.setup()
-    engine.reset()
-    model, data = engine.ctx.model, engine.ctx.data
-    mujoco.mj_forward(model, data)
+    # The model and data outlive the plugins: the slice reads only them.
+    with Engine(cfg, preview=True) as engine:
+        engine.reset()
+        model, data = engine.ctx.model, engine.ctx.data
+        mujoco.mj_forward(model, data)
 
-    # ...but NOT the robot. A map is the environment; the robot is what moves through it. Compiling the
-    # world puts the robot at its spawn pose, so without this its chassis and wheels rasterise into a
-    # blob of permanent occupancy exactly where every trial begins -- AMCL then localises against a
-    # phantom obstacle at the start, and a planner refuses to leave. Worse, `--free-from` is documented
-    # as "normally the robot's start", so the flood fill is seeded ON the blob and the damage looks like
-    # a slightly small free area rather than a bug.
-    skip = _robot_geoms(model, engine.ctx)
+        # ...but NOT the robot. A map is the environment; the robot is what moves through it.
+        # Compiling the world puts the robot at its spawn pose, so without this its chassis and
+        # wheels rasterise into a blob of permanent occupancy exactly where every trial begins --
+        # AMCL then localises against a phantom obstacle at the start, and a planner refuses to
+        # leave. Worse, `--free-from` is documented as "normally the robot's start", so the flood
+        # fill is seeded ON the blob and the damage looks like a slightly small free area rather
+        # than a bug.
+        skip = _robot_geoms(model, engine.ctx)
 
     out: list[tuple[np.ndarray, np.ndarray]] = []
     hulls: list[list[tuple[np.ndarray, np.ndarray]]] = []
@@ -199,6 +211,8 @@ def _load_world(
             )
         elif gtype in (mujoco.mjtGeom.mjGEOM_CYLINDER, mujoco.mjtGeom.mjGEOM_CAPSULE):
             r, hz = float(size[0]), float(size[1])
+            if gtype == mujoco.mjtGeom.mjGEOM_CAPSULE:
+                hz += r  # the end caps: a prism to the tips, since a map is a floor-plane footprint
             n = 16
             ang = np.linspace(0.0, 2.0 * np.pi, n, endpoint=False)
             ring = np.stack([r * np.cos(ang), r * np.sin(ang)], axis=1)
@@ -353,7 +367,7 @@ def main(argv: list | None = None) -> int:
             args.world, hull_at=args.scan_height if args.collision_hulls else None
         )
     else:
-        manifest = json.loads((args.scene / "scene.json").read_text())
+        manifest = _read_manifest(args.scene)
         lo = np.array(manifest["bounds_min"][:2])
         hi = np.array(manifest["bounds_max"][:2])
         geometry = _load_scene(args.scene)
