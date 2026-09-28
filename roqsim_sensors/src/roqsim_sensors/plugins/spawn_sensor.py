@@ -890,8 +890,8 @@ class SpawnSensorPlugin(Plugin):
             self._apply_intrinsics(child)
         if self.show_fov:
             near, far = self._resolve_fov_range(asset)
-            # A synthesised camera frustum is always clipped against the world built so far, so pass
-            # the world spec every time; camera-less paths (bundled envelope, lidar sector) ignore it.
+            # A synthesised frustum or lidar sector is always clipped against the world built so far,
+            # so pass the world spec every time; only a bundled envelope ignores it.
             self._show_fov(child, asset, near, far, world_spec=spec)
         self._apply_motion(child, asset)
         # After the FOV synthesis, which reads the model's sole scan site: frame sites are extra.
