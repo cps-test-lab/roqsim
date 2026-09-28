@@ -11,9 +11,9 @@ port log, and runtime policy — they stay clean of rebuild tooling, which is a 
 - A script that needs to anchor back into a package must go up through `external/`'s parent (a
   sibling of the packages), e.g. `Path(__file__).resolve().parents[2] / "<pkg>/src/..."` — not
   `parent.parent`.
-- **Exception — reusable pipeline tool *suites* that a skill documents stay in-package:**
-  `roqsim_assets/tools/` (model-import skill), `roqsim_scenes/tools/` (scene-porting),
-  `roqsim_walker/tools/import_actor.py`. Only single-model, one-off converters live here.
+- **Exception — reusable pipeline tool *suites* stay in-package:** `roqsim_assets/tools/` (prop
+  import), `roqsim_scenes/tools/` (floorplan to world), `roqsim_walker/tools/import_actor.py`. Only
+  single-model, one-off converters live here.
 
-Blender/DAE conversion traps (winding flips, vestigial `<up_axis>`, Blender-version differences,
-pycollada as the reliable DAE→OBJ path) are documented in the `robot-porting` skill's mesh section.
+Blender/DAE conversion traps (winding flips, vestigial `<up_axis>`, pycollada as the reliable DAE→OBJ
+path) are documented in `dae2obj.py`.
