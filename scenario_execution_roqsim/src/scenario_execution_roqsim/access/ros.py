@@ -184,6 +184,40 @@ class _EndpointMap:
         return offered
 
 
+def _qos(profile: dict | None):
+    """The subscription QoS for a report the bridge publishes with *profile* (its endpoint map's).
+
+    The publisher's own profile, so a report the world set to ``best_effort`` or ``transient_local``
+    is still received: a reliable subscriber never matches a best-effort publisher. Depth 10 where the
+    map names none.
+    """
+    if not profile:
+        return 10
+    from rclpy.qos import (  # noqa: PLC0415
+        DurabilityPolicy,
+        HistoryPolicy,
+        QoSProfile,
+        ReliabilityPolicy,
+    )
+
+    return QoSProfile(
+        depth=int(profile.get("depth", 10)),
+        history=HistoryPolicy.KEEP_ALL
+        if profile.get("history") == "keep_all"
+        else HistoryPolicy.KEEP_LAST,
+        reliability=(
+            ReliabilityPolicy.BEST_EFFORT
+            if profile.get("reliability") == "best_effort"
+            else ReliabilityPolicy.RELIABLE
+        ),
+        durability=(
+            DurabilityPolicy.TRANSIENT_LOCAL
+            if profile.get("durability") == "transient_local"
+            else DurabilityPolicy.VOLATILE
+        ),
+    )
+
+
 class _LatestValue:
     """The last value published on one report's topic."""
 
@@ -448,7 +482,7 @@ class RosAccess(WorldAccess):
             )
         latest = _LatestValue()
         latest.subscription = self._node.create_subscription(
-            msg_type, topic, latest.store, 10, callback_group=self._group
+            msg_type, topic, latest.store, _qos(entry.get("qos")), callback_group=self._group
         )
         self._report_values[topic] = latest
         return latest

@@ -29,6 +29,7 @@ from std_msgs.msg import String  # noqa: E402
 
 from roqsim.bridge import ENDPOINT_MAP  # noqa: E402
 from roqsim.context import Endpoint, Entity, SimContext  # noqa: E402
+from roqsim.endpoint import qos_profile  # noqa: E402
 from roqsim.plugins.contact_monitor import ContactMonitorPlugin  # noqa: E402
 from roqsim_ros_bridge.ros2_bridge import Ros2Bridge  # noqa: E402
 
@@ -61,6 +62,8 @@ def _world():
     for monitor in monitors:
         monitor.configure(ctx)
         monitor.on_reset(ctx)
+    # The renamed report travels best effort, as a world's `qos:` would set it.
+    ctx.interface.find("spare", "contact").qos = qos_profile("sensor_data")
     ctx.interface.add(
         Endpoint(
             name="clock_seconds",
@@ -126,12 +129,15 @@ def test_the_map_names_the_topics_the_bridge_publishes_on(bridge):
     contact = next(e for e in emap["endpoints"] if e["name"] == "contact")
     assert contact["type"] == "std_msgs.msg.Bool"
     assert contact["field"] == "in_contact"
+    qos = {(e["owner"], e["name"]): e["qos"]["reliability"] for e in emap["endpoints"]}
+    assert qos[("parcel", "contact")] == "reliable" and qos[("spare", "contact")] == "best_effort"
     assert emap["owners"] is None
 
 
 def test_a_scenario_reads_a_report_through_the_map(bridge):
-    """``osc.roqsim``'s ROS access, from a node of its own: map, then the renamed topic, then the
-    value the plugin reports once the crate lands."""
+    """``osc.roqsim``'s ROS access, from a node of its own: map, then the renamed topic -- best
+    effort, which it subscribes to as published -- then the value the plugin reports once the crate
+    lands."""
     access_mod = pytest.importorskip("scenario_execution_roqsim.access.ros")
     bridge, ctx, monitors = bridge
     node = Node("scenario", namespace="sim1", context=bridge._context)
