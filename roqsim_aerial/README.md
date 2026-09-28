@@ -160,8 +160,10 @@ components:
 
 ROS 2 then talks to **PX4**, not to roqsim: a uXRCE-DDS agent bridges PX4's uORB topics onto
 `/fmu/in/*` and `/fmu/out/*` as `px4_msgs`, and a node commands offboard flight there. The roqsim
-`ros2_bridge` above still publishes the simulator's own ground-truth odometry, which is what lets an
-experiment measure the estimator's error rather than trusting it.
+`ros2_bridge` above serves only what this world's plugins declare: the GNSS `fix`
+(`sensor_msgs/NavSatFix`), the `motor_cmd` input and `/clock`. It publishes no odometry. To measure
+the estimator's error against the truth, add `ground_truth_pose` to the drone's components
+(`docs/ground_truth.rst`).
 
 `pymavlink` carries the wire format and is an extra, not a hard dependency:
 

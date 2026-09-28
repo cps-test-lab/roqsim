@@ -7,7 +7,7 @@
 # from the robot's and the sensor mount's frames, so the launch file needs no robot_state_publisher /
 # URDF chain. nav2 reads a LaserScan: nav2_g1.launch.py projects the cloud into /scan with
 # pointcloud_to_laserscan. A static map->odom identity transform (in the launch file) stands in for
-# localization.
+# localization: odom starts at the spawn pose, and the robot spawns at the map origin facing +x.
 #
 # timestep 0.002 (500 Hz): the G1 locomotion policy's PD loop is tuned for this step.
 

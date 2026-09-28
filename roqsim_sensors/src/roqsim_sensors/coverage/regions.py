@@ -22,7 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-from roqsim.floorplan_geometry import room_polygons
+from roqsim.floorplan_geometry import check_sketch, room_polygons
 
 
 @dataclass
@@ -116,8 +116,10 @@ def regions_from_sketch(sketch, *, bridge: float = 1.6) -> list[Region]:
     sketch with, so a room here is the room the floorplan draws; ``bridge`` is the gap in metres a
     chain may cross (a doorway leaves a wall in two pieces).
     """
+    where = str(sketch) if isinstance(sketch, (str, Path)) else "floorplan sketch"
     if isinstance(sketch, (str, Path)):
         sketch = json.loads(Path(sketch).read_text())
+    check_sketch(sketch, where)
     return [
         Region(name=room.name, polygon=np.asarray(room.polygon, dtype=np.float64))
         for room in room_polygons(sketch, bridge=bridge)
