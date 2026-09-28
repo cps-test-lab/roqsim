@@ -590,7 +590,9 @@ def _fill_by_name(msg, value, fields, stamp, hints) -> None:
         else:
             setattr(msg, f.name, v)
     if hasattr(msg, "header") and "header" not in {f.name for f in fields}:
-        _header(msg, stamp, frame(hints, "frame_id", "") or None)
+        # A frame only where the hints state one: namespacing an empty frame id would publish the
+        # bare namespace ("ns/") as a frame nobody broadcasts.
+        _header(msg, stamp, frame(hints, "frame_id", "") if hints.get("frame_id") else None)
 
 
 def _decode_by_name(msg, fields, cls) -> Any:
