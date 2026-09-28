@@ -336,8 +336,8 @@ def postprocess(base: Path, out: Path) -> None:
     # Explicit attrs beat class defaults in MJCF, so pop them first. rgba is KEPT on visuals: it
     # is the real URDF colour, which is why this port needs no material-recovery step.
     #
-    # density="0" is deliberately kept on visual geoms rather than stripped. robot-porting warns
-    # that a zero-density mesh geom renders as its bounding sphere; that does NOT reproduce here
+    # density="0" is deliberately kept on visual geoms rather than stripped. A zero-density mesh
+    # geom is said to render as its bounding sphere; that does NOT reproduce here
     # (checked by rendering base_link with and without it under MuJoCo 3.11 -- identical mesh), and
     # stripping it instead corrupts the mass: 14 of the 72 source links carry no <inertial>, so
     # MuJoCo derives their inertia from geometry and the visual meshes then contribute ~20 kg of
