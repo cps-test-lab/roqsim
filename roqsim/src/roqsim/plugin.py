@@ -155,10 +155,10 @@ class Plugin:
         its own label. Override where a plugin speaks for another entity."""
         return self.entity or self.label
 
-    def endpoint_namespace(self, ctx: SimContext) -> str:
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
         """The transport scope of this plugin's decorated endpoints: its ``namespace:`` config, else
-        the owning entity's."""
-        entity = ctx.entities.get(self.endpoint_owner)
+        the owning entity's (*owner*'s, for an endpoint that names its own)."""
+        entity = ctx.entities.get(owner or self.endpoint_owner)
         return self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
     def register_endpoints(self, ctx: SimContext) -> None:

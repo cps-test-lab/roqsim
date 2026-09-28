@@ -33,6 +33,7 @@ from roqsim.context import CommandFuture
 
 from . import physics
 from .extensions import EXTENSION_GROUP, load_extensions
+from .params import payload_for
 from .physics import barrier
 
 # srv-type-string -> handler(request, response, ctx, on_payload, endpoint) -> response message
@@ -117,9 +118,9 @@ def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
 def set_bool(request, response, ctx, on_payload, endpoint=None):
     """Switch a producer on or off, and report whether it took effect.
 
-    The generic policy for "a command with an outcome": the request goes to the producer as the
-    neutral ``bool`` payload its ``write`` expects, and the reply says what the simulator *did* rather
-    than that the message was delivered.
+    The generic policy for "a command with an outcome": the request goes to the producer as its
+    parameter ``data`` (the bare ``bool`` for an untyped ``write``), and the reply says what the
+    simulator *did* rather than that the message was delivered.
 
     The verdict is the producer's, not this handler's. A producer that publishes a state object
     carrying ``verified`` (see ``roqsim.plugins.model_override``) has it read off the blackboard under the
@@ -134,7 +135,7 @@ def set_bool(request, response, ctx, on_payload, endpoint=None):
     """
     want = bool(request.data)
     # Queued for the physics thread by the bridge's inbound marshaller.
-    if not _applied(ctx, on_payload(want), response):
+    if not _applied(ctx, on_payload(payload_for(endpoint, {"data": want})), response):
         return response
 
     read_state = None

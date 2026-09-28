@@ -92,13 +92,26 @@ reproduces from it; with the block omitted nothing is drawn and the odometry is 
 
 from __future__ import annotations
 
+from typing import Annotated
+
 import mujoco
 import numpy as np
 
 from roqsim import endpoint
 from roqsim.context import RobotHandle, SimContext
+from roqsim.endpoint import Unit
 from roqsim.odometry import CommandWatchdog
 from roqsim.plugin import Plugin
+
+#: The ``odom`` payload: the planar pose and body-frame twist, in the odometry frame.
+Odometry = tuple[
+    Annotated[float, Unit("m"), "x"],
+    Annotated[float, Unit("m"), "y"],
+    Annotated[float, Unit("rad"), "yaw"],
+    Annotated[float, Unit("m/s"), "forward speed"],
+    Annotated[float, Unit("m/s"), "sideways speed (always 0)"],
+    Annotated[float, Unit("rad/s"), "yaw rate"],
+]
 
 
 class DiffDrivePlugin(Plugin):
@@ -293,9 +306,14 @@ class DiffDrivePlugin(Plugin):
             "topic": self.topic_override("cmd_vel") or "cmd_vel",
         },
     )
-    def command_twist(self, twist) -> None:
-        """Endpoint ``cmd_vel``: the latest ``(vx, vy, w)`` twist, applied once per step."""
-        self.drive(twist[0], twist[1], twist[2])
+    def command_twist(
+        self,
+        vx: Annotated[float, Unit("m/s"), "forward speed"],
+        vy: Annotated[float, Unit("m/s"), "sideways speed; a differential drive drops it"] = 0.0,
+        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
+    ) -> None:
+        """Endpoint ``cmd_vel``: the latest body-frame twist, applied once per step."""
+        self.drive(vx, vy, w)
 
     def drive(self, vx: float, vy: float, w: float) -> None:
         """Body-frame twist target (vy dropped: differential drive cannot strafe)."""
@@ -316,7 +334,8 @@ class DiffDrivePlugin(Plugin):
             "emit_tf": True,
         },
     )
-    def read_odom(self):
+    def read_odom(self) -> Odometry:
+        """Endpoint ``odom``: the wheel odometry, integrated from the wheels' own motion."""
         x, y, yaw, v, w = self._odom
         return (x, y, yaw, v, 0.0, w)
 
@@ -329,7 +348,14 @@ class DiffDrivePlugin(Plugin):
             "topic": self.topic_override("joint_states") or "joint_states",
         },
     )
-    def read_joint_states(self):
+    def read_joint_states(
+        self,
+    ) -> tuple[
+        Annotated[list[str], "wheel joint names"],
+        Annotated[list[float], Unit("rad")],
+        Annotated[list[float], Unit("rad/s")],
+    ]:
+        """Endpoint ``joint_states``: the wheels' positions and velocities."""
         return (self._jnames, self._jpos, self._jvel)
 
     def on_reset(self, ctx: SimContext) -> None:

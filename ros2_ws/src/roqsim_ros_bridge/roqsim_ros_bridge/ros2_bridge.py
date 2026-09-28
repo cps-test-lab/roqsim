@@ -27,8 +27,9 @@ scenario address a plugin's report by the names the world gives it (``entity_rep
 ``strip_namespace`` and a ``gt`` prefix -- see ``_advertise_endpoint_map``.
 
 Concurrency (see roqsim docs/architecture.rst §7): an ``rclpy`` MultiThreadedExecutor spins on a
-worker thread; inbound subscriptions decode to a neutral payload and marshal the write onto the
-physics thread via ``ctx.post``. Publishing happens in ``post_step`` on the physics thread (rclpy
+worker thread; inbound subscriptions decode a message to its named parameters
+(:mod:`roqsim_ros_bridge.params`) and hand them to the endpoint's write, which queues onto the
+physics thread. Publishing happens in ``post_step`` on the physics thread (rclpy
 publish is thread-safe), so the physics thread stays the sole writer of ``data``.
 
 Config::
@@ -98,6 +99,7 @@ from roqsim.bridge import ENDPOINT_MAP, BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
 from roqsim_ros_bridge.actions import get_action_handler
 from roqsim_ros_bridge.extensions import load_extensions
+from roqsim_ros_bridge.params import payload_for
 from roqsim_ros_bridge.services import get_service_handler
 
 #: ``clock_rate_hz`` value meaning "one tick per physics step" -- the default. Spelled rather than
@@ -689,7 +691,9 @@ class Ros2Bridge(BridgeBase):
         topic = _resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name))
         qos = int(hints.get("qos", 10))
         decode = reg.get_decoder(hints["type"])
-        self._node.create_subscription(msg_type, topic, lambda m: on_payload(decode(m)), qos)
+        self._node.create_subscription(
+            msg_type, topic, lambda m, e=ep: on_payload(payload_for(e, decode(m))), qos
+        )
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "in"))
 
     def _check_peer_types(self) -> None:

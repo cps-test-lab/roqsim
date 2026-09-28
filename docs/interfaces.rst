@@ -530,8 +530,11 @@ A robot describes its own I/O so a bridge can wire it to *any* transport (ROS 2,
 zmq) without the robot package importing that transport. A plugin declares its ports by decorating
 the methods that serve them (``@endpoint.out`` / ``@endpoint.command`` / ``@endpoint.stream``, see
 :doc:`plugins`, *Declaring a plugin's endpoints*), and the framework registers them as ``Endpoint``\ s
-on ``ctx.interface`` and marshals every inbound call onto the physics thread. A port known only at run
-time is registered by hand in ``configure``:
+on ``ctx.interface`` and marshals every inbound call onto the physics thread. The method's signature
+is the endpoint's schema, carried as ``params`` (what ``write`` takes, by name) and ``result`` (what
+``read`` returns, or a command's outcome), so a bridge can describe and check a port without knowing
+the plugin. Every entity also has a core pose endpoint, ``sim/entities/<name>/pose``. A port known
+only at run time is registered by hand in ``configure``:
 
 .. code-block:: python
 

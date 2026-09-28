@@ -6,7 +6,10 @@ so the bridge has no hardcoded ``from sensor_msgs.msg import ...``. Field mappin
 the type string:
 
   * ``CONVERTERS`` -- fill an *outbound* message in place from a neutral payload (``out`` endpoints).
-  * ``DECODERS``   -- decode an *inbound* message to a neutral payload (``in`` endpoints).
+  * ``DECODERS``   -- decode an *inbound* message to its named parameters (``in`` endpoints): a
+    mapping, whose names are what a typed endpoint's method declares (``vx``, ``vy``, ``w`` for a
+    twist). :func:`roqsim_ros_bridge.params.payload_for` hands it on as is to an endpoint with
+    ``params``, and as the positional tuple of its values to an untyped one.
 
 Converters/decoders are duck-typed on the payload (``payload.ranges``, ``twist.linear.x``), never on a
 specific robot package's dataclass, so the backend stays decoupled from any robot. Types without a
@@ -32,8 +35,8 @@ from .frames import namespaced
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
-# type-string -> decode(msg) -> neutral payload             (inbound)
-DECODERS: dict[str, Callable[[Any], Any]] = {}
+# type-string -> decode(msg) -> {parameter name: value}     (inbound)
+DECODERS: dict[str, Callable[[Any], dict[str, Any]]] = {}
 
 
 @functools.cache
@@ -99,8 +102,8 @@ def get_converter(type_path: str) -> Callable[[Any, Any, Time, dict], None]:
     return fill_reflective
 
 
-def get_decoder(type_path: str) -> Callable[[Any], Any]:
-    """Registered decoder for ``type_path``, or a reflective ``msg.data`` fallback."""
+def get_decoder(type_path: str) -> Callable[[Any], dict[str, Any]]:
+    """Registered decoder for ``type_path``, or a reflective ``{"data": msg.data}`` fallback."""
     fn = DECODERS.get(type_path)
     if fn is not None:
         return fn
@@ -115,7 +118,7 @@ def get_decoder(type_path: str) -> Callable[[Any], Any]:
                 f"no decoder registered for {type_path!r} and it has no 'data' field to fall "
                 f"back on"
             )
-        return msg.data
+        return {"data": msg.data}
 
     return decode_reflective
 
@@ -715,20 +718,21 @@ def fill_camera_info(msg, payload, stamp: Time, hints: dict) -> None:
     ]
 
 
-# -- decoders (inbound: ROS message -> neutral payload) ----------------------------------------
+# -- decoders (inbound: ROS message -> named parameters) ---------------------------------------
 @decoder("geometry_msgs.msg.Twist")
-def decode_twist(msg) -> tuple[float, float, float]:
-    return (msg.linear.x, msg.linear.y, msg.angular.z)
+def decode_twist(msg) -> dict[str, float]:
+    """Body-frame twist -> ``vx``, ``vy`` (m/s) and ``w`` (rad/s), what a planar base takes."""
+    return {"vx": msg.linear.x, "vy": msg.linear.y, "w": msg.angular.z}
 
 
 @decoder("geometry_msgs.msg.TwistStamped")
-def decode_twist_stamped(msg) -> tuple[float, float, float]:
+def decode_twist_stamped(msg) -> dict[str, float]:
     return decode_twist(msg.twist)
 
 
 @decoder("ackermann_msgs.msg.AckermannDrive")
-def decode_ackermann(msg) -> tuple[float, float]:
-    """Car-like command -> neutral ``(steering_angle, speed)``.
+def decode_ackermann(msg) -> dict[str, float]:
+    """Car-like command -> ``steering_angle`` and ``speed``.
 
     Not converted to a twist on the way through, which would be the obvious thing and is wrong here.
     A twist states a curvature, and turning a steering angle into one needs the wheelbase -- robot
@@ -736,18 +740,18 @@ def decode_ackermann(msg) -> tuple[float, float]:
     exists to carry: at zero speed a curvature says nothing, while a steering angle still says which
     way the wheels point. The consumer knows its own wheelbase and can do neither badly.
     """
-    return (msg.steering_angle, msg.speed)
+    return {"steering_angle": msg.steering_angle, "speed": msg.speed}
 
 
 @decoder("ackermann_msgs.msg.AckermannDriveStamped")
-def decode_ackermann_stamped(msg) -> tuple[float, float]:
+def decode_ackermann_stamped(msg) -> dict[str, float]:
     return decode_ackermann(msg.drive)
 
 
 @decoder("geometry_msgs.msg.PoseStamped")
-def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, ...], str]:
-    """Pose setpoint -> neutral ``(position_xyz, quaternion_wxyz, frame_id)``, in MuJoCo's
-    quaternion order.
+def decode_pose_stamped(msg) -> dict[str, Any]:
+    """Pose setpoint -> ``position`` (x, y, z), ``orientation`` (w, x, y, z; MuJoCo's quaternion
+    order) and ``frame_id``.
 
     The full orientation, not a yaw: a consumer that only flies yaw projects it itself, the same
     division ``decode_ackermann`` makes. Deciding here to discard pitch and roll would decide it for
@@ -756,11 +760,11 @@ def decode_pose_stamped(msg) -> tuple[tuple[float, float, float], tuple[float, .
     only the consumer knows which frames it can read a pose in.
     """
     q = msg.pose.orientation
-    return (
-        (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
-        (q.w, q.x, q.y, q.z),
-        msg.header.frame_id,
-    )
+    return {
+        "position": (msg.pose.position.x, msg.pose.position.y, msg.pose.position.z),
+        "orientation": (q.w, q.x, q.y, q.z),
+        "frame_id": msg.header.frame_id,
+    }
 
 
 def yaw_of(quat) -> float:
@@ -770,20 +774,19 @@ def yaw_of(quat) -> float:
 
 
 @decoder("geometry_msgs.msg.WrenchStamped")
-def decode_wrench_stamped(msg) -> tuple[tuple[float, ...], tuple[float, ...]]:
-    """Wrench setpoint -> neutral ``(force_xyz, torque_xyz)``, the shape a wrench reader reads out."""
+def decode_wrench_stamped(msg) -> dict[str, tuple[float, ...]]:
+    """Wrench setpoint -> ``force`` and ``torque`` (x, y, z), the shape a wrench reader reads out."""
     f, t = msg.wrench.force, msg.wrench.torque
-    return ((f.x, f.y, f.z), (t.x, t.y, t.z))
+    return {"force": (f.x, f.y, f.z), "torque": (t.x, t.y, t.z)}
 
 
 @decoder("trajectory_msgs.msg.JointTrajectory")
-def decode_joint_trajectory(msg) -> tuple[list[str], list[float]]:
-    """Streamed joint command -> neutral ``(names, positions)`` for an arm's ``set_targets`` (same
+def decode_joint_trajectory(msg) -> dict[str, list]:
+    """Streamed joint command -> ``names`` and ``positions`` for an arm's ``set_targets`` (same
     payload the FollowJointTrajectory action feeds). moveit_servo publishes a single-point trajectory
     each period; take the last point's positions (== the target). Empty points -> a no-op write."""
-    if not msg.points:
-        return (list(msg.joint_names), [])
-    return (list(msg.joint_names), list(msg.points[-1].positions))
+    positions = list(msg.points[-1].positions) if msg.points else []
+    return {"names": list(msg.joint_names), "positions": positions}
 
 
 # -- transform (owned by the bridge, derived from an odom payload) -----------------------------
