@@ -25,7 +25,6 @@ from __future__ import annotations
 import math
 import threading
 
-import numpy as np
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -45,6 +44,7 @@ from simulation_interfaces.srv import (
 )
 
 from roqsim import control as ctl
+from roqsim.kinematics import body_twist
 from roqsim.placement import PLACEABLE_MODES_HINT, place_body
 from roqsim.plugin import Plugin
 from roqsim.presence import set_present
@@ -553,13 +553,12 @@ class SimInterfacesPlugin(Plugin):
         bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body_name)
         if bid < 0:
             return {}
-        vel = np.zeros(6)
-        mujoco.mj_objectVelocity(ctx.model, ctx.data, mujoco.mjtObj.mjOBJ_BODY, bid, vel, 0)
+        twist = body_twist(ctx.model, ctx.data, bid)
         return {
             "pos": [float(v) for v in ctx.data.xpos[bid]],
             "quat": [float(v) for v in ctx.data.xquat[bid]],
-            "ang": [float(v) for v in vel[:3]],
-            "lin": [float(v) for v in vel[3:]],
+            "ang": list(twist.angular),
+            "lin": list(twist.linear),
         }
 
     def validate_config(self, config: dict) -> list[str]:

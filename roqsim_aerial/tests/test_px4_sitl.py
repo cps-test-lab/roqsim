@@ -543,6 +543,25 @@ def test_the_body_comes_from_the_entity_not_from_a_meta_key():
         plugin.shutdown(ctx)
 
 
+def test_the_ground_truth_velocity_is_the_bodys_own_not_its_centre_of_mass():
+    """An airframe spinning in place about its origin has no linear velocity, wherever its centre of
+    mass sits."""
+    ctx = _ctx()
+    plugin = _plugin({"port": _free_port(), "connect_timeout": 0.2})
+    with pytest.raises(RuntimeError, match="no PX4 SITL connected"):
+        plugin.configure(ctx)
+    try:
+        # Off the origin; the compiled flag saying the two frames coincide has to go with it.
+        ctx.model.body_ipos[plugin._bid] = (0.1, 0.0, 0.0)
+        ctx.model.body_sameframe[plugin._bid] = mujoco.mjtSameFrame.mjSAMEFRAME_NONE
+        ctx.data.qvel[:] = (0.0, 0.0, 0.0, 0.0, 0.0, 1.0)
+        mujoco.mj_forward(ctx.model, ctx.data)
+        *_, vel_enu = plugin._state(ctx)
+        assert np.allclose(vel_enu, 0.0, atol=1e-9)
+    finally:
+        plugin.shutdown(ctx)
+
+
 def test_an_entity_with_no_body_at_all_still_fails_loudly():
     ctx = _ctx()
     ctx.entities.remove("drone")

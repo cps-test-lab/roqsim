@@ -30,6 +30,7 @@ import json
 import sys
 from pathlib import Path
 
+from roqsim import exit_status
 from roqsim.config import world_sources
 from roqsim.world import resolve_world_yaml_ref
 
@@ -38,6 +39,10 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim scenes inputs",
         description="List every file a world is defined by, as JSON on stdout.",
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            note="2 includes, with --require-complete, a part of the world that did not resolve.",
+        ),
     )
     parser.add_argument(
         "world", help="world YAML path, or a package ref such as 'roqsim_scenes:depot'"
@@ -57,16 +62,16 @@ def main(argv=None) -> int:
             resolved = resolve_world_yaml_ref(target)
         except FileNotFoundError as err:
             print(f"cannot resolve world {target!r}: {err}", file=sys.stderr)
-            return 1
+            return exit_status.BAD_INPUT
         if resolved is None:
             print(
                 f"{target!r} is not a world ref (no such roqsim.worlds provider)", file=sys.stderr
             )
-            return 1
+            return exit_status.BAD_INPUT
         target, packaged = str(resolved), True
     if not Path(target).exists():
         print(f"world {target!r} does not exist", file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
 
     world = Path(target).resolve()
     skipped: list = []
@@ -79,7 +84,7 @@ def main(argv=None) -> int:
         # world, which parent or which plugin to go and fix.
         for problem in skipped:
             print(problem, file=sys.stderr)
-        return 1
+        return exit_status.BAD_INPUT
     # ``packaged`` says the files arrive with an installed package rather than needing to
     # travel with whatever is staging them. The list is reported either way -- a caller
     # asking what a world depends on wants it; a caller deciding what to copy reads the
@@ -87,7 +92,7 @@ def main(argv=None) -> int:
     print(
         json.dumps({"world": str(world), "packaged": packaged, "inputs": [str(p) for p in inputs]})
     )
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

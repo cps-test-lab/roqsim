@@ -36,6 +36,23 @@ def test_a_file_path_resolves_relative_to_the_world():
     assert issubclass(cls, NavOutput)
 
 
+def test_a_file_path_is_executed_once_and_resolves_to_one_class(tmp_path):
+    """A navigator resolves its output in validation and again in configure; both get one class."""
+    runs = tmp_path / "runs.log"
+    (tmp_path / "once.py").write_text(
+        "from pathlib import Path\n"
+        "from roqsim_nav.outputs import NavOutput\n"
+        f"with Path({str(runs)!r}).open('a') as fh:\n"
+        "    fh.write('run\\n')\n"
+        "class Once(NavOutput):\n"
+        "    pass\n"
+    )
+    first = resolve_output("once.py:Once", tmp_path)
+    second = resolve_output("once.py:Once", tmp_path)
+    assert first is second
+    assert runs.read_text().count("run") == 1
+
+
 def test_an_unknown_short_name_lists_what_is_available():
     """An error that does not say what the options were makes a typo an archaeology exercise."""
     with pytest.raises(RegistryError, match="Available:"):
