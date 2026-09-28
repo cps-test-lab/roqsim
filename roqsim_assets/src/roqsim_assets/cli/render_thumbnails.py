@@ -12,8 +12,10 @@ co-located file by relative path and fall back to text when it is absent, so the
 GL.
 
 Covers every ``roqsim.models`` entry (flat ``<model>.xml``, nested ``<name>/<name>.xml`` props,
-walker blueprints) and every baked ``roqsim.worlds`` scene. Textures already ship their own colour
-map, and built-in code-built worlds have no on-disk home, so neither is rendered here.
+walker blueprints) and every baked ``roqsim.worlds`` scene. A robot whose manifest mounts devices (a
+``spawn_sensor`` lidar or camera) is rendered as ``spawn_robot`` builds it, since its own MJCF does not
+carry them (:func:`model_scene`). Textures already ship their own colour map, and built-in code-built
+worlds have no on-disk home, so neither is rendered here.
 
 Usage::
 
@@ -26,12 +28,15 @@ never aborting the run.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import sys
+import tempfile
 from importlib import import_module
 from pathlib import Path
 
 import mujoco
 import numpy as np
+import yaml
 from PIL import Image
 
 from roqsim.mesh_preview import build_mesh_scene as _build_mesh_scene
@@ -48,12 +53,13 @@ from roqsim.world import FLOOR_RGB1, FLOOR_RGB2, SKY_RGB1, SKY_RGB2
 _SIZE = 480  # square source PNG; the doc pages display it at ~150px.
 
 
-def _render(model: mujoco.MjModel, cam: mujoco.MjvCamera, out: Path) -> None:
-    data = mujoco.MjData(model)
-    # `home` over qpos0, via the same helper `roqsim render` uses -- so a model's thumbnail and its
-    # `roqsim render` output are the same picture. (Why it matters: for an articulated robot the two poses
-    # are very different, and the TIAGo Pro's arms stick straight out in front of it at qpos0.)
-    reset_to_home(model, data)
+def _render(
+    model: mujoco.MjModel, cam: mujoco.MjvCamera, out: Path, data: mujoco.MjData | None = None
+) -> None:
+    """Render ``model`` to ``out``; ``data`` is an already-posed state, else one reset to ``home``."""
+    if data is None:
+        data = mujoco.MjData(model)
+        reset_to_home(model, data)
     fr = FrameRenderer(model, _SIZE, _SIZE, camera=cam)
     out.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(fr.render(data)).save(out)
@@ -69,11 +75,8 @@ def _framed_cam(model: mujoco.MjModel) -> mujoco.MjvCamera:
     return cam
 
 
-def _render_mjcf(xml_path: Path, out: Path, apply=None) -> None:
-    spec = mujoco.MjSpec.from_file(str(xml_path))
-    if apply is not None:
-        apply(spec)
-    model = spec.compile()
+def _render_mjcf(xml_path: Path, out: Path) -> None:
+    model = mujoco.MjSpec.from_file(str(xml_path)).compile()
     _render(model, _framed_cam(model), out)
 
 
@@ -119,6 +122,69 @@ def _ground_and_light(spec: mujoco.MjSpec) -> None:
         spec.visual.headlight.ambient = [PREVIEW_HEADLIGHT_AMBIENT] * 3
 
 
+def mounts_devices(model_file: Path) -> bool:
+    """Whether the model's manifest mounts a device: an entry whose plugin registers an entity."""
+    from roqsim.config import parse_plugin_entry
+    from roqsim.manifest import load_manifest
+    from roqsim.registry import resolve_plugin
+
+    return any(
+        resolve_plugin(parse_plugin_entry(entry, "manifest plugin").ref).provides_entity
+        for entry in load_manifest(model_file)
+    )
+
+
+@contextlib.contextmanager
+def model_scene(ref: str):
+    """The scene a model's thumbnail shows, compiled and posed: yields ``(model, data)``.
+
+    A robot whose manifest mounts devices is built as ``spawn_robot`` builds it, through the same path
+    as ``roqsim render`` (:func:`roqsim.render.build_target`: transport plugins dropped, then reset),
+    so its devices are attached and it stands as the spawn and its controllers leave it. Any other
+    model is its own MJCF at ``home``. Both stand on the ground and under the light
+    :func:`_ground_and_light` gives.
+    """
+    from roqsim import models as M
+    from roqsim.render import build_target
+
+    asset = M.resolve_model(ref)
+    if not mounts_devices(asset.path):
+        spec = mujoco.MjSpec.from_file(str(asset.path))
+        M.apply_assets(spec, asset)
+        _ground_and_light(spec)
+        model = spec.compile()
+        data = mujoco.MjData(model)
+        # `home` over qpos0, via the same helper `roqsim render` uses -- so a model's thumbnail and its
+        # `roqsim render` output are the same picture. (Why it matters: for an articulated robot the
+        # two poses are very different, and the TIAGo Pro's arms stick straight out in front of it at
+        # qpos0.)
+        reset_to_home(model, data)
+        yield model, data
+        return
+
+    ground = mujoco.MjSpec()
+    _ground_and_light(ground)
+    with tempfile.TemporaryDirectory(prefix="roqsim-thumb-") as tmp:
+        world = Path(tmp) / "ground.xml"
+        world.write_text(ground.to_xml())
+        doc = Path(tmp) / "robot.yaml"
+        doc.write_text(
+            yaml.safe_dump(
+                {"sim": {"world": str(world)}, "components": [{"spawn_robot": {"model": ref}}]}
+            )
+        )
+        model, data, ctx, _view, _cam = build_target(str(doc), None)
+    try:
+        yield model, data
+    finally:
+        ctx.engine.shutdown()
+
+
+def _render_model(ref: str, out: Path) -> None:
+    with model_scene(ref) as (model, data):
+        _render(model, _framed_cam(model), out, data)
+
+
 def _render_mesh(obj_path: Path, out: Path) -> None:
     """Render a bare mesh (walker blueprint / prop OBJ) framed on it, via the shared preview scene."""
     model = _build_mesh_scene(str(obj_path))
@@ -142,14 +208,9 @@ def _iter_models():
     from roqsim import models as M
 
     def _render_for(name, stem):
-        asset = M.resolve_model(f"{name}:{stem}")
-
-        def _apply(spec, a=asset):
-            M.apply_assets(spec, a)
-            _ground_and_light(spec)
-
-        dest = thumb_path(asset.path)
-        return dest, (lambda a=asset, ap=_apply: _render_mjcf(a.path, dest, apply=ap))
+        ref = f"{name}:{stem}"
+        dest = thumb_path(M.resolve_model(ref).path)
+        return dest, (lambda: _render_model(ref, dest))
 
     for name, models_dir, _mesh, _tex in M.providers():
         models_dir = Path(models_dir)

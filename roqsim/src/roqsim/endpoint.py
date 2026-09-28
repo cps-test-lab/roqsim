@@ -1,76 +1,103 @@
 """Endpoints declared on a plugin's methods, typed by the method's signature.
 
-A plugin marks the methods that are its I/O ports, and the base :class:`~roqsim.plugin.Plugin`
-turns them into :class:`~roqsim.context.Endpoint`\\ s once its ``configure`` has run::
-
-    from typing import Annotated
+A plugin marks the methods that are its I/O ports; the engine registers them as
+:class:`~roqsim.context.Endpoint`\\ s after the plugin's ``configure``::
 
     from roqsim import endpoint
-    from roqsim.endpoint import Unit
+    from roqsim.types import AngularSpeed, JointState, Odometry, Speed, Twist
 
-    class BasePlugin(Plugin):
-        @endpoint.command(ros2={"service": "std_srvs.srv.Trigger"})
+    class DiffDrive(Plugin):
+        @endpoint.stream(Twist)
+        def cmd_vel(self, vx: Speed, vy: Speed = 0.0, wz: AngularSpeed = 0.0) -> None:
+            \"\"\"Body-frame velocity command, applied once per step.
+
+            Args:
+                vx: forward speed
+                vy: sideways speed; a differential drive drops it
+                wz: yaw rate
+            \"\"\"
+
+        @endpoint.out(rate="odom_rate_hz", ros2={"emit_tf": True})
+        def odom(self) -> Odometry:
+            \"\"\"Wheel odometry.\"\"\"
+
+        @endpoint.out(rate="odom_rate_hz", when="publish_joint_states")
+        def joint_states(self) -> JointState:
+            \"\"\"The wheels' positions and velocities.\"\"\"
+
+        @endpoint.command
         def tare(self) -> None:
-            ...
+            \"\"\"Zero the sensor at its current load.\"\"\"
 
-        @endpoint.stream("cmd_vel", ros2=lambda self: {"type": "geometry_msgs.msg.Twist", ...})
-        def command_twist(
-            self,
-            vx: Annotated[float, Unit("m/s"), "forward speed"],
-            w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
-        ) -> None:
-            ...
-
-        @endpoint.out("odom", rate_hz=lambda self: self.rate_hz)
-        def read_odom(self) -> Odometry:
-            ...
-
-Three kinds, by what the caller needs:
+**The method is the endpoint**: its name is the endpoint's name, the first line of its docstring
+the endpoint's documentation, and its signature the endpoint's schema. Three kinds, by what the
+caller needs:
 
 ``out``
-    The method takes no parameters and returns the neutral payload. It runs on the physics thread,
-    whenever a bridge reads. Its return annotation is the payload's type (:attr:`Endpoint.result`).
+    The method takes no parameters and returns the payload, on the physics thread, whenever a
+    bridge reads. Its return annotation is the payload's type (:attr:`Endpoint.result`).
 ``command``
-    A request with an outcome. The endpoint's ``write`` is callable from any thread: it checks the
-    named parameters against the method's signature, queues the method for the physics thread and
-    returns a :class:`~roqsim.context.CommandFuture` holding what the method returned or raised.
+    A request with an outcome. ``write`` is callable from any thread: it checks the named parameters
+    against the signature, queues the method for the physics thread and returns a
+    :class:`~roqsim.context.CommandFuture` holding what the method returned or raised.
 ``stream``
-    An inbound stream. ``write`` checks the parameters the same way and stores them in the
-    endpoint's latest-value slot, and the physics thread calls the method with the newest ones once
-    per step (while the run is paused, in the driver's idle loop). Values superseded within a step
-    are never applied.
+    An inbound stream. ``write`` checks the parameters the same way and keeps them in a latest-value
+    slot; the physics thread calls the method with the newest ones once per step (while paused, in
+    the driver's idle loop). Values superseded within a step are never applied.
 
-**The signature is the schema.** A command's or a stream's parameters are the method's own:
-annotated types, defaults (a parameter without one is required), and per parameter a unit and a
-line of documentation through :class:`typing.Annotated` -- a :class:`Unit` and a plain string. A
-bridge passes them as a mapping of names to values; ``None`` is the empty mapping. What ``write``
-accepts is checked before anything is queued: a missing required parameter, an unknown one (with
-the nearest known name), and a value of the wrong type are refused with one :class:`ParameterError`
-naming all of them -- raised into the returned future for a command, raised to the caller for a
-stream. An ``int`` passes for a ``float``, a ``bool`` for neither, and a sequence for a declared
-``numpy`` array of the declared dtype and :class:`Shape`. The resulting schema is data on the
-endpoint (:attr:`Endpoint.params`, :attr:`Endpoint.result`), so any bridge can read it.
+**Payloads are dataclasses**: the neutral types of :mod:`roqsim.types`, or any dataclass of the
+plugin's own. A ``command`` or ``stream`` names the type it takes as the decorator's first argument
+-- ``@endpoint.stream(Twist)`` -- and its parameters are that type's fields it uses, by name; or it
+takes one parameter annotated with the type, which receives the whole value. A bridge maps the type
+to its transport (the ROS bridge: a message type, a topic named after the endpoint, converters both
+ways), so a plugin writes no transport type.
 
-**A family** is one declaration for a set decided by config -- one endpoint per joint, per wheel,
-per instance. ``each`` is a callable taking the plugin and returning the items; each item makes one
-endpoint named ``<name>/<item>`` (or the name with ``{item}`` substituted), and the item is passed
-to the method as its first argument, which is not a parameter of the endpoint::
+**Parameters.** Annotated types (the unit aliases of :mod:`roqsim.types`, or ``Annotated[float,
+Unit("m/s")]`` directly), defaults (a parameter without one is required), and a line of
+documentation per parameter in the docstring's ``Args:`` section; a dataclass documents its fields
+in an ``Attributes:`` section. A bridge passes parameters as a mapping of names to values (``None``
+for none). ``write`` refuses a missing required parameter, an unknown one (naming the nearest known)
+and a value of the wrong type with one :class:`ParameterError` naming all of them -- into the future
+for a command, raised to the caller for a stream -- before anything is queued. An ``int`` passes for
+a ``float``, a ``bool`` for neither, and a sequence for a ``numpy`` array of the declared dtype and
+:class:`Shape`. The schema is data on the endpoint (:attr:`Endpoint.params`, :attr:`Endpoint.result`,
+:attr:`Endpoint.payload_type`), for any bridge to read.
 
-    @endpoint.out("joints/{item}/effort", each=lambda self: self.joint_names)
-    def effort(self, joint: str) -> Annotated[float, Unit("N*m")]:
-        ...
+**Options**:
 
-In a family every callable option -- a backend hint, ``rate_hz``, ``when``, ``owner``,
-``namespace`` -- takes ``(plugin, item)``.
+``name``
+    The endpoint's name, where it is not the method's.
+``rate``
+    Publish rate of an ``out``, Hz: a number, or the name of the plugin attribute (else config key)
+    holding it -- ``rate="odom_rate_hz"``.
+``when``
+    Whether this instance has the endpoint at all: the name of a boolean attribute or config key --
+    ``when="publish_joint_states"``.
+``lazy``
+    An ``out`` whose read is skipped while nobody subscribes.
+``each``
+    A family: one endpoint per item of the named attribute (or of what a callable returns), named
+    ``<name>/<item>`` or ``name`` with ``{item}`` substituted; the method gets the item as its first
+    argument, which is not an endpoint parameter::
 
-Keyword arguments other than the documented ones are backend hints, keyed by backend name
-(``ros2=...``). Each is a dict, or a callable taking the plugin and returning the dict (or ``None`` to
-leave that backend out) -- hints often need values known only after ``configure``. ``rate_hz`` takes
-a number or such a callable too, and ``when`` a callable deciding whether this instance has the
-endpoint at all. The owner, namespace and default name come from the plugin
-(:attr:`~roqsim.plugin.Plugin.endpoint_owner`, :meth:`~roqsim.plugin.Plugin.endpoint_namespace`,
-the method's name). An endpoint that belongs to another entity than the plugin's other ones names it
-with ``owner=`` (and ``namespace=`` where its scope differs too), a value or a callable.
+        @endpoint.out(name="joints/{item}/effort", each="joint_names")
+        def effort(self, joint: str) -> Torque: ...
+
+``owner``, ``namespace``
+    The entity an endpoint belongs to and its transport scope, where they are not the plugin's
+    (:attr:`~roqsim.plugin.Plugin.endpoint_owner`, :meth:`~roqsim.plugin.Plugin.endpoint_namespace`).
+``ros2=`` (any other keyword)
+    A backend's hints, for what the type's default mapping does not cover: a frame id, a stamped
+    variant, a QoS, a TF to emit. A dict, a callable of the plugin returning one, or ``None`` to keep
+    the endpoint off that backend.
+
+``rate``, ``when``, ``each``, ``owner``, ``namespace`` and the hints also take a callable of the
+plugin (``(plugin, item)`` in a family) for a value that has to be computed.
+
+**The world renames and tunes**: a plugin's ``topics:`` config renames an endpoint on every
+transport (:attr:`Endpoint.topic`) and its ``qos:`` config sets the endpoint's quality of service
+(:attr:`Endpoint.qos`) -- a preset name of :data:`QOS_PRESETS` or a mapping of ``reliability``,
+``durability``, ``history`` and ``depth``.
 
 :func:`declared` lists a class's endpoints, with their schema, without building a world.
 """
@@ -80,6 +107,7 @@ from __future__ import annotations
 import dataclasses
 import functools
 import inspect
+import re
 import types
 import typing
 from collections.abc import Callable, Mapping, Sequence
@@ -98,15 +126,19 @@ if TYPE_CHECKING:
 #: The kinds, and the :class:`~roqsim.context.Endpoint` direction each one is.
 DIRECTIONS = {"out": "out", "command": "in", "stream": "in"}
 
+#: Entry-point group of the transports that describe how they carry an endpoint: each entry loads a
+#: callable taking an :class:`~roqsim.context.Endpoint` and returning a JSON-ready dict.
+TRANSPORTS_GROUP = "roqsim.transports"
+
 _ATTR = "__roqsim_endpoints__"
 
 
 # -- the markers a signature is annotated with ---------------------------------------------------
 class Unit:
-    """The unit of a parameter or a result value: ``Annotated[float, Unit("m/s")]``.
+    """The unit of a parameter or a value: ``Annotated[float, Unit("m/s")]``.
 
     A plain string, spelled as :class:`roqsim.schema.Field`'s ``unit`` is, so a plugin's config and
-    its endpoints state units in one vocabulary.
+    its endpoints state units in one vocabulary. :mod:`roqsim.types` has aliases for the common ones.
     """
 
     __slots__ = ("symbol",)
@@ -149,6 +181,98 @@ class ParameterError(ValueError):
     """What a bridge passed does not fit the endpoint's parameters; the message names each misfit."""
 
 
+# -- quality of service ----------------------------------------------------------------------------
+#: The named QoS profiles an endpoint's hint or a world's ``qos:`` may give. ``default`` is what an
+#: endpoint gets when nothing names one.
+QOS_PRESETS: dict[str, dict[str, Any]] = {
+    "default": {
+        "reliability": "reliable",
+        "durability": "volatile",
+        "history": "keep_last",
+        "depth": 10,
+    },
+    "sensor_data": {
+        "reliability": "best_effort",
+        "durability": "volatile",
+        "history": "keep_last",
+        "depth": 5,
+    },
+    "services_default": {
+        "reliability": "reliable",
+        "durability": "volatile",
+        "history": "keep_last",
+        "depth": 10,
+    },
+    "latched": {
+        "reliability": "reliable",
+        "durability": "transient_local",
+        "history": "keep_last",
+        "depth": 1,
+    },
+}
+
+_QOS_CHOICES = {
+    "reliability": ("reliable", "best_effort"),
+    "durability": ("volatile", "transient_local"),
+    "history": ("keep_last", "keep_all"),
+}
+
+
+def qos_profile(spec: str | Mapping[str, Any]) -> dict[str, Any]:
+    """The full profile *spec* names: a preset of :data:`QOS_PRESETS`, or a mapping of some of
+    ``reliability``, ``durability``, ``history`` and ``depth`` over ``default``.
+
+    Raises :class:`ValueError` naming what is wrong.
+    """
+    if isinstance(spec, str):
+        if spec not in QOS_PRESETS:
+            near = nearest(spec, QOS_PRESETS)
+            hint = f" (did you mean {near!r}?)" if near else ""
+            raise ValueError(
+                f"unknown QoS preset {spec!r}{hint}; the presets are {', '.join(QOS_PRESETS)}"
+            )
+        return dict(QOS_PRESETS[spec])
+    if not isinstance(spec, Mapping):
+        raise ValueError(
+            f"a QoS is a preset name ({', '.join(QOS_PRESETS)}) or a mapping of reliability, "
+            f"durability, history and depth, got {type(spec).__name__}"
+        )
+    profile = dict(QOS_PRESETS["default"])
+    errors = []
+    for key, value in spec.items():
+        if key in _QOS_CHOICES:
+            if value not in _QOS_CHOICES[key]:
+                errors.append(f"{key} must be one of {', '.join(_QOS_CHOICES[key])}, got {value!r}")
+        elif key == "depth":
+            if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+                errors.append(f"depth must be an integer >= 1, got {value!r}")
+        else:
+            near = nearest(str(key), [*_QOS_CHOICES, "depth"])
+            errors.append(
+                f"unknown QoS key {key!r}" + (f" (did you mean {near!r}?)" if near else "")
+            )
+        profile[key] = value
+    if errors:
+        raise ValueError("; ".join(errors))
+    return profile
+
+
+def validate_qos_config(config: Mapping[str, Any]) -> list[str]:
+    """Errors of a plugin's ``qos:`` config: a mapping of endpoint name to a QoS."""
+    qos = config.get("qos")
+    if qos is None:
+        return []
+    if not isinstance(qos, Mapping):
+        return ["'qos' must be a mapping of endpoint name -> QoS preset or profile"]
+    errors = []
+    for name, spec in qos.items():
+        try:
+            qos_profile(spec)
+        except ValueError as exc:
+            errors.append(f"qos[{name!r}]: {exc}")
+    return errors
+
+
 # -- the schema, as data ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ValueType:
@@ -156,8 +280,9 @@ class ValueType:
 
     ``kind`` is what a bridge dispatches on: ``float``, ``int``, ``bool``, ``str``, ``array`` (numpy,
     with ``dtype``/``shape`` where declared), ``list`` (``items`` has the one element type),
-    ``tuple`` (``items`` has one type per position), ``dict``, ``struct`` (a dataclass; ``fields``),
-    ``none``, ``any`` (unannotated, or not describable further; ``name`` still says what it is).
+    ``tuple`` (``items`` has one type per position), ``dict``, ``struct`` (a dataclass; ``fields``,
+    and ``cls`` the class), ``none``, ``any`` (unannotated, or not describable further; ``name``
+    still says what it is).
     """
 
     kind: str
@@ -221,9 +346,13 @@ def _plain(value):
 _SCALARS = {float: "float", int: "int", bool: "bool", str: "str"}
 
 
-def value_type(hint: Any, *, where: str = "") -> ValueType:
-    """The :class:`ValueType` an annotation declares (``Annotated`` markers included)."""
-    unit, doc, shape = "", "", None
+def value_type(hint: Any, *, where: str = "", doc: str = "") -> ValueType:
+    """The :class:`ValueType` an annotation declares, with its :class:`Unit` and :class:`Shape`.
+
+    Documentation comes from a docstring (``doc``), never from the annotation: a plain string in
+    ``Annotated`` is refused, so a parameter is documented in one place.
+    """
+    unit, shape = "", None
     if typing.get_origin(hint) is typing.Annotated:
         hint, *meta = typing.get_args(hint)
         for m in meta:
@@ -232,7 +361,10 @@ def value_type(hint: Any, *, where: str = "") -> ValueType:
             elif isinstance(m, Shape):
                 shape = m.dims
             elif isinstance(m, str):
-                doc = m
+                raise TypeError(
+                    f"{where}: {m!r} documents a value inside its annotation; document a parameter "
+                    f"in the docstring's Args: section and a dataclass field in Attributes:"
+                )
     base = _base_type(hint, where)
     return dataclasses.replace(
         base, unit=unit or base.unit, doc=doc or base.doc, shape=shape or base.shape
@@ -277,7 +409,9 @@ def _base_type(hint: Any, where: str) -> ValueType:
     if origin in (dict, Mapping) or hint in (dict, Mapping):
         return ValueType("dict", "dict")
     if isinstance(hint, type) and dataclasses.is_dataclass(hint):
-        return ValueType("struct", hint.__name__, fields=_dataclass_fields(hint), cls=hint)
+        return ValueType(
+            "struct", hint.__name__, doc=doc_summary(hint), fields=_dataclass_fields(hint), cls=hint
+        )
     if isinstance(hint, type):
         return ValueType("any", hint.__name__, cls=hint)
     return ValueType("any", _name(hint))
@@ -287,19 +421,90 @@ def _name(hint: Any) -> str:
     return getattr(hint, "__name__", None) or str(hint).replace("typing.", "")
 
 
+# -- docstrings --------------------------------------------------------------------------------------
+_SECTION = re.compile(r"^(\s*)(Args|Attributes):\s*$")
+_ENTRY = re.compile(r"^(\s*)(\w+)(?:\s*\([^)]*\))?\s*:\s*(.*)$")
+
+
+def doc_summary(obj: Any) -> str:
+    """The first line of *obj*'s own docstring, or ``""``."""
+    doc = inspect.cleandoc(obj.__doc__ or "") if getattr(obj, "__doc__", None) else ""
+    return doc.splitlines()[0].strip() if doc else ""
+
+
+@functools.cache
+def doc_entries(obj: Any, section: str) -> dict[str, str]:
+    """The ``name: text`` entries of *obj*'s docstring section (``Args`` or ``Attributes``).
+
+    Google style: the section header on its own line, one entry per name indented below it, and a
+    continuation indented further.
+    """
+    doc = inspect.cleandoc(obj.__doc__ or "")
+    entries: dict[str, str] = {}
+    lines = doc.splitlines()
+    i = 0
+    while i < len(lines):
+        head = _SECTION.match(lines[i])
+        i += 1
+        if head is None or head.group(2) != section:
+            continue
+        base = len(head.group(1))
+        entry_indent = None
+        current = None
+        while i < len(lines):
+            line = lines[i]
+            if not line.strip():
+                i += 1
+                continue
+            indent = len(line) - len(line.lstrip())
+            if indent <= base:
+                break
+            match = _ENTRY.match(line)
+            if match and (entry_indent is None or indent == entry_indent):
+                entry_indent = indent
+                current = match.group(2)
+                entries[current] = match.group(3).strip()
+            elif current is not None:
+                entries[current] = f"{entries[current]} {line.strip()}".strip()
+            i += 1
+    return entries
+
+
+def _refuse_undeclared(documented: dict[str, str], names: Sequence[str], where: str, section: str):
+    extra = [n for n in documented if n not in names]
+    if extra:
+        raise TypeError(
+            f"{where}: the docstring's {section}: section documents {', '.join(map(repr, extra))}, "
+            f"which {'is' if len(extra) == 1 else 'are'} not among {', '.join(names) or 'nothing'}"
+        )
+
+
 @functools.cache
 def _dataclass_fields(cls: type) -> tuple[Param, ...]:
-    hints = _hints(cls, cls.__qualname__)
+    where = cls.__qualname__
+    hints = _hints(cls, where)
+    docs = doc_entries(cls, "Attributes")
+    names = [f.name for f in dataclasses.fields(cls)]
+    _refuse_undeclared(docs, names, where, "Attributes")
     out = []
     for f in dataclasses.fields(cls):
         has_default = (
             f.default is not dataclasses.MISSING or f.default_factory is not dataclasses.MISSING
         )
-        default = f.default if f.default is not dataclasses.MISSING else None
+        if f.default is not dataclasses.MISSING:
+            default = f.default
+        elif f.default_factory is not dataclasses.MISSING:
+            default = f.default_factory()
+        else:
+            default = None
         out.append(
             Param(
                 f.name,
-                value_type(hints.get(f.name, inspect.Parameter.empty), where=cls.__qualname__),
+                value_type(
+                    hints.get(f.name, inspect.Parameter.empty),
+                    where=f"{where}.{f.name}",
+                    doc=docs.get(f.name, ""),
+                ),
                 required=not has_default,
                 default=default,
             )
@@ -319,18 +524,34 @@ def _hints(obj: Any, where: str) -> dict:
         ) from exc
 
 
+# -- a signature, read -------------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Signature:
+    """What a decorated method declares: its parameters, its result, and the payload it carries."""
+
+    params: tuple[Param, ...]
+    result: ValueType | None
+    #: The type a transport carries: an ``out``'s result, or the type a ``command``/``stream`` takes
+    #: (its decorator's, or its one dataclass parameter's). ``None`` for an inbound endpoint that
+    #: takes plain parameters of no declared type.
+    payload: ValueType | None
+
+
 @functools.cache
-def signature(fn: Callable, kind: str, family: bool) -> tuple[tuple[Param, ...], ValueType | None]:
-    """``(params, result)`` of a decorated method: the endpoint's schema, read off its signature.
+def signature(fn: Callable, kind: str, family: bool, msg: type | None = None) -> Signature:
+    """The endpoint's schema, read off a decorated method.
 
     The first parameter is ``self``, and in a family the second is the item. An ``out`` takes no
     other parameter; a ``stream`` has no result. ``*args``, ``**kwargs`` and positional-only
-    parameters are refused: a bridge names every parameter it passes.
+    parameters are refused: a bridge names every parameter it passes. With *msg*, each parameter is
+    one of its fields, of the same kind and unit.
     """
     where = fn.__qualname__
     hints = _hints(fn, where)
+    docs = doc_entries(fn, "Args")
     sig = inspect.signature(fn)
     params = list(sig.parameters.values())[2 if family else 1 :]
+    _refuse_undeclared(docs, [p.name for p in params], where, "Args")
     out = []
     for p in params:
         if p.kind not in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY):
@@ -341,20 +562,63 @@ def signature(fn: Callable, kind: str, family: bool) -> tuple[tuple[Param, ...],
         out.append(
             Param(
                 p.name,
-                value_type(hints.get(p.name, inspect.Parameter.empty), where=where),
+                value_type(
+                    hints.get(p.name, inspect.Parameter.empty),
+                    where=f"{where}({p.name})",
+                    doc=docs.get(p.name, ""),
+                ),
                 required=p.default is inspect.Parameter.empty,
                 default=None if p.default is inspect.Parameter.empty else p.default,
             )
         )
-    if kind == "out" and out:
+    params_t = tuple(out)
+    if kind == "out" and params_t:
         raise TypeError(
             f"{where}: an out endpoint takes no parameters, but declares "
-            f"{', '.join(p.name for p in out)}"
+            f"{', '.join(p.name for p in params_t)}"
         )
     result = None
     if kind != "stream" and sig.return_annotation is not inspect.Signature.empty:
-        result = value_type(hints.get("return"), where=where)
-    return tuple(out), result
+        result = value_type(hints.get("return"), where=f"{where} -> return")
+    if kind == "out":
+        return Signature(params_t, result, result)
+    return Signature(params_t, result, _inbound_payload(params_t, msg, where))
+
+
+def _inbound_payload(params: tuple[Param, ...], msg: type | None, where: str) -> ValueType | None:
+    if msg is None:
+        if len(params) == 1 and params[0].type.kind == "struct":
+            return params[0].type
+        return None
+    if not (isinstance(msg, type) and dataclasses.is_dataclass(msg)):
+        raise TypeError(f"{where}: an endpoint's payload type is a dataclass, got {msg!r}")
+    carried = value_type(msg, where=where)
+    if len(params) == 1 and params[0].type.cls is msg:
+        return carried
+    fields = {f.name: f for f in carried.fields}
+    errors = []
+    for p in params:
+        f = fields.get(p.name)
+        if f is None:
+            near = nearest(p.name, fields)
+            errors.append(
+                f"{p.name!r} is not a field of {msg.__name__}"
+                + (f" (did you mean {near!r}?)" if near else "")
+            )
+        elif f.type.kind != p.type.kind and not (f.type.kind == "float" and p.type.kind == "int"):
+            errors.append(
+                f"{p.name!r} is {p.type.name} but {msg.__name__}.{p.name} is {f.type.name}"
+            )
+        elif f.type.unit and p.type.unit and f.type.unit != p.type.unit:
+            errors.append(
+                f"{p.name!r} is in {p.type.unit} but {msg.__name__}.{p.name} in {f.type.unit}"
+            )
+    if errors:
+        raise TypeError(
+            f"{where}: the parameters of an endpoint taking {msg.__name__} are its fields, by name "
+            f"({', '.join(fields)}): {'; '.join(errors)}"
+        )
+    return carried
 
 
 # -- checking what a bridge passed -----------------------------------------------------------------
@@ -485,6 +749,9 @@ def bind(params: tuple[Param, ...], payload: Any, where: str = "endpoint") -> di
 
 
 # -- declaring -------------------------------------------------------------------------------------
+_Option = Any  # a value, an attribute/config key name, or a callable of the plugin
+
+
 @dataclass(frozen=True)
 class EndpointSpec:
     """One decorated endpoint, as declared on the class."""
@@ -492,21 +759,22 @@ class EndpointSpec:
     kind: str
     name: str
     attr: str
-    rate_hz: float | Callable[..., float] = 0.0
+    msg: type | None = None
+    rate: _Option = 0.0
     lazy: bool = False
-    when: Callable[..., bool] | None = None
-    each: Callable[[Any], Any] | None = None
+    when: _Option = None
+    each: _Option = None
     owner: str | Callable[..., str] | None = None
     namespace: str | Callable[..., str] | None = None
-    backend: dict[str, dict | Callable[..., dict | None]] = field(default_factory=dict)
+    backend: dict[str, Any] = field(default_factory=dict)
 
     @property
     def direction(self) -> str:
         return DIRECTIONS[self.kind]
 
-    def signature(self, cls: type) -> tuple[tuple[Param, ...], ValueType | None]:
-        """``(params, result)`` read off the method's signature on *cls*."""
-        return signature(getattr(cls, self.attr), self.kind, self.each is not None)
+    def signature(self, cls: type) -> Signature:
+        """The schema, read off the method on *cls*."""
+        return signature(getattr(cls, self.attr), self.kind, self.each is not None, self.msg)
 
     def endpoint_name(self, item: Any = None) -> str:
         if self.each is None:
@@ -515,59 +783,142 @@ class EndpointSpec:
             return self.name.replace("{item}", str(item))
         return f"{self.name}/{item}"
 
+    def prototype(self, cls: type) -> Endpoint:
+        """An unbound :class:`Endpoint` of what the class alone says: its schema and static hints.
+
+        A hint computed at configure time is not evaluated; the backend's entry says so.
+        """
+        sig = self.signature(cls)
+        backend = {}
+        for key, hints in self.backend.items():
+            if hints is None or isinstance(hints, Mapping):
+                backend[key] = None if hints is None else dict(hints)
+            else:
+                backend[key] = {}
+        return Endpoint(
+            name=self.endpoint_name("{item}") if self.each is not None else self.name,
+            direction=self.direction,
+            owner="",
+            backend=backend,
+            params=None if self.kind == "out" else sig.params,
+            result=sig.result,
+            payload_type=sig.payload,
+            transport=True,
+            rate_hz=float(self.rate) if isinstance(self.rate, (int, float)) else 0.0,
+            lazy=self.lazy,
+        )
+
     def describe(self, cls: type) -> dict:
-        """What can be said of it without an instance: its schema and static values, never a
-        hint's contents."""
-        doc = (getattr(cls, self.attr).__doc__ or "").strip().splitlines()
-        params, result = self.signature(cls)
-        row = {
+        """What can be said of it without an instance: its schema, its options, and how each
+        installed transport carries it."""
+        sig = self.signature(cls)
+        row: dict[str, Any] = {
             "name": self.endpoint_name("{item}") if self.each is not None else self.name,
             "kind": self.kind,
             "direction": self.direction,
             "backends": sorted(self.backend),
             "conditional": self.when is not None,
-            "doc": doc[0] if doc else None,
+            "doc": doc_summary(getattr(cls, self.attr)) or None,
         }
         if self.each is not None:
-            row["family"] = True
+            row["family"] = _option_name(self.each)
+        if self.when is not None:
+            row["when"] = _option_name(self.when)
         if self.kind != "out":
-            row["params"] = [p.describe() for p in params]
+            row["params"] = [p.describe() for p in sig.params]
         if self.kind != "stream":
-            row["result"] = result.describe() if result is not None else None
-        if self.kind == "out" and not callable(self.rate_hz):
-            row["rate_hz"] = float(self.rate_hz)
+            row["result"] = sig.result.describe() if sig.result is not None else None
+        if sig.payload is not None:
+            row["payload"] = sig.payload.name
+        if self.kind == "out":
+            row["rate_hz"] = _describe_rate(cls, self.rate)
+            if self.lazy:
+                row["lazy"] = True
+        computed = sorted(k for k, v in self.backend.items() if v is not None and callable(v))
+        if computed:
+            row["hints_at_configure"] = computed
+        transports = describe_transports(self.prototype(cls))
+        if transports:
+            row["transports"] = transports
         return row
 
 
-def _decorator(kind: str, name: str | None, **fields) -> Callable:
-    def mark(fn):
-        specs = list(getattr(fn, _ATTR, ()))
-        specs.append((kind, name, fields))
-        setattr(fn, _ATTR, tuple(specs))
-        return fn
+def _option_name(option: _Option) -> str:
+    return option if isinstance(option, str) else "computed"
 
-    return mark
+
+def _describe_rate(cls: type, rate: _Option):
+    if isinstance(rate, (int, float)):
+        return float(rate)
+    if isinstance(rate, str):
+        field_spec = (getattr(cls, "CONFIG_SCHEMA", None) or {}).get(rate)
+        row: dict[str, Any] = {"from": rate}
+        if field_spec is not None and field_spec.default is not None:
+            row["default"] = field_spec.default
+        return row
+    return "computed"
+
+
+def describe_transports(ep: Endpoint) -> dict:
+    """How each installed transport (:data:`TRANSPORTS_GROUP`) carries *ep*."""
+    from .registry import _entry_points
+
+    out = {}
+    for entry in _entry_points(TRANSPORTS_GROUP):
+        try:
+            out[entry.name] = entry.load()(ep)
+        except Exception as exc:  # noqa: BLE001 - a transport that cannot say is reported, not fatal
+            out[entry.name] = {"error": f"{type(exc).__name__}: {exc}"}
+    return out
+
+
+def _decorator(kind: str, fn: Callable | None, **fields) -> Callable:
+    def mark(method):
+        specs = list(getattr(method, _ATTR, ()))
+        specs.append((kind, fields))
+        setattr(method, _ATTR, tuple(specs))
+        return method
+
+    return mark(fn) if fn is not None else mark
+
+
+def _split(first: Any, kind: str) -> tuple[Callable | None, type | None]:
+    """``@endpoint.out`` bare (the method), or ``@endpoint.stream(Twist)`` (the payload type)."""
+    if first is None:
+        return None, None
+    if inspect.isfunction(first):
+        return first, None
+    if kind == "out":
+        raise TypeError(
+            f"endpoint.out takes no positional argument but the method it decorates, got {first!r}; "
+            f"the payload type is the method's return annotation, and a name is name=..."
+        )
+    return None, first
 
 
 _Owner = str | Callable[..., str] | None
 
 
 def out(
-    name: str | None = None,
+    fn: Callable | None = None,
+    /,
     *,
-    rate_hz: float | Callable[..., float] = 0.0,
+    name: str | None = None,
+    rate: _Option = 0.0,
     lazy: bool = False,
-    when: Callable[..., bool] | None = None,
-    each: Callable[[Any], Any] | None = None,
+    when: _Option = None,
+    each: _Option = None,
     owner: _Owner = None,
     namespace: _Owner = None,
     **backend,
 ) -> Callable:
     """Declare the decorated method as an ``out`` endpoint; see the module docstring."""
+    method, _ = _split(fn, "out")
     return _decorator(
         "out",
-        name,
-        rate_hz=rate_hz,
+        method,
+        name=name,
+        rate=rate,
         lazy=lazy,
         when=when,
         each=each,
@@ -578,38 +929,62 @@ def out(
 
 
 def command(
-    name: str | None = None,
+    msg: type | Callable | None = None,
+    /,
     *,
-    when: Callable[..., bool] | None = None,
-    each: Callable[[Any], Any] | None = None,
+    name: str | None = None,
+    when: _Option = None,
+    each: _Option = None,
     owner: _Owner = None,
     namespace: _Owner = None,
     **backend,
 ) -> Callable:
     """Declare the decorated method as a command (``in``, with an outcome).
 
-    The method's parameters are the command's; what it returns is the future's result.
+    *msg* is the payload type, when the parameters are its fields. What the method returns is the
+    future's result.
     """
+    method, payload = _split(msg, "command")
     return _decorator(
-        "command", name, when=when, each=each, owner=owner, namespace=namespace, backend=backend
+        "command",
+        method,
+        name=name,
+        msg=payload,
+        when=when,
+        each=each,
+        owner=owner,
+        namespace=namespace,
+        backend=backend,
     )
 
 
 def stream(
-    name: str | None = None,
+    msg: type | Callable | None = None,
+    /,
     *,
-    when: Callable[..., bool] | None = None,
-    each: Callable[[Any], Any] | None = None,
+    name: str | None = None,
+    when: _Option = None,
+    each: _Option = None,
     owner: _Owner = None,
     namespace: _Owner = None,
     **backend,
 ) -> Callable:
     """Declare the decorated method as an inbound stream (``in``, latest value wins per step).
 
-    The method's parameters are the stream's; it is called with the newest ones once per step.
+    *msg* is the payload type, when the parameters are its fields. The method is called with the
+    newest parameters once per step.
     """
+    method, payload = _split(msg, "stream")
     return _decorator(
-        "stream", name, when=when, each=each, owner=owner, namespace=namespace, backend=backend
+        "stream",
+        method,
+        name=name,
+        msg=payload,
+        when=when,
+        each=each,
+        owner=owner,
+        namespace=namespace,
+        backend=backend,
     )
 
 
@@ -626,16 +1001,32 @@ def declared(cls: type) -> list[EndpointSpec]:
             by_attr.pop(attr, None)
             if marks is None:
                 continue
-            by_attr[attr] = [
-                EndpointSpec(kind=kind, name=name or attr, attr=attr, **fields)
-                for kind, name, fields in marks
-            ]
+            specs = []
+            for kind, fields in marks:
+                fields = dict(fields)
+                specs.append(
+                    EndpointSpec(kind=kind, name=fields.pop("name") or attr, attr=attr, **fields)
+                )
+            by_attr[attr] = specs
     return [spec for specs in by_attr.values() for spec in specs]
 
 
 # -- building ----------------------------------------------------------------------------------------
-def _value(value, *args):
-    return value(*args) if callable(value) else value
+def option(plugin: Plugin, value: _Option, *args):
+    """An option's value for *plugin*: a callable's result, or the named attribute (else config key),
+    or the value itself."""
+    if callable(value):
+        return value(*args)
+    if isinstance(value, str):
+        if hasattr(plugin, value):
+            return getattr(plugin, value)
+        if value in plugin.config:
+            return plugin.config[value]
+        raise TypeError(
+            f"{type(plugin).__name__}: an endpoint option names {value!r}, which is neither an "
+            f"attribute of the plugin nor a key of its config"
+        )
+    return value
 
 
 def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
@@ -647,16 +1038,15 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
     default_owner = plugin.endpoint_owner
     default_namespace = plugin.endpoint_namespace(ctx)
     for spec in specs:
-        params, result = spec.signature(type(plugin))
+        sig = spec.signature(type(plugin))
         method = getattr(plugin, spec.attr)
         if spec.each is None:
             instances = [((plugin,), method)]
         else:
-            instances = [
-                ((plugin, item), functools.partial(method, item)) for item in spec.each(plugin)
-            ]
+            items = option(plugin, spec.each, plugin)
+            instances = [((plugin, item), functools.partial(method, item)) for item in items]
         for args, call in instances:
-            if spec.when is not None and not spec.when(*args):
+            if spec.when is not None and not option(plugin, spec.when, *args):
                 continue
             name = spec.endpoint_name(args[1] if len(args) > 1 else None)
             owner = default_owner if spec.owner is None else _value(spec.owner, *args)
@@ -666,35 +1056,70 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
                 namespace = plugin.endpoint_namespace(ctx, owner)
             else:
                 namespace = default_namespace
-            backend = {}
+            backend: dict[str, dict | None] = {}
             for key, hints in spec.backend.items():
                 resolved = _value(hints, *args)
-                if resolved is not None:
-                    backend[key] = dict(resolved)
+                backend[key] = None if resolved is None else dict(resolved)
             ep = Endpoint(
                 name=name,
                 direction=spec.direction,
                 owner=owner,
                 namespace=namespace,
                 backend=backend,
-                result=result,
+                result=sig.result,
+                payload_type=sig.payload,
+                topic=plugin.topic_override(name),
+                transport=True,
             )
             where = f"{owner}/{name}"
             if spec.kind == "out":
                 ep.read = call
-                ep.rate_hz = float(_value(spec.rate_hz, *args))
+                ep.rate_hz = float(option(plugin, spec.rate, *args))
                 ep.lazy = spec.lazy
             elif spec.kind == "command":
-                ep.params = params
-                ep.write = _submitter(ctx, call, params, where)
+                ep.params = sig.params
+                ep.write = _submitter(ctx, call, sig.params, where)
                 ep.marshalled = True
             else:
-                ep.params = params
+                ep.params = sig.params
                 slot = ctx.stream_slot(where, lambda kwargs, _call=call: _call(**kwargs))
-                ep.write = _streamer(slot, params, where)
+                ep.write = _streamer(slot, sig.params, where)
                 ep.marshalled = True
             endpoints.append(ep)
     return endpoints
+
+
+def _value(value, *args):
+    return value(*args) if callable(value) else value
+
+
+def apply_world_qos(plugin: Plugin, endpoints: Sequence[Endpoint]) -> None:
+    """Set each endpoint's :attr:`~roqsim.context.Endpoint.qos` from *plugin*'s ``qos:`` config.
+
+    *endpoints* are the ones the plugin registered. A key naming none of them is refused, naming the
+    ones it has: a QoS that silently applied to nothing would leave the world believing it tuned a
+    stream it did not.
+    """
+    wanted = plugin.config.get("qos") or {}
+    if not wanted:
+        return
+    by_name: dict[str, list[Endpoint]] = {}
+    for ep in endpoints:
+        by_name.setdefault(ep.name, []).append(ep)
+    unknown = [key for key in wanted if key not in by_name]
+    if unknown:
+        hints = [
+            f"{k!r}" + (f" (did you mean {n!r}?)" if (n := nearest(k, by_name)) else "")
+            for k in unknown
+        ]
+        raise ValueError(
+            f"{plugin.label}: qos names {', '.join(hints)}, which it does not register; its "
+            f"endpoints are {', '.join(sorted(by_name)) or 'none'}"
+        )
+    for key, spec in wanted.items():
+        profile = qos_profile(spec)
+        for ep in by_name[key]:
+            ep.qos = dict(profile)
 
 
 def _submitter(ctx: SimContext, method: Callable, params: tuple[Param, ...], where: str):
@@ -702,6 +1127,9 @@ def _submitter(ctx: SimContext, method: Callable, params: tuple[Param, ...], whe
         try:
             kwargs = _bind(params, payload, where)
         except ParameterError as exc:
+            # Logged here as well as handed back: a transport that fires and forgets (a topic
+            # feeding a command) never reads the future, and the refusal must not vanish.
+            ctx.logger.warning("%s", exc)
             refused = CommandFuture()
             refused._resolve(error=exc)
             return refused
