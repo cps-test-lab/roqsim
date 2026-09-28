@@ -1,8 +1,7 @@
 """The global planner: A* over the occupancy grid, and the grid's own inflation.
 
-These moved here with the code they test, out of ``roqsim_walker``. Nothing about them is
-pedestrian-specific -- the planner is the same one a navigated prop or an opponent robot searches
-with -- which is why the code left that package in the first place.
+Nothing about them is pedestrian-specific -- the planner is the same one a navigated prop or an
+opponent robot searches with -- which is why they live here rather than in ``roqsim_walker``.
 """
 
 from __future__ import annotations

@@ -7,8 +7,8 @@ sim:
   pacing: realtime
 
 components:
-  # diff_drive (skid-steer, 4 driven wheels + the calibrated slip_factor) and the lidar come from
-  # the panther model manifest.
+  # diff_drive (skid-steer, 4 driven wheels + the calibrated slip_factor) and the RPLIDAR S3
+  # come from the panther model manifest.
   - spawn_robot:
       model: panther
       pose:

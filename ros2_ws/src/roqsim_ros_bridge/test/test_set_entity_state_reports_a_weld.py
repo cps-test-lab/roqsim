@@ -1,14 +1,14 @@
 """``SetEntityState`` says WHY it could not place an entity, in the service's own terms.
 
-The failure this guards produced no crash and no clue. A placement plugin compiles welded
+The failure this guards produces no crash and no clue. A placement plugin compiles welded
 scenery by default; a welded body carries no free joint; and the handler places an entity by
 writing one. So a world that parks an obstacle out of the way and teleports it in on cue
-failed on its first call, in every run, while the world compiled, the entity existed under
-the name the trial used, and ``GetEntities`` listed it -- and the only thing said about it
-was that a service call failed.
+fails on its first call, in every run, while the world compiles, the entity exists under
+the name the trial uses, and ``GetEntities`` lists it -- and without a named cause the only
+thing said about it is that a service call failed.
 
-``SpawnEntity`` already answered this case in full. Both doors reach the same check, so both
-say the same thing.
+``SpawnEntity`` answers this case in full. Both doors reach the same check, so both say the
+same thing.
 """
 
 from __future__ import annotations
@@ -101,11 +101,11 @@ def _run(plugin, req):
 def test_a_welded_entity_is_refused_by_naming_the_weld():
     resp = _run(_plugin(writable=False), _Req("dynamic_0", (1.0, 2.0, 0.03)))
     assert resp.result.result == Result.RESULT_OPERATION_FAILED
-    # The name, the cause and the fix -- the three things the campaign log had none of.
+    # The name, the cause and the fix -- the three things a bare service failure gives none of.
     assert "dynamic_0" in resp.result.error_message
     assert "free joint" in resp.result.error_message
-    # The advice is the SHARED one, verbatim. Naming only `physics` sent whoever wanted a placed
-    # obstacle to the mode that lets the solver move it -- and left this transport recommending
+    # The advice is the SHARED one, verbatim. Naming only `physics` would send whoever wants a placed
+    # obstacle to the mode that lets the solver move it -- and leave this transport recommending
     # something different from the in-process one for the identical refusal.
     assert PLACEABLE_MODES_HINT in resp.result.error_message
     assert "motion: driven" in resp.result.error_message
@@ -136,8 +136,8 @@ def test_an_unknown_entity_is_still_not_found():
 def test_a_requested_twist_reaches_the_write():
     """The state includes a velocity, and asking for one has to arrive.
 
-    `EntityState` carries a twist and `GetEntityState` reports one, but this handler used to apply
-    only the pose -- and answer RESULT_OK. A caller could read a velocity it was unable to set, with
+    `EntityState` carries a twist and `GetEntityState` reports one. A handler that applied only the
+    pose -- and answered RESULT_OK -- would let a caller read a velocity it was unable to set, with
     nothing in the reply saying half the request had been dropped.
     """
     plugin = _plugin(writable=True)

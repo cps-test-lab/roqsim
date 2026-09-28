@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from roqsim.clock import SHORTFALL_REPORT_SHARE, Pacer
 from roqsim.config import load_config_from_dict
 from roqsim.runner import run
@@ -39,8 +41,8 @@ def test_pacer_factor_parsing():
 # -- pacing shortfall ---------------------------------------------------------------------
 # Falling behind is absorbed on purpose: catching up would deliver sim time faster than the
 # requested rate, which against a live stack is worse than being slow. Counting it is what
-# stops that absorption from being silent -- a run that held 0.34x realtime for five minutes
-# reported nothing until its job deadline killed it, and the shortfall had to be
+# stops that absorption from being silent -- uncounted, a run holding 0.34x realtime for five
+# minutes reports nothing until its job deadline kills it, and the shortfall has to be
 # reconstructed from run.clock_map.csv afterwards.
 
 
@@ -138,3 +140,96 @@ def test_scenario_adapter_lifecycle(tmp_path: Path):
     assert counts["pre_step"] == 7
     sim.shutdown()
     assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_recording_cannot_close(
+    tmp_path: Path, monkeypatch
+):
+    """A recording whose close raises (a full disk) still leaves the engine shut down."""
+    from roqsim.capture import RecordingError
+
+    class _Rec:
+        frames = 0
+
+        def __init__(self, ctx, path, rate, **kw):
+            pass
+
+        def sample(self, *a, **k):
+            return False
+
+        def close(self):
+            raise RecordingError("disk full")
+
+    monkeypatch.setattr("roqsim.capture.StateRecorder", _Rec)
+    monkeypatch.setenv("ROQSIM_RECORD", str(tmp_path / "run.npz"))
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim.step()
+    ctx = sim.context
+    with pytest.raises(RecordingError, match="disk full"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None
+
+
+def test_scenario_adapter_shuts_the_engine_down_when_the_viewer_cannot_close(tmp_path: Path):
+    """A viewer whose close raises still leaves the engine shut down."""
+
+    class _Viewer:
+        def close(self):
+            raise RuntimeError("GL context lost")
+
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    sim.reset()
+    sim._viewer = _Viewer()
+    ctx = sim.context
+    with pytest.raises(RuntimeError, match="GL context lost"):
+        sim.shutdown()
+    assert ctx.blackboard.get("dummy_counts::d0")["shutdown"] == 1
+    assert sim._engine is None and sim._viewer is None
+
+
+def test_scenario_adapter_holds_no_engine_whose_setup_failed(tmp_path: Path, monkeypatch):
+    """After a failed setup the next call builds a fresh engine rather than stepping the broken one."""
+    from roqsim.engine import Engine
+
+    real_setup = Engine.setup
+
+    def failing_setup(self):
+        raise RuntimeError("configure failed")
+
+    monkeypatch.setattr(Engine, "setup", failing_setup)
+    sim = MujocoSim(world=_write_world(tmp_path))
+    sim.setup()
+    with pytest.raises(RuntimeError, match="configure failed"):
+        sim.reset()
+    assert sim.context is None
+
+    monkeypatch.setattr(Engine, "setup", real_setup)
+    sim.step()
+    assert sim.context.blackboard.get("dummy_counts::d0")["pre_step"] == 1
+    sim.shutdown()
+
+
+def test_scenario_adapter_scene_export_lands_in_the_run_directory(tmp_path: Path, monkeypatch):
+    """A relative ``ROQSIM_SCENE_EXPORT_DIR`` resolves against ``RUN_OUTPUT_DIR``, then ``output_dir``."""
+    world = _write_world(tmp_path)
+    run_dir, root = tmp_path / "run", tmp_path / "shared"
+    monkeypatch.setenv("ROQSIM_SCENE_EXPORT_DIR", "scene")
+    monkeypatch.setenv("RUN_OUTPUT_DIR", str(run_dir))
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (run_dir / "scene" / "scene.json").is_file()
+    assert not (root / "scene").exists()
+
+    # Without a per-run directory the scenario's own output_dir is the fallback.
+    monkeypatch.delenv("RUN_OUTPUT_DIR")
+    sim = MujocoSim(world=world)
+    sim.setup(output_dir=str(root))
+    sim.reset()
+    sim.shutdown()
+    assert (root / "scene" / "scene.json").is_file()

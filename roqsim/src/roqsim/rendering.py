@@ -12,6 +12,8 @@ from must not be mutated by another thread meanwhile.
 
 from __future__ import annotations
 
+import contextlib
+import gc
 import logging
 import math
 import os
@@ -21,6 +23,7 @@ import mujoco
 import numpy as np
 
 from . import raycast
+from .exit_status import NO_GL
 from .presence import ABSENT_GEOM_GROUP
 
 _logger = logging.getLogger(__name__)
@@ -115,6 +118,77 @@ def _frame_distance(model: mujoco.MjModel, radius: float, aspect: float, margin:
     return margin * radius / math.sin(half_fov)
 
 
+def scene_corners(model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray | None:
+    """The eight corners of the world-space box around every geom with a bound, or ``None``.
+
+    Each geom's own ``geom_aabb`` (stated in its rotated frame) is carried into world space corner by
+    corner, so a wall stays a wall and not the sphere around it -- which is what makes this tight for
+    the rooms recordings are made in. Planes have no bound and are skipped; the geoms that stand on
+    them say where the scene is. ``data`` must be forward-kinematics-current.
+    """
+    lo = np.full(3, np.inf)
+    hi = np.full(3, -np.inf)
+    signs = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+    for g in range(model.ngeom):
+        if float(model.geom_rbound[g]) <= 0.0:
+            continue
+        center, half = model.geom_aabb[g, :3], model.geom_aabb[g, 3:]
+        xmat = data.geom_xmat[g].reshape(3, 3)
+        corners = data.geom_xpos[g] + (center + signs * half) @ xmat.T
+        lo = np.minimum(lo, corners.min(axis=0))
+        hi = np.maximum(hi, corners.max(axis=0))
+    if not np.all(np.isfinite(lo)):
+        return None
+    return np.array(
+        [[x, y, z] for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
+    )
+
+
+def scene_camera(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    aspect: float = 1.0,
+    azimuth: float = 90.0,
+    elevation: float = -45.0,
+    margin: float = 1.05,
+) -> mujoco.MjvCamera:
+    """The whole scene from above: every geom in the frame, as close as the field of view allows.
+
+    Looks at the centre of the scene's box from ``azimuth``/``elevation`` (MuJoCo's default orbit:
+    angled, not top-down, so walls and heights read) and backs off exactly far enough that all eight
+    corners of that box fall inside the view, in both the vertical field and the one the frame's
+    ``aspect`` gives it horizontally. Falls back to :func:`default_free_camera` when nothing in the
+    model has a bound.
+    """
+    cam = default_free_camera(model)
+    corners = scene_corners(model, data)
+    if corners is None:
+        return cam
+    cam.azimuth, cam.elevation = float(azimuth), float(elevation)
+    cam.lookat[:] = (corners.min(axis=0) + corners.max(axis=0)) / 2.0
+    az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
+    forward = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
+    right = np.array([-math.sin(az), math.cos(az), 0.0])
+    up = np.cross(right, forward)
+    half_fovy = math.radians(float(model.vis.global_.fovy)) / 2.0
+    tan_v = math.tan(half_fovy)
+    tan_h = tan_v * max(float(aspect), 1e-6)
+    needed = 0.0
+    for corner in corners:
+        rel = corner - cam.lookat
+        depth = float(rel @ forward)  # positive: beyond the lookat, away from the eye
+        # The eye must be far enough behind the lookat that the corner's lateral offset fits the
+        # field of view at the corner's own depth: (distance + depth) * tan >= |offset|.
+        needed = max(
+            needed,
+            abs(float(rel @ right)) / tan_h - depth,
+            abs(float(rel @ up)) / tan_v - depth,
+        )
+    cam.distance = max(margin * needed, 1e-3)
+    return cam
+
+
 def autoframe(
     model: mujoco.MjModel,
     data: mujoco.MjData,
@@ -173,6 +247,22 @@ def eye_position(cam: mujoco.MjvCamera) -> np.ndarray:
     az, el = math.radians(cam.azimuth), math.radians(cam.elevation)
     forward = np.array([math.cos(el) * math.cos(az), math.cos(el) * math.sin(az), math.sin(el)])
     return np.asarray(cam.lookat) - cam.distance * forward
+
+
+def orbit_from_eye(eye, target) -> tuple[list[float], float, float, float]:
+    """The inverse of :func:`eye_position`: ``(lookat, distance, azimuth, elevation)`` in metres and
+    degrees for a camera standing at ``eye`` and looking at ``target``, so a pose stated in world
+    coordinates can be written onto a free camera.
+    """
+    eye, target = np.asarray(eye, dtype=float), np.asarray(target, dtype=float)
+    forward = target - eye
+    distance = float(np.linalg.norm(forward))
+    if distance < 1e-9:
+        raise ValueError("eye and target coincide; the camera has nowhere to look")
+    fx, fy, fz = forward / distance
+    elevation = math.degrees(math.asin(max(-1.0, min(1.0, fz))))
+    azimuth = math.degrees(math.atan2(fy, fx))
+    return [float(v) for v in target], distance, azimuth, elevation
 
 
 def look_in_place(cam: mujoco.MjvCamera, dx: float, dy: float, sensitivity: float = 180.0) -> None:
@@ -315,6 +405,8 @@ def focus_camera(
 
 class GLBackendError(RuntimeError):
     """MuJoCo bound a GL backend that cannot render here (see :func:`check_gl_backend`)."""
+
+    exit_status = NO_GL
 
 
 def bound_gl_backend() -> str:
@@ -470,8 +562,8 @@ def _log_gl_once() -> None:
     """Log the backend *and* the device it bound, once, then verify the device.
 
     This is the line that answers "did this run use the GPU", and it is worth a log entry
-    because the alternative -- inferring it from wall-clock afterwards -- is how a mis-bound
-    backend went unnoticed across every campaign this substrate had run.
+    because the alternative -- inferring it from wall-clock afterwards -- lets a mis-bound
+    backend go unnoticed across any number of campaigns.
 
     The verification lives here because this is the first point in the process where a GL
     context exists, and :func:`check_bound_device` cannot answer anything before one does.
@@ -489,6 +581,27 @@ def _log_gl_once() -> None:
             f" -- {device}" if device else "",
         )
     check_bound_device(device)
+
+
+@contextlib.contextmanager
+def hold_gc():
+    """Keep the cyclic garbage collector out of a GL critical section.
+
+    A ``mujoco.Renderer`` is torn down in its ``__del__``, so an unreferenced one -- an engine a
+    test dropped, a camera whose plugin is gone -- is destroyed whenever the collector happens to
+    run. Its teardown makes its own context current and destroys it, leaving no context current;
+    a render interrupted by that (the collector can run at any allocation, and MuJoCo allocates
+    the output array between making its context current and drawing) draws into nothing and reads
+    back uninitialised memory, which surfaces as impossible pixel values. Holding the collector for
+    the few milliseconds of a render is what keeps the two apart.
+    """
+    was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        yield
+    finally:
+        if was_enabled:
+            gc.enable()
 
 
 class FrameRenderer:
@@ -568,7 +681,8 @@ class FrameRenderer:
         self._renderer.update_scene(data, self.camera, scene_option=self._vopt)
         if decorate is not None:
             decorate(self._renderer.scene)
-        return self._renderer.render()
+        with hold_gc():
+            return self._renderer.render()
 
     def move_camera(self, action: int, dx: float, dy: float) -> None:
         """Apply a mouse move to a free camera via MuJoCo's own handler.
@@ -645,4 +759,29 @@ class FrameRenderer:
         return int(geomid[0]), int(body_id), selpnt.copy()
 
     def close(self) -> None:
-        self._renderer.close()
+        """Free the renderer with ITS OWN context current, so its deletes hit its own objects.
+
+        ``mujoco.Renderer.close`` frees the GL context first and the ``MjrContext`` second, and
+        freeing the latter is a run of ``glDelete*`` calls that land in whatever context is current
+        at that moment. With more than one renderer alive that is the other renderer's context, and
+        GL object names are per context and start from one -- so the framebuffer and textures of a
+        live renderer are deleted in place of the dead one's, and it renders garbage from then on.
+        Freeing in the other order, under the dying context, is the fix; the ``getattr`` guards keep
+        this working against a MuJoCo that no longer exposes the two members or has fixed the order
+        itself. Idempotent, and also what ``__del__`` runs.
+        """
+        renderer, self._renderer = self._renderer, None
+        if renderer is None:
+            return
+        gl_context = getattr(renderer, "_gl_context", None)
+        mjr_context = getattr(renderer, "_mjr_context", None)
+        if gl_context is not None and mjr_context is not None:
+            gl_context.make_current()
+            mjr_context.free()
+            renderer._mjr_context = None
+        renderer.close()
+
+    def __del__(self) -> None:
+        # Attribute access can fail during interpreter shutdown; there is nothing to do then.
+        with contextlib.suppress(Exception):
+            self.close()

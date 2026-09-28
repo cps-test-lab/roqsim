@@ -180,6 +180,15 @@ def test_the_instance_image_is_only_published_when_asked_for():
     assert ep is not None and ep.backend["ros2"]["encoding"] == "16UC1"
 
 
+def test_a_reset_clears_the_previous_trials_frame():
+    """Until the first capture of a trial, every output answers "nothing yet", not the last frame."""
+    engine = _engine(instances=True)
+    names = ("labels", "instances", "detections")
+    assert all(_endpoint(engine, n).read() is not None for n in names)
+    engine.reset()
+    assert [_endpoint(engine, n).read() for n in names] == [None, None, None]
+
+
 # -- boxes -----------------------------------------------------------------------------------
 
 
@@ -310,7 +319,7 @@ def test_parts_of_one_body_can_carry_different_classes():
 
 
 def test_a_geom_class_does_not_leak_to_the_rest_of_its_body():
-    """Selecting a part must label THAT part. Labelling by body was the bug being fixed."""
+    """Selecting a part must label THAT part. Labelling by body would label the whole prop."""
     labels = _plugin(_engine(classes=[BOARDS]))._labels
     values = set(np.unique(labels).tolist())
 

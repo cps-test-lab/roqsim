@@ -1,11 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 """Skip markers for the tests that need a generated, uncommitted vendor mesh.
 
-The mid360, zivid and robin_w1g meshes are DERIVED from vendor CAD whose redistribution terms are
-unclear, so they are generated locally by `make external-resources` and git-ignored -- and two of the
-three sources sit behind a product page that cannot be fetched at all. A clean checkout (CI included)
+The zivid and robin_w1g meshes are DERIVED from vendor CAD whose redistribution terms are
+unclear, so they are generated locally by `make external-resources` and git-ignored -- and one of the two
+sources sits behind a product page that cannot be fetched at all. A clean checkout (CI included)
 therefore has the models' MJCF but not their meshes, and the engine fails at compile with "Error
-opening file 'meshes/mid360_body.obj'". Skipping is the honest outcome: the asset is absent by
+opening file 'meshes/zivid_body.obj'". Skipping is the honest outcome: the asset is absent by
 design, not broken -- the same call `make smoke` makes when a world names a git-ignored asset.
 
 Shared between test modules rather than defined in one of them: any test that COMPILES a world naming
@@ -34,6 +34,5 @@ def needs_external_mesh(model: str, mesh: str):
     )
 
 
-needs_mid360 = needs_external_mesh("mid360", "mid360_body.obj")
 needs_zivid = needs_external_mesh("zivid", "zivid_body.obj")
 needs_robin = needs_external_mesh("robin_w1g", "robin_w1g_body.obj")

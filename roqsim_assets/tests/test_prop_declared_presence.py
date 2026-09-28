@@ -1,10 +1,9 @@
 """``present: false`` on the parametric props, and on a population of them.
 
 The contract itself -- what the key means, what absence does, that it survives a reset -- is
-:mod:`roqsim.tests.test_declared_presence`, written against the one plugin that honoured it. What
-is pinned here is that it now reaches the props a campaign actually places: every plugin that
-registers an entity used to ACCEPT this key and drop it, so a world declaring an obstacle absent
-compiled a present one and nothing said otherwise.
+:mod:`roqsim.tests.test_declared_presence`. What is pinned here is that it reaches the props a
+campaign actually places: a plugin that registers an entity but ACCEPTS this key and drops it
+compiles a present obstacle for a world that declares it absent, and nothing says otherwise.
 
 The population case is the one worth reading twice. ``boxes`` registers no entity of its own -- its
 instances do -- so the engine, which sees the entry and not what is under it, cannot apply their

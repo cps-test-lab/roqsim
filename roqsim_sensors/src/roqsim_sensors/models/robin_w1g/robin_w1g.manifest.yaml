@@ -13,7 +13,7 @@ components:
       exclude_body: mount
 
 # Field of view for `spawn_sensor: {show_fov: true}`. The W1G is camera-less, so there is no `<camera>`
-# to synthesise a frustum from and (since the baked CAD envelope was dropped) no bundled `_fov` mesh to
+# to synthesise a frustum from and no bundled `_fov` mesh to
 # reveal; instead spawn_sensor synthesises a translucent angular SECTOR -- here a bounded, forward-facing
 # 120deg x 70deg wedge (not a 360deg dome like the Mid-360). The angular band mirrors the
 # `seyond_robin_w1g` capture plugin's own FoV defaults; `near`/`far` are the shell's inner/outer radii.

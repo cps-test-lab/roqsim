@@ -6,7 +6,8 @@ The YAML has two top-level sections::
       name: OpenSpace        # optional; viewer window title becomes "Roqsim: <name>"
       timestep: 0.004        # optional; else taken from the model
       pacing: realtime       # realtime | {factor: 4.0} | asap
-      integrator: rk4        # optional; euler | rk4 | implicit | implicitfast
+      integrator: auto       # optional; auto | euler | rk4 | implicit | implicitfast | discrete
+      solver: newton         # optional; newton | cg | pgs. Else MuJoCo's default (newton)
       density: 1.225         # optional; kg/m^3. MuJoCo's default is 0, i.e. a vacuum
       viscosity: 1.8e-5      # optional; Pa*s
       view:                  # optional initial viewer setup (windowed only; see viewer)
@@ -18,12 +19,21 @@ The YAML has two top-level sections::
         follow_heading: true # optional: chase cam -- azimuth becomes an offset from the robot's yaw
       sync: {enabled: false} # foreseen lockstep mode (inert in M1)
 
-    components:            # ``plugins:`` is the former spelling of this key, still accepted
+    components:            # ``plugins:`` is accepted as an alias of this key
       - floorplan:                                # a short-name ref is the entry's key
           size: 3.0                               # its config: opaque, validated by the plugin itself
         name: ground                              # reserved sibling key; identifies this instance
       - "my_pkg.mod:MyPlugin": { rays: 90 }       # a ref with a ':' MUST be a quoted key (see below)
       - "./plugins/custom.py:Foo": {}             # empty config; file refs are quoted too
+
+``timestep`` and ``integrator`` are applied to the model after every plugin's ``build`` hook and
+before compile. A stated ``timestep`` wins over one a plugin or the world MJCF set, and an unstated
+one keeps the model's. The integrator is always this key's, whatever a plugin or the MJCF wrote:
+``auto`` unless stated, resolved at that point once the model's flexes are known -- ``discrete`` for a model with a flex that has elasticity or passive contact, which MuJoCo
+refuses to compile under anything implicit, else ``implicitfast``. The resolved integrator is
+logged and recorded in the run's provenance. A stated integrator a flex cannot run under, ``solver:
+pgs`` or ``noslip_iterations`` above 0 alongside such a flex, and a flex attached to a mocap body
+are refused before compile, naming the key to change -- the rules are :mod:`roqsim.flex`'s.
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
 plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one), which
@@ -78,6 +88,7 @@ from typing import Any
 
 import yaml
 
+from .document import check_version
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -116,8 +127,8 @@ class PluginSpec:
         return f"{self.entity}.{self.label}" if self.entity else self.label
 
 
-#: The document key holding the list of entries. ``plugins`` is the former spelling: a document may
-#: use either while worlds and manifests are swept over, but never both -- two spellings of one key in
+#: The document key holding the list of entries. ``plugins`` is an accepted alias: a document may
+#: use either, but never both -- two spellings of one key in
 #: one file is a merge nobody can predict, so it is refused rather than resolved.
 _ENTRIES_KEY = "components"
 _ENTRIES_KEY_LEGACY = "plugins"
@@ -311,12 +322,15 @@ def resolve_enabled(specs: list[PluginSpec]) -> None:
     ``if entity else ""``), so a sensor resolves an unprefixed site and fails much later with a
     message about MJCF names -- which is the silent class of failure this design exists to remove.
     The cascade is computed rather than left to the reader, and each spec keeps its own ``enabled``
-    so the record shows what was turned off and what merely went with it.
+    so the record shows what was turned off and what merely went with it. Walked at every depth: a
+    device mounted on a robot is a component that owns components too.
     """
     for spec in specs:
         if not spec.enabled:
             for child in _subtree(spec):
                 child.enabled = False
+        else:
+            resolve_enabled(spec.children)
 
 
 def _subtree(spec: PluginSpec) -> list[PluginSpec]:
@@ -389,6 +403,10 @@ class SimConfig:
     unresolved: list[tuple[str, str]] = field(default_factory=list)
     base_dir: Path = field(default_factory=Path.cwd)
     raw: dict = field(default_factory=dict)
+    #: ``sim`` values the engine settled at setup where the document left the choice to it --
+    #: ``integrator``, which ``auto`` resolves once the model's flexes are known. Overlaid on ``sim``
+    #: in :meth:`as_record`, so a run's provenance states what ran rather than what was delegated.
+    resolved: dict = field(default_factory=dict)
 
     # -- the record a run leaves ---------------------------------------------------------------
 
@@ -398,10 +416,12 @@ class SimConfig:
         The RESOLVED tree, not the document plus the overrides that were applied to it. A recording
         that stored only the recipe had to re-run the whole load path to be replayed, which coupled
         replay to the override grammar: any change to it invalidated every recording ever made. What
-        ran is recorded outright, so rebuilding reads rather than re-interprets.
+        ran is recorded outright, so rebuilding reads rather than re-interprets. That includes the
+        ``sim`` values the engine resolved (:attr:`resolved`): ``integrator: auto`` is recorded as
+        the integrator it became.
         """
         return {
-            "sim": dict(self.sim),
+            "sim": {**self.sim, **self.resolved},
             "base_dir": str(self.base_dir),
             "components": [
                 {
@@ -505,6 +525,29 @@ class SimConfig:
 # *modify*: disable the inherited entry and re-add a tweaked copy in the child's ``components``.
 
 
+def _is_package_ref(ext: Any) -> bool:
+    """Whether an ``extends`` value is a ``<package>:<world>`` ref rather than a path."""
+    return isinstance(ext, str) and ":" in ext and not Path(ext).exists()
+
+
+def _package_world(world: Any, ext: str) -> Any:
+    """A package parent's *relative file* ``sim.world`` as a ``<package>:<path>`` ref.
+
+    The parent was reached by reference, so what it names beside itself is named by reference too,
+    never by where this interpreter happens to have the package installed. That is what lets a
+    run's provenance rebuild on another machine: an absolute path into one ``dist-packages`` exists
+    nowhere else, while ``roqsim_scenes:depot/depot.xml`` resolves wherever the package is. Built-in
+    names, refs and absolute paths are left as they are.
+    """
+    if not isinstance(world, str) or ":" in world or Path(world).is_absolute():
+        return world
+    is_path = world.endswith((".xml", ".mjcf")) or "/" in world or os.sep in world
+    if not is_path:
+        return world
+    package = ext.partition(":")[0]
+    return f"{package}:{world}"
+
+
 def _absolutize_world(world: Any, parent_dir: Path) -> Any:
     """Rewrite a parent's *relative file* ``sim.world`` to an absolute path (so it still resolves
     when the inheriting child lives in another dir). Built-in names and ``<package>:<world>`` refs
@@ -587,6 +630,23 @@ def _apply_disable(plugins: list, selectors: list) -> list:
     return out
 
 
+#: The world document version this roqsim reads, stated with a top-level ``version:`` (absent is 1).
+#: Bumped when a key is renamed, moved or changes meaning, not when one is added.
+WORLD_VERSION = 1
+_VERSION_KEY = "version"
+
+
+def _check_world_version(raw: dict, where: str) -> dict:
+    """Refuse a document stating a newer or malformed version; return it without the stamp.
+
+    The stamp is not passed on, so nothing after inheritance sees it.
+    """
+    check_version(
+        raw, _VERSION_KEY, reads=WORLD_VERSION, document="world", where=where, error=PluginError
+    )
+    return {k: v for k, v in raw.items() if k != _VERSION_KEY}
+
+
 def _resolve_inheritance(
     raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset(), *, where: str = "world config"
 ) -> dict:
@@ -596,12 +656,13 @@ def _resolve_inheritance(
     the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
 
-    Every document in the chain passes through here, and only here, which is why the top-level key
-    check lives in this function: a parent's keys are read and its unknown ones dropped, so
-    checking only the leaf would accept in a parent exactly what is refused in a child.
+    Every document in the chain passes through here, and only here, so each one's ``version:``
+    (:data:`WORLD_VERSION`) and top-level keys are checked, a parent's like a leaf's: a parent's
+    unknown keys would otherwise be dropped unread, accepting there what is refused in a child.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    raw = _check_world_version(raw, where)
     _refuse_unknown_document_keys(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
@@ -626,7 +687,11 @@ def _resolve_inheritance(
 
     parent_sim = dict(parent_raw.get("sim") or {})
     if "world" in parent_sim:
-        parent_sim["world"] = _absolutize_world(parent_sim["world"], parent_path.parent)
+        parent_sim["world"] = (
+            _package_world(parent_sim["world"], ext)
+            if _is_package_ref(ext)
+            else _absolutize_world(parent_sim["world"], parent_path.parent)
+        )
     merged_sim = deep_merge(parent_sim, raw.get("sim") or {})
 
     kept = _apply_disable(document_entries(parent_raw, str(parent_path)), disable or [])
@@ -650,10 +715,10 @@ def load_config(
     after the overrides. Injected here rather than authored into the world so a checked-in world
     stays ROS-free and standalone-runnable.
     """
-    # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. `roqsim sim` and the
-    # scenario adapter each resolved one before calling in, so the ref was a property of those two
-    # entry points rather than of a world -- and `roqsim-export-web` (which no human types, but which
-    # a consumer's scene cache runs to build a run view's geometry) got the ref verbatim and reported
+    # A `<package>:<world>` ref is accepted here, not just as an `extends:` target. Resolved only by
+    # `roqsim sim` and the scenario adapter, the ref would be a property of those two entry points
+    # rather than of a world -- and `roqsim-export-web` (which no human types, but which a consumer's
+    # scene cache runs to build a run view's geometry) would get the ref verbatim and report
     # "world config /abs/cwd/pick_cell:pick_cell_ros2 does not exist". Downstream that surfaces
     # as "no 3D geometry" for every run, so the whole batch looks broken rather than one caller.
     #
@@ -932,7 +997,7 @@ def assignments_from_mapping(doc: dict, source: str = "override") -> list[Assign
     return out
 
 
-#: Roots an assignment may address. ``plugins`` is the former spelling of the container key and is
+#: Roots an assignment may address. ``plugins`` is an alias of the container key and is
 #: accepted here for the same reason it is accepted in a document.
 _COMPONENT_ROOTS = (_ENTRIES_KEY, _ENTRIES_KEY_LEGACY)
 
@@ -1194,6 +1259,27 @@ def _validate_view(view) -> None:
 _CONTACT_OVERRIDE_WIDTHS = {"solref": 2, "solimp": 5, "friction": 5}
 
 
+#: The values ``sim.integrator`` accepts. ``auto`` (the default) lets the model decide: ``discrete``
+#: when it has a flex that needs it, else ``implicitfast`` (:mod:`roqsim.flex`). The rest are MuJoCo's
+#: integrators by the name its XML uses.
+SIM_INTEGRATORS = ("auto", "euler", "rk4", "implicit", "implicitfast", "discrete")
+
+#: The values ``sim.solver`` accepts: MuJoCo's constraint solvers by the name its XML uses.
+SIM_SOLVERS = ("pgs", "cg", "newton")
+
+
+def _validate_choice(key: str, value, allowed: tuple[str, ...]) -> None:
+    """Refuse an unknown enum value for ``sim.<key>`` at load time, naming the ones that exist.
+
+    The engine maps these names onto MuJoCo enums; without this an unknown one surfaced there as a
+    bare ``KeyError`` naming only the value, after every plugin had built.
+    """
+    if value is None:
+        return
+    if value not in allowed:
+        raise PluginError(f"sim.{key}: unknown value {value!r}; one of {', '.join(allowed)}")
+
+
 def _validate_seed(seed) -> None:
     """Reject a malformed ``sim.seed`` at load time.
 
@@ -1261,6 +1347,8 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         )
     _validate_view((raw.get("sim") or {}).get("view"))
     _validate_seed((raw.get("sim") or {}).get("seed"))
+    _validate_choice("integrator", (raw.get("sim") or {}).get("integrator"), SIM_INTEGRATORS)
+    _validate_choice("solver", (raw.get("sim") or {}).get("solver"), SIM_SOLVERS)
     _validate_contact_override((raw.get("sim") or {}).get("contact_override"))
 
     component_assignments = [a for a in assignments if _is_component(a)]
@@ -1274,13 +1362,17 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     # a structural override work -- `--set components.robot.model=husky` lands before step two reads
     # `model:` -- and the second is what reaches a component a manifest supplied.
     declared_tree = [s for s in plugins if s.entity is None]
+    keys_before = {id(s): set(s.config) for s in _subtrees(declared_tree)}
     matched = apply_assignments(raw, declared_tree, component_assignments)
     # Re-flatten: pass one may have ADDED components (`components:` on an address), and those have
     # to be wired, checked and ordered exactly like the ones the document declared -- so they go
     # back through the same walk rather than being spliced in beside it.
     plugins = flatten_specs(declared_tree)
     effective, unresolved = expand_document(plugins, base_dir)
+    _refuse_late_expansion_overrides(component_assignments, _as_tree(effective), plugins, base_dir)
+    _refuse_late_additions(component_assignments, _as_tree(effective), plugins)
     matched += apply_assignments(raw, _as_tree(effective), component_assignments)
+    _drop_keys_that_named_injected_components(_as_tree(effective), keys_before)
     resolve_enabled(_as_tree(effective))
     unmatched = [a for a in component_assignments if a not in matched]
     if unmatched:
@@ -1294,6 +1386,11 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         raise PluginError(
             f"override '{'.'.join(a.path)}' matches no component in this document." + hint
         )
+    # After every assignment has landed, on the tree that will run: both refusals name an address
+    # only that tree has, and both would otherwise pass load and fail -- or do nothing -- later.
+    tree = _as_tree(effective)
+    _refuse_config_keys_naming_components(tree, base_dir)
+    _refuse_declared_beside_mounted_device(tree, plugins, base_dir)
     return SimConfig(
         sim=dict(raw.get("sim", {}) or {}),
         plugins=effective,
@@ -1302,6 +1399,219 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
         base_dir=base_dir,
         raw=raw,
     )
+
+
+def _refuse_late_expansion_overrides(
+    assignments, tree: list[PluginSpec], declared: list[PluginSpec], base_dir: Path
+) -> None:
+    """Refuse an override of an expansion input on a component a manifest injected.
+
+    The first pass reaches only what the document declares; a manifest-injected mount is first
+    addressable after it has expanded. Setting its ``frame_id`` or ``model`` then would change the
+    mount and leave the components it brought in built from the old value -- a scan stamped in one
+    frame while the mount publishes another, with nothing to say so. The plugin names the keys its
+    ``expand`` reads (:attr:`roqsim.plugin.Plugin.expansion_keys`).
+    """
+    written = {id(s) for s in declared}
+    for a in assignments:
+        for spec, config_path in _resolve_targets(a.path[1:], tree):
+            if id(spec) in written or not config_path:
+                continue
+            try:
+                keys = resolve_plugin(spec.ref, base_dir=base_dir).expansion_keys
+            except PluginError:
+                continue
+            if config_path[0] in keys:
+                owner, _, label = spec.address.rpartition(".")
+                raise PluginError(
+                    f"override '{'.'.join(a.path)}' sets '{config_path[0]}' on '{spec.address}', "
+                    f"which a model manifest supplies -- and '{config_path[0]}' is read while that "
+                    f"component expands, which has already happened by the time an override can "
+                    f"reach it. Declare it in the world instead, where the value lands first: under "
+                    f"'{owner or '(root)'}', a '{_CHILDREN_KEY}:' entry "
+                    f"'- {spec.ref}: {{{config_path[0]}: ...}}' with name: {label}."
+                )
+
+
+def _refuse_late_additions(assignments, tree: list[PluginSpec], declared: list[PluginSpec]) -> None:
+    """Refuse an override that adds under a component a manifest injected.
+
+    Adding is a first-pass operation: what is added is flattened, expanded and merged with the
+    owner's manifest defaults like anything the document declares. A manifest-injected owner is first
+    addressable after expansion, so entries appended to it then would never be expanded or built,
+    and the run would report success without them. The same entries reach it when the override adds
+    an entry for that component under its nearest declared ancestor, which expansion then merges the
+    manifest's defaults under -- and the message writes that override out.
+    """
+    written = {id(s) for s in declared}
+    by_address = {s.address: s for s in _subtrees(tree)}
+    for a in assignments:
+        for spec, config_path in _resolve_targets(a.path[1:], tree):
+            if id(spec) in written or config_path != (_CHILDREN_KEY,):
+                continue
+            chain = [spec]
+            while chain[-1].entity is not None and id(by_address[chain[-1].entity]) not in written:
+                chain.append(by_address[chain[-1].entity])
+            ancestor = chain[-1].entity
+            nested = "[...]"
+            for link in chain:
+                nested = f"[{{{link.ref}: {{}}, name: {link.label}, {_CHILDREN_KEY}: {nested}}}]"
+            raise PluginError(
+                f"override '{'.'.join(a.path)}' adds under '{spec.address}', which a model manifest "
+                f"supplies -- and what it owns is expanded and wired while that manifest expands, "
+                f"which has already happened by the time an override can reach it, so the entries "
+                f"would be dropped. Add them through its declared owner instead, where they land "
+                f"first: '{_ENTRIES_KEY}.{ancestor}.{_CHILDREN_KEY}: {nested}'. The manifest still "
+                f"fills in everything that entry does not say."
+            )
+
+
+def _drop_keys_that_named_injected_components(tree: list[PluginSpec], keys_before: dict) -> None:
+    """Remove what the first pass wrote under a name that turned out to be a component.
+
+    Pass one sees only what the document declares, so ``robot.rplidar.lidar.rays`` -- a scanner the
+    model's manifest mounts -- resolves there as the config key ``rplidar`` on ``robot``. Pass two
+    reaches the real component and sets the value where it belongs; the first write stays behind as a
+    key nothing reads, and the run record would carry it as though the spawn had been configured
+    with it. Only keys pass one ADDED are candidates, and a declared key can never share a
+    component's label (:func:`_check_label_vs_config`), so nothing the document wrote is touched.
+    """
+    for spec in _subtrees(tree):
+        before = keys_before.get(id(spec))
+        if before is None:
+            continue
+        labels = {child.label for child in spec.children}
+        for key in set(spec.config) - before:
+            if key in labels:
+                del spec.config[key]
+
+
+def _subtrees(roots: list[PluginSpec]) -> list[PluginSpec]:
+    return [s for root in roots for s in (root, *_subtree(root))]
+
+
+def _refuse_config_keys_naming_components(tree: list[PluginSpec], base_dir: Path) -> None:
+    """Refuse a key a strict plugin does not read when it is the label of a component it owns.
+
+    An override is split where the tree ends (:func:`_resolve_targets`), so ``robot.lidar.rays``
+    against a robot whose scanner hangs off a mounted device (``robot.rplidar.lidar``) stops at
+    ``robot`` and writes a config key ``lidar`` there: nothing reads it, the real component keeps its
+    value, and the run looks configured. A plugin declaring ``STRICT_KEYS`` refuses any unknown key
+    when it is instantiated; this runs earlier, at load, because only the effective tree can say
+    which address was meant -- any depth below the entry, since a mounted device nests one level.
+    """
+    from .schema import INJECTED_KEYS
+
+    for spec in _subtrees(tree):
+        try:
+            cls = resolve_plugin(spec.ref, base_dir=base_dir)
+        except PluginError:
+            continue  # refused by instantiate_plugins, with the rest of the unresolved refs
+        schema = cls.CONFIG_SCHEMA
+        if not (schema and cls.STRICT_KEYS):
+            continue
+        descendants = _subtree(spec)
+        for key in spec.config:
+            if key in schema or key in INJECTED_KEYS:
+                continue
+            hits = sorted(f"{_ENTRIES_KEY}.{d.address}" for d in descendants if d.label == key)
+            if hits:
+                raise PluginError(
+                    f"'{key}' is not a {spec.ref} key; {spec.address}'s {key} is "
+                    f"{' and '.join(hits)}. A config key or override naming it has to spell that "
+                    f"whole address (e.g. {hits[0]}.<key>), or it reaches nothing."
+                )
+
+
+def _refuse_declared_beside_mounted_device(
+    tree: list[PluginSpec], declared: list[PluginSpec], base_dir: Path
+) -> None:
+    """Refuse an entry declared on a carrier when its model mounts that component on a device.
+
+    An entry nested directly under the carrier (``robot: [- lidar: {...}]``) when the model mounts
+    that component on a device merges into nothing, so it loads as a second component beside the
+    device's (``robot.lidar`` next to ``robot.rplidar.lidar``) and fails only once the model is
+    compiled, naming a site rather than the mount it belongs under.
+
+    Refused when all of these hold, keyed on refs and the tree, never on a plugin's name:
+
+    * the owner's model manifest supplies a component that registers an entity (a mounted device),
+      and somewhere below it a component with the entry's plugin ref;
+    * the world declares that ref directly under the owner, enabled, with a label the owner's
+      manifest does not supply -- a label it supplies merges into the default and is not stale;
+    * no top-level string of the entry's config names a site, camera or declared frame of the
+      owner's model (``manifest frames:`` and the owner's ``frames:`` become sites at build).
+
+    The last condition is what keeps a real second sensor legal: one that states where it hangs on
+    the carrier itself has a placement of its own. One that relies on the plugin's default site is
+    refused here, and stating that site explicitly is the way through; the message says so.
+    """
+    from .manifest import load_manifest
+    from .models import ModelError, resolve_model
+
+    written = {id(s) for s in declared}
+    for owner in _subtrees(tree):
+        entries = [c for c in owner.children if id(c) in written and c.enabled]
+        model = owner.config.get("model")
+        if not entries or not model or not owner.config.get("default_plugins", True):
+            continue
+        try:
+            model_file = resolve_model(str(model), base_dir=base_dir).path
+            supplied = {parse_plugin_entry(e).label for e in load_manifest(model_file, base_dir)}
+        except (ModelError, PluginError):
+            continue  # the owner's own validation reports an unresolvable model or manifest
+        devices = []
+        for child in owner.children:
+            if child.label not in supplied:
+                continue
+            try:
+                if resolve_plugin(child.ref, base_dir=base_dir).provides_entity:
+                    devices.append(child)
+            except PluginError:
+                continue
+        own_names: set[str] | None = None
+        for entry in entries:
+            if entry.label in supplied:
+                continue
+            mounts = [(d, c) for d in devices for c in _subtree(d) if c.ref == entry.ref]
+            if not mounts:
+                continue
+            if own_names is None:
+                own_names = _model_attach_names(model_file, owner.config.get("frames"))
+                if own_names is None:
+                    break  # the model does not parse; its spawn's build reports that
+            if any(isinstance(v, str) and v in own_names for v in entry.config.values()):
+                continue
+            where = "; ".join(
+                f"{c.address} -- nest it under '{d.address}' ({d.ref}, name: {d.label})"
+                for d, c in mounts
+            )
+            raise PluginError(
+                f"'{entry.address}' ({entry.ref}) is declared directly under '{owner.address}', "
+                f"but that model mounts its {entry.ref} on a device: {where}. The model supplies no "
+                f"'{entry.label}' on '{owner.address}' itself and the entry names no site, camera or "
+                f"frame of it, so it would build as a second {entry.ref} with nothing to attach to. "
+                f"To configure the mounted one, move the entry into that device's "
+                f"'{_CHILDREN_KEY}:' block with name: {mounts[0][1].label}. To add a second "
+                f"{entry.ref} of its own, state the site of '{owner.address}' it hangs from."
+            )
+
+
+def _model_attach_names(model_file: Path, frames) -> set[str] | None:
+    """Sites, cameras and declared frames of a model, unprefixed; ``None`` if the MJCF won't parse."""
+    import mujoco
+
+    from .manifest import manifest_frames
+
+    try:
+        spec = mujoco.MjSpec.from_file(str(model_file))
+    except Exception:  # noqa: BLE001 - the spawn's build reports a broken model with its own message
+        return None
+    names = {s.name for s in spec.sites} | {c.name for c in spec.cameras}
+    for frame in list(manifest_frames(model_file)) + list(frames or []):
+        if isinstance(frame, dict) and frame.get("name"):
+            names.add(str(frame["name"]))
+    return names
 
 
 #: Plugin refs :func:`with_transport` appends, in order. Names rather than classes: they
@@ -1452,15 +1762,30 @@ def expand_document(
 
     Injected specs (a spawn plugin's manifest) land right after the entry that produced them, so
     build order still falls out of the document's shape. Whether to skip a default the document
-    already declares is the producing plugin's call: it is handed the declared specs and dedupes on
-    the label (see :func:`roqsim.manifest.expand_manifest`). One level deep, deliberately -- what
-    ``expand`` returns is not itself expanded.
+    already declares is the producing plugin's call: it is handed every spec declared or injected so
+    far and dedupes on the label (see :func:`roqsim.manifest.expand_manifest`).
+
+    **Recursive, depth-first.** What ``expand`` returns is expanded in turn, so a robot's manifest can
+    mount a device whose own manifest brings its capture plugin: robot, its first component, a
+    mounted sensor, the sensor's components, the robot's next component. An injected spec owned by
+    an entry that has not landed yet -- a manifest child of a component the world declared itself --
+    waits for that owner and follows it, so a carrier always builds before what it carries. A chain
+    that reaches the same model file twice, or nests deeper than :data:`_MAX_EXPANSION_DEPTH`, is
+    refused with the chain named.
 
     Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
     """
     effective: list[PluginSpec] = []
     unresolved: list[tuple[str, str]] = []
-    for spec in declared:
+    # Handed to every `expand`, and grown by what each returns, so a nested producer dedupes against
+    # what the world AND an outer manifest already said for its entity.
+    world: list[PluginSpec] = list(declared)
+    landed: set[str] = set()
+    waiting: dict[str, list[tuple[PluginSpec, tuple]]] = {}
+
+    def place(spec: PluginSpec, chain: tuple) -> None:
+        effective.append(spec)
+        landed.add(spec.address)
         try:
             cls = resolve_plugin(spec.ref, base_dir=base_dir)
         except PluginError as exc:
@@ -1470,17 +1795,75 @@ def expand_document(
             # `instantiate_plugins` is where the refusal happens -- with the same message it always
             # gave, including the "this is a ROS world, here are your two ways on" case.
             unresolved.append((spec.ref, str(exc)))
-            effective.append(spec)
-            continue
-        _check_ownership(spec, cls)
-        effective.append(spec)
-        for sub in cls.expand(spec, declared, base_dir):
-            effective.append(sub)
-            try:
-                resolve_plugin(sub.ref, base_dir=base_dir)
-            except PluginError as exc:
-                unresolved.append((sub.ref, str(exc)))
+            cls = None
+        if cls is not None:
+            _check_ownership(spec, cls)
+            link = (spec.address, _expansion_model(spec, base_dir))
+            inner = (*chain, link)
+            subs = cls.expand(spec, world, base_dir)
+            for sub in subs:
+                _check_expansion_chain(inner, sub, base_dir)
+            # All of them are visible before any is expanded: a mounted device's manifest must see
+            # the override its carrier's manifest nests under it, which is a later entry of `subs`.
+            world.extend(subs)
+            for sub in subs:
+                if sub.entity is not None and sub.entity not in landed:
+                    waiting.setdefault(sub.entity, []).append((sub, inner))
+                else:
+                    place(sub, inner)
+        for sub, sub_chain in waiting.pop(spec.address, []):
+            place(sub, sub_chain)
+
+    for spec in declared:
+        place(spec, ())
+    if waiting:
+        owners = ", ".join(sorted(waiting))
+        raise PluginError(
+            f"expansion injected components for {owners}, which no entry in this document is. An "
+            f"`expand` must wire what it returns to its own address or to one of its components."
+        )
     return effective, unresolved
+
+
+#: How many expansions one chain may nest: a world's robot, the device it mounts, a device on that
+#: device, and so on. Real carriers need two or three; the bound turns a runaway producer into a
+#: named refusal rather than a hang.
+_MAX_EXPANSION_DEPTH = 8
+
+
+def _expansion_model(spec: PluginSpec, base_dir: Path) -> str | None:
+    """The model file an expanding entry brings in, as the identity a cycle is detected on."""
+    model = spec.config.get("model")
+    if not model or not spec.config.get("default_plugins", True):
+        return None
+    from .models import ModelError, resolve_model
+
+    try:
+        return str(resolve_model(str(model), base_dir=base_dir).path)
+    except ModelError:
+        # The spawn's own `expand` and `validate_config` report an unresolvable model; as a cycle
+        # identity the name as written is still one.
+        return str(model)
+
+
+def _check_expansion_chain(chain: tuple, sub: PluginSpec, base_dir: Path) -> None:
+    """Refuse *sub* when expanding it would revisit a model on *chain* or nest past the bound."""
+
+    def shown(links) -> str:
+        return " -> ".join(f"{a} ({m})" if m else a for a, m in links)
+
+    if len(chain) > _MAX_EXPANSION_DEPTH:
+        raise PluginError(
+            f"manifest expansion nests deeper than {_MAX_EXPANSION_DEPTH} levels at "
+            f"'{sub.address}': {shown(chain)}. A carrier mounting a device mounting a device is "
+            f"two or three; this many is a manifest mounting itself through a chain of models."
+        )
+    model = _expansion_model(sub, base_dir)
+    if model is not None and any(m == model for _a, m in chain):
+        raise PluginError(
+            f"manifest expansion cycle: '{sub.address}' brings in {model} again, which this chain "
+            f"is already expanding: {shown((*chain, (sub.address, model)))}"
+        )
 
 
 def _check_ownership(spec: PluginSpec, cls: type[Plugin]) -> None:

@@ -138,8 +138,8 @@ class Endpoint:
 
     A plugin that produces or consumes data (a controller, a sensor) registers its ports on
     ``ctx.interface`` in ``configure()``. A transport/bridge plugin (ROS 2, zenoh, zmq, ...) reads
-    the registry and wires each port to its wire protocol -- so the robot and its bridge no longer
-    duplicate a hand-maintained key contract.
+    the registry and wires each port to its wire protocol -- so the robot and its bridge share no
+    hand-maintained key contract.
 
     The robot package imports nothing backend-specific: ``read``/``write`` traffic in *neutral*
     payloads (numpy arrays, tuples, small dataclasses), never wire messages. Backend particulars
@@ -228,6 +228,24 @@ class InterfaceRegistry:
     def by_direction(self, direction: str) -> list[Endpoint]:
         return [e for e in self._endpoints if e.direction == direction]
 
+    def find(self, owner: str, name: str) -> Endpoint | None:
+        """The endpoint *owner* declared as *name*, or ``None`` if it declared none.
+
+        ``(owner, name)`` is how a consumer outside the world addresses one endpoint -- a name alone
+        repeats across entities (every monitored arm has a ``force_limit``). Where one entity
+        declares a name more than once, as a robot with several arm controllers does with
+        ``joint_states`` (each scoped by its own namespace), the pair cannot tell them apart, and
+        this raises rather than returning whichever was registered first.
+        """
+        found = [e for e in self._endpoints if e.owner == owner and e.name == name]
+        if len(found) > 1:
+            scopes = ", ".join(repr(e.namespace) for e in found)
+            raise LookupError(
+                f"entity {owner!r} declares {len(found)} endpoints named {name!r} (namespaces "
+                f"{scopes}), so (entity, name) does not identify one of them"
+            )
+        return found[0] if found else None
+
 
 class Gate:
     """A named barrier condition used by the foreseen synchronous/lockstep mode.
@@ -282,6 +300,13 @@ class SimContext:
         #: model opened to be understood. A world that overrides nothing still fills it.
         self.actuator_tables: dict[str, list] = {}
 
+        #: What each published endpoint ended up going out at: one row per output a bridge bound,
+        #: filled at ``configure`` and written into the run's provenance. A publish can only land on
+        #: a physics step, so a requested rate that is not a whole number of steps is served at a
+        #: neighbouring one -- the row carries both numbers, because a reader holding only the world
+        #: document has the requested one and no way to learn the other.
+        self.endpoint_rates: list[dict] = []
+
         # Manual control: when True the *human* owns ``data.ctrl`` this run, so every controller
         # plugin must leave it alone and let the viewer's control sliders drive the actuators. A
         # run-level switch (the runner's ``--manual-control``), not world config: which controller a
@@ -309,11 +334,11 @@ class SimContext:
 
         self.control = RunControl()
 
-        # End-of-run request. A trial that knows it is finished -- the goal was reached, the episode
-        # failed, the recording is complete -- should be able to say so, rather than the world being
-        # padded out to a wall-clock `--seconds` that has to be guessed high enough for the slowest
-        # cell and is then wasted on every faster one. The driver polls `stop_requested` and exits
-        # its loop cleanly, so `shutdown` still runs and files still flush.
+        # End-of-run request, for the standalone driver: a trial run by `roqsim sim` that knows it is
+        # finished says so, rather than the world being padded out to a wall-clock `--seconds`
+        # guessed high enough for the slowest cell. `roqsim sim` polls `stop_requested` and exits its
+        # loop cleanly, so `shutdown` still runs and files still flush. Under scenario-execution the
+        # scenario owns the end of the run and nothing reads this.
         self.stop_requested: bool = False
         self.stop_reason: str = ""
 
@@ -427,11 +452,12 @@ class SimContext:
 
     # -- snapshots ----------------------------------------------------------------------------
     def request_stop(self, reason: str = "") -> None:
-        """Ask the driver to end the run after this step. Idempotent; the first reason wins.
+        """Ask the standalone driver to end the run after this step. Idempotent; the first reason wins.
 
-        Physics-thread only, like every other write on this object. The engine itself does not act
-        on it -- an embedding driver (scenario-execution, a test harness) is free to ignore it and
-        keep stepping -- so it is a request, not a kill switch.
+        `roqsim sim` honours it. Under scenario-execution the scenario owns when a run ends and the
+        adapter does not read it, so a trial that must end a scenario run publishes its outcome for
+        the scenario to condition on. The engine itself does not act on it -- a request, not a kill
+        switch. Physics-thread only, like every other write on this object. A reset withdraws it.
         """
         if not self.stop_requested:
             self.stop_requested = True

@@ -1,8 +1,8 @@
 """`dwell`: standing still on arrival before moving on.
 
 The route's one stochastic element, and the reason a repeated trial is a sample rather than a
-duplicate. `NavState` has carried a `dwell` field and `behavior.py` has read it through the seeded
-`uniform` all along; what was missing was any way for a world to set it, so it was always `None`.
+duplicate. A world sets it on the navigator, which fills `NavState`'s `dwell` field, and
+`behavior.py` reads it through the seeded `uniform`.
 """
 
 from __future__ import annotations
@@ -93,8 +93,8 @@ def test_one_value_applies_to_every_route_point():
 
 def test_a_per_point_list_may_mix_scalars_and_pairs():
     """What a patrol with a pause at only SOME of its waypoints looks like, and the shape the
-    shipped `walker_patrol` world writes. Requiring every entry to be nested rejected exactly this,
-    which is how two shipped worlds stopped loading."""
+    shipped `walker_patrol` world writes. Requiring every entry to be nested would reject exactly
+    this, and stop those worlds loading."""
     assert _dwell_list([0.0, [2.0, 4.0], 0.0, [1.0, 3.0]], 4) == [
         (0.0, 0.0),
         (2.0, 4.0),
@@ -147,7 +147,7 @@ def test_without_a_dwell_the_mover_never_stops(tmp_path):
 
 def test_a_dwell_makes_the_mover_stand_at_each_goal(tmp_path):
     """The load-bearing check. `dwell` reaching `NavState` is not the same as a pause happening --
-    the field was present and unread for exactly that reason."""
+    a field can be present and never read."""
     engine = _engine(tmp_path, seed=5, dwell=[0.0, 3.0])
     engine.setup()
     engine.reset()

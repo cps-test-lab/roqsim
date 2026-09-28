@@ -20,8 +20,8 @@ it. Hammering one ``mjData`` with 8 threads x 40000 single-ray casts, a sampler 
 ``pstack`` peak at **2112** bytes (eight-plus overlapping 96-byte frames) and, on return,
 ``pstack`` was **1632 rather than 0** -- MuJoCo documents that a function restores ``pstack`` on
 return, and concurrency breaks that invariant. The leak is monotonic, so a long trial (1800 s at
-10 Hz is ~18k casts) walks toward stack exhaustion; the failure mode observed while developing this
-module was a core dump, not a wrong number.
+10 Hz is ~18k casts) walks toward stack exhaustion; the failure mode is a core dump, not a wrong
+number.
 
 Results were *correct* in every one of those 320000 casts, which is exactly what makes this worth
 writing down: the race corrupts an allocator invariant rather than the output, so it survives any
@@ -97,6 +97,53 @@ def _resolve_mask(geomgroup):
     return VISIBLE_GROUPS if geomgroup is _UNSET else geomgroup
 
 
+def _plane_hits(model, data, origin, dirs, cutoff, mask, flg_static, bodyexclude, hits) -> None:
+    """Add the planes ``mj_multiRay`` culled back into ``hits``, in place.
+
+    MuJoCo culls a geom whose bounding sphere lies farther from the ray origin than ``cutoff``, and
+    a plane's bounding sphere is a point at the plane's *position* -- so a floor plane centred at
+    the world origin is skipped for every ray cast from more than ``cutoff`` away, however close the
+    floor itself is. A 15 cm cliff sensor on a robot two metres from the origin then reads no floor
+    at all, and a 12 m scanner loses the ground thirteen metres out. Widening the cutoff would give
+    up the cull for everything nearer than the plane's position, which is most of a large world, so
+    instead the planes are intersected here, with MuJoCo's own plane rules: one-sided (a ray from
+    below misses), a nonzero size bounds the hit, and the same group, static and body filters as
+    the batched cast. ``dist`` keeps the nearest of the two answers.
+    """
+    planes = np.flatnonzero(model.geom_type == mujoco.mjtGeom.mjGEOM_PLANE)
+    if not planes.size:
+        return
+    origin = np.asarray(origin, dtype=np.float64).reshape(3)
+    dirs = np.asarray(dirs, dtype=np.float64).reshape(-1, 3)
+    dist, geomid = hits.dist.reshape(-1), hits.geomid.reshape(-1)
+    for g in planes:
+        g = int(g)
+        body = int(model.geom_bodyid[g])
+        if body == bodyexclude or (not flg_static and body == 0):
+            continue
+        if mask is not None and not mask[int(model.geom_group[g])]:
+            continue
+        # A plane that MuJoCo itself kept is already the nearest answer where it hit.
+        if np.linalg.norm(data.geom_xpos[g] - origin) <= cutoff:
+            continue
+        frame = data.geom_xmat[g].reshape(3, 3)
+        normal = frame[:, 2]
+        denom = dirs @ normal
+        above = float((origin - data.geom_xpos[g]) @ normal)
+        # One-sided: only a ray from the front (positive normal side) travelling into it hits.
+        with np.errstate(divide="ignore", invalid="ignore"):
+            t = np.where(denom < 0.0, above / -denom, -1.0)
+        ok = (t > 0.0) & (t <= cutoff) & (above > 0.0)
+        sx, sy = float(model.geom_size[g][0]), float(model.geom_size[g][1])
+        if sx > 0.0 and sy > 0.0:
+            points = origin + dirs * t[:, None] - data.geom_xpos[g]
+            local = points @ frame
+            ok &= (np.abs(local[:, 0]) <= sx) & (np.abs(local[:, 1]) <= sy)
+        nearer = ok & ((dist < 0.0) | (t < dist))
+        dist[nearer] = t[nearer]
+        geomid[nearer] = g
+
+
 def cast(
     model,
     data,
@@ -123,10 +170,11 @@ def cast(
     hits = out if out is not None else buffers(nray)
     if hits.dist.ndim != 1 or hits.nray != nray:
         raise ValueError(f"raycast: out sized for {hits.nray} rays, given {nray} directions")
+    o = np.ascontiguousarray(origin, dtype=np.float64).reshape(3)
     mujoco.mj_multiRay(
         model,
         data,
-        np.ascontiguousarray(origin, dtype=np.float64).reshape(3),
+        o,
         d,
         _resolve_mask(geomgroup),
         flg_static,
@@ -138,6 +186,7 @@ def cast(
         nray,
         cutoff,
     )
+    _plane_hits(model, data, o, d, cutoff, _resolve_mask(geomgroup), flg_static, bodyexclude, hits)
     return hits
 
 
@@ -162,7 +211,7 @@ def cast_many(
     What this still buys over a hand-written loop is the allocation discipline and a caller that can
     then classify every point at once: the flat views are computed before the loop, so each iteration
     passes slices rather than building a fresh array. Measured on a 26569-point grid that is ~1.5x
-    faster than the per-point loop with per-point classification it replaced -- from the vectorised
+    faster than a per-point loop with per-point classification -- from the vectorised
     numpy, not from concurrency, which this module refuses (see the module docstring).
     """
     o = np.ascontiguousarray(origins, dtype=np.float64).reshape(-1, 3)
@@ -194,5 +243,16 @@ def cast_many(
             None if nrm_f is None else nrm_f[3 * a : 3 * (a + nray)],
             nray,
             cutoff,
+        )
+        _plane_hits(
+            model,
+            data,
+            o[i],
+            d,
+            cutoff,
+            mask,
+            flg_static,
+            bodyexclude,
+            RayHits(dist=dist_f[a : a + nray], geomid=geom_f[a : a + nray]),
         )
     return hits

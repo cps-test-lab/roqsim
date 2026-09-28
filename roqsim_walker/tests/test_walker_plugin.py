@@ -51,9 +51,9 @@ def sim(_engine):
 
     Building the engine is cheap (~0.1 s); its FIRST ``reset()`` is not (~0.9 s -- the character
     meshes and the CARLA locomotion clips load lazily there). A second reset on the same engine is
-    about a millisecond, so ten tests each building their own engine paid that boot ten times.
-    ``reset()`` is the engine's episode boundary and the same call this fixture always made, so a
-    test still starts from the route's start with every plugin's ``on_reset`` having run.
+    about a millisecond, so ten tests each building their own engine would pay that boot ten times.
+    ``reset()`` is the engine's episode boundary, so a test still starts from the route's start with
+    every plugin's ``on_reset`` having run.
     """
     _engine.reset()
     return _engine
@@ -90,9 +90,9 @@ def test_plugin_registers_entity_handle_and_goal_endpoint(sim):
     assert ctx.blackboard.get("walker:pedestrian") is not None
 
     # The walker itself registers the body_poses TF stream; its navigator registers the goal
-    # interface, as it does for a robot or a prop -- which is why there are now TWO goal endpoints
-    # rather than one. `navigate_through_poses` is unchanged in name and type, so an existing client
-    # and an existing world are unaffected; `navigate_to_pose` is new surface a walker never had.
+    # interface, as it does for a robot or a prop -- which is why there are TWO goal endpoints.
+    # `navigate_through_poses` keeps the name and type a walker client expects; `navigate_to_pose`
+    # is the navigator's single-goal surface.
     # `start_route` is there because this walker has a patrol: it runs the configured route.
     endpoints = {e.name: e for e in ctx.interface.all() if e.owner == "pedestrian"}
     assert set(endpoints) == {
@@ -388,9 +388,9 @@ def _engine_with_waypoints(waypoints, **walker):
 def test_a_per_waypoint_dwell_reaches_the_navigator():
     """`[x, y, dwell]` is what the walker's config block documents and its validator accepts.
 
-    It used to be truncated to `(x, y)` on the way to the navigator, so a world asking for a pause
-    got none and the crowd simply never stopped walking -- with no warning, because nothing had
-    rejected the value. It cannot ride along as a goal's third element (that position is the goal's
+    Truncated to `(x, y)` on the way to the navigator, a world's pause would never arrive and the
+    crowd would simply never stop walking -- with no warning, because nothing
+    rejects the value. It cannot ride along as a goal's third element (that position is the goal's
     yaw), so it travels as the navigator's own `dwell`.
     """
     engine = _engine_with_waypoints([[0.0, 0.0, [0.0, 3.0]], [2.0, 0.0, [1.0, 2.0]]])
@@ -402,7 +402,7 @@ def test_a_per_waypoint_dwell_reaches_the_navigator():
 
 def test_a_dwell_on_only_some_waypoints_reaches_the_navigator():
     """The shape the shipped `walker_patrol` world writes: a pause at two of four waypoints. The
-    per-point list is then a MIX of bare numbers and pairs, which is what broke that world."""
+    per-point list is then a MIX of bare numbers and pairs."""
     engine = _engine_with_waypoints(
         [[-2.0, -2.0], [2.0, -2.0, [2.0, 4.0]], [2.0, 2.0], [-2.0, 2.0, [1.0, 3.0]]]
     )

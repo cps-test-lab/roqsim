@@ -235,8 +235,8 @@ def test_every_service_a_shipped_plugin_declares_has_a_handler():
     the whole bridge down at configure, for every world that lists that plugin. The declaration
     and the handler live in different packages, which is exactly how they come apart.
 
-    Every plugin package is scanned, not just core: the declaration that first came apart this way
-    was a sensor's, and a scan of ``roqsim.plugins`` alone would have watched the wrong shelf.
+    Every plugin package is scanned, not just core: sensor packages declare services too, and a
+    scan of ``roqsim.plugins`` alone would watch the wrong shelf.
     """
     import importlib
     from importlib.metadata import entry_points

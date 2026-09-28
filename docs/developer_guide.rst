@@ -26,7 +26,7 @@ Repository layout
    roqsim_mobile_manipulation/  base AND arm robots — the one package depending on both families
    roqsim_humanoid/ roqsim_quadruped/   legged families;  roqsim_walker/  pedestrians (dynamic obstacles)
    roqsim_scene_builder/ roqsim_webctrl/   human-in-the-loop scene windows, web control UI
-   scenario_execution_roqsim/     OSC actions (entity_moved, entity_rotated, set_model_override);
+   scenario_execution_roqsim/     OSC actions (entity_moved, entity_reports, set_model_override, ...);
                                     the ONLY package here that may import scenario_execution
    ros2_ws/src/
      roqsim_ros_bridge/            ROS 2 bridge + simulation_interfaces (plugins)
@@ -83,13 +83,15 @@ a path or which package a tool lives in:
 
 .. code-block:: bash
 
-   roqsim --help                       # the groups, one per package that ships tools
+   roqsim --help                       # the core's commands and a group per package with tools
    roqsim scenes --help                # one line per tool in that group
    roqsim scenes sdf-to-scene --help   # that tool's own options
    python -m pydoc roqsim_scenes.cli.sdf_to_scene   # the reasoning behind it
 
-Two tools are top-level rather than in a group, because they are the two verbs the substrate exists for:
-``roqsim sim`` runs a world and ``roqsim render`` draws one. Everything else is ``roqsim <group> <tool>``.
+The core's own verbs are top-level rather than in a group: ``roqsim sim`` runs a world, ``roqsim render``
+draws one, and ``state``, ``check``, ``health``, ``catalog`` and ``plugins`` read a world, a run or the
+registries; the core's exporters are the ``roqsim export`` group. Every package tool is
+``roqsim <group> <tool>`` (``roqsim/src/roqsim/commands.py``).
 
 **Write it standalone, then link it in — in the same commit.**
 
@@ -123,15 +125,28 @@ both ordinary Python:
 * the docstring's **first line is a one-line summary** — it is what a listing shows, so keep it plain
   prose (a terminal prints ``\`\`markup\`\``` verbatim);
 * the parser says ``ArgumentParser(description=__doc__.split("\n")[0])``. Handing it the *whole*
-  docstring is what once made a single ``--help`` cost more than the rest of the tree together.
+  docstring can make a single ``--help`` cost more than the rest of the tree together.
 
 ``make test`` **fails** while a tool with a ``__main__`` block is unregistered, while a wrapper carries
 logic, or while a ``--help`` grows an essay. These are checks (``roqsim/tests/test_command_registry.py``),
-not conventions — the previous convention decayed silently until a checked-in Makefile was calling a
-binary that had never existed.
+not conventions — a convention nothing checks decays silently, until a checked-in Makefile calls a
+binary that does not exist.
 
 A tool that runs inside Blender is registered with ``tool(..., blender=True)``: it cannot be imported
 here, so the command locates ``blender`` and runs the module inside it.
+
+**An input the tool cannot load is one sentence, not a traceback.** Report the errors you understand
+yourself; where a world, model or recording does not resolve (``PluginError``, ``ModelError``,
+``RecordingError``) or a named file is not there (``FileNotFoundError``) and your ``main`` lets it
+through, the tree prints ``roqsim <group> <tool>: <reason>`` and exits ``2``, or ``4`` for a recording that
+exists and cannot be read. ``-v`` keeps the traceback, for the case where the missing file is the tool's
+own.
+
+**Exit statuses come from** :mod:`roqsim.exit_status` **and nowhere else.** Return its constants, give
+the parser ``epilog=exit_status.epilog(<the codes this tool returns>)``, and report a caught error with
+``return exit_status.fail("roqsim <group> <tool>", err)``. An error class whose status is not a bad input
+says so with an ``exit_status`` class attribute, so every tool that catches it agrees. Never return ``1``:
+it is Python's status for a crash. The table is in :ref:`exit-status`.
 
 Sensor coverage (analysis layer)
 --------------------------------

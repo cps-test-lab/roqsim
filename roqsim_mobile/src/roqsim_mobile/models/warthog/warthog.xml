@@ -45,6 +45,7 @@
     <material name="clearpath_red" rgba="0.8 0.0 0.0 1"/>
     <material name="clearpath_white" rgba="1.0 1.0 1.0 1"/>
     <material name="warthog_yellow" rgba="0.95 0.816 0.082 1"/>
+    <mesh file="bracket_vertical.stl"/>
     <mesh file="chassis-collision.stl"/>
     <mesh file="chassis.stl"/>
     <mesh file="diff-link.stl"/>
@@ -67,16 +68,15 @@
           <geom class="visual" mesh="diff-link" material="clearpath_light_grey" pos="-0.5826 0 0.24979"/>
           <geom class="visual" mesh="susp-link" material="clearpath_light_grey" pos="-0.5826 0 0.24979"/>
         <geom class="collision" mesh="chassis-collision" name="chassis_collision"/>
-        <!-- The description ships no scanner. This one clears the fenders, which reach 0.533 m
-             above base_link and would otherwise be the only thing a deck-height scan could see.
-             The height is an assumption - see the port log. -->
-        <site name="lidar" pos="0.5 0 0.6" size="0.01" rgba="1 0 0 0.6"/>
             <body name="left_diff_unit_link" pos="0 0.56821 0">
               <inertial pos="0 -0.05 0.197" mass="50" diaginertia="1.980416666666667 9.135416666666668 9.135416666666668"/>
             <geom class="visual" mesh="fenders" material="warthog_yellow" pos="0 0 0" quat="0.7071068 0 0 0.7071068"/>
             <geom class="visual" mesh="rocker" material="clearpath_black" pos="0 0 0" quat="0.7071068 0 0 0.7071068"/>
             <geom class="visual" mesh="light" material="clearpath_white" pos="0 -0.0244 0"/>
             <geom class="visual" mesh="light" material="clearpath_red" pos="0 -0.0244 0" quat="6.123234e-17 0 0 1"/>
+            <geom class="visual" mesh="bracket_vertical" material="clearpath_dark_grey" pos="0.690125 -0.03 0.350001" quat="0.7071408 0 0.7070727 0"/>
+            <geom class="collision" type="box" name="bracket_0_base_collision" pos="0.6850629 -0.03 0.3454292" quat="0.7071408 0 0.7070727 0" size="0.04957128 0.045 0.0050625"/>
+            <geom class="collision" type="box" name="bracket_0_upright_collision" pos="0.7548589 -0.03 0.2966072" quat="0.7071408 0 0.7070727 0" size="0.001599999 0.045 0.06707129"/>
               <geom class="collision" mesh="fenders" name="left_fender_collision"/>
               <body name="front_left_wheel_link" pos="0.457367 0 -0.012977">
                 <inertial pos="0 0 0" mass="15.0" diaginertia="0.41562499999999997 0.6749999999999999 0.41562499999999997"/>
@@ -99,6 +99,9 @@
             <geom class="visual" mesh="rocker" material="clearpath_black" pos="0 0 0" quat="0.7071068 0 0 -0.7071068"/>
             <geom class="visual" mesh="light" material="clearpath_white" pos="0 0.0244 0"/>
             <geom class="visual" mesh="light" material="clearpath_red" pos="0 0.0244 0" quat="6.123234e-17 0 0 -1"/>
+            <geom class="visual" mesh="bracket_vertical" material="clearpath_dark_grey" pos="-0.690125 0.02999906 0.349999" quat="3.275957e-05 0.7071408 3.275641e-05 -0.7070727"/>
+            <geom class="collision" type="box" name="bracket_1_base_collision" pos="-0.6850621 0.02999953 0.3454282" quat="3.275957e-05 0.7071408 3.275641e-05 -0.7070727" size="0.04957128 0.045 0.0050625"/>
+            <geom class="collision" type="box" name="bracket_1_upright_collision" pos="-0.7548486 0.02999306 0.2965928" quat="3.275957e-05 0.7071408 3.275641e-05 -0.7070727" size="0.001599999 0.045 0.06707129"/>
               <geom class="collision" mesh="fenders" name="right_fender_collision"/>
               <body name="front_right_wheel_link" pos="0.457367 0 -0.012977">
                 <inertial pos="0 0 0" mass="15.0" diaginertia="0.41562499999999997 0.6749999999999999 0.41562499999999997"/>

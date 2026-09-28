@@ -37,6 +37,35 @@ least-squares inverse of the site Jacobian, integrate to joint position targets,
 enormous joint velocities from a small Cartesian command, and in a contact task that reads as a
 sudden force spike -- a physics artefact indistinguishable, in the metrics, from a real jam.
 
+**Which state each law linearises at.** The motion law measures its pose error on the arm and
+resolves it through the Jacobian at the COMMANDED joint targets, the configuration its increment is
+added to, so a lagging servo does not bend a straight commanded motion. The wrench laws take the
+Jacobian at the measured joints. ``current_pose`` reports the measured pose.
+
+**A moving goal.** A goal streamed as a moving setpoint -- a Cartesian path sent one pose at a time,
+which is how a task or a ROS client drives a Cartesian controller -- is followed a steady distance
+behind by a law that only closes on the pose error: ``v / kp`` for the motion law (25 mm at 50 mm/s
+and the default ``kp`` of 2 /s), ``D v / C`` for a stiff axis of the compliance law. ``feedforward``
+removes that lag the way a real trajectory-following controller does, by commanding the setpoint's
+own velocity alongside the correction: ``twist = v_goal + kp (x_goal - x)`` for the motion law, and
+damping on the velocity *relative* to the goal's, ``D (xdot - v_goal)``, on the compliance law's
+stiff axes. A zero-stiffness axis tracks no frame, so nothing is fed forward on it.
+
+``v_goal`` is whatever the caller supplied with the goal (``CartesianHandle.set_goal(..., twist=)``),
+and otherwise it is estimated from the stream itself, by differencing successive goals over sim
+time -- ``target_frame`` is a ``PoseStamped``, which carries no velocity, so for a ROS client the
+estimate is the only source there is. The estimate is built so that a goal which *jumps* feeds
+nothing forward: it takes, per axis, the smaller of the last two arrival-to-arrival velocities where
+they agree in sign and zero where they do not, so one displaced goal among a stream -- or a new
+stationary goal -- contributes no velocity, while a steady stream is fed forward in full. Goals
+further apart than ``feedforward_window_s`` are not a stream and feed nothing forward, and a
+feedforward lapses once the next goal is overdue by half the stream's own interval, so a stream that
+stops leaves the arm to settle on its last goal. What a stationary goal commands is unchanged by any
+of this; ``feedforward: off`` restores the proportional-only law for a stream as well. The commanded
+twist is clamped to ``max_linear_vel`` / ``max_angular_vel`` either way.
+
+The lag is observable: ``tracking_error`` reports ``goal - pose`` and the velocity being fed forward.
+
 **Single-writer.** This plugin never touches ``data.ctrl``. It writes joint *targets* through the
 ``ArmHandle`` that ``arm_controller`` publishes, and ``arm_controller`` remains the only writer of
 that arm's actuators.
@@ -57,7 +86,14 @@ ownership is where the entry sits rather than a config key::
       damping: [80, 80, 80, 160, 160, 160]   # D, diagonal
       stiffness: [0, 0, 0, 0, 0, 0]          # C, diagonal; a zero axis is pure force control
       axes: [1, 1, 1, 1, 1, 1]               # per-axis enable mask
-      kp: [2, 2, 2, 2, 2, 2]                 # motion type only: proportional gain on the pose error
+      kp: [2, 2, 2, 2, 2, 2]                 # motion type only: gain on the pose error, 1/s;
+                                             #   without feedforward a goal moving at v is
+                                             #   followed v / kp behind (25 mm at 50 mm/s)
+      feedforward: auto        # auto | supplied | off -- the goal's own velocity, commanded alongside
+                               #   the correction: auto uses a twist supplied with the goal and
+                               #   otherwise estimates one from the goal stream; supplied uses only a
+                               #   supplied twist; off is the proportional-only law
+      feedforward_window_s: 0.2   # goals further apart than this are not a stream and feed nothing
       max_linear_vel: 0.1      # m/s, clamp on the commanded twist MAGNITUDE
       max_angular_vel: 1.0     # rad/s
       ik_damping: 0.01         # damped-least-squares lambda
@@ -71,7 +107,11 @@ Endpoints, named as FZI's ``cartesian_controllers`` name them, so a node written
 unchanged against that stack: ``<controller>/target_wrench`` (in, ``geometry_msgs/WrenchStamped``),
 ``<controller>/target_frame`` (in, ``geometry_msgs/PoseStamped``) and ``<controller>/current_pose``
 (out). A commanded value overrides its configured default; until one arrives the config stands, so a
-world that publishes nothing behaves exactly as it always did.
+world that publishes nothing behaves exactly as configured. ``<controller>/tracking_error`` (out,
+``std_msgs/Float64``, metres) is this controller's own addition: how far the controlled site is from
+the pose it tracks, the commanded ``target_frame`` or, before one is commanded, the pose the
+controller took the arm at. Its in-process payload is a :class:`TrackingError`, with the full
+translational and rotational error and the feedforward in use.
 
 Also publishes a ``CartesianHandle`` on the blackboard under ``cartesian:<arm>`` for an in-process
 task plugin, with the same reach as the endpoints.
@@ -112,6 +152,15 @@ _TYPE_CLASSES = {
 #: Older config spelling, kept working. ``admittance`` resolves by whether a stiffness is configured.
 _LAWS = ("admittance", "position")
 
+#: Where the goal velocity fed forward comes from: a twist supplied with the goal, else the goal
+#: stream (``auto``); a supplied twist only (``supplied``); nowhere (``off``).
+_FEEDFORWARD = ("auto", "supplied", "off")
+
+#: How long a feedforward outlives the goal it came with, in the stream's own arrival intervals. One
+#: interval is when the next goal is due; the extra half absorbs arrival jitter, and bounds how far
+#: past its last goal a stream that stops carries the arm.
+_HOLD_INTERVALS = 1.5
+
 
 def _type_from_law(law: str, stiffness) -> str:
     if law == "position":
@@ -142,12 +191,104 @@ def _rotvec(mat_from: np.ndarray, mat_to: np.ndarray) -> np.ndarray:
     return out
 
 
+def _minmod(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Per component, the smaller of ``a`` and ``b`` in magnitude where they agree in sign, else 0."""
+    agree = np.sign(a) == np.sign(b)
+    return np.where(agree, np.sign(a) * np.minimum(np.abs(a), np.abs(b)), 0.0)
+
+
+class _GoalStream:
+    """The commanded goal's own velocity: supplied with it, or estimated from successive goals.
+
+    Goals are stamped with the sim time they arrive at. The estimate needs three arrivals, each
+    within ``window_s`` of the last, and combines the two velocities between them with
+    :func:`_minmod`: a stream moving steadily yields its velocity, and a goal that jumps -- one large
+    difference beside a small or opposite one -- yields none, which is what keeps a step to a new
+    goal from being read as a burst of speed. Two goals arriving at the same instant are one
+    arrival, the later replacing the earlier.
+
+    A velocity, estimated or supplied, holds until the next goal is overdue by half the stream's
+    interval, or for ``window_s`` after a goal that arrived alone with a supplied twist.
+    """
+
+    def __init__(self, mode: str, window_s: float):
+        self.mode = mode
+        self.window_s = window_s
+        self.clear()
+
+    def clear(self) -> None:
+        self._samples: list[tuple[float, np.ndarray, np.ndarray | None]] = []
+        self._velocity: np.ndarray | None = None
+        self._until = -np.inf
+
+    def observe(
+        self, t: float, pos: np.ndarray, mat: np.ndarray | None, twist: np.ndarray | None = None
+    ) -> None:
+        if self.mode == "off":
+            return
+        sample = (float(t), np.array(pos, dtype=float), None if mat is None else np.array(mat))
+        if self._samples and sample[0] <= self._samples[-1][0]:
+            self._samples[-1] = sample
+        else:
+            self._samples = [*self._samples[-2:], sample]
+        interval = self._samples[-1][0] - self._samples[-2][0] if len(self._samples) > 1 else None
+        streamed = interval is not None and interval <= self.window_s
+        self._until = sample[0] + (_HOLD_INTERVALS * interval if streamed else self.window_s)
+        if twist is not None:
+            self._velocity = np.array(twist, dtype=float)
+        elif self.mode == "auto":
+            self._velocity = self._estimate()
+        else:
+            self._velocity = None
+
+    def _estimate(self) -> np.ndarray | None:
+        if len(self._samples) < 3:
+            return None
+        first, mid, last = self._samples
+        if mid[0] - first[0] > self.window_s or last[0] - mid[0] > self.window_s:
+            return None
+        return _minmod(self._rate(first, mid), self._rate(mid, last))
+
+    @staticmethod
+    def _rate(a, b) -> np.ndarray:
+        dt = b[0] - a[0]
+        out = np.zeros(6)
+        out[:3] = (b[1] - a[1]) / dt
+        if a[2] is not None and b[2] is not None:
+            out[3:] = _rotvec(a[2], b[2]) / dt
+        return out
+
+    def velocity(self, t: float) -> np.ndarray | None:
+        """The goal velocity to feed forward at sim time ``t``, or ``None`` when there is none."""
+        if self._velocity is None or t > self._until:
+            return None
+        return self._velocity
+
+
+@dataclass(frozen=True)
+class TrackingError:
+    """How far the controlled site is from the pose it tracks, in the world frame.
+
+    ``linear`` is ``goal - pose`` in metres and ``angular`` the rotation from the tool's orientation
+    to the goal's as a rotation vector in radians; ``distance`` and ``angle`` are their magnitudes.
+    ``feedforward`` is the goal velocity being commanded this instant, zeros when none is.
+    """
+
+    linear: tuple[float, float, float]
+    angular: tuple[float, float, float]
+    distance: float
+    angle: float
+    feedforward: tuple[float, ...]
+
+
 @dataclass
 class CartesianHandle:
     """Blackboard handle under ``cartesian:<arm>``; all callables run on the physics thread."""
 
     arm: str
-    set_goal: Callable[[np.ndarray, np.ndarray], None]
+    #: ``set_goal(pos, quat_or_mat=None, twist=None)``: command the target frame; ``twist`` is the
+    #: goal's own world-frame velocity ``[vx, vy, vz, wx, wy, wz]`` where the caller knows it.
+    set_goal: Callable[..., None]
     read_pose: Callable[[], tuple[np.ndarray, np.ndarray]]
     set_law: Callable[[str], None]
     set_active: Callable[[bool], None]
@@ -156,6 +297,8 @@ class CartesianHandle:
     #: Command the target wrench, the in-process twin of the ``target_wrench`` endpoint.
     set_target_wrench: Callable[[np.ndarray], None] | None = None
     is_active: Callable[[], bool] | None = None
+    #: The in-process twin of the ``tracking_error`` endpoint.
+    read_tracking_error: Callable[[], TrackingError] | None = None
 
 
 class CartesianAdmittancePlugin(Plugin):
@@ -179,6 +322,10 @@ class CartesianAdmittancePlugin(Plugin):
         self.v_lin = float(self.config.get("max_linear_vel", 0.1))
         self.v_ang = float(self.config.get("max_angular_vel", 1.0))
         self.ik_damping = float(self.config.get("ik_damping", 0.01))
+        self._stream = _GoalStream(
+            str(self.config.get("feedforward", "auto")),
+            float(self.config.get("feedforward_window_s", 0.2)),
+        )
 
         # The identity is primary and the law follows from it: `controller_type` decides which terms
         # are live, and the legacy `law` key only picks a type when no type was named.
@@ -194,12 +341,25 @@ class CartesianAdmittancePlugin(Plugin):
         # A controller the world declares inactive comes up holding nothing, the way
         # `spawner --inactive` leaves one. Default active, so a world that never switches is unchanged.
         self._active = str(self.config.get("initial_state", "active")) != "inactive"
+        # What a reset returns to: a trial's `set_target_wrench`, `set_law` and switches are its own.
+        self._configured = (
+            self._active,
+            self.w_d.copy(),
+            self.law,
+            self.controller_type,
+            self._uses_wrench,
+            self._uses_stiffness,
+        )
+        self._registered: Controller | None = None
 
         self._ctx: SimContext | None = None
         self._arm_handle = None
         self._ft = None
         self._site_id = -1
         self._dofs: np.ndarray = np.zeros(0, dtype=int)
+        self._qposadr: np.ndarray = np.zeros(0, dtype=int)
+        # Scratch state for forward kinematics at the commanded joint targets; never stepped.
+        self._kin: mujoco.MjData | None = None
         self._joint_names: list[str] = []
         self._twist = np.zeros(6)
         self._goal_pos: np.ndarray | None = None
@@ -231,6 +391,10 @@ class CartesianAdmittancePlugin(Plugin):
         ):
             if key in config and len(config[key]) != width:
                 errors.append(f"'{key}' must have {width} entries (one per Cartesian axis)")
+        if str(config.get("feedforward", "auto")) not in _FEEDFORWARD:
+            errors.append(f"'feedforward' must be one of {', '.join(_FEEDFORWARD)}")
+        if float(config.get("feedforward_window_s", 0.2)) <= 0:
+            errors.append("'feedforward_window_s' must be > 0")
         if "mass" in config and any(float(v) <= 0 for v in config["mass"]):
             errors.append("'mass' entries must be > 0 (M is inverted in the admittance law)")
         return errors
@@ -267,20 +431,23 @@ class CartesianAdmittancePlugin(Plugin):
         # commands them. Anything else in the model (a second arm, a conveyor) stays untouched --
         # a Jacobian solve over every DOF in the world would happily move all of them.
         self._joint_names = list(self._arm_handle.joint_names)
-        dofs = []
+        dofs, qposadr = [], []
         for jname in self._joint_names:
             jid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"{prefix}{jname}")
             if jid < 0:
                 raise RuntimeError(f"cartesian_admittance: joint {prefix}{jname!r} not found")
             dofs.append(int(m.jnt_dofadr[jid]))
+            qposadr.append(int(m.jnt_qposadr[jid]))
         self._dofs = np.array(dofs, dtype=int)
+        self._qposadr = np.array(qposadr, dtype=int)
+        self._kin = mujoco.MjData(m)
 
         ns = entity.meta.get("namespace", "") if entity else ""
 
         # Listed and switched like any other controller. It claims the SAME command interfaces as
         # the trajectory controller, which is what makes handing the arm from one to the other a
         # switch rather than a race.
-        registry_for(ctx).register(
+        self._registered = registry_for(ctx).register(
             Controller(
                 name=self.controller_name,
                 type=f"cartesian_controllers/{_TYPE_CLASSES[self.controller_type]}",
@@ -292,8 +459,8 @@ class CartesianAdmittancePlugin(Plugin):
             )
         )
 
-        # The arm pulls this each step. An older arm_controller has no such slot, so this stays
-        # optional -- the plugin then runs from its own `pre_step` as it always did.
+        # The arm pulls this each step. An arm_controller without such a slot is still served:
+        # the plugin then runs from its own `pre_step`.
         if getattr(self._arm_handle, "set_command_source", None) is not None:
             self._arm_handle.set_command_source(self.update, self.label or "cartesian_admittance")
 
@@ -308,6 +475,7 @@ class CartesianAdmittancePlugin(Plugin):
                 controller_name=self.controller_name,
                 set_target_wrench=self.set_target_wrench,
                 is_active=lambda: self._active,
+                read_tracking_error=self.read_tracking_error,
             ),
         )
 
@@ -366,10 +534,34 @@ class CartesianAdmittancePlugin(Plugin):
                 },
             )
         )
+        ctx.interface.add(
+            Endpoint(
+                name="tracking_error",
+                direction="out",
+                owner=self.arm,
+                namespace=ns,
+                read=self.read_tracking_error,
+                rate_hz=self.config.get("pose_rate_hz", 50.0),
+                backend={
+                    "ros2": {
+                        "type": "std_msgs.msg.Float64",
+                        "field": "distance",
+                        "topic": self.topic_override("tracking_error")
+                        or f"{self.controller_name}/tracking_error",
+                    }
+                },
+            )
+        )
 
     # -- handle API ------------------------------------------------------------------------------
 
-    def set_goal(self, pos, quat_or_mat=None) -> None:
+    def set_goal(self, pos, quat_or_mat=None, twist=None) -> None:
+        """Command the target frame, optionally with its own velocity.
+
+        ``twist`` is ``[vx, vy, vz, wx, wy, wz]`` in the world frame: how fast the goal itself is
+        moving, fed forward under ``feedforward: auto | supplied``. Without it, ``auto`` estimates
+        the velocity from the stream of goals.
+        """
         self._goal_pos = np.array(pos, dtype=float)
         if quat_or_mat is not None:
             mat = np.array(quat_or_mat, dtype=float)
@@ -378,6 +570,14 @@ class CartesianAdmittancePlugin(Plugin):
                 mujoco.mju_quat2Mat(out, mat)
                 mat = out
             self._goal_mat = mat.reshape(3, 3)
+        if twist is not None:
+            twist = np.array(twist, dtype=float)
+            if twist.shape != (6,):
+                raise ValueError(
+                    f"cartesian_admittance: a goal twist has 6 entries [vx, vy, vz, wx, wy, wz], "
+                    f"got shape {twist.shape}"
+                )
+        self._stream.observe(self._ctx.sim_time, self._goal_pos, self._goal_mat, twist)
 
     def read_pose(self) -> tuple[np.ndarray, np.ndarray]:
         d = self._ctx.data
@@ -392,6 +592,22 @@ class CartesianAdmittancePlugin(Plugin):
         quat = np.zeros(4)
         mujoco.mju_mat2Quat(quat, mat.reshape(9))
         return (pos.tolist(), quat.tolist())
+
+    def read_tracking_error(self) -> TrackingError:
+        """``goal - pose`` for the controlled site, and the goal velocity being fed forward.
+
+        The goal is the commanded ``target_frame`` and, before one is commanded, the pose this
+        controller took the arm at -- the same anchor the stiffness term pulls toward.
+        """
+        err = -self._deflection()
+        ff = self._goal_velocity()
+        return TrackingError(
+            linear=tuple(float(v) for v in err[:3]),
+            angular=tuple(float(v) for v in err[3:]),
+            distance=float(np.linalg.norm(err[:3])),
+            angle=float(np.linalg.norm(err[3:])),
+            feedforward=tuple(float(v) for v in (ff if ff is not None else np.zeros(6))),
+        )
 
     def set_target_wrench(self, wrench) -> None:
         """Command ``w_d``: what the TOOL is to apply, the convention ``target_wrench`` config uses."""
@@ -421,6 +637,7 @@ class CartesianAdmittancePlugin(Plugin):
             self._anchor_here()
             self._twist = np.zeros(6)
             self._q_target = None
+            self._stream.clear()
         elif not active:
             self._twist = np.zeros(6)
         self._active = active
@@ -433,11 +650,21 @@ class CartesianAdmittancePlugin(Plugin):
     # -- lifecycle -------------------------------------------------------------------------------
 
     def on_reset(self, ctx: SimContext) -> None:
+        active, w_d, self.law, self.controller_type, self._uses_wrench, self._uses_stiffness = (
+            self._configured
+        )
+        self.w_d = w_d.copy()
+        self._active = active
+        if self._registered is not None:
+            registry_for(ctx).restore(
+                self._registered, ACTIVE if active else INACTIVE, ctx.sim_time
+            )
         self._twist = np.zeros(6)
         # A commanded frame belongs to the episode that commanded it: carrying one across a reset
         # would make a repetition start where the previous one left off.
         self._goal_pos = None
         self._goal_mat = None
+        self._stream.clear()
         self._next_t = 0.0
         self._q_target = None
         self._anchor_here()
@@ -445,7 +672,7 @@ class CartesianAdmittancePlugin(Plugin):
     def pre_step(self, ctx: SimContext) -> None:
         # Ask rather than act: the arm runs this through `ensure_updated` too, and whichever plugin
         # reaches it first in this step does the work. Declaring this one before or after the arm
-        # therefore changes nothing -- which it used to, by a whole step.
+        # therefore changes nothing.
         if self._arm_handle is not None and self._arm_handle.ensure_updated is not None:
             self._arm_handle.ensure_updated(ctx)
         else:
@@ -462,7 +689,7 @@ class CartesianAdmittancePlugin(Plugin):
         # Due within half a physics step of the scheduled time, and the next tick scheduled on the
         # fixed grid rather than one period after this one. The sim clock is a floating-point sum of
         # timesteps, so a tick due at exactly k periods can read a hair early; compared strictly and
-        # re-anchored on the current time, each such hair became a whole missed physics step.
+        # re-anchored on the current time, each such hair becomes a whole missed physics step.
         half_step = 0.5 * ctx.model.opt.timestep
         if ctx.sim_time < self._next_t - half_step:
             return
@@ -473,8 +700,16 @@ class CartesianAdmittancePlugin(Plugin):
             # here rather than catching up on the ticks that were missed.
             self._next_t = ctx.sim_time + dt
 
-        twist = self._wrench_twist(dt) if self._uses_wrench else self._position_twist()
-        self._apply(ctx, self._clamp(twist), dt)
+        if self._uses_wrench:
+            self._apply(ctx, self._clamp(self._wrench_twist(dt)), dt)
+            return
+        # The motion law's increment is added to the accumulated joint TARGET, so it is resolved
+        # through the Jacobian at that target. The servo lags its target by a whole configuration
+        # during a move, and a Jacobian taken at the measured joints maps the commanded twist to a
+        # step that is right for where the arm was, not for the target it is added to -- the target
+        # then walks off the commanded line, sideways and in tilt. The error stays measured, which
+        # is what lets the accumulated target carry the drive's steady-state error.
+        self._apply(ctx, self._clamp(self._position_twist()), dt, self._commanded_kinematics(ctx))
 
     # -- laws ------------------------------------------------------------------------------------
 
@@ -487,7 +722,13 @@ class CartesianAdmittancePlugin(Plugin):
         # The mask is applied to the FORCING term, not to the resulting twist, and the stored twist
         # is masked with it. Masking only the output leaves a disabled axis integrating to the clamp
         # behind the mask, so enabling it later dumps a saturated velocity into the arm in one step.
-        accel = (forcing * self.axes - self.D * self._twist) / self.M
+        # Damping acts on the velocity relative to the goal's, on the axes that track the goal: a
+        # zero-stiffness axis is under force control alone and is given no velocity to follow.
+        relative = self._twist
+        ff = self._goal_velocity() if self._uses_stiffness else None
+        if ff is not None:
+            relative = self._twist - ff * self.axes * (self.C != 0.0)
+        accel = (forcing * self.axes - self.D * relative) / self.M
         self._twist = self._clamp(self._twist + accel * dt) * self.axes
         return self._twist
 
@@ -495,10 +736,10 @@ class CartesianAdmittancePlugin(Plugin):
         """``x - x_0``: how far the tool has been pushed off its equilibrium, translation and rotation.
 
         The equilibrium is the commanded ``target_frame`` where one has been commanded, and otherwise
-        the pose captured when this controller took the arm. Both halves are present: with the
-        rotational half missing, a configured rotational stiffness did nothing and "orientation is
-        held" quietly meant "orientation is unregulated", with the DLS solve free to accumulate drift
-        across a long run.
+        the pose captured when this controller took the arm. Both halves are present: without the
+        rotational half, a configured rotational stiffness does nothing and "orientation is
+        held" quietly means "orientation is unregulated", with the DLS solve free to accumulate
+        drift across a long run.
         """
         pos, mat = self.read_pose()
         anchor_pos = self._goal_pos if self._goal_pos is not None else self._rest_pos
@@ -525,6 +766,17 @@ class CartesianAdmittancePlugin(Plugin):
             return -wrench
         return wrench
 
+    def _goal_velocity(self) -> np.ndarray | None:
+        """The goal velocity to feed forward now, or ``None``.
+
+        Its rotational half only where an orientation has been commanded: without one no
+        orientation is tracked, and a rotation fed forward would turn the tool open-loop.
+        """
+        ff = self._stream.velocity(self._ctx.sim_time)
+        if ff is None or self._goal_mat is not None:
+            return ff
+        return np.concatenate([ff[:3], np.zeros(3)])
+
     def _position_twist(self) -> np.ndarray:
         pos, mat = self.read_pose()
         if self._goal_pos is None:
@@ -534,6 +786,9 @@ class CartesianAdmittancePlugin(Plugin):
         if self._goal_mat is not None:
             # Orientation error as a rotation vector, from where the tool is to where it should be.
             twist[3:] = self.kp[3:] * _rotvec(mat, self._goal_mat)
+        ff = self._goal_velocity()
+        if ff is not None:
+            twist = twist + ff
         # No integrator in this law, so masking the result is enough -- nothing accumulates behind it.
         return twist * self.axes
 
@@ -545,12 +800,36 @@ class CartesianAdmittancePlugin(Plugin):
         out[3:] = _limit(out[3:], self.v_ang)
         return out
 
-    def _apply(self, ctx: SimContext, twist: np.ndarray, dt: float) -> None:
-        """Resolve a world-frame twist to joint position targets via damped least squares."""
-        m, d = ctx.model, ctx.data
+    def _seed_target(self) -> None:
+        """Start the accumulated joint target from the arm's measured joints, once per hand-over."""
+        if self._q_target is None:
+            _, positions, _, _ = self._arm_handle.read_state()
+            by_name = dict(zip(self._arm_handle.joint_names, positions, strict=False))
+            self._q_target = np.array([by_name[n] for n in self._joint_names], dtype=float)
+
+    def _commanded_kinematics(self, ctx: SimContext) -> mujoco.MjData:
+        """Kinematics with this arm at its commanded joint targets and everything else as measured."""
+        self._seed_target()
+        kin = self._kin
+        kin.qpos[:] = ctx.data.qpos
+        kin.mocap_pos[:] = ctx.data.mocap_pos
+        kin.mocap_quat[:] = ctx.data.mocap_quat
+        kin.qpos[self._qposadr] = self._q_target
+        mujoco.mj_kinematics(ctx.model, kin)
+        mujoco.mj_comPos(ctx.model, kin)
+        return kin
+
+    def _apply(
+        self, ctx: SimContext, twist: np.ndarray, dt: float, data: mujoco.MjData | None = None
+    ) -> None:
+        """Resolve a world-frame twist to joint position targets via damped least squares.
+
+        The Jacobian is taken at *data*'s configuration, the measured state when none is given.
+        """
+        m = ctx.model
         jacp = np.zeros((3, m.nv))
         jacr = np.zeros((3, m.nv))
-        mujoco.mj_jacSite(m, d, jacp, jacr, self._site_id)
+        mujoco.mj_jacSite(m, ctx.data if data is None else data, jacp, jacr, self._site_id)
         jac = np.vstack([jacp, jacr])[:, self._dofs]
 
         # dq = J^T (J J^T + lambda^2 I)^-1 v. Damping trades exactness for boundedness near a
@@ -560,9 +839,6 @@ class CartesianAdmittancePlugin(Plugin):
         jjt = jac @ jac.T + lam2 * np.eye(6)
         dq = jac.T @ np.linalg.solve(jjt, twist)
 
-        if self._q_target is None:
-            _, positions, _, _ = self._arm_handle.read_state()
-            by_name = dict(zip(self._arm_handle.joint_names, positions, strict=False))
-            self._q_target = np.array([by_name[n] for n in self._joint_names], dtype=float)
+        self._seed_target()
         self._q_target = self._q_target + dq * dt
         self._arm_handle.set_targets(self._joint_names, self._q_target.tolist())

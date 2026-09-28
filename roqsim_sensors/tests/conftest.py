@@ -4,8 +4,8 @@
 pytest imports ``conftest.py`` ahead of the test modules beside it, which is the only hook that runs
 early enough: several of these modules ``import mujoco`` at the top, above their ``roqsim`` imports
 (isort sorts third-party above first-party), and ``MUJOCO_GL`` is read exactly once, while ``import
-mujoco`` runs. Without this, running *this directory on its own* with ``MUJOCO_GL`` unset bound glfw
-and the camera tests died in ``check_gl_backend`` -- while ``make test`` stayed green, because it
+mujoco`` runs. Without this, running *this directory on its own* with ``MUJOCO_GL`` unset binds glfw
+and the camera tests die in ``check_gl_backend`` -- while ``make test`` stays green, because it
 collects roqsim's own suite first and that imports roqsim before anything touches mujoco.
 
 roqsim's package ``__init__`` makes the same call for every entry point that reaches mujoco through

@@ -5,8 +5,8 @@
 """The key catalogue: what the handlers fly on, and what the window says they do, are one thing.
 
 The point of `roqsim.keys` is that the F1 list cannot drift from the keys. These tests are where that
-is actually held -- above all by pinning the maps `WalkKeys` polls to the values it used to carry
-literally, so a catalogue edit cannot quietly change how the camera flies.
+is actually held -- above all by pinning the maps `WalkKeys` polls to literal values, so a
+catalogue edit cannot quietly change how the camera flies.
 """
 
 from types import SimpleNamespace

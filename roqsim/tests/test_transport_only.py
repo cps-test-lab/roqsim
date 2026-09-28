@@ -224,7 +224,7 @@ def test_a_typo_alongside_a_bridge_gets_the_plain_report(no_entry_points):
 
 
 def test_every_unresolvable_ref_is_reported_at_once():
-    """Resolution used to stop at the first, costing an edit-and-rerun cycle per typo.
+    """Stopping at the first would cost an edit-and-rerun cycle per typo.
 
     No fixture needed: these two names are not registered in any environment.
     """
@@ -243,8 +243,8 @@ def test_a_single_failure_keeps_the_original_wording():
 
 
 def test_a_document_whose_bridge_is_not_installed_still_LOADS(no_entry_points):
-    """Expansion moved into the load path, so a ref that will not import is met earlier than it
-    used to be. Loading has to stay tolerant: a consumer that wants the *scene* -- render, the
+    """Expansion runs in the load path, so a ref that will not import is met at load. Loading
+    has to stay tolerant: a consumer that wants the *scene* -- render, the
     exporters, describe -- must still get one for a world it cannot run."""
     cfg = load_config_from_dict({"components": [{GEOMETRY: {}}, {"ros2_bridge": {}}]})
     assert _refs(cfg) == [GEOMETRY, "ros2_bridge"]

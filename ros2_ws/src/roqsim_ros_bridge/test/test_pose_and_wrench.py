@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: Apache-2.0
 """Poses and wrenches across the wire: quaternion order, and the full orientation.
 
-Two failures sit behind these. A plugin declared ``WrenchStamped`` and no converter existed, so the
-reflective fallback raised at publish time -- the wrench a contact task is built on never reached
-ROS at all. And the pose decoder projected every orientation down to a yaw, which suits an airframe
-and discards exactly what a Cartesian controller commanded to hold its tool upright needs.
+Two failures sit behind these. A plugin that declares ``WrenchStamped`` with no converter makes the
+reflective fallback raise at publish time -- the wrench a contact task is built on never reaches ROS
+at all. And a pose decoder that projects every orientation down to a yaw suits an airframe and
+discards exactly what a Cartesian controller commanded to hold its tool upright needs.
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ class _PoseMsg:
 
 
 def test_a_wrench_has_a_converter_at_all():
-    """The bug itself: a declared type with no converter falls back to ``msg.data``, which a wrench
+    """The first failure: a declared type with no converter falls back to ``msg.data``, which a wrench
     does not have, and raises at the first publish rather than at configure."""
     fill = get_converter("geometry_msgs.msg.WrenchStamped")
     msg = _WrenchMsg()
@@ -78,6 +78,20 @@ def test_a_wrench_carries_the_frame_it_was_resolved_in():
     msg = _WrenchMsg()
     fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "tool0"})
     assert msg.header.frame_id == "tool0"
+
+
+def test_a_namespaced_wrench_in_the_world_frame_names_world():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "world", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "world"
+
+
+def test_a_namespaced_wrench_in_a_robot_frame_is_prefixed():
+    fill = get_converter("geometry_msgs.msg.WrenchStamped")
+    msg = _WrenchMsg()
+    fill(msg, ([0.0] * 3, [0.0] * 3), None, {"frame_id": "tool0", "frame_prefix": "ur5e"})
+    assert msg.header.frame_id == "ur5e/tool0"
 
 
 def test_a_commanded_wrench_decodes_to_the_readers_own_shape():
@@ -100,11 +114,19 @@ def test_a_pose_decodes_with_its_orientation_intact():
     msg.pose.orientation.w = msg.pose.orientation.y = math.sqrt(0.5)
     msg.pose.orientation.x = msg.pose.orientation.z = 0.0
 
-    position, quat = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
+    position, quat, _frame = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
 
     assert tuple(position) == (0.4, 0.0, 0.3)
     assert quat[0] == pytest.approx(math.sqrt(0.5)), "w comes first, MuJoCo's order"
     assert quat[2] == pytest.approx(math.sqrt(0.5)), "the pitch must survive the decode"
+
+
+def test_a_pose_decodes_with_its_frame():
+    """A setpoint in ``odom`` read as a world position flies a drone spawned away from the origin to
+    the wrong place; only the consumer can tell the two apart, so the decoder hands the frame on."""
+    msg = _PoseMsg()
+    msg.header.frame_id = "odom"
+    assert get_decoder("geometry_msgs.msg.PoseStamped")(msg)[2] == "odom"
 
 
 def test_the_quaternion_is_reordered_on_the_way_out():
@@ -123,12 +145,12 @@ def test_a_pose_survives_a_round_trip():
     original = ([0.4, -0.1, 0.3], [math.sqrt(0.5), 0.0, math.sqrt(0.5), 0.0])
     fill(msg, original, None, {})
 
-    position, quat = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
+    position, quat, _frame = get_decoder("geometry_msgs.msg.PoseStamped")(msg)
     assert list(position) == pytest.approx(original[0])
     assert list(quat) == pytest.approx(original[1])
 
 
-# -- the guard that would have caught the wrench --------------------------------------------------
+# -- the guard over every declared out type -------------------------------------------------------
 
 
 def test_every_out_topic_type_a_shipped_plugin_declares_has_a_converter():

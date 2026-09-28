@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -51,10 +52,60 @@ TARGET_FACES = 4000
 
 #: Sub-directories of meshes/dae holding the parts the URDF actually references.
 MESH_DIRS = ("body", "wheel")
-#: STLs copied as-is (MuJoCo loads STL). The vendor's own lidar mount and LDS-01, pulled in by
-#: lidar:=lds, so the scanner the manifest declares is geometry rather than a bare site marker.
-STL_MESHES = ("RasPiMouse_MultiLiDARMount.stl", "robotis_lds01.stl")
+#: STLs copied as-is (MuJoCo loads STL): the vendor's own multi-lidar mount, pulled in by
+#: lidar:=lds. The LDS-01 on it is the `lds01` device model, which the manifest mounts.
+STL_MESHES = ("RasPiMouse_MultiLiDARMount.stl",)
+#: Mesh stems of the vendor scanner link that the `lds01` device model carries instead.
+DEVICE_MESHES = ("robotis_lds01",)
 WHEELS = {"left_wheel": "left", "right_wheel": "right"}
+
+
+def _rpy_matrix(roll: float, pitch: float, yaw: float) -> list[list[float]]:
+    """URDF fixed-axis roll/pitch/yaw as a rotation matrix, ``Rz(yaw) @ Ry(pitch) @ Rx(roll)``."""
+    cr, sr, cp, sp, cy, sy = (
+        math.cos(roll), math.sin(roll), math.cos(pitch), math.sin(pitch), math.cos(yaw), math.sin(yaw)
+    )
+    return [
+        [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+        [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+        [-sp, cp * sr, cp * cr],
+    ]
+
+
+def _chain(joints: list[ET.Element]) -> tuple[list[float], list[list[float]]]:
+    """Position and rotation of the end of a fixed-joint chain, in the frame its first joint hangs from."""
+    pos, rot = [0.0, 0.0, 0.0], [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+    for joint in joints:
+        origin = joint.find("origin")
+        xyz = [float(v) for v in (origin.get("xyz") or "0 0 0").replace(",", " ").split()]
+        rpy = [float(v) for v in (origin.get("rpy") or "0 0 0").replace(",", " ").split()]
+        pos = [pos[i] + sum(rot[i][k] * xyz[k] for k in range(3)) for i in range(3)]
+        step = _rpy_matrix(*rpy)
+        rot = [[sum(rot[i][k] * step[k][j] for k in range(3)) for j in range(3)] for i in range(3)]
+    return pos, rot
+
+
+def _chained_visuals(link: ET.Element, joints: list[ET.Element], materials: dict[str, str],
+                     skip_meshes: tuple[str, ...] = ()) -> str:
+    """Every visual of *link* as geoms of ``body_link``, placed through the fixed *joints*.
+
+    A visual with its own orientation is refused: only its position is carried through the chain,
+    and a rotated one would be emitted in the wrong orientation without a word.
+    """
+    pos, rot = _chain(joints)
+    out = ""
+    block = link_visuals(link, "        ", materials=materials, default_rgba="0.1 0.1 0.1 1")
+    for line in block.splitlines():
+        if any(f'mesh="{stem}"' in line for stem in skip_meshes):
+            continue
+        if ' quat="' in line:
+            raise SystemExit(f"{link.get('name')}: a rotated visual cannot be placed here: {line}")
+        head, rest = line.split('pos="', 1)
+        vec, tail = rest.split('"', 1)
+        local = [float(v) for v in vec.split()]
+        x, y, z = (pos[i] + sum(rot[i][k] * local[k] for k in range(3)) for i in range(3))
+        out += f'{head}pos="{x:g} {y:g} {z:g}"{tail}\n'
+    return out
 
 
 def convert_meshes(source: Path) -> dict[str, list]:
@@ -119,22 +170,14 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
             f' rgba="0.15 0.15 0.15 1"/>\n'
         )
 
-    # The vendor's own mount/scanner offsets and geometry, read from the expanded tree.
-    mount_z = float(joints["lds_multi_mount_joint"].find("origin").get("xyz").split()[2])
-    lidar_z = mount_z + float(joints["laser_joint"].find("origin").get("xyz").split()[2])
-    mesh_material = {"RasPiMouse_MultiLiDARMount": "mat_mount", "robotis_lds01": "mat_lidar"}
-    lidar_geoms = ""
-    for link_name, offset in (("lds_multi_mount_link", mount_z), ("laser", lidar_z)):
-        block = link_visuals(links[link_name], "        ", materials=mesh_material,
-                              default_rgba="0.1 0.1 0.1 1")
-        # shift each geom into base_link by the link's own z offset
-        for line in block.splitlines():
-            if 'pos="' in line:
-                head, rest = line.split('pos="', 1)
-                vec, tail = rest.split('"', 1)
-                x, y, z = (float(v) for v in vec.split())
-                line = f'{head}pos="{x:g} {y:g} {z + offset:g}"{tail}'
-            lidar_geoms += line + "\n"
+    # The vendor's multi-lidar mount, and the four standoff legs its scanner link carries, placed
+    # through the vendor's own fixed joints -- the scanner's 3.14 yaw included. The scanner mesh is
+    # left out: it is the `lds01` device model, which the manifest mounts at the same joint.
+    mount_joint, laser_joint = joints["lds_multi_mount_joint"], joints["laser_joint"]
+    lidar_geoms = _chained_visuals(links["lds_multi_mount_link"], [mount_joint],
+                                   {"RasPiMouse_MultiLiDARMount": "mat_mount"})
+    lidar_geoms += _chained_visuals(links["laser"], [mount_joint, laser_joint], {},
+                                    skip_meshes=DEVICE_MESHES)
 
     wheels = ""
     for link_name, side in WHEELS.items():
@@ -160,7 +203,7 @@ def build(urdf: ET.Element, palette: dict[str, list]) -> str:
         commit=RASPIMOUSE_COMMIT, materials="".join(materials), assets="".join(assets),
         base_mass=base["mass"], base_pos=base["pos"], base_inertia=base["diaginertia"],
         half=half, box_origin=box_origin, base_geoms=base_geoms, wheels=wheels,
-        lidar_geoms=lidar_geoms, lidar_z=f"{lidar_z:g}",
+        lidar_geoms=lidar_geoms,
     )
 
 
@@ -214,9 +257,7 @@ TEMPLATE = """<mujoco model="raspimouse">
 
   <asset>
     <material name="mat_mount" rgba="0.2 0.2 0.2 1"/>
-    <material name="mat_lidar" rgba="0.1 0.1 0.1 1"/>
 {materials}{assets}    <mesh file="RasPiMouse_MultiLiDARMount.stl" scale="0.001 0.001 0.001"/>
-    <mesh file="robotis_lds01.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
@@ -226,13 +267,11 @@ TEMPLATE = """<mujoco model="raspimouse">
       <body name="body_link" pos="0 0 0">
         <inertial pos="{base_pos}" mass="{base_mass}" diaginertia="{base_inertia}"/>
 {base_geoms}        <geom class="collision" name="chassis_geom" size="{half}" pos="{box_origin}"/>
-        <!-- The vendor's own multi-lidar mount and LDS-01, with EVERY visual of both links: the
-             scanner carries four leg cylinders as well as its mesh, and emitting only the mesh
-             leaves it floating 3 cm above the mount. `lidar:=lds` is a supported option of the
-             description, so the mount height and the 0.120 m scan plane are the vendor's numbers,
-             not assumptions. -->
-{lidar_geoms}        <site name="lidar" pos="0 0 {lidar_z}" size="0.004" rgba="1 0 0 0.6"/>
-{wheels}      </body>
+        <!-- The vendor's own multi-lidar mount (`lidar:=lds`), and the four leg cylinders its
+             scanner link stands on, placed through the vendor's fixed joints. The LDS-01 itself is
+             the `lds01` device model: raspimouse.manifest.yaml declares lds_multi_mount_link as a
+             frame and mounts the scanner on it at the vendor's laser joint. -->
+{lidar_geoms}{wheels}      </body>
     </body>
   </worldbody>
 

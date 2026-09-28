@@ -42,11 +42,11 @@ def resolve_seed(seed: int | None, logger: logging.Logger, config_seed: int | No
 
     An explicitly passed seed wins because it is the more specific instruction -- the
     world states what a run normally uses, the caller states what THIS run uses. With
-    neither, one is drawn and announced, exactly as before ``sim.seed`` existed.
+    neither, one is drawn and announced.
 
     Always returns an ``int``, never ``None``: a driver assigns the result to
     :attr:`~roqsim.context.SimContext.seed`, and an unset seed is what
-    :meth:`~roqsim.context.SimContext.rng_for` now refuses to draw from.
+    :meth:`~roqsim.context.SimContext.rng_for` refuses to draw from.
     """
     if seed is not None:
         logger.info("seed: %d (given)", seed)

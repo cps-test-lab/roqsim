@@ -2,7 +2,7 @@
 
 The load-bearing assertion here is :func:`test_the_visible_mask_is_the_default`. Every raycaster in
 the tree relies on it, and the bug class it closes -- an *absent* entity still being a lidar return --
-was live in three plugins and documented as a standing warning in :mod:`roqsim.presence`.
+is one each raycaster would otherwise have to close on its own.
 """
 
 from __future__ import annotations
@@ -141,3 +141,77 @@ def test_cast_many_defaults_to_the_visible_mask_too(md):
     m.geom_rgba[g][3] = 1.0
     many = raycast.cast_many(m, d, np.zeros((2, 3)), _PX, cutoff=50.0)
     assert (many.dist == -1.0).all()
+
+
+_PLANE_XML = """
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="10 10 0.1"/>
+    <geom name="near_box" type="box" size="0.05 0.05 0.05" pos="2.15 0 0.05"/>
+    <geom name="far_box" type="box" size="0.05 0.05 0.05" pos="4 0 0.05"/>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_a_plane_within_the_cutoff_is_hit_however_far_its_position_is():
+    """MuJoCo culls a plane by the distance to its POSITION, so a floor centred at the origin
+    vanished from any short-range cast made more than the cutoff away from the origin -- a cliff
+    sensor two metres out read no floor. The planes are intersected here instead; the
+    bounding-sphere cull still drops a box beyond the requested cutoff."""
+    model = mujoco.MjModel.from_xml_string(_PLANE_XML)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    floor = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "floor")
+    origin = np.array([2.0, 0.0, 0.02])
+    down = raycast.cast(model, data, origin, [[0.0, 0.0, -1.0]], cutoff=0.15)
+    assert down.dist[0] == pytest.approx(0.02)
+    assert down.geomid[0] == floor
+    # A pitched ray meets the floor at 0.02 / sin(80 deg).
+    pitched = raycast.cast(model, data, origin, [[0.1736, 0.0, -0.9848]], cutoff=0.15)
+    assert pitched.dist[0] == pytest.approx(0.02 / 0.9848, abs=1e-4)
+    ahead = raycast.cast(model, data, origin, [[1.0, 0.0, 0.0]], cutoff=0.15)
+    assert ahead.geomid[0] == mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "near_box")
+    # Beyond the requested cutoff the floor is a miss too, as a box is.
+    high = raycast.cast(model, data, origin + [0, 0, 1], [[0.0, 0.0, -1.0]], cutoff=0.15)
+    assert high.dist[0] == -1.0
+    far = raycast.cast(model, data, np.array([3.0, 0.0, 0.05]), [[1.0, 0.0, 0.0]], cutoff=0.15)
+    assert far.dist[0] == -1.0
+    many = raycast.cast_many(model, data, [origin, origin + [1, 0, 0]], [[0, 0, -1.0]], cutoff=0.15)
+    assert np.allclose(many.dist, 0.02)
+    assert np.all(many.geomid == floor)
+
+
+def test_a_far_plane_keeps_mujocos_own_plane_rules():
+    """One-sided, bounded by a nonzero size, and subject to the static and group filters."""
+    xml = """
+    <mujoco>
+      <worldbody>
+        <geom name="patch" type="plane" size="1 1 0.1" group="3"/>
+        <body name="lid" pos="0 0 0"><geom name="lid" type="plane" size="0 0 0.1" pos="0 0 2" group="0"/></body>
+      </worldbody>
+    </mujoco>
+    """
+    model = mujoco.MjModel.from_xml_string(xml)
+    data = mujoco.MjData(model)
+    mujoco.mj_forward(model, data)
+    patch = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, "patch")
+    # Inside the patch's size: hit. Outside it: the ray sails on (a miss below the lid).
+    assert raycast.cast(model, data, [0.5, 0, 0.05], [[0, 0, -1.0]], cutoff=0.1).geomid[0] == patch
+    assert raycast.cast(model, data, [2.5, 0, 0.05], [[0, 0, -1.0]], cutoff=0.1).dist[0] == -1.0
+    # From below the patch, upward: one-sided, no hit.
+    assert raycast.cast(model, data, [0.5, 0, -0.05], [[0, 0, 1.0]], cutoff=0.1).dist[0] == -1.0
+    # Static geometry skipped when the caller says so; a group masked out is skipped too.
+    no_static = raycast.cast(
+        model, data, [0.5, 0, 0.05], [[0, 0, -1.0]], cutoff=0.1, flg_static=False
+    )
+    assert no_static.dist[0] == -1.0
+    masked = raycast.cast(
+        model,
+        data,
+        [0.5, 0, 0.05],
+        [[0, 0, -1.0]],
+        cutoff=0.1,
+        geomgroup=np.array([1, 1, 1, 0, 0, 0], dtype=np.uint8),
+    )
+    assert masked.dist[0] == -1.0

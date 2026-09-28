@@ -1,10 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Re-export of :mod:`roqsim.floorplan_geometry`, which is where this now lives.
+"""Re-export of :mod:`roqsim.floorplan_geometry`.
 
-The arithmetic moved into core when a second package needed it: the ``floorplan`` plugin builds its
-walls from segments, and core is already where the floorplan geometry MuJoCo consumes lives
-(:mod:`roqsim.floorplan_collision`). Kept here because this path is the one three readers already
-import, and a move is not a reason to break them.
+The arithmetic lives in core because a second package needs it: the ``floorplan`` plugin builds its
+walls from segments, and core is where the floorplan geometry MuJoCo consumes lives
+(:mod:`roqsim.floorplan_collision`). This path stays importable because three readers import it.
 """
 
 from roqsim.floorplan_geometry import (

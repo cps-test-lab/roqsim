@@ -146,9 +146,9 @@ def render_scene(
 
     # An image has to be its own content block, so the inline case returns the result explicitly rather
     # than putting the Image in the dict: a dict holding one is serialized like any other value, so the
-    # picture arrived as the repr of a Python object *and* the record lost its structured form (an Image
-    # is not JSON-serializable, so the whole dict was dropped from structuredContent while the tool still
-    # advertised an output schema -- the client then rejected the call it had just made succeed).
+    # picture arrives as the repr of a Python object *and* the record loses its structured form (an
+    # Image is not JSON-serializable, so the whole dict is dropped from structuredContent while the
+    # tool still advertises an output schema -- the client then rejects a call that succeeded).
     return ToolResult(content=[Image(path=record["path"])], structured_content=record)
 
 

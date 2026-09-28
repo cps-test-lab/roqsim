@@ -4,11 +4,11 @@
 
 `cartesian_admittance` writes joint targets through the `ArmHandle`; `arm_controller` writes those
 targets into `data.ctrl`. Both run in `pre_step`, in world-YAML order, and the Cartesian controller
-can only be declared AFTER the arm -- its `configure` requires the handle to exist. So the arm wrote
-the targets it was holding and the Cartesian controller computed the next ones immediately after,
-every tick, and each one reached the actuators a step late.
+can only be declared AFTER the arm -- its `configure` requires the handle to exist. Left to that
+order, the arm writes the targets it is holding and the Cartesian controller computes the next ones
+immediately after, every tick, so each one reaches the actuators a step late.
 
-Nothing reported it, and a phase lag comparable to the loop's own time constant is not visible as a
+Nothing reports it, and a phase lag comparable to the loop's own time constant is not visible as a
 lag: it reads as a controller that is slightly softer than the one that was configured.
 """
 

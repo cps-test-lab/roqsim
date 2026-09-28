@@ -1,8 +1,6 @@
 """Static wall footprints for the walker planner and ORCA, read from the compiled MuJoCo model --
 the single source of truth.
 
-Ported from an earlier in-house navigation prototype.
-
 Walls live in the model as *collidable, static, non-floor* geoms: the ``floorplan`` plugin's wall
 colliders, and any environment MJCF attached as welded bodies -- so reading the model needs no
 external map files. "Static" means welded to the world (``body_weldid == 0``); the robot has DOFs
@@ -27,6 +25,8 @@ import math
 
 import mujoco
 import numpy as np
+
+from roqsim.kinematics import body_twist
 
 _CIRCLE_SEG = 12  # polygon segments approximating a round footprint
 
@@ -76,10 +76,10 @@ def wall_polygons(
 def _at_rest(model, data, body_id: int) -> bool:
     """Whether ``body_id`` is moving slower than :data:`RESTING_SPEED`.
 
-    Reads ``cvel``, which is only meaningful after a forward pass -- every caller here runs one
-    before rasterizing, for the same reason ``geom_xpos`` needs it.
+    The body's own velocity, which is only meaningful after a forward pass -- every caller here runs
+    one before rasterizing, for the same reason ``geom_xpos`` needs it.
     """
-    return float(np.linalg.norm(data.cvel[int(body_id)][3:6])) < RESTING_SPEED
+    return float(np.linalg.norm(body_twist(model, data, int(body_id)).linear)) < RESTING_SPEED
 
 
 def _footprint(model, data, g):
@@ -102,20 +102,32 @@ def _footprint(model, data, g):
             [[sx, sy, sz] for sx in (-s[0], s[0]) for sy in (-s[1], s[1]) for sz in (-s[2], s[2])]
         )
         W = corners @ R.T + p
-    elif t in (G.mjGEOM_CYLINDER, G.mjGEOM_CAPSULE, G.mjGEOM_SPHERE, G.mjGEOM_ELLIPSOID):
-        r = float(max(s[0], s[1])) if t == G.mjGEOM_ELLIPSOID else float(s[0])
-        if t == G.mjGEOM_CYLINDER:
-            half = float(s[1])
-        elif t == G.mjGEOM_CAPSULE:
-            half = float(s[1]) + r
-        elif t == G.mjGEOM_ELLIPSOID:
-            half = float(s[2])
-        else:  # sphere
-            half = r
+    elif t in (G.mjGEOM_CYLINDER, G.mjGEOM_CAPSULE, G.mjGEOM_SPHERE):
+        # Built from the geom's own axis, in the world: a cylinder or capsule lying on its side (a
+        # rail, a pipe, a beam placed by `fromto`) spans its length across the floor, and a footprint
+        # drawn in its local xy plane would be a sliver at its centre.
         ang = np.linspace(0.0, 2 * np.pi, _CIRCLE_SEG, endpoint=False)
-        circ = np.stack([r * np.cos(ang), r * np.sin(ang), np.zeros_like(ang)], 1)
-        W = circ @ R.T + p
-        return W[:, :2], float(p[2] - half), float(p[2] + half)
+        r = float(s[0])
+        half = 0.0 if t == G.mjGEOM_SPHERE else float(s[1])
+        ends = [p + R[:, 2] * half, p - R[:, 2] * half]
+        if t == G.mjGEOM_CYLINDER:
+            # The two end faces: circles of radius r about the axis, in the geom's frame.
+            ring = np.stack([r * np.cos(ang), r * np.sin(ang), np.zeros_like(ang)], 1) @ R.T
+            W = np.concatenate([ring + e for e in ends])
+            return W[:, :2], float(W[:, 2].min()), float(W[:, 2].max())
+        # Capsule and sphere: a sphere of radius r at each end, which projects to a disc.
+        disc = np.stack([r * np.cos(ang), r * np.sin(ang)], 1)
+        xy = np.concatenate([disc + e[:2] for e in ends])
+        zs = [e[2] for e in ends]
+        return xy, float(min(zs) - r), float(max(zs) + r)
+    elif t == G.mjGEOM_ELLIPSOID:
+        ang = np.linspace(0.0, 2 * np.pi, _CIRCLE_SEG, endpoint=False)
+        el = np.linspace(-np.pi / 2, np.pi / 2, 7)
+        a, e = np.meshgrid(ang, el)
+        unit = np.stack([np.cos(e) * np.cos(a), np.cos(e) * np.sin(a), np.sin(e)], -1).reshape(
+            -1, 3
+        )
+        W = (unit * np.asarray(s[:3], dtype=float)) @ R.T + p
     else:
         return None, 0.0, 0.0
     return W[:, :2], float(W[:, 2].min()), float(W[:, 2].max())
@@ -133,8 +145,9 @@ def dynamic_obstacle_bodies(model, exclude_mocapids):
     as an immovable agent every step -- the same ground-truth-overwrite a
     non-yielding participant gets -- so navigating agents steer around them too.
 
-    ``radius`` is the geom's circumscribed xy radius, which is yaw-invariant, so a
-    rotating box keeps a footprint that never shrinks below its true extent."""
+    ``radius`` circumscribes the body's collidable geoms about its origin in its xy
+    plane, which is yaw-invariant, so a rotating box keeps a footprint that never
+    shrinks below its true extent."""
     out = []
     for b in range(model.nbody):
         mid = int(model.body_mocapid[b])
@@ -152,24 +165,45 @@ def dynamic_obstacle_bodies(model, exclude_mocapids):
 
 
 def _geom_xy_radius(model, g) -> float:
-    """Circumscribed radius of geom ``g`` in its xy plane (independent of yaw)."""
+    """Radius about its body's origin, in the body's xy plane, that circumscribes geom ``g``
+    (independent of the body's yaw).
+
+    Taken in the body frame with the geom's own offset and orientation: the caller places the disc
+    at the body's position, and a capsule lying along x (a rail, a cart's handle) reaches its full
+    half-length, not its radius."""
     t = int(model.geom_type[g])
     s = model.geom_size[g]
+    c = np.asarray(model.geom_pos[g], dtype=float)
+    R = np.empty(9)
+    mujoco.mju_quat2Mat(R, model.geom_quat[g])
+    R = R.reshape(3, 3)
     G = mujoco.mjtGeom
     if t == G.mjGEOM_BOX:
-        return float(math.hypot(s[0], s[1]))
+        corners = np.array(
+            [[sx, sy, sz] for sx in (-s[0], s[0]) for sy in (-s[1], s[1]) for sz in (-s[2], s[2])]
+        )
+        return _max_xy_norm(corners @ R.T + c)
     if t in (G.mjGEOM_CYLINDER, G.mjGEOM_CAPSULE, G.mjGEOM_SPHERE):
-        return float(s[0])
+        # An end cap's rim or sphere lies within ``r`` of its centre, whatever the axis.
+        half = 0.0 if t == G.mjGEOM_SPHERE else float(s[1])
+        ends = np.stack([c + R[:, 2] * half, c - R[:, 2] * half])
+        return _max_xy_norm(ends) + float(s[0])
     if t == G.mjGEOM_ELLIPSOID:
-        return float(max(s[0], s[1]))
+        # The largest xy reach of an ellipsoid about its centre is the top singular value of the
+        # xy rows of R @ diag(size).
+        return float(math.hypot(c[0], c[1]) + np.linalg.norm(R[:2, :] * s[:3], 2))
     if t == G.mjGEOM_MESH:
         did = int(model.geom_dataid[g])
         adr, n = int(model.mesh_vertadr[did]), int(model.mesh_vertnum[did])
         if n <= 0:
             return 0.0
         V = model.mesh_vert[adr : adr + n].reshape(-1, 3)
-        return float(np.max(np.hypot(V[:, 0], V[:, 1])))
+        return _max_xy_norm(V @ R.T + c)
     return 0.0
+
+
+def _max_xy_norm(points: np.ndarray) -> float:
+    return float(np.max(np.hypot(points[:, 0], points[:, 1])))
 
 
 def _convex_hull_2d(points: np.ndarray) -> np.ndarray:

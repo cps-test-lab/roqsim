@@ -55,6 +55,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import errno
 import logging
 import sys
 import xml.etree.ElementTree as ET
@@ -65,7 +66,12 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import logging_setup
+from . import exit_status, logging_setup
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -312,8 +318,13 @@ def _sample_matrix(
         mujoco.mj_collision(model, data)
         seen = set()
         for c in range(data.ncon):
-            a = _body_of_geom(model, data.contact[c].geom1)
-            b = _body_of_geom(model, data.contact[c].geom2)
+            g1, g2 = int(data.contact[c].geom1), int(data.contact[c].geom2)
+            if g1 < 0 or g2 < 0:
+                # A flex side (geom -1): a flex is not a link, and MoveIt has no pair to disable.
+                # Looked up as a geom, -1 would read the model's last geom and its body.
+                continue
+            a = _body_of_geom(model, g1)
+            b = _body_of_geom(model, g2)
             if a in links and b in links and (k := key(a, b)) is not None:
                 seen.add(k)
         for k in seen:
@@ -603,10 +614,15 @@ def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export srdf",
         description="Generate a MoveIt SRDF (incl. a sampled collision matrix) for an roqsim robot.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="a bare MJCF file")
+    source.add_argument(
+        "--mjcf",
+        help="a bare MJCF file (compiled directly, with no plugins, so --set, --override and "
+        "--skip-plugins are refused with it)",
+    )
     parser.add_argument("--urdf", required=True, help="the URDF `roqsim export urdf` produced")
     parser.add_argument("--out", required=True, help="output .srdf path")
     parser.add_argument("--name", required=True, help="robot name (must match the URDF's)")
@@ -662,8 +678,13 @@ def main(argv: list | None = None) -> int:
         help="extra plugin names/refs to drop before compiling; transport/bridge plugins are always "
         "dropped (they contribute no geometry)",
     )
+    add_override_options(parser)
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        refuse_world_options(
+            parser, args, "--mjcf compiles a bare MJCF with no plugins -- use --world instead"
+        )
 
     logging_setup.configure(verbose=args.verbose)
     log = logging.getLogger("roqsim.export_srdf")
@@ -676,6 +697,8 @@ def main(argv: list | None = None) -> int:
         # the SPEC: MuJoCo fixes what can collide at compile time, so a model whose robot geoms are
         # masked apart (the usual `contype=2 / conaffinity=1`) can never be made to self-collide
         # afterwards. This is a sampling model, not a simulation one.
+        if not Path(args.mjcf).is_file():
+            raise FileNotFoundError(errno.ENOENT, "no such MJCF", args.mjcf)
         spec = mujoco.MjSpec.from_file(str(Path(args.mjcf)))
         changed = unmask_self_collision(spec)
         log.info("enabled self-collision on %d geoms for sampling", changed)
@@ -685,11 +708,15 @@ def main(argv: list | None = None) -> int:
         # cannot be cleared on this path. `collision_matrix` refuses a masked model rather than
         # producing an SRDF that silently disables self-collision checking -- export a robot's
         # description from its MJCF (`--mjcf`) instead, which is where a robot description belongs.
-        model, _d, _v = _compile_from_world(args.world, skip, {}, log)
+        model, _d, _v = _compile_from_world(args.world, skip, overrides_from_options(args), log)
 
     links = links_from_urdf(model, Path(args.urdf), args.strip)
     if not links:
-        raise SystemExit(f"no URDF link matched a body in the model (strip={args.strip!r})")
+        print(
+            f"roqsim export srdf: no URDF link matched a body in the model (strip={args.strip!r})",
+            file=sys.stderr,
+        )
+        return exit_status.BAD_INPUT
 
     home = {}
     for item in (p for p in args.home.split(",") if p.strip()):
@@ -716,13 +743,13 @@ def main(argv: list | None = None) -> int:
             samples=args.samples,
         )
     except ValueError as err:
-        raise SystemExit(f"roqsim export srdf: {err}") from err
+        return exit_status.fail("roqsim export srdf", err)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     ET.indent(tree, space="  ")
     tree.write(out, encoding="utf-8", xml_declaration=True)
     log.info("wrote %s", out)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

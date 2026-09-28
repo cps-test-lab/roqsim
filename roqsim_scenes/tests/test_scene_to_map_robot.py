@@ -7,8 +7,7 @@ a phantom obstacle at the start and a planner refuses to leave it.
 
 The failure is quiet, which is why it is worth a test. ``--free-from`` is documented as "normally the
 robot's start", so the flood fill gets seeded *on* the robot blob and the symptom is a slightly smaller
-free area rather than an error. It was found only because an independent clearance check on the start
-pose failed.
+free area rather than an error.
 """
 
 from __future__ import annotations
@@ -77,7 +76,7 @@ def test_scenery_entities_are_kept():
 
 
 def test_a_world_with_no_robot_is_untouched():
-    """An environment-only world must map exactly as before this change."""
+    """An environment-only world has no robot geoms to exclude."""
     model = _model_with({"shelf": None, "crate": None})
     assert _robot_geoms(model, _ctx(model, [])) == set()
 

@@ -8,14 +8,14 @@ A number in a README is a claim that decays silently: nobody recounts, the drift
 review, and the first reader to notice is someone who trusted it. So the totals the README does
 state are asserted here rather than maintained by hand.
 
-A count the README is better off not making is deleted from both sides instead. Two were: the
+A count the README is better off not making is left out of both sides instead. Two are: the
 number of registered plugins, and the number of ready-to-run worlds. Both depend on which packages
 are installed, so both read differently in a full checkout, in an install of the public packages
 alone, and in a working tree that has an experiment's own provider installed beside them -- and a
 number that is wrong for most readers is worse than no number. The README describes what plugins and
 worlds are rather than how many there are.
 
-The robot total stays because it does not have that problem: it is counted over a fixed list of
+The robot total is stated because it does not have that problem: it is counted over a fixed list of
 in-tree packages, so an out-of-tree provider cannot move it.
 
 The failure message says what to write, because a test that only says "51 != 52" makes the reader do

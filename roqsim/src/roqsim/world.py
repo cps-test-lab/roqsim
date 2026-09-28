@@ -206,7 +206,14 @@ def _world_entry_points():
 
 def _find_world(worlds_dir: Path, world: str) -> Path | None:
     """An MJCF for ``world`` under ``worlds_dir``: ``<world>/<world>.xml`` (baked-scene layout), a flat
-    ``<world>.xml``/``.mjcf``, or the sole ``*.xml`` in ``<world>/``."""
+    ``<world>.xml``/``.mjcf``, the sole ``*.xml`` in ``<world>/``, or -- when ``world`` is itself a
+    relative file path such as ``depot/depot.xml`` -- that file. The last is how a world YAML inside
+    the package names its MJCF once it has been inherited by reference (see
+    :func:`roqsim.config._package_world`): the same file, named by package rather than by path."""
+    if world.endswith((".xml", ".mjcf")) and not Path(world).is_absolute():
+        cand = worlds_dir / world
+        if cand.is_file():
+            return cand
     for cand in (
         worlds_dir / world / f"{world}.xml",
         worlds_dir / world / f"{world}.mjcf",

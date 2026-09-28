@@ -9,7 +9,8 @@ sim:
 
 components:
   # diff_drive (skid-steer, 4 driven wheels + slip_factor 1.7) and the VLP-16 planar scan
-  # (1800 rays / 10 Hz at 0.3852 m above ground) come from the model manifest
+  # (898 rays, as velodyne_laserscan publishes it, at 10 Hz and 0.3852 m above ground) come from
+  # the model manifest
   # (models/clearpath_jackal/clearpath_jackal.manifest.yaml).
   - spawn_robot:
       model: clearpath_jackal
@@ -20,7 +21,7 @@ components:
 
   # Override the manifest's diff_drive only to add test_cmd: with no ROS to send /cmd_vel, this
   # scripted [v, w] drives the robot in a circle so the standalone scene shows motion.
-  # Limits are the spec's g_kinematic_limits workaround (1.0 m/s, 1.0 rad/s), so this is well inside.
+  # The manifest's limits are 1.0 m/s and 1.0 rad/s, so this is well inside.
     components:
       - diff_drive:
           test_cmd: [0.5, 0.4]   # remove once the ros2_bridge drives /cmd_vel

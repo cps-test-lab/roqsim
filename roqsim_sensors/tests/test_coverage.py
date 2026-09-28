@@ -1,4 +1,4 @@
-"""Tests for the sensor-coverage subpackage: FOV membership, adapters, and the coverage engine."""
+"""Tests for the coverage subpackage: FOV membership, adapters, and the coverage engine."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import mujoco
 import numpy as np
 import pytest
 import yaml
-from external_meshes import needs_mid360, needs_robin, needs_zivid
+from external_meshes import needs_robin, needs_zivid
 from roqsim_sensors.coverage import adapters, optimize
 from roqsim_sensors.coverage.adapters import PlacedSensor, build_fov
 from roqsim_sensors.coverage.catalog import CATALOG, catalog_as_dict
@@ -17,6 +17,7 @@ from roqsim_sensors.coverage.engine import coverage
 from roqsim_sensors.coverage.fov import FovKind, SensorFov, in_fov
 from roqsim_sensors.models import MODELS_DIR
 
+from roqsim import exit_status
 from roqsim.manifest import manifest_fov
 from roqsim.models import resolve_model
 from roqsim.registry import resolve_plugin
@@ -365,7 +366,7 @@ def _luminance(rgb: np.ndarray) -> float:
 
 def test_density_ramp_gets_darker_with_more_sensors():
     # The density palette must encode "more overlapping sensors = darker": luminance strictly decreases
-    # as the coverage count rises. This is the property the user asked to see.
+    # as the coverage count rises.
     from roqsim_sensors.coverage.viz import _DENSITY_RAMP
 
     lums = [_luminance(row) for row in _DENSITY_RAMP]
@@ -409,17 +410,13 @@ def test_render_heatmap_unknown_palette_raises(tmp_path):
 # -- the CLI's two entry-point contracts -------------------------------------------------------------
 
 
-@needs_mid360
 @needs_zivid
 @needs_robin
 def test_load_world_accepts_a_world_yaml():
     """`--world` must take a world YAML, not only a bare MJCF.
 
-    That branch imported `rst.config` / `rst.engine` / `rst.world` -- the package's name before it was
-    renamed to roqsim -- so every world YAML and package ref died with
-    `cannot load world ...: No module named 'rst'`, and only a raw .xml worked. The ImportError is
-    caught and re-raised as SystemExit, so the dead import read as "this world is unloadable" rather
-    than as a broken rename.
+    That branch imports the engine, and an ImportError there is caught and re-raised as SystemExit,
+    so a dead import reads as "this world is unloadable" while a raw .xml still loads.
     """
     from pathlib import Path
 
@@ -436,8 +433,8 @@ def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
     """`roqsim-coverage` is its own entry point and never reaches mujoco through roqsim.
 
     Its submodules `import mujoco` at module scope, and MUJOCO_GL is read once while that runs -- so
-    the coverage package has to select the backend itself. When it did not, the CLI bound glfw and
-    `--render 3d` had no offscreen renderer: dead on a headless node, and silently off the GPU
+    the coverage package has to select the backend itself. Otherwise the CLI binds glfw and
+    `--render 3d` has no offscreen renderer: dead on a headless node, and silently off the GPU
     everywhere else. Checked in a subprocess with MUJOCO_GL unset, since the variable binds at first
     import and the test session has already bound it.
     """
@@ -464,10 +461,9 @@ def test_coverage_cli_selects_the_gl_backend_before_importing_mujoco():
 
 # -- the sampler's free-space classification -------------------------------------------------------
 #
-# `_classify_points` used to cast six axis rays per point and classify that point inside the loop.
-# It now casts through `raycast.cast_many` and classifies every point at once with numpy. The
-# vectorised form (an einsum over (P, 6, 3) normals) is where a transcription error would hide, so
-# this pins it against the per-point logic it replaced.
+# `_classify_points` casts through `raycast.cast_many` and classifies every point at once with
+# numpy. The vectorised form (an einsum over (P, 6, 3) normals) is where a transcription error would
+# hide, so this pins it against the per-point logic: six axis rays per point, classified in a loop.
 
 _CLASSIFY_XML = """
 <mujoco><worldbody>
@@ -484,7 +480,7 @@ _CLASSIFY_XML = """
 
 
 def _classify_reference(model, data, points, *, max_dist, geomgroup):
-    """The pre-change implementation: one ``mj_multiRay`` per point, classified per point."""
+    """The per-point reference: one ``mj_multiRay`` per point, classified per point."""
     from roqsim_sensors.coverage.sampling import _AXES6, _HORIZONTAL
 
     keep = np.zeros(len(points), dtype=bool)
@@ -539,8 +535,8 @@ def test_batched_classification_matches_the_per_point_loop():
 
 # -- the catalog derives its optics -------------------------------------------------------------------
 #
-# The catalog used to restate `fovy`/resolution/`near`/`far` that the models already declared, and the
-# copies had drifted (its zivid entry claimed 704x704 against the model's 480x480). These pin the
+# The catalog reads `fovy`/resolution/`near`/`far` from the models rather than restating them, since
+# a restated copy drifts from the model it names. These pin the
 # derivation itself, because a bug there is silent: `_model_optics` returning nothing would fall
 # through to `camera_adapter`'s last-resort constants and report coverage for a lens no device has.
 
@@ -584,8 +580,7 @@ def test_search_cannot_propose_a_type_the_catalog_lacks():
     """`greedy --types X` must not die in `placed_from_proposal`.
 
     `optimize._DOWN_RPY` is what `generate_candidates` will propose and `--types` is user-facing, so a
-    type listed there without a CATALOG entry is a KeyError reachable from the CLI. That is exactly
-    what `realsense_d415` was.
+    type listed there without a CATALOG entry is a KeyError reachable from the CLI.
     """
     assert set(optimize._DOWN_RPY) <= set(CATALOG)
 
@@ -598,7 +593,7 @@ def test_every_catalog_type_has_an_adapter():
 
 
 def test_catalog_as_dict_is_json_serialisable():
-    # fov_template is a property doing file IO now, so the CLI's `catalog` command (and the planner
+    # fov_template is a property that does file IO, so the CLI's `catalog` command (and the planner
     # reading its output) would break on a non-serialisable leak rather than at import.
     assert (
         json.loads(json.dumps(catalog_as_dict()))["realsense_d435"]["fov_template"]["near"] == 0.28
@@ -609,8 +604,8 @@ def test_catalog_as_dict_is_json_serialisable():
 def test_manifest_fov_near_matches_the_capture_plugin(name):
     """A sensor model's `fov.near` is its device's min range, so it must equal the plugin's clip_near.
 
-    d435 stated 0.2 while `realsense_d435` clipped at 0.28, so the drawn cone began 8 cm nearer than
-    any depth was returned. Only `near` is pinned: both this manifest and the catalog document `far`
+    A manifest `near` of 0.2 against a 0.28 clip would draw the cone 8 cm nearer than any depth is
+    returned. Only `near` is pinned: both this manifest and the catalog document `far`
     as an analysis/display range deliberately independent of `clip_far`.
     """
     asset = resolve_model(f"roqsim_sensors:{name}")
@@ -625,3 +620,140 @@ def test_manifest_fov_near_matches_the_capture_plugin(name):
     if clip_near is None:
         pytest.skip(f"{name}: {ref} has no depth clip")
     assert fov["near"] == pytest.approx(clip_near)
+
+
+def _estimate_argv(tmp_path, world: str, placements: str) -> list[str]:
+    return [
+        "estimate",
+        "--world",
+        world,
+        "--placements",
+        placements,
+        "--out",
+        str(tmp_path / "run"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("world", "placements", "expect"),
+    [
+        ("/no/such/world.yaml", "p.json", "does not exist"),
+        ("no_such_pkg:world", "p.json", "no_such_pkg"),
+        ("WORLD", "/no/such/p.json", "/no/such/p.json"),
+        ("WORLD", "NOT_JSON", "p.json"),
+    ],
+)
+def test_main_reports_a_wrong_input_on_one_line_and_exits_2(
+    tmp_path, capsys, world, placements, expect
+):
+    """The agent driving propose -> evaluate -> refine greps stderr and branches on the status, so a
+    wrong input is one `roqsim sensors coverage:` line and exit 2 -- never a traceback."""
+    from roqsim_sensors.coverage import cli
+
+    if world == "WORLD":
+        world_path = tmp_path / "w.xml"
+        world_path.write_text(
+            "<mujoco><worldbody><geom type='box' size='.1 .1 .1'/></worldbody></mujoco>"
+        )
+        world = str(world_path)
+    if placements == "p.json":
+        (tmp_path / "p.json").write_text("[]")
+        placements = str(tmp_path / "p.json")
+    elif placements == "NOT_JSON":
+        (tmp_path / "p.json").write_text("{not json")
+        placements = str(tmp_path / "p.json")
+    assert cli.main(_estimate_argv(tmp_path, world, placements)) == exit_status.BAD_INPUT
+    err = capsys.readouterr().err.strip().splitlines()
+    assert len(err) == 1, err
+    assert err[0].startswith("roqsim sensors coverage: ")
+    assert expect in err[0]
+    assert not (tmp_path / "run").exists(), "nothing is written for an input that was refused"
+
+
+def test_regions_from_a_sketch_it_cannot_read_are_refused():
+    from roqsim_sensors.coverage.regions import regions_from_sketch
+
+    with pytest.raises(ValueError, match="floorplan sketch version 99"):
+        regions_from_sketch({"version": 99, "rooms": [], "lines": []})
+
+
+_BOX = "<mujoco><worldbody><body name='box'><geom type='box' size='.1 .1 .1'/></body></worldbody></mujoco>"
+
+
+@pytest.mark.parametrize("cmd", ["estimate", "greedy"])
+@pytest.mark.parametrize("form", ["set", "override"])
+def test_an_override_reaches_the_world_coverage_compiles(tmp_path, monkeypatch, cmd, form):
+    """`--set`/`--override` are `roqsim sim`'s, so coverage is measured on the world a run builds."""
+    from roqsim_sensors.coverage import cli
+
+    from roqsim.engine import Engine
+
+    class Compiled(Exception):
+        pass
+
+    seen, setup = [], Engine.setup
+
+    def spy(self, *a, **kw):
+        setup(self, *a, **kw)
+        seen.append(self.ctx.model.opt.timestep)
+        raise Compiled
+
+    monkeypatch.setattr(Engine, "setup", spy)
+    (tmp_path / "box.xml").write_text(_BOX)
+    world = tmp_path / "world.yaml"
+    world.write_text(
+        "sim: {timestep: 0.002}\ncomponents:\n"
+        "  - spawn_model: {model: box.xml, motion: static}\n    name: box\n"
+    )
+    if form == "set":
+        flags = ["--set", "sim.timestep=0.0005"]
+    else:
+        (tmp_path / "run.yaml").write_text("sim: {timestep: 0.0005}\n")
+        flags = ["--override", str(tmp_path / "run.yaml")]
+    argv = [cmd, "--world", str(world), "--out", str(tmp_path / "run"), *flags]
+    if cmd == "estimate":
+        argv += ["--placements", str(tmp_path / "p.json")]
+    with pytest.raises(Compiled):
+        cli.main(argv)
+    assert seen == [0.0005]
+
+
+@pytest.mark.parametrize("flags", [["--set", "sim.timestep=0.001"], ["--override", "run.yaml"]])
+def test_an_override_with_an_mjcf_world_is_refused_by_name(tmp_path, capsys, flags):
+    from roqsim_sensors.coverage import cli
+
+    (tmp_path / "w.xml").write_text(_BOX)
+    (tmp_path / "p.json").write_text("[]")
+    argv = _estimate_argv(tmp_path, str(tmp_path / "w.xml"), str(tmp_path / "p.json"))
+    with pytest.raises(SystemExit) as exit_info:
+        cli.main([*argv, *flags])
+    assert exit_info.value.code == exit_status.BAD_INPUT
+    assert f"{flags[0]} acts on a world YAML, and --world names a bare MJCF" in (
+        capsys.readouterr().err
+    )
+    assert not (tmp_path / "run").exists()
+
+
+def test_loading_a_world_that_fails_after_setup_leaves_no_engine_running(tmp_path, monkeypatch):
+    """The ``dummy`` plugin counts its own shutdowns."""
+    from roqsim_sensors.coverage.cli import load_world
+
+    from roqsim.engine import Engine
+
+    seen: list[Engine] = []
+    setup = Engine.setup
+
+    def recording_setup(self):
+        seen.append(self)
+        setup(self)
+
+    def fails(*args, **kwargs):
+        raise RuntimeError("injected after setup")
+
+    monkeypatch.setattr(Engine, "setup", recording_setup)
+    monkeypatch.setattr(mujoco, "mj_forward", fails)
+    world = tmp_path / "w.yaml"
+    world.write_text("sim:\n  timestep: 0.005\nplugins:\n  - dummy: {}\n    name: d0\n")
+    with pytest.raises(RuntimeError, match="injected"):
+        load_world(str(world))
+    assert [e.ctx.blackboard.get("dummy_counts::d0")["shutdown"] for e in seen] == [1]

@@ -1,0 +1,77 @@
+# Slamtec RPLIDAR S3 (S3M1-R2) 2D lidar, as a device `spawn_sensor` mounts -- on its own, or nested in a
+# robot manifest at the vendor joint origin.
+#
+# Mesh, link frames and inertial: Husarion husarion_components_description (see rplidar_s3.xml),
+# whose component LDR06 it is. Scan values: Slamtec "RPLIDAR S3 Introduction and Datasheet", model
+# S3M1-R2, rev. 1.1, 2024-03-12 ("data sheet"), Figure 2-1 "RPLIDAR Performance", read from the copy at
+# https://wiki.slamtec.com/download/attachments/83066883/SLAMTEC_rplidar_datasheet_S3_v1.1_en.pdf
+# (product page https://www.slamtec.com/en/S3).
+#
+# Frames, as Husarion's macro chains them (slamtec_rplidar.urdf.xacro:42-66, 249-278 @ 5f783f8): the
+# vendor joint origin places `<name>_link`, the housing base, which is the mount body; the scan is
+# stamped in `<name>_laser` (`laser` when the component has no name), 30.5 mm above it and turned half
+# a revolution. The intermediate `<name>_link` is not published by the device: its name follows the
+# component name, which only `{frame_id}` carries. A robot that publishes it declares it in its own
+# `frames:` at the vendor joint origin and hangs the device from it with a zero origin; spawn_sensor then
+# publishes `parent_frame -> {frame_id}`.
+#
+# spawn_sensor fills `{frame_id}` from the mount's `frame_id`, else from the default below.
+# `exclude_body: mount` skips this device's housing and nothing else; `emit_static_tf: false` because
+# spawn_sensor publishes the `frames:` chain.
+frame_id: laser             # Husarion's scan frame with no component name (slamtec_rplidar.urdf.xacro:278)
+
+frames:
+  - name: "{frame_id}"      # the vendor scan frame (slamtec_rplidar.urdf.xacro:63-65, 272-276, model s3)
+    parent: mount
+    pos: [0.0, 0.0, 0.0305]
+    rpy: [0.0, 0.0, 3.141592654]
+
+components:
+  - lidar:
+      site: scan
+      frame_id: "{frame_id}"
+      exclude_body: mount
+      emit_static_tf: false
+      # What the driver publishes: Slamtec/sllidar_ros2 @ 34300099fa, src/sllidar_node.cpp ("driver"),
+      # as Husarion's rplidar image runs it (husarion/rplidar-docker @ 69ae8c5: Dockerfile:11 builds
+      # sllidar_ros2, husarion_utils/rplidar.launch.yaml:63-74 sets angle_compensate true and leaves
+      # scan_mode empty, so the driver starts the device's typical mode). The data sheet requires
+      # DenseBoost for the 32 kHz sample rate; that it is the S3's typical mode is unverified.
+      #
+      # Layout: angle-compensated slots, m per degree with m = (int)(points per turn / 360.0 + 1)
+      # (:342-345, a size_t at :460), 360 * m slots (:374); limits 0 .. 360 deg (:369-370) published
+      # reversed as angle_min = pi - 360 deg, angle_max = pi, angle_increment = span / (N - 1)
+      # (:216-224): the first and the last ray share a bearing. At the data sheet's 32 kHz and 10 Hz a
+      # turn is 3200 points, m = 9, so 3240 rays; the sample time the device reports is unverified.
+      rays: 3240
+      angle_min: -3.141592654   # pi - 360 deg
+      angle_max: 3.141592654    # pi
+      # Header: range_min hard-coded 0.05 (:228); range_max is the scan mode's max_distance the device
+      # reports (:229), unverified for the S3, so the data sheet's range stands in: 0.05-40 m, white
+      # object (70% reflection; 15 m black, 10%; 5 m at 2%).
+      range_min: 0.05
+      max_range: 40.0
+      # Data sheet note [1]: below 0.05 m or beyond 40 m the lidar still outputs point data, for
+      # reference only. The driver publishes any non-zero distance unmapped, so a too-close surface is
+      # published at its distance; a sample reported as 0 is published +inf (:236-240).
+      too_close: raw
+      no_return: +inf           # src/sllidar_node.cpp:236-240
+      rate_hz: 10.0             # data sheet: scanning frequency typ. 10 Hz, 10~20 Hz
+      # Data sheet: accuracy +-30 mm (25 degC, 10-90% reflection). The data sheet does not say which
+      # sigma; taken as 1 sigma. Its 10 mm "resolution" is not a quantisation the driver publishes
+      # (0.25 mm steps, :236), so none is applied.
+      range_stddev: 0.03
+      # Not modelled: the driver writes each sample into m consecutive slots, later samples
+      # overwriting earlier ones, and its slots are 1/9 deg while the header's increment is
+      # 360 deg / 3239; the 0-63 quality it publishes as intensities; the data sheet's 0-1.5 deg scan
+      # field flatness.
+
+# Sector `spawn_sensor: {show_fov: true}` draws and the coverage catalog reads: the lidar's own
+# field and its physical detection limits.
+fov:
+  near: 0.05
+  far: 40.0
+  h_min: -3.141592654
+  h_max: 3.141592654
+  v_min: 0.0
+  v_max: 0.0

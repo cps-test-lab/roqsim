@@ -59,24 +59,42 @@ components:
         joint6: 2.0
         joint7: 0.7853981633974483
 
-  # The base's own safety laser. Every mobile base in the substrate ships a `lidar` site and this
-  # one is a navigating platform, so it carries a scan by default rather than making each world
-  # rediscover the mount.
+  # The base's Safety Laser Scanner: an Omron OS32C. Omron's LD-60/90 Platform User's Manual, Cat. No.
+  # I611-E-09 ("I611"), names the scanner's settings "OS32C laser settings" (p. 16, 1-30, 4-49) and
+  # lists the OS32C Series User's Manual (Z296) among its related manuals; QUT's Frankie is an LD-60
+  # (qcr/frankie_docs README; Haviland et al., RA-L 2022, Sec. IV-A). No QUT source names the scanner,
+  # and QUT's unit was not identified by serial or label.
   #
-  # The GEOMETRY is measured from the Omron CAD (see the site's comment in frankie.xml): the mount
-  # point is the sensor housing's centre, and the window slot subtends 250 deg about it, so the fan
-  # is +-125 deg. `exclude_body` is not optional -- the site sits inside the chassis collision box,
-  # and without it every ray returns the robot's own shell.
-  #
-  # The SAMPLING is not: the source URDF models no laser at all, so `rays` and `rate_hz` are the
-  # substrate's, chosen as one sample per half-degree at a typical safety-scanner rate. A study that
-  # depends on angular resolution or scan rate should set them from the scanner it means to model
-  # rather than inherit these. Range is likewise the plugin's default rather than a rated figure.
-  - lidar:
-      site: lidar
-      rays: 500                     # 250 deg at 0.5 deg spacing
-      angle_min: -2.1816615649      # -125 deg
-      angle_max: 2.1816615649       # +125 deg
-      rate_hz: 15.0
-      exclude_body: base_link       # the site is inside the chassis box; see above
+  # Mount: the scan plane 190 mm above the floor (I611 p. 1-6 "Safety Laser Scanner"; p. 2-13 "Laser
+  # Specifications": "240 deg field of view 190 mm from floor surface"). base_link rests on the floor,
+  # so the device's mounting face is 0.190 - 0.067 (its scan plane above its base, Z298 p. 5) = 0.123.
+  # x 0.265 is the centre of the CAD's scanner space (the qut_frankie_description mesh); no source
+  # states the horizontal position, so it is unverified. The scanner looks out through the LD's
+  # channel, which the model's skin and collision geometry carry open (build_frankie_mjcf.py
+  # CHANNEL_Z; I611 p. 1-19).
+  - spawn_sensor:
+      model: omron_os32c
+      parent_frame: base_link
+      pos: [0.265, 0.0, 0.123]
+      rpy: [0.0, 0.0, 0.0]
     name: lidar
+    components:
+      # Omron's setting for this robot, over the OS32C's own 270 deg: I611 p. 1-6 and p. 2-13, "a 240 deg
+      # field of view". At the scanner's 0.4 deg resolution (Z298 p. 5) that is 601 beams, +-120 deg.
+      #
+      # No range override. I611 p. 1-6 adds "with a range of 3 m": that is the protective range, the
+      # OS32C's safety zone (3.0 m at 50/70 mm object resolution, Z298 p. 5), which I611 ch. 4-19
+      # ("Safety Laser Scanner Zones") configures. The platform navigates and maps on the same scanner's
+      # range data (I611 p. 1-13 "primary method of localization utilizes the Safety Laser Scanner",
+      # p. 1-14 "range data from the Safety Laser Scanner as its primary means of detecting obstacles",
+      # p. 3-86 maps "out of operating range"), and Omron's LD platform guide states the navigation
+      # laser's "typical maximum range of 15 m" (LD Platform OEM User's Guide 11970-000 Rev K, p. 112),
+      # which is the device's 15 m warning zone.
+      #
+      # QUT's stack reads no LaserScan: qcr/ros_omron_agv's laser_node republishes the platform's ARAM
+      # laser points as a map-frame PointCloud2. The LaserScan conventions are the device's ROS 1
+      # driver's (see omron_os32c.manifest.yaml).
+      - lidar:
+          rays: 601
+          angle_min: -2.094395102   # -120 deg
+          angle_max: 2.094395102    # +120 deg

@@ -9,6 +9,7 @@ collision, and a wheel touching a wall must.
 from __future__ import annotations
 
 import mujoco
+import numpy as np
 import pytest
 
 from roqsim.context import Entity, SimContext
@@ -74,7 +75,10 @@ def test_watches_the_whole_subtree():
     """The wheel is watched too -- a wheel clipping a box is as much a collision as the bumper."""
     model, data = _build()
     _, plugin = _plugin(model, data)
-    watched = {mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, g) for g in plugin._watched}
+    watched = {
+        mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_GEOM, int(g))
+        for g in np.flatnonzero(plugin._scope.watched)
+    }
     assert watched == {"chassis", "wheel_geom"}
 
 
@@ -143,14 +147,15 @@ def test_min_force_filters_grazing_contacts():
 
 # -- ownership and identity -------------------------------------------------
 #
-# Both of these were latent: the plugin has needed an owner since ownership became
-# structural, and its blackboard handle has been keyed on a name that defaults to the class.
+# Both follow from ownership being structural: the plugin needs an owner, and its blackboard
+# handle must not be keyed on a name that defaults to the class.
+
 
 def test_declared_at_the_top_of_a_document_it_is_refused():
     """It watches an entity, so there is nothing for it to watch at the top of a document.
 
-    Before this it resolved `base_link` by accident when a robot happened to use that name,
-    and failed confusingly when one did not -- both worse than being told to nest it.
+    Accepted there, it would resolve `base_link` by accident when a robot happens to use that name,
+    and fail confusingly when one does not -- both worse than being told to nest it.
     """
     from roqsim.config import PluginError, load_config_from_dict
 
@@ -164,7 +169,7 @@ def test_declared_at_the_top_of_a_document_it_is_refused():
 
 def test_two_monitors_get_two_handles():
     """Keyed on the address, not on `name` -- which defaults to the CLASS name, so two
-    unnamed instances wrote to one key and the second silently replaced the first."""
+    unnamed instances would write to one key and the second silently replace the first."""
     model, data = _build()
     ctx = SimContext(config={})
     ctx.model, ctx.data = model, data
@@ -197,6 +202,7 @@ def test_two_monitors_get_two_handles():
 # It is also how a trial keeps a robot from being observed at the pose the world compiled it at --
 # a pose no campaign placing obstacles for this configuration knew to keep clear. Spawned into
 # position, the robot is never perceivable where the world happened to put it.
+
 
 def _reveal(ctx, plugin, present=True):
     """Flip presence, then step -- the order a run applies it in.

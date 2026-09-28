@@ -3,9 +3,9 @@
 Layout is ``models/<name>/<name>.xml`` with that model's meshes in its own ``meshes/`` subdir and its
 manifest, licence, port log and thumbnail beside it -- the same one-folder-per-model shape
 ``roqsim_assets`` uses for props, and a form :func:`roqsim.models.resolve_model` accepts directly. The
-alternative (every MJCF flat in this directory over one shared ``meshes/``) is what this replaced: a
-model's files were scattered across four globs, and Menagerie link meshes with generic names
-(``base_0.obj``, ``link1.stl``) could only be kept apart by a per-model mesh subdirectory anyway. A
+alternative (every MJCF flat in this directory over one shared ``meshes/``) scatters a model's
+files across four globs, and Menagerie link meshes with generic names
+(``base_0.obj``, ``link1.stl``) can only be kept apart by a per-model mesh subdirectory anyway. A
 folder makes the grouping the filesystem's job, so adding or removing a model is one ``mv``.
 
 Each ships a ``<model>.manifest.yaml`` listing the plugins intrinsic to it -- for an arm that is an

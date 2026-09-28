@@ -96,9 +96,6 @@
         <geom class="visual" mesh="base__m4" material="mat_base__m4"/>
         <geom class="visual" mesh="base__m5" material="mat_base__m5"/>
         <geom class="collision" mesh="base_collision"/>
-        <!-- The lidar mast. Height is an assumption (see the port log): the base description ships
-             no scanner, because Husarion keeps sensors in a separate package. -->
-        <site name="lidar" pos="0 0 0.2035" size="0.008" rgba="1 0 0 0.6"/>
         <body name="fl_wheel_link" pos="0.22 0.3485 0">
           <inertial pos="0.0 0.0 0.0" mass="3.0" diaginertia="0.02251 0.03485 0.02251"/>
           <joint name="fl_wheel_joint" class="wheel"/>

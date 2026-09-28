@@ -205,14 +205,24 @@ def lidar_adapter(model, data, placed: PlacedSensor) -> SensorFov:
     # the plane are genuinely unseen. An analysis may widen it with a `v_fov` override (an assumption).
     v = placed.config.get("v_fov")
     v_fov = (float(v[0]), float(v[1])) if v else (0.0, 0.0)
+    # Each ray stands for one increment of azimuth, so a fan whose rays fill the turn is the full
+    # circle -- the last ray sits one increment short of angle_min + 2*pi, and a band ending there
+    # would leave a sliver behind the scanner that no gap between two rays actually has.
+    span = p.angle_max - p.angle_min
+    if span + p.angle_increment >= 2.0 * np.pi - 1e-9:
+        h_fov = (p.angle_min, p.angle_min + 2.0 * np.pi)
+    else:
+        h_fov = (p.angle_min, p.angle_max)
     return SensorFov(
         kind=FovKind.CONE_BAND,
         origin=origin,
         rot=rot,
-        h_fov=(p.angle_min, p.angle_max),
+        h_fov=h_fov,
         v_fov=v_fov,
-        range_min=p.range_min,
-        range_max=p.range_max,
+        # The physical limits decide what the sensor sees; the header's range_min/range_max are
+        # only what its driver publishes.
+        range_min=p.detection_min,
+        range_max=p.detection_max,
         range_is_physical=True,
         sensor_type=placed.sensor_type,
         label=placed.label,

@@ -37,5 +37,6 @@ components:
   # For ROS 2 (separate colcon package roqsim_ros_bridge): one bridge reads every declared endpoint
   # from ctx.interface -- no per-topic config needed. This robot declares cmd_vel/odom + three
   # joint_states producers (base, torso/head, both arms) + two GripperCommand actions + two scans
-  # (scan_front, scan_rear). For >1 robot, set `namespace: <name>` on each spawn_robot.
+  # (PAL's relative scan_front_raw / scan_rear_raw). For >1 robot, set `namespace: <name>` on each
+  # spawn_robot; the scans and their frames follow it.
   # - ros2_bridge: {}

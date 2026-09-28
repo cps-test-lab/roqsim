@@ -89,8 +89,8 @@ def test_a_source_that_does_not_exist_is_dropped(tmp_path):
 
 def test_a_manifest_supplied_components_file_counts_as_an_input(tmp_path, monkeypatch):
     """`prop_trajectory` implements `expand` for one reason: to hand its `sources()` the directory
-    the world lives in. Expansion used to happen inside the engine, so this walk never saw it and
-    the CSV resolved against the CALLER's working directory -- against what its docstring promises.
+    the world lives in. Expansion happens at load, so this walk sees it; left to the engine, the
+    CSV would resolve against the CALLER's working directory -- against what its docstring promises.
     """
     (tmp_path / "route.csv").write_text("t,x,y\n0,0,0\n1,1,0\n")
     world = tmp_path / "w.yaml"
@@ -145,7 +145,7 @@ def test_an_absent_file_is_not_something_skipped(tmp_path):
 
 
 def test_a_plugin_that_cannot_be_asked_is_reported_as_skipped(tmp_path):
-    """Still best-effort -- and now it says so, naming the plugin it could not ask.
+    """Still best-effort -- and it says so, naming the plugin it could not ask.
 
     A caller staging these files somewhere the originals are unreachable cannot act on a list
     that is short for a reason it never hears about.

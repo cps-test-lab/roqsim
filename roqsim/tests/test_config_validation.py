@@ -138,7 +138,7 @@ def test_view_rejects_unknown_keys():
 
 
 def test_view_rejects_malformed_values():
-    # A string where three numbers belong used to travel all the way to apply_view, which iterates
+    # Unchecked, a string where three numbers belong travels all the way to apply_view, which iterates
     # the characters of `"1,2,0"` and fails with `could not convert string to float: '.'` -- naming
     # a decimal point, no key and no file. Reject it here, where the key can be named.
     with pytest.raises(PluginError, match="sim.view.lookat: expected 3 numbers"):

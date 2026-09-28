@@ -1,21 +1,20 @@
 """The Doosan M1013: Doosan's numbers, an assembled arm, and a chain that does not chatter.
 
-Three of these tests pin things this port got wrong first, none of which move a number the obvious
-checks look at.
+Three of these tests pin failures that move none of the numbers the obvious checks look at.
 
-``test_meshes_assemble_into_a_continuous_arm`` guards the failure that reached a render before it was
-noticed: the arm arrived **in pieces**, with a 43 cm gap between link_3 and link_4 and its base
-buried below the floor -- while the mass audit, the joint limits and the reach all passed, because
+``test_meshes_assemble_into_a_continuous_arm`` guards a failure only a render shows: an arm **in
+pieces**, with a 43 cm gap between link_3 and link_4 and its base buried below the floor -- while
+the mass audit, the joint limits and the reach all pass, because
 they are computed from the kinematic chain and the site, not from where the geometry sits.
 
 ``test_rests_without_chattering`` guards the opposite kind of invisibility. With one stiff servo
-setting for all six joints, joints 5 and 6 sat pinned at their force limit flipping velocity sign
-every step -- ``kv*dt/I`` of 2.9, past the explicit-damping threshold. Position error stayed under
-0.03 deg, so a gravity-hold test passed while the distal joints buzzed.
+setting for all six joints, joints 5 and 6 sit pinned at their force limit flipping velocity sign
+every step -- ``kv*dt/I`` of 2.9, past the explicit-damping threshold. Position error stays under
+0.03 deg, so a gravity-hold test passes while the distal joints buzz.
 
 ``test_self_collision_matches_the_vendor_geometry`` pins the collision decision. Doosan's own
 ``*_collision`` meshes are byte-for-byte copies of its full-detail visual CAD, so collision here is
-the convex hull of each decimated mesh. Fitted primitives were tried and measured 5x too
+the convex hull of each decimated mesh. Fitted primitives measure 5x too
 conservative; the number below is the vendor geometry's own rate.
 """
 
@@ -64,10 +63,10 @@ def test_reach_matches_the_datasheet():
 def test_meshes_assemble_into_a_continuous_arm():
     """The visual chain must be gapless and stand on the floor.
 
-    Both failed at first, and silently. ``dae2obj`` writes Z-up OBJs while ``reduce-mesh`` imported
-    OBJ with Blender's Y-up default, so every decimated mesh came back rotated 90 degrees about x:
-    the base sank 349 mm below the floor and a 43 cm hole opened between link_3 and link_4. Nothing
-    else noticed -- the kinematics matched the URDF to float precision throughout.
+    Both fail silently. ``dae2obj`` writes Z-up OBJs, so a ``reduce-mesh`` import with Blender's
+    Y-up default brings every decimated mesh back rotated 90 degrees about x: the base sinks 349 mm
+    below the floor and a 43 cm hole opens between link_3 and link_4. Nothing else notices -- the
+    kinematics match the URDF to float precision throughout.
     """
     model = _model()
     data = mujoco.MjData(model)

@@ -298,7 +298,7 @@ def _run_route(tmp_path, seconds=20.0, **nav):
 
 
 def test_pure_pursuit_finishes_the_route_and_reports_done(tmp_path):
-    """The end-to-end regression for two silent bugs, both of which let the mover keep moving.
+    """End to end, the two silent failures goal advancement must avoid: both keep the mover moving.
 
     A follower that advances goals on *proximity* stalls at the corner, because pure pursuit does
     not drive at the corner. Fixing that with a "have I crossed the plane through the goal" test
@@ -353,6 +353,32 @@ def test_pure_pursuit_corner_error_scales_with_the_lookahead(tmp_path):
         for la in (0.15, 0.6)
     }
     assert corners[0.15] < corners[0.6]
+
+
+def test_pure_pursuit_drives_a_route_that_returns_to_its_start(tmp_path):
+    """Out and back: the goal after the first is the point the mover starts from.
+
+    The carrot's polyline carries one goal past the current one, so here it ends where the mover
+    stands. Unless it also carries the leg the mover is on, the mover projects onto that far end,
+    the remaining length reads as zero, and it never sets off.
+    """
+    engine = _engine(
+        tmp_path,
+        route_mode="exact",
+        goals=[[-2.5, 2.0], list(START)],
+        tracker="pure_pursuit",
+        lookahead=0.6,
+    )
+    engine.setup()
+    engine.reset()
+    try:
+        core = _navigator(engine)._core
+        track = _track(engine, seconds=14.0)
+        assert float(track[:, 1].max()) > 1.7, "the mover never went out"
+        assert core.st.done, "the route never completed"
+        assert np.linalg.norm(track[-1] - np.asarray(START)) < 0.3
+    finally:
+        engine.shutdown()
 
 
 def test_a_looping_route_wraps_the_carrot_onto_its_own_start(tmp_path):

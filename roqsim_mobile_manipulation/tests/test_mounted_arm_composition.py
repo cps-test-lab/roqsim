@@ -125,6 +125,9 @@ def test_mounted_arm_rides_the_base(tmp_path):
         base_dir=tmp_path,
     )
     engine = Engine(config)
+    # A test driving an Engine is the driver, and `ctx.seed` is driver-owned: the Husky's scanner
+    # noise refuses to draw without one.
+    engine.ctx.seed = 0
     engine.setup()
     engine.reset()
     m, d = engine.ctx.model, engine.ctx.data
@@ -209,6 +212,7 @@ def test_reach_envelope_is_statically_stable(tmp_path):
     parking constraint it implies.
     """
     engine = Engine(_world(tmp_path, arm_extra=GRIPPER))
+    engine.ctx.seed = 0  # driver-owned; the Husky's scanner noise draws from it
     engine.setup()
     engine.reset()
     m, d = engine.ctx.model, engine.ctx.data

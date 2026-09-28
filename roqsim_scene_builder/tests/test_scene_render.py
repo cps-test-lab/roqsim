@@ -61,9 +61,9 @@ def test_inline_returns_the_image_as_its_own_content_block(fake_rst, tmp_path, w
 
 
 def test_inline_keeps_the_record_structured(fake_rst, tmp_path, world):
-    """Through the real tool wrapper, because that is where it broke: an Image is not JSON-serializable,
-    so a dict holding one lost its structured content while the tool still advertised an output schema,
-    and the client rejected a render that had in fact succeeded."""
+    """Through the real tool wrapper, because that is where it can break: an Image is not
+    JSON-serializable, so a dict holding one loses its structured content while the tool still
+    advertises an output schema, and the client rejects a render that has in fact succeeded."""
     import asyncio
 
     from fastmcp.tools import FunctionTool

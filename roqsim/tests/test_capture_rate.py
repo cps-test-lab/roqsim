@@ -1,9 +1,9 @@
 """The capture rate's contract: it lands on the physics grid, exactly, and says so proportionately.
 
 The property that matters most is round-tripping: every rate a message *prints* must be acceptable as
-``--capture-fps``. A suggestion you cannot type back is not a suggestion, and an earlier design that
-hard-errored on off-grid rates was incoherent for exactly that reason -- it would have printed
-``29.41`` and then rejected it.
+``--capture-fps``. A suggestion you cannot type back is not a suggestion, and a design that
+hard-errors on off-grid rates is incoherent for exactly that reason -- it would print ``29.41`` and
+then reject it.
 """
 
 from __future__ import annotations
@@ -157,7 +157,7 @@ def test_the_effective_rate_is_always_reachable():
 @pytest.mark.parametrize("dt", _TIMESTEPS)
 @pytest.mark.parametrize("fps", [30, 60, 13, 99])
 def test_every_printed_rate_can_be_fed_back(fps, dt):
-    """The property an earlier hard-error design violated: suggestions must be re-enterable.
+    """The property a hard-error design violates: suggestions must be re-enterable.
 
     Feed the snapped rate, and each suggested neighbour, back in as text. Each must parse, must land on
     the grid, and must come back with zero deviation -- so a user who copies a number out of a message

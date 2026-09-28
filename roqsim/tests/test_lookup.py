@@ -1,4 +1,4 @@
-"""Resolving a caller's NAME to a body: the two-step every consumer used to write out by hand.
+"""Resolving a caller's NAME to a body: the two-step no consumer should write out by hand.
 
 The failure this guards is not an exception, it is a *plausible number*. An entity's name is not its
 body's name (``spawn_model`` prefixes the MJCF's root body), so a consumer that resolves the entity

@@ -2,8 +2,8 @@
 
 Three failures this catches, none of which the per-model behaviour tests would:
 
-* a model whose MJCF is in ``models/<name>/`` but whose ``<compiler meshdir=...>`` still points at the
-  old shared ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it compiles the
+* a model whose MJCF is in ``models/<name>/`` but whose ``<compiler meshdir=...>`` points at a
+  shared ``models/meshes/`` -- MuJoCo does not error on an unresolvable mesh path, it compiles the
   model with the reference as given, so the arm silently loses its geometry;
 * a mesh (or licence) that no ``[tool.setuptools.package-data]`` glob matches. That installs cleanly
   from an editable checkout and fails at RUN time inside a campaign container, where the checkout is

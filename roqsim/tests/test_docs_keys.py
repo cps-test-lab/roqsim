@@ -6,8 +6,8 @@
 
 The window's list is generated from the bindings, so the *list* cannot drift and the docs do not
 reproduce it. What prose still owes a key is the part a list cannot carry -- when it applies, what it
-writes, why it is that key -- and that is what goes stale silently. F9 was a key nobody outside the
-source knew about; this is what stops the next one.
+writes, why it is that key -- and that is what goes stale silently. This stops a key that nobody
+outside the source knows about.
 """
 
 from pathlib import Path

@@ -1,7 +1,5 @@
 """Per-walker behaviour: navigate to goals, recover when stuck.
 
-Ported from an earlier in-house navigation prototype.
-
 The high-level decisions a walker makes each step live here, on top of the controller's global plan
 (where to route) and ORCA (how to avoid collisions right now). The behaviour is a small py-trees
 tree::
@@ -72,8 +70,8 @@ class NavParams:
 class NavCore:
     """State + logic for one agent's navigation, shared by the py-trees leaves.
 
-    ``st`` is anything satisfying :class:`~roqsim_nav.state.NavStateLike` -- the plain
-    :class:`~roqsim_nav.state.NavState`, or the walker controller's richer per-walker object.
+    ``st`` is anything satisfying :class:`~roqsim_nav.state.NavStateLike`, such as the plain
+    :class:`~roqsim_nav.state.NavState`.
     ``planner`` is a :class:`~roqsim_nav.planner.GridPlanner` or ``None`` (then paths are straight
     lines to each goal -- recovery still applies).
 
@@ -132,9 +130,9 @@ class NavCore:
         self._pos = np.asarray(pos, dtype=float)
         self._blocker = None if blocker is None else np.asarray(blocker, dtype=float)
         # `max_recovery` bounds CONSECUTIVE recoveries, so getting somewhere has to clear the
-        # count. Resetting only on goal arrival made that false for the case it matters in: a mover
-        # working its way out of a pocket takes several recover-and-replan cycles to get free, and
-        # would exhaust its budget and abandon the goal while it was still making progress. The
+        # count. Resetting only on goal arrival would make that false for the case it matters in: a
+        # mover working its way out of a pocket takes several recover-and-replan cycles to get free,
+        # and would exhaust its budget and abandon the goal while it was still making progress. The
         # threshold is the distance a backup itself covers -- having moved further than the last
         # manoeuvre pushed it is the evidence that this is not the same wedge.
         if self._recover_count and self._recover_from is not None:
@@ -292,8 +290,8 @@ class NavCore:
           plane through it perpendicular to the approach -- not when it comes within
           ``arrival_radius`` of it. This is the half that cannot be omitted: pure pursuit
           deliberately does not drive at the goal, so a follower still waiting for proximity reaches
-          that radius late or never, and the mover stalls short of the corner. (It did, measurably,
-          when this was first tried as an override of the steering alone.)
+          that radius late or never, and the mover stalls short of the corner. (It does, measurably,
+          when only the steering is overridden.)
 
         The final goal of a non-looping route is the exception and still uses ``arrival_radius``:
         there is nothing to round onto, and the mover has to stop *at* the goal rather than cross it.
@@ -342,30 +340,55 @@ class NavCore:
         return True
 
     def route_ahead(self) -> list[tuple[float, float]]:
-        """The polyline still to be driven: the rest of the current path, then the goals after it.
+        """The polyline still to be driven: the leg the mover is on, the rest of the current path,
+        then the goal after it.
 
         Continuing past the current goal is what lets the carrot round a corner instead of aiming at
         its end.
 
-        **It extends exactly one goal past the current one, and no further.** One is all the carrot
-        needs to round the upcoming corner, and stopping there is what keeps the polyline from
-        crossing itself: the carrot and the projection are both found by projecting the mover onto
-        this polyline, which is ambiguous the moment the same place appears on it twice. Carrying the
-        whole remainder of a looping route does exactly that -- the route comes back round to where
-        the mover is standing, the projection lands on that later pass, the remaining length reads as
-        zero, and the end-of-path easing scales the mover's speed to nothing. It parks, on a route
-        with no end. A bounded window cannot express that however the route is shaped.
+        **It starts at the anchor the current goal is approached from**, so the leg the mover is on
+        is part of it. Without that leg the polyline begins at the current goal, and a route that
+        comes back to where the mover stands -- out and back, the goal after the current one being
+        its own start -- ends exactly there: the mover projects onto that far end, the remaining
+        length reads as zero, and it never sets off.
+
+        **It extends exactly one goal past the current one, and no further -- and not at all where the
+        route turns back there by more than 90 degrees** (:meth:`_turns_back`), where the goal is
+        stopped at instead. One goal is all the carrot needs to round the upcoming corner, and
+        stopping there is what keeps the polyline from crossing itself: the carrot and the
+        projection are both found by projecting the mover onto this polyline, which is ambiguous the
+        moment the same place appears on it twice. Carrying the whole remainder of a looping route
+        does exactly that -- the route comes back round to where the mover is standing, the
+        projection lands on that later pass, the remaining length reads as zero, and the end-of-path
+        easing scales the mover's speed to nothing. It parks, on a route with no end. A bounded
+        window cannot express that however the route is shaped.
         """
         st = self.st
-        route = [tuple(float(v) for v in p) for p in st.path[st.path_idx :]]
+        route = [self._anchor(), *(tuple(float(v) for v in p) for p in st.path[st.path_idx :])]
+        after = self._goal_after()
+        if after is not None and not self._turns_back(route, after):
+            route.append(after)
+        return route
+
+    def _goal_after(self) -> tuple[float, float] | None:
+        """The goal after the current one, or ``None`` at the end of a route that does not loop."""
+        st = self.st
         goals = [tuple(float(v) for v in p) for p in st.waypoints]
         after = goals[st.goal_idx + 1 :] or (goals[:1] if st.loop else [])
-        route += after[:1]
-        if len(route) < 2:
-            # A single remaining point is not a polyline; anchor it at the mover so the carrot and
-            # the projection are still defined.
-            route = [tuple(float(v) for v in self._pos), *route]
-        return route
+        return after[0] if after else None
+
+    @staticmethod
+    def _turns_back(route, after) -> bool:
+        """Whether leaving the last point of ``route`` for ``after`` turns by more than 90 degrees.
+
+        ``route`` ends at the current goal. Carried round such a turn, the carrot's polyline runs back
+        alongside itself -- on an out-and-back route, on top of itself -- so the mover's projection
+        lands on the way back before it has arrived, and it turns early and never stops at the goal.
+        """
+        goal = np.asarray(route[-1], dtype=float)
+        arriving = goal - np.asarray(route[-2], dtype=float)
+        leaving = np.asarray(after, dtype=float) - goal
+        return float(arriving @ leaving) < 0.0
 
     def _reached_goal(self) -> bool:
         """Whether the current goal counts as passed, measured as **progress along the route**.
@@ -385,8 +408,11 @@ class NavCore:
         """
         st = self.st
         goal = np.asarray(st.path[-1], dtype=float)
-        if not st.loop and st.goal_idx >= len(st.waypoints) - 1:
-            # Nothing to round onto: stop AT it, the way any goal-reaching controller must.
+        after = self._goal_after()
+        leg = [self._anchor(), *(tuple(float(v) for v in p) for p in st.path[st.path_idx :])]
+        if after is None or self._turns_back(leg, after):
+            # Nothing to round onto -- the end of the route, or a turn back the carrot is not carried
+            # round: stop AT it, the way any goal-reaching controller must.
             return float(np.linalg.norm(goal - self._pos)) < st.arrival_radius
         # Progress is measured from a fixed ANCHOR behind the mover -- the point the current goal is
         # being approached from. Measuring from the route's own start does not work: with no
@@ -400,11 +426,10 @@ class NavCore:
     def _progress_route(self) -> list[tuple[float, float]]:
         """The polyline progress is measured along: anchor, then the path, then the goals after it.
 
-        Built here rather than reused from :meth:`route_ahead`, which serves the *carrot* and anchors
-        a one-point remainder at the mover's own position. That anchoring is right for steering and
-        wrong for measuring: it shifts every index by one only sometimes, so the goal's position in
-        the polyline stops being a function of the path length and the arithmetic silently points at
-        the wrong point. One route per question is cheaper than one route with a caveat.
+        Built here rather than reused from :meth:`route_ahead`, which serves the *carrot*: it starts
+        from the same anchor but carries only one goal past the current one, where progress is
+        measured along every goal still ahead. One route per question is cheaper than one route
+        with a caveat.
         """
         st = self.st
         goals = [tuple(float(v) for v in p) for p in st.waypoints]
@@ -522,7 +547,7 @@ def build_tree(core: NavCore, *, recovery: bool = True, lookahead: float | None 
     ``lookahead`` selects the path tracker: ``None`` keeps the waypoint follower (steer at the goal,
     advance on proximity), a distance switches to pure pursuit (steer at a carrot on the path,
     advance on crossing the goal). The pedestrian stack keeps the former by default -- a walker
-    rounding corners by its arrival radius is what it has always looked like.
+    rounding corners by its arrival radius is how a pedestrian looks.
 
     ``recovery=False`` drops the higher-priority recovery branch, leaving ``navigate`` alone. That is
     the difference between an agent that gets itself unstuck -- backing up and re-planning, so its

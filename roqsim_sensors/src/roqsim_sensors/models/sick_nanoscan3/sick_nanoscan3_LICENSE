@@ -1,0 +1,32 @@
+The visual meshes in meshes/ are converted from
+
+    https://github.com/neobotix/rox
+    commit c865076d5412aca9c861e3b3326fb6a30cb393b1
+    file   rox_description/meshes/nanoscan_3.dae
+
+Copyright (c) Neobotix GmbH
+Licence: BSD, as declared in the package manifest (no licence text ships upstream).
+Converted (and, where the source is heavy, decimated) to OBJ in metres by
+external/convert/build_scanner_devices.py; the MJCF's link frame, visual origin, collision
+primitive and inertial are read from the same repository.
+
+--------------------------------------------------------------------------------
+
+The repository ships no LICENSE file, and the mesh carries no per-file copyright header. The only
+licence statement the upstream makes is the one in the package manifest that ships the mesh:
+
+    rox_description/package.xml, at the commit above
+
+      <maintainer email="ros@neobotix.de">Neobotix</maintainer>
+      <license>BSD</license>
+      <author email="padmanabhan@neobotix.de">Pradheep Padmanabhan</author>
+
+"BSD" names a family, not a document: the 2-clause, 3-clause and original 4-clause texts differ in
+what they require. No variant's text is reproduced here, because choosing one would put terms in the
+licensor's mouth that the licensor did not write. What every variant does require -- that the
+copyright notice and the licence statement travel with the copy -- is what this file is: it names the
+copyright holder, the author, the exact upstream revision, and the exact file the geometry derives
+from.
+
+If a downstream use needs the variant pinned (an SPDX-clean SBOM, say), ask Neobotix GmbH to state
+it, and replace this paragraph with their answer.

@@ -81,11 +81,14 @@ The CLI (placement search)
        --world <w> --regions scene/floorplan.json --region-names "room 1,room 2" --restrict \
        --types livox_mid360 --mount-z 3.3 --target k=1,frac=0.95 --out run/
 
+``estimate`` and ``greedy`` take ``roqsim sim``'s ``--set`` and ``--override``, so the coverage measured
+is that of the world a run with those overrides builds; they apply to a world YAML or ref, and are
+refused for an MJCF ``--world``.
+
 ``placements.json`` is a list of ``{type, pos, rpy, config?}`` using catalog types. The
 ``estimate`` report carries ``achieved`` (coverage fractions), ``uncovered_regions`` (where to add a
 sensor), ``per_sensor_contribution`` (redundant sensors have ``unique_points: 0``), and ``per_object``.
-The refine loop — evaluate, read the gaps, adjust ``placements.json``, re-evaluate — is what the
-``sensor-coverage`` skill drives.
+To refine a layout, evaluate, read the gaps, adjust ``placements.json`` and evaluate again.
 
 **Per-region coverage.** ``--regions`` restricts the *question* to named areas without touching the
 sampler: it takes a JSON of ``{name, polygon|bbox, z_min?, z_max?}`` regions **or** a scene's
@@ -164,12 +167,12 @@ the datasheet gives — millimetres **behind** the geom that models that face. A
 therefore leaves the origin already inside the sensor's own body, and without care the sensor's own
 housing is the first thing it hits. So every FOV carries the body it is mounted on
 (``SensorFov.body_exclude``, from ``cam_bodyid``/``site_bodyid``) and the ray cast excludes it — the
-same ``bodyexclude`` mechanism the ``lidar`` plugin's ``exclude_body`` uses for a robot's chassis.
+same ``bodyexclude`` mechanism the ``lidar`` plugin's ``exclude_body`` uses for a scanner's own housing.
 
-Worth stating because the symptom did not look like occlusion. The D435 mount's ``d435_front`` sits
-4.3 mm ahead of its camera, which blocked the whole central cone while wide-angle fringe rays still
-escaped — so a mounted camera reported a *plausible but low* number rather than an obvious zero, and
-a narrow long-range sensor (the Zivid, near 1.3 m) reported exactly **0** coverage in a room it saw
-perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
+Worth stating because the symptom does not look like occlusion. The D435 mount's ``d435_front`` sits
+4.3 mm ahead of its camera, which unexcluded blocks the whole central cone while wide-angle fringe
+rays still escape — so a mounted camera reports a *plausible but low* number rather than an obvious
+zero, and a narrow long-range sensor (the Zivid, near 1.3 m) reports exactly **0** coverage in a room
+it sees perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
 ``spawn_sensor``-mounted sensor. A *hypothetical* placement (``pos``/``rpy``, not
 spawned) is unaffected: it has no body, because nothing of it exists to get in the way.

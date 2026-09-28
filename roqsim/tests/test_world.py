@@ -21,7 +21,7 @@ def test_empty_room_is_registered_and_default():
 
 
 def test_no_scene_plugin_gets_default_empty_room():
-    # A plugin-less world still stands on a lit floor, now enclosed by perimeter walls.
+    # A plugin-less world still stands on a lit floor, enclosed by perimeter walls.
     engine = Engine(load_config_from_dict({"sim": {}, "plugins": []}))
     engine.setup()
     names = _geom_names(engine.ctx.model)
@@ -122,10 +122,10 @@ def test_two_scene_plugins_providing_the_world_are_refused():
 
 
 def test_a_baked_scene_beside_such_a_plugin_is_refused_too():
-    """The path spelling of ``sim.world``, which was the worse half of the old behaviour.
+    """The path spelling of ``sim.world``.
 
     A file world is *loaded* as the base spec before any plugin builds, so a warning saying it was
-    ignored described something that had already happened.
+    ignored would describe something that had already happened.
     """
     cfg = load_config_from_dict({"sim": {"world": "scene.xml"}, "plugins": []})
     engine = Engine(cfg, plugins=[_ScenePlugin()])
