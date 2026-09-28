@@ -79,3 +79,27 @@ def test_its_input_is_the_clis():
     schema = asyncio.run(_schema())
     assert schema["required"] == ["world"]
     assert set(schema["properties"]) == {"world"}
+
+
+@pytest.mark.parametrize("status", [0, 2, 5])
+def test_every_status_that_carries_a_report_returns_it(monkeypatch, status):
+    """``roqsim check`` prints its report with 0 (clean), 2 (names no world) and 5 (a finding)."""
+    report = {"ok": status == 0, "reached": None if status == 2 else "reset", "problems": []}
+    monkeypatch.setattr(
+        check_mod.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, status, json.dumps(report), ""),
+    )
+    assert check_mod.check_world("w.yaml") == report
+
+
+def test_a_crash_is_not_read_as_a_verdict(monkeypatch):
+    monkeypatch.setattr(
+        check_mod.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(
+            argv, 1, json.dumps({"ok": True}), "Traceback ...\nMemoryError"
+        ),
+    )
+    with pytest.raises(RuntimeError, match="MemoryError"):
+        check_mod.check_world("w.yaml")

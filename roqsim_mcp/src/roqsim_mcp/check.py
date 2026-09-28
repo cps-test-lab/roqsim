@@ -33,6 +33,12 @@ import json
 import subprocess
 import sys
 
+from roqsim import exit_status
+
+#: The statuses ``roqsim check`` prints a report with: a clean world, a target that names no world,
+#: and a problem at a later stage. Any other status is a check that did not run.
+_VERDICTS = (exit_status.OK, exit_status.BAD_INPUT, exit_status.FINDING)
+
 
 def check_world(world: str) -> dict:
     """Load a world as far as it goes and report every problem at once, as ``roqsim check --json``.
@@ -59,8 +65,8 @@ def check_world(world: str) -> dict:
         text=True,
         check=False,
     )
-    # 0 and 1 are both a verdict with its report on stdout; anything else is a check that did not run.
-    if proc.returncode in (0, 1):
+    # BAD_INPUT is also an unreadable override, which prints no report: only parsed stdout is one.
+    if proc.returncode in _VERDICTS:
         try:
             return json.loads(proc.stdout)
         except json.JSONDecodeError:
