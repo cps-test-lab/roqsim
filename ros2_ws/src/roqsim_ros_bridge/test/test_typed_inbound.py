@@ -178,3 +178,43 @@ def test_diff_drives_ros_interface_is_unchanged_and_a_twist_drives_it():
         assert odom.linear[0] == pytest.approx(0.2, abs=0.03) and odom.position[0] > 0.05
     finally:
         engine.shutdown()
+
+
+def test_a_joint_velocity_trajectory_reaches_the_arm_with_its_positions_as_velocities():
+    """arm_controller's JointVelocities is mapped by its package's roqsim.ros2_types entry: a
+    JointTrajectory whose last point's positions carry the velocities, both ways."""
+    from builtin_interfaces.msg import Time
+    from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin, JointVelocities
+
+    from roqsim_ros_bridge.registry import resolve_type
+
+    world = {
+        "sim": {"timestep": 0.001},
+        "components": [
+            {
+                "spawn_arm": {"model": "ur5e", "prefix": "ur5e_", "namespace": "ur5e"},
+                "name": "ur5e",
+                "components": [{"arm_controller": {"velocity_commands": True}}],
+            }
+        ],
+    }
+    engine = Engine(load_config_from_dict(world, base_dir=Path(".")))
+    engine.setup()
+    engine.reset()
+    try:
+        ep = next(e for e in engine.ctx.interface.all() if e.name == "joint_velocity")
+        binding = resolve(ep)
+        assert binding.hints["type"] == "trajectory_msgs.msg.JointTrajectory"
+        assert binding.hints["topic"] == "arm_controller/joint_velocity"
+        msg = _trajectory()
+        msg.joint_names = ["shoulder_pan_joint"]
+        ep.write(binding.decode(msg))
+        engine.step()
+        arm = next(p for p in engine.plugins if isinstance(p, ArmControllerPlugin))
+        assert arm._vel_cmd == {"shoulder_pan_joint": pytest.approx(0.1)}
+
+        out = resolve_type(binding.hints["type"])()
+        binding.fill(out, JointVelocities(["a"], [0.5]), Time(sec=1), binding.hints)
+        assert list(out.joint_names) == ["a"] and list(out.points[0].positions) == [0.5]
+    finally:
+        engine.shutdown()

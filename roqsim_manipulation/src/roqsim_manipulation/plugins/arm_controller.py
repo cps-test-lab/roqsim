@@ -174,6 +174,22 @@ def joint_effort_per_actuator_force(model, actuator_id: int, joint_id: int) -> f
 
 
 @dataclass
+class JointVelocities:
+    """Target velocities for named joints.
+
+    ROS carries it as ``trajectory_msgs/JointTrajectory`` with the velocities in the last point's
+    ``positions`` (:mod:`roqsim_manipulation.ros2_types`).
+
+    Attributes:
+        names: joint names, in the order of ``velocities``
+        velocities: rad/s for a revolute joint, m/s for a prismatic one
+    """
+
+    names: list[str]
+    velocities: NDArray[np.float64]
+
+
+@dataclass
 class TrajectoryPoint:
     """Joint values at one point of a trajectory controller's loop.
 
@@ -642,21 +658,20 @@ class ArmControllerPlugin(Plugin):
         self.set_targets(names, positions)
 
     # Joint-VELOCITY command input, for reactive controllers that resolve to joint rates rather
-    # than poses (see "Velocity commands" in the module docstring). Integrated in pre_step. It
-    # travels as a single-point JointTrajectory whose positions carry the velocities.
+    # than poses (see "Velocity commands" in the module docstring). Integrated in pre_step.
     @endpoint.command(
-        JointPositions,
+        JointVelocities,
         when="velocity_commands",
         ros2=lambda self: {"topic": f"{self._controller}/joint_velocity"},
     )
-    def joint_velocity(self, names: list[str], positions: NDArray[np.float64]) -> None:
+    def joint_velocity(self, names: list[str], velocities: NDArray[np.float64]) -> None:
         """Joint velocities, integrated into the held target each step.
 
         Args:
             names: the joints it names
-            positions: their velocities (rad/s, or m/s), in the field the trajectory point carries
+            velocities: one per name, rad/s or m/s
         """
-        self.set_velocities(names, positions)
+        self.set_velocities(names, velocities)
 
     @endpoint.command(
         when="has_gripper",

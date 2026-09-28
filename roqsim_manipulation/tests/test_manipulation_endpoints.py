@@ -14,7 +14,11 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from roqsim_manipulation.plugins.arm_controller import ArmControllerPlugin, ControllerState
+from roqsim_manipulation.plugins.arm_controller import (
+    ArmControllerPlugin,
+    ControllerState,
+    JointVelocities,
+)
 from roqsim_manipulation.plugins.cartesian_admittance import CartesianAdmittancePlugin
 
 from roqsim.config import load_config_from_dict
@@ -79,8 +83,10 @@ def test_the_payloads_are_the_neutral_types():
         ctrl={"stream_commands": True, "velocity_commands": True},
     )
     eps = _endpoints(engine)
-    for name in ("follow_joint_trajectory", "joint_command", "joint_velocity"):
+    for name in ("follow_joint_trajectory", "joint_command"):
         assert eps[name].payload_type.cls is JointPositions
+    assert eps["joint_velocity"].payload_type.cls is JointVelocities
+    assert [p.name for p in eps["joint_velocity"].params] == ["names", "velocities"]
     joints = eps["joint_states"].read()
     assert isinstance(joints, JointState) and len(joints.efforts) == len(joints.names)
     state = eps["controller_state"].read()
@@ -113,8 +119,8 @@ def test_joint_velocities_of_two_messages_in_one_step_merge():
     engine = _engine(ctrl={"velocity_commands": True})
     ep = _endpoints(engine)["joint_velocity"]
     arm = _plugin(engine, ArmControllerPlugin)
-    ep.write({"names": [JOINTS[0]], "positions": [0.1]})
-    ep.write({"names": [JOINTS[1]], "positions": [-0.2]})
+    ep.write({"names": [JOINTS[0]], "velocities": [0.1]})
+    ep.write({"names": [JOINTS[1]], "velocities": [-0.2]})
     engine.step()
     assert arm._vel_cmd == {JOINTS[0]: 0.1, JOINTS[1]: -0.2}
 
