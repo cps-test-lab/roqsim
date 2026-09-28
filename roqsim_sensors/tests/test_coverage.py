@@ -772,3 +772,13 @@ def test_probe_target_frac_is_the_value_build_report_reads():
     assert probe.target == {"metric": "fraction_covered", "k": 2, "value": 0.6}
     assert probe.target == parse_target("k=2,frac=0.6")
     assert cls({}).target == {}
+
+
+def test_a_target_key_nothing_reads_is_refused_on_both_front_doors():
+    """A misspelt ``frac`` would otherwise be dropped and ``target_met`` judged against 1.0."""
+    from roqsim_sensors.coverage.cli import parse_target
+
+    with pytest.raises(ValueError, match="'fraction'"):
+        parse_target("k=1,fraction=0.9")
+    with pytest.raises(ValueError, match="'fraction'"):
+        resolve_plugin("sensor_coverage_probe", None)({"target": {"fraction": 0.9}})

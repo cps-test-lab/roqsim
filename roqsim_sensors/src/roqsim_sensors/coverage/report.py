@@ -14,16 +14,26 @@ import numpy as np
 from .engine import CoverageResult
 from .sampling import cluster_gaps
 
+#: What a coverage target may say: ``k`` sensors, over ``frac`` (or ``value``) of the samples.
+_TARGET_KEYS = {"k", "frac", "value"}
+
 
 def normalise_target(target: dict | None) -> dict:
     """The coverage target in the form :func:`build_report` reads: ``{"metric", "k", "value"}``.
 
     ``frac`` is the spelling the CLI's ``--target k=1,frac=0.95`` and the plugin's ``target:`` both
     take; ``value`` is accepted too. Empty -> no target. Both front doors go through here, so a
-    ``frac`` is never dropped on one of them and ``target_met`` judged against the default 1.0.
+    ``frac`` is never dropped on one of them and ``target_met`` judged against the default 1.0. A key
+    it does not read is refused for the same reason: a misspelt ``frac`` would be judged against 1.0.
     """
     if not target:
         return {}
+    unknown = sorted(set(target) - _TARGET_KEYS)
+    if unknown:
+        raise ValueError(
+            f"coverage target: unknown key(s) {', '.join(map(repr, unknown))}; "
+            "give k and frac, e.g. k=1,frac=0.95"
+        )
     return {
         "metric": "fraction_covered",
         "k": int(target.get("k", 1)),
