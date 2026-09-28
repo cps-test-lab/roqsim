@@ -266,6 +266,4 @@ def main(argv: list | None = None) -> int:
 
 
 if __name__ == "__main__":
-    from lxml import etree  # noqa: F401  (import here so library use does not require it)
-
     raise SystemExit(main())
