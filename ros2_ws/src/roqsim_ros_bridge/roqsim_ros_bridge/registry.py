@@ -513,8 +513,8 @@ def _status_value(value) -> str:
     """One reading as the string a ``diagnostic_msgs/KeyValue`` carries.
 
     ``repr`` for a float rather than a rounded format: the value is read back out of a recording and
-    compared with a threshold, so it round-trips exactly, and a cutoff reads as ``inf`` rather than
-    as a large number that looks measured. Booleans are the lowercase spelling every parser already
+    compared with a threshold, so it round-trips exactly, and a non-finite reading stays ``inf`` or
+    ``nan``. Booleans are the lowercase spelling every parser already
     takes, instead of Python's ``True``.
     """
     if isinstance(value, bool):

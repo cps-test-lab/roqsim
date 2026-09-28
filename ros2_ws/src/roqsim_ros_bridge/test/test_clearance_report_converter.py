@@ -52,11 +52,11 @@ def test_every_named_field_is_published_under_its_own_name():
 def test_a_number_reads_back_as_the_number_it_was():
     """A recorded reading is compared against a threshold, so it round-trips rather than
     being rounded into a value the trial never measured."""
-    msg = _fill(_Report(current=0.1234567890123, minimum=1e-9))
+    msg = _fill(_Report(current=0.1234567890123, minimum=1e-9, at_time=float("inf")))
     readings = _readings(msg)
     assert float(readings["current"]) == pytest.approx(0.1234567890123, rel=1e-15)
     assert float(readings["minimum"]) == pytest.approx(1e-9, rel=1e-15)
-    assert float(readings["at_time"]) == pytest.approx(12.5)
+    assert float(readings["at_time"]) == float("inf")
 
 
 def test_a_flag_is_the_spelling_a_reader_parses():
@@ -67,11 +67,11 @@ def test_a_flag_is_the_spelling_a_reader_parses():
 def test_a_cutoff_that_was_never_resolved_says_so():
     """What the monitor reports when nothing came inside the query's range: a flagged reading
     that names nothing, rather than a plausible distance to an unnamed thing."""
-    msg = _fill(_Report(current=float("inf"), minimum=float("inf"), geom="", saturated=True))
+    msg = _fill(_Report(current=3.0, minimum=3.0, geom="", saturated=True))
     readings = _readings(msg)
     assert readings["geom"] == ""
     assert readings["saturated"] == "true"
-    assert float(readings["current"]) == float("inf")
+    assert float(readings["current"]) == float(readings["minimum"]) == 3.0
 
 
 def test_the_status_carries_who_is_reporting_and_about_what():
