@@ -63,10 +63,8 @@ using `FemaleVisitorWalk` still depends on CARLA attribution.
 
 ## What is this package's own (Apache-2.0)
 
-The code (`src/roqsim_walker/**.py`), the 17-joint humanoid topology, the navigation stack (A\*,
-behaviour tree, ORCA wiring), the world YAML, and the measurement pipeline that produces a
-blueprint's collision radii and sole offsets from geometry. The optional `rvo2` dependency
-(`[avoidance]`) is not vendored — it is fetched from its own upstream and carries its own licence.
+The code (`src/roqsim_walker/**.py`), the 17-joint humanoid topology, the world YAML, and the
+measurement pipeline that produces a blueprint's collision radii and sole offsets from geometry.
 
 ## Adding an actor
 

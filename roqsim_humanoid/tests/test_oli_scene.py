@@ -1,7 +1,6 @@
 """LimX Oli (HU_D04_01) port verification battery.
 
-Mirrors the robot-porting verification battery: static sanity (A), closed-loop locomotion drive
-tests (B), and sensor checks (C). Everything runs through the real ``oli_locomotion`` plugin (the
+Static sanity (A), closed-loop locomotion drive tests (B), and sensor checks (C). Everything runs through the real ``oli_locomotion`` plugin (the
 pretrained ONNX whole-body walk policy + PD loop), so the model, its manifest config and the
 controller are verified together -- a humanoid cannot be tested open-loop the way a wheeled base can
 (it is an inverted pendulum; only the balancing policy keeps it upright).

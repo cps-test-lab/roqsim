@@ -23,7 +23,8 @@ The same two registries answer there::
     roqsim catalog models              # every model, with the ref that resolves it
     roqsim catalog worlds              # every world YAML, baked scene and built-in definition
     roqsim catalog models --refs       # just the refs, one per line, for piping
-    roqsim catalog model turtlebot4    # one model: its file, its manifest, where its meshes come from
+    roqsim catalog model turtlebot4    # one model: its file, its manifest, where its meshes come from,
+                                       #   and its bodies, sites, joints and actuators
 
 Both print JSON, and every row carries ``use`` -- the line to put in a world file or on the command
 line -- because "what do I type" is the question being asked. ``python -m roqsim.catalog models``

@@ -4,7 +4,8 @@
 # world only places the robot and wires transport. The ros2_bridge publishes clock/odom/
 # tf(odom->base_link)/scan/joint_states, and -- because the lidar declares its mount frame -- the
 # static base_link->lidar TF, so the launch file needs no robot_state_publisher / URDF chain.
-# A static map->odom identity transform (in the launch file) stands in for localization.
+# A static map->odom identity transform (in the launch file) stands in for localization: odom starts
+# at the spawn pose, and the robot spawns at the map origin facing +x.
 #
 # timestep 0.002 (500 Hz): Isaac trains the Spot flat-terrain policy at a 500 Hz sim / 50 Hz policy
 # (decimation 10), so spot_locomotion needs this step.
