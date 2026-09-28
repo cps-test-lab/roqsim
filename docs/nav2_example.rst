@@ -86,9 +86,10 @@ package (``worlds/g1_nav2.yaml`` + ``params/nav2_params_g1.yaml``, ``worlds/spot
 
 * ``nav2_g1.launch.py`` projects the head-mounted Livox Mid-360's point cloud into ``/scan`` with
   ``pointcloud_to_laserscan``, which it needs installed (``ros-jazzy-pointcloud-to-laserscan``).
-* ``nav2_spot.launch.py`` needs the NVIDIA Spot policy, which is not committed: ``make venv`` fetches
-  it, ``python -m roqsim_quadruped.policy.fetch_policy`` does the same, or ``SPOT_POLICY_PATH`` names
-  one (see ``roqsim_quadruped/README.md``).
+* ``nav2_spot.launch.py`` needs the NVIDIA Spot policy, which is not committed: ``make venv`` tries
+  to fetch it and carries on if it cannot, ``python -m roqsim_quadruped.policy.fetch_policy`` fetches
+  it, or ``SPOT_POLICY_PATH`` names a copy (see ``roqsim_quadruped/README.md``). Without one,
+  ``spot_locomotion`` refuses to load.
 
 The goal-reaching test
 ----------------------
