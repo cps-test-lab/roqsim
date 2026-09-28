@@ -54,7 +54,7 @@ def test_every_model_is_a_folder():
         "hokuyo_ust",
         "lds01",
         "mid360",
-        "oakd",
+        "oakd_pro",
         "omron_os32c",
         "realsense_d415",
         "realsense_d435",

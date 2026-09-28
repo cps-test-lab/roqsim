@@ -12,7 +12,6 @@ Threading contract (see docs/architecture.rst > Concurrency):
 
 from __future__ import annotations
 
-import functools
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -161,56 +160,34 @@ class Plugin:
         entity = ctx.entities.get(owner or self.endpoint_owner)
         return self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
 
-    def register_endpoints(self, ctx: SimContext) -> None:
+    def register_endpoints(self, ctx: SimContext) -> list:
         """Add the endpoints declared with :mod:`roqsim.endpoint` to ``ctx.interface``, once per
-        context.
+        context, and return them.
 
-        It runs as the last step of this plugin's ``configure`` -- a subclass's ``configure`` is
-        wrapped to call it (see :meth:`__init_subclass__`), and the engine calls it after a plugin
-        that has none -- so a hint may read what ``configure`` resolved, and a bridge listed later
-        binds them. Endpoints only known at run time are still added with ``ctx.interface.add``.
+        The engine calls it right after this plugin's ``configure``, so an option may read what
+        ``configure`` resolved, and a bridge listed later binds them. A test that calls ``configure``
+        itself calls this after it. Endpoints only known at run time are added with
+        ``ctx.interface.add`` instead.
         """
         if self.__dict__.get("_endpoints_ctx") is ctx:
-            return
+            return []
         self._endpoints_ctx = ctx
         from .endpoint import build
 
-        for ep in build(self, ctx):
+        endpoints = build(self, ctx)
+        for ep in endpoints:
             ctx.interface.add(ep)
-
-    def __init_subclass__(cls, **kwargs) -> None:
-        """Wrap a subclass's own ``configure`` so its decorated endpoints register when it returns.
-
-        Only the outermost call registers, so a ``configure`` that calls ``super().configure`` has
-        finished resolving before its hints are read. A ``configure`` that raises registers nothing.
-        """
-        super().__init_subclass__(**kwargs)
-        own = cls.__dict__.get("configure")
-        if own is None or getattr(own, "_registers_endpoints", False):
-            return
-
-        @functools.wraps(own)
-        def configure(self, ctx, _own=own):
-            depth = self.__dict__.get("_configure_depth", 0)
-            self._configure_depth = depth + 1
-            try:
-                _own(self, ctx)
-            finally:
-                self._configure_depth = depth
-            if depth == 0:
-                self.register_endpoints(ctx)
-
-        configure._registers_endpoints = True
-        cls.configure = configure
+        return endpoints
 
     # -- endpoint topic hardwiring ------------------------------------------------------------
     def topic_override(self, endpoint_name: str) -> str | None:
         """Topic set for the endpoint ``endpoint_name``, or ``None`` if unset.
 
         Read from the plugin's ``topics:`` config map (``topics: {<endpoint>: <topic>}``), keyed by
-        the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). An
-        endpoint-producing plugin uses it as ``self.topic_override("image") or <namespaced default>``
-        when filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
+        the endpoint's role name (e.g. ``image``, ``camera_info``, ``joint_states``, ``scan``). A
+        decorated endpoint gets it as :attr:`~roqsim.context.Endpoint.topic` from the framework; a
+        hand-built one uses it as ``self.topic_override("image") or <namespaced default>`` when
+        filling the backend ``topic``. An absolute (leading ``/``) value is published verbatim by
         the bridge, overriding the endpoint's ``namespace`` -- so a producer can match external /
         hardware topic names regardless of its scope. A relative value renames the endpoint inside
         its namespace, the way a vendor description names a robot's second scanner ``scan2`` under
@@ -244,6 +221,9 @@ class Plugin:
         """
         errors = list(type(self).validate_schema(config))
         errors += self.validate_presence(config)
+        from .endpoint import validate_qos_config
+
+        errors += validate_qos_config(config)
         try:
             errors += self.validate_config(config) or []
         except Exception as exc:  # a plugin's validator itself blew up
