@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """The 2D geometry of a floorplan sketch -- one answer, for everything that reads one.
 
-A floorplan JSON (metres, y-up: ``{comment, description, rooms, lines, doors, markers}``) is read by
-several things that must agree about it: what builds the walls, what draws the plan view, what bakes
+A floorplan JSON (metres, y-up: ``{version, comment, description, rooms, lines, doors, markers}``,
+checked by :func:`check_sketch`) is read by several things that must agree about it: what builds the walls, what draws the plan view, what bakes
 a mesh. Where a doorway is has one answer, so the arithmetic lives here rather than in any of them
 -- an opening one cuts and another draws differently would make a preview lie about the world it
 claims to show, and neither would look wrong on its own.
@@ -20,6 +20,45 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
+from .document import check_version, refuse_unknown_keys
+
+# --- the document ------------------------------------------------------------------------------
+
+#: The sketch version this code reads, stated with a top-level ``version:`` (absent is 1). Bumped
+#: when a key is renamed or changes meaning.
+SKETCH_VERSION = 1
+
+#: Every key a sketch carries, by level. A key outside these is refused: nothing reads it, so a
+#: misspelt ``width_m`` would otherwise build the default door.
+SKETCH_KEYS = frozenset({"version", "comment", "description", "rooms", "lines", "doors", "markers"})
+SKETCH_ITEM_KEYS = {
+    "rooms": frozenset({"id", "name", "line_ids", "description"}),
+    "lines": frozenset({"id", "x0_m", "y0_m", "x1_m", "y1_m"}),
+    "doors": frozenset({"id", "line_id", "t", "width_m", "height_m"}),
+    "markers": frozenset({"id", "x_m", "y_m", "comment", "in_room", "yaw_deg"}),
+}
+
+
+def stamp_sketch(sketch: dict) -> dict:
+    """*sketch* with ``version`` first, as every writer emits it."""
+    return {"version": SKETCH_VERSION, **{k: v for k, v in sketch.items() if k != "version"}}
+
+
+def check_sketch(sketch: dict, where: str) -> int:
+    """Return the sketch's version, refusing a newer one or a key no reader reads, at every level."""
+    if not isinstance(sketch, dict):
+        raise ValueError(f"{where}: a floorplan sketch is a mapping, not {type(sketch).__name__}")
+    # The version first: a newer sketch's new keys are its version's, not typos.
+    version = check_version(
+        sketch, "version", reads=SKETCH_VERSION, document="floorplan sketch", where=where
+    )
+    refuse_unknown_keys(sketch, SKETCH_KEYS, where)
+    for level, known in SKETCH_ITEM_KEYS.items():
+        for i, item in enumerate(sketch.get(level) or []):
+            refuse_unknown_keys(item, known, f"{where}: {level}[{i}]")
+    return version
+
 
 # --- walls and openings --------------------------------------------------------------------------
 

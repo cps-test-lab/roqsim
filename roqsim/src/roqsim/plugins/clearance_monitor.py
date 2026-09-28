@@ -246,7 +246,9 @@ class ClearanceMonitorPlugin(Plugin):
 
     def post_step(self, ctx: SimContext) -> None:
         model, data = ctx.model, ctx.data
-        if float(data.time) < self._next_due:
+        # A thousandth of a step short still counts: float drift in the summed clock would otherwise
+        # push a period the timestep divides to the step after it.
+        if float(data.time) < self._next_due - 1e-3 * model.opt.timestep:
             return
         self._next_due = float(data.time) + 1.0 / self.compute_rate_hz
         best = self.distmax
