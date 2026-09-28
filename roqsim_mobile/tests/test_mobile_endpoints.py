@@ -17,7 +17,7 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.endpoint import ParameterError
 from roqsim.engine import Engine
-from roqsim.types import JointState, Odometry, Twist
+from roqsim.types import JointState, Odometry, Transforms, Twist
 from roqsim_mobile.plugins.ackermann_drive import (
     AckermannCommand,
     AckermannDrive,
@@ -113,10 +113,12 @@ def test_spawn_robot_frames_belong_to_the_robot_and_its_namespace():
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == "bot")
     spawn = _plugin(engine, SpawnRobotPlugin)
     assert frames.namespace == "tb" and frames.direction == "out"
-    assert frames.backend == {
-        "ros2": {"frame_id": spawn.frame_links[0]["parent"], "static_tf": spawn.frame_links}
-    }
-    assert frames.result.kind == "none" and frames.read() is None
+    assert frames.backend == {"ros2": {"static": True}}
+    assert frames.result.cls is Transforms
+    sent = frames.read().transforms
+    assert [(t.parent, t.child) for t in sent] == [
+        (link["parent"], link["child"]) for link in spawn.frame_links
+    ]
 
 
 def test_a_robot_without_frames_has_no_frames_endpoint():

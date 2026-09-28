@@ -75,6 +75,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import mujoco
+import numpy as np
 
 from roqsim import endpoint
 from roqsim.actuators import (
@@ -93,6 +94,7 @@ from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin, PluginError
 from roqsim.pose import PoseError, parse_pose, yaw_of
 from roqsim.schema import Field
+from roqsim.types import Transform, Transforms
 
 
 def _keyframe_base_z(spec: mujoco.MjSpec, base_joint: str) -> float | None:
@@ -326,15 +328,20 @@ class SpawnRobotPlugin(Plugin):
         """The robot entity this spawn registers."""
         return self.robot_name
 
-    @endpoint.out(
-        when="frame_links",
-        ros2=lambda self: {
-            "frame_id": self.frame_links[0]["parent"],
-            "static_tf": self.frame_links,
-        },
-    )
-    def frames(self) -> None:
-        """The robot's fixed frames, as static transforms with bare names; nothing to stream."""
+    @endpoint.out(when="frame_links", ros2={"static": True})
+    def frames(self) -> Transforms:
+        """The robot's fixed frames, with bare names, sent once as static transforms."""
+        return Transforms(
+            [
+                Transform(
+                    link["parent"],
+                    link["child"],
+                    np.array(link["translation"]),
+                    np.array(link["rotation"]),
+                )
+                for link in self.frame_links
+            ]
+        )
 
     def _root_links(self, ctx: SimContext, base_body: str) -> list[tuple[str, str, str, str]]:
         """``root -> body`` for each body other than the root that a frame chain hangs from.

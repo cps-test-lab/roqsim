@@ -130,11 +130,24 @@ def scan_endpoint(engine: Engine):
     return scan
 
 
+def frame_links(frames) -> list[dict]:
+    """The static transforms a ``frames`` endpoint sends, as ``{parent, child, translation,
+    rotation}``: a robot's are the ``Transforms`` it returns, a mounted sensor's its ``static_tf``
+    hint."""
+    hint = (frames.backend.get("ros2") or {}).get("static_tf")
+    if hint is not None:
+        return hint
+    return [
+        {"parent": t.parent, "child": t.child, "translation": t.translation, "rotation": t.rotation}
+        for t in frames.read().transforms
+    ]
+
+
 def static_tf(engine: Engine, owner: str, namespace: str = NAMESPACE) -> list[dict]:
     """The static transforms *owner* publishes on its ``frames`` endpoint, in the robot's namespace."""
     (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == owner]
     assert frames.namespace == namespace
-    return frames.backend["ros2"]["static_tf"]
+    return frame_links(frames)
 
 
 # -- rotations and poses -----------------------------------------------------------------------
