@@ -36,12 +36,12 @@ def _vendor_link(new: str) -> RetiredModel:
         plugin="spawn_sensor",
         renamed_to=new,
         because=(
-            "when its mount frame became the vendor link (it was a display convention pointing "
-            "the lens along +y)"
+            "when its mount frame became the one its vendor macro places (it was a display "
+            "convention pointing the lens along +y)"
         ),
         then=(
-            "Update the name, and re-express this mount's pos/rpy against the vendor link; see "
-            "roqsim_sensors/README.md."
+            "Update the name, and re-express this mount's pos/rpy as the vendor macro's origin; "
+            "see roqsim_sensors/README.md."
         ),
     )
 

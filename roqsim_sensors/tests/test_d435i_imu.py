@@ -1,8 +1,8 @@
 """The D435i's integrated IMU: it arrives with the model, where the vendor says it sits.
 
-The mount is the vendor ``camera_link``, so the vendor's own extrinsics hold as written: the IMU is
-the gyro optical frame of the manifest's ``frames:`` chain, and ``d435_color`` is the colour optical
-frame. Both are checked here against the published ``realsense2_description`` constants, so a chain
+The model's ``link`` body is the vendor ``camera_link``, so the vendor's own extrinsics hold as
+written in it: the IMU is the gyro optical frame of the manifest's ``frames:`` chain, and
+``d435_color`` is the colour optical frame. Both are checked here against the published ``realsense2_description`` constants, so a chain
 that drifted from the vendor would fail. And a device on a fixed mount must read 1 g: MuJoCo
 computes no acceleration for a body welded to the world, so without the plugin's closed-form branch
 a tripod-mounted camera would report free fall forever.
@@ -67,11 +67,11 @@ def _imu(engine) -> ImuPlugin | None:
     return next((p for p in engine.plugins if isinstance(p, ImuPlugin)), None)
 
 
-def _in_mount(model, data, site_or_cam_pos, site_or_cam_mat):
-    """A world pose expressed in the ``d435_mount`` body (the vendor ``camera_link``)."""
-    mount = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_mount")
-    r = data.xmat[mount].reshape(3, 3)
-    return r.T @ (site_or_cam_pos - data.xpos[mount]), r.T @ site_or_cam_mat.reshape(3, 3)
+def _in_link(model, data, site_or_cam_pos, site_or_cam_mat):
+    """A world pose expressed in the ``d435_link`` body (the vendor ``camera_link``)."""
+    link = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "d435_link")
+    r = data.xmat[link].reshape(3, 3)
+    return r.T @ (site_or_cam_pos - data.xpos[link]), r.T @ site_or_cam_mat.reshape(3, 3)
 
 
 # -- provenance ------------------------------------------------------------------------------
@@ -84,7 +84,7 @@ def test_the_imu_is_the_vendors_gyro_optical_frame_in_camera_link():
     assert site >= 0
     body = int(model.site_bodyid[site])
     assert mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, body) == "d435_mount"
-    pos, rot = _in_mount(model, data, data.site_xpos[site], data.site_xmat[site])
+    pos, rot = _in_link(model, data, data.site_xpos[site], data.site_xmat[site])
     assert np.allclose(pos, D435I_IMU_XYZ, atol=1e-9)
     assert np.allclose(rot, _rot(*OPTICAL_RPY), atol=1e-9)
 
@@ -95,7 +95,7 @@ def test_the_colour_camera_is_the_vendors_colour_optical_frame():
     model, data = engine.ctx.model, engine.ctx.data
     cam = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, "d435_d435_color")
     assert cam >= 0
-    pos, rot = _in_mount(model, data, data.cam_xpos[cam], data.cam_xmat[cam])
+    pos, rot = _in_link(model, data, data.cam_xpos[cam], data.cam_xmat[cam])
     assert np.allclose(pos, [0.0, D435_CAM_DEPTH_TO_COLOR_OFFSET, 0.0], atol=1e-9)
     assert np.allclose(rot @ np.diag([1.0, -1.0, -1.0]), _rot(*OPTICAL_RPY), atol=1e-9)
 
