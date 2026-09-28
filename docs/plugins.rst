@@ -702,11 +702,12 @@ answer and what this plugin declares. Its ``solref``, like every contact's, is s
 floor for the integrator the world runs under (:func:`roqsim.solref.solref_floor`: two steps, or
 about one under ``discrete``, depending on the damping ratio and ``solimp``). ``sim.contact_override``
 refuses a time constant below it and ``roqsim check`` warns about a flex's; a pair's is passed
-through as stated, because the plugin builds before the integrator is resolved. Each side is named independently as an ``entity``, a ``body``
-or a ``geom``, because a real pair mixes kinds -- the floor is a geom while the thing sliding on it
-is an entity, as in the second line above. An ``entity`` or ``body`` pairs every geom of that
-subtree: a robot base with twenty collision geoms against a five-geom crate is a hundred pairs, and
-asking a world to enumerate them is how a pair silently misses the one that actually touches.
+through as stated, because the plugin builds before the integrator is resolved. Each side is named
+independently as an ``entity``, a ``body`` or a ``geom``, because a real pair mixes kinds -- the
+floor is a geom while the thing sliding on it is an entity, as in the second line above. An
+``entity`` or ``body`` pairs every geom of that subtree: a robot base with twenty collision geoms
+against a five-geom crate is a hundred pairs, and asking a world to enumerate them is how a pair
+silently misses the one that actually touches.
 
 One sharp edge, because it overrides two things and not one: a declared pair is added to MuJoCo's
 contact list **without consulting** ``contype``/``conaffinity``, so overriding the friction between
