@@ -107,6 +107,11 @@ class Device:
     depth_resolution: tuple[int, int]
     #: The D435i's inertial module, whose frames the manifest's `imu` component stamps.
     imu_xacro: str | None = None
+    #: The device's weight from its data sheet (kg), carried as a uniform box of the collision
+    #: geom's size; ``None`` leaves MuJoCo to derive the body inertia from the geoms. The xacro's own
+    #: inertial is not used: it gives every model 0.072 kg with a tensor two orders too large, and
+    #: says it "should not be used for modeling".
+    mass: float | None = None
 
 
 DEVICES = {
@@ -138,6 +143,7 @@ DEVICES = {
             depth_fovy=58.0,  # depth FOV 87 x 58 deg
             depth_resolution=(848, 480),
             imu_xacro="_d435i_imu_modules.urdf.xacro",
+            mass=0.072,  # D435/D435i data sheet: 72 g
         ),
         Device(
             name="realsense_d455",
@@ -256,6 +262,19 @@ def mjcf(device: Device, v: Vendor) -> str:
         else ""
     )
     cpos, csize = device.collision
+    inertial = ""
+    if device.mass is not None:
+        full = [2 * h for h in csize]
+        diag = [
+            device.mass / 12 * (full[1] ** 2 + full[2] ** 2),
+            device.mass / 12 * (full[0] ** 2 + full[2] ** 2),
+            device.mass / 12 * (full[0] ** 2 + full[1] ** 2),
+        ]
+        inertial = f"""
+        <!-- The data sheet's weight, as a uniform box of the collision geom's size. -->
+        <inertial pos="{fmt_vec(placed(cpos))}" quat="{fmt_vec(q_lm)}"
+                  mass="{fmt_num(device.mass)}"
+                  diaginertia="{" ".join(f"{i:.9g}" for i in diag)}"/>"""
     cw, ch = device.resolution
     dw, dh = device.depth_resolution
     axes = f"{fmt_vec(cam_x)} {fmt_vec(cam_y)}"
@@ -284,7 +303,7 @@ def mjcf(device: Device, v: Vendor) -> str:
 
   <worldbody>
     <body name="mount">
-      <body name="link" pos="{fmt_vec(v.screw_to_link)}">
+      <body name="link" pos="{fmt_vec(v.screw_to_link)}">{inertial}
         <geom name="{short}_visual" type="mesh" mesh="{short}_mesh" material="{short}_body"
               pos="{fmt_vec(t_lm)}" quat="{fmt_vec(q_lm)}" contype="0" conaffinity="0"/>{front}
         <geom name="{short}_collision" type="box" pos="{fmt_vec(placed(cpos))}"
