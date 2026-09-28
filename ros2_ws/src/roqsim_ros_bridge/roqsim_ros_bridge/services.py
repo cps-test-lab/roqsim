@@ -77,7 +77,7 @@ def trigger(request, response, ctx, on_payload, endpoint=None):  # noqa: ARG001
         response.success = False
         response.message = (
             f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
-            "(is it paused?)"
+            "(is the physics thread stalled?)"
         )
         return response
     response.success = True
@@ -110,7 +110,7 @@ def set_bool(request, response, ctx, on_payload, endpoint=None):
         response.success = False
         response.message = (
             f"the simulation did not apply the command within {physics.DEFAULT_TIMEOUT_S} s "
-            "(is it paused?)"
+            "(is the physics thread stalled?)"
         )
         return response
 

@@ -52,6 +52,10 @@ roqsim_walker = "roqsim_walker.models"
 [project.entry-points."roqsim.commands"]
 walker = "roqsim_walker.cli:walker"
 
+[tool.setuptools]
+# The CC-BY attribution the bundled assets require travels in the wheel's metadata (dist-info).
+license-files = ["THIRD_PARTY.md"]
+
 [tool.setuptools.packages.find]
 where = ["src"]
 
@@ -64,6 +68,7 @@ roqsim_walker = [
     "models/people/*/*.png",
     "models/people/*/CREDITS.txt",   # the asset's licence + attribution travels with it
     "models/anims/*/*.npz",
+    "models/anims/*/CREDITS.txt",    # the CARLA CC-BY attribution travels with the clips
     "worlds/*.yaml",
 ]
 

@@ -43,7 +43,8 @@ The plugin (world-YAML toggle)
 
 List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
 write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
-in the world; give an explicit list for lidars/Livox or hypothetical placements.
+in the world but a device's depth camera, which is another stream of the device beside its colour
+camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars/Livox or hypothetical placements.
 
 .. code:: yaml
 
@@ -131,17 +132,18 @@ Visualising a sensor's FOV directly
 ------------------------------------
 
 Independently of coverage, ``spawn_sensor: {show_fov: true}`` draws a sensor's field of view in the
-viewer/renders. Three paths, by what the model provides:
+viewer/renders. Three paths, tried in this order:
 
-* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from the
-  camera's ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
+* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from each
+  camera but a depth camera beside a colour one, from its ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
   into a visibility volume that stops at walls and objects (see below);
-* a camera-less **lidar** (Mid-360, Robin W1G) synthesises a translucent angular **sector** shell from
-  the datasheet angles (``h_min``/``h_max``/``v_min``/``v_max``) in its manifest's ``fov:`` block, using
-  the very ray convention the capture plugin casts with -- a full 360deg dome for the Mid-360, a bounded
-  forward 120deg x 70deg wedge for the Robin W1G;
-* a **camera-less** model that ships a bundled ``_fov`` mesh reveals it, if neither of the above applies
-  (none of the current models: the Zivid ships one but has a camera, so it takes the frustum path).
+* a **camera-less** model that ships a bundled ``_fov`` mesh reveals it (none of the current
+  models: the Zivid ships one but has a camera, so it takes the frustum path);
+* otherwise a camera-less **lidar** whose manifest's ``fov:`` block declares an angular band
+  (``h_min``/``h_max``/``v_min``/``v_max``) synthesises a translucent angular **sector** shell from
+  those datasheet angles, using the very ray convention the capture plugin casts with -- a full 360deg
+  dome for the Mid-360, a bounded forward 120deg x 70deg wedge for the Robin W1G, a flat fan for each
+  2D scanner.
 
 ``fov_near``/``fov_range`` default to the **sensor model's own** ``fov: {near, far}`` block in its
 ``<model>.manifest.yaml`` (device knowledge lives with the device -- Zivid 1.3..5 m, D435 0.28..6 m,
@@ -151,13 +153,13 @@ valid detection band. A model that has a camera always synthesises its frustum f
 Zivid (which also ships a bundled ``_fov`` envelope) -- the baked envelope stays hidden. The
 ``worlds/all_sensors_demo.yaml`` world shows every sensor's FOV and runs a coverage probe.
 
-A synthesised camera frustum is **always** clipped into a **visibility volume** that stops at walls and
-objects instead of passing through them (a ``fov_rays`` grid, default ``[32, 24]``, is cast from the
-camera against the world) -- occlusion is unconditional, not a per-placement opt-in. It applies only to
-synthesised camera frustums; a bundled envelope and a lidar sector are drawn un-clipped. The clip is a
-static build-time snapshot of the world *built so far*, so list scene/floorplan plugins before the
-sensors; dynamic bodies occlude at their spawn pose and the volume does not update at runtime. This is a
-per-sensor visual (what one sensor can see); for the quantitative per-area overlap count across all
+A synthesised camera frustum or lidar sector is **always** clipped into a **visibility volume** that
+stops at walls and objects instead of passing through them (a ``fov_rays`` grid, default ``[32, 24]``,
+is cast from the camera, and a sector's own azimuth x elevation grid from the scan site) -- occlusion
+is unconditional, not a per-placement opt-in. Only a bundled ``_fov`` envelope is drawn un-clipped: it
+is a baked mesh. The clip is a static build-time snapshot of the world *built so far*, so list
+scene/floorplan plugins before the sensors; dynamic bodies occlude at their spawn pose and the volume
+does not update at runtime. This is a per-sensor visual (what one sensor can see); for the quantitative per-area overlap count across all
 sensors use the coverage probe with ``palette: density``.
 
 A sensor never occludes itself
