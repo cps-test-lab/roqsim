@@ -42,7 +42,8 @@ The plugin (world-YAML toggle)
 
 List ``sensor_coverage_probe`` in a world's ``components:`` to compute coverage once (at ``configure``) and
 write ``report.json`` plus a render; omit it for none. ``sensors: auto`` evaluates every MuJoCo camera
-in the world; give an explicit list for lidars/Livox or hypothetical placements.
+in the world but a device's depth camera, which is another stream of the device beside its colour
+camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars/Livox or hypothetical placements.
 
 .. code:: yaml
 
@@ -132,8 +133,8 @@ Visualising a sensor's FOV directly
 Independently of coverage, ``spawn_sensor: {show_fov: true}`` draws a sensor's field of view in the
 viewer/renders. Three paths, tried in this order:
 
-* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from the
-  camera's ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
+* a **camera** mount (the RealSense/Zivid models) synthesises a translucent view **frustum** from each
+  camera but a depth camera beside a colour one, from its ``fovy``/aspect spanning ``fov_near``..``fov_range``, **always clipped against world geometry**
   into a visibility volume that stops at walls and objects (see below);
 * a **camera-less** model that ships a bundled ``_fov`` mesh reveals it (none of the current
   models: the Zivid ships one but has a camera, so it takes the frustum path);
