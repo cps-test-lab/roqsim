@@ -40,11 +40,14 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
 
 
@@ -213,23 +216,28 @@ class PropTrajectoryPlugin(Plugin):
                 meta={"prefix": p, "path": str(self.config["path"]), "speed": self.speed},
             )
         )
-        # Expose the stage's progress so a trial can be gated on it (and so a run's log records what
-        # the object actually did, not just what it was asked to do).
-        ctx.interface.add(
-            Endpoint(
-                name="stage_progress",
-                direction="out",
-                owner=self.entity_name,
-                namespace=self.config.get("namespace", ""),
-                read=self.read_progress,
-                rate_hz=30.0,
-                backend={"ros2": {"type": "std_msgs.msg.Float64", "topic": "stage_progress"}},
-            )
-        )
         self.on_reset(ctx)
 
-    def read_progress(self):
-        """(arc length travelled [m], total path length [m], finished?)."""
+    @property
+    def endpoint_owner(self) -> str:
+        """The stage entity this plugin registers."""
+        return self.entity_name
+
+    # The stage's progress, so a trial can be gated on it (and so a run's log records what the
+    # object actually did, not just what it was asked to do).
+    @endpoint.out(
+        "stage_progress",
+        rate_hz=30.0,
+        ros2={"type": "std_msgs.msg.Float64", "topic": "stage_progress"},
+    )
+    def read_progress(
+        self,
+    ) -> tuple[
+        Annotated[float, Unit("m"), "arc length travelled"],
+        Annotated[float, Unit("m"), "total path length"],
+        Annotated[bool, "whether the path is finished"],
+    ]:
+        """Endpoint ``stage_progress``: how far along its path the stage is."""
         return float(self._s), float(self._cum[-1] if len(self._cum) else 0.0), bool(self._done)
 
     def on_reset(self, ctx: SimContext) -> None:

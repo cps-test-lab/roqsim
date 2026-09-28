@@ -88,10 +88,12 @@ import logging
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim import endpoint
+from roqsim.context import Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
 from roqsim.pose import rpy_to_quat
@@ -471,59 +473,62 @@ class DoorPlugin(Plugin):
         if not self.controllable:
             return  # passive door: holds `open`, no ROS surface
 
-        ns = self.config.get("namespace", "")
         # State reader keyed by the door's own name so the (generalized) GripperCommand handler finds
         # it without the door pretending to be a gripper (see roqsim_ros_bridge.actions).
         ctx.blackboard.set(f"door:{self.door_name}:state", self.read_state)
-        ctx.interface.add(
-            Endpoint(
-                name="cmd",
-                direction="in",
-                owner=self.door_name,
-                namespace=ns,
-                write=self.set_openness,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "topic": self.topic_override("cmd") or "cmd",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="state",
-                direction="out",
-                owner=self.door_name,
-                namespace=ns,
-                read=lambda: self._target if self._ctx is None else self.read_state()[0],
-                rate_hz=10.0,
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "topic": self.topic_override("state") or "state",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="door",
-                direction="in",
-                owner=self.door_name,
-                namespace=ns,
-                write=self.set_openness,
-                backend={
-                    "ros2": {
-                        "action": "control_msgs.action.GripperCommand",
-                        "name": self.topic_override("door") or "door",
-                        # Where the handler reads (position, velocity) for reached/stalled -- the
-                        # door's own reader, not a gripper's (handler defaults to gripper:<owner>).
-                        "state_key": f"door:{self.door_name}:state",
-                    }
-                },
-            )
-        )
+
+    @property
+    def endpoint_owner(self) -> str:
+        """The door entity this plugin registers."""
+        return self.door_name
+
+    def _commanded(self) -> bool:
+        """Whether this door has a ROS surface: a leaf that is ``controllable``."""
+        return self.leaf and self.controllable
+
+    @endpoint.stream(
+        "cmd",
+        when=_commanded,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Float64",
+            "topic": self.topic_override("cmd") or "cmd",
+        },
+    )
+    def command_openness(
+        self, data: Annotated[float, "target openness, 0 closed to 1 fully open; clamped"]
+    ) -> None:
+        """Endpoint ``cmd``: the latest target openness, applied once per step."""
+        self.set_openness(data)
+
+    @endpoint.out(
+        "state",
+        rate_hz=10.0,
+        when=_commanded,
+        ros2=lambda self: {
+            "type": "std_msgs.msg.Float64",
+            "topic": self.topic_override("state") or "state",
+        },
+    )
+    def read_openness(self) -> Annotated[float, "openness, 0 closed to 1 fully open"]:
+        """Endpoint ``state``: the door's current openness."""
+        return self._target if self._ctx is None else self.read_state()[0]
+
+    # The GripperCommand handler reports reached/stalled by watching the door's own state reader
+    # (`state_key`), not a gripper's (it defaults to gripper:<owner>).
+    @endpoint.command(
+        "door",
+        when=_commanded,
+        ros2=lambda self: {
+            "action": "control_msgs.action.GripperCommand",
+            "name": self.topic_override("door") or "door",
+            "state_key": f"door:{self.door_name}:state",
+        },
+    )
+    def command_door(
+        self, position: Annotated[float, "target openness, 0 closed to 1 fully open; clamped"]
+    ) -> None:
+        """Endpoint ``door``: move to a target openness, with feedback until it settles."""
+        self.set_openness(position)
 
     def set_openness(self, openness: float) -> None:
         """Set the target openness fraction (0 = closed, 1 = fully open); clamped.

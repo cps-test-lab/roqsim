@@ -40,6 +40,7 @@ from builtin_interfaces.msg import Duration as DurationMsg
 from control_msgs.action import FollowJointTrajectory, GripperCommand
 
 from .extensions import EXTENSION_GROUP, load_extensions
+from .params import payload_for
 
 logger = logging.getLogger(__name__)
 
@@ -353,12 +354,13 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     gripper (controller ``type: GripperCommand``), but the policy is generic -- any producer with a
     single commandable position and a state reader reuses it (e.g. an automatic ``door``). The
     commanded ``position`` is sent to the producer (e.g. ``ArmControllerPlugin.set_gripper``,
-    ``DoorPlugin.set_openness``) via ``on_payload`` as the neutral scalar payload its ``write``
-    expects. We then watch the producer's state -- a ``() -> (position, velocity)`` reader on the
-    blackboard -- and succeed once it reaches the target (``reached_goal``) or stops moving short of
-    it (``stalled``, i.e. a gripper closed on an object / a door met an obstruction). The reader's
-    blackboard key is the endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so
-    existing arms are unchanged. Without a reader we wait a fixed settle time and report the command.
+    ``DoorPlugin.set_openness``) via ``on_payload``: as the parameter ``position`` to an endpoint
+    that declares its parameters, and as the bare scalar to one that does not. We then watch the
+    producer's state -- a ``() -> (position, velocity)`` reader on the blackboard -- and succeed
+    once it reaches the target (``reached_goal``) or stops moving short of it (``stalled``, i.e. a
+    gripper closed on an object / a door met an obstruction). The reader's blackboard key is the
+    endpoint's ros2 ``state_key`` hint, defaulting to ``gripper:<owner>`` so existing arms are
+    unchanged. Without a reader we wait a fixed settle time and report the command.
 
     ``max_effort`` is handled as ros2_control's gripper action controller handles it, which accepts
     every goal. A producer that publishes an effort entry under its ``effort_key`` hint (an
@@ -381,7 +383,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
     effort = ctx.blackboard.get(effort_key) if effort_key else None
     if effort is not None:
         ctx.post(lambda _ctx, value=max_effort: effort.set_max_effort(value))
-    on_payload(target)
+    on_payload(payload_for(endpoint, {"position": target}))
 
     reader = None
     if endpoint is not None:
@@ -406,7 +408,7 @@ def gripper_command(goal_handle, ctx, on_payload, endpoint=None):
             # where it is. Without a reader nothing measures the fingers, and the command stands.
             if reader is not None:
                 position, _velocity = reader()
-                on_payload(position)
+                on_payload(payload_for(endpoint, {"position": position}))
                 reached = abs(position - target) <= pos_tol
             else:
                 logger.warning(

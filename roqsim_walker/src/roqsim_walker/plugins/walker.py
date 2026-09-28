@@ -39,12 +39,16 @@ import itertools
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
+from numpy.typing import NDArray
 
+from roqsim import endpoint
 from roqsim.config import PluginSpec
-from roqsim.context import Endpoint, Entity, SimContext
+from roqsim.context import Entity, SimContext
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin, PluginError
 from roqsim_nav.avoidance import DEFAULT_MODEL
 from roqsim_walker.animation import (
@@ -283,45 +287,49 @@ class WalkerPlugin(Plugin):
             ),
         )
 
-        # Publish the walker's live bone poses so a viewer can animate its skinned mesh. The walker is
-        # mocap-driven (no MuJoCo joints, so nothing to put on /joint_states); instead each of the 17
-        # skeleton bodies is broadcast as its own transform on /tf. A bridge with a TFMessage converter
-        # (the ROS 2 bridge has one) bundles them into one message per tick. The bones are world-frame
-        # (mocap bodies are world children), so each is a flat child of the world/map frame.
+        # The bones `body_poses` publishes, in skeleton order.
         self._body_ids = [
             (name, mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, name))
             for name in (f"{self.walker_name}/{j}" for j in JOINT_NAMES)
         ]
-        ctx.interface.add(
-            Endpoint(
-                name="body_poses",
-                direction="out",
-                owner=self.walker_name,
-                namespace=ns,
-                read=self.read_body_poses,
-                rate_hz=30.0,
-                backend={
-                    "ros2": {
-                        "type": "tf2_msgs.msg.TFMessage",
-                        "topic": "/tf",  # absolute: the shared TF topic, never namespaced
-                        "frame_id": "map",
-                    }
-                },
-            )
-        )
-
         # The goal endpoint is NOT declared here: the nested `navigator` declares it, for
         # both nav2 action types, from one place. Two declarations of the same capability would mean
         # two handlers racing to register for one type in the bridge, where the loser is silently
         # overwritten. `goal_endpoint` and `action_name` still work in this block -- `expand` passes
         # them through.
 
-    def read_body_poses(self):
-        """Endpoint ``read`` (physics thread): ``[(frame, pos[3], quat[4]), ...]`` for the 17 bones.
+    @property
+    def endpoint_owner(self) -> str:
+        """The walker entity this plugin registers."""
+        return self.walker_name
 
-        World transforms straight from ``data.xpos``/``xquat`` (mocap bodies are world children).
-        ``frame`` is the body name (== the exported scene body name), so the viewer binds each
-        transform to its bone node by name. ``quat`` is MuJoCo (w, x, y, z)."""
+    # The walker is mocap-driven (no MuJoCo joints, so nothing to put on /joint_states); instead
+    # each of the 17 skeleton bodies is broadcast as its own transform on /tf. A bridge with a
+    # TFMessage converter (the ROS 2 bridge has one) bundles them into one message per tick. The
+    # bones are world-frame (mocap bodies are world children), so each is a flat child of the
+    # world/map frame.
+    @endpoint.out(
+        "body_poses",
+        rate_hz=30.0,
+        ros2={
+            "type": "tf2_msgs.msg.TFMessage",
+            "topic": "/tf",  # absolute: the shared TF topic, never namespaced
+            "frame_id": "map",
+        },
+    )
+    def read_body_poses(
+        self,
+    ) -> list[
+        tuple[
+            Annotated[str, "the bone's body name, which the exported scene body has too"],
+            Annotated[NDArray[np.float64], Unit("m"), "world position"],
+            Annotated[NDArray[np.float64], "world orientation (w, x, y, z)"],
+        ]
+    ]:
+        """Endpoint ``body_poses``: every bone's world pose, so a viewer can animate the walker.
+
+        World transforms straight from ``data.xpos``/``xquat``. The frame is the body name, so the
+        viewer binds each transform to its bone node by name."""
         d = self._ctx.data
         return [(name, d.xpos[bid], d.xquat[bid]) for name, bid in self._body_ids if bid >= 0]
 
@@ -363,10 +371,6 @@ class WalkerPlugin(Plugin):
     # names, the action type and the sequence-number contract are all unchanged.
     def _nav(self):
         return self._ctx.blackboard.get(f"nav:{self.walker_name}:handle") if self._ctx else None
-
-    def _write_route(self, poses) -> None:
-        """Endpoint ``write``: already marshalled onto the physics thread by the bridge."""
-        self.send_route(poses)
 
     def send_route(self, poses) -> int:
         handle = self._nav()

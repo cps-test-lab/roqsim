@@ -81,11 +81,13 @@ Movers that agree on it share one rasterized grid (see :mod:`roqsim_nav.grid`).
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.kinematics import body_twist
 from roqsim.plugin import Plugin
 
@@ -486,7 +488,6 @@ class NavigatorPlugin(Plugin):
         # `st.waypoints`, so every route rebuild below has to resize it too.
         self._dwell_spec = cfg.get("dwell", 0.0)
         self._ctx = ctx
-        self._declare_endpoints(ctx, entity)
         ctx.blackboard.set(f"nav:{self.entity}", self)
         ctx.blackboard.set(
             f"nav:{self.entity}:handle",
@@ -762,58 +763,73 @@ class NavigatorPlugin(Plugin):
         "start_route": "roqsim_nav_interfaces.action.StartRoute",
     }
 
-    def _declare_endpoints(self, ctx: SimContext, entity) -> None:
-        """Declare the goal interface as backend-neutral ``in`` endpoints.
-
-        The two nav2 endpoints share one ``write``: the neutral payload is a list of points either
-        way, and a single goal is a one-element list. They exist as separate endpoints only because
-        a ROS client picks an action type, and nav2 has two.
-
-        ``start_route`` releases the configured route, and is its own endpoint with its own type
-        rather than an empty nav2 goal: an empty ``NavigateThroughPoses`` is a malformed goal to
-        every nav2 client, and giving it a meaning here alone would make the same message mean two
-        things. It is declared only for a mover that has a configured route, since without one there
-        is nothing it could release.
-
-        ``goal_endpoint: false`` declares none, so a bridge needs no handler -- and therefore no
-        nav2_msgs -- for a mover that is only ever commanded in-process. Declaring an endpoint no
-        handler serves is a hard error at bridge start-up, by design, so this is not a formality.
-        """
+    # -- the goal interface, as backend-neutral endpoints --------------------------------------
+    # Owned by the entity it moves, in that entity's namespace unless the config names one.
+    #
+    # The two nav2 endpoints are one family sharing one method: the parameter is a list of points
+    # either way, and a single goal is a one-element list. They exist as separate endpoints only
+    # because a ROS client picks an action type, and nav2 has two.
+    #
+    # ``start_route`` releases the configured route, and is its own endpoint with its own type
+    # rather than an empty nav2 goal: an empty ``NavigateThroughPoses`` is a malformed goal to every
+    # nav2 client, and giving it a meaning here alone would make the same message mean two things.
+    # It is declared only for a mover that has a configured route, since without one there is
+    # nothing it could release.
+    #
+    # ``goal_endpoint: false`` declares none, so a bridge needs no handler -- and therefore no
+    # nav2_msgs -- for a mover that is only ever commanded in-process. Declaring an endpoint no
+    # handler serves is a hard error at bridge start-up, by design, so this is not a formality.
+    #
+    # Both are commands, so every goal is applied, in order. The thread-safe methods further down
+    # (``send_goals``, ``start``, ``cancel``) are the in-process interface a caller that needs the
+    # route's sequence number uses; they queue their change themselves.
+    def _serves(self, action: str) -> bool:
+        """Whether this navigator declares the goal endpoint ``action``."""
         cfg = self.config
-        if not cfg.get("goal_endpoint", True):
-            return
-        namespace = cfg.get("namespace") or (entity.meta or {}).get("namespace", "")
-        names = cfg.get("action_names") or {}
-        # `action_name` (singular) is the walker's own spelling for the through-poses name.
-        legacy = cfg.get("action_name")
-        for endpoint, action_type in self.ACTIONS.items():
-            if endpoint not in (cfg.get("actions") or self.ACTIONS):
-                continue
-            if endpoint == "start_route" and not self._configured_goals:
-                continue
-            name = names.get(endpoint) or (
-                legacy if legacy and endpoint == "navigate_through_poses" else endpoint
-            )
-            ctx.interface.add(
-                Endpoint(
-                    name=endpoint,
-                    direction="in",
-                    owner=self.entity,
-                    namespace=namespace,
-                    write=self._write_start if endpoint == "start_route" else self._write_goals,
-                    backend={"ros2": {"action": action_type, "name": name}},
-                )
-            )
+        if not cfg.get("goal_endpoint", True) or action not in (cfg.get("actions") or self.ACTIONS):
+            return False
+        return action != "start_route" or bool(self._configured_goals)
 
-    def _write_goals(self, poses) -> None:
-        """Endpoint ``write``: the bridge has already marshalled this onto the physics thread."""
+    def _action_hint(self, action: str) -> dict:
+        """The ``ros2`` hint of the goal endpoint ``action``: its type and its action name."""
+        names = self.config.get("action_names") or {}
+        # `action_name` (singular) is the walker's own spelling for the through-poses name.
+        legacy = self.config.get("action_name")
+        name = names.get(action) or (
+            legacy if legacy and action == "navigate_through_poses" else action
+        )
+        return {"action": self.ACTIONS[action], "name": name}
+
+    @endpoint.command(
+        "{item}",
+        each=lambda self: [
+            a for a in ("navigate_to_pose", "navigate_through_poses") if self._serves(a)
+        ],
+        ros2=lambda self, action: self._action_hint(action),
+    )
+    def command_goals(
+        self,
+        action: str,
+        poses: Annotated[
+            list[tuple[float, ...]],
+            "the route, each point (x, y) in world metres; a trailing yaw is accepted and not used",
+        ],
+    ) -> None:
+        """Endpoint ``navigate_to_pose`` / ``navigate_through_poses``: replace the route and run it.
+
+        Refused when ``poses`` is empty."""
         route = [(float(p[0]), float(p[1])) for p in poses]
         if not route:
             raise ValueError(f"{self.entity!r}: a goal needs at least one pose")
         self._apply_goals(route, self._seq.next())
 
-    def _write_start(self, _payload=None) -> None:
-        """Endpoint ``write`` for ``start_route``: the payload is ignored, the call is the request."""
+    @endpoint.command(
+        "start_route",
+        when=lambda self: self._serves("start_route"),
+        ros2=lambda self: self._action_hint("start_route"),
+    )
+    def command_start(self) -> None:
+        """Endpoint ``start_route``: release the configured route; a no-op once it runs."""
         if not self._started:
             self._apply_start(self._seq.next())
 
