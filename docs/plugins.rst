@@ -258,12 +258,18 @@ rides a body has its pose from that body, so moving the sensor means moving what
 
 A **device a robot ships with** is a ``spawn_sensor`` nested among the robot's components, usually
 in the robot's own manifest. It is mounted at the vendor's ``parent_frame`` (a body, or a link the
-robot declares in its manifest's ``frames:``) with the vendor joint origin as ``pos``/``rpy``. It
+robot declares in its manifest's ``frames:``) with the ``origin`` the robot description passes the
+device's vendor macro as ``pos``/``rpy``: a device model's ``mount`` is the frame that origin places,
+so the device sits where ``robot_state_publisher`` would put it. It
 inherits the robot's prefix (its own is ``<robot prefix><name>_``) and namespace. Its components
 are addressed ``<robot>.<name>.<plugin>``, and a robot manifest overrides one by nesting it under
 the mount. The mount publishes the device's frame chain as static TF. Its scan frame is the mount's ``frame_id``,
 else the vendor default the device manifest declares as ``frame_id:``; a device whose vendor names
-none needs one on every mount. The ``spawn_sensor`` and
+none needs one on every mount. A device whose vendor macro prefixes its links with a ``name``
+parameter declares that default as ``device_name:``, and a second mount of it on one robot sets its
+own, as a second instance of the macro would: two mounts that would publish any one frame name are
+refused. A device that declares no ``frames:`` chain has no vendor frame to hang from, and a robot
+mount of it is refused naming the device. The ``spawn_sensor`` and
 ``spawn_robot`` entries below have the keys.
 
 A standalone mount takes the same ``motion:`` key a prop does, with the same three answers, and it
