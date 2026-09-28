@@ -64,6 +64,7 @@ def _plugins(model, data):
     )
     dd = DiffDrivePlugin(dict(_CFG["diff_drive"]))
     dd.configure(ctx)
+    dd.register_endpoints(ctx)
     dd.on_reset(ctx)
     body = AgibotG2ControllerPlugin(dict(_CFG["agibot_g2_controller"]))
     body.configure(ctx)

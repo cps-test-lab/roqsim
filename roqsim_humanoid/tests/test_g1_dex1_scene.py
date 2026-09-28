@@ -104,7 +104,11 @@ def test_grippers_open_and_close_independently(tmp_path):
     engine.setup()
     engine.reset()
     _run(engine, 500)
-    eps = {(e.name, e.backend["ros2"].get("name", "")): e for e in engine.ctx.interface.all()}
+    eps = {
+        (e.name, e.backend["ros2"]["name"]): e
+        for e in engine.ctx.interface.all()
+        if e.name == "gripper_cmd"
+    }
     for side in ("left", "right"):
         ep = eps[("gripper_cmd", f"{side}_gripper_controller/gripper_cmd")]
         reader = engine.ctx.blackboard.require(ep.backend["ros2"]["state_key"])
