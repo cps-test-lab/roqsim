@@ -13,7 +13,9 @@ Usage::
     roqsim export web --mjcf  path/to/model.xml  --out /tmp/scene/
 
 Output (all in ``--out``):
-  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin)
+  - ``scene.json`` -- tree + joints + geoms + materials + mesh/texture index (offsets into scene.bin),
+                      headed by ``format``/``version`` (:data:`FORMAT`, :data:`FORMAT_VERSION`) so a
+                      reader can refuse a descriptor written to a contract it has not seen
   - ``scene.bin``  -- concatenated Float32/Uint32/Uint8 buffers referenced by byte offset + count
   - ``tex_<i>.png``-- one PNG per *image* texture: copied verbatim when the MJCF's recorded path
                       resolves, else re-encoded from the compiled pixels (a baked scene's paths are
@@ -33,6 +35,7 @@ scene.json so the browser animates the arm from ``/joint_states`` exactly as the
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import logging
 import shutil
@@ -42,16 +45,28 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
-from . import flex_skin, logging_setup
+from . import exit_status, flex_skin, logging_setup
 from .config import (
-    deep_merge,
     drop_transport_plugins,
     load_config,
-    overrides_from_dotlist,
-    overrides_from_files,
     world_sources,
 )
 from .engine import Engine
+from .override_options import (
+    add_override_options,
+    overrides_from_options,
+    refuse_world_options,
+)
+
+#: What ``scene.json`` declares itself to be. The other ``scene.json`` in this tree -- a
+#: ``roqsim_scenes`` scene manifest, a bill of meshes and bounds -- shares the file name and nothing
+#: else, and a reader given the wrong one otherwise finds out from a missing key deep in a loader.
+FORMAT = "roqsim.web_scene"
+#: The descriptor's format version. Bumped when a key changes MEANING, never when one is added: a
+#: reader takes what it knows by name, so an additive key (``skins`` arrived that way) costs nothing,
+#: while a changed one would be read with confidence and drawn wrong. A reader refuses a version
+#: above the one it implements, and reads an absent stamp as version 1.
+FORMAT_VERSION = 1
 
 # MuJoCo joint types (mjtJoint) -> the string the web loader switches on.
 _JOINT_TYPE = {
@@ -708,6 +723,8 @@ def export_scene(
     joints, initial_joints = _export_joints(model, data)
 
     scene = {
+        "format": FORMAT,
+        "version": FORMAT_VERSION,
         "up": "z",  # MuJoCo is Z-up (like ROS); the web wrapper group rotates it into three's Y-up
         "bodies": _export_bodies(model, data),
         "joints": joints,
@@ -746,6 +763,10 @@ def export_scene(
 
 def _compile_from_mjcf(path: Path) -> tuple[mujoco.MjModel, mujoco.MjData, dict]:
     """Compile a bare MJCF file directly (no plugins / world YAML). Initial state is the model default."""
+    if not path.is_file():
+        # MuJoCo reports a missing file as a ValueError from its XML parser; this one the command
+        # tree reports as a missing input.
+        raise FileNotFoundError(errno.ENOENT, "no such MJCF", str(path))
     model = mujoco.MjSpec.from_file(str(path)).compile()
     return model, mujoco.MjData(model), {}
 
@@ -791,23 +812,28 @@ def _compile_from_world(
         cfg.plugins = kept
     # `preview`: settling a scene to look at it is not a measurement, so the seed is the fixed
     # one rather than the driver's to resolve.
-    engine = Engine(cfg, preview=True)
-    engine.setup()  # build + compile + configure (each spawn plugin's initial pose applied)
-    engine.reset()  # on_reset: re-pose mocap walkers, re-seat robot bases
-    mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # propagate re-posed mocap into data.xpos
-    for _ in range(max(0, settle_steps)):
-        engine.step()
-    return engine.ctx.model, engine.ctx.data, cfg.view
+    # The model and data outlive the plugins: an export reads only them.
+    with Engine(cfg, preview=True) as engine:  # build + compile + configure
+        engine.reset()  # on_reset: re-pose mocap walkers, re-seat robot bases
+        mujoco.mj_forward(engine.ctx.model, engine.ctx.data)  # re-posed mocap into data.xpos
+        for _ in range(max(0, settle_steps)):
+            engine.step()
+        return engine.ctx.model, engine.ctx.data, cfg.view
 
 
 def main(argv: list | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="roqsim export web",
         description="Export a compiled MuJoCo world to a browser scene descriptor.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--world", help="path to the world YAML (compiled via the plugin pipeline)")
-    source.add_argument("--mjcf", help="path to a bare MJCF file (compiled directly)")
+    source.add_argument(
+        "--mjcf",
+        help="path to a bare MJCF file (compiled directly, with no plugins and no reset, so "
+        "--set, --override, --skip-plugins and --settle-steps are refused with it)",
+    )
     parser.add_argument("--out", required=True, help="output directory for scene.json/scene.bin")
     parser.add_argument(
         "--skip-plugins",
@@ -815,27 +841,9 @@ def main(argv: list | None = None) -> int:
         help="comma-separated plugin names/refs to drop before compiling, on top of the "
         "transport/bridge plugins (which contribute no geometry and are always dropped)",
     )
-    parser.add_argument(
-        "--set",
-        dest="overrides",
-        action="append",
-        default=[],
-        metavar="path.to.key=value",
-        help="override a world value before compiling, e.g. "
-        "--set components.floorplan.mesh=/abs/rooms.stl (repeatable)",
-    )
-    parser.add_argument(
-        "--override",
-        dest="override_files",
-        action="append",
-        default=[],
-        metavar="FILE",
-        help="a YAML file of world overrides -- the file spelling of --set, for anything "
-        "structured enough that flattening it onto a command line loses it (repeatable; "
-        "later files and --set win). The same flag, and the same loader, as `roqsim sim`: a "
-        "campaign whose overrides are a nested tree (a list of obstacle instances, say) can "
-        "hand this exporter exactly what it handed the run",
-    )
+    # The options, and the merge, `roqsim sim` uses: a campaign whose overrides are a nested tree
+    # (a list of obstacle instances, say) hands this exporter exactly what it handed the run.
+    add_override_options(parser)
     parser.add_argument(
         "--settle-steps",
         type=int,
@@ -860,17 +868,23 @@ def main(argv: list | None = None) -> int:
     )
     parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args(argv)
+    if args.mjcf:
+        # Refused rather than ignored: the export would be geometry the caller believes is
+        # overridden, pruned or settled and is not.
+        refuse_world_options(
+            parser,
+            args,
+            "--mjcf compiles a bare MJCF with no plugins and no reset -- export the world with "
+            "--world instead",
+        )
 
     logging_setup.configure(verbose=args.verbose)
     logger = logging.getLogger("roqsim.export_web")
 
     skip = {s.strip() for s in args.skip_plugins.split(",") if s.strip()}
-    # Files first, then --set, so the two spell one thing and the flat one wins on a
-    # collision -- identical to `roqsim sim`, because an export that resolved overrides
+    # Resolved by the same function as `roqsim sim`'s, because an export that resolved overrides
     # differently from the run would compile geometry the run never had.
-    overrides = deep_merge(
-        overrides_from_files(args.override_files), overrides_from_dotlist(args.overrides)
-    )
+    overrides = overrides_from_options(args)
     model, data, view = (
         _compile_from_mjcf(Path(args.mjcf))
         if args.mjcf
@@ -889,7 +903,7 @@ def main(argv: list | None = None) -> int:
         with open(args.manifest, "w", encoding="utf-8") as fh:
             json.dump({"inputs": sources}, fh, indent=2)
         logger.info("wrote source manifest (%d files) to %s", len(sources), args.manifest)
-    return 0
+    return exit_status.OK
 
 
 if __name__ == "__main__":

@@ -43,3 +43,22 @@ def test_a_pose_set_at_reset_is_the_pose_the_sites_report_before_the_first_step(
     marker = engine.ctx.data.site("marker").xpos
     assert marker[0] == pytest.approx(RESET_Q)
     engine.shutdown()
+
+
+class _StopsOnItsFirstStep(Plugin):
+    def post_step(self, ctx: SimContext) -> None:
+        if ctx.sim_time <= ctx.dt:
+            ctx.request_stop("done")
+
+
+def test_a_stop_requested_in_one_trial_does_not_end_the_next():
+    engine = Engine(
+        load_config_from_dict({"sim": {}, "components": [{f"{__name__}:_StopsOnItsFirstStep": {}}]})
+    )
+    engine.setup()
+    engine.reset()
+    engine.step()
+    assert engine.ctx.stop_requested and engine.ctx.stop_reason == "done"
+    engine.reset()
+    assert not engine.ctx.stop_requested and engine.ctx.stop_reason == ""
+    engine.shutdown()
