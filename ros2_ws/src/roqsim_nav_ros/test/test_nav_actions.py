@@ -15,7 +15,6 @@ a pip-only checkout and gains this when a workspace is sourced.
 from __future__ import annotations
 
 import threading
-import time
 
 import pytest
 
@@ -104,30 +103,32 @@ def sim(tmp_path_factory):
             },
         ],
     }
-    engine = Engine(load_config_from_dict(with_transport(raw, ros=True), base_dir=tmp))
-    engine.setup()
-    engine.reset()
-    stop = threading.Event()
+    with Engine(load_config_from_dict(with_transport(raw, ros=True), base_dir=tmp)) as engine:
+        engine.reset()
+        stop = threading.Event()
 
-    def run():
-        while not stop.is_set():
-            engine.step()
+        def run():
+            while not stop.is_set():
+                engine.step()
 
-    threading.Thread(target=run, daemon=True).start()
-    # Nothing here calls `engine.reset()`: the stepping thread owns the physics, and resetting from
-    # the test thread races it -- `on_reset` rewinds the route sequence under a goal that is already
-    # in flight, which surfaces as an aborted goal and an exception in the stepper. Each test sends
-    # ABSOLUTE goals instead, so they are independent of each other and of their order.
-    if not rclpy.ok():  # the bridge initialises rclpy itself; a second init raises
-        rclpy.init()
-    node = Node("roqsim_nav_ros_test")
-    try:
-        yield engine, node
-    finally:
-        stop.set()
-        time.sleep(0.2)
-        node.destroy_node()
-        engine.shutdown()
+        stepper = threading.Thread(target=run, daemon=True)
+        stepper.start()
+        # Nothing here calls `engine.reset()`: the stepping thread owns the physics, and resetting
+        # from the test thread races it -- `on_reset` rewinds the route sequence under a goal that is
+        # already in flight, which surfaces as an aborted goal and an exception in the stepper. Each
+        # test sends ABSOLUTE goals instead, so they are independent of each other and of their order.
+        try:
+            if not rclpy.ok():  # the bridge initialises rclpy itself; a second init raises
+                rclpy.init()
+            node = Node("roqsim_nav_ros_test")
+            try:
+                yield engine, node
+            finally:
+                node.destroy_node()
+        finally:
+            # The stepper stops before the engine shuts down under it.
+            stop.set()
+            stepper.join(timeout=5.0)
 
 
 def _xy(engine, entity="cart"):

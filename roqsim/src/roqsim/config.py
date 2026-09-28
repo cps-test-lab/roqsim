@@ -83,6 +83,7 @@ from typing import Any
 
 import yaml
 
+from .document import check_version
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -587,15 +588,38 @@ def _apply_disable(plugins: list, selectors: list) -> list:
     return out
 
 
-def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset()) -> dict:
+#: The world document version this roqsim reads, stated with a top-level ``version:`` (absent is 1).
+#: Bumped when a key is renamed, moved or changes meaning, not when one is added.
+WORLD_VERSION = 1
+_VERSION_KEY = "version"
+
+
+def _check_world_version(raw: dict, where: str) -> dict:
+    """Refuse a document stating a newer or malformed version; return it without the stamp.
+
+    The stamp is not passed on, so nothing after inheritance sees it.
+    """
+    check_version(
+        raw, _VERSION_KEY, reads=WORLD_VERSION, document="world", where=where, error=PluginError
+    )
+    return {k: v for k, v in raw.items() if k != _VERSION_KEY}
+
+
+def _resolve_inheritance(
+    raw: dict, base_dir: Path, seen: frozenset[Path] = frozenset(), *, where: str = "world config"
+) -> dict:
     """Expand an ``extends``/``disable`` world into a plain ``{sim, plugins}`` dict.
 
     Recursively merges the parent world (which may itself ``extends``): ``sim`` is deep-merged with
     the child winning, and ``plugins`` becomes ``(parent - disabled) + child``. A no-op when the
     world declares no ``extends``. Cycles raise.
+
+    Every document in the chain passes through here, so each one's ``version:`` is checked
+    (:data:`WORLD_VERSION`), a parent's like a leaf's.
     """
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
+    raw = _check_world_version(raw, where)
     ext = raw.get("extends")
     disable = raw.get("disable")
     if ext is None:
@@ -613,7 +637,9 @@ def _resolve_inheritance(raw: dict, base_dir: Path, seen: frozenset[Path] = froz
         parent_raw = yaml.safe_load(fh) or {}
     if not isinstance(parent_raw, dict):
         raise PluginError(f"extended world {parent_path} must be a mapping at the top level")
-    parent_raw = _resolve_inheritance(parent_raw, parent_path.parent, seen | {parent_path})
+    parent_raw = _resolve_inheritance(
+        parent_raw, parent_path.parent, seen | {parent_path}, where=str(parent_path)
+    )
 
     parent_sim = dict(parent_raw.get("sim") or {})
     if "world" in parent_sim:
@@ -667,7 +693,7 @@ def load_config(
         raise PluginError(f"world config {path} does not exist")
     with path.open() as fh:
         raw = yaml.safe_load(fh) or {}
-    raw = _resolve_inheritance(raw, path.parent)
+    raw = _resolve_inheritance(raw, path.parent, where=str(path))
     if transport:
         raw = with_transport(raw, **transport)
     return _from_dict(
