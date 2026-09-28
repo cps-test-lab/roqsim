@@ -44,10 +44,11 @@ driven exactly like the other robots (`spawn_robot`, `cmd_vel`/`odom`/`joint_sta
   the `realsense_d435` device twice (`device_name` `head_camera`/`chest_camera`, each in its own
   namespace) on `head_pitch_link` and `waist_pitch_link`, so each publishes the RealSense topics
   (`camera/color/image_raw`, `camera/depth/image_rect_raw`, `camera/depth/color/points`), its
-  `<device_name>_color_optical_frame` chain, and the D435i's lazy IMU on `camera/imu`. The head mount
-  is the URDF's `head_camera_joint` read through the vendor D435 mesh on that link; the chest keeps
-  the forward axis at `waist_camera_joint`'s origin rather than that joint's 35° tilt (both joints
-  are commented out upstream) -- see `oli.manifest.yaml`.
+  `<device_name>_color_optical_frame` chain, and the D435i's lazy IMU on `camera/imu`. The head
+  camera's `camera_link` is the URDF's `head_camera_joint` read through the vendor D435 mesh on that
+  link, and its mount (the vendor `camera_bottom_screw_frame`) sits the vendor offset behind it; the
+  chest keeps the forward axis at `waist_camera_joint`'s origin rather than that joint's 35° tilt
+  (both joints are commented out upstream) -- see `oli.manifest.yaml`.
 - `policy/oli/policy.onnx` + `policy/oli/walk_param.yaml` — pretrained **ONNX** whole-body walk
   policy + deploy config, vendored verbatim from LimX `humanoid-rl-deploy-python`.
 - `plugins/oli_locomotion.py` — the controller: builds the 102-dim observation, keeps a 5-deep

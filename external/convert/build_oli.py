@@ -278,8 +278,9 @@ def main() -> None:
     base.add_site(name="imu", pos=[0.0, 0.0, 0.0], size=[0.01])
 
     # -- depth cameras: none baked. The head and chest RealSense D435s are the `realsense_d435`
-    # device model, which oli.manifest.yaml mounts on head_pitch_link and waist_pitch_link at the
-    # URDF camera-joint origins; the device carries its own housing, camera and frame chain.
+    # device model, which oli.manifest.yaml mounts on head_pitch_link and waist_pitch_link with
+    # camera_link at the URDF camera-joint origins; the device carries its own housing, cameras and
+    # frame chain.
 
     # -- IMU sensors (noise-free) for realism; the policy reads base state from qpos/qvel like g1 -
     fq = spec.add_sensor()
