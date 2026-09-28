@@ -5,8 +5,8 @@ Scene builder (human 2D floorplan + 3D review)
 MCP server exposes two native-window tools a *human* answers in —
 
 * ``review_scene_by_human`` — a **3D** window showing whatever ``roqsim`` can load; the human
-  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass,
-  Fail, or a neutral comment. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
+  walks/looks/pans through it and drops numbered comment **dots**, and it **blocks** until Pass or
+  Fail. Use it when a single rendered image cannot convey a 3D layout — a ported scene, a robot
   placement, a world under review.
 * ``sketch_floorplan_by_human`` — a **2D** top-view window for authoring a floorplan's walls; it
   returns a finished **structured sketch** (rooms + lines + doors) that the deterministic generator
@@ -27,8 +27,8 @@ MCP server exposes two native-window tools a *human* answers in —
   ``roqsim sim --record``, rendered headless. It is how an *agent* looks at a scene, where the two
   tools above are how it asks a *human* to. See :ref:`render-scene-tool` below.
 
-The sketch window is not the only source of that JSON. Three tools in ``roqsim_scenes`` produce the same
-schema from something that already exists, leaving the generator downstream unchanged:
+The sketch window is not the only source of that JSON. Three tools in ``roqsim_scenes`` produce the
+same schema from something that already exists, leaving the generator downstream unchanged:
 
 * ``roqsim scenes mapimage-to-floorplan`` — when the layout exists only as a *picture* (an
   occupancy-grid screenshot, a published top view). It measures a figure rather than reading a world,
@@ -104,7 +104,7 @@ The ``review_scene_by_human`` tool
 
 Returns::
 
-    {"verdict": "pass" | "fail" | "comment", "comment": str,   # "comment": a note, neither pass nor fail
+    {"verdict": "pass" | "fail", "comment": str,
      "annotations": [{"id": 1, "world": [1.2, 0.3, 0.8],
                       "target": {"geom": "shelf_top", "body": "shelf"}, "comment": "…",
                       "yaw_deg": 90}],   # yaw_deg only present when a heading was dragged
