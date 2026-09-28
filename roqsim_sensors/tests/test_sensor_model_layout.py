@@ -51,14 +51,14 @@ def test_every_model_is_a_folder():
     assert not list(MODELS_DIR.glob("*.xml"))
     assert not (MODELS_DIR / "meshes").exists(), "the shared meshes/ dir is per-model now"
     assert MODEL_NAMES == [
-        "d415",
-        "d435",
-        "d455",
         "hokuyo_ust",
         "lds01",
         "mid360",
         "oakd",
         "omron_os32c",
+        "realsense_d415",
+        "realsense_d435",
+        "realsense_d455",
         "robin_w1g",
         "rplidar_a1",
         "rplidar_c1",
