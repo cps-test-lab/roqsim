@@ -14,8 +14,9 @@ What it starts
 * nav2 ``map_server`` + ``planner_server`` (NavFn) + ``controller_server`` (Regulated Pure Pursuit)
   + ``behavior_server`` + ``bt_navigator``, activated by a lifecycle manager.
 
-The scan is published in the ``base_link`` frame, so no ``robot_state_publisher`` / URDF TF chain is
-required.
+The scan is published in the RPLIDAR's ``rplidar_link`` frame, and the bridge publishes the static
+``base_link`` → ``shell_link`` → ``rplidar_link`` transforms the robot's model declares, so no
+``robot_state_publisher`` / URDF TF chain is required.
 
 Run it
 ------
