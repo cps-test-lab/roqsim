@@ -5,7 +5,8 @@ adapter (``irobot_create_gz_toolbox``'s pose republisher) turns those poses into
 mouse, the dock's infrared field and the kidnap detection. This plugin publishes the same streams,
 so the unchanged stack runs against roqsim:
 
-* on ``topic`` (``tf2_msgs/TFMessage``), one message per frame, each carrying one transform;
+* on ``topic``, one :class:`FrameTransform` per frame, which ROS carries as a one-transform
+  ``tf2_msgs/TFMessage`` (:mod:`roqsim_mobile.ros2_types`);
 * the entity's own pose in the world, ``map -> <frame>``, from the core pose endpoint
   (``sim/entities/<entity>/pose``, :mod:`roqsim.entity_pose`);
 * each of ``sites`` relative to the entity's body, ``<body> -> <site>``, as ``body^-1 * site``:
@@ -27,23 +28,30 @@ Config::
 
 from __future__ import annotations
 
-from typing import Annotated
+from dataclasses import dataclass
 
 import mujoco
 import numpy as np
-from numpy.typing import NDArray
 
 from roqsim import endpoint, entity_pose
 from roqsim.context import SimContext
-from roqsim.endpoint import Shape, Unit
 from roqsim.plugin import Plugin
+from roqsim.types import Point3, Quaternion
 
-#: One transform of a ``TFMessage`` payload: child frame, translation, quaternion (w, x, y, z).
-Transform = tuple[
-    Annotated[str, "child frame"],
-    Annotated[NDArray[np.float64], Shape(3), Unit("m")],
-    Annotated[NDArray[np.float64], Shape(4), "quaternion (w, x, y, z)"],
-]
+
+@dataclass
+class FrameTransform:
+    """One frame's pose relative to its parent, the parent being the endpoint's ``frame_id`` hint.
+
+    Attributes:
+        child_frame_id: the frame placed, by the name its consumer matches
+        translation: the child frame's origin, parent frame
+        rotation: quaternion (w, x, y, z), parent frame
+    """
+
+    child_frame_id: str
+    translation: Point3
+    rotation: Quaternion
 
 
 class Create3PosePublisherPlugin(Plugin):
@@ -91,31 +99,28 @@ class Create3PosePublisherPlugin(Plugin):
                 raise RuntimeError(f"create3_pose_publisher: site {prefix + site!r} not found")
             self._sids[site] = sid
 
-    def _hints(self, frame_id: str) -> dict:
-        return {"type": "tf2_msgs.msg.TFMessage", "topic": self.topic, "frame_id": frame_id}
-
     @endpoint.out(
-        "pose",
-        rate_hz=lambda self: self.rate_hz,
+        name="pose",
+        rate="rate_hz",
         lazy=True,
-        when=lambda self: bool(self.frame),
-        ros2=lambda self: self._hints("map"),
+        when="frame",
+        ros2=lambda self: {"topic": self.topic, "frame_id": "map"},
     )
-    def world_pose(self) -> list[Transform] | None:
+    def world_pose(self) -> FrameTransform | None:
         """The entity's true world pose as ``<frame>``."""
         pose = self._pose.read()
         if pose is None:
             return None
-        return [(self.frame, pose.position, pose.orientation)]
+        return FrameTransform(self.frame, pose.position, pose.orientation)
 
     @endpoint.out(
-        "pose/{item}",
-        each=lambda self: self.sites,
-        rate_hz=lambda self, site: self.rate_hz,
+        name="pose/{item}",
+        each="sites",
+        rate="rate_hz",
         lazy=True,
-        ros2=lambda self, site: self._hints(self._body),
+        ros2=lambda self, site: {"topic": self.topic, "frame_id": self._body},
     )
-    def site_pose(self, site: str) -> list[Transform]:
+    def site_pose(self, site: str) -> FrameTransform:
         """A site's pose relative to the entity's body, under the site's own name."""
         d = self._ctx.data
         sid, bid = self._sids[site], self._bid
@@ -127,4 +132,4 @@ class Create3PosePublisherPlugin(Plugin):
         rel_pos = d.xmat[bid].reshape(3, 3).T @ (d.site_xpos[sid] - d.xpos[bid])
         rel_quat = np.empty(4)
         mujoco.mju_mulQuat(rel_quat, base_inv, quat)
-        return [(site, rel_pos, rel_quat)]
+        return FrameTransform(site, rel_pos, rel_quat)

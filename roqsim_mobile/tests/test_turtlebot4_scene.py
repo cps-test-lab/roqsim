@@ -819,15 +819,15 @@ def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
     poses = [
         e
         for e in create3.ctx.interface.all()
-        if e.backend.get("ros2", {}).get("topic") == "_internal/sim_ground_truth_pose"
+        if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_pose"
     ]
-    by_child = {e.read()[0][0]: e for e in poses}
+    by_child = {e.read().child_frame_id: e for e in poses}
     assert set(by_child) == {"turtlebot4", "mouse", "ir_omni"}
     assert by_child["turtlebot4"].backend["ros2"]["frame_id"] == "map"
-    _, pos, _ = by_child["mouse"].read()[0]
+    pos = by_child["mouse"].read().translation
     assert np.allclose(pos, [0.1015, 0.087, 0.0092], atol=1e-6)
     assert by_child["mouse"].backend["ros2"]["frame_id"] == "base_link"
-    _, pos, _ = by_child["ir_omni"].read()[0]
+    pos = by_child["ir_omni"].read().translation
     assert np.allclose(pos, [0.153, 0.0, 0.0992], atol=1e-6)
     assert all(e.lazy for e in poses)
 
@@ -927,15 +927,16 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
         for _ in range(200):
             engine.step()
         poses = {
-            e.read()[0][0]: e
+            e.read().child_frame_id: e
             for e in engine.ctx.interface.all()
-            if e.backend.get("ros2", {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
+            if (e.backend.get("ros2") or {}).get("topic") == "_internal/sim_ground_truth_dock_pose"
         }
         assert set(poses) == {"standard_dock", "halo_link"}
-        _, dock_pos, dock_quat = poses["standard_dock"].read()[0]
+        dock = poses["standard_dock"].read()
+        dock_pos, dock_quat = dock.translation, dock.rotation
         assert np.allclose(dock_pos[:2], [0.157, 0.0], atol=1e-4)
         assert abs(float(dock_quat[3])) == pytest.approx(1.0, abs=1e-3), "turned to face the robot"
-        _, halo, _ = poses["halo_link"].read()[0]
+        halo = poses["halo_link"].read().translation
         assert np.allclose(halo, [-0.06, 0.0, 0.0904], atol=1e-6)
         # A static prop: the robot did not push it while settling next to it.
         m = engine.ctx.model
