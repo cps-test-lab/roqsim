@@ -70,6 +70,7 @@ VALUES = [
     T.Image(np.array([[0.5, 1.5]], dtype=np.float32), "32FC1"),
     T.CameraInfo(640, 480, 500.0, 501.0, 320.0, 240.0, [0.1, 0.0, 0.0, 0.0, 0.0]),
     T.PointCloud(np.array([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], dtype=np.float32)),
+    T.Transform("odom", "base_link", np.array([1.0, 2.0, 0.1]), np.array([0.5, 0.5, 0.5, 0.5])),
 ]
 
 

@@ -19,9 +19,18 @@ ROS.
 ``Image``              ``sensor_msgs/Image`` (or ``type: sensor_msgs.msg.CompressedImage``)
 ``CameraInfo``         ``sensor_msgs/CameraInfo``
 ``PointCloud``         ``sensor_msgs/PointCloud2`` (x, y, z float32)
+``Transform``          ``tf2_msgs/TFMessage`` (one transform; inbound, exactly one)
+``Transforms``         ``tf2_msgs/TFMessage`` (one transform per entry)
 ``bool`` ``float``     ``std_msgs/Bool``, ``std_msgs/Float64``,
 ``int`` ``str``        ``std_msgs/Int64``, ``std_msgs/String``
 =====================  =================================================================
+
+**Transforms** are stamped with the step's sim time like every other message. A transform's parent
+is its ``parent``, or the endpoint's ``frame_id`` hint (default ``map``) when it leaves ``parent``
+empty, namespaced as every frame id is; its ``child`` is published verbatim, so a consumer matches it
+by the name the producer gave. With the hint ``static: true`` the endpoint's first value is instead
+sent once through the bridge's static broadcaster -- latched (transient-local) ``/tf_static``, parent
+and child both namespaced, stamp zero -- exactly as a ``static_tf`` hint's transforms are.
 
 A package adds its own type once through the ``roqsim.ros2_types`` entry-point group
 (:data:`ENTRY_POINT_GROUP`): the entry loads a :class:`RosType`, or an iterable of them.
@@ -31,7 +40,7 @@ A package adds its own type once through the ``roqsim.ros2_types`` entry-point g
 producer's own hints -- and the converters. For a decorated endpoint:
 
 * the payload type's row decides the message, and the producer's hints only deviate from it: a
-  frame id, ``stamped``, ``emit_tf``, a ``static_tf``, a ``qos``, a ``field`` of a structure to
+  frame id, ``stamped``, ``emit_tf``, a ``static_tf``, ``static``, a ``qos``, a ``field`` of a structure to
   publish alone (whose type then decides), or a ``type`` naming one of the row's messages;
 * a payload type with no row is mapped **by field name** onto the message its ``type`` hint names:
   each dataclass field (or each parameter, for an endpoint taking plain parameters) must be a field
@@ -370,6 +379,55 @@ def _decode_pointcloud(msg) -> T.PointCloud:
     return T.PointCloud(np.stack(cols, axis=1))
 
 
+def _transform_parent(v: T.Transform, hints) -> str:
+    return namespaced(hints.get("frame_prefix", ""), v.parent or hints.get("frame_id", "map"))
+
+
+def _transform_stamped(v: T.Transform, stamp, hints):
+    from geometry_msgs.msg import TransformStamped
+
+    tf = TransformStamped()
+    _header(tf, stamp, _transform_parent(v, hints))
+    tf.child_frame_id = v.child
+    _set_xyz(tf.transform.translation, v.translation)
+    _set_quat(tf.transform.rotation, v.rotation)
+    return tf
+
+
+def _decode_transform_stamped(tf) -> T.Transform:
+    return T.Transform(
+        tf.header.frame_id,
+        tf.child_frame_id,
+        _xyz(tf.transform.translation),
+        _wxyz(tf.transform.rotation),
+    )
+
+
+def _fill_transform(msg, v: T.Transform, stamp, hints) -> None:
+    msg.transforms = [_transform_stamped(v, stamp, hints)]
+
+
+def _decode_transform(msg) -> T.Transform:
+    if len(msg.transforms) != 1:
+        raise ValueError(
+            f"a Transform travels as a TFMessage of one transform, got {len(msg.transforms)}"
+        )
+    return _decode_transform_stamped(msg.transforms[0])
+
+
+def _fill_transforms(msg, v: T.Transforms, stamp, hints) -> None:
+    msg.transforms = [_transform_stamped(t, stamp, hints) for t in v.transforms]
+
+
+def _decode_transforms(msg) -> T.Transforms:
+    return T.Transforms([_decode_transform_stamped(tf) for tf in msg.transforms])
+
+
+def transforms_of(value) -> list[T.Transform]:
+    """The transforms a :class:`~roqsim.types.Transform` or :class:`~roqsim.types.Transforms` carries."""
+    return list(value.transforms) if isinstance(value, T.Transforms) else [value]
+
+
 def _scalar(cls: type, msg: str) -> RosType:
     def fill(m, v, stamp, hints):
         m.data = cls(v)
@@ -454,6 +512,16 @@ for _rostype in (
     ),
     RosType(
         T.PointCloud, (Wire("sensor_msgs.msg.PointCloud2", _fill_pointcloud, _decode_pointcloud),)
+    ),
+    RosType(
+        T.Transform,
+        (Wire("tf2_msgs.msg.TFMessage", _fill_transform, _decode_transform),),
+        hints={"frame_id": "map"},
+    ),
+    RosType(
+        T.Transforms,
+        (Wire("tf2_msgs.msg.TFMessage", _fill_transforms, _decode_transforms),),
+        hints={"frame_id": "map"},
     ),
     _scalar(bool, "std_msgs.msg.Bool"),
     _scalar(float, "std_msgs.msg.Float64"),
@@ -755,10 +823,32 @@ def resolve(ep) -> Binding | None:
             f"field name, or register a converter in the {ENTRY_POINT_GROUP} entry-point group"
         )
         return binding
-    hints["topic"] = ep.topic or hints.get("topic") or ep.name
-    hints["qos"] = _qos(ep, hints)
+    if hints.get("static"):
+        _static(ep, carried, hints)
+    else:
+        hints["topic"] = ep.topic or hints.get("topic") or ep.name
+        hints["qos"] = _qos(ep, hints)
     binding.hints = hints
     return binding
+
+
+_TF_TYPES = (T.Transform, T.Transforms)
+
+
+def _static(ep, carried: ValueType | None, hints: dict) -> None:
+    """A ``static: true`` endpoint goes to the bridge's static broadcaster, not to a topic of its own."""
+    if ep.direction != "out" or carried is None or carried.cls not in _TF_TYPES:
+        raise ValueError(
+            f"{ep.owner}/{ep.name}: ros2 hint static=true publishes transforms on /tf_static; "
+            f"it needs an out endpoint returning Transform or Transforms"
+        )
+    if ep.topic or "topic" in hints or ep.qos is not None or "qos" in hints:
+        raise ValueError(
+            f"{ep.owner}/{ep.name}: a static endpoint is published on the latched /tf_static; "
+            f"it takes no topic or qos of its own"
+        )
+    hints["topic"] = "/tf_static"
+    hints["qos"] = qos_profile("latched")
 
 
 def _service(ep, hints: dict) -> Binding:
