@@ -9,6 +9,7 @@ Lifecycle::
                  plugin.configure(ctx)
     reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
+    idle()    -> drain posted commands; mj_forward if any ran (a paused driver, no time advance)
     shutdown()-> plugin.shutdown(ctx) in reverse order
 
 A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leaving runs
@@ -462,6 +463,21 @@ class Engine:
             self._timed(plugin, "post_step", plugin.post_step, self.ctx)
         # 5) snapshot for cross-thread readers.
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
+
+    def idle(self) -> int:
+        """Run posted commands without advancing time; the driver calls it while not stepping.
+
+        A paused run still owes its callers their commands: a service that posts a change and waits
+        for it would otherwise time out for as long as the pause lasts. When any command ran,
+        ``mj_forward`` brings the derived quantities (body poses, sensor data, contacts) in line
+        with what it wrote, so a read before the next step sees the change. ``data.time`` does not
+        move and no plugin hook runs. Returns the number of commands run.
+        """
+        self._require_setup()
+        ran = self.ctx.drain_commands()
+        if ran:
+            mujoco.mj_forward(self.ctx.model, self.ctx.data)
+        return ran
 
     def shutdown(self) -> None:
         """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).

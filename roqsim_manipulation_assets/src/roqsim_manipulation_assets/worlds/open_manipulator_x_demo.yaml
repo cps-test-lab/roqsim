@@ -37,6 +37,7 @@ components:
           test_target: [0.6, 0.3, -0.4, 0.9]
       - realsense_d435:
           camera: d435_color
+          depth_camera: d435_color  # the arm's one camera, at the depth FOV
           points: true
           rate_hz: 10.0
 
