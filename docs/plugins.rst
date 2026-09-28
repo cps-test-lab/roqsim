@@ -966,7 +966,8 @@ allowlist, with what each field does and how it can silently do nothing, is in t
 ``Config::`` block above and in ``roqsim scenes describe``'s ``overridable.fields``. Details and the
 measurements behind each row: :ref:`architecture <92-physical-faults-impl>` §9.2. A flex's
 ``flex_damping``, ``flex_friction``, ``flex_solref`` and ``flex_solimp`` are rows too, selected by
-flex name; its Young's modulus is not, for the reason in :ref:`its material, as a world key <flex-material>`.
+flex name; its Young's modulus is not, for the reason in
+:ref:`its material, as a world key <flex-material>`.
 
 .. _deformable-bodies:
 
