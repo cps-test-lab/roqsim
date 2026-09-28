@@ -180,6 +180,15 @@ def test_the_instance_image_is_only_published_when_asked_for():
     assert ep is not None and ep.backend["ros2"]["encoding"] == "16UC1"
 
 
+def test_a_reset_clears_the_previous_trials_frame():
+    """Until the first capture of a trial, every output answers "nothing yet", not the last frame."""
+    engine = _engine(instances=True)
+    names = ("labels", "instances", "detections")
+    assert all(_endpoint(engine, n).read() is not None for n in names)
+    engine.reset()
+    assert [_endpoint(engine, n).read() for n in names] == [None, None, None]
+
+
 # -- boxes -----------------------------------------------------------------------------------
 
 

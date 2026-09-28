@@ -13,7 +13,7 @@ Usage::
 Provenance: ROBOTIS `robotis_mujoco_menagerie`, directory `robotis_tb3`, pinned at commit
 ``d8344c0dbe7a00208d0301111523dde65efc174a`` (Apache-2.0; see ``turtlebot3_waffle_LICENSE`` beside the
 model). The source ships MJCFs for the Burger and the **Waffle Pi** plus, in ``assets/``, the plain
-**Waffle** base mesh — which is the platform `hussain_maze_ros2_2024` actually names, so this port uses
+**Waffle** base mesh — which is the platform the maze paper (Hussain et al., ICRAI 2024) names, so this port uses
 ``waffle_base.stl`` rather than the Waffle Pi's.
 
 Why decimate: ``waffle_base.stl`` is 325,838 triangles (the Waffle Pi's is 157,576). The vendor MJCF
