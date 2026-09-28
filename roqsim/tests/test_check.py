@@ -16,6 +16,7 @@ import textwrap
 
 import pytest
 
+from roqsim import exit_status
 from roqsim.check import STAGES, check_world, main
 
 
@@ -117,8 +118,17 @@ def test_the_exit_code_is_the_verdict(tmp_path, capsys):
     pytest.importorskip("roqsim_sensors")
     assert main([str(_world(tmp_path, GOOD))]) == 0
     assert "ok" in capsys.readouterr().out
-    assert main(["nope_xyz:missing"]) == 1
+    assert main(["nope_xyz:missing"]) == exit_status.BAD_INPUT, "a target naming no world is input"
     assert "FAIL" in capsys.readouterr().out
+
+
+def test_help_states_the_exit_status(capsys):
+    """A caller in a loop branches on the status, so --help says what 2 and 5 mean for check."""
+    with pytest.raises(SystemExit):
+        main(["--help"])
+    out = " ".join(capsys.readouterr().out.split())
+    assert "exit status:" in out
+    assert "2 is a target that names no world, and 5 a problem at any later stage" in out
 
 
 def test_json_is_the_same_report(tmp_path, capsys):

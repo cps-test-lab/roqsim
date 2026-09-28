@@ -23,6 +23,9 @@ import argparse
 import json
 from pathlib import Path
 
+from roqsim import exit_status
+from roqsim_scenes import scene_manifest
+
 
 def floorplan_of(scene_dir: Path) -> dict:
     """The floorplan JSON for ``scene_dir``: follow ``scene.json``'s ``"floorplan"`` reference.
@@ -37,6 +40,7 @@ def floorplan_of(scene_dir: Path) -> dict:
         raise ValueError(f"{scene_dir} has no scene.json; it is not a roqsim scene directory.")
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    scene_manifest.check(manifest, manifest_path)
     ref = manifest.get("floorplan")
     if not isinstance(ref, str):
         raise ValueError(
@@ -52,22 +56,27 @@ def floorplan_of(scene_dir: Path) -> dict:
     return json.loads(floorplan_path.read_text(encoding="utf-8"))
 
 
-def main(argv: list | None = None) -> None:
+def main(argv: list | None = None) -> int:
     ap = argparse.ArgumentParser(
-        description="Recover the floorplan JSON from a sketch-authored scene."
+        description="Recover the floorplan JSON from a sketch-authored scene.",
+        epilog=exit_status.epilog(exit_status.BAD_INPUT),
     )
     ap.add_argument("--scene", required=True, type=Path, help="scene dir holding scene.json")
     ap.add_argument("--out", type=Path, help="write the floorplan JSON here (default: stdout)")
     args = ap.parse_args(argv)
 
-    floorplan = floorplan_of(args.scene)
+    try:
+        floorplan = floorplan_of(args.scene)
+    except ValueError as err:
+        return exit_status.fail("roqsim scenes scene-to-floorplan", err)
     text = json.dumps(floorplan, indent=2)
     if args.out:
         args.out.write_text(text + "\n", encoding="utf-8")
         print(f"wrote floorplan {args.out}")
     else:
         print(text)
+    return exit_status.OK
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -341,6 +341,16 @@ class CartesianAdmittancePlugin(Plugin):
         # A controller the world declares inactive comes up holding nothing, the way
         # `spawner --inactive` leaves one. Default active, so a world that never switches is unchanged.
         self._active = str(self.config.get("initial_state", "active")) != "inactive"
+        # What a reset returns to: a trial's `set_target_wrench`, `set_law` and switches are its own.
+        self._configured = (
+            self._active,
+            self.w_d.copy(),
+            self.law,
+            self.controller_type,
+            self._uses_wrench,
+            self._uses_stiffness,
+        )
+        self._registered: Controller | None = None
 
         self._ctx: SimContext | None = None
         self._arm_handle = None
@@ -437,7 +447,7 @@ class CartesianAdmittancePlugin(Plugin):
         # Listed and switched like any other controller. It claims the SAME command interfaces as
         # the trajectory controller, which is what makes handing the arm from one to the other a
         # switch rather than a race.
-        registry_for(ctx).register(
+        self._registered = registry_for(ctx).register(
             Controller(
                 name=self.controller_name,
                 type=f"cartesian_controllers/{_TYPE_CLASSES[self.controller_type]}",
@@ -640,6 +650,15 @@ class CartesianAdmittancePlugin(Plugin):
     # -- lifecycle -------------------------------------------------------------------------------
 
     def on_reset(self, ctx: SimContext) -> None:
+        active, w_d, self.law, self.controller_type, self._uses_wrench, self._uses_stiffness = (
+            self._configured
+        )
+        self.w_d = w_d.copy()
+        self._active = active
+        if self._registered is not None:
+            registry_for(ctx).restore(
+                self._registered, ACTIVE if active else INACTIVE, ctx.sim_time
+            )
         self._twist = np.zeros(6)
         # A commanded frame belongs to the episode that commanded it: carrying one across a reset
         # would make a repetition start where the previous one left off.
