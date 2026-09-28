@@ -70,7 +70,7 @@ From Python::
        sim.pause()
        print(sim.step(10)["sim_time"])
        scan = sim.read("robot/lidar2d_0/lidar/scan")    # ranges is a numpy array
-       sim.call("robot/diff_drive/cmd_vel", {"vx": 0.3, "w": 0.1})
+       sim.call("robot/diff_drive/cmd_vel", {"vx": 0.3, "wz": 0.1})
        sim.resume()
        with sim.subscribe("robot/diff_drive/odom") as odom:
            path, t, value = odom.get(timeout=1.0)

@@ -8,20 +8,16 @@ the control socket can do what a scenario's ``set_entity_state``, ``spawn_entity
     sim/entities/set_presence   command   make an entity present (optionally placed) or absent
 
 The operations are :mod:`roqsim.entity_control`'s, which the in-process route calls too, so a
-refusal reads the same on both. An entity's pose is the core's ``sim/entities/<name>/pose``.
+refusal reads the same on both. An entity's pose is the core's ``sim/entities/<name>/pose``. They are
+served over the control socket only (``ros2=None``): ROS has its own simulation-control services.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
-
-import numpy as np
-from numpy.typing import NDArray
-
 from .. import endpoint, entity_control
 from ..context import SimContext
-from ..endpoint import Shape, Unit
 from ..plugin import Plugin
+from ..types import AngularVelocity3, Point3, Quaternion, Velocity3
 
 
 class EntityControlPlugin(Plugin):
@@ -33,37 +29,44 @@ class EntityControlPlugin(Plugin):
     def configure(self, ctx: SimContext) -> None:
         self._ctx = ctx
 
-    @endpoint.command("set_state")
+    @endpoint.command(ros2=None)
     def set_state(
         self,
-        entity: Annotated[str, "the world's `name:` for it"],
-        position: Annotated[NDArray[np.float64], Shape(3), Unit("m"), "world frame"],
-        orientation: Annotated[NDArray[np.float64], Shape(4), "quaternion (w, x, y, z)"],
-        linear_velocity: Annotated[
-            NDArray[np.float64] | None, Shape(3), Unit("m/s"), "zero unless stated"
-        ] = None,
-        angular_velocity: Annotated[
-            NDArray[np.float64] | None, Shape(3), Unit("rad/s"), "zero unless stated"
-        ] = None,
+        entity: str,
+        position: Point3,
+        orientation: Quaternion,
+        linear_velocity: Velocity3 | None = None,
+        angular_velocity: AngularVelocity3 | None = None,
     ) -> str:
-        """Place a free-jointed or mocap entity, at rest unless velocities are stated."""
+        """Place a free-jointed or mocap entity, at rest unless velocities are stated.
+
+        Args:
+            entity: the world's `name:` for it
+            position: world frame
+            orientation: quaternion (w, x, y, z), world frame
+            linear_velocity: zero unless stated
+            angular_velocity: zero unless stated
+        """
         return entity_control.set_state(
             self._ctx, entity, position, orientation, linear_velocity, angular_velocity
         )
 
-    @endpoint.command("set_presence")
+    @endpoint.command(ros2=None)
     def set_presence(
         self,
-        entity: Annotated[str, "the world's `name:` for it"],
-        present: Annotated[bool, "true: perceivable and collidable; false: absent"],
-        position: Annotated[
-            NDArray[np.float64] | None, Shape(3), Unit("m"), "where it appears"
-        ] = None,
-        orientation: Annotated[
-            NDArray[np.float64] | None, Shape(4), "quaternion (w, x, y, z)"
-        ] = None,
+        entity: str,
+        present: bool,
+        position: Point3 | None = None,
+        orientation: Quaternion | None = None,
     ) -> str:
-        """Make an entity the world declared present (placed, where a pose is given) or absent."""
+        """Make an entity the world declared present (placed, where a pose is given) or absent.
+
+        Args:
+            entity: the world's `name:` for it
+            present: true: perceivable and collidable; false: absent
+            position: where it appears, world frame
+            orientation: quaternion (w, x, y, z), world frame
+        """
         return entity_control.set_presence(self._ctx, entity, present, position, orientation)
 
     def validate_config(self, config: dict) -> list[str]:

@@ -325,9 +325,7 @@ def test_a_worlds_qos_overrides_the_default_and_a_real_bridge_publishes_with_it(
         assert (
             joints.qos_profile.reliability == ReliabilityPolicy.RELIABLE
         )  # the default, as before
-        (odom_ep,) = [
-            e for e in engine.ctx.interface.all() if e.owner == "tb" and e.name == "odom"
-        ]
+        (odom_ep,) = [e for e in engine.ctx.interface.all() if e.owner == "tb" and e.name == "odom"]
         assert bridge.bound_name(odom_ep)["qos"] == QOS_PRESETS["sensor_data"]
     finally:
         engine.shutdown()

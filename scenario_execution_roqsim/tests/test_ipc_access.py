@@ -66,11 +66,11 @@ class Things(Plugin):
     def endpoint_owner(self) -> str:
         return "parcel"
 
-    @endpoint.command("arm")
+    @endpoint.command
     def arm(self) -> None:
         raise ValueError("the gripper is not armed")
 
-    @endpoint.out("level")
+    @endpoint.out
     def level(self) -> dict:
         return {"litres": 3.5, "full": False}
 
