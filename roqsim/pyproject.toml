@@ -10,7 +10,7 @@ readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
 dependencies = [
-    "mujoco>=3.0",
+    "mujoco>=3.14,<3.15",
     "numpy>=1.24",
     "pyyaml>=6.0",
     "click>=8.1",   # the `roqsim` command tree (roqsim/commands.py); tools keep their own argparse
@@ -66,6 +66,10 @@ model_override = "roqsim.plugins.model_override:ModelOverridePlugin"
 # Carried mass on any robot's body -- a load, not a robot family, so it is core beside the other
 # world-agnostic plugins.
 payload = "roqsim.plugins.payload:PayloadPlugin"
+# A flex's material (Young's modulus, Poisson's ratio, damping, contact) from the world, for a flex any
+# model declared. On the spec, before compile, because MuJoCo bakes the modulus into the compiled
+# stiffness and keeps no field a runtime write could reach.
+flex_material = "roqsim.plugins.flex_material:FlexMaterialPlugin"
 # What the run COST, beside what it did: mechanical power off the actuators, integrated. Core rather
 # than a robot family because every actuated thing has the question, and the measured part
 # (force * velocity) is the same for a wheel, a joint and a rotor.

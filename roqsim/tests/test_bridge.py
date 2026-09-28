@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from roqsim.bridge import BridgeBase
 from roqsim.context import Endpoint, SimContext
 
@@ -177,3 +179,47 @@ def test_eager_endpoint_publishes_to_nobody_unchanged():
     bridge.configure(ctx)
     bridge.post_step(ctx)
     assert bridge.published == ["image", "camera_info"]
+
+
+# -- what a bridge says it publishes ----------------------------------------------------------------
+
+
+def test_the_endpoint_map_lists_each_bound_output_by_owner_and_name():
+    """Only outputs this backend bound: no input, and no endpoint without this backend's hints."""
+    bridge = FakeBridge({})
+    bridge.configure(_ctx_with_endpoints())
+    emap = bridge.endpoint_map(lambda out: {"scope": out.endpoint.namespace})
+    assert emap["owners"] is None, "no owner filter: this bridge serves every owner"
+    assert emap["endpoints"] == [
+        {"owner": "robot1", "name": "odom", "scope": "robot1"},
+        {"owner": "robot2", "name": "odom", "scope": "robot2"},
+    ]
+
+
+def test_the_endpoint_map_carries_the_owner_filter():
+    """So a reader can tell "robot1 publishes nothing" from "this bridge does not serve robot1"."""
+    bridge = FakeBridge({"owner": "robot2"})
+    bridge.configure(_ctx_with_endpoints())
+    emap = bridge.endpoint_map(lambda out: {})
+    assert emap["owners"] == ["robot2"]
+    assert [e["owner"] for e in emap["endpoints"]] == ["robot2"]
+
+
+def test_an_endpoint_is_found_by_its_owner_and_name():
+    ctx = _ctx_with_endpoints()
+    assert ctx.interface.find("robot2", "odom").owner == "robot2"
+    assert ctx.interface.find("robot1", "cmd_vel").direction == "in"
+    assert ctx.interface.find("robot3", "odom") is None
+    assert ctx.interface.find("robot1", "imu") is None
+
+
+def test_a_pair_that_names_two_endpoints_is_refused_rather_than_guessed():
+    """A robot with two arm controllers declares `joint_states` twice, scoped by namespace; the pair
+    (entity, name) cannot say which, and returning the first would read the wrong arm."""
+    ctx = SimContext(config={})
+    for ns in ("dual/left", "dual/right"):
+        ctx.interface.add(
+            Endpoint(name="joint_states", direction="out", owner="dual", namespace=ns)
+        )
+    with pytest.raises(LookupError, match="dual/left.*dual/right"):
+        ctx.interface.find("dual", "joint_states")

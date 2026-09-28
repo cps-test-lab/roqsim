@@ -45,6 +45,14 @@ the observation plugins that watch one thing and read it from where they sit.
 
 Declaring the same two geoms twice is refused rather than resolved: MuJoCo keeps both pairs and uses
 one of them, and which one is not something a world should have to know.
+
+**A side cannot be a flex.** A ``<pair>`` names two geoms, and MuJoCo has no pair for a flex, so a
+flex's contacts keep the combination rule whatever is declared here. A side that is a flex -- a
+``geom:`` naming one, or an ``entity``/``body`` whose subtree owns a collidable flex -- is therefore
+refused rather than paired geom by geom: the pair would govern the rigid parts and leave the flex,
+often the part that touches, at the combined value. A flex's contact is set on the flex itself
+(``<contact friction=... priority=...>`` in its ``<flexcomp>``); a higher ``priority`` makes its
+friction the contact's outright rather than the element-wise maximum.
 """
 
 from __future__ import annotations
@@ -54,6 +62,7 @@ import logging
 import mujoco
 
 from ..context import SimContext
+from ..flex import spec_flex_body_names
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -140,24 +149,62 @@ class ContactPairOverridePlugin(Plugin):
             stack.extend(b.bodies)
         return out
 
-    def _side(self, sel: dict, spec: mujoco.MjSpec, ctx: SimContext) -> list[str]:
+    @staticmethod
+    def _subtree_flexes(spec: mujoco.MjSpec, body_name: str) -> list[str]:
+        """The collidable flexes `body_name`'s subtree owns: all of their DOF bodies lie in it.
+
+        The ownership rule of :func:`roqsim.flex.entity_flex_ids`, read off the spec because a pair
+        is declared before compile.
+        """
+        root = spec.body(body_name)
+        bodies, stack = set(), [root]
+        while stack:
+            b = stack.pop()
+            bodies.add(b.name)
+            stack.extend(b.bodies)
+        return [
+            f.name or f"#{i}"
+            for i, f in enumerate(spec.flexes)
+            if (f.contype or f.conaffinity) and set(spec_flex_body_names(f)) <= bodies
+        ]
+
+    @staticmethod
+    def _refuse_flex(side: str, sel: dict, flexes: list[str]) -> None:
+        named = ", ".join(repr(f) for f in flexes)
+        raise RuntimeError(
+            f"contact_pair_override: side {side!r} ({sel}) is or carries the flex {named}. A "
+            "<pair> names two geoms and MuJoCo has none for a flex, so the flex's contacts would "
+            "keep the combined friction while the rest of the side took this pair's. Set the "
+            "flex's own friction and priority instead (<contact friction=... priority=...> in its "
+            "<flexcomp>), or name a body or geom of this side that excludes it."
+        )
+
+    def _side(self, side: str, sel: dict, spec: mujoco.MjSpec, ctx: SimContext) -> list[str]:
         """One side's geom names, from whichever of entity / body / geom it was given by."""
         if sel.get("geom"):
+            if any(f.name == sel["geom"] for f in spec.flexes):
+                self._refuse_flex(side, sel, [sel["geom"]])
             return [sel["geom"]]
         if sel.get("body"):
-            return self._subtree_geoms(spec, sel["body"])
-        name = sel["entity"]
-        entity = ctx.entities.get(name)
-        if entity is None or not entity.body:
-            raise RuntimeError(
-                f"contact_pair_override: no entity named {name!r} with a base body. Entities are registered "
-                "by the plugin that spawns them, so this pair must be declared AFTER both -- one "
-                "naming a robot listed below it finds nothing."
-            )
-        return self._subtree_geoms(spec, entity.body)
+            body = sel["body"]
+        else:
+            name = sel["entity"]
+            entity = ctx.entities.get(name)
+            if entity is None or not entity.body:
+                raise RuntimeError(
+                    f"contact_pair_override: no entity named {name!r} with a base body. Entities are registered "
+                    "by the plugin that spawns them, so this pair must be declared AFTER both -- one "
+                    "naming a robot listed below it finds nothing."
+                )
+            body = entity.body
+        geoms = self._subtree_geoms(spec, body)
+        flexes = self._subtree_flexes(spec, body)
+        if flexes:
+            self._refuse_flex(side, sel, flexes)
+        return geoms
 
     def _sides(self, spec: mujoco.MjSpec, ctx: SimContext) -> tuple[list[str], list[str]]:
-        return self._side(self.a, spec, ctx), self._side(self.b, spec, ctx)
+        return self._side("a", self.a, spec, ctx), self._side("b", self.b, spec, ctx)
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
         a, b = self._sides(spec, ctx)

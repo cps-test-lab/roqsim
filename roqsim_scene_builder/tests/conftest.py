@@ -1,10 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
-"""Shared fixtures for the scene-builder tests: a throwaway X display for the GUI ones.
-
-The same fixture as ``mcp-media-review``'s image-review suite --
-the two packages share the annotation-window design and, per the note atop ``annotate_ui``, share it
-by copying rather than by depending on each other.
-"""
+"""Shared fixtures for the scene-builder tests: a throwaway X display for the GUI ones."""
 
 from __future__ import annotations
 

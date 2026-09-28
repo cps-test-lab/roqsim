@@ -35,6 +35,13 @@ can perceive or touch the entity, all runtime-mutable, so nothing recompiles:
     seeing absent geometry. This is the axis a **viewer** answers to, and it is the one that
     survives an entity whose material makes the alpha trick inapplicable.
 
+A **flex** the entity carries (a ``<flexcomp>`` in a prop or a tool) has its own copy of each:
+``flex_rgba``, ``flex_contype``/``flex_conaffinity`` and ``flex_group``, written the same way. Each
+takes effect on the next step without a recompile -- measured: zeroing the pair ends every contact
+of a flex resting on a floor, and either the group or the alpha alone takes it out of a rendered
+frame. No raycast needs telling: ``mj_ray`` does not intersect a flex (measured: a ray aimed
+through a soft block reaches the floor behind it).
+
 The originals are saved on the entity, so returning is exact rather than a guess at what the
 world declared.
 
@@ -60,6 +67,8 @@ import logging
 
 import mujoco
 
+from .flex import entity_flex_ids
+
 _log = logging.getLogger(__name__)
 
 #: Geom group reserved for absent entities. Groups 0-1 are visual, 2 is both sensor FOV
@@ -73,6 +82,9 @@ _SAVED = "_presence_saved"
 
 #: Key under which an entity's saved per-body gravity compensation lives while it is absent.
 _SAVED_GRAVCOMP = "_presence_saved_gravcomp"
+
+#: Key under which an entity's saved flex appearance and contact mask live while it is absent.
+_SAVED_FLEX = "_presence_saved_flex"
 
 
 def entity_body_ids(model, body_name: str) -> list[int]:
@@ -133,10 +145,13 @@ def set_present(ctx, entity, present: bool) -> bool:
         return True
 
     geoms = entity_geom_ids(ctx.model, entity.body)
+    flexes = entity_flex_ids(ctx.model, entity.body)
     if present:
         _restore(ctx.model, entity, geoms)
+        _restore_flexes(ctx.model, entity)
     else:
         _hide(ctx.model, entity, geoms)
+        _hide_flexes(ctx.model, entity, flexes)
         _freeze(ctx.model, ctx.data, entity)
     entity.present = bool(present)
     # A transition leaves NO other trace. It writes model fields, while a recording stores
@@ -146,11 +161,12 @@ def set_present(ctx, entity, present: bool) -> bool:
     # whose service call returned OK. Until presence rides in the capture, this line is
     # the record: stamped with sim time, so it lands on the run's clock like every other event.
     _log.info(
-        "presence: %s %s at t=%.3f (%d geoms)",
+        "presence: %s %s at t=%.3f (%d geoms, %d flexes)",
         entity.name,
         "present" if present else "absent",
         float(ctx.data.time),
         len(geoms),
+        len(flexes),
     )
     return True
 
@@ -169,6 +185,33 @@ def _hide(model, entity, geoms) -> None:
         model.geom_conaffinity[gid] = 0
         model.geom_rgba[gid][3] = 0.0
     entity.meta[_SAVED] = saved
+
+
+def _hide_flexes(model, entity, flexes) -> None:
+    """The flex counterpart of :func:`_hide`: the same three axes, on the flex's own fields."""
+    saved = {}
+    for fid in flexes:
+        saved[fid] = (
+            int(model.flex_group[fid]),
+            int(model.flex_contype[fid]),
+            int(model.flex_conaffinity[fid]),
+            float(model.flex_rgba[fid][3]),
+        )
+        model.flex_group[fid] = ABSENT_GEOM_GROUP
+        model.flex_contype[fid] = 0
+        model.flex_conaffinity[fid] = 0
+        model.flex_rgba[fid][3] = 0.0
+    entity.meta[_SAVED_FLEX] = saved
+
+
+def _restore_flexes(model, entity) -> None:
+    """Put back exactly what :func:`_hide_flexes` saved, and nothing it did not."""
+    saved = entity.meta.pop(_SAVED_FLEX, None) or {}
+    for fid, (group, contype, conaffinity, alpha) in saved.items():
+        model.flex_group[fid] = group
+        model.flex_contype[fid] = contype
+        model.flex_conaffinity[fid] = conaffinity
+        model.flex_rgba[fid][3] = alpha
 
 
 def _freeze(model, data, entity) -> None:

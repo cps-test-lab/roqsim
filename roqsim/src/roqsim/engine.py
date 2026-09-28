@@ -7,9 +7,18 @@ Lifecycle::
 
     setup()   -> build phase: plugin.build(spec) for all; spec.compile(); make data;
                  plugin.configure(ctx)
-    reset()   -> mj_resetData; plugin.on_reset(ctx)
+    reset()   -> mj_resetData; plugin.on_reset(ctx); mj_forward; report an interpenetrating start
     step()    -> drain posted commands; plugin.pre_step; mj_step; plugin.post_step; snapshot
     shutdown()-> plugin.shutdown(ctx) in reverse order
+
+A driver holds the engine in a ``with`` block: entering runs :meth:`setup`, leaving runs
+:meth:`shutdown`, whether the body returned or raised::
+
+    engine = Engine(cfg)
+    engine.ctx.seed = seed      # before setup: configure may read it
+    with engine:
+        engine.reset()
+        ...
 
 With ``profile=True`` every hook call is timed (:meth:`timing_report`, per-plugin per-hook
 wall-time) and the one-shot load phases — plugin resolution, world load, compile, data creation —
@@ -38,6 +47,8 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
+from .flex import AUTO, IntegratorChoice, check_flex_options, resolve_integrator
+from .interpenetration import Interpenetration, interpenetrations, summary
 from .plugin import Plugin, PluginError
 from .presence import arm_gravity_compensation
 from .seed import PREVIEW_SEED
@@ -54,6 +65,9 @@ _INTEGRATORS = {
     "rk4": mujoco.mjtIntegrator.mjINT_RK4,
     "implicit": mujoco.mjtIntegrator.mjINT_IMPLICIT,
     "implicitfast": mujoco.mjtIntegrator.mjINT_IMPLICITFAST,
+    # What a flex with elasticity or passive contact requires; ``sim.integrator: auto`` picks it for
+    # such a model (see :mod:`roqsim.flex`).
+    "discrete": mujoco.mjtIntegrator.mjINT_DISCRETE,
 }
 
 #: Constraint solvers, for ``sim.solver``. Newton converges in far fewer iterations than PGS/CG and is
@@ -80,9 +94,8 @@ _CONES = {
 #:
 #: They are here for FIDELITY first. A published model that enables MuJoCo's global override has to be
 #: reproducible as published, and these three are the values such a model states — and often the ones
-#: it randomizes, since the flag makes them the only contact parameters in play. One corpus
-#: reconstruction turns on exactly that, and its spec records the flag as REQUIRED for the three to
-#: have any effect at all. That a sweep over them is then an ordinary campaign factor, needing no
+#: it randomizes, since the flag makes them the only contact parameters in play; without the flag the
+#: three have no effect at all. That a sweep over them is then an ordinary campaign factor, needing no
 #: bespoke plugin and no hand-edited MJCF per cell, is the second reason rather than the first.
 #:
 #: GLOBAL, and BEFORE COMPILE — both halves load-bearing. Per-geom ``solref``/``solimp`` stay where
@@ -131,6 +144,12 @@ class Engine:
             self.ctx.seed = PREVIEW_SEED
         self.ctx.sync_enabled = bool(config.sync.get("enabled", False))
         self._setup_done = False
+        #: The integrator the model was compiled with and why (:class:`roqsim.flex.IntegratorChoice`);
+        #: set by :meth:`setup`, before compile.
+        self.integrator: IntegratorChoice | None = None
+        #: What the last :meth:`reset` left interpenetrating beyond tolerance, deepest first
+        #: (:mod:`roqsim.interpenetration`). Empty until a reset has run.
+        self.interpenetrations: list[Interpenetration] = []
         # Timing is strictly opt-in: with profile=False neither hooks nor load phases pay for a
         # perf_counter call (pre_step/post_step run once per plugin per physics step).
         self._profile = profile
@@ -153,6 +172,14 @@ class Engine:
         with self._span("setup_total"):
             self._setup()
         self._setup_done = True
+
+    def __enter__(self) -> Engine:
+        """Run :meth:`setup`. A setup that raises has shut down what it configured."""
+        self.setup()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.shutdown()
 
     def _world_plugins(self) -> list[Plugin]:
         """The plugins that build their own ground + lighting, in declaration order."""
@@ -223,12 +250,19 @@ class Engine:
                     removed["textures_removed"],
                 )
 
-        # Apply configured physics options before compile. Default to implicitfast, which the
-        # velocity-servo wheel drives need for stability (Euler blows them up).
+        # Apply configured physics options before compile, and after every build hook: a stated
+        # `sim.timestep` wins over whatever a plugin or the world MJCF wrote, and the integrator is
+        # always `sim.integrator`'s.
         if self.config.timestep is not None:
             spec.option.timestep = self.config.timestep
-        integrator = self.config.sim.get("integrator", "implicitfast")
-        spec.option.integrator = _INTEGRATORS[integrator]
+        # After the builds because a plugin may be what adds the flex that decides it. `auto` (the
+        # default) is implicitfast for a model without a flex that needs discrete -- what the
+        # velocity-servo wheel drives need for stability (Euler blows them up) -- and discrete for
+        # one with such a flex, which MuJoCo refuses to compile under anything implicit.
+        self.integrator = resolve_integrator(self.config.sim.get("integrator", AUTO), spec)
+        spec.option.integrator = _INTEGRATORS[self.integrator.resolved]
+        self.config.resolved["integrator"] = self.integrator.resolved
+        self.logger.info("integrator: %s (%s)", self.integrator.resolved, self.integrator.reason)
 
         # Solver effort, left at MuJoCo's defaults unless a world asks for more. A contact-rich world
         # needs more than a navigation world: a grasped object held between two pads creeps out of the
@@ -268,6 +302,9 @@ class Engine:
             # world key rather than something baked into every model that might be used that way.
             spec.option.gravity = [float(v) for v in gravity]
         self._apply_contact_override(spec)
+        # Last, once every option it reads is final: the solver rule depends on the solver and
+        # noslip settings, whichever of the world MJCF or `sim` stated them.
+        check_flex_options(spec, self.integrator)
 
         # Name the model so the viewer never shows MuJoCo's default "MuJoCo Model" title: prefer the
         # world's `sim.name`, else keep a meaningful baked name, else "Roqsim".
@@ -287,12 +324,21 @@ class Engine:
         with self._span("make_data"):
             self.ctx.data = mujoco.MjData(self.ctx.model)
 
-        for plugin in self.plugins:
-            self._timed(plugin, "configure", plugin.configure, self.ctx)
-            # After configure, because the entity has to be registered before its presence can
-            # be set; here rather than inside each plugin so that a plugin registering an entity
-            # gets the world's `present:` honoured by declaring that it registers one.
-            plugin.apply_declared_presence(self.ctx)
+        # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
+        # every plugin configured so far, the failing one included (it may have opened something
+        # before it raised). Build opens nothing, so the build loop needs no such guard.
+        configured: list[Plugin] = []
+        try:
+            for plugin in self.plugins:
+                configured.append(plugin)
+                self._timed(plugin, "configure", plugin.configure, self.ctx)
+                # After configure, because the entity has to be registered before its presence can
+                # be set; here rather than inside each plugin so that a plugin registering an entity
+                # gets the world's `present:` honoured by declaring that it registers one.
+                plugin.apply_declared_presence(self.ctx)
+        except BaseException:
+            self._shutdown_plugins(configured, " after a configure failed")
+            raise
 
     def _apply_contact_override(self, spec) -> None:
         """Apply ``sim.contact_override`` — MuJoCo's global ``o_solref``/``o_solimp``/``o_friction``.
@@ -348,10 +394,16 @@ class Engine:
             )
 
     def reset(self, **params) -> None:
-        """Reset physics and let plugins restore initial state. ``params`` are forwarded via config.
+        """Reset physics and let plugins restore initial state.
 
-        (The scenario-execution adapter maps injected scenario parameters onto ``params``; plugins
-        read them from ``ctx`` / their own config. Kept simple here.)
+        ``params`` describe the trial being started: they are set on the blackboard as
+        ``reset_params`` before any plugin's ``on_reset``, an empty mapping when none are given.
+        The scenario-execution adapter forwards the scenario parameters it does not consume here.
+
+        The state it leaves is checked for bodies placed inside one another
+        (:func:`roqsim.interpenetration.interpenetrations`): what it finds is kept in
+        :attr:`interpenetrations` and logged as one WARNING naming the deepest pairs. Nothing is
+        refused, and the state is not touched.
         """
         self._require_setup()
         # Flush any pending commands so nothing targets the pre-reset state.
@@ -362,10 +414,13 @@ class Engine:
         # `rng_for` is keyed on simulated time, so without this every trial after the first
         # would replay the first one's noise exactly.
         self.ctx.episode += 1
+        # A stop request ends the trial that made it, not the next one.
+        self.ctx.stop_requested = False
+        self.ctx.stop_reason = ""
         mujoco.mj_resetData(self.ctx.model, self.ctx.data)
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
-        if params:
-            self.ctx.blackboard.set("reset_params", params)
+        # Set on every reset, so no trial reads the previous one's parameters.
+        self.ctx.blackboard.set("reset_params", dict(params))
         for plugin in self.plugins:
             self._timed(plugin, "on_reset", plugin.on_reset, self.ctx)
             # Presence lives in `model`, which mj_resetData does not restore, so a spare spawned
@@ -375,6 +430,12 @@ class Engine:
         # command, a presence: until the next step, the derived quantities (site poses, sensor data,
         # contacts) must describe that state and not the one before the plugins ran.
         mujoco.mj_forward(self.ctx.model, self.ctx.data)
+        # That state is what the trial starts from, so it is where an overlap the solver will blow
+        # apart on the first steps is visible -- and the run's own log is where it must be said,
+        # since what follows looks like a controller or protocol fault. Reported, never refused.
+        self.interpenetrations = interpenetrations(self.ctx.model, self.ctx.data, self.ctx.entities)
+        if self.interpenetrations:
+            self.logger.warning("%s", summary(self.interpenetrations))
         for gate in self.ctx.gates():
             gate.reset()
 
@@ -395,15 +456,22 @@ class Engine:
         self.ctx.publish_snapshot({"time": self.ctx.sim_time})
 
     def shutdown(self) -> None:
-        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest)."""
+        """Tear down plugins in reverse order (best-effort; one failure does not stop the rest).
+
+        A no-op before :meth:`setup` completed and after a shutdown: a setup that failed in
+        configure has already shut down what it configured, and nothing else is open.
+        """
         if not self._setup_done:
             return
-        for plugin in reversed(self.plugins):
+        self._shutdown_plugins(self.plugins, "")
+        self._setup_done = False
+
+    def _shutdown_plugins(self, plugins: list[Plugin], why: str) -> None:
+        for plugin in reversed(plugins):
             try:
                 self._timed(plugin, "shutdown", plugin.shutdown, self.ctx)
             except Exception:
-                self.logger.exception("plugin %s shutdown failed", plugin.name)
-        self._setup_done = False
+                self.logger.exception("plugin %s shutdown failed%s", plugin.name, why)
 
     # -- introspection ------------------------------------------------------------------------
     @property

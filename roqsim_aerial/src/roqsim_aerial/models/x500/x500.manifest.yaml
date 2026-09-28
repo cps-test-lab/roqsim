@@ -1,0 +1,19 @@
+# Default components shipped with the X500 description.
+#
+# `spawn_robot: {model: x500}` pulls this in automatically, so a world does not re-declare the
+# airframe's intrinsic actuation. To override a default, declare the same plugin for the same robot
+# in the world; to opt out entirely, set `spawn_robot` config `default_plugins: false`.
+#
+# Unlike the Crazyflie's manifest, this one does NOT pull in a stabiliser -- and the omission is the
+# point. An X500's stabiliser is its flight stack (PX4), which is a separate process outside the
+# simulator; baking a Python attitude controller in here would give the airframe two controllers the
+# moment PX4 is attached, and would quietly make every "PX4 flew it" result a result about our
+# controller instead. So the manifest supplies only the actuation model: the thing that turns
+# normalized per-rotor commands into forces and reaction torques, which is a property of the motors
+# and propellers and belongs to the vehicle whatever is flying it.
+#
+# Consequence to state plainly: an x500 spawned with nothing driving `set_normalized` does not stand
+# still, it falls. That is correct -- an unarmed multirotor does exactly that. Attach `px4_sitl`, a
+# scenario, or a ROS 2 publisher on the `motor_cmd` endpoint.
+components:
+  - multirotor_motors: {}   # max_thrust comes from the MJCF's ctrlrange; see the plugin docstring
