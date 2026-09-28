@@ -66,6 +66,8 @@ __all__ = [
     "Speed",
     "Torque",
     "Torque3",
+    "Transform",
+    "Transforms",
     "Twist",
     "Unit",
     "Vector3",
@@ -314,3 +316,31 @@ class PointCloud:
     """
 
     points: Annotated[NDArray[np.float32], Shape(None, 3), Unit("m")]
+
+
+@dataclass
+class Transform:
+    """One frame placed relative to another: the child frame's pose in the parent frame.
+
+    Attributes:
+        parent: frame the child is placed in; empty for the endpoint's own
+        child: frame placed, by the name its consumer matches
+        translation: child frame's origin, parent frame
+        rotation: child frame's orientation, quaternion (w, x, y, z), parent frame
+    """
+
+    parent: str
+    child: str
+    translation: Point3 = field(default_factory=_zero3)
+    rotation: Quaternion = field(default_factory=_identity)
+
+
+@dataclass
+class Transforms:
+    """Several frames placed at one instant, carried together (a skeleton's bones, a mount's chain).
+
+    Attributes:
+        transforms: one per child frame
+    """
+
+    transforms: list[Transform] = field(default_factory=list)
