@@ -29,25 +29,25 @@ class Probe(Plugin):
     def configure(self, ctx: SimContext) -> None:
         self.topic = "resolved-in-configure"
 
-    @endpoint.out(rate_hz=lambda self: 25.0, ros2=lambda self: {"topic": self.topic})
+    @endpoint.out(rate=lambda self: 25.0, ros2=lambda self: {"topic": self.topic})
     def level(self):
         """How full it is."""
         self.threads.append(threading.get_ident())
         return 0.5
 
-    @endpoint.command("reset_counter", ros2={"service": "std_srvs.srv.Trigger"})
+    @endpoint.command(ros2={"service": "std_srvs.srv.Trigger"})
     def reset_counter(self, count: int = 0, label: str = "") -> str:
         self.threads.append(threading.get_ident())
         if label == "bad":
             raise ValueError("refused")
         return f"reset {count}"
 
-    @endpoint.stream("setpoint", ros2={"type": "std_msgs.msg.Float64"})
+    @endpoint.stream(name="setpoint", ros2={"type": "std_msgs.msg.Float64"})
     def set_setpoint(self, value: float) -> None:
         self.threads.append(threading.get_ident())
         self.applied.append(value)
 
-    @endpoint.out("hidden", when=lambda self: False)
+    @endpoint.out(when=lambda self: False)
     def hidden(self):
         return None
 
@@ -210,7 +210,7 @@ def test_declared_endpoints_are_listed_from_the_class_alone():
     ]
     level = specs[0].describe(Probe)
     assert level["backends"] == ["ros2"] and level["doc"] == "How full it is."
-    assert "rate_hz" not in level  # a callable rate is known only per instance
+    assert level["rate_hz"] == "computed"  # a callable rate is known only per instance
 
 
 def test_an_undecorated_override_drops_the_declaration():

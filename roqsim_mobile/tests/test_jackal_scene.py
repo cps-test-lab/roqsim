@@ -92,6 +92,7 @@ def _plugin(model, data, **overrides):
     )
     plugin = DiffDrivePlugin({**_manifest_plugin("diff_drive"), **overrides})
     plugin.configure(ctx)
+    plugin.register_endpoints(ctx)
     plugin.on_reset(ctx)
     return ctx, plugin
 

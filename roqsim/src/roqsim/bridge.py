@@ -9,13 +9,14 @@ inbound data onto the physics thread, and the map of what the bridge publishes
 
 The bridge reads :class:`roqsim.context.Endpoint`s registered by the robot's plugins; it never
 imports the robot package or hardcodes topic/stream names. Backend particulars (message type, topic,
-QoS, frames) come from each endpoint's ``backend[BACKEND]`` hint block, so adding an interface is a
-one-line endpoint registration on the producer with zero bridge edits.
+QoS, frames) come from each endpoint's ``backend[BACKEND]`` hint block, and for a decorated endpoint
+from what its payload type maps to on the backend (:meth:`BridgeBase._hints_for`), so adding an
+interface is a declaration on the producer with zero bridge edits.
 
 Threading (see docs/architecture.rst > Concurrency): ``_setup``/``configure``/``post_step``/
 ``shutdown`` run on the physics thread. Inbound transport callbacks run on the backend's own thread
 and MUST NOT touch ``data`` -- they call the ``on_payload`` handed to :meth:`_make_input`, which
-marshals the write onto the physics thread via ``ctx.post``.
+marshals the write onto the physics thread (``ctx.submit``, or the endpoint's own queue).
 """
 
 from __future__ import annotations
@@ -89,11 +90,6 @@ class BridgeBase(Plugin):
     #: Backend key selecting which ``endpoint.backend[...]`` hint block applies (e.g. "ros2").
     BACKEND: str = ""
 
-    #: Whether this backend wires an endpoint that carries no hints for it. A transport that needs a
-    #: per-endpoint message type (ROS) cannot, and skips it; one that carries neutral payloads as
-    #: they are can serve every endpoint. Either way ``backend={BACKEND: False}`` opts one out.
-    WIRES_ALL: bool = False
-
     # A bridge publishes what the other plugins built; it adds nothing to the scene itself. Declared
     # here rather than per bridge so any transport -- including out-of-tree ones -- is renderable
     # without its middleware installed.
@@ -133,11 +129,10 @@ class BridgeBase(Plugin):
         ctx.interface.bridges.append(self)
         rate_overrides = self.config.get("rates", {})
         for ep in ctx.interface.all():
-            hints = ep.backend.get(self.BACKEND)
-            if hints is False or (hints is None and not self.WIRES_ALL):
-                continue
-            hints = hints or {}
             if self._owners is not None and ep.owner not in self._owners:
+                continue
+            hints = self._hints_for(ep)
+            if hints is None:
                 continue
             # Before the backend hook, which may replace it with the name it resolved.
             self._names[id(ep)] = dict(hints)
@@ -159,6 +154,17 @@ class BridgeBase(Plugin):
                 ctx.logger.warning(
                     "bridge: endpoint %r has bad direction %r", ep.name, ep.direction
                 )
+
+    def _hints_for(self, ep: Endpoint) -> dict | None:
+        """The hint block this backend binds *ep* with, or ``None`` to leave it unbound.
+
+        The endpoint's own block for this backend; a block of ``None`` keeps it off. A decorated
+        endpoint (``Endpoint.transport``) is bound without one, with an empty block -- a backend
+        overrides this to fill in what its payload type maps to.
+        """
+        if self.BACKEND in ep.backend:
+            return ep.backend[self.BACKEND]
+        return {} if ep.transport else None
 
     def endpoint_map(self, describe: Callable[[_Output], dict]) -> dict:
         """What this bridge publishes, keyed as the world names it: ``(owner, endpoint name)``.

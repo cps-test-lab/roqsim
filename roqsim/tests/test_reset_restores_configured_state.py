@@ -49,8 +49,10 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
 from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegistry
+from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import JointState
 
 #: Physics steps a trial runs for, split around the setter calls.
 STEPS = 200
@@ -174,7 +176,10 @@ def _joint_command(engine: Engine, endpoint) -> tuple:
         and e.name == "joint_states"
         and e.namespace == endpoint.namespace
     ]
-    names, positions = states[0].read()[:2]
+    state = states[0].read()
+    names, positions = (
+        (state.names, state.positions) if isinstance(state, JointState) else state[:2]
+    )
     return list(names), [float(p) + 0.1 for p in positions]
 
 
@@ -216,7 +221,21 @@ def _write_every_in_endpoint(engine: Engine) -> None:
         payload = PAYLOADS[endpoint.name]
         if callable(payload):
             payload = payload(engine, endpoint)
+        if endpoint.params is not None:
+            payload = _named(endpoint, payload)
         engine.ctx.post(lambda _ctx, e=endpoint, p=payload: e.write(p))
+
+
+def _named(endpoint, payload) -> dict:
+    """*payload*, positional as in :data:`PAYLOADS`, as the named parameters a typed endpoint takes.
+
+    Checked here: a typed write refuses a misfit into a future or a log line, which a trial would
+    not notice, and the endpoint would go unused.
+    """
+    values = () if payload is None else payload if isinstance(payload, tuple) else (payload,)
+    named = dict(zip((p.name for p in endpoint.params), values, strict=False))
+    bind(endpoint.params, named, f"{endpoint.owner}/{endpoint.name}")
+    return named
 
 
 def _switch_every_controller(engine: Engine) -> None:
@@ -350,7 +369,7 @@ CASES: dict[str, Case] = {
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
-    "oakd_camera": Case(lambda _: _sensor("oakd")),
+    "oakd_camera": Case(lambda _: _sensor("oakd_pro")),
     "realsense_d415": Case(lambda _: _sensor("realsense_d415")),
     "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
     "realsense_d455": Case(lambda _: _sensor("realsense_d455")),

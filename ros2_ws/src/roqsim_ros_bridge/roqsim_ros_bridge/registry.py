@@ -1,15 +1,17 @@
 """ROS 2 side of the bridge: resolve message types by string and fill them from neutral payloads.
 
+An endpoint declared with :mod:`roqsim.endpoint` is carried through the table of
+:mod:`roqsim_ros_bridge.typemap` instead; what follows serves a hand-built endpoint without a schema.
+
 The robot package declares each endpoint's ROS type as a *string* (e.g.
 ``"sensor_msgs.msg.LaserScan"``); :func:`resolve_type` turns that into the class via ``importlib``,
 so the bridge has no hardcoded ``from sensor_msgs.msg import ...``. Field mapping lives here, keyed by
 the type string:
 
   * ``CONVERTERS`` -- fill an *outbound* message in place from a neutral payload (``out`` endpoints).
-  * ``DECODERS``   -- decode an *inbound* message to its named parameters (``in`` endpoints): a
-    mapping, whose names are what a typed endpoint's method declares (``vx``, ``vy``, ``w`` for a
-    twist). :func:`roqsim_ros_bridge.params.payload_for` hands it on as is to an endpoint with
-    ``params``, and as the positional tuple of its values to an untyped one.
+  * ``DECODERS``   -- decode an *inbound* message to its named parameters (``in`` endpoints), which
+    :func:`roqsim_ros_bridge.params.payload_for` hands to an untyped endpoint as the positional
+    tuple of their values.
 
 Converters/decoders are duck-typed on the payload (``payload.ranges``, ``twist.linear.x``), never on a
 specific robot package's dataclass, so the backend stays decoupled from any robot. Types without a
@@ -32,6 +34,7 @@ from geometry_msgs.msg import Pose, Quaternion, TransformStamped
 
 from . import image_codec
 from .frames import namespaced
+from .typemap import odometry_pose
 
 # type-string -> fill(msg, payload, stamp, hints) -> None   (outbound)
 CONVERTERS: dict[str, Callable[[Any, Any, Time, dict], None]] = {}
@@ -791,7 +794,7 @@ def decode_joint_trajectory(msg) -> dict[str, list]:
 
 # -- transform (owned by the bridge, derived from an odom payload) -----------------------------
 def make_tf(payload, stamp: Time, frame_id: str, child_frame_id: str) -> TransformStamped:
-    # payload is either odom shape -- see fill_odom. Planar: (x, y, yaw, v, vy, w[, z]), the
+    # payload is an Odometry (roqsim.types), or either untyped odom shape -- see fill_odom. Planar: (x, y, yaw, v, vy, w[, z]), the
     # optional trailing z being the base height so a legged robot's base_link renders at its true
     # elevation (planar -> z=0). 6-DOF: the ODOM6_KEYS mapping, whose full rotation must be carried
     # through rather than flattened to yaw, or TF would stand a banking drone upright.
@@ -799,6 +802,14 @@ def make_tf(payload, stamp: Time, frame_id: str, child_frame_id: str) -> Transfo
     tf.header.stamp = stamp
     tf.header.frame_id = frame_id
     tf.child_frame_id = child_frame_id
+    pose = odometry_pose(payload)
+    if pose is not None:
+        position, (w, x, y, z) = pose
+        tf.transform.translation.x, tf.transform.translation.y, tf.transform.translation.z = (
+            float(v) for v in position
+        )
+        tf.transform.rotation = Quaternion(x=float(x), y=float(y), z=float(z), w=float(w))
+        return tf
     if is_odom6(payload):
         tf.transform.translation.x = float(payload["x"])
         tf.transform.translation.y = float(payload["y"])

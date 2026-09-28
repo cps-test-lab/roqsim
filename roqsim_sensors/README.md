@@ -12,7 +12,7 @@ package rather than `roqsim_mobile`/`roqsim_manipulation`. ROS-free; ROS couplin
 | `lidar` | 2D lidar via `raycast.cast` (no GL). Declares a `scan` (`LaserScan`) output endpoint. |
 | `livox_mid360` | Livox Mid-360 3D lidar via `raycast.cast` (no GL). Casts a spherical ray grid over the device's 360°×59° (−7°..+52°) FoV and declares a `cloud` (`PointCloud2`) output endpoint. Sibling of `lidar` (point cloud, not planar scan). Bundled with the standalone `mid360` mount below. Uniform-grid sampling approximates the device's non-repetitive scan pattern — a documented substrate limit. |
 | `seyond_robin_w1g` | Seyond Robin W1G forward-facing solid-state 3D lidar via `raycast.cast` (no GL). A thin subclass of `livox_mid360` for a **bounded** FoV: azimuth is a −60°..+60° band with inclusive endpoints (not a wrapping 360° sweep, `AZIMUTH_WRAPS = False`), elevation −35°..+35°, boresight +x; declares a `cloud` (`PointCloud2`) endpoint on `seyond/points`. Defaults follow the datasheet (120°×70° FoV, 0.1–70 m range, 10 Hz). Uniform-grid sampling approximates the device's proprietary scan pattern/point rate — a documented substrate limit. Bundled with the standalone `robin_w1g` mount below. |
-| `oakd_camera` | OAK-D Pro RGB-D camera rendered via `mujoco.Renderer` (GL). Declares `image`, `depth`, and a `camera_info` for each stream; depth in `32FC1` metres or `16UC1` millimetres (`depth_encoding`). Bundled as a default TurtleBot 4 sensor (`roqsim_mobile`'s `turtlebot4.manifest.yaml`) and with the standalone `oakd` mount below. |
+| `oakd_camera` | OAK-D Pro RGB-D camera rendered via `mujoco.Renderer` (GL). Declares `image`, `depth`, and a `camera_info` for each stream; depth in `32FC1` metres or `16UC1` millimetres (`depth_encoding`). Bundled with the `oakd_pro` device model below, which `roqsim_mobile`'s `turtlebot4.manifest.yaml` mounts. |
 | `realsense_d435` | Intel RealSense D435(i) colour stream, plus an **opt-in** depth image (`depth: true`) and `PointCloud2` (`points: true`, implies depth). Declares `image`/`camera_info` and, when enabled, `depth`/`points` output endpoints, topic/frame naming following `realsense-ros` (`camera/depth/image_rect_raw`, `camera/depth/color/points`). The cloud is reprojected into the ROS optical frame; it is opt-in because a 640×480 frame is up to 307k points. Depth is `32FC1` metres unless `depth_encoding: 16UC1` asks for the driver's own millimetres. Bundled with the `realsense_d435` model below, or attach one to your own robot's MJCF (the `open_manipulator_x` arm ships an eye-in-hand one). |
 | `realsense_d415` | Intel RealSense D415 colour stream (RGB only). Same renderer as `realsense_d435`; a separate plugin/model so a robot carrying a real D415 is faithful. Bundled with the `realsense_d415` model below. |
 | `realsense_d455` | Intel RealSense D455 colour stream, plus the same **opt-in** depth/`PointCloud2` path as `realsense_d435` (which it subclasses, with the D455's own 0.6–6 m clip range). A separate plugin/model so a robot carrying a real D455 is faithful — the D455 is the wide-FOV, longer-range member (87°×62° colour, 95 mm stereo baseline, 0.6–6 m range). Bundled with the `realsense_d455` model below. |
@@ -83,14 +83,17 @@ tests in `tests/test_spawn_sensor.py` and `tests/test_realsense_devices.py`:
   the tripod screw, with `camera_link` (x along the lens normal, y left, z up) at the macro's fixed
   offset from it -- (0.0106, 0.0175, 0.0125) m on the D435 -- so a mount at `rpy [0,0,0]` looks along
   world +x. The mesh, collision box and cameras carry the vendor poses inside `camera_link`, and the
-  manifest's `frames:` publishes the vendor chain from the mount. The `zivid` and `oakd` mounts keep
-  a display convention instead -- they look along local **+y**, +z up -- the Zivid because Zivid
-  publishes no ROS description to take a link from; a robot mount of the Zivid is refused for the
-  same reason.
+  manifest's `frames:` publishes the vendor chain from the mount. For `oakd_pro` that frame is
+  `oakd_link`, which the vendor `oakd` macro attaches at its origin, with the RGB camera at identity
+  in it. The `zivid` mount keeps a display convention instead -- it looks along local **+y**, +z up
+  -- because Zivid publishes no ROS description to take a link from; a robot mount of the Zivid is
+  refused for the same reason.
 - **One camera per stream.** Each RealSense model renders colour from a camera at the vendor colour
   optical frame and depth from one at the depth optical frame (`d435_depth` etc.), each at its
   stream's data-sheet FOV and resolution, so depth, its `camera_info` and the point cloud are
-  rendered from the frame they are stamped in.
+  rendered from the frame they are stamped in. The OAK-D Pro renders depth through its RGB camera:
+  depthai-ros aligns stereo depth to the RGB image by default (`i_align_depth`) and stamps it in
+  `<name>_rgb_camera_optical_frame`.
 - **Resolution.** A camera plugin renders through `roqsim.rendering.FrameRenderer`, which grows the
   compiled world's offscreen framebuffer to the frame it renders, so a camera may declare a `<camera
   resolution>` above MuJoCo's default 640×480 (the RealSense depth cameras render 848×480). A sensor
@@ -117,7 +120,7 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `realsense_d455` | Intel RealSense D455: visual mesh + a `d455_color` camera at the vendor colour optical frame (59 mm from the depth frame, on the other side of it from the D435's) and a `d455_depth` camera at the depth optical frame (87°×58° depth FOV, 848×480), mounted by `camera_bottom_screw_frame`, with the D455's wide 87°×62° colour FOV baked in (fovy 62° + the 640×400 / 1.6-aspect resolution ⇒ ~87° horizontal). Its manifest auto-attaches `realsense_d455`. Mesh from `realsense2_description`'s `d455.stl` (decimated to ~6k tris via Blender, Apache-2.0 — see `models/realsense_d455/REALSENSE_D455_MESH_LICENSE`); poses from `_d455.urdf.xacro`. |
 | `mid360` | A standalone Livox Mid-360 3D-lidar mount: visual meshes (grey housing + blue laser dome) + a `mid360` scan site at the dome's optical centre. It ships **no** baked FOV geom -- `show_fov` synthesises the coverage volume from its manifest's angular `fov:` band. Spawn with `spawn_sensor: {model: mid360, pos: ..., rpy: ...}`; its manifest (`mid360.manifest.yaml`) auto-attaches `livox_mid360` (frame `livox_frame`). Add `show_fov: true` to draw the translucent 360°×59° sector shell, out to the manifest's 40 m detection range. The meshes are tessellated (Open CASCADE) and decimated from Livox's own Mid-360 STEP assemblies (housing + FOV) — see `models/mid360/MID360_MESH_LICENSE` for provenance. |
 | `zivid` | A standalone Zivid 3 XL250 mount: visual mesh (dark housing, glass strip + two lens windows) + a `zivid_color` camera at the +x optical module (looks along +y), plus a hidden 39° square FOV mesh that is **never drawn** (see below). Spawn with `spawn_sensor: {model: zivid, pos: ..., rpy: ...}`; its manifest (`zivid.manifest.yaml`) auto-attaches `zivid`. Add `show_fov: true` to draw a translucent frustum synthesised from `zivid_color`, spanning the manifest's 1.3–5 m working range: a model with a camera always takes the frustum path, so the baked envelope stays hidden. The housing mesh is decimated (~8k tris via Blender) from Zivid's own Zivid 3 STL; optical parameters (baseline, FOV, focus) come from the XL250 datasheet — see `models/zivid/ZIVID_MESH_LICENSE` for provenance. |
-| `oakd` | A standalone Luxonis OAK-D Pro mount: a **box** at the source URDF's collision dimensions (2.25 × 9.7 × 3 cm) + an `oakd_rgb` camera at the device origin (looks along +y), plus the three stereo-baseline sites. Spawn with `spawn_sensor: {model: oakd, ...}`; its manifest auto-attaches `oakd_camera`. **No mesh on purpose**: `roqsim_mobile`'s turtlebot4 carries this device as the same box, the upstream `oakd_pro.dae` is 12 MB / 152k tris, and a decimated copy was reviewed against the box and judged not worth carrying — what the model exists to provide is the camera. Every number (box, camera pose, 56.84° fovy, 0.075 m baseline) comes from `nav2_minimal_tb4_description`'s `oakd.urdf.xacro` (Apache-2.0 — see `models/oakd/OAKD_LICENSE`); the fovy is URDF-faithful and is asserted equal to turtlebot4.xml's by `roqsim_mobile`'s tests. |
+| `oakd_pro` | Luxonis OAK-D Pro, mounted by its vendor `oakd_link`: a **box** at the source URDF's collision dimensions (2.25 × 9.7 × 3 cm), the vendor inertial (0.061 kg and the xacro's tensor), and an `oakd_rgb` camera at the vendor `oakd_rgb_camera_optical_frame`. Spawn with `spawn_sensor: {model: oakd_pro, ...}`; its manifest auto-attaches `oakd_camera` (stamped `{device_name}_rgb_camera_optical_frame`) and publishes `oakd_link` → the RGB, left and right camera frames and optical frames (0.075 m baseline) and the IMU frame. `device_name` defaults to `oakd`, the vendor macro's own. `roqsim_mobile`'s `turtlebot4` mounts it on its camera bracket. **No mesh on purpose**: the upstream `oakd_pro.dae` is 12 MB / 152k tris, and a decimated copy was reviewed against the box and judged not worth carrying — what the model exists to provide is the camera. `external/convert/build_oakd_pro.py` writes the MJCF and the frame chain from `turtlebot4_description`'s `urdf/sensors/oakd.urdf.xacro` @ 7fd29fb (Apache-2.0 — see `models/oakd_pro/OAKD_PRO_LICENSE`). |
 | `robin_w1g` | A standalone Seyond Robin W1G solid-state-lidar mount: visual mesh (dark wedge housing, window on +x, rear connector) + a `robin_w1g` scan site just inside the window, and, like the Mid-360, **no** baked FOV geom. Spawn with `spawn_sensor: {model: robin_w1g, pos: ..., rpy: ...}`; its manifest (`robin_w1g.manifest.yaml`) auto-attaches `seyond_robin_w1g` (frame `seyond_lidar`). Unlike the 360°-dome Mid-360 it looks *forward* along +x (`rpy [0,0,0]` faces a wall). Add `show_fov: true` to draw the translucent 120°×70° sector shell, out to the manifest's 70 m spec'd detection range (not the 150 m maximum). The mesh is tessellated (Open CASCADE) and decimated from Seyond's own Robin W1G STEP; the FOV frustum is authored from the datasheet — see `models/robin_w1g/ROBIN_W1G_MESH_LICENSE` for provenance. |
 | `sick_s300` | SICK S300 safety laser scanner: housing mesh + a `scan` site. Its manifest attaches `lidar` as Neobotix's `neo_sick_s300-2` driver publishes it (541 rays over 270° with the last on +135°, header 0.01–29 m, returns measured 0.05–30 m, 10 mm steps, 25 Hz), excluding only its own `mount`, stamped in `lidar_1_link` (the Neobotix link name). Mounted by `roqsim_mobile`'s `mp_400` (one) and `mpo_700` (two). Mesh and link frame from Neobotix `neo_simulation2` — see `models/sick_s300/sick_s300_LICENSE`. |
 | `sick_microscan3` | SICK microScan3 Core safety laser scanner: housing mesh + a `scan` site. Its manifest attaches `lidar` as SICK's `sick_safetyscanners2` driver publishes it (715 rays over 275° with the last on +137.5°, 0.1–40 m, 25 Hz), excluding only its own `mount`, stamped in `lidar_1_link`. Mounted twice by `roqsim_mobile`'s `mpo_500`. Mesh and link frame from Neobotix `neo_simulation2` — see `models/sick_microscan3/sick_microscan3_LICENSE`. |
@@ -132,8 +135,8 @@ clone would be missing. `tests/test_sensor_model_layout.py` locks the layout, th
 | `sick_lms1xx` | SICK LMS111 2D lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` as Clearpath's `LMS1xx` driver publishes it (541 rays over 270° with the last on +135°, header 0.01–20 m, returns measured 0.5–20 m, 50 Hz), excluding only its own `mount`, stamped in `lidar2d_0_laser`. Clearpath's `sick_lms1xx` accessory. Mesh and link frames from Clearpath `clearpath_sensors_description` — see `models/sick_lms1xx/sick_lms1xx_LICENSE`. |
 | `velodyne_vlp16` | Velodyne VLP-16 (Puck) lidar: housing mesh + a `scan` site. Its manifest attaches `lidar` casting one plane of its 16 as the driver's `velodyne_laserscan` publishes it (898 rays of 0.007 rad from −π, header 0–200 m, returns measured 0.9–100 m, too close and no return `+inf`, 10 Hz), excluding only its own `mount`, stamped in `velodyne` 37.7 mm above the housing base. Mounted by `roqsim_mobile`'s `clearpath_jackal`. Meshes and link frames from Dataspeed `velodyne_description` — see `models/velodyne_vlp16/velodyne_vlp16_LICENSE`. |
 
-The twelve scanners and the three RealSense cameras are device models a robot mounts from its
-manifest: a `spawn_sensor` at the vendor's parent frame and the origin the robot description gives
+The twelve scanners, the three RealSense cameras and the OAK-D Pro are device models a robot
+mounts from its manifest: a `spawn_sensor` at the vendor's parent frame and the origin the robot description gives
 the vendor macro, overriding a value only where its vendor configuration differs. The RealSense MJCFs
 and their manifests' `frames:` blocks are written by `external/convert/build_realsense_devices.py`
 from `realsense2_description` at a pinned realsense-ros tag, including the fixed
@@ -150,6 +153,7 @@ new one (`roqsim.models.resolve_model`, this package's `RETIRED_MODELS`):
 | retired | now | what changed |
 |---------|-----|--------------|
 | `d415`, `d435`, `d455` | `realsense_d415`, `realsense_d435`, `realsense_d455` | The mount frame became the one the vendor macro's origin places, `camera_bottom_screw_frame`. It was a display convention: the body was pre-rotated so a mount at `rpy [0,0,0]` looked along +y. |
+| `oakd` | `oakd_pro` | The mount frame became the one the vendor macro's origin places, `oakd_link`. It was a display convention: the body was turned +90° about z so a mount at `rpy [0,0,0]` looked along +y. |
 
 Re-express a mount of a retired model rather than editing its numbers by hand:
 
@@ -162,10 +166,15 @@ camera where they were. One camera moves: the retired `d415` centred its camera 
 housing, 5 mm in front of the glass, and `realsense_d415`'s sits at the vendor colour optical frame,
 38 mm from there. `tests/test_realsense_devices.py` holds that check.
 
+    python external/convert/build_oakd_pro.py --rewrite-mounts world.yaml [...]
+
+does the same for `oakd` with `T_old * Rq`, which puts the camera where it was;
+`tests/test_oakd_pro_device.py` holds that check.
+
 ## Demo world
 
 `worlds/all_sensors_demo.yaml` places the camera and 3D-lidar mounts in the default empty room —
-the `mid360`, `realsense_d435`, `realsense_d415`, `realsense_d455`, `zivid` and `oakd` mounts (bringing `livox_mid360`,
+the `mid360`, `realsense_d435`, `realsense_d415`, `realsense_d455`, `zivid` and `oakd_pro` mounts (bringing `livox_mid360`,
 `realsense_d435`, `realsense_d415`, `realsense_d455`, `zivid`, `oakd_camera`), the 2D `lidar` sharing
 the Mid-360 mount, and two `fiducial_marker` targets — as a robot-free showcase and smoke test. Every
 sensor draws its **field of view** (`show_fov`): the two lidars get a synthesised angular sector and

@@ -628,7 +628,7 @@ A ``RenderService`` on the context that owns all GL/EGL contexts and camera rend
 
 -  **The offscreen backend is bound by ``import mujoco``, so it is chosen by ``import roqsim``.** ``MUJOCO_GL`` is read exactly once, inside ``mujoco/rendering/classic/gl_context.py``, while mujoco is being imported; it assigns ``GLContext`` there and then, and an *unset* value is not an error but a choice — it falls through to **glfw**. Everything that follows from that is the reason :func:`roqsim.gl.select_offscreen_gl` is called from the package ``__init__`` rather than from a driver's ``main``: a driver module's own imports reach mujoco before its ``main`` body runs, so a selection made there sets a variable nobody will read again. A selection made in ``roqsim.runner.main`` would be inert for every headless run, invisibly, because a world with no camera never constructs a ``Renderer`` and therefore never instantiates the mis-bound backend; the first camera world on a headless node would then fail with ``mujoco.FatalError: gladLoadGL error`` from inside ``MjrContext``. A node with a DRI render device gets ``egl``, one without gets ``osmesa``; an explicit ``MUJOCO_GL`` always wins and ``ROQSIM_NO_GL_SELECT`` opts out. Both backends are installed in the container images for the same reason the choice is deferred: which one works is a property of the node, not of the image. The one case the package ``__init__`` cannot cover — a consumer importing ``mujoco`` first — is caught by :func:`roqsim.rendering.check_gl_backend`, which every renderer in the tree funnels through and which names the cause and the fix rather than leaving MuJoCo's message to stand.
 -  The interactive viewer (``mujoco.viewer.launch_passive``) is a *driver* concern, separate from the offscreen ``RenderService``, so windowed vs headless is a driver switch, not a plugin change. The standalone runner sets the viewer's initial free camera from the world's optional ``sim.view`` block (``lookat``/``distance``/``azimuth``/``elevation``, plus ``track`` — an entity or body to follow — and ``follow_heading``; any subset — omitted keys keep MuJoCo's model-derived default). ``sim.view`` is the camera and *only* the camera: it is schema-checked on load, so an unknown key fails the run rather than being silently dropped. The two Simulate side panels are deliberately **not** expressible there — they are run-level flags (``--left-ui``/``--right-ui``, passed to ``launch_passive``'s ``show_left_ui``/``show_right_ui``, both hidden by default), on the same footing as ``--manual-control``: a world describes the experiment, whereas panels and hand-driving describe one interactive session. All of it is windowed-only (ignored under ``headless``) and is not a plugin concern. The keys roqsim adds to that window are declared once (:mod:`roqsim.keys`): the handlers take their keycodes from those records and the **F1** list is rendered from them, so what the window says a key does and what it does are one declaration -- and the list a run shows is merged from the handlers that run actually wired, so it never offers a key this window lacks. The window's text overlay is owned by slot (:mod:`roqsim.overlay`) because ``set_texts`` replaces the whole set: the camera-mode notice and the key list are two writers, and either alone would take the other down.
--  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
+-  **Rendering an image is a driver concern too, and it is a separate process.** ``roqsim render`` (:mod:`roqsim.render`, the tool; :mod:`roqsim.rendering` is the library it drives) compiles a target through the *same* dispatch as ``roqsim sim`` (:func:`roqsim.runner.config_for_input`) and writes one frame offscreen, so a world renders exactly as it simulates. It runs in its own process with its own GL context and touches no running simulation, which is why the picture path has no performance question attached to it. Three deliberate choices: the camera comes from the world's ``sim.view``, layered by ``--view`` through the *same* override path ``--set`` uses (so ``sim.view`` keeps one validator and one frozen key set — there is no second camera grammar); the headless camera is built by handing a shim to :func:`roqsim.viewer.setup_camera`, so ``track``/``follow_heading``/preview framing are inherited rather than reimplemented; and a model's ``home`` keyframe is preferred over ``qpos0``, shared with ``roqsim assets render-thumbnails`` so a model's thumbnail and its ``roqsim render`` output are the same picture; a robot whose manifest mounts devices is thumbnailed as ``spawn_robot`` builds it, devices attached, since its own MJCF does not carry them. Raw meshes are accepted here (wrapped in the preview scene :mod:`roqsim.mesh_preview` owns -- in the core, not beside the prop pipeline that motivated it, because a capability ``roqsim render --help`` advertises cannot depend on an optional sibling being installed) even though ``roqsim sim`` refuses them: loose geometry cannot be meaningfully *simulated*, but rendering it is both harmless and useful. Stdout is exactly one line of JSON, a machine contract rather than a convenience — it reports the camera in ``--view``'s own vocabulary, so a shot can be reproduced by copying it back.
 
 -  **Closing the window is a wait, not a request.** MuJoCo runs the window on threads it owns and ``Handle.close()`` only sets ``exitrequest``, so the window, its GL context and its X drawable are destroyed *after* the call returns. A process that closes and then exits promptly (a world that fails to load, ``--steps 1``, a short ``--seconds``) would race its own teardown: Python's ``atexit`` runs ``glfw.terminate`` under the render thread, whose in-flight ``glXSwapBuffers`` then hits a destroyed drawable, and Xlib's default handler calls ``exit()`` from that thread while the main thread is already finalizing — the process hangs after its last line of output (or segfaults). Both drivers therefore open with :func:`roqsim.viewer.launch_viewer` and close with :func:`roqsim.viewer.close_viewer`, which joins those threads (~10 ms) so the teardown is ordered; never ``Handle.close()`` or ``with handle:`` directly. Relatedly, the cosmetic X11 window branding (:mod:`roqsim.window_branding`) polls other clients' windows, where a window closing mid-pass is normal, so it installs an ignoring X error handler for the duration — Xlib's default one would kill the process over a window title.
 -  **Windowed run + cameras — two GL contexts, two backends.** The viewer window is *always* glfw: ``mujoco.viewer`` imports and initialises glfw directly, independent of ``MUJOCO_GL``, which selects only the *offscreen* ``Renderer`` backend. So a windowed run of a camera world holds a glfw window context **and** an offscreen render context at once, and they must not both be glfw — two glfw contexts in one process collide and MuJoCo aborts with ``gladLoadGL error``. The runner (see :func:`roqsim.viewer.prepare_viewer_gl`) resolves this before any GL loads, for windowed launches only, with two overridable defaults: it preloads the system **libGLEW** (the glfw window context needs it in the global symbol namespace on many Linux/GL-driver combinations) via an ``LD_PRELOAD`` re-exec — ``LD_PRELOAD`` is read only at process startup — and defaults ``MUJOCO_GL=egl`` so the offscreen cameras get their own context. That default decides only under ``ROQSIM_NO_GL_SELECT``: otherwise ``import roqsim`` has already chosen ``egl`` or ``osmesa``, which is not glfw either. Override with ``MUJOCO_GL`` / ``ROQSIM_NO_GL_PRELOAD``. Caveat: a hand-exported ``LD_PRELOAD=…libGLEW`` left in the shell drags GLX into the process alongside MuJoCo's PyOpenGL EGL backend and crashes ``import mujoco`` with ``undefined symbol: eglQueryString`` — roqsim preloads libGLEW itself, so do not also export it.
@@ -822,27 +822,35 @@ bridge and can be wired to any transport. It has three layers:
 **1. Endpoints (neutral, in the robot packages).** A plugin declares its ports with decorators on
 the methods that serve them (:mod:`roqsim.endpoint`): ``@endpoint.out`` (the method returns the
 payload), ``@endpoint.command`` (a request with an outcome) and ``@endpoint.stream`` (an inbound
-stream, latest value wins). ``Plugin.register_endpoints`` turns them into ``Endpoint``\ s on
-``ctx.interface`` as the last step of that plugin's ``configure`` -- a subclass's ``configure`` is
-wrapped to do it, and the engine calls it for a plugin without one -- so a hint may read what
-``configure`` resolved, and a bridge listed later binds them. The owner, namespace and default name
-come from the plugin (``endpoint_owner``, ``endpoint_namespace``, the method name; ``owner=`` for
-one that belongs elsewhere); backend hints are keyword arguments, each a dict or a callable of the
-plugin, and ``each=`` declares a family, one endpoint per item a config names. **The method's
-signature is the schema**: a command's or a stream's parameters (types, defaults, ``Annotated``
-units and docs) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
-bridge reads; a bridge passes parameters by name, and ``write`` refuses a missing, unknown or
-mistyped one before queueing (:class:`~roqsim.endpoint.ParameterError`).
+stream, latest value wins). **The method is the endpoint**: its name is the endpoint's name, its
+docstring's first line the endpoint's doc, and its signature the schema -- a command's or a stream's
+parameters (types with the unit aliases of :mod:`roqsim.types`, defaults, docs from the docstring's
+``Args:`` section) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
+bridge reads. **Payloads are neutral types**: the dataclasses of :mod:`roqsim.types` (``Twist``,
+``Pose``, ``Odometry``, ``JointState``, ``JointPositions``, ``Wrench``, ``Imu``, ``LaserScan``,
+``Image``, ``CameraInfo``, ``PointCloud``) or any dataclass of the plugin's own, never positional
+tuples; an ``in`` endpoint names its type (``@endpoint.stream(Twist)``) and takes the fields it uses
+by name, and ``Endpoint.payload_type`` says what a transport carries. A bridge passes parameters by
+name, and ``write`` refuses a missing, unknown or mistyped one before queueing
+(:class:`~roqsim.endpoint.ParameterError`). Options name attributes or config keys (``rate=``,
+``when=``, ``each=``) rather than wrapping them in callables; the owner and namespace come from the
+plugin (``endpoint_owner``, ``endpoint_namespace``; ``owner=`` for one that belongs elsewhere).
+**The engine registers** a plugin's endpoints right after its ``configure``
+(``Plugin.register_endpoints``), so an option may read what ``configure`` resolved, and a bridge
+listed later binds them; it then applies the plugin's ``qos:`` to every endpoint the plugin
+registered, and the framework records its ``topics:`` renames as ``Endpoint.topic``.
 :func:`roqsim.endpoint.declared` lists a class's endpoints with that schema without a world, and
-``roqsim plugins describe`` publishes them. A port known only at run time is added with
+``roqsim plugins describe`` publishes them, with how each installed transport (the
+``roqsim.transports`` entry points) carries them. A port known only at run time is added with
 ``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
-:class:`roqsim.context.Endpoint`): a ``name``,
-``direction`` (``"out"`` → provide ``read``; ``"in"`` → provide ``write``), an ``owner`` (the entity),
-a ``namespace`` (a plain scope string each backend attaches to the endpoint's topics/frames/actions),
-an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed by backend name. The
-``read``/``write`` callables traffic in **neutral payloads** (numpy arrays, tuples, small dataclasses)
-and run on the physics thread. Crucially the robot packages import nothing transport-specific — the
-message *type* is named as a **string** (``"sensor_msgs.msg.LaserScan"``) under the backend hint.
+:class:`roqsim.context.Endpoint`): a ``name``, ``direction`` (``"out"`` → provide ``read``;
+``"in"`` → provide ``write``), an ``owner`` (the entity), a ``namespace`` (a plain scope string each
+backend attaches to the endpoint's topics/frames/actions), an optional ``rate_hz``, and a ``backend``
+dict of inert per-backend hints keyed by backend name, which for a decorated endpoint carries only
+its deviations from the type's mapping (a frame, ``stamped``, ``emit_tf``, a QoS), and ``None`` to
+keep it off a backend. The ``read``/``write`` callables run on the physics thread. Crucially the
+robot packages import nothing transport-specific: a hand-built endpoint names its message *type* as a
+**string** under the backend hint, and a decorated one names none.
 
 **Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
 ``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
@@ -864,13 +872,14 @@ bridge.
 transport: it iterates ``ctx.interface``, applies the optional owner filter, rate-gates each ``out``
 endpoint, runs the per-tick publish loop on the physics thread, and marshals inbound data onto the
 physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
-§7), handing the backend a callback that returns the command's future. A backend implements a few hooks:
-``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
-A backend that needs a per-endpoint type (ROS) binds only the endpoints carrying its hint block; one
-that carries neutral payloads as they are sets ``WIRES_ALL`` and binds every endpoint, and an
-endpoint opts out of either with ``backend={<name>: False}``. Each bridge records what it made of an
-endpoint (``bound_name``: a ROS topic after namespaces and renames), so another transport can say
-what the endpoint is called there. A write into a stream is tagged with the bridge's backend, and
+§7), handing the backend a callback that returns the command's future. It binds an endpoint that
+carries a hint block for its backend, and a decorated one (``Endpoint.transport``) without one, from
+what its payload type maps to (``_hints_for``); a hint block of ``None`` keeps an endpoint off that
+backend. A backend that carries neutral payloads as they are (``ipc``) overrides ``_hints_for`` to bind
+every endpoint. A backend implements a few hooks: ``_setup`` / ``_hints_for`` / ``_make_output`` /
+``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``. Each bridge records what it made
+of an endpoint (``bound_name``: a ROS topic after namespaces and renames), so another transport can
+say what the endpoint is called there. A write into a stream is tagged with the bridge's backend, and
 two transports driving one stream within a second of each other are logged once, naming both.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
@@ -898,11 +907,22 @@ its ``realised_hz`` and the ``every_steps`` behind it. So a rate quoted from the
 checked against the one the run actually published at without measuring arrival times.
 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
-``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
-type string into a class via ``importlib`` (cached); converters keyed by that string fill an outbound
-message in place, decoders turn an inbound message into its named parameters (the names a typed
-endpoint's method declares; an untyped one gets their values in order), and a reflective path
-(``msg.data = payload``, and ``data`` inbound) covers primitive ``std_msgs`` with no registered
+``Ros2Bridge(BridgeBase)`` and **one table from the neutral types to ROS messages**
+(``roqsim_ros_bridge/typemap.py``, free of ROS imports): each type of :mod:`roqsim.types` and each
+scalar maps to its message (``Twist`` to ``geometry_msgs/Twist``, ``Odometry`` to
+``nav_msgs/Odometry``, ...) with a converter each way, a ``stamped`` hint choosing between a
+message and its stamped form. ``typemap.resolve`` gives an endpoint's effective hints -- the
+message ``type`` (or a ``std_srvs/Trigger`` service for a command without parameters), the
+``topic`` (the world's ``topics:`` name, else the hint's, else the endpoint's name), the ``qos``
+(the world's ``qos:``, else the hint's, else ``default``: reliable, depth 10) and the producer's own
+frames -- and the converters. A dataclass without a row maps **by field name** onto the message its
+hint names, checked when the bridge binds it: a field that does not fit is refused by name, never
+dropped. A package maps its own type once through the ``roqsim.ros2_types`` entry-point group; with
+neither, the endpoint is not on ROS, which ``roqsim plugins describe`` reports. A hand-built endpoint
+keeps the registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the type string into a
+class via ``importlib`` (cached); converters keyed by that string fill an outbound message in place,
+decoders turn an inbound message into the positional payload its ``write`` takes, and a reflective
+path (``msg.data = payload``, and ``data`` inbound) covers primitive ``std_msgs`` with no registered
 converter. One converter per
 *wire format*, not per producer: the same rendered frame is published as ``sensor_msgs/Image`` or as
 ``sensor_msgs/CompressedImage`` purely by which type string an endpoint names, so a camera plugin
@@ -957,7 +977,8 @@ across several transports.
 **Hardwired topics.** A producer can pin an endpoint's topic to an *absolute* name that ignores the
 namespace, so the sim matches an external / hardware topic layout exactly. Any endpoint-producing
 plugin accepts a ``topics:`` map keyed by endpoint role name — ``topics: {image:
-/camera/color/image_raw, joint_states: /joint_states}`` — read via ``Plugin.topic_override(name)``
+/camera/color/image_raw, joint_states: /joint_states}`` — which the framework records on a decorated
+endpoint (``Endpoint.topic``) and a hand-built one reads via ``Plugin.topic_override(name)``
 (``roqsim/plugin.py``) when it fills the backend ``topic``. An absolute topic (leading ``/``) is
 published verbatim by the ROS backend (``_resolve_topic`` in ``ros2_bridge.py``), bypassing
 ``ep.namespace`` (and the node namespace); a relative topic renames the endpoint inside its
@@ -972,7 +993,8 @@ it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefi
 what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
 ``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
 publishes by owner and name with the topic its publisher is on, the message type and the published
-``field`` (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its ``owner`` filter. The topic is
+``field`` and its effective QoS (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its
+``owner`` filter. The topic is
 read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
 a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
 ``entity_reports`` reads over ROS; only the published field travels, so the other fields of a

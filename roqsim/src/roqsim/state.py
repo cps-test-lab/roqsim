@@ -332,7 +332,10 @@ def _flatten_object(prefix: str, payload) -> dict:
         if isinstance(value, (int, float)):
             out[f"{prefix}.{key}"] = float(value)
         elif isinstance(value, (list, tuple, np.ndarray)) and len(np.ravel(value)) <= 8:
-            for i, v in enumerate(np.ravel(value)):
+            flat = np.ravel(value)
+            if flat.dtype.kind not in "biuf":  # joint names beside their positions
+                continue
+            for i, v in enumerate(flat):
                 out[f"{prefix}.{key}.{i}"] = float(v)
     return out
 

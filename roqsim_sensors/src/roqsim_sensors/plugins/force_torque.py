@@ -39,11 +39,12 @@ sits rather than a config key::
       flex_reaction: excluded   # accept a reading blind to flex contacts (see "A flex the sensor
                                 #   cannot see" below); refused without it where one could occur
 
-Endpoint ``tare`` (in) is that zero button as a service; it takes no argument and its reply is
-what lets a scenario fail rather than measure against an offset it only assumed was applied.
+Endpoint ``tare`` (a command) is that zero button, a ``std_srvs/Trigger`` service on
+``<name>/tare`` over ROS; it takes no argument and its reply is what lets a scenario fail rather
+than measure against an offset it only assumed was applied.
 
-Endpoint ``wrench`` (out) reads ``(force[3], torque[3])`` and carries a
-``geometry_msgs/WrenchStamped`` backend hint. A ``WrenchReader`` is published on the blackboard
+Endpoint ``wrench`` (out) reads a :class:`roqsim.types.Wrench`, a ``geometry_msgs/WrenchStamped`` on
+``<name>/wrench`` over ROS, stamped in the frame ``frame`` names. A ``WrenchReader`` is published on the blackboard
 under ``ft:<entry label>`` for in-process consumers — the admittance controller is one — exposing
 ``read()`` and the resolved ``frame``.
 
@@ -121,7 +122,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Annotated
 
 import mujoco
 import numpy as np
@@ -129,10 +129,10 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
-from roqsim.endpoint import Unit
 from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
 from roqsim.plugin import Plugin
 from roqsim.presence import entity_body_ids
+from roqsim.types import Wrench
 
 _FRAMES = ("sensor", "base", "world")
 
@@ -337,11 +337,9 @@ class ForceTorquePlugin(Plugin):
         # The frame the wrench is stated in, as TF names it: bare, like every frame a bridge
         # publishes (it applies the namespace), so never the MJCF name with the entity's prefix.
         # `sensor` is the site's own frame, which nothing else publishes, so it comes with the
-        # fixed transform from the body it is on; `base` is the entity's root body.
-        ros2 = {
-            "type": "geometry_msgs.msg.WrenchStamped",
-            "topic": self.topic_override("wrench") or f"{self.name}/wrench",
-        }
+        # fixed transform from the body it is on; `base` is the entity's root body. The topic is
+        # under the sensor's name, since one arm may carry several.
+        ros2 = {"topic": f"{self.name}/wrench"}
         if self.frame == "sensor":
             ros2["frame_id"] = site_name.removeprefix(prefix)
             body = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, int(m.site_bodyid[self._site_id]))
@@ -434,28 +432,17 @@ class ForceTorquePlugin(Plugin):
                 torque = torque + rng.normal(0.0, self.noise_t, 3)
         return force, torque
 
-    @endpoint.out("wrench", rate_hz=lambda self: self.rate_hz, ros2=lambda self: self._wrench_ros2)
-    def read_pair(
-        self,
-    ) -> tuple[
-        Annotated[list[float], Unit("N"), "force (x, y, z) in the frame `frame` names"],
-        Annotated[list[float], Unit("N*m"), "torque (x, y, z) in the same frame"],
-    ]:
-        """Endpoint ``wrench``: the wrench as plain lists, for a transport-neutral payload."""
+    @endpoint.out(rate="rate_hz", ros2=lambda self: self._wrench_ros2)
+    def wrench(self) -> Wrench:
+        """The wrench, in the frame ``frame`` names."""
         force, torque = self.read()
-        return (force.tolist(), torque.tolist())
+        return Wrench(force, torque)
 
-    # A service, not a topic, and `Trigger` rather than `SetBool`: this is the zero button, which a
-    # real FT driver also exposes as a service taking no argument (`zero_ftsensor`). A caller needs
-    # the outcome -- a scenario that tared and carried on regardless would measure against an
-    # offset it only assumed was applied.
-    @endpoint.command(
-        "tare",
-        ros2=lambda self: {
-            "service": "std_srvs.srv.Trigger",
-            "name": self.topic_override("tare") or f"{self.name}/tare",
-        },
-    )
+    # A command without parameters, which ROS carries as a `Trigger` service: this is the zero
+    # button, which a real FT driver also exposes as a service taking no argument
+    # (`zero_ftsensor`). A caller needs the outcome -- a scenario that tared and carried on
+    # regardless would measure against an offset it only assumed was applied.
+    @endpoint.command(ros2=lambda self: {"name": f"{self.name}/tare"})
     def tare(self) -> None:
         """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
 
