@@ -585,7 +585,8 @@ class Px4SitlPlugin(Plugin):
 
     def _send_sensors(self, ctx: SimContext) -> None:
         gyro_flu, accel_flu, quat, pos_enu, _ = self._state(ctx)
-        rng = ctx.rng_for(f"px4_sitl:{self.name}")
+        # Keyed on the address: an unnamed bridge on each of two drones shares its class name.
+        rng = ctx.rng_for(f"px4_sitl:{self.address}")
 
         gyro = flu_to_frd(gyro_flu) + self._noise["gyro"] * rng.standard_normal(3)
         accel = flu_to_frd(accel_flu) + self._noise["accel"] * rng.standard_normal(3)
