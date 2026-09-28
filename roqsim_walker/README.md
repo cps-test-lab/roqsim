@@ -42,51 +42,33 @@ components:
         - [ 2.0,  2.0]
       loop: true               # cycle the patrol forever
       arrival_radius: 0.25
-      avoidance: false         # true: steer round others with the default local model (give_way)
+      avoidance: false         # true -> steers round others through the shared local model
       action_name: navigate_through_poses
-      orca:     {radius: 0.26, max_speed: 1.6}   # the walker's disc and speed cap in avoidance
+      orca:     {radius: 0.26, max_speed: 1.6}   # the disc it presents to avoidance; speed cap
       planner:  {inflation_radius: 0.3, waypoint_radius: 0.3}
       recovery: {stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}
       motion:   {walk: /abs/walk.npz}   # override a resolved locomotion clip
-    name: pedestrian           # the entry's label, and the walker's entity name
+    name: pedestrian           # entity name (a sibling of the plugin ref, not config)
 ```
 
 ### Navigation layers
 
-Navigation is `roqsim_nav`'s: the walker hands its keys to a `navigator` component with the `walker`
-output, so these modules live there.
-
-| Layer | Module (`roqsim_nav`) | What it does |
+| Layer | Module | What it does |
 |---|---|---|
-| Global plan | `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
-| Behaviour | `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
-| Local avoidance | `avoidance/` (`give_way` default, `orca`) | Yields to the robot, other walkers and mocap props; walls are static obstacles |
+| Global plan | `roqsim_nav`'s `planner.py`, `occupancy.py` | 8-connected A\* over an inflated occupancy grid rasterized from the model's **wall geoms**, string-pulled to sparse waypoints |
+| Behaviour | `roqsim_nav`'s `behavior.py` | py-trees `Selector[recovery, navigate]`: follow path, advance goals, back-up-and-replan when stuck |
+| Local avoidance | `roqsim_nav`'s `avoidance/` | Gives way to the robot and other movers |
 
-Walls are read straight from the compiled model (`obstacles.py`), so the planner and ORCA always
-agree. The default `empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no
-wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
+Walls are read straight from the compiled model (`roqsim_nav`'s `obstacles.py`). The default
+`empty_room` is a **walled** room, so A\* engages on its perimeter walls; **with no wall geoms** (a wall-less MJCF via `sim.world`) the grid is skipped and walkers follow straight-line
 legs. A `floorplan` mesh adds its own walls the same way.
 
 ### Avoidance
 
-`avoidance: true` turns on local avoidance for that walker with `roqsim_nav`'s default model,
-`give_way`, which is pure Python. To use ORCA instead, write a nested `navigator` with
-`avoidance: {steer: orca}`; that needs `rvo2`, built from source (an extra cannot express its build
-dependency, so it is two commands):
-
-```bash
-pip install Cython
-pip install --no-build-isolation git+https://github.com/sybrenstuvel/Python-RVO2.git
-```
-
-`rvo2` publishes no wheel, so the extra is a git direct reference and needs **git + a compiler**. Two
-places that bites: a PyPI upload of this package cannot carry the extra (PyPI rejects direct-URL
-metadata), and a wheel-only or air-gapped build — a campaign image — cannot resolve it. Install the
-base package in those, and enable avoidance only where the toolchain exists.
-
-Asking for `orca` without `rvo2` installed is an `ImportError` naming the extra. The shared ORCA
-simulation is created when *any* walker enables it; a walker with `avoidance: false`
-still occupies an ORCA agent (so peers steer around it) but is never pushed off its own path.
+`avoidance: true` gives the walker's navigator `roqsim_nav`'s default local model, `give_way`
+(pure Python, no extra), with `stop: false`: it steers round the robot and other walkers, and never
+stops for them. For ORCA, write a `navigator` for the walker with
+`avoidance: {steer: orca}` and install `roqsim_nav[avoidance]` (see `roqsim_nav`'s README).
 
 ### Goals at runtime
 
@@ -103,9 +85,6 @@ A route overrides the patrol; on arrival the walker resumes patrolling from its 
 waypoint (or stands, if it had no patrol). `status()` latches `finished` under the route's own
 sequence number, so a caller can distinguish *its* completion from a stale or preempted one — this is
 exactly what the `NavigateThroughPoses` action handler polls.
-
-Multiple `walker` plugins share one controller (one ORCA simulation sees every walker, the robot and
-any mocap props). The first to initialise owns the per-step tick.
 
 ## Assets
 

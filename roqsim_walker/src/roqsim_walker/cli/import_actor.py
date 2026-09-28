@@ -215,7 +215,7 @@ def measure_sole(verts: np.ndarray, w: np.ndarray, bind_ours: dict) -> tuple[dic
     """``(sole, foot_tip)``: where each shoe actually touches the floor.
 
     ``sole[s]['heel'|'toe']`` are offsets from the **ankle**/**toe** joints to the lowest sole
-    points, which is how ``nav.controller._foot_ground`` reads them (``joint + rotate(q, offset)``);
+    points, which is how ``animation._foot_ground`` reads them (``joint + rotate(q, offset)``);
     at rest our joint frames are world-aligned, so a plain world-space delta is what it wants. Legs
     are identical between the T-pose and rest (only the shoulders rotate), so ``bind_ours`` is the
     right frame here too.

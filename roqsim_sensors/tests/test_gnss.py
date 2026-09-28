@@ -239,3 +239,39 @@ def test_an_entity_with_no_body_at_all_still_fails_loudly():
     ctx.entities.add(Entity(name="drone", kind="robot", body=None, meta={"prefix": ""}))
     with pytest.raises(RuntimeError, match="no body to measure"):
         _plugin(QUIET).configure(ctx)
+
+
+ANTENNA_SCENE = """
+<mujoco model="gnss_antenna_test">
+  <option timestep="0.002" gravity="0 0 0"/>
+  <worldbody>
+    <body name="drone" pos="0 0 0">
+      <freejoint name="base_free"/>
+      <geom name="drone" type="box" size="0.1 0.1 0.05" mass="1"/>
+      <body name="antenna" pos="0.5 0 0">
+        <geom name="antenna" type="sphere" size="0.02" mass="0.01"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def test_velocity_is_the_antennas_own_not_the_subtree_centre_of_mass():
+    """A vehicle yawing in place: an antenna 0.5 m off the axis moves at 0.5 m/s, the COM does not."""
+    model = mujoco.MjModel.from_xml_string(ANTENNA_SCENE)
+    data = mujoco.MjData(model)
+    ctx = SimContext(config={})
+    ctx.model, ctx.data = model, data
+    ctx.seed = 7
+    ctx.entities.add(Entity(name="drone", kind="robot", body="drone", meta={"prefix": ""}))
+    plugin = _plugin({**QUIET, "body": "antenna"})
+    plugin.configure(ctx)
+    plugin.on_reset(ctx)
+    ctx.data.qvel[5] = 1.0  # rad/s about the vertical, through the root
+    mujoco.mj_forward(ctx.model, ctx.data)
+    plugin.post_step(ctx)
+    fix = plugin.read_fix()
+    assert fix["vel_e"] == pytest.approx(0.0, abs=1e-6)
+    assert fix["vel_n"] == pytest.approx(0.5, abs=1e-6)
+    assert fix["vel"] == pytest.approx(0.5, abs=1e-6)
