@@ -842,3 +842,18 @@ def test_a_run_with_nowhere_to_save_a_view_does_not_offer_the_key():
 
     listed = key_catalogue.merge(HelpKeys, WalkKeys(), SaveViewKey(savable=False))
     assert "F8" not in {b.label for b in listed}
+
+
+def test_the_offset_can_be_set_without_being_read_as_a_drag(ctx):
+    """A camera path animates the angle behind the robot through this setter; writing cam.azimuth
+    instead would be folded into the offset as a mouse drag and applied twice."""
+    v = _FakeViewer()
+    cam = TrackingCamera({"track": "robot", "follow_heading": True, "azimuth": 180}, ctx)
+    cam.apply(v)
+    _set_yaw(ctx, cam.track_body_id, 0.0)
+    cam.update(v)
+    cam.azimuth_offset = 90.0
+    cam.update(v)
+    assert v.cam.azimuth == pytest.approx(90.0)
+    cam.update(v)  # a second frame with nothing changed holds; no drift
+    assert v.cam.azimuth == pytest.approx(90.0)

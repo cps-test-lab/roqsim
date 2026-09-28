@@ -1,16 +1,25 @@
 # Copyright (C) 2026 Frederik Pasch
 # SPDX-License-Identifier: Apache-2.0
-"""Check a run for the three faults a simulation can have while still looking alive.
+"""Check a run for the faults a simulation can have while still looking alive.
 
     roqsim health <run-dir> --robot base_link           # what the run looks like right now
     roqsim health <run-dir> --robot base_link --watch   # keep checking until something is wrong
     roqsim health --clock run.clock_map.csv --poses sim_poses.csv --watch
 
-Three checks, and deliberately no more, because each is a fault that raises **no error anywhere**: a
-simulation that never starts stepping, one that steps far slower than realtime, and a robot that
-stands still for a simulated minute. A run with any of them looks healthy to every other signal --
-the process is up, the log is quiet, the exit status is 0 -- while producing nothing worth
-analysing. Everything else a run can get wrong already reports itself.
+Four checks, and deliberately no more, because each is a fault that raises **no error anywhere**: a
+simulation that never starts stepping, one that stops stepping, one that steps far slower than
+realtime, and a robot that stands still for a simulated minute. A run with any of them looks healthy
+to every other signal -- the process is up, the log is quiet, the exit status is 0 -- while
+producing nothing worth analysing. Everything else a run can get wrong already reports itself.
+
+**Stopped and slow are different findings.** Clock rows are written once per recorder sample on the
+*simulated*-time grid, so a slow world still writes them, just further apart in wall time, while a
+frozen one writes none. Check 3 (``sim-time-stuck``, an error) reads the second: no row has advanced
+sim time for longer than the run's own recent cadence can explain. Check 4 (``sim-time-rate``, a
+warning) reads the first: rows keep arriving, but sim time advances below a floor. An expensive world
+-- a deformable body at a sub-millisecond timestep -- legitimately runs at a few percent of realtime,
+and a check that ended it for that would end every such experiment; a run that stopped is ended on
+check 3 whatever its speed was.
 
 **A separate process, on purpose.** These checks are not a plugin and hold nothing inside the
 simulator: a health check that ran in the simulated process would share the process's failure modes,
@@ -22,7 +31,7 @@ can say something true about a run that is wedged, and about one that is already
 ===========================  ===================================  ==========================
 file                         columns used                         serves
 ===========================  ===================================  ==========================
-``*.clock_map.csv``          ``wall_ts`` (epoch), ``sim_ts``      checks 2 and 3
+``*.clock_map.csv``          ``wall_ts`` (epoch), ``sim_ts``      checks 2, 3 and 4
 ``sim_poses.csv``            ``timestamp``, ``frame``, position   check 1
 ===========================  ===================================  ==========================
 
@@ -42,15 +51,30 @@ for "it stopped" is that nothing arrives. Silence is therefore counted against a
 there is reason to think it is still alive**:
 
 * ``--watch`` is that reason -- it is watching a run it expects to continue -- so wall time keeps
-  advancing while the record does not, and a wedge is caught. It stops without complaint when the
-  recording's ``.npz`` appears, because that file is written by ``close()`` and so means the run
-  ended on purpose rather than stopped dead.
+  advancing while the record does not, and a stop is caught by check 3. It stops without complaint
+  when the recording's ``.npz`` appears, because that file is written by ``close()`` and so means
+  the run ended on purpose rather than stopped dead.
 * a one-shot check has no such premise: it is handed a directory and asked what is in it. It judges
   the span the record actually covers, because what happened after the last row is not something the
   file can say. Otherwise every finished run would be reported as a stall a minute after it ended.
+  **So a one-shot check cannot see a simulation that stopped**: the rows end, and nothing in the file
+  says whether the run ended or froze. Check 3 fires there only on what the rows themselves record
+  -- rows whose sim time does not advance -- which the recorder never writes. A caller polling a live
+  run that has to catch a stop runs ``--watch``, bounded with ``--for`` when it wants one pass: the
+  first poll is judged against the wall clock.
 
 Either way a message states what was *observed* -- how long since the last row, and where -- and
 never asserts a cause.
+
+**Each record is read from its window, not from its start.** Every check judges the newest minute
+(:data:`CLOCK_READ_S`, :data:`POSE_READ_S`), so a record is entered at the first row inside that
+window and the rows before it are never parsed; only what arrives afterwards is read incrementally.
+That is what "cheap enough to poll" rests on: a supervisor runs this as a *new process* on every
+poll, usually inside the simulator's own container and memory budget, and a reader that parsed the
+whole record each time would cost more on every poll for as long as the run lasted -- until the
+transient was larger than the simulator's budget had room for. A verdict is therefore about the
+run's newest minute: a robot that stood still earlier and has moved since is not reported, which is
+what a caller asking "what does the run look like right now" means.
 
 Alongside the findings, ``--json`` reports a ``state`` block: the last pose of every recorded body and
 the clock, with the sim-to-wall rate. It is here rather than in a command of its own because both
@@ -62,9 +86,9 @@ Deliberately not in it: the scenario's behaviour tree. That lives in a different
 over the whole file rather than a tail read, and belongs to whoever owns it -- while this command has
 to stay cheap enough to poll.
 
-Exit status: ``0`` nothing wrong (warnings are still printed), ``5`` an error-level finding, ``2``
-the checks could not run at all. Exiting on a finding is how a backgrounded invocation reports one:
-its output is invisible until it exits.
+Exit status, from :mod:`roqsim.exit_status`: ``0`` nothing wrong (warnings are still printed), ``5``
+an error-level finding, ``2`` the checks could not run at all. Exiting on a finding is how a
+backgrounded invocation reports one: its output is invisible until it exits.
 """
 
 from __future__ import annotations
@@ -73,17 +97,16 @@ import argparse
 import json
 import logging
 import math
+import statistics
 import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from . import exit_status
 
-EXIT_OK = 0
-EXIT_BAD_ARGS = 2
-EXIT_FINDING = 5
+log = logging.getLogger(__name__)
 
 #: Where the recorder puts each record. Duplicated from :mod:`roqsim.capture` rather than imported:
 #: that module imports MuJoCo, and nothing in this one needs it. ``test_health.py`` asserts the two
@@ -99,15 +122,42 @@ MOTION_WINDOW_S = 60.0
 #: Check 2: how long sim time may take to start advancing.
 START_TIMEOUT_S = 60.0
 
-#: Check 3: the slowest a run may advance sim time and still be worth waiting for -- 5 s of sim per
-#: 60 s of wall, i.e. 0.083x realtime. Far below any usable run, so this fires on a wedge and not on
-#: a merely expensive world.
+#: Check 3: how long sim time may stand still before the run is reported as stopped -- this many
+#: seconds of wall time, or :data:`STUCK_FACTOR` times the median wall interval between the run's
+#: last :data:`STUCK_CADENCE_ROWS` advancing clock rows, whichever is longer. The floor keeps a fast
+#: run from being failed for one slow step; the factor keeps a slow world, whose rows are seconds
+#: apart, from being failed for its ordinary cadence.
+STUCK_FLOOR_S = 60.0
+STUCK_FACTOR = 10.0
+STUCK_CADENCE_ROWS = 32
+
+#: Check 4: the slowest a run may advance sim time before it is reported as slow -- 5 s of sim per
+#: 60 s of wall, i.e. 0.083x realtime. A **warning**: an expensive world runs below it legitimately
+#: and keeps writing rows, so it is worth saying and not worth ending a run over. A run that stopped
+#: is check 3's, and is an error.
 MIN_SIM_ADVANCE_S = 5.0
 RATE_WINDOW_S = 60.0
 
 #: Seconds between polls in ``--watch``. The checks answer questions measured in minutes, so this
 #: only decides how promptly a finding is reported, never whether it is found.
 POLL_S = 2.0
+
+#: How much of a record is read when it is opened, in the seconds of its own first column: the
+#: longest window any check over it judges, plus this slack. **What keeps the cost of a check
+#: independent of the length of the run.** Every check here answers a question about the most
+#: recent minute, so the rows before that minute are read for nothing -- and a reader started fresh
+#: on every poll, as a supervisor does, would otherwise parse a whole run's record each time, with a
+#: transient footprint that grows for as long as the run does. The slack is what lets a window be
+#: measured *inside* the rows read: the rate check anchors on the last row before its cutoff, and
+#: the motion check needs a still robot to have been still for the whole window since its anchor.
+READ_SLACK_S = 10.0
+CLOCK_READ_S = max(START_TIMEOUT_S, RATE_WINDOW_S) + READ_SLACK_S
+POSE_READ_S = MOTION_WINDOW_S + READ_SLACK_S
+
+#: Step of the backward scan that finds where a window begins. Coarse against a row and fine against
+#: a window: a minute of poses for a handful of bodies is a few hundred KiB, so the over-read at the
+#: window's edge is at most one of these.
+_SCAN_CHUNK = 64 * 1024
 
 #: A sim_ts smaller than the one before it by more than this is a reset, not a rewind. The columns
 #: are written at six decimals, so anything above rounding is a real step backwards.
@@ -178,12 +228,24 @@ class Tail:
     Read in binary because the position has to be a byte offset that can be compared with a size;
     a text handle's ``tell()`` is documented as an opaque cookie. Lines are decoded one at a time,
     so a multi-byte character split across two reads cannot corrupt one.
+
+    **Opened at the window, not at the start.** With a *window*, in the seconds of the record's own
+    first column, a file that already holds more than that is entered at the first row inside the
+    window and the rows before it are never read (``skipped`` counts the bytes left unread). The
+    checks judge the newest minute of a run, and a reader that is a new process on every poll would
+    otherwise parse the whole record every time -- a footprint that grows with the run, inside the
+    simulator's own memory budget when the two share a container. Everything appended after the open
+    is still read incrementally, exactly as before. A record that resets its clock -- the pose
+    record's sim time at a world reset -- is entered no earlier than the reset: the checks re-anchor
+    there anyway, so nothing before it would change a verdict.
     """
 
-    def __init__(self, path: Path) -> None:
+    def __init__(self, path: Path, window: float | None = None) -> None:
         self.path = path
+        self.window = window
         self.malformed = 0
         self.restarts = 0
+        self.skipped = 0
         self._handle = None
         self._buffer = b""
         self._fields: list[str] | None = None
@@ -192,6 +254,21 @@ class Tail:
         self.close()
         self._buffer = b""
         self._fields = None
+
+    def _open(self) -> None:
+        self._handle = self.path.open("rb")
+        if self.window is None:
+            return
+        header = self._handle.readline()
+        if not header.endswith(b"\n"):
+            # The writer is between creating the file and finishing its header. Nothing to
+            # window yet; the incremental read below picks the header up once it is whole.
+            self._handle.seek(0)
+            return
+        self._fields = header.decode("utf-8").strip("\r\n").split(",")
+        start = _window_start(self._handle, len(header), self.window)
+        self.skipped = start - len(header)
+        self._handle.seek(start)
 
     def rows(self) -> list[dict[str, str]]:
         """Every complete row appended since the last call. Empty while the file does not exist."""
@@ -206,7 +283,7 @@ class Tail:
         if self._handle is None:
             if not self.path.exists():
                 return []
-            self._handle = self.path.open("rb")
+            self._open()
         self._buffer += self._handle.read()
         *complete, self._buffer = self._buffer.split(b"\n")
         out: list[dict[str, str]] = []
@@ -237,6 +314,69 @@ class Tail:
             self._handle = None
 
 
+def _window_start(handle, body_start: int, window: float) -> int:
+    """The offset of the first row within *window* seconds of the newest one, scanning backwards.
+
+    Reads the file from its end in :data:`_SCAN_CHUNK` steps, so what it costs is the window and one
+    chunk, never the file. Each chunk contributes its earliest complete line, whose first field is
+    the record's time column; the scan stops at the first such line older than the window, at a
+    line whose time is *greater* than the one after it (the record's clock was reset there, and the
+    checks start over at a reset), or at the start of the rows. The answer is the offset of that
+    line, so the window is over-read by at most one chunk, and the checks trim it by time as they
+    always have. Returns *body_start* -- everything -- when nothing is older than the window or when
+    the time column cannot be read: the bounded answer on an unreadable record is to fall back to
+    the whole of it once, not to guess an offset into it.
+    """
+    handle.seek(0, 2)
+    end = handle.tell()
+    newest: float | None = None
+    oldest: float | None = None
+    hi = end
+    carry = b""  # the front of the chunk read last: a line that begins before it
+    while hi > body_start:
+        lo = max(body_start, hi - _SCAN_CHUNK)
+        handle.seek(lo)
+        data = handle.read(hi - lo) + carry
+        lines = data.split(b"\n")
+        if hi == end:
+            lines.pop()  # after the final newline: a row still being written, or nothing
+        if lo > body_start:
+            # Begins somewhere before this chunk, so it is complete only with the next one read.
+            carry = lines.pop(0) if lines else data
+        else:
+            carry = b""
+        first_at = lo + len(carry) + (1 if lo > body_start else 0)
+        if newest is None:
+            last = next((line for line in reversed(lines) if line.strip()), None)
+            if last is None:
+                hi = lo
+                continue
+            newest = _first_field(last)
+            if newest is None:
+                return body_start
+        offset = first_at
+        for line in lines:
+            if not line.strip():
+                offset += len(line) + 1
+                continue
+            stamp = _first_field(line)
+            if stamp is None:
+                return body_start
+            if stamp <= newest - window or (oldest is not None and stamp > oldest + SERIES_EPS):
+                return offset
+            oldest = stamp
+            break
+        hi = lo
+    return body_start
+
+
+def _first_field(line: bytes) -> float | None:
+    try:
+        return float(line.split(b",", 1)[0])
+    except ValueError:
+        return None
+
+
 def find_clock_record(run_dir: Path) -> Path | None:
     """The run's clock record. Named after the recording, so it is found by suffix, newest first.
 
@@ -265,13 +405,23 @@ class FileSource:
     Kept behind this small surface -- ``clock()`` and ``poses()`` returning plain rows -- because the
     checks below are written against the rows and not against the files. A source that answered from
     somewhere else (an endpoint, for a checker that has to run off-node) would change nothing else.
+
+    Each record is entered at its own window (:data:`CLOCK_READ_S` of wall time, :data:`POSE_READ_S`
+    of sim time -- the column each is sampled on), which is what bounds a check by the window it
+    judges rather than by the length of the run. ``None`` for either reads the whole file.
     """
 
-    def __init__(self, clock_path: Path | None, poses_path: Path | None) -> None:
+    def __init__(
+        self,
+        clock_path: Path | None,
+        poses_path: Path | None,
+        clock_window: float | None = CLOCK_READ_S,
+        pose_window: float | None = POSE_READ_S,
+    ) -> None:
         self.clock_path = clock_path
         self.poses_path = poses_path
-        self._clock = Tail(clock_path) if clock_path else None
-        self._poses = Tail(poses_path) if poses_path else None
+        self._clock = Tail(clock_path, clock_window) if clock_path else None
+        self._poses = Tail(poses_path, pose_window) if poses_path else None
 
     def clock(self) -> list[ClockRow]:
         if self._clock is None:
@@ -331,7 +481,7 @@ class SeriesSplitter:
     while the wall column deliberately keeps climbing ("real time did not restart"). A campaign
     resets between repetitions, so this is the common case and not an edge one.
 
-    Measuring across that boundary is how a healthy run gets failed: check 3 differences the first
+    Measuring across that boundary is how a healthy run gets failed: check 4 differences the first
     and last sim stamp in its window, and a window spanning a reset sees a full minute of progress
     as zero or negative advance. So the boundary restarts the checks rather than being averaged
     through. The carry-over matters -- a reset usually falls *between* two polls, not inside one
@@ -413,13 +563,98 @@ class SimTimeStarts:
         ]
 
 
-class SimTimeRate:
-    """Check 3: sim time advances at least ``min_advance`` per ``window`` of wall time.
+class SimTimeStops:
+    """Check 3: sim time keeps advancing, judged against the run's own cadence.
 
-    Wall time comes from this process's clock rather than from the newest row, which is what makes a
-    silent record count against the run: if rows stop arriving, the measured advance stops while the
-    window keeps sliding, and the rate falls. Judged only once a full window of history exists, so a
-    run is never failed for the first minute of its life.
+    A clock row is written per recorder sample on the simulated-time grid, so a running simulation
+    writes rows however slowly it steps and a frozen one writes none. The finding is therefore
+    *silence*: no row has advanced sim time for longer than :meth:`limit` -- the floor, or
+    ``factor`` times the median wall interval between the recent advancing rows, whichever is
+    longer. Measured against the run's own cadence because a fixed limit is wrong for one kind of
+    world or the other: a minute is an eternity for a realtime run and ten rows for a world whose
+    rows are six seconds apart.
+
+    ``now`` is what the silence is measured to, so the mode decides what this can see (see the
+    module docstring): against the wall clock (``--watch``) a record that stops arriving is caught;
+    against the newest row (one-shot) only rows that arrived without advancing sim time can be, which
+    the recorder never writes. A row that does not advance sim time is therefore counted as silence
+    rather than as progress -- it says the writer is alive, not that the simulation is.
+
+    Armed once sim time has advanced at least once: before that the question is check 2's, and a
+    single row has no cadence to judge against.
+    """
+
+    slug = "sim-time-stuck"
+
+    def __init__(
+        self,
+        floor: float = STUCK_FLOOR_S,
+        factor: float = STUCK_FACTOR,
+        history: int = STUCK_CADENCE_ROWS,
+    ) -> None:
+        self.floor = floor
+        self.factor = factor
+        self._intervals: deque[float] = deque(maxlen=history)
+        self._last: ClockRow | None = None  # the newest row that advanced sim time
+        self._reset = False
+        self._armed = False
+        self._reported = False
+
+    def on_new_series(self) -> None:
+        """A reset proves the loop is running: the next row is progress, though sim time went back.
+
+        Its wall interval is not added to the cadence -- a reset is not a sample period.
+        """
+        self._reset = True
+
+    def update(self, rows: list[ClockRow]) -> None:
+        for row in rows:
+            if self._last is None or self._reset:
+                self._armed = self._armed or self._reset
+                self._last, self._reset = row, False
+            elif row.sim_ts > self._last.sim_ts + SERIES_EPS:
+                self._intervals.append(row.wall_ts - self._last.wall_ts)
+                self._last, self._armed = row, True
+
+    def cadence(self) -> float | None:
+        """Median wall seconds between the recent advancing rows; ``None`` before there are two."""
+        return statistics.median(self._intervals) if self._intervals else None
+
+    def limit(self) -> float:
+        cadence = self.cadence()
+        return self.floor if cadence is None else max(self.floor, self.factor * cadence)
+
+    def findings(self, now: float, origin: float) -> list[Finding]:
+        if self._reported or not self._armed or self._last is None:
+            return []
+        quiet = now - self._last.wall_ts
+        limit = self.limit()
+        if quiet <= limit:
+            return []
+        self._reported = True
+        cadence = self.cadence()
+        usual = f"rows arrived every {cadence:.2f} s before that" if cadence is not None else ""
+        return [
+            Finding(
+                ERROR,
+                self.slug,
+                f"sim time has not advanced for {quiet:.0f} s of wall time, since sim "
+                f"{self._last.sim_ts:.2f} s; "
+                + (f"{usual}, so " if usual else "")
+                + f"the limit was {limit:.0f} s",
+            )
+        ]
+
+
+class SimTimeRate:
+    """Check 4: sim time advances at least ``min_advance`` per ``window`` of wall time.
+
+    Measured between the recorder's own rows -- over the newest ``window`` of wall time the record
+    covers, anchored on the last row before it -- and not up to ``now``. That keeps silence out of
+    this check: a record that stops arriving leaves the measured rate where it was, and the stop is
+    check 3's. What remains is a run whose rows keep arriving but carry little sim time each, which
+    is an expensive world as often as a broken one, so it is a warning. Judged only once the rows
+    span a full window, so a run is never reported for the first minute of its life.
     """
 
     slug = "sim-time-rate"
@@ -442,27 +677,27 @@ class SimTimeRate:
     def findings(self, now: float, origin: float) -> list[Finding]:
         if self._reported or not self._rows:
             return []
+        latest = self._rows[-1]
         # Keep one row from before the window as the anchor: the advance is measured across the
         # whole window, so dropping every older row would shorten it to the newest arrivals.
-        cutoff = now - self.window
+        cutoff = latest.wall_ts - self.window
         while len(self._rows) >= 2 and self._rows[1].wall_ts <= cutoff:
             self._rows.popleft()
-        anchor, latest = self._rows[0], self._rows[-1]
-        span = now - anchor.wall_ts
+        anchor = self._rows[0]
+        span = latest.wall_ts - anchor.wall_ts
         if span < self.window:
             return []
         advance = latest.sim_ts - anchor.sim_ts
         if advance / span >= self.min_advance / self.window:
             return []
         self._reported = True
-        quiet = now - latest.wall_ts
         return [
             Finding(
-                ERROR,
+                WARN,
                 self.slug,
                 f"sim time advanced {advance:.2f} s over {span:.0f} s of wall time "
-                f"({advance / span:.3f}x realtime, floor {self.min_advance / self.window:.3f}x); "
-                f"last row {quiet:.0f} s ago",
+                f"({advance / span:.3f}x realtime, floor {self.min_advance / self.window:.3f}x) "
+                f"across {len(self._rows)} clock rows",
             )
         ]
 
@@ -474,7 +709,8 @@ class RobotMoves:
     waiting on a pedestrian, a perception-only run, a manipulator-only phase -- and a channel that
     interrupts healthy runs is one nobody reads.
 
-    Measured in *sim* time, so a slow run is not also reported as a stuck one; check 3 owns that.
+    Measured in *sim* time, so a slow run is not also reported as a still robot; checks 3 and 4 own
+    that.
     """
 
     slug = "robot-motion"
@@ -623,14 +859,14 @@ class Report:
                 "skipped": self.skipped,
                 "notes": self.notes,
                 "state": self.state,
-                "exit": EXIT_FINDING if self.failed else EXIT_OK,
+                "exit": exit_status.FINDING if self.failed else exit_status.OK,
             },
             indent=2,
         )
 
 
 class Monitor:
-    """The three checks over one source, polled until something is wrong or the caller stops."""
+    """The four checks over one source, polled until something is wrong or the caller stops."""
 
     def __init__(
         self, source: FileSource, robots: list[str], origin: float, no_robots: str = ""
@@ -638,7 +874,7 @@ class Monitor:
         self.source = source
         self.origin = origin
         self.report = Report()
-        self.clock_checks = [SimTimeStarts(), SimTimeRate()]
+        self.clock_checks = [SimTimeStarts(), SimTimeStops(), SimTimeRate()]
         self.motion = RobotMoves(robots)
         self.robots = robots
         self._clock_series = SeriesSplitter()
@@ -723,9 +959,9 @@ class Monitor:
         and all these records can honestly give: they are sampled, so this is the most recent
         sample and not an interpolation to the instant of the call.
 
-        ``rate`` is sim seconds per wall second over the current series -- the same quantity
-        check 3 judges, reported rather than judged, so a caller can see 0.05x without having to
-        infer it from a finding. Absent when the window is too short to divide.
+        ``rate`` is sim seconds per wall second over the rows read of the current series -- the
+        same quantity check 4 judges, reported rather than judged, so a caller can see 0.05x without
+        having to infer it from a finding. Absent when the window is too short to divide.
 
         ``kind`` is added by the caller from the recorder's roster when there is one (see
         :func:`read_roster`), and left off otherwise. Never guessed here: the pose record names root
@@ -888,7 +1124,15 @@ def _await_clock(run_dir: Path, deadline: float, poll: float) -> Path | None:
 
 
 def main(argv: list | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="roqsim health", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="roqsim health",
+        description=__doc__.split("\n")[0],
+        epilog=exit_status.epilog(
+            exit_status.BAD_INPUT,
+            exit_status.FINDING,
+            note="2 includes a run with no record to check; a warning-level finding exits 0.",
+        ),
+    )
     parser.add_argument(
         "run_dir",
         nargs="?",
@@ -947,7 +1191,7 @@ def main(argv: list | None = None) -> int:
         )
     if error:
         print(f"roqsim health: {error}", file=sys.stderr)
-        return EXIT_BAD_ARGS
+        return exit_status.BAD_INPUT
 
     source = FileSource(clock_path, poses_path)
     # The roster answers "which of these bodies is a robot" so nobody has to pass the names per
@@ -1023,6 +1267,13 @@ def main(argv: list | None = None) -> int:
         else:
             report.notes.append(short + "; still accumulating")
     for label, tail in source.tails():
+        if tail.skipped:
+            # Said so a reader knows the verdict is about the run's newest minute and not its
+            # whole: the rows before the window were left unread, which is the point.
+            report.notes.append(
+                f"{label} record: read from its last {tail.window:.0f} s; "
+                f"{tail.skipped / (1024 * 1024):.1f} MiB before that were not read"
+            )
         if tail.restarts:
             # Worth reporting: the writer re-created the file, so the series the checks measured is
             # not the whole run.
@@ -1045,7 +1296,7 @@ def main(argv: list | None = None) -> int:
             )
         if not report.findings:
             print("ok    nothing wrong observed")
-    return EXIT_FINDING if report.failed else EXIT_OK
+    return exit_status.FINDING if report.failed else exit_status.OK
 
 
 if __name__ == "__main__":  # pragma: no cover

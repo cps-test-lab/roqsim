@@ -9,7 +9,7 @@ the endpoint -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file 
 the ``LaserScan`` payload, and the device defaults.
 
 Config (in addition to ``lidar_common``'s ``namespace``/``site``/``frame_id``/
-``rate_hz``/``exclude_body``/``dropout_percent``/``emit_static_tf``/``tf_parent``)::
+``rate_hz``/``exclude_body``/``dropout_percent``/``emit_static_tf``/``tf_parent``/``lazy``)::
 
     lidar:
       rays: 360                  # samples; the first at angle_min, the last exactly at angle_max

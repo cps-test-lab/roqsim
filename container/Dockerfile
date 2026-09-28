@@ -7,10 +7,9 @@
 # sources are copied and installed last (change often), so editing our code only rebuilds the cheap
 # final --no-deps install layer.
 #
-# Contains: core + assets + sensors + mobile + manipulation (plugins + arm/gripper models)
-# + mobile manipulation + scenes + walker + rso.
-# NOT included: quadruped/humanoid (they pull torch). Set INCLUDE_TORCH_PKGS=1 for a full non-ROS
-# variant (adds CPU-only torch + quadruped + humanoid).
+# Contains every roqsim package in the repository except those container/packages.py excludes for
+# this image: the torch-backed ones (set INCLUDE_TORCH_PKGS=1 for a full non-ROS variant with CPU-only
+# torch) and the scene builder's windows.
 
 ARG PYTHON_VERSION=3.12
 
@@ -32,7 +31,7 @@ WORKDIR /build
 
 # 1) Stable layer: third-party runtime deps (pinned loosely, mirrors the sub-package pyproject deps).
 RUN pip install --no-cache-dir \
-        "mujoco>=3.0" \
+        "mujoco>=3.14,<3.15" \
         "numpy>=1.24" \
         "pyyaml>=6.0" \
         "click>=8.1" \
@@ -42,7 +41,8 @@ RUN pip install --no-cache-dir \
         "trimesh>=3.20" \
         "scipy>=1.11" \
         "requests>=2.25" \
-        "opencv-python-headless>=4.6"
+        "opencv-python-headless>=4.6" \
+        "fastmcp>=3.4"
 
 # 1b) Optional torch-backed packages for a full non-ROS build. CPU wheel index only (no CUDA);
 #     kept in its own guarded layer so the lean default never pays for it.
@@ -51,45 +51,16 @@ RUN if [ "${INCLUDE_TORCH_PKGS}" = "1" ]; then \
         pip install --no-cache-dir "onnxruntime>=1.16"; \
     fi
 
-# 2) Volatile layer: our package sources (each dir carries its own pyproject.toml + package data).
-COPY roqsim            ./roqsim
-COPY roqsim_assets     ./roqsim_assets
-COPY roqsim_sensors    ./roqsim_sensors
-COPY roqsim_mobile     ./roqsim_mobile
-COPY roqsim_manipulation ./roqsim_manipulation
-# The arm/gripper MODELS, and the robots that are a base AND an arm (frankie, tiago_pro). Neither
-# was here: `roqsim_manipulation` is plugins only, so the image had spawn_arm and arm_controller
-# and nothing to point them at -- `roqsim sim roqsim_manipulation_assets:ur10e_demo` could not
-# resolve, and no mobile manipulator existed at all. Dockerfile.ros was already corrected for this;
-# the lean image had the same hole. The order matters: roqsim_mobile_manipulation depends on both
-# families, and Frankie borrows the Panda meshes from roqsim_manipulation_assets.
-COPY roqsim_manipulation_assets ./roqsim_manipulation_assets
-COPY roqsim_mobile_manipulation ./roqsim_mobile_manipulation
-COPY roqsim_scenes     ./roqsim_scenes
-COPY roqsim_nav        ./roqsim_nav
-COPY roqsim_walker     ./roqsim_walker
-COPY roqsim_webctrl        ./roqsim_webctrl
+# 2) Volatile layer: our package sources (each dir carries its own pyproject.toml + package data),
+#    installed with deps already satisfied above (--no-deps keeps this layer cheap). The set is
+#    discovered, not listed: container/packages.py, which --check then compares with what is installed.
+COPY . .
+RUN pip install --no-cache-dir --no-deps $(python container/packages.py lean) && \
+    python container/packages.py lean --check
 
-# 3) Install our packages with deps already satisfied above (--no-deps keeps this layer cheap and
-#    makes a source edit rebuild only this step). roqsim (core) first, then the dependents.
-RUN pip install --no-cache-dir --no-deps \
-        ./roqsim \
-        ./roqsim_assets \
-        ./roqsim_sensors \
-        ./roqsim_mobile \
-        ./roqsim_manipulation \
-        ./roqsim_manipulation_assets \
-        ./roqsim_mobile_manipulation \
-        ./roqsim_scenes \
-        ./roqsim_nav \
-        ./roqsim_walker \
-        ./roqsim_webctrl
-
-# 3b) Optional torch-backed packages (source + install) for the full non-ROS variant.
-COPY roqsim_quadruped  ./roqsim_quadruped
-COPY roqsim_humanoid   ./roqsim_humanoid
+# 3) Optional torch-backed packages for the full non-ROS variant.
 RUN if [ "${INCLUDE_TORCH_PKGS}" = "1" ]; then \
-        pip install --no-cache-dir --no-deps ./roqsim_quadruped ./roqsim_humanoid; \
+        pip install --no-cache-dir --no-deps $(python container/packages.py torch); \
     fi
 
 # 4) Every --no-deps install above trusted the hand-written list in step 1 to already carry what the

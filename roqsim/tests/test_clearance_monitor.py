@@ -415,3 +415,25 @@ def test_an_invalid_compute_rate_is_refused(world):
     world["components"][0]["components"][0]["clearance_monitor"]["compute_rate_hz"] = 0
     with pytest.raises(PluginError, match="compute_rate_hz"):
         _engine(world)
+
+
+def test_a_rate_the_timestep_divides_measures_on_every_period(world):
+    """At 50 Hz on a 2 ms step every measurement is exactly ten steps after the last.
+
+    The sim clock is a float sum of timesteps, so the step that lands on the due time can read a
+    hair below it; the gate must take that step, not the one after it.
+    """
+    world["components"][0]["components"][0]["clearance_monitor"]["compute_rate_hz"] = 50.0
+    engine = _engine(world)
+    try:
+        measured, last = [], None
+        for i in range(2000):  # 4 s: long enough for the summed clock to drift
+            _drive_to(engine, 0.5 + 1e-4 * i, steps=1)  # a new distance every step
+            current = _report(engine).current
+            if current != last:
+                measured.append(i)
+            last = current
+        gaps = {b - a for a, b in zip(measured, measured[1:], strict=False)}
+        assert gaps == {10}, f"measurement spacing in steps: {sorted(gaps)}"
+    finally:
+        engine.shutdown()

@@ -21,7 +21,8 @@ only shared. That leaves:
   every time it was pressed. This is what put camera travel on the arrows rather than on WASD.
 * **The arrows and Page Up/Down** are free while the simulation runs: Simulate's own arrow bindings
   only step the physics while it is *paused*.
-* **F8, F9, F10** are unbound by Simulate and are roqsim's. **F11 and F12** are still free.
+* **F8 to F12** are unbound by Simulate and are roqsim's: a live run uses F8, F9 and F10, and a
+  replay adds F11 and F12 for scrubbing (:mod:`roqsim.replay`). None is left.
 
 A binding is owned by the handler that implements it, which declares it in a ``key_bindings``
 attribute; :func:`merge` collects those from whatever objects it is handed. So the list a window

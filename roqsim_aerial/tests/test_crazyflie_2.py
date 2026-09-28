@@ -153,13 +153,67 @@ def test_translates_to_setpoint(target):
         engine.shutdown()
 
 
+def test_the_state_is_the_bodys_own_velocity_not_its_centre_of_mass():
+    """A drone spinning in place about its origin reports no linear velocity, whatever its mass
+    distribution: the controller holds the body's position, so it needs the body's velocity."""
+    engine, controller = _flown()
+    try:
+        model, data = engine.ctx.model, engine.ctx.data
+        bid = controller._bid
+        # Off the origin; the compiled flag saying the two frames coincide has to go with it.
+        model.body_ipos[bid] = (0.05, 0.0, 0.0)
+        model.body_sameframe[bid] = mujoco.mjtSameFrame.mjSAMEFRAME_NONE
+        dof = int(model.jnt_dofadr[model.body_jntadr[bid]])
+        data.qvel[dof : dof + 6] = (0.0, 0.0, 0.0, 0.0, 0.0, 2.0)
+        mujoco.mj_forward(model, data)
+        controller.pre_step(engine.ctx)
+        state = controller.read_state()
+        assert np.allclose(state[3:6], 0.0, atol=1e-9)
+        assert state[7] == pytest.approx(2.0)
+    finally:
+        engine.shutdown()
+
+
 def test_reset_returns_to_spawn():
     engine, controller = _flown()
     try:
+        spawn = np.array(controller.read_state()[:3])
+        assert np.allclose(spawn[:2], 0.0, atol=1e-6)
         _fly(engine, controller, 4.0)
         controller.set_target(1.0, 1.0, 1.5)
         _fly(engine, controller, 4.0)
         engine.reset()
-        assert np.allclose(np.array(controller.read_state()[:3]), 0.0, atol=1e-6)
+        assert np.allclose(np.array(controller.read_state()[:3]), spawn, atol=1e-6)
     finally:
+        engine.shutdown()
+
+
+def test_reset_forgets_a_commanded_target():
+    """Trial 2 takes off toward the configured target, not toward where trial 1 was sent."""
+    engine, controller = _flown()
+    try:
+        _fly(engine, controller, 2.0)
+        controller.set_target(1.0, 1.0, 1.5, yaw=1.0)
+        engine.reset()
+        np.testing.assert_allclose(controller._target, [0.0, 0.0, 1.0])
+        assert controller._yaw == 0.0
+        pos = _fly(engine, controller, 6.0)
+        assert np.hypot(*pos[:2]) < 0.05, f"flew toward the previous trial's target: {pos}"
+        assert pos[2] == pytest.approx(1.0, abs=0.05)
+    finally:
+        engine.shutdown()
+
+
+def test_a_configured_body_that_does_not_resolve_is_refused():
+    """A misspelt ``body:`` stops the run instead of flying the thrust actuator's body."""
+    world = {
+        "sim": {"density": 1.225, "viscosity": 1.8e-5},
+        "components": [{
+            "spawn_robot": {"model": "crazyflie_2", "prefix": "cf2_"},
+            "name": "drone",
+            "components": [{"quadrotor_controller": {"body": "no_such_body"}}],
+        }],
+    }
+    with pytest.raises(RuntimeError, match="no_such_body"):
+        engine, _ = _flown(world)
         engine.shutdown()

@@ -1,0 +1,18 @@
+# Copied unchanged from iRobotEducation/create3_sim (irobot_create_common_bringup/config/ir_intensity_vector_params.yaml,
+# BSD-3-Clause, Copyright 2021 iRobot Corporation), so the node runs with the parameters its
+# maintainers ship; roqsim's TurtleBot 4 publishes on the topics named here.
+/**:
+  ir_intensity_vector_publisher:
+    ros__parameters:
+      # IR intensity publisher topic
+      publisher_topic: ir_intensity
+      publish_rate: 62.0
+      subscription_topics:
+        # IR intensity topics
+        - _internal/ir_intensity_front_center_left
+        - _internal/ir_intensity_front_center_right
+        - _internal/ir_intensity_front_left
+        - _internal/ir_intensity_front_right
+        - _internal/ir_intensity_left
+        - _internal/ir_intensity_right
+        - _internal/ir_intensity_side_left

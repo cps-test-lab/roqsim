@@ -178,6 +178,10 @@ class _Transport:
             picking, text="Add + PNG", command=self._add_and_render, bg=PANEL, fg=FG, relief="flat"
         )
         self.png_button.pack(side="left", padx=2)
+        self.take_button = tk.Button(
+            picking, text="● Take", command=self._toggle_take, bg=PANEL, fg=FG, relief="flat"
+        )
+        self.take_button.pack(side="left", padx=2)
 
         self.shots = tk.Listbox(
             self.root, height=6, bg=PANEL, fg=FG, relief="flat", highlightthickness=0
@@ -218,6 +222,11 @@ class _Transport:
             self._syncing = False
         self.where.configure(text=f"#{timeline.index} / {len(timeline) - 1}")
         self.play_button.configure(text="||" if self.replay.playing else "> ")
+        taking = self.replay.take is not None
+        self.take_button.configure(
+            text=f"■ End take ({len(self.replay.take)})" if taking else "● Take",
+            bg=ACCENT if taking else PANEL,
+        )
 
     # -- what the widgets do --------------------------------------------------------------------
 
@@ -272,6 +281,16 @@ class _Transport:
         self.label_var.set("")
         self.status.configure(text=self._shots_note())
         return doc
+
+    def _toggle_take(self) -> None:
+        """Start a camera take, or end it: the clip lands in the shots list like a shot does."""
+        doc = self.replay.toggle_take(self.label_var.get().strip())
+        if doc is not None:
+            self.shots.insert("end", f"{doc['id']}  {doc['from']:.3f}-{doc['to']:.3f} s (take)")
+            self.shots.see("end")
+            self.label_var.set("")
+            self.status.configure(text=self._shots_note())
+        self._refresh()
 
     def _add_and_render(self) -> None:
         """Write the shot, then draw it with the command the figure will use."""
