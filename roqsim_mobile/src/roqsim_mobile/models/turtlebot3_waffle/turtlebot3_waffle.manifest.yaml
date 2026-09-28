@@ -17,8 +17,7 @@ components:
       max_linear_vel: 0.26           # ROBOTIS Waffle datasheet rated top speed
       max_angular_vel: 1.82          # ROBOTIS Waffle datasheet rated top yaw rate
       wheel_accel_limit: 1.0         # assumption: no acceleration limit is published for the
-                                     # platform, and hussain_maze_ros2_2024 states none either
-                                     # (spec gap g_robot_limits). Whatever Nav2 is given must match.
+                                     # platform. Whatever Nav2 is given must match.
       left_actuator: left_wheel_motor
       right_actuator: right_wheel_motor
       left_joint: left_wheel_joint
@@ -29,8 +28,8 @@ components:
   # device's datasheet defaults (360 deg at 1 deg, 5 Hz, 0.12-3.5 m, 10 mm sigma growing to 3.5%).
   # ROBOTIS's Gazebo sensor (turtlebot3_gazebo models/turtlebot3_waffle/model.sdf:135-159 @ 4563301)
   # runs at 10 Hz, which the 300 rpm scanner cannot, and its constant stddev 0.01 is the specification's
-  # near-range precision in a noise model that cannot grow with range, so neither is an override. The paper names only "its Lidar sensor" (spec gap
-  # g_lidar_params). Addressed as `<robot>.lds01.lidar`; the scan is `scan` in the robot's
+  # near-range precision in a noise model that cannot grow with range, so neither is an override.
+  # The paper this model was ported for names only "its Lidar sensor". Addressed as `<robot>.lds01.lidar`; the scan is `scan` in the robot's
   # namespace, stamped `base_scan`.
   - spawn_sensor:
       model: lds01
