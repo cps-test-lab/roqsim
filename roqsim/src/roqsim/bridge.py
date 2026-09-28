@@ -89,6 +89,11 @@ class BridgeBase(Plugin):
     #: Backend key selecting which ``endpoint.backend[...]`` hint block applies (e.g. "ros2").
     BACKEND: str = ""
 
+    #: Whether this backend wires an endpoint that carries no hints for it. A transport that needs a
+    #: per-endpoint message type (ROS) cannot, and skips it; one that carries neutral payloads as
+    #: they are can serve every endpoint. Either way ``backend={BACKEND: False}`` opts one out.
+    WIRES_ALL: bool = False
+
     # A bridge publishes what the other plugins built; it adds nothing to the scene itself. Declared
     # here rather than per bridge so any transport -- including out-of-tree ones -- is renderable
     # without its middleware installed.
@@ -98,6 +103,9 @@ class BridgeBase(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self._ctx: SimContext | None = None
         self._outputs: list[_Output] = []
+        #: What this bridge made of each endpoint it bound, by ``id(endpoint)`` (see
+        #: :meth:`bound_name`).
+        self._names: dict[int, dict] = {}
         self._ready = False
         # Optional owner filter (``owner``: a name or list of names; omit to serve all endpoints).
         # The common case is ONE bridge serving everything -- per-robot scoping comes from each
@@ -122,13 +130,17 @@ class BridgeBase(Plugin):
         # convention enforced rather than assumed: a producer listed after the bridge now raises
         # instead of quietly never being published.
         ctx.interface.mark_bound(self.name)
+        ctx.interface.bridges.append(self)
         rate_overrides = self.config.get("rates", {})
         for ep in ctx.interface.all():
             hints = ep.backend.get(self.BACKEND)
-            if hints is None:
+            if hints is False or (hints is None and not self.WIRES_ALL):
                 continue
+            hints = hints or {}
             if self._owners is not None and ep.owner not in self._owners:
                 continue
+            # Before the backend hook, which may replace it with the name it resolved.
+            self._names[id(ep)] = dict(hints)
             if ep.direction == "out":
                 if ep.read is None:
                     ctx.logger.warning("bridge: out endpoint %r has no read(); skipped", ep.name)
@@ -168,6 +180,15 @@ class BridgeBase(Plugin):
                 for out in self._outputs
             ],
         }
+
+    def bound_name(self, ep: Endpoint) -> dict | None:
+        """What this bridge made of *ep*: its hints, or what the backend resolved them to (a ROS
+        topic after namespaces and renames). ``None`` when this bridge did not bind it.
+
+        For a reader that describes an endpoint across transports -- another bridge answering
+        "what is this called on ROS" -- so the name it gives is the one this bridge actually used.
+        """
+        return self._names.get(id(ep))
 
     def _rate_gate(self, ctx: SimContext, rate_hz: float, subject: str) -> _RateGate:
         """A gate at the nearest rate this world can hold, announced in proportion to the move.
@@ -308,6 +329,9 @@ class BridgeBase(Plugin):
         ``marshalled`` endpoint queues the work itself, so it is called directly; any other write
         is submitted to run on the physics thread.
         """
+        if ep.slot is not None:
+            # Tagged, so two transports driving one stream are told apart (StreamSlot.put).
+            return lambda payload, put=ep.slot.put, src=self.BACKEND: put(payload, src)
         if ep.marshalled:
             return ep.write
 

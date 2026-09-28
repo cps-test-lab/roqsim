@@ -332,11 +332,14 @@ class Engine:
         try:
             for plugin in self.plugins:
                 configured.append(plugin)
+                # Stamps the endpoints this plugin registers with its address.
+                self.ctx.interface.producer = plugin.address
                 self._timed(plugin, "configure", plugin.configure, self.ctx)
                 # For a plugin with no configure of its own; a configure registers its endpoints
                 # itself. Either way before the next plugin configures: a bridge binds the
                 # interface in its own configure, and is listed after its producers.
                 plugin.register_endpoints(self.ctx)
+                self.ctx.interface.producer = ""
                 # After configure, because the entity has to be registered before its presence can
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.

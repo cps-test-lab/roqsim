@@ -599,6 +599,11 @@ identical across arms.
 
 External input (ROS callbacks, ``simulation_interfaces`` services, GUI) must **not** mutate ``data`` directly. It enqueues a callable via ``ctx.post(cmd)``; the engine **drains the queue at the start of ``pre_step``**, so every mutation happens on the physics thread, in FIFO order, deterministically. A driver that is not stepping -- ``roqsim sim`` paused or stopped -- drains it in its idle loop instead (``Engine.idle``), and when a command ran, ``mj_forward`` brings body poses and sensor data in line with it; simulated time does not advance and no plugin hook runs. ``ctx.post`` is the substrate the ROS bridge and synchronous mode (§10) build on; ``ctx.submit`` is the same queue with a :class:`~roqsim.context.CommandFuture` for a caller that needs the outcome, and the drain delivers a command's exception to the caller waiting on it (one nobody waits on is logged). The queue is a ``collections.deque``: posting and draining take no lock. After the commands the drain applies each inbound stream's latest value (§13).
 
+The control socket's threads (§13) follow the same rule: its request threads never touch ``data`` -- a
+``read`` or a ``call`` is submitted to the physics thread and waited on -- and what it publishes is
+read in ``post_step``. The runner resets its pacer on every idle loop, so the first step after a pause
+is paced from when it is taken and the pause is not counted as falling behind.
+
 For readers on other threads, the engine publishes an immutable ``snapshot`` after each step (``publish_snapshot``/``read_snapshot``). The default path, though, is to read in ``post_step`` on the physics thread — no snapshot needed.
 
 ``reset``/``shutdown`` drain/flush the queue so no command targets a half-rebuilt model.
@@ -849,6 +854,12 @@ endpoint, runs the per-tick publish loop on the physics thread, and marshals inb
 physics thread via ``ctx.submit`` unless the endpoint marshals itself (single-writer rule intact,
 §7), handing the backend a callback that returns the command's future. A backend implements a few hooks:
 ``_setup`` / ``_make_output`` / ``_make_input`` / ``_publish`` / ``_now`` / ``_tick`` / ``_teardown``.
+A backend that needs a per-endpoint type (ROS) binds only the endpoints carrying its hint block; one
+that carries neutral payloads as they are sets ``WIRES_ALL`` and binds every endpoint, and an
+endpoint opts out of either with ``backend={<name>: False}``. Each bridge records what it made of an
+endpoint (``bound_name``: a ROS topic after namespaces and renames), so another transport can say
+what the endpoint is called there. A write into a stream is tagged with the bridge's backend, and
+two transports driving one stream within a second of each other are logged once, naming both.
 
 The rate gate is tested once per physics step, so the publish rates a world can hold are exactly
 ``physics_rate / k`` for integer ``k`` — a request between two of them is served at one of them, as a
@@ -896,6 +907,25 @@ waypoint has been *fed* would make a blocked or saturated arm indistinguishable 
 that did the job, and MoveIt forwards that verdict unchanged, so the caller would see a clean execution
 against a scene that never moved.
 
+**The control socket (``ipc``).** The second backend, :class:`roqsim.ipc.bridge.IpcBridge`, is core
+roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
+(``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,
+which serves the driver's :class:`~roqsim.control.RunControl` as ``sim/run_control/{pause, resume,
+step, reset, state}``. It wires every endpoint under a path built from the address of the plugin
+that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
+``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; two endpoints on one path are refused at bind
+naming both. It serves on demand and publishes on no schedule: a ROUTER answers ``describe`` /
+``read`` / ``call`` on a background thread -- a ``read`` is the endpoint's ``read`` run on the
+physics thread through ``ctx.submit``, a ``call`` a command's future waited on, with a timeout
+that is an error and never a success -- and an XPUB publishes, from ``post_step`` at each
+endpoint's gated rate, only the outputs under a prefix some client subscribed to. With nobody
+subscribed its ``post_step`` checks two empty collections and returns. A command may name an
+``out`` endpoint of its producer that confirms it (``Endpoint.confirm``); the reply carries that
+endpoint's value read in the ``post_step`` of the step that applied the command, and while the
+run is paused it says ``verified: false`` rather than stepping. ``--no-communication`` keeps it: it
+reaches this process, not a middleware the experiment publishes on. The scenario-execution adapter
+never adds it -- a stepped run is in-process. User-facing: :doc:`control`.
+
 **Injection, not authoring.** A world does not declare its transport. ``with_transport`` appends the
 bridge at load time (``roqsim sim --ros``; ``ROQSIM_ROS`` for the scenario-execution adapter), which is
 the exact inverse of ``drop_transport_plugins`` and is what keeps a checked-in world **ROS-free** and
@@ -936,9 +966,10 @@ report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as
-matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. Adding a new
-backend (zenoh, zmq) is a new ``BridgeBase`` subclass + its own registry — robots and worlds are
-unchanged.
+matching-dtype numpy buffers (one C-level copy) instead of per-element Python loops. The ``ipc``
+backend copies each array once on the physics thread, since a producer may overwrite its buffer in
+the next step, and hands that copy to ZeroMQ without another. Adding a new backend (zenoh) is a new
+``BridgeBase`` subclass + its own registry — robots and worlds are unchanged.
 
 .. _14-glossary--faq:
 

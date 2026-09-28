@@ -344,6 +344,17 @@ class Ros2Bridge(BridgeBase):
             String(data=json.dumps(self.endpoint_map(self._describe_output), sort_keys=True))
         )
 
+    def bound_name(self, ep) -> dict | None:
+        """The topic, service or action *ep* is on, resolved against this node (namespace and
+        remapping included), with its type."""
+        named = super().bound_name(ep)
+        if named is None:
+            return None
+        return {
+            key: self._node.resolve_topic_name(value) if key != "type" else value
+            for key, value in named.items()
+        }
+
     def _describe_output(self, out) -> dict:
         """Where and how one bound output travels: its resolved topic, type and published field."""
         hints = out.endpoint.backend[self.BACKEND]
@@ -601,6 +612,7 @@ class Ros2Bridge(BridgeBase):
         qos = int(hints.get("qos", 10))
         publisher = self._node.create_publisher(msg_type, topic, qos)
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
+        self._names[id(ep)] = {"topic": topic, "type": hints["type"]}
         # Let an expensive producer (e.g. a rendered camera) skip work when nobody's listening --
         # generic, not camera-specific; cheap endpoints (lidar, odom) just never check it.
         ep.has_subscribers = lambda p=publisher: p.get_subscription_count() > 0
@@ -655,10 +667,12 @@ class Ros2Bridge(BridgeBase):
         if "service" in hints:
             srv_type = reg.resolve_type(hints["service"])
             handler = get_service_handler(hints["service"])
+            name = _join_ns(self._eff_ns(ep), hints.get("name", ep.name))
+            self._names[id(ep)] = {"service": name, "type": hints["service"]}
             self._services.append(
                 self._node.create_service(
                     srv_type,
-                    _join_ns(self._eff_ns(ep), hints.get("name", ep.name)),
+                    name,
                     # The endpoint rides along so the handler can resolve its producer's state
                     # (its `state_key` hint) without knowing which producer it is serving.
                     lambda req, resp, e=ep: handler(req, resp, self._ctx, on_payload, e),
@@ -671,11 +685,13 @@ class Ros2Bridge(BridgeBase):
         if "action" in hints:
             action_type = reg.resolve_type(hints["action"])
             handler = get_action_handler(hints["action"])
+            name = _join_ns(self._eff_ns(ep), hints.get("name", ep.name))
+            self._names[id(ep)] = {"action": name, "type": hints["action"]}
             self._action_servers.append(
                 ActionServer(
                     self._node,
                     action_type,
-                    _join_ns(self._eff_ns(ep), hints.get("name", ep.name)),
+                    name,
                     # The endpoint rides along so the handler can resolve its producer's state
                     # (e.g. ctx.blackboard.get(f"walker:{endpoint.owner}")) without a hardcoded key.
                     execute_callback=lambda gh, e=ep: handler(gh, self._ctx, on_payload, e),
@@ -687,6 +703,7 @@ class Ros2Bridge(BridgeBase):
             return
         msg_type = reg.resolve_type(hints["type"])
         topic = _resolve_topic(self._eff_ns(ep), hints.get("topic", ep.name))
+        self._names[id(ep)] = {"topic": topic, "type": hints["type"]}
         qos = int(hints.get("qos", 10))
         decode = reg.get_decoder(hints["type"])
         self._node.create_subscription(msg_type, topic, lambda m: on_payload(decode(m)), qos)

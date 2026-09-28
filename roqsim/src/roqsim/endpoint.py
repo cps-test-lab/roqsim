@@ -30,7 +30,8 @@ Three kinds, by what the caller needs:
 
 Keyword arguments other than the documented ones are backend hints, keyed by backend name
 (``ros2=...``). Each is a dict, or a callable taking the plugin and returning the dict (or ``None`` to
-leave that backend out) -- hints often need values known only after ``configure``. ``rate_hz`` takes
+leave that backend out) -- hints often need values known only after ``configure``. ``False`` opts
+the endpoint out of a backend that wires every endpoint without hints (``ipc=False``). ``rate_hz`` takes
 a number or such a callable too, and ``when`` a callable deciding whether this instance has the
 endpoint at all. The owner, namespace and default name come from the plugin
 (:attr:`~roqsim.plugin.Plugin.endpoint_owner`, :meth:`~roqsim.plugin.Plugin.endpoint_namespace`,
@@ -41,6 +42,7 @@ the method's name).
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -68,6 +70,7 @@ class EndpointSpec:
     lazy: bool = False
     when: Callable[[Any], bool] | None = None
     backend: dict[str, dict | Callable[[Any], dict | None]] = field(default_factory=dict)
+    confirm: str = ""
 
     @property
     def direction(self) -> str:
@@ -84,6 +87,8 @@ class EndpointSpec:
             "conditional": self.when is not None,
             "doc": doc[0] if doc else None,
         }
+        if self.confirm:
+            row["confirm"] = self.confirm
         if self.kind == "out" and not callable(self.rate_hz):
             row["rate_hz"] = float(self.rate_hz)
         return row
@@ -111,12 +116,19 @@ def out(
     return _decorator("out", name, rate_hz=rate_hz, lazy=lazy, when=when, backend=backend)
 
 
-def command(name: str | None = None, *, when: Callable[[Any], bool] | None = None, **backend):
+def command(
+    name: str | None = None,
+    *,
+    when: Callable[[Any], bool] | None = None,
+    confirm: str = "",
+    **backend,
+):
     """Declare the decorated method as a command (``in``, with an outcome).
 
-    The method takes the payload as its one argument.
+    The method takes the payload as its one argument. ``confirm`` names an ``out`` endpoint of the
+    same plugin whose value, after the step that applied the command, confirms it.
     """
-    return _decorator("command", name, when=when, backend=backend)
+    return _decorator("command", name, when=when, confirm=confirm, backend=backend)
 
 
 def stream(name: str | None = None, *, when: Callable[[Any], bool] | None = None, **backend):
@@ -166,7 +178,9 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
         backend = {}
         for key, hints in spec.backend.items():
             resolved = _value(hints, plugin)
-            if resolved is not None:
+            if resolved is False:  # opted out of a backend that wires every endpoint
+                backend[key] = False
+            elif resolved is not None:
                 backend[key] = dict(resolved)
         ep = Endpoint(
             name=spec.name,
@@ -174,6 +188,10 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
             owner=owner,
             namespace=namespace,
             backend=backend,
+            kind=spec.kind,
+            producer=plugin.address,
+            confirm=spec.confirm,
+            doc=inspect.cleandoc(method.__doc__ or ""),
         )
         if spec.kind == "out":
             ep.read = method
@@ -183,7 +201,8 @@ def build(plugin: Plugin, ctx: SimContext) -> list[Endpoint]:
             ep.write = _submitter(ctx, method)
             ep.marshalled = True
         else:
-            ep.write = ctx.stream_slot(f"{owner}/{spec.name}", method).put
+            ep.slot = ctx.stream_slot(f"{owner}/{spec.name}", method)
+            ep.write = ep.slot.put
             ep.marshalled = True
         endpoints.append(ep)
     return endpoints
