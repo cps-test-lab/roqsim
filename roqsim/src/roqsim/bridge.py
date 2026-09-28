@@ -331,7 +331,7 @@ class BridgeBase(Plugin):
         """
         if ep.slot is not None:
             # Tagged, so two transports driving one stream are told apart (StreamSlot.put).
-            return lambda payload, put=ep.slot.put, src=self.BACKEND: put(payload, src)
+            return lambda payload, write=ep.write, src=self.BACKEND: write(payload, source=src)
         if ep.marshalled:
             return ep.write
 

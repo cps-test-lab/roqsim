@@ -39,6 +39,7 @@ from .. import control as ctl
 from ..bridge import BridgeBase, _RateGate
 from ..context import CommandFuture, endpoint_kind
 from ..document import nearest
+from ..endpoint import ParameterError
 from ..plugin import PluginError
 from ..rates import snap_rate
 from . import PROTOCOL, pub_uri, register, unregister, wire
@@ -129,6 +130,7 @@ class IpcBridge(BridgeBase):
         self._requests: queue.SimpleQueue = queue.SimpleQueue()
         self._threads: list[threading.Thread] = []
         self._registration = None
+        self._late = threading.Lock()
 
     def validate_config(self, config: dict) -> list[str]:
         return [] if config.get("uri") else ["ipc_bridge needs a `uri` (ipc://<path> or tcp://...)"]
@@ -370,8 +372,23 @@ class IpcBridge(BridgeBase):
             "endpoints": len(self._paths),
         }
 
+    def _refresh(self) -> None:
+        """Take in the ``out`` endpoints registered after bind (``on_demand``, such as an entity's
+        pose): read on request only, so serving them late loses nothing."""
+        with self._late:
+            known = {id(ep) for ep in self._paths.values()}
+            for ep in self._ctx.interface.all():
+                if id(ep) in known or ep.direction != "out" or ep.read is None:
+                    continue
+                if ep.backend.get(self.BACKEND) is False:
+                    continue
+                self._paths.setdefault(path_of(ep), ep)
+
     def _endpoint(self, path: str) -> Endpoint:
         ep = self._paths.get(path)
+        if ep is None:
+            self._refresh()
+            ep = self._paths.get(path)
         if ep is not None:
             return ep
         guess = nearest(path, self._paths)
@@ -402,10 +419,11 @@ class IpcBridge(BridgeBase):
         entry.update(owner=ep.owner, producer=ep.producer, name=ep.name, namespace=ep.namespace)
         if path in self._confirm_of:
             entry["confirm"] = path_of(self._confirm_of[path])
-        for key in ("params", "result"):  # the endpoint's typed schema, where it declares one
-            schema = getattr(ep, key, None)
-            if schema:
-                entry[key] = schema
+        # The typed schema, where the endpoint declares one (roqsim.endpoint).
+        if ep.params is not None:
+            entry["params"] = [p.describe() for p in ep.params]
+        if ep.result is not None:
+            entry["result"] = ep.result.describe()
         entry["bridges"] = {
             bridge.BACKEND: named
             for bridge in self._ctx.interface.bridges
@@ -414,6 +432,7 @@ class IpcBridge(BridgeBase):
         return entry
 
     def _describe(self, header: dict, _value) -> Any:
+        self._refresh()
         path = str(header.get("path") or "").strip("/")
         if not path:
             return [self._entry(p, ep, False) for p, ep in sorted(self._paths.items())]
@@ -463,7 +482,10 @@ class IpcBridge(BridgeBase):
             raise _Refusal("wrong_kind", f"{path} is an out endpoint: use read")
         write = self._inputs[path]
         if endpoint_kind(ep) == "stream":
-            write(value)
+            try:
+                write(value)
+            except ParameterError as exc:
+                raise _Refusal("bad_request", str(exc)) from None
             return {"queued": True}
         timeout = self._timeout(header)
         confirm = self._confirm_of.get(path)
@@ -516,6 +538,8 @@ class IpcBridge(BridgeBase):
                 f"no outcome for {path} within {timeout:g} s: the physics thread did not get to it "
                 "(stalled or shutting down), so it may or may not apply later",
             ) from None
+        except ParameterError as exc:  # refused before it was queued
+            raise _Refusal("bad_request", str(exc)) from None
         except Exception as exc:  # noqa: BLE001 - the producer's own refusal is the reply
             raise _Refusal("refused", f"{exc}", exception=type(exc).__name__) from None
         return wire.encode(result)

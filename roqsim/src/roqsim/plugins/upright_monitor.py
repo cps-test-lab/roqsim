@@ -89,12 +89,14 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
 from .. import endpoint
 from ..context import SimContext
+from ..endpoint import Unit
 from ..plugin import Plugin
 
 _log = logging.getLogger(__name__)
@@ -117,12 +119,12 @@ class UprightReport:
     """
 
     upright: bool
-    first_time: float
-    tilt_deg: float
-    rise_m: float
-    worst_tilt_deg: float
-    worst_rise_m: float
-    reason: str
+    first_time: Annotated[float, Unit("s"), "when it first left the plane; -1.0 while it has not"]
+    tilt_deg: Annotated[float, Unit("deg")]
+    rise_m: Annotated[float, Unit("m"), "departure from the settled height, either direction"]
+    worst_tilt_deg: Annotated[float, Unit("deg")]
+    worst_rise_m: Annotated[float, Unit("m")]
+    reason: Annotated[str, "'tilt' or 'height' once it left the plane"]
 
 
 class UprightMonitorPlugin(Plugin):

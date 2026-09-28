@@ -749,7 +749,7 @@ def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
     ins = {e.name: e for e in create3.ctx.interface.all() if e.direction == "in"}
     assert ins["cmd_vel"].backend["ros2"] == {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
     handle = create3.ctx.blackboard.get(f"robot:{scan_mount.OWNER}")
-    ins["cmd_vel"].write((0.2, 0.0, 0.0))
+    ins["cmd_vel"].write({"vx": 0.2})
     for _ in range(50):
         create3.step()
     assert handle.read_odom()[3] > 0.05

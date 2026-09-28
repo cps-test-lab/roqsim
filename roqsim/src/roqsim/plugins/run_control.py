@@ -11,11 +11,17 @@ control plane of its own::
     sim/run_control/reset     command   reset the world; replies once it has
     sim/run_control/state     out       playing/paused/..., sim time and episode
 
+``pause``, ``step`` and ``reset`` return a :class:`~roqsim.context.CommandFuture` of their own,
+which a bridge waits on in turn: their answer is the state after the step in flight, the steps or
+the reset have run, which is later than the command itself.
+
 Only the standalone driver honours it. Under scenario-execution the scenario owns stepping, and the
 adapter never adds this plugin.
 """
 
 from __future__ import annotations
+
+from typing import Annotated
 
 from .. import control as ctl
 from .. import endpoint
@@ -48,7 +54,7 @@ class RunControlPlugin(Plugin):
         }
 
     @endpoint.command("pause")
-    def pause(self, _payload=None) -> CommandFuture:
+    def pause(self) -> CommandFuture:
         """Stop stepping. Commands sent while paused still run, and time does not advance."""
         self._ctx.control.set_state(ctl.PAUSED)
         return self._after_step_in_flight()
@@ -61,13 +67,13 @@ class RunControlPlugin(Plugin):
         return done
 
     @endpoint.command("resume")
-    def resume(self, _payload=None) -> dict:
+    def resume(self) -> dict:
         """Step again. The pacing starts afresh, so the pause is not counted as falling behind."""
         self._ctx.control.set_state(ctl.PLAYING)
         return self.state()
 
     @endpoint.command("step")
-    def step(self, n=1) -> CommandFuture:
+    def step(self, n: Annotated[int, "steps to take"] = 1) -> CommandFuture:
         """Take N steps (default 1) while paused; the reply comes once they ran, with the sim time."""
         ctx = self._ctx
         if ctx.control.state != ctl.PAUSED:
@@ -75,7 +81,7 @@ class RunControlPlugin(Plugin):
                 f"step needs a paused simulation and this one is "
                 f"{ctl.STATE_NAMES.get(ctx.control.state, ctx.control.state)}: pause it first"
             )
-        count = 1 if n is None else int(n)
+        count = int(n)
         if count < 1:
             raise ValueError(f"step takes a number of steps >= 1, not {n!r}")
         done = CommandFuture()
@@ -93,7 +99,7 @@ class RunControlPlugin(Plugin):
         return done
 
     @endpoint.command("reset")
-    def reset(self, _payload=None) -> CommandFuture:
+    def reset(self) -> CommandFuture:
         """Reset the world to its initial state; the reply comes once the reset has run."""
         done = CommandFuture()
         self._reset_waiters.append(done)

@@ -21,6 +21,8 @@ from .seed import SeedError
 if TYPE_CHECKING:
     import mujoco
 
+    from .endpoint import Param, ValueType
+
 _log = logging.getLogger(__name__)
 
 
@@ -160,6 +162,12 @@ class Endpoint:
     :mod:`roqsim.endpoint` produce: a command's write returns a :class:`CommandFuture`, a stream's
     stores the payload in a latest-value :class:`StreamSlot`. A bridge calls it directly.
 
+    ``params`` and ``result`` are the endpoint's schema, as data any bridge can read (see
+    :mod:`roqsim.endpoint`). An ``in`` endpoint with ``params`` takes a mapping of those names
+    (``None`` for none) and checks it before queueing: a command's ``write`` returns a future that
+    raises :class:`roqsim.endpoint.ParameterError` for a misfit, a stream's raises it to the caller.
+    ``result`` types the ``out`` payload or the command's outcome.
+
     An ``in`` endpoint says what *kind* of interaction it is through its backend hints, and the choice
     is about the interaction rather than about taste: a plain ``type`` is a stream with no answer, a
     ``service`` is a command whose outcome the caller needs (so it can fail on it), and an ``action``
@@ -205,6 +213,13 @@ class Endpoint:
     marshalled: bool = (
         False  # ``write`` queues onto the physics thread itself; call it from anywhere
     )
+    #: The named parameters ``write`` takes (:class:`roqsim.endpoint.Param`), for an ``in`` endpoint
+    #: declared with :mod:`roqsim.endpoint`: its payload is a mapping of these names, checked before
+    #: anything is queued. ``None``: an untyped write, handed its payload as the bridge built it.
+    params: tuple[Param, ...] | None = None
+    #: The type of what ``read`` returns (``out``) or what a command's future resolves to, as
+    #: :class:`roqsim.endpoint.ValueType`; ``None`` when not declared.
+    result: ValueType | None = None
     #: ``"out"``, ``"command"`` or ``"stream"``; empty on a hand-built endpoint, whose kind
     #: :func:`endpoint_kind` infers from its direction and hints.
     kind: str = ""
@@ -214,7 +229,8 @@ class Endpoint:
     #: For a command: the name of an ``out`` endpoint of the same producer whose value confirms it
     #: -- a verdict its ``post_step`` records after the command applied.
     confirm: str = ""
-    #: A stream's latest-value slot, set by :mod:`roqsim.endpoint`, so a bridge can tag its writes.
+    #: A stream's latest-value slot, set by :mod:`roqsim.endpoint`; its ``write`` then takes the
+    #: writing transport as ``source``, so two driving one stream are told apart.
     slot: StreamSlot | None = None
     #: What it is, for a reader outside the process: a decorated method's docstring.
     doc: str = ""
@@ -360,8 +376,14 @@ class InterfaceRegistry:
         #: The transport plugins that bound this registry, in binding order.
         self.bridges: list = []
 
-    def add(self, endpoint: Endpoint) -> None:
-        if self._bound_by is not None:
+    def add(self, endpoint: Endpoint, *, on_demand: bool = False) -> None:
+        """Register *endpoint*.
+
+        ``on_demand`` marks one that is only ever read when a consumer asks for it by name -- the
+        core's entity poses (:mod:`roqsim.entity_pose`) -- so registering it after a bridge bound
+        loses no publication, and is allowed.
+        """
+        if self._bound_by is not None and not on_demand:
             raise RuntimeError(
                 f"endpoint {endpoint.name!r} (owner {endpoint.owner!r}) was registered after "
                 f"{self._bound_by!r} already bound the interface, so nothing would publish it. "
@@ -443,6 +465,8 @@ class SimContext:
         self.blackboard = Blackboard()
         self.entities = EntityRegistry()
         self.interface = InterfaceRegistry()
+        #: Entities whose core pose endpoint is registered (:mod:`roqsim.entity_pose`).
+        self.entity_poses: set[str] = set()
         self.render = None  # lazily set to a RenderService when first needed
 
         #: What each spawned model's actuators ended up running under, keyed by entity: a list of

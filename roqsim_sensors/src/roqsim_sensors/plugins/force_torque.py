@@ -121,6 +121,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
@@ -128,6 +129,7 @@ import numpy as np
 from roqsim import endpoint
 from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, Controller, registry_for
+from roqsim.endpoint import Unit
 from roqsim.flex import flex_collides, flex_dof_body_ids, flex_label
 from roqsim.plugin import Plugin
 from roqsim.presence import entity_body_ids
@@ -433,7 +435,12 @@ class ForceTorquePlugin(Plugin):
         return force, torque
 
     @endpoint.out("wrench", rate_hz=lambda self: self.rate_hz, ros2=lambda self: self._wrench_ros2)
-    def read_pair(self):
+    def read_pair(
+        self,
+    ) -> tuple[
+        Annotated[list[float], Unit("N"), "force (x, y, z) in the frame `frame` names"],
+        Annotated[list[float], Unit("N*m"), "torque (x, y, z) in the same frame"],
+    ]:
         """Endpoint ``wrench``: the wrench as plain lists, for a transport-neutral payload."""
         force, torque = self.read()
         return (force.tolist(), torque.tolist())
@@ -449,10 +456,8 @@ class ForceTorquePlugin(Plugin):
             "name": self.topic_override("tare") or f"{self.name}/tare",
         },
     )
-    def tare(self, _payload=None) -> None:
+    def tare(self) -> None:
         """Zero the sensor at the tool's CURRENT pose and load. Physics thread only.
-
-        As the ``tare`` endpoint the payload is ignored: zeroing takes no argument.
 
         What a real sensor's zero button does, with the same limit: this cancels the load as it is
         right now, not the tool's weight at every pose. See "Taring" in the module docstring.

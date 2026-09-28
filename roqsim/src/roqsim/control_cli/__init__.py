@@ -132,18 +132,50 @@ def _describe(sim, args) -> int:
     )
     if entry.get("doc"):
         print("  " + entry["doc"].replace("\n", "\n  "))
-    for key in ("params", "result"):
-        if entry.get(key):
-            print(f"  {key}: {json.dumps(entry[key])}")
+    for param in entry.get("params") or []:
+        print(
+            f"  parameter {_typed(param)}" + ("" if param["required"] else f" = {param['default']}")
+        )
+    if entry.get("result"):
+        print(f"  {'value' if entry['kind'] == 'out' else 'returns'}: {_typed(entry['result'])}")
+        for field in entry["result"].get("fields") or []:
+            print(f"    {_typed(field)}")
     if entry.get("confirm"):
         print(f"  confirmed by: {entry['confirm']}")
     for backend, named in (entry.get("bridges") or {}).items():
         print(f"  on {backend}: {json.dumps(named)}")
     if entry["kind"] == "out":
         print(f"  example: roqsim read {entry['path']}")
+    elif "params" in entry:
+        example = {p["name"]: _example(p) for p in entry["params"]}
+        print(
+            f"  example: roqsim call {entry['path']}"
+            + (f" '{json.dumps(example)}'" if example else "")
+        )
     else:
-        print(f"  example: roqsim call {entry['path']} '<json>'")
+        print(f"  example: roqsim call {entry['path']} '<json payload>'")
     return exit_status.OK
+
+
+def _typed(row: dict) -> str:
+    """``name: type [unit] -- doc`` of one described parameter, field or value."""
+    text = f"{row['name']}: {row['type']}" if "name" in row else row["type"]
+    if row.get("unit"):
+        text += f" [{row['unit']}]"
+    if row.get("doc"):
+        text += f" -- {row['doc']}"
+    return text
+
+
+_PLACEHOLDERS = {"float": 0.0, "int": 0, "bool": False, "str": ""}
+
+
+def _example(param: dict):
+    if not param["required"]:
+        return param.get("default")
+    return _PLACEHOLDERS.get(
+        param["type"], [] if param["type"].startswith(("list", "tuple", "array")) else None
+    )
 
 
 def _read(sim, args) -> int:

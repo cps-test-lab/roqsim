@@ -8,6 +8,7 @@
     sim.endpoints()                                  # [{'path': 'robot/lidar/scan', 'kind': 'out', ...}]
     sim.read("robot/diff_drive/odom")                # the value, numpy arrays included
     sim.read("sim/run_control/state", field="sim_time")
+    sim.call("robot/diff_drive/cmd_vel", {"vx": 0.3})   # parameters by name
     sim.call("grip_fault/override", True)            # {'applied': True, 'verified': True, ...}
     sim.pause(); sim.step(10); sim.resume()
     for path, t, value in sim.subscribe("robot/lidar"):
@@ -124,6 +125,9 @@ class Client:
     def call(self, path: str, value: Any = None, *, timeout: float | None = None) -> dict:
         """Write a command and wait for its outcome, or put a value in a stream.
 
+        *value* is the parameters by name, a mapping, for an endpoint that declares them
+        (``describe`` lists them); an endpoint built by hand takes its payload as it is.
+
         A command replies ``{"applied": True, "result": <what it returned>}``, plus
         ``verified``/``confirmation`` where the endpoint names one that confirms it. A stream
         replies ``{"queued": True}``.
@@ -148,7 +152,7 @@ class Client:
 
     def step(self, n: int = 1, *, timeout: float | None = None) -> dict:
         """Take *n* steps while paused; returns once they ran, with the sim time reached."""
-        return self.call("sim/run_control/step", int(n), timeout=timeout)["result"]
+        return self.call("sim/run_control/step", {"n": int(n)}, timeout=timeout)["result"]
 
     def reset(self, *, timeout: float | None = None) -> dict:
         return self.call("sim/run_control/reset", timeout=timeout)["result"]

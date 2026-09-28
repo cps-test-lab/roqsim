@@ -45,6 +45,7 @@ except Exception as err:  # noqa: BLE001 — add a readable cause, then re-raise
         "MUJOCO_GL=egl only after installing libegl1/libglvnd0."
     ) from err
 
+from . import entity_pose
 from .assets import deduplicate_assets
 from .config import SimConfig, instantiate_plugins
 from .context import SimContext
@@ -340,6 +341,9 @@ class Engine:
                 # interface in its own configure, and is listed after its producers.
                 plugin.register_endpoints(self.ctx)
                 self.ctx.interface.producer = ""
+                # Each entity the plugin registered gets its core pose endpoint, likewise before a
+                # bridge listed next binds.
+                entity_pose.register(self.ctx)
                 # After configure, because the entity has to be registered before its presence can
                 # be set; here rather than inside each plugin so that a plugin registering an entity
                 # gets the world's `present:` honoured by declaring that it registers one.

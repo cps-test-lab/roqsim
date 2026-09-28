@@ -1239,43 +1239,174 @@ Declaring a plugin's endpoints
 ------------------------------
 
 A plugin marks the methods that are its I/O ports, and the base ``Plugin`` registers them on
-``ctx.interface`` when its ``configure`` returns (see :doc:`interfaces` for what an endpoint is)::
+``ctx.interface`` when its ``configure`` returns (see :doc:`interfaces` for what an endpoint is). The
+method's signature is the endpoint's schema::
+
+   from typing import Annotated
 
    from roqsim import endpoint
+   from roqsim.endpoint import Unit
+
+   class DiffDrivePlugin(Plugin):
+       @endpoint.stream("cmd_vel", ros2=lambda self: {"type": "geometry_msgs.msg.Twist",
+                                                      "topic": "cmd_vel"})
+       def command_twist(
+           self,
+           vx: Annotated[float, Unit("m/s"), "forward speed"],
+           vy: Annotated[float, Unit("m/s"), "sideways speed; dropped"] = 0.0,
+           w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
+       ) -> None:
+           self.drive(vx, vy, w)
+
+       @endpoint.out("odom", rate_hz=lambda self: self.odom_rate_hz, ros2=...)
+       def read_odom(self) -> Odometry:            # the return annotation types the payload
+           ...
 
    class ForceTorquePlugin(Plugin):
-       @endpoint.out("wrench", rate_hz=lambda self: self.rate_hz,
-                     ros2=lambda self: self._wrench_ros2)       # built in configure
-       def read_pair(self):
-           return (force, torque)
-
        @endpoint.command("tare", ros2={"service": "std_srvs.srv.Trigger"})
-       def tare(self, _payload=None):
+       def tare(self) -> None:                     # no parameters
            ...
 
-       @endpoint.stream("cmd_vel", ros2={"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"})
-       def command_twist(self, twist):
-           ...
-
-* ``endpoint.out`` -- the method returns the neutral payload; it runs on the physics thread when a
-  bridge reads it.
+* ``endpoint.out`` -- the method takes no parameters and returns the neutral payload; it runs on
+  the physics thread when a bridge reads it. Its return annotation is the payload's type: a
+  dataclass (its fields), a tuple or list of annotated values, a scalar, or a numpy array
+  (``NDArray[np.float64]``, with ``Shape(3)`` in ``Annotated`` where it is fixed).
 * ``endpoint.command`` -- a request with an outcome: the endpoint's ``write`` can be called from any
   thread and returns a future holding what the method returned or raised. The method runs on the
   physics thread.
-* ``endpoint.stream`` -- an inbound stream: ``write`` keeps the latest payload, and the method gets
-  the newest one once per step. Values superseded within a step are never applied.
+* ``endpoint.stream`` -- an inbound stream: ``write`` keeps the latest parameters, and the method is
+  called with the newest ones once per step. Values superseded within a step are never applied.
 
-The owner is the entity the plugin is nested under (``endpoint_owner``), the namespace its
-``namespace:`` config or else that entity's (``endpoint_namespace``), and the name defaults to the
-method's; a plugin that speaks for another entity overrides the two. Every other keyword is a backend
-hint, a dict or a callable taking the plugin -- hints often need what ``configure`` resolved -- and
-``rate_hz`` may be a callable too. ``when=lambda self: ...`` leaves an endpoint out for an instance
-whose config switches it off.
+**Parameters.** A command's or a stream's parameters are the method's own, and a bridge passes them
+by name, as a mapping (``{"vx": 0.2}``; ``None`` for a command that takes none). A parameter without
+a default is required. ``Annotated`` carries a :class:`~roqsim.endpoint.Unit` (spelled as a config
+``Field``'s ``unit``) and a plain string as its documentation. ``write`` checks what it is given
+before anything is queued -- a missing parameter, an unknown one (naming the nearest known), a value
+of the wrong type -- and refuses all of them in one :class:`~roqsim.endpoint.ParameterError`: in the
+returned future for a command, raised to the caller for a stream. An ``int`` passes for a ``float``,
+a ``bool`` for neither, and a sequence becomes the declared array. The schema is data on the
+endpoint (``Endpoint.params``, ``Endpoint.result``) for any bridge to read, and
+``roqsim plugins describe <name>`` publishes it -- each parameter's type, default, unit and doc, and
+the result -- read off the class without building a world. Annotations must resolve at run time, so
+a type used in one is imported at module level, not under ``TYPE_CHECKING``.
 
-The method never posts to the physics thread itself: marshalling is the framework's, once. A port
-whose name or number is only known at run time is still added with ``ctx.interface.add``.
-``roqsim plugins describe <name>`` lists a plugin's declared endpoints -- name, kind, direction,
-backends -- read off the class without building a world.
+**Owner, namespace, name.** The owner is the entity the plugin is nested under (``endpoint_owner``),
+the namespace its ``namespace:`` config or else that entity's (``endpoint_namespace``), and the name
+defaults to the method's. A plugin whose endpoints all speak for another entity -- one it registers
+itself -- overrides ``endpoint_owner``; a single endpoint that belongs elsewhere says ``owner=`` (and
+``namespace=`` where its scope differs), a value or a callable of the plugin.
+
+**Families.** One endpoint per joint, wheel, zone or instance, as many as the config says, is one
+declaration: ``each=`` is a callable of the plugin returning the items, each item makes one endpoint
+named ``<name>/<item>`` (or ``name`` with ``{item}`` substituted), and the method gets the item as
+its first argument::
+
+   @endpoint.out("bumper/{item}", each=lambda self: self.zones,
+                 ros2=lambda self, zone: {"type": "std_msgs.msg.Bool", "topic": f"bumper/{zone}"})
+   def zone_pressed(self, zone: str) -> bool:
+       ...
+
+In a family every callable option (hints, ``rate_hz``, ``when``, ``owner``, ``namespace``) takes
+``(plugin, item)``.
+
+**Hints.** Every other keyword is a backend hint, a dict or a callable taking the plugin -- hints often
+need what ``configure`` resolved -- and ``rate_hz`` may be a callable too. ``when=lambda self: ...``
+leaves an endpoint out for an instance whose config switches it off. The control socket
+(:doc:`control`) serves every endpoint without a hint; ``ipc=False`` keeps one off it.
+
+**Confirmation.** ``@endpoint.command(..., confirm="report")`` names an ``out`` endpoint of the same
+plugin whose value, recorded in the ``post_step`` of the step that applied the command, confirms it:
+a caller over the control socket gets that value in the reply. It is how a command whose effect is
+only known after a step -- a fault that landed or did not -- answers with its verdict.
+
+The method never posts to the physics thread itself: marshalling is the framework's, once.
+
+Converting a plugin
+~~~~~~~~~~~~~~~~~~~
+
+A plugin that still builds ``Endpoint(...)`` in ``configure`` is converted one endpoint at a time,
+and its ROS interface -- topic, type, service, action, frames, rate -- stays exactly as it was:
+
+1. **Move the hint block onto a decorator.** ``backend={"ros2": {...}}`` becomes
+   ``ros2=lambda self: {...}``; ``rate_hz``, ``lazy`` and a surrounding ``if`` (``when=``) move
+   with it. A value ``configure`` computed for the hint is kept on ``self`` and read in the lambda.
+2. **Owner and namespace.** Delete the ``owner=`` / ``namespace=`` arguments where they are the
+   entity the plugin is nested under (``self.robot = self.entity`` and the usual
+   ``config namespace or entity namespace``). Where they are not -- a plugin that registers its own
+   entity (``self.address``), or one endpoint on a second entity -- override ``endpoint_owner`` or
+   pass ``owner=`` / ``namespace=`` to that decorator.
+3. **The method.** The decorated method is the ``read`` or the ``write``; a ``lambda`` becomes a
+   method. An ``in`` endpoint's positional payload becomes named parameters -- the names the ROS
+   decoder of its message type produces (``roqsim_ros_bridge.registry``: ``vx``/``vy``/``w`` for a
+   twist, ``steering_angle``/``speed``, ``position``/``orientation``/``frame_id`` for a pose,
+   ``force``/``torque``, ``names``/``positions``, ``data`` for a primitive and for ``SetBool``).
+   Annotate each parameter and the return, with units.
+4. **Pick the kind.** A topic input that is a setpoint is a ``stream``; a ``service`` is a
+   ``command``; an input that must see every value in order (a trajectory, a queue of goals) is a
+   ``command`` too, since a stream keeps only the latest. Any ``ctx.post`` in the write goes: the
+   framework queues it.
+5. **A loop becomes a family** (``each=``).
+6. **Tests.** A test that called ``write(payload)`` passes the mapping. Check the endpoint's
+   ``backend`` equals what the hand-built one had.
+
+What stays hand-built: a port whose name or number is only known *during* the run (added with
+``ctx.interface.add``), and a plugin's own transport thread (``px4_sitl``'s socket reader posts what
+it received; that is not an endpoint).
+
+**The follow-ups.** One pull request per package, each leaving every ROS interface unchanged:
+
+.. list-table::
+   :header-rows: 1
+   :widths: 22 50 28
+
+   * - Package
+     - Plugins (endpoints)
+     - Needs
+   * - ``roqsim`` (core plugins and helpers)
+     - ``bumper`` (``bumper/<zone>``), ``clearance_monitor``, ``contact_impulse``,
+       ``contact_location``, ``contact_monitor``, ``energy_monitor`` (``battery``),
+       ``joint_state_publisher``, ``model_override`` (``override`` command, one ``out`` per
+       target), ``spawn_model`` (``<entity>_pose``), and ``roqsim.frames.static_tf_endpoint``
+       (``frames``, used by ``spawn_robot`` and ``spawn_sensor``)
+     - families: ``bumper``, ``model_override``; owner: ``model_override`` (its own name),
+       ``spawn_model`` (the entity it spawns)
+   * - ``roqsim_sensors``
+     - ``camera_common`` (``image``, ``image_compressed``, ``camera_info``), ``depth_camera``
+       (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
+       ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
+       ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
+       ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
+       per fault), ``spawn_sensor`` (``frames``)
+     - families: ``live_config``; owner: ``spawn_sensor`` (the sensor entity)
+   * - ``roqsim_mobile``
+     - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
+       ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
+     - owner: ``spawn_robot`` (the robot entity)
+   * - ``roqsim_manipulation``
+     - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
+       action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),
+       ``cartesian_admittance`` (``target_frame``, ``target_wrench``; ``current_pose``,
+       ``tracking_error``)
+     - --
+   * - ``roqsim_humanoid``, ``roqsim_quadruped``, ``roqsim_aerial``, ``roqsim_walker``,
+       ``roqsim_nav``, ``roqsim_assets``
+     - ``g1_locomotion``, ``oli_locomotion``, ``spot_locomotion`` (``cmd_vel``; ``odom``,
+       ``joint_states``), ``agibot_g2_controller`` (``joint_states``; ``joint_command``),
+       ``quadrotor_controller`` (``cmd_pos``; ``odom``), ``multirotor_motors`` (``motor_cmd``),
+       ``walker`` (``body_poses``), ``navigator`` (its route commands, today posted from the
+       write), ``conveyor`` (``speed``; ``package_pose``), ``door`` (``cmd``, ``door``; ``state``),
+       ``prop_trajectory`` (``stage_progress``)
+     - families: ``navigator`` (one command per configured route endpoint); owner: ``conveyor``,
+       ``door``, ``prop_trajectory``, ``walker`` (the entity each registers), and ``conveyor``'s
+       ``package_pose`` (``owner=`` the package entity, ``namespace=""``)
+   * - ``roqsim_ros_bridge`` (bridge side)
+     - the action handlers (``actions.py``) hand a typed endpoint its named parameters, as
+       ``services.py`` and the subscriptions already do through ``params.payload_for``
+     - --
+
+A last pull request removes the old way: no installed plugin calls ``ctx.interface.add(Endpoint(...))``
+or posts from an endpoint's write, a test enforces it over every entry point in ``roqsim.plugins``,
+and ``payload_for``'s positional form for an untyped endpoint goes.
 
 Degrading a sensor mid-run
 --------------------------

@@ -826,10 +826,16 @@ stream, latest value wins). ``Plugin.register_endpoints`` turns them into ``Endp
 ``ctx.interface`` as the last step of that plugin's ``configure`` -- a subclass's ``configure`` is
 wrapped to do it, and the engine calls it for a plugin without one -- so a hint may read what
 ``configure`` resolved, and a bridge listed later binds them. The owner, namespace and default name
-come from the plugin (``endpoint_owner``, ``endpoint_namespace``, the method name); backend hints are
-keyword arguments, each a dict or a callable of the plugin. :func:`roqsim.endpoint.declared` lists a
-class's endpoints without a world, and ``roqsim plugins describe`` publishes them. A port known only
-at run time is added with ``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
+come from the plugin (``endpoint_owner``, ``endpoint_namespace``, the method name; ``owner=`` for
+one that belongs elsewhere); backend hints are keyword arguments, each a dict or a callable of the
+plugin, and ``each=`` declares a family, one endpoint per item a config names. **The method's
+signature is the schema**: a command's or a stream's parameters (types, defaults, ``Annotated``
+units and docs) and the return type become ``Endpoint.params`` and ``Endpoint.result``, data any
+bridge reads; a bridge passes parameters by name, and ``write`` refuses a missing, unknown or
+mistyped one before queueing (:class:`~roqsim.endpoint.ParameterError`).
+:func:`roqsim.endpoint.declared` lists a class's endpoints with that schema without a world, and
+``roqsim plugins describe`` publishes them. A port known only at run time is added with
+``ctx.interface.add(Endpoint(...))``. Either way an endpoint is (see
 :class:`roqsim.context.Endpoint`): a ``name``,
 ``direction`` (``"out"`` → provide ``read``; ``"in"`` → provide ``write``), an ``owner`` (the entity),
 a ``namespace`` (a plain scope string each backend attaches to the endpoint's topics/frames/actions),
@@ -837,6 +843,12 @@ an optional ``rate_hz``, and a ``backend`` dict of inert per-backend hints keyed
 ``read``/``write`` callables traffic in **neutral payloads** (numpy arrays, tuples, small dataclasses)
 and run on the physics thread. Crucially the robot packages import nothing transport-specific — the
 message *type* is named as a **string** (``"sensor_msgs.msg.LaserScan"``) under the backend hint.
+
+**Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
+``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
+and ``(w, x, y, z)`` quaternion from ``xpos``/``xquat`` and its velocity from ``cvel``, computed only
+when read, ``None`` while the entity is deleted. It carries no backend hint, so no bridge publishes
+it unasked, and it is registered even after a bridge bound, for a consumer that looks it up by name.
 
 **Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
 itself. A command's ``write`` is safe from any thread: it submits the method
@@ -888,8 +900,10 @@ checked against the one the run actually published at without measuring arrival 
 **3. A concrete backend (transport-aware, in its own package).** ``roqsim_ros_bridge`` provides
 ``Ros2Bridge(BridgeBase)`` plus a registry (``roqsim_ros_bridge/registry.py``): ``resolve_type`` turns the
 type string into a class via ``importlib`` (cached); converters keyed by that string fill an outbound
-message in place, decoders turn an inbound message into a neutral payload, and a reflective path
-(``msg.data = payload``) covers primitive ``std_msgs`` with no registered converter. One converter per
+message in place, decoders turn an inbound message into its named parameters (the names a typed
+endpoint's method declares; an untyped one gets their values in order), and a reflective path
+(``msg.data = payload``, and ``data`` inbound) covers primitive ``std_msgs`` with no registered
+converter. One converter per
 *wire format*, not per producer: the same rendered frame is published as ``sensor_msgs/Image`` or as
 ``sensor_msgs/CompressedImage`` purely by which type string an endpoint names, so a camera plugin
 offers a compressed stream without importing a codec (the encoder itself is

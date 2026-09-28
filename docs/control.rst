@@ -28,9 +28,18 @@ From another shell, in the same directory or anywhere else on the machine::
    ...
 
    $ roqsim describe robot/diff_drive/cmd_vel
+   robot/diff_drive/cmd_vel
+     kind: stream
+     ...
+     parameter vx: float [m/s] -- forward speed
+     parameter vy: float [m/s] -- sideways speed; a differential drive drops it = 0.0
+     parameter w: float [rad/s] -- yaw rate = 0.0
+     example: roqsim call robot/diff_drive/cmd_vel '{"vx": 0.0, "vy": 0.0, "w": 0.0}'
+
    $ roqsim read robot/lidar2d_0/lidar/scan          # arrays summarised; --full prints them
+   $ roqsim read sim/entities/robot/pose --field position
    $ roqsim read sim/run_control/state --field sim_time
-   $ roqsim call robot/diff_drive/cmd_vel '[0.5, 0, 0]'
+   $ roqsim call robot/diff_drive/cmd_vel '{"vx": 0.5}'
    $ roqsim sub robot/diff_drive/odom --count 5      # values as they are published
    $ roqsim ctl pause
    $ roqsim ctl step 100                             # returns once the 100 steps ran
@@ -51,7 +60,7 @@ From Python::
        sim.pause()
        print(sim.step(10)["sim_time"])
        scan = sim.read("robot/lidar2d_0/lidar/scan")    # ranges is a numpy array
-       sim.call("robot/diff_drive/cmd_vel", [0.3, 0.0, 0.1])
+       sim.call("robot/diff_drive/cmd_vel", {"vx": 0.3, "w": 0.1})
        sim.resume()
        with sim.subscribe("robot/diff_drive/odom") as odom:
            path, t, value = odom.get(timeout=1.0)
@@ -93,8 +102,9 @@ Paths and kinds
 An endpoint's path is the address of the plugin that registered it, with its dots as slashes, then
 the endpoint's name: the ``lidar`` nested under ``robot`` publishing ``scan`` is ``robot/lidar/scan``;
 a ``model_override`` named ``grip_fault`` at the top of a world is ``grip_fault/override``. Run
-control is ``sim/run_control/{pause, resume, step, reset, state}``. Two endpoints that would share a
-path are refused when the simulation starts, naming both.
+control is ``sim/run_control/{pause, resume, step, reset, state}``, and every entity's ground-truth
+pose is the core's ``sim/entities/<name>/pose``. Two endpoints that would share a path are refused
+when the simulation starts, naming both.
 
 Every endpoint is served unless it opts out with ``backend={"ipc": False}`` (``ipc=False`` on a
 decorator). Three kinds:
@@ -102,20 +112,22 @@ decorator). Three kinds:
 ``out``
    ``read`` returns its current value; ``sub`` delivers it as it is published, at its rate.
 ``command``
-   ``call`` writes it and waits for the outcome: what the plugin's method returned, or the plugin's
-   own exception text when it refused. A command that names an ``out`` endpoint that confirms it
+   ``call`` writes it -- the parameters by name, as a JSON object, for an endpoint that declares
+   them (``describe`` lists them with their types and units; a missing, unknown or mistyped one is
+   refused before anything is queued, naming the nearest known name) -- and waits for the outcome:
+   what the plugin's method returned, or the plugin's own exception text when it refused. A command that names an ``out`` endpoint that confirms it
    (``Endpoint.confirm``) replies with that endpoint's value as recorded in the step that applied
    the command. **While the simulation is paused no step runs**, so such a reply is ``"verified":
    false`` with a note saying so -- it neither steps the simulation nor reports the verdict from
    before the change. A command that gets no outcome within the timeout (5 s unless the request
    names one) is an error, never a success.
 ``stream``
-   ``call`` puts the value in the stream's slot and returns at once; the newest value is applied at
-   the next step, or while paused at once.
+   ``call`` checks the parameters the same way, puts them in the stream's slot and returns at
+   once; the newest value is applied at the next step, or while paused at once.
 
-``describe`` returns the whole tree, or one endpoint: its kind, rate, docstring, what confirms it,
-and what the other transports call it (the ROS topic, service or action the ROS bridge resolved).
-An unknown path is refused with the nearest known path and its siblings.
+``describe`` returns the whole tree, or one endpoint: its kind, rate, docstring, parameters and
+result with their types and units, what confirms it, and what the other transports call it (the
+ROS topic, service or action the ROS bridge resolved). An unknown path is refused with the nearest known path and its siblings.
 
 Values
 ------

@@ -33,20 +33,20 @@ class _Stamped:
     drive: _Drive = field(default_factory=_Drive)
 
 
-def test_the_two_numbers_pass_through_in_order():
+def test_the_two_numbers_pass_through_by_name():
     decode = DECODERS["ackermann_msgs.msg.AckermannDrive"]
-    assert decode(_Drive(steering_angle=0.35, speed=1.25)) == (0.35, 1.25)
+    assert decode(_Drive(steering_angle=0.35, speed=1.25)) == {"steering_angle": 0.35, "speed": 1.25}
 
 
 def test_a_stopped_car_still_states_an_angle():
     """The case a twist cannot express, and the reason not to convert here."""
     decode = DECODERS["ackermann_msgs.msg.AckermannDrive"]
-    assert decode(_Drive(steering_angle=0.42, speed=0.0)) == (0.42, 0.0)
+    assert decode(_Drive(steering_angle=0.42, speed=0.0)) == {"steering_angle": 0.42, "speed": 0.0}
 
 
 def test_the_stamped_form_unwraps_to_the_same_pair():
     decode = DECODERS["ackermann_msgs.msg.AckermannDriveStamped"]
-    assert decode(_Stamped(_Drive(steering_angle=-0.2, speed=-0.5))) == (-0.2, -0.5)
+    assert decode(_Stamped(_Drive(steering_angle=-0.2, speed=-0.5))) == {"steering_angle": -0.2, "speed": -0.5}
 
 
 def test_the_decoder_reads_no_geometry_and_no_derivatives():
@@ -58,4 +58,4 @@ def test_the_decoder_reads_no_geometry_and_no_derivatives():
     """
     decode = DECODERS["ackermann_msgs.msg.AckermannDrive"]
     payload = decode(_Drive(steering_angle=0.1, speed=2.0, acceleration=99.0, jerk=99.0))
-    assert payload == (0.1, 2.0)
+    assert payload == {"steering_angle": 0.1, "speed": 2.0}

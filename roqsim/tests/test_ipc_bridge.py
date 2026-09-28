@@ -39,17 +39,17 @@ class Tank(Plugin):
         self._ctx = ctx
 
     @endpoint.out(rate_hz=100.0)
-    def level(self):
+    def level(self) -> dict:
         """How full it is."""
         self.reads += 1
         return {"litres": 3.5, "profile": np.arange(6, dtype=np.float32).reshape(2, 3)}
 
     @endpoint.out()
-    def report(self):
+    def report(self) -> dict:
         return {"verdict": self.verdict}
 
     @endpoint.command("drain", confirm="report")
-    def drain(self, litres=None):
+    def drain(self, litres: float | None = None) -> dict:
         """Let some out."""
         if litres is not None and litres < 0:
             raise ValueError(f"cannot drain {litres} litres: a drain takes water out")
@@ -57,11 +57,11 @@ class Tank(Plugin):
         return {"drained": litres}
 
     @endpoint.command("stall")
-    def stall(self, _payload=None):
+    def stall(self) -> None:
         return None
 
     @endpoint.stream("setpoint")
-    def set_setpoint(self, value):
+    def set_setpoint(self, value: list[float]) -> None:
         self.setpoints.append(value)
 
     def post_step(self, ctx: SimContext) -> None:
@@ -129,6 +129,8 @@ def test_read_describe_and_array_frames_round_trip(uri):
         assert value["profile"].dtype == np.float32 and value["profile"].shape == (2, 3)
         np.testing.assert_array_equal(value["profile"], np.arange(6).reshape(2, 3))
         assert sim.read("box/tank/level", field="litres") == 3.5
+        pose = sim.read("sim/entities/box/pose")  # the core's, per entity
+        assert pose["position"].shape == (3,) and pose["orientation"].shape == (4,)
         paths = {e["path"]: e for e in sim.endpoints()}
         assert paths["box/tank/level"]["kind"] == "out"
         assert paths["box/tank/drain"]["kind"] == "command"
@@ -136,23 +138,30 @@ def test_read_describe_and_array_frames_round_trip(uri):
         assert {"sim/run_control/pause", "sim/run_control/step"} <= set(paths)
         full = sim.describe("box/tank/drain")
         assert full["doc"] == "Let some out." and full["confirm"] == "box/tank/report"
+        assert [p["name"] for p in full["params"]] == ["litres"]
+        assert full["params"][0]["type"] == "float" and not full["params"][0]["required"]
 
 
 def test_a_command_replies_with_its_confirmation_and_a_refusal_with_its_own_text(uri):
     with Sim(uri), Client(uri) as sim:
-        reply = sim.call("box/tank/drain", 2)
+        reply = sim.call("box/tank/drain", {"litres": 2})
         assert reply["applied"] and reply["verified"]
-        assert reply["result"] == {"drained": 2}
+        assert reply["result"] == {"drained": 2.0}
         assert reply["confirmation"] == {"verdict": "landed"}
-        with pytest.raises(ControlError, match="cannot drain -1 litres") as err:
-            sim.call("box/tank/drain", -1)
+        with pytest.raises(ControlError, match="cannot drain -1.0 litres") as err:
+            sim.call("box/tank/drain", {"litres": -1})
         assert err.value.kind == "refused"
+        with pytest.raises(ControlError, match="did you mean 'litres'") as err:
+            sim.call("box/tank/drain", {"liters": 1})
+        assert err.value.kind == "bad_request"
+        with pytest.raises(ControlError, match="missing parameter 'value'"):
+            sim.call("box/tank/setpoint", {})
 
 
 def test_a_paused_run_applies_a_command_and_says_it_is_unverified(uri):
     with Sim(uri) as run, Client(uri) as sim:
         sim.pause()
-        reply = sim.call("box/tank/drain", 1)
+        reply = sim.call("box/tank/drain", {"litres": 1})
         assert reply["applied"] and reply["verified"] is False
         assert "unverified" in reply["note"]
         assert run.tank.verdict == "none"  # no step ran to record one
@@ -160,7 +169,7 @@ def test_a_paused_run_applies_a_command_and_says_it_is_unverified(uri):
 
 def test_a_stream_keeps_the_latest_value(uri):
     with Sim(uri) as run, Client(uri) as sim:
-        assert sim.call("box/tank/setpoint", [1.0, 2.0]) == {"queued": True}
+        assert sim.call("box/tank/setpoint", {"value": [1.0, 2.0]}) == {"queued": True}
         deadline = time.monotonic() + 5
         while not run.tank.setpoints and time.monotonic() < deadline:
             time.sleep(0.01)
@@ -240,14 +249,14 @@ def test_two_transports_writing_one_stream_warn_once_naming_both(caplog):
     with Engine(cfg, plugins=[DummyPlugin({}, name="box"), tank], preview=True) as engine:
         ep = engine.ctx.interface.find("box", "setpoint")
         with caplog.at_level(logging.WARNING, logger="roqsim.context"):
-            ep.slot.put(1.0, "ros2")
-            ep.slot.put(2.0, "ipc")
-            ep.slot.put(3.0, "ros2")
+            ep.write({"value": [1.0]}, source="ros2")
+            ep.write({"value": [2.0]}, source="ipc")
+            ep.write({"value": [3.0]}, source="ros2")
         warnings = [r for r in caplog.records if "written by both" in r.getMessage()]
         assert len(warnings) == 1
         assert "ros2" in warnings[0].getMessage() and "ipc" in warnings[0].getMessage()
         engine.ctx.drain_commands()
-        assert tank.setpoints == [3.0]
+        assert tank.setpoints == [[3.0]]
 
 
 def test_two_endpoints_on_one_path_are_refused_naming_both(uri):
@@ -265,7 +274,7 @@ def test_two_endpoints_on_one_path_are_refused_naming_both(uri):
 def test_an_endpoint_opts_out_with_a_false_hint(uri):
     class Quiet(Plugin):
         @endpoint.out(ipc=False)
-        def secret(self):
+        def secret(self) -> int:
             return 1
 
     with Sim(uri, Quiet({}, entity="box", label="quiet")), Client(uri) as sim:
@@ -318,7 +327,7 @@ def test_describe_names_the_endpoint_on_the_other_transports(uri):
 
     class Hinted(Plugin):
         @endpoint.out(wire={"topic": "odom"})
-        def odom(self):
+        def odom(self) -> float:
             return 0.0
 
     with Sim(uri, Hinted({}, entity="box", label="base"), Wire({})), Client(uri) as sim:
