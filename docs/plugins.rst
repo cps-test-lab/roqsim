@@ -74,10 +74,22 @@ catalog above once ROS is sourced and the workspace is on the path.
        warns when one does not), ``reuse_messages``, ``rates`` (per-endpoint overrides, snapped onto the
        physics grid like every other publish rate — see the note below), ``owner``
        (optional endpoint filter for multi-transport splits), ``merged_joint_states``
-       (see the note below).
+       (see the note below). Also: ``node_name`` (default ``roqsim_bridge``); ``frame_prefix``
+       (prefix for frame ids, default the ``namespace``); ``publish_static_tf`` (default ``true``;
+       ``false`` where a ``robot_state_publisher`` publishes the same mount links); ``domain_id``
+       (an isolated ROS context on that domain, so several bridges can run in one process) with
+       ``strip_namespace`` (a namespace, or list, removed so the robot a bridge serves keeps
+       local names on its domain); ``gt: {prefix, exempt}`` (the ground-truth topic prefix and the
+       topics exempt from it, :doc:`ground_truth`). ``clock_rate_hz: 0`` publishes no ``/clock``.
    * - ``sim_interfaces``
-     - ``simulation_interfaces`` control plane (features / entities / state / step / reset). No
-       required config; reuses the bridge's node when co-loaded.
+     - ``simulation_interfaces`` control plane. Serves ``get_simulator_features``,
+       ``get_entities``, ``get_spawnables``, ``spawn_entity``, ``delete_entity``,
+       ``get_entity_state``, ``set_entity_state``, ``get_simulation_state``,
+       ``set_simulation_state``, ``step_simulation`` and ``reset_simulation`` (relative names).
+       Listed after a ``ros2_bridge`` they live on the bridge's node, and so in its ``namespace``
+       (plugins configure in world order, and the bridge shares its node when it configures);
+       otherwise on a node of their own named by ``node_name`` (default ``roqsim_interfaces``). No
+       required config. What each does is in :doc:`interfaces`.
 
 .. note::
 
