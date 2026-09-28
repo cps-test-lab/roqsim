@@ -100,7 +100,8 @@ under-reports the turn -- measured, a car that came round 1.1 rad believes it ca
 scrub factor is offered to hide it: unlike a skid-steer's, whose scrub is systematic enough for
 ``diff_drive``'s ``slip_factor`` to correct, a tyre's slip angle varies with speed and load, so a
 single constant would be a fudge that makes the odometry look better than the sensor it stands for.
-:mod:`roqsim_sensors.plugins.ground_truth_pose` is what a grader compares against, and the gap
+The true pose (:mod:`roqsim.entity_pose`, and the run's recording) is what a grader compares
+against, and the gap
 between the two is what a localisation experiment is about.
 """
 

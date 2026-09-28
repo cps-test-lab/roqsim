@@ -30,7 +30,7 @@ ARGUMENTS = [
         "robot_name",
         default_value="turtlebot4",
         description="The child frame the robot's ground-truth pose is published under "
-        "(turtlebot4.manifest.yaml: ground_truth_pose child_frame)",
+        "(turtlebot4.manifest.yaml: create3_pose_publisher frame)",
     ),
     DeclareLaunchArgument(
         "dock_name",

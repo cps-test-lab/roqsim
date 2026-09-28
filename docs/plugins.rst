@@ -360,8 +360,8 @@ dirs (e.g. ``assets: roqsim_manipulation_assets`` for a custom arm variant that 
      - range_sensor: {site: cliff_front_left, max_range: 0.15, lazy: true, ...}   # x4 cliff, x7 IR
        name: cliff_front_left
      - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
-     - ground_truth_pose: {site: mouse, relative_to: base, lazy: true, ...}
-       name: gt_mouse
+     - create3_pose_publisher: {frame: turtlebot4, sites: [mouse, ir_omni], rate_hz: 62, ...}
+       name: gt
 
 The second half is the Create 3 base's own sensor surface -- bumper zones, cliff and IR proximity
 sensors, IMU, and the ground-truth streams its vendor's simulator adapter reads -- declared on the
@@ -1369,7 +1369,7 @@ it received; that is not an endpoint).
        (``depth``, ``depth_camera_info``, ``depth_compressed``), ``realsense_d435`` (``points``),
        ``segmentation_camera`` (``labels``, ``instances``, ``detections``), ``lidar_common``,
        ``imu``, ``gnss`` (``fix``), ``object_detector`` (``detections``), ``force_limit``,
-       ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
+       the ``live_config`` mixin (``override`` command, one ``out``
        per fault), ``spawn_sensor`` (``frames``)
      - families: ``live_config``; owner: ``spawn_sensor`` (the sensor entity)
    * - ``roqsim_mobile``
@@ -1573,7 +1573,7 @@ as ``+x`` whatever the spawn heading. A wheeled base integrates its wheels from 
 odometry drifts as wheel odometry does. A legged controller reads its base pose from the simulator
 and states it relative to the spawn pose, so its odometry is exact, and its ``z`` stays the base
 height, so ``base_link`` stands where the robot does. The true pose is not in ``odom``: it is the
-``ground_truth_pose`` plugin (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
+core pose endpoint ``sim/entities/<name>/pose`` and the run's recording (:doc:`ground_truth`). A ``map -> odom`` identity is therefore right
 only for a robot spawned at the map origin facing ``+x``.
 
 **A command expires.** ``cmd_vel_timeout`` (seconds of sim time) is how long a command holds; once

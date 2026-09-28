@@ -9,7 +9,8 @@ leg joints as ``joint_states``.
 
 ``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
 policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
-command"). The base's world pose is the ``ground_truth_pose`` plugin's.
+command"). The base's true world pose is the core pose endpoint
+``sim/entities/<name>/pose``.
 
 The observation/action conventions, PD gains, default angles, scales and timing are lifted verbatim
 from unitree_rl_gym's ``deploy/deploy_mujoco/deploy_mujoco.py`` + ``configs/g1.yaml`` (bundled in this

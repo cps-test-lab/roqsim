@@ -9,7 +9,8 @@ base as ``odom`` and the joints as ``joint_states``.
 
 ``odom`` starts at zero at the spawn pose, and ``cmd_vel_timeout`` zeroes a stale command so the
 policy walks to a stop, as on every velocity-commanded plugin (docs/plugins.rst, "A velocity
-command"). The base's world pose is the ``ground_truth_pose`` plugin's.
+command"). The base's true world pose is the core pose endpoint
+``sim/entities/<name>/pose``.
 
 The observation layout, PD gains, default angles, scales, torque limits and timing are lifted verbatim
 from humanoid-rl-deploy-python's ``walk_controller.py`` + ``walk_param.yaml`` (bundled under

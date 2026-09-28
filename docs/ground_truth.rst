@@ -1,78 +1,53 @@
-ground truth
+Ground truth
 ============
 
-The simulator knows every body's exact pose. Two mechanisms expose that truth to ROS, for two
-different consumers.
+The simulator knows every body's exact pose. There are two ways to get it, and neither is a
+plugin in the world.
+
+The recording
+-------------
+
+An analysis reads the true path from the run itself. ``roqsim sim --record`` keeps the complete
+state, and the pose series beside it (``sim_poses.csv``, :ref:`sim-poses`) has one row per sample
+per named body: the world pose as a quaternion and the world twist, on exact simulated time. A
+stepped run publishes nothing, so for it this is the only pose series there is. Because it comes from
+the solver rather than from a transport, it has no arrival-time jitter.
+
+The core pose endpoint
+----------------------
+
+While a run is going, every entity whose body is in the model has an ``out`` endpoint
+``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`). It holds the body's world
+position, its ``(w, x, y, z)`` orientation, and the linear and angular velocity of the body origin,
+taken from ``data.xpos``, ``data.xquat`` and ``cvel``::
+
+    from roqsim import entity_pose
+
+    ep = ctx.interface.find(entity_pose.OWNER, entity_pose.endpoint_name("robot"))
+    pose = ep.read()            # EntityPose, or None while the entity is deleted
+
+It is computed only when it is read. It carries no backend hint, so no bridge publishes it unless
+asked. A plugin that must put a true pose on the wire in a stack's own shape reads this endpoint and
+declares that stream itself. ``create3_pose_publisher`` (``roqsim_mobile``) is the example: it
+publishes the TurtleBot 4's and its dock's poses, and their sites' poses relative to the body, on the
+topics the Create 3 simulator stack reads (:doc:`create3_stack`).
+
+roqsim publishes no ``<model>_base_link_gt`` TF frame. A consumer that needs the truth reads the
+recording.
 
 Ground-truth topic namespace (``ros2_bridge`` ``gt:``)
 ------------------------------------------------------
 
-The :doc:`ros2_bridge <interfaces>` can divert *output* topics under a ground-truth prefix so a
-consumer can tell a true pose from real perception. Configure it on the bridge plugin::
+When this simulator runs beside a real system as its ground truth, the :doc:`ros2_bridge
+<interfaces>` can divert *output* topics under a prefix. This lets a consumer tell a simulated
+stream from real perception::
 
     components:
       - ros2_bridge:
           gt:
-            prefix: /gt              # published outputs move to /gt/... (e.g. /gt/tf)
+            prefix: /gt              # published outputs move to /gt/...
             exempt: [odom, scan]     # ...except these, which mirror a real topic and stay canonical
 
-The rule: **prefix** a pure ground-truth stream that has no real-sensor equivalent (an object's true
-pose); **exempt** a stream that mirrors a real topic (robot telemetry, a sensor's own message), so it
-keeps its canonical name. With no ``gt`` block every topic is canonical.
-
-Ground-truth base pose (``ground_truth_pose`` plugin)
------------------------------------------------------
-
-``ground_truth_pose`` (in ``roqsim_sensors``) publishes a robot base body's *true* world pose as a TF
-transform ``<frame_id> -> <child_frame>``, default ``map -> <model>_base_link_gt``. It reads
-``data.xpos``/``data.xquat`` directly, so it is robot-family-agnostic (TurtleBot, Husky, Spot, a
-humanoid — same plugin).
-
-The frame is a **disconnected leaf**: it is deliberately *not* wired into the odometry/localization
-chain. nav2 localizes with AMCL off the drifting wheel odometry (``diff_drive`` integrates wheel
-velocities, so ``/odom`` and ``odom -> base_link`` drift like real hardware); ``map -> odom`` is
-AMCL's correction. ``<model>_base_link_gt`` sits beside that tree purely so an evaluator can diff the
-navigated path against the truth.
-
-This mirrors the Gazebo navigation stack, where ``gazebo_tf_publisher`` republishes
-``SceneBroadcaster`` poses as ``<robot>_base_link_gt`` on ``/tf``. Recording ``/tf`` against either
-simulator therefore yields the same ground-truth frame and the same offline analysis applies
-unchanged — which is what lets roqsim stand in for Gazebo.
-
-Add it to a world (or a robot manifest)::
-
-    components:
-      - spawn_robot: {model: turtlebot4}
-        name: robot
-        components:
-          - ground_truth_pose: {}   # -> /tf: map -> turtlebot4_base_link_gt
-      - ros2_bridge: {}
-
-Config keys: ``body`` (base-body override; default the entity's registered base body -- the entity
-itself is the entry this one is nested under), ``site`` (a site of the entity instead of a body),
-``relative_to`` (``world``, the default, or ``base``), ``frame_id`` (parent, default ``map``, or the
-base body for a relative pose), ``child_frame`` (default ``<model>_base_link_gt`` for a body, the
-site's own name for a site), ``rate_hz`` (default ``30``), and the standard ``topics:`` hardwire map
-(``pose`` role; default relative ``tf`` → ``/tf``, or ``/gt/tf`` under the bridge ``gt`` prefix).
-
-**A site, and a pose relative to the base.** A robot's real description hangs sensors, emitters and
-receivers off its base as links, and a stack that reproduces a device from ground truth -- an
-optical-flow sensor from the true motion of its mount, a dock's infrared field from the true poses
-of emitter and receiver -- reads those links' poses off the simulator. Gazebo publishes a model's
-pose in the world and its links' poses *relative to the model*, and the consumer composes the two.
-The same plugin serves that, several instances on one entity, each its own frame::
-
-    components:
-      - spawn_robot: {model: turtlebot4}
-        name: robot
-        components:
-          - ground_truth_pose: {child_frame: turtlebot4, rate_hz: 62,
-                                topics: {pose: _internal/sim_ground_truth_pose}}
-            name: gt_base
-          - ground_truth_pose: {site: mouse, relative_to: base, rate_hz: 62,
-                                topics: {pose: _internal/sim_ground_truth_pose}}
-            name: gt_mouse
-
-A site is published under its own name, the parent of a relative pose defaults to the base body, and
-the numbers are ``base^-1 * pose`` -- constant for a rigid mount wherever the base stands. It works
-under a ``spawn_model`` prop as under a robot, which is how a dock's emitter gets a frame.
+The rule is this: put a prefix on a stream that has no real-sensor equivalent, and exempt a stream
+that mirrors a real topic, so that it keeps its canonical name. With no ``gt`` block, every topic is
+canonical.

@@ -276,7 +276,7 @@ def test_odometry_is_the_encoder_estimate_and_drifts_on_a_curve():
     Cornering, the tyres slip and the bicycle relation under-reports the turn: measured here, the car
     ends up at a yaw of ~1.1 rad while its odometry believes ~0.8. That gap is what a localisation
     experiment is about, so it is asserted to EXIST rather than tuned away with a fudge factor;
-    `ground_truth_pose` is what a grader compares against.
+    the true pose is what a grader compares against.
     """
     engine = _engine()
     _, _, yaw = _run(engine, 0.6, 0.6)

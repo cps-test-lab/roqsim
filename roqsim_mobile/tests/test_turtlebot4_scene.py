@@ -664,16 +664,12 @@ def test_e1_the_manifest_declares_the_create3_surface():
             assert cfg["h_fov"] == pytest.approx(math.radians(10), abs=1e-6)
             assert (cfg["range_min"], cfg["max_range"]) == (0.025, 0.2)
 
-    poses = {e["name"]: e["ground_truth_pose"] for e in _manifest_entries("ground_truth_pose")}
-    assert poses["gt_base"]["child_frame"] == "turtlebot4"
-    assert poses["gt_mouse"] == {
-        "site": "mouse",
-        "relative_to": "base",
+    assert _manifest_plugin("create3_pose_publisher") == {
+        "topic": "_internal/sim_ground_truth_pose",
+        "frame": "turtlebot4",
+        "sites": ["mouse", "ir_omni"],
         "rate_hz": 62,
-        "lazy": True,
-        "topics": {"pose": "_internal/sim_ground_truth_pose"},
     }
-    assert poses["gt_ir_omni"]["site"] == "ir_omni"
 
     assert _manifest_plugin("imu")["topic"] == "imu"
     assert _manifest_plugin("imu")["pos"] == pytest.approx([0.050613, 0.043673, 0.0844])
@@ -762,7 +758,11 @@ def test_e3b_the_base_takes_a_plain_twist_and_expires_it(create3):
 
 def test_e4_the_ground_truth_stream_is_the_adapters_contract(create3):
     """E4: the base under the robot's name in the world, the mouse and IR receiver relative to it."""
-    poses = [e for e in create3.ctx.interface.all() if e.name == "pose"]
+    poses = [
+        e
+        for e in create3.ctx.interface.all()
+        if e.backend.get("ros2", {}).get("topic") == "_internal/sim_ground_truth_pose"
+    ]
     by_child = {e.read()[0][0]: e for e in poses}
     assert set(by_child) == {"turtlebot4", "mouse", "ir_omni"}
     assert by_child["turtlebot4"].backend["ros2"]["frame_id"] == "map"
@@ -849,19 +849,12 @@ def test_e7_the_dock_is_a_prop_with_the_emitter_frames_the_stack_ranges_by():
                 "name": "standard_dock",
                 "components": [
                     {
-                        "ground_truth_pose": {
-                            "child_frame": "standard_dock",
-                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
+                        "create3_pose_publisher": {
+                            "topic": "_internal/sim_ground_truth_dock_pose",
+                            "frame": "standard_dock",
+                            "sites": ["halo_link"],
                         },
-                        "name": "gt_dock",
-                    },
-                    {
-                        "ground_truth_pose": {
-                            "site": "halo_link",
-                            "relative_to": "base",
-                            "topics": {"pose": "_internal/sim_ground_truth_dock_pose"},
-                        },
-                        "name": "gt_halo",
+                        "name": "gt",
                     },
                 ],
             },

@@ -37,9 +37,9 @@ The Depot world with AMCL (Gazebo-compatible)
 in the **Depot** world (``roqsim_scenes:depot``, baked from the Gazebo/Fuel model) with the stock nav2
 Depot map, and localizes with **AMCL** instead of the static ``map->odom`` stand-in — mirroring nav2's
 ``tb4_simulation_launch.py`` on gz. The robot spawns at world ``(-8, 0)`` and AMCL seeds at the map
-origin, fixing ``map = world + (8, 0)`` exactly as in Gazebo; ``depot_nav2.yaml`` also adds the
-:doc:`ground_truth` ``ground_truth_pose`` plugin, so ``/tf`` carries ``turtlebot4_base_link_gt`` just
-like the gz stack. A nav2 client — and a scenario-execution ``ros_launch`` of either backend — sees
+origin, fixing ``map = world + (8, 0)`` exactly as in Gazebo. The robot's true path is in the run's
+recording, not on ``/tf`` (:doc:`ground_truth`), so the gz stack's ``turtlebot4_base_link_gt`` frame
+has no counterpart here. A nav2 client — and a scenario-execution ``ros_launch`` of either backend — sees
 the same ROS graph.
 
 .. code-block:: bash

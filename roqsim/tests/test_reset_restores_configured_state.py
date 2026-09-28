@@ -346,7 +346,7 @@ CASES: dict[str, Case] = {
     "range_sensor": Case(lambda _: _world(_robot("turtlebot4"))),
     "imu": Case(lambda _: _mobile({"imu": {}})),
     "gnss": Case(lambda _: _mobile({"gnss": {"datum": {"lat": 47.4, "lon": 8.5, "alt": 400.0}}})),
-    "ground_truth_pose": Case(lambda _: _mobile({"ground_truth_pose": {}})),
+    "create3_pose_publisher": Case(lambda _: _world(_robot("turtlebot4"))),
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),

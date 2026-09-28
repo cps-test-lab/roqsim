@@ -137,13 +137,7 @@ components:
   - imu: {pos: [0.050613, 0.043673, 0.0844], topic: imu, rate_hz: 62}
   # Ground truth the Create 3's simulator streams for its adapter: the base's world pose under the
   # robot's name, and the optical-flow mouse and IR receiver poses relative to the base, all on one
-  # topic at 62 Hz. `child_frame` is the name the adapter's `robot_name` parameter matches.
-  - ground_truth_pose: {child_frame: turtlebot4, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_base
-  - ground_truth_pose: {site: mouse, relative_to: base, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_mouse
-  - ground_truth_pose: {site: ir_omni, relative_to: base, rate_hz: 62, lazy: true,
-                        topics: {pose: _internal/sim_ground_truth_pose}}
-    name: gt_ir_omni
+  # topic at 62 Hz. `frame` is the name the adapter's `robot_name` parameter matches.
+  - create3_pose_publisher: {topic: _internal/sim_ground_truth_pose, frame: turtlebot4,
+                             sites: [mouse, ir_omni], rate_hz: 62}
+    name: gt

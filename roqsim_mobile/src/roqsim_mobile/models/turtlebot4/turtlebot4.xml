@@ -139,7 +139,7 @@
            the quaternion qz(yaw) * qy(pitch), written out because MuJoCo's `euler` composes in
            the other order). What each one publishes is the
            manifest's business (range_sensor casts a ray grid from a site along its +x;
-           ground_truth_pose publishes a site's pose); the MJCF only says where they are.
+           create3_pose_publisher publishes a site's pose); the MJCF only says where they are.
 
            Four cliff sensors, pitched 80 deg down from 1.92 cm over the floor: the boresight
            meets the floor ~1.95 cm out, so a floor return is short and a hole is no return. -->
