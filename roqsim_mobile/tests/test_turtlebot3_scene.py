@@ -48,7 +48,9 @@ LDS_MASS = 0.114
 #: The vendor base (robotis_tb3 @ d8344c0: 1.8 kg, scanner drawn on it) less the mounted scanner.
 BASE_MASS = 1.8 - LDS_MASS
 TOTAL_MASS = BASE_MASS + 2 * 0.0285  # the MJCF alone
-SPAWNED_MASS = 1.8 + 2 * 0.0285  # 1.857 kg: the vendor's total, once the manifest mounts the scanner
+SPAWNED_MASS = (
+    1.8 + 2 * 0.0285
+)  # 1.857 kg: the vendor's total, once the manifest mounts the scanner
 PLATE_L, PLATE_W = 0.272, 0.276  # chassis plate (the datasheet's 0.306 m width is the wheels)
 HULL_W = 2 * 0.144 + WHEEL_W  # 0.3064 m — datasheet 0.306 m
 #: base_link -> base_scan, turtlebot3_description @ 0c0be84 urdf/turtlebot3_waffle.urdf:203-207.
@@ -532,7 +534,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
     engine, _ = mounted
     scan = scan_mount.scan_endpoint(engine)
     assert scan.owner == "robot.lds01" and scan.namespace == scan_mount.NAMESPACE
-    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan_mount.topic_of(scan) == "scan"
     assert scan.backend["ros2"]["frame_id"] == "base_scan"
     assert "static_tf" not in scan.backend["ros2"]
 

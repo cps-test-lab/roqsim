@@ -173,7 +173,7 @@ def test_a_nested_device_inherits_its_carriers_prefix_and_namespace(tmp_path):
     assert entity.meta["prefix"] == "r_scan_front_" and entity.meta["namespace"] == "tb"
     scan = _endpoint(engine, "scan", "robot.scan_front")
     assert scan.namespace == "tb"
-    assert scan.backend["ros2"]["topic"] == "scan"  # relative, so the namespace scopes it
+    assert "topic" not in scan.backend["ros2"] and scan.topic is None  # on "scan", relative
     assert scan.backend["ros2"]["frame_id"] == "scanner_link"
     assert "static_tf" not in scan.backend["ros2"]  # the mount owns the chain
 
@@ -274,7 +274,7 @@ def test_a_carrier_manifest_override_and_topics_win_over_the_device(tmp_path):
     lidar = _plugin(engine, "robot.scan_front.lidar")
     assert lidar.num_rays == 8
     assert lidar.config["max_range"] == 4.0  # still the device's
-    assert _endpoint(engine, "scan", "robot.scan_front").backend["ros2"]["topic"] == "/front/scan"
+    assert _endpoint(engine, "scan", "robot.scan_front").topic == "/front/scan"
 
 
 def test_a_world_declared_mount_sets_frame_id_before_the_device_expands(tmp_path):

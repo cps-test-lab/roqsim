@@ -921,7 +921,7 @@ def _sensor(ctx, fault, address="rig.lidar", nominal=None):
     cfg = {"site": "sensor_site", "rays": 8, "exclude_body": "", "fault": dict(fault)}
     cfg.update(nominal or {})
     plugin = LidarPlugin(cfg, name=label, entity=entity or None, label=label)
-    plugin.register_fault_endpoints(ctx, namespace="")
+    plugin.register_fault(ctx)
     return plugin
 
 

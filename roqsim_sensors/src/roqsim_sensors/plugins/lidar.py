@@ -1,12 +1,12 @@
 """Sensor plugin: 2D lidar via batched ray-casting (:func:`roqsim.raycast.cast`, no GL).
 
 Casts a horizontal fan from its ``site`` at ``rate_hz``, optionally applies sensor noise, and
-exposes the latest :class:`~.payloads.LaserScan` via a ``scan`` output endpoint for a transport
+exposes the latest :class:`roqsim.types.LaserScan` via a ``scan`` output endpoint for a transport
 plugin.
 
 The shared machinery -- the rate gate, the detection limits, the noise model, the static mount TF and
-the endpoint -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file is the fan pattern,
-the ``LaserScan`` payload, and the device defaults.
+the endpoint's hints -- lives in :class:`~.lidar_common.RayCastSensorPlugin`; this file is the fan
+pattern, the ``scan`` endpoint and its ``LaserScan`` payload, and the device defaults.
 
 Config (in addition to ``lidar_common``'s ``namespace``/``site``/``frame_id``/
 ``rate_hz``/``exclude_body``/``dropout_percent``/``emit_static_tf``/``tf_parent``/``lazy``)::
@@ -76,8 +76,10 @@ import numbers
 
 import numpy as np
 
+from roqsim import endpoint
+from roqsim.types import LaserScan
+
 from .lidar_common import RayCastSensorPlugin
-from .payloads import LaserScan
 
 #: Spellings ``too_close``/``no_return`` accept besides a number. ``None`` is ``raw``.
 _OUTPUT_WORDS = {"-inf": -math.inf, "+inf": math.inf, "inf": math.inf, "nan": math.nan, "raw": None}
@@ -115,7 +117,6 @@ def _allowed(allow_raw: bool, allow_neg_inf: bool) -> str:
 
 class LidarPlugin(RayCastSensorPlugin):
     ENDPOINT_NAME = "scan"
-    ROS_TYPE = "sensor_msgs.msg.LaserScan"
     DEFAULT_TOPIC = "scan"
     PLUGIN_LABEL = "lidar"
 
@@ -234,6 +235,11 @@ class LidarPlugin(RayCastSensorPlugin):
         """A horizontal fan from ``angle_min`` to ``angle_max``, both endpoints sampled."""
         angles = np.linspace(self.angle_min, self.angle_max, self._num_rays)
         return np.stack([np.cos(angles), np.sin(angles), np.zeros(self._num_rays)], axis=1)
+
+    @endpoint.out(rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    def scan(self) -> LaserScan | None:
+        """The latest sweep; nothing before the first cast of a trial."""
+        return self._payload_value
 
     def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray) -> LaserScan:
         ranges = np.full(self._num_rays, self.no_return, dtype=np.float64)

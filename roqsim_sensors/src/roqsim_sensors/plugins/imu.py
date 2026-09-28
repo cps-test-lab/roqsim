@@ -93,8 +93,8 @@ Config::
       yaw_stddev: 0.0           # rad, EXTRA noise about the vertical axis only (see above)
       fault: {gyro_stddev: 0.4} # optional: the values it takes while degraded (set_sensor_override)
 
-Endpoint ``imu`` (out) reads an :class:`ImuReading` and carries a ``sensor_msgs/Imu`` backend hint on
-``imu/data`` -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
+Endpoint ``imu`` (out) reads a :class:`roqsim.types.Imu`, a ``sensor_msgs/Imu`` on ``imu/data`` over
+ROS -- the topic ``robot_localization`` and a standalone IMU driver both use -- plus the
 static ``body -> frame_id`` transform. An :class:`ImuReader` is published on the blackboard under
 ``imu:<address>`` for in-process consumers.
 
@@ -126,36 +126,19 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Imu
 
 from ..live_config import FaultableSensorMixin
 
 _log = logging.getLogger(__name__)
-
-
-@dataclass
-class ImuReading:
-    """Neutral payload for the ``imu`` endpoint: what a strap-down IMU reports at one instant.
-
-    ``orientation`` is (w, x, y, z) in the world frame; the rates and accelerations are in the
-    sensor frame, which is what a strap-down device measures and what REP 145 expects. The three
-    variances are per-axis and isotropic; ``orientation_valid`` False is the ROS "not provided"
-    marker rather than a zero quaternion, which a consumer cannot distinguish from level.
-    """
-
-    orientation: list[float] = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
-    angular_velocity: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    linear_acceleration: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
-    orientation_valid: bool = True
-    orientation_variance: float = 0.0
-    angular_velocity_variance: float = 0.0
-    linear_acceleration_variance: float = 0.0
 
 
 @dataclass
@@ -164,7 +147,7 @@ class ImuReader:
 
     name: str
     frame: str
-    read: Callable[[], ImuReading]
+    read: Callable[[], Imu]
 
 
 def _quat_from_rpy(rpy) -> list[float]:
@@ -229,6 +212,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         # simply names its channels differently from a standalone IMU (`camera/imu`) should not have
         # to give up the namespace to say so, which is what an absolute override would cost it.
         self.topic = str(self.config.get("topic") or "imu/data")
+        self._static_tf: dict = {}  # the mount transform, set at configure
         self.orientation = bool(self.config.get("orientation", True))
         self.accel_stddev = float(self.config.get("accel_stddev", 0.0))
         self.gyro_stddev = float(self.config.get("gyro_stddev", 0.0))
@@ -390,7 +374,6 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
         self._ctx = ctx
         m = ctx.model
         entity = ctx.entities.get(self.owner)
-        ns = self.config.get("namespace") or (entity.meta.get("namespace", "") if entity else "")
         prefix = self.config.get("prefix")
         if prefix is None:
             prefix = entity.meta.get("prefix", "") if entity else ""
@@ -432,31 +415,24 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             )
         ctx.blackboard.set(key, ImuReader(name=self.label, frame=self.frame_id, read=self.read))
 
-        # The fault switch, if this sensor declares one -- before the reading endpoint, so both are
-        # in ctx.interface when a bridge binds them.
-        self.register_fault_endpoints(ctx, ns)
-        ctx.interface.add(
-            Endpoint(
-                name="imu",
-                direction="out",
-                owner=self.owner,
-                namespace=ns,
-                read=self.read,
-                rate_hz=self.rate_hz,
-                # Read only while something subscribes -- see the module docstring.
-                lazy=True,
-                backend={
-                    "ros2": {
-                        "type": "sensor_msgs.msg.Imu",
-                        # `imu/data` by default, where robot_localization and a standalone driver
-                        # look; `topic:` is how a device states its own layout.
-                        "topic": self.topic_override("imu") or self.topic,
-                        "frame_id": self.frame_id,
-                        "static_tf": self._mount_tf(m, prefix),
-                    }
-                },
-            )
-        )
+        # The fault switch, if this sensor declares one.
+        self.register_fault(ctx)
+        self._static_tf = self._mount_tf(m, prefix)
+
+    # Read only while something subscribes -- see the module docstring. `imu/data` by default, where
+    # robot_localization and a standalone driver look; `topic:` is how a device states its own layout.
+    @endpoint.out(
+        rate="rate_hz",
+        lazy=True,
+        ros2=lambda self: {
+            "topic": self.topic,
+            "frame_id": self.frame_id,
+            "static_tf": self._static_tf,
+        },
+    )
+    def imu(self) -> Imu:
+        """The current reading, with the declared noise as its variances."""
+        return self.read()
 
     def _mount_tf(self, m, prefix: str) -> dict:
         """Static ``mount body -> frame_id`` transform as plain numbers, for a bridge.
@@ -489,7 +465,7 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
 
     # -- the reading --------------------------------------------------------------------------
 
-    def read(self) -> ImuReading:
+    def read(self) -> Imu:
         """The current reading. Runs on the physics thread; called once per due tick per reader."""
         d = self._ctx.data
         gyro = np.array(d.sensordata[self._gyro_adr : self._gyro_adr + 3], dtype=float)
@@ -514,11 +490,11 @@ class ImuPlugin(FaultableSensorMixin, Plugin):
             if self.orientation and (self.orientation_stddev or self.yaw_stddev):
                 quat = self._perturb(quat, rng)
 
-        return ImuReading(
-            orientation=[float(v) for v in quat],
-            angular_velocity=[float(v) for v in gyro],
-            linear_acceleration=[float(v) for v in accel],
-            orientation_valid=self.orientation,
+        return Imu(
+            orientation=np.asarray(quat, dtype=float),
+            angular_velocity=np.asarray(gyro, dtype=float),
+            linear_acceleration=np.asarray(accel, dtype=float),
+            orientation_valid=bool(self.orientation),
             # stddev**2, per channel. Bias is deliberately not folded in -- see the module docstring.
             orientation_variance=self.orientation_stddev**2 + self.yaw_stddev**2,
             angular_velocity_variance=self.gyro_stddev**2,

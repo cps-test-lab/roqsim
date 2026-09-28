@@ -36,7 +36,7 @@ def test_manifest_auto_brings_realsense_d435_capture():
     engine.reset()
     engine.step()
     assert "d435" in engine.ctx.entities.names()
-    rgb = _endpoint(engine, "image").read()
+    rgb = _endpoint(engine, "image").read().data
     assert rgb.shape == (480, 640, 3) and rgb.dtype == np.uint8
     assert _endpoint(engine, "camera_info") is not None
     # The realsense_d435 manifest asks for colour only: depth/points are opt-in per world, so a plain
@@ -632,7 +632,7 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
         engine.setup()
         engine.reset()
         engine.step()
-        rgb = _endpoint(engine, "image").read().astype(np.float64)
+        rgb = _endpoint(engine, "image").read().data.astype(np.float64)
         return rgb[..., 0].mean(axis=0) - rgb[..., 1:].mean(axis=(0, 2))  # redness per column
 
     centred = column_profile(width / 2)

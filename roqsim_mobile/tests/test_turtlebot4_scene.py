@@ -660,7 +660,7 @@ def test_d6_the_scan_topic_is_the_robots(mounted):
     engine, _ = mounted
     scan = scan_mount.scan_endpoint(engine)
     assert scan.owner == "robot.rplidar" and scan.namespace == scan_mount.NAMESPACE
-    assert scan.backend["ros2"]["topic"] == "scan"
+    assert scan_mount.topic_of(scan) == "scan"
     assert scan.backend["ros2"]["frame_id"] == "rplidar_link"
     assert "static_tf" not in scan.backend["ros2"]
 
@@ -763,8 +763,11 @@ def create3():
 
 
 def _by_topic(engine, topic):
+    """The endpoint on *topic*: the world's rename, else its ros2 hint's topic, else its name."""
     return next(
-        e for e in engine.ctx.interface.all() if e.backend.get("ros2", {}).get("topic") == topic
+        e
+        for e in engine.ctx.interface.all()
+        if (e.topic or (e.backend.get("ros2") or {}).get("topic") or e.name) == topic
     )
 
 

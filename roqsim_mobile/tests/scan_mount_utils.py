@@ -130,6 +130,11 @@ def scan_endpoint(engine: Engine):
     return scan
 
 
+def topic_of(ep) -> str:
+    """The topic a bridge publishes *ep* on: the world's rename, else its ros2 hint's, else its name."""
+    return ep.topic or ep.backend["ros2"].get("topic") or ep.name
+
+
 def static_tf(engine: Engine, owner: str, namespace: str = NAMESPACE) -> list[dict]:
     """The static transforms *owner* publishes on its ``frames`` endpoint, in the robot's namespace."""
     (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == owner]
@@ -380,5 +385,5 @@ def assert_tf_chain(engine: Engine, owner: str, namespace: str, mounts) -> None:
         scan = endpoint(engine, "scan", address)
         hints = scan.backend["ros2"]
         assert scan.namespace == namespace
-        assert (hints["frame_id"], hints["topic"]) == (frame, topic)
+        assert (hints["frame_id"], topic_of(scan)) == (frame, topic)
         assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"

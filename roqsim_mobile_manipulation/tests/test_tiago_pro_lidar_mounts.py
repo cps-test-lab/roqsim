@@ -208,7 +208,7 @@ def test_the_static_tf_and_topic_are_pals(engine, label):
     assert abs(abs(float(np.dot(tf["rotation"], rpy_to_quat(*rpy)))) - 1.0) < 1e-9
     scan = endpoints[(f"tp.{label}", "scan")]
     assert scan.namespace == NAMESPACE
-    assert scan.backend["ros2"]["topic"] == topic  # relative: <ns>/scan_*_raw
+    assert scan.topic == topic  # the manifest's rename, relative: <ns>/scan_*_raw
     assert scan.backend["ros2"]["frame_id"] == frame
     assert "static_tf" not in scan.backend["ros2"]
 

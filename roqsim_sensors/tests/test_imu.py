@@ -19,6 +19,7 @@ from roqsim_sensors.plugins.imu import ImuPlugin
 from roqsim.config import PluginError, load_config_from_dict
 from roqsim.context import Entity, SimContext
 from roqsim.plugin import Plugin
+from roqsim.types import Imu
 
 GRAVITY = 9.81
 
@@ -166,7 +167,7 @@ def test_the_mount_offset_reaches_the_published_static_transform():
     engine = _engine(pos=[0.1, 0.0, 0.2], frame_id="imu_link")
     endpoint = next(e for e in engine.ctx.interface.all() if e.name == "imu")
     hints = endpoint.backend["ros2"]
-    assert hints["type"] == "sensor_msgs.msg.Imu"
+    assert endpoint.result.cls is Imu  # a sensor_msgs/Imu over ROS
     assert hints["topic"] == "imu/data" and hints["frame_id"] == "imu_link"
     assert hints["static_tf"]["parent"] == "base_link"
     assert np.allclose(hints["static_tf"]["translation"], [0.1, 0.0, 0.2], atol=1e-9)
@@ -379,7 +380,7 @@ def test_an_absolute_hardwire_still_wins():
         ).ctx.interface.all()
         if e.name == "imu"
     )
-    assert endpoint.backend["ros2"]["topic"] == "/hardware/imu"
+    assert endpoint.topic == "/hardware/imu"
 
 
 class _PrefixedScene(Plugin):

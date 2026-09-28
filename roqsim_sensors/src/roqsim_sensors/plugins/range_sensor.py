@@ -9,7 +9,7 @@ proximity sensor turns the nearest return into an intensity -- so the grid is pu
 and nothing here decides what a cliff or an obstacle is.
 
 Casts ``h_rays x v_rays`` rays from its ``site`` through ``h_fov x v_fov`` at ``rate_hz`` and
-publishes them as one :class:`~.payloads.LaserScan`, rows concatenated in row-major order (the top
+publishes them as one :class:`roqsim.types.LaserScan`, rows concatenated in row-major order (the top
 row first, each row sweeping from ``-h_fov/2`` to ``+h_fov/2``). The ``angle_*`` fields describe the
 horizontal sweep of one row, so a single-row sensor is an ordinary short ``LaserScan`` and a
 multi-row one is a ``LaserScan`` whose ``ranges`` hold every row -- the layout the Create 3's
@@ -48,15 +48,16 @@ import math
 
 import numpy as np
 
+from roqsim import endpoint
+from roqsim.types import LaserScan
+
 from .lidar import LidarPlugin
-from .payloads import LaserScan
 
 
 class RangeSensorPlugin(LidarPlugin):
     #: The endpoint role is ``range``, not the scanner's ``scan``: a robot carries one scanner and
     #: a dozen of these, and a consumer picking "the scan endpoint" must not find twelve.
     ENDPOINT_NAME = "range"
-    ROS_TYPE = "sensor_msgs.msg.LaserScan"
     DEFAULT_TOPIC = "range"
     PLUGIN_LABEL = "range_sensor"
 
@@ -140,6 +141,12 @@ class RangeSensorPlugin(LidarPlugin):
             [cos_el * np.cos(az_grid), cos_el * np.sin(az_grid), np.sin(el_grid)], axis=-1
         )
         return dirs.reshape(-1, 3)
+
+    # The scanner's endpoint, renamed: redefining `scan` replaces the scanner's declaration.
+    @endpoint.out(name="range", rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    def scan(self) -> LaserScan | None:
+        """The latest reading, one LaserScan of the cone's rays; nothing before the first cast."""
+        return self._payload_value
 
     def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray) -> LaserScan:
         ranges = np.full(self.num_rays, self.no_return, dtype=np.float64)

@@ -66,6 +66,11 @@ roqsim_sensors = "roqsim_sensors.models"
 [project.entry-points."roqsim.commands"]
 sensors = "roqsim_sensors.commands:sensors"
 
+# How the ROS 2 bridge carries this package's own payloads (NavSatFix, Detection3DArray,
+# Detection2DArray); loaded by the bridge only.
+[project.entry-points."roqsim.ros2_types"]
+roqsim_sensors = "roqsim_sensors.ros2_types:TYPES"
+
 [tool.setuptools.packages.find]
 where = ["src"]
 

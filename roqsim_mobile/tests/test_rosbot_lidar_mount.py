@@ -168,7 +168,7 @@ def test_topic_frame_and_scan_values():
             e for e in engine.ctx.interface.all() if e.name == "scan" and e.owner == "rb.rplidar"
         )
         assert scan.namespace == NAMESPACE
-        assert scan.backend["ros2"]["topic"] == "scan"  # relative: <ns>/scan
+        assert (scan.topic or scan.backend["ros2"].get("topic", scan.name)) == "scan"  # <ns>/scan
         assert scan.backend["ros2"]["frame_id"] == "laser"
         assert "static_tf" not in scan.backend["ros2"]
         lidar = _lidar(engine)

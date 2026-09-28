@@ -54,8 +54,10 @@ import math
 
 import numpy as np
 
+from roqsim import endpoint
+from roqsim.types import PointCloud
+
 from .lidar_common import RayCastSensorPlugin
-from .payloads import PointCloud
 
 # Vertical FoV of the Mid-360, in radians -- see the datasheet reference in the module docstring.
 _V_FOV_MIN = math.radians(-7.0)
@@ -68,7 +70,6 @@ _CLOUD_OUTPUTS = ("drop", "origin")
 
 class LivoxMid360Plugin(RayCastSensorPlugin):
     ENDPOINT_NAME = "cloud"
-    ROS_TYPE = "sensor_msgs.msg.PointCloud2"
     #: Livox's own ROS driver publishes the point cloud on this topic by default.
     DEFAULT_TOPIC = "livox/lidar"
     PLUGIN_LABEL = "livox_mid360"
@@ -150,6 +151,11 @@ class LivoxMid360Plugin(RayCastSensorPlugin):
         return np.stack([cos_el * np.cos(AZ), cos_el * np.sin(AZ), np.sin(EL)], axis=-1).reshape(
             -1, 3
         )
+
+    @endpoint.out(rate="rate_hz", ros2=lambda self: self._ros2_hints())
+    def cloud(self) -> PointCloud | None:
+        """The latest frame of returns; nothing before the first cast of a trial."""
+        return self._payload_value
 
     def _payload(self, dist: np.ndarray, valid: np.ndarray, near: np.ndarray) -> PointCloud:
         # Points in the sensor frame: direction * range for each measured return, in ray order. A
