@@ -79,29 +79,26 @@ a soft stiffness holds a pose instead of folding; at zero gravity it is identica
 Which law and gains every joint ended up with is written into the run's recording, so a result can
 state what its joints ran under. See :ref:`architecture` for the full mechanism.
 
-Every key is checked
-~~~~~~~~~~~~~~~~~~~~
+Every ``sim:`` key is checked
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-A world may carry ``sim:``, ``components:`` and, when it inherits, ``extends:``/``disable:`` --
-and nothing else. ``sim:`` accepts:
-
-``world``, ``name``, ``timestep``, ``pacing``, ``sync``, ``seed``, ``integrator``, ``cone``,
-``gravity``, ``wind``, ``contact_override``, ``dedup_assets``, ``view``, and the MuJoCo
+``sim:`` accepts ``world``, ``name``, ``timestep``, ``pacing``, ``sync``, ``seed``, ``integrator``,
+``cone``, ``gravity``, ``wind``, ``contact_override``, ``dedup_assets``, ``view``, and the MuJoCo
 ``opt.*`` passthroughs ``solver``, ``iterations``, ``ls_iterations``, ``noslip_iterations``,
 ``impratio``, ``density``, ``viscosity``.
 
 **An unknown key is refused, not ignored**, and the message names the nearest known one::
 
-   sim: unknown key(s) 'timstep' (did you mean 'timestep'?). Known: cone, contact_override, ...
+   sim: unknown key(s) 'timstep' (did you mean 'timestep'?); it takes cone, contact_override, ...
 
-This is the same rule ``sim.view`` and ``sim.contact_override`` already keep, applied to the
-document as a whole, and for the same reason: a key nothing reads is invisible. ``timstep: 0.004``
-used to load, run, and use the default step, so the world did not do what its author wrote and
-every number it produced measured something else. An ignored key is worse than a rejected one
-because the run still finishes and still reports.
+This is the rule ``sim.view`` and ``sim.contact_override`` keep, for the same reason: a key nothing
+reads is invisible. An ignored ``timstep: 0.004`` would run at the default step, and the run would
+still finish and report, with every number measuring something its author did not write. The
+deprecated ``headless`` still warns rather than being refused.
 
 The check runs after ``extends:`` is resolved and after ``--set``/overrides merge, so a typo is
-refused wherever it came from.
+refused wherever it came from. The passthrough list is one tuple,
+``roqsim.config.SIM_OPTION_KEYS``, that both this check and the engine read.
 
 
 Overriding the world

@@ -277,12 +277,11 @@ class Engine:
         # ground robot and wrong for anything that flies, where nothing damps a lateral step, so it
         # rings forever and reads as bad gains rather than as missing air.
         for key in SIM_OPTION_KEYS:
-            attr = key
             if (value := self.config.sim.get(key)) is not None:
                 setattr(
                     spec.option,
-                    attr,
-                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, attr))(value),
+                    key,
+                    _SOLVERS[value] if key == "solver" else type(getattr(spec.option, key))(value),
                 )
         if (cone := self.config.sim.get("cone")) is not None:
             spec.option.cone = _CONES[cone]

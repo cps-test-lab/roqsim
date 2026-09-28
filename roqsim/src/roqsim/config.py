@@ -83,7 +83,7 @@ from typing import Any
 
 import yaml
 
-from .document import check_version
+from .document import check_version, refuse_unknown_keys
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -1260,15 +1260,6 @@ def _validate_contact_override(override) -> None:
             raise PluginError(f"sim.contact_override.{key}: all entries must be numbers")
 
 
-#: Every key a world document may carry at the top level. `extends`/`disable` are consumed by
-#: inheritance and normally gone by the time this is checked; they stay listed so that a document
-#: using them without a parent is not refused for it.
-#:
-#: An allowlist, and refused rather than ignored, for the reason `sim.contact_override` gives:
-#: a key nothing reads is invisible. `componets:` parsed, loaded and ran -- as an empty world,
-#: because the entries were under a key no one looked at.
-_DOCUMENT_KEYS = frozenset({"sim", "components", "plugins", "extends", "disable"})
-
 #: The MuJoCo ``opt.*`` fields a world may set straight through, by their own names. Declared here
 #: rather than in the engine that applies them, so the key list and the allowlist that admits it
 #: are one thing: a key added to the loop and not to the allowlist would be refused as unknown,
@@ -1285,8 +1276,9 @@ SIM_OPTION_KEYS = (
 )
 
 
-#: Every key `sim:` may carry. `headless` is listed because it is DEPRECATED rather than unknown:
-#: it warns above and must not be refused here, or the warning could never be reached.
+#: Every key `sim:` may carry, refused otherwise: nothing reads another, so `timstep` would run at
+#: the default step. `headless` is listed because it is deprecated rather than unknown: it warns,
+#: and refusing it would hide the warning that says what to use instead.
 _SIM_KEYS = frozenset(
     {
         "cone",
@@ -1307,23 +1299,6 @@ _SIM_KEYS = frozenset(
 ) | frozenset(SIM_OPTION_KEYS)
 
 
-def _refuse_unknown(where: str, unknown: list[str], known: frozenset[str]) -> None:
-    """Refuse unknown keys, naming the nearest known one when there is an obvious near-miss.
-
-    The suggestion is what makes this cheap to act on: the keys are short and a typo is usually
-    one edit away, so the reader is told what to write rather than only what not to.
-    """
-    import difflib  # pylint: disable=import-outside-toplevel
-
-    hints = []
-    for key in unknown:
-        close = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.7)
-        hints.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
-    raise PluginError(
-        f"{where}: unknown key(s) {', '.join(hints)}. Known: {', '.join(sorted(known))}."
-    )
-
-
 def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
     if not isinstance(raw, dict):
         raise PluginError("world config must be a mapping at the top level")
@@ -1338,10 +1313,7 @@ def _from_dict(raw: dict, base_dir: Path, assignments=None) -> SimConfig:
             "--headless (standalone) or the headless scenario parameter to suppress the window. "
             "Remove the key from the world YAML to silence this."
         )
-    if unknown_doc := sorted(set(raw) - _DOCUMENT_KEYS):
-        _refuse_unknown("world config", unknown_doc, _DOCUMENT_KEYS)
-    if unknown_sim := sorted(set(raw.get("sim") or {}) - _SIM_KEYS):
-        _refuse_unknown("sim", unknown_sim, _SIM_KEYS)
+    refuse_unknown_keys(raw.get("sim") or {}, _SIM_KEYS, "sim", error=PluginError)
     unknown = sorted(set((raw.get("sim") or {}).get("view") or {}) - _VIEW_KEYS)
     if unknown:
         raise PluginError(
