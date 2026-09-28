@@ -5,25 +5,30 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass
-from typing import Annotated
 
 import numpy as np
 import pytest
-from numpy.typing import NDArray
 
 from roqsim import endpoint
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
-from roqsim.endpoint import ParameterError, Shape, Unit
+from roqsim.endpoint import ParameterError
 from roqsim.engine import Engine
 from roqsim.introspection import get_plugin_details
 from roqsim.plugin import Plugin
 from roqsim.plugins.dummy import DummyPlugin
+from roqsim.types import AngularSpeed, Point3, Speed, Torque
 
 
 @dataclass
 class Reading:
-    speed: Annotated[float, Unit("m/s"), "along the track"]
+    """A reading.
+
+    Attributes:
+        speed: along the track
+    """
+
+    speed: Speed
     label: str = ""
 
 
@@ -37,39 +42,39 @@ class Drive(Plugin):
     def configure(self, ctx: SimContext) -> None:
         self.joints = list(self.config.get("joints", self.joints))
 
-    @endpoint.command()
-    def set_speed(
-        self,
-        vx: Annotated[float, Unit("m/s"), "forward speed"],
-        w: Annotated[float, Unit("rad/s"), "yaw rate"] = 0.0,
-    ) -> bool:
-        """Set the target twist."""
+    @endpoint.command
+    def set_speed(self, vx: Speed, w: AngularSpeed = 0.0) -> bool:
+        """Set the target twist.
+
+        Args:
+            vx: forward speed
+            w: yaw rate
+        """
         return vx > 0.0 or w != 0.0
 
-    @endpoint.command()
+    @endpoint.command
     def tare(self) -> None:
         """Zero it."""
 
-    @endpoint.stream()
-    def target(self, pos: Annotated[NDArray[np.float64], Shape(3), Unit("m")]) -> None:
+    @endpoint.stream
+    def target(self, pos: Point3) -> None:
         self.applied.append(pos)
 
-    @endpoint.out()
+    @endpoint.out
     def reading(self) -> Reading:
         return Reading(1.5, "ok")
 
-    @endpoint.command("joints/{item}/speed", each=lambda self: self.joints)
-    def joint_speed(self, joint: str, value: Annotated[float, Unit("rad/s")]) -> str:
+    @endpoint.command(name="joints/{item}/speed", each="joints")
+    def joint_speed(self, joint: str, value: AngularSpeed) -> str:
         self.speeds[joint] = value
         return joint
 
     @endpoint.out(
-        "effort",
-        each=lambda self: self.joints,
-        rate_hz=lambda self, joint: 10.0 if joint == "left" else 20.0,
+        each="joints",
+        rate=lambda self, joint: 10.0 if joint == "left" else 20.0,
         ros2=lambda self, joint: {"topic": f"{joint}/effort"},
     )
-    def effort(self, joint: str) -> Annotated[float, Unit("N*m")]:
+    def effort(self, joint: str) -> Torque:
         return {"left": 1.0, "right": 2.0}[joint]
 
 
@@ -192,7 +197,7 @@ def test_describe_shows_types_defaults_units_docs_and_the_result():
         "doc": "along the track",
         "required": True,
     }
-    assert rows["joints/{item}/speed"]["family"] is True
+    assert rows["joints/{item}/speed"]["family"] == "joints"
     assert rows["joints/{item}/speed"]["params"] == [
         {"name": "value", "type": "float", "unit": "rad/s", "required": True}
     ]
@@ -240,14 +245,14 @@ def test_a_familys_options_receive_the_item():
 
 def test_a_signature_a_bridge_cannot_name_is_refused():
     class Loose(Plugin):
-        @endpoint.command()
+        @endpoint.command
         def go(self, *args) -> None: ...
 
     with pytest.raises(TypeError, match="parameters are named"):
         endpoint.declared(Loose)[0].describe(Loose)
 
     class Reads(Plugin):
-        @endpoint.out()
+        @endpoint.out
         def level(self, scale: float) -> float: ...
 
     with pytest.raises(TypeError, match="an out endpoint takes no parameters"):
@@ -256,11 +261,11 @@ def test_a_signature_a_bridge_cannot_name_is_refused():
 
 def test_an_endpoint_on_another_entity_names_its_owner_and_scope():
     class Carrier(Plugin):
-        @endpoint.out("package_pose", owner=lambda self: "package", namespace="")
+        @endpoint.out(owner=lambda self: "package", namespace="")
         def package_pose(self) -> float:
             return 0.0
 
-        @endpoint.out()
+        @endpoint.out
         def speed(self) -> float:
             return 1.0
 

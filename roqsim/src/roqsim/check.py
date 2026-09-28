@@ -294,7 +294,7 @@ def _inventory(engine) -> dict:
     model = ctx.model
     endpoints = []
     for endpoint in ctx.interface.all():
-        hints = endpoint.backend.get("ros2", {})
+        hints = endpoint.backend.get("ros2") or {}
         endpoints.append(
             {
                 "name": endpoint.name,
@@ -302,7 +302,8 @@ def _inventory(engine) -> dict:
                 "owner": endpoint.owner,
                 "namespace": endpoint.namespace,
                 "type": hints.get("type") or hints.get("service"),
-                "topic": hints.get("topic") or hints.get("name"),
+                "payload": endpoint.payload_type.name if endpoint.payload_type else None,
+                "topic": endpoint.topic or hints.get("topic") or hints.get("name"),
                 "rate_hz": endpoint.rate_hz,
             }
         )

@@ -52,6 +52,7 @@ from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegist
 from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import JointState
 
 #: Physics steps a trial runs for, split around the setter calls.
 STEPS = 200
@@ -175,7 +176,10 @@ def _joint_command(engine: Engine, endpoint) -> tuple:
         and e.name == "joint_states"
         and e.namespace == endpoint.namespace
     ]
-    names, positions = states[0].read()[:2]
+    state = states[0].read()
+    names, positions = (
+        (state.names, state.positions) if isinstance(state, JointState) else state[:2]
+    )
     return list(names), [float(p) + 0.1 for p in positions]
 
 

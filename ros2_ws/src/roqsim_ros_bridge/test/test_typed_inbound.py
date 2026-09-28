@@ -1,8 +1,8 @@
 """An inbound message reaches a typed endpoint as named parameters, an untyped one as before.
 
-A decoder names what it decodes (``vx``, ``vy``, ``w`` for a twist); an endpoint declared with
-:mod:`roqsim.endpoint` takes those names, and one built by hand keeps the positional payload its
-``write`` was written for. The ROS side of a migrated plugin -- topic, type, service -- is the same.
+An endpoint declared with :mod:`roqsim.endpoint` gets the fields of its payload type it names, by
+name; one built by hand keeps the positional payload its ``write`` was written for. The ROS side of
+a migrated plugin -- topic, type, service -- is the same.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from roqsim.plugin import Plugin
 from roqsim_ros_bridge.params import payload_for
 from roqsim_ros_bridge.registry import get_decoder
 from roqsim_ros_bridge.services import set_bool, trigger
+from roqsim_ros_bridge.typemap import resolve
 
 UNTYPED = Endpoint(name="legacy", direction="in")
 
@@ -102,11 +103,11 @@ class Switch(Plugin):
         super().__init__(*a, **kw)
         self.seen = []
 
-    @endpoint.command("enable", ros2={"service": "std_srvs.srv.SetBool"})
+    @endpoint.command(ros2={"service": "std_srvs.srv.SetBool"})
     def enable(self, data: bool) -> None:
         self.seen.append(("enable", data))
 
-    @endpoint.command("zero", ros2={"service": "std_srvs.srv.Trigger"})
+    @endpoint.command
     def zero(self) -> None:
         self.seen.append(("zero",))
 
@@ -143,28 +144,37 @@ def test_diff_drives_ros_interface_is_unchanged_and_a_twist_drives_it():
     engine.reset()
     try:
         eps = {e.name: e for e in engine.ctx.interface.all() if e.owner == "z"}
-        assert eps["cmd_vel"].backend == {
-            "ros2": {"type": "geometry_msgs.msg.Twist", "topic": "cmd_vel"}
+        default = {
+            "reliability": "reliable",
+            "durability": "volatile",
+            "history": "keep_last",
+            "depth": 10,
         }
-        assert eps["odom"].backend["ros2"] == {
+        ros = {name: resolve(ep) for name, ep in eps.items()}
+        assert ros["cmd_vel"].hints == {
+            "type": "geometry_msgs.msg.Twist",
+            "topic": "cmd_vel",
+            "qos": default,
+        }
+        assert ros["odom"].hints == {
             "type": "nav_msgs.msg.Odometry",
             "topic": "odom",
             "frame_id": "odom",
             "child_frame_id": "base_footprint",
             "emit_tf": True,
+            "qos": default,
         }
-        assert eps["joint_states"].backend["ros2"] == {
+        assert ros["joint_states"].hints == {
             "type": "sensor_msgs.msg.JointState",
             "topic": "joint_states",
+            "qos": default,
         }
         msg = Twist()
         msg.linear.x = 0.2
-        eps["cmd_vel"].write(
-            payload_for(eps["cmd_vel"], get_decoder("geometry_msgs.msg.Twist")(msg))
-        )
+        eps["cmd_vel"].write(ros["cmd_vel"].decode(msg))
         for _ in range(750):
             engine.step()
-        x, _y, _yaw, v, _vy, _w = eps["odom"].read()
-        assert v == pytest.approx(0.2, abs=0.03) and x > 0.05
+        odom = eps["odom"].read()
+        assert odom.linear[0] == pytest.approx(0.2, abs=0.03) and odom.position[0] > 0.05
     finally:
         engine.shutdown()
