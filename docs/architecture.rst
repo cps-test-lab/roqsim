@@ -224,10 +224,10 @@ Solver options (``sim.solver`` and friends)
 The integrator is ``sim.integrator``. Its default, ``auto``, resolves after every plugin's ``build``
 and before compile: to ``discrete`` for a model with a flex that has elasticity or passive contact,
 which MuJoCo refuses to compile under ``implicit``/``implicitfast``, and to ``implicitfast`` for any
-other model -- the one the velocity-servo wheel drives need for stability. The choice and the flex that decided it are logged,
-recorded in the run's provenance (``world_model.sim.integrator``) and printed by ``roqsim check``. A
-stated integrator is applied at the same point, so neither a plugin nor the world MJCF can set it; a
-stated ``sim.timestep`` likewise wins over theirs.
+other model -- the one the velocity-servo wheel drives need for stability. The choice and the flex
+that decided it are logged, recorded in the run's provenance (``world_model.sim.integrator``) and
+printed by ``roqsim check``. A stated integrator is applied at the same point, so neither a plugin
+nor the world MJCF can set it; a stated ``sim.timestep`` likewise wins over theirs.
 
 A flex also constrains the rest of this block, and roqsim refuses the combinations before compile,
 naming the key to change: a stated ``implicit``/``implicitfast`` (or, for passive contact, any
@@ -439,8 +439,9 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
   *effective* component list -- what the document declares plus what its models' manifests contribute
   -- in build order. ``SimConfig.declared`` keeps the entries a reader actually wrote. That is what
   lets a consumer see what will run: ``roqsim scenes describe`` can name a sensor the document never
-  declared, and ``world_sources`` sees a manifest-supplied component's files, so a
-  ``prop_trajectory``'s CSV resolves against the world's directory rather than the caller's.
+  declared, and ``world_sources`` sees a manifest-supplied component's files -- a
+  ``prop_trajectory``'s CSV among them, resolved against the world's directory rather than the
+  caller's.
 - **A run records the components that ran, and a recording is rebuilt by reading them.** The
   provenance carries the resolved tree and the ``sim`` block beside the recipe (the world reference
   and the override document, which stay because they are what a reader needs to see how the run was
@@ -453,8 +454,8 @@ A model bundles the plugins intrinsic to it (a mobile base → ``diff_drive`` + 
 - **Loading stays tolerant; running does not.** A ref that will not import is recorded on
   ``SimConfig.unresolved`` and its entry is kept, unexpanded, so a scene-only consumer (``roqsim
   render``, the exporters, ``describe``) still gets a world whose transport is not installed.
-  ``instantiate_plugins`` is where that is refused, with the full unresolved-plugin report -- including the
-  case that says a world failed *solely* on its bridges and names the two ways on. Dropping the
+  ``instantiate_plugins`` is where that is refused, with the full unresolved-plugin report --
+  including the case that says a world failed *solely* on its bridges and names the two ways on. Dropping the
   transport prunes the matching deferred failures, or a consumer would remove the bridge it cannot
   import and be refused for it anyway.
 
@@ -933,9 +934,9 @@ unchanged.
    to start it absent, which is how a world provides the spares for something that appears mid-trial;
    the declared value is re-applied on reset, because presence is a ``model`` field and
    ``mj_resetData`` restores ``data``. Both are done from the engine, for the plugin's declared
-   entity, rather than by each plugin, so no plugin can accept the key and drop it. A plugin whose entity is registered by something *under* it — a population like
-   ``boxes``, whose instances are the entities — forwards it to them, since the engine sees the entry
-   and not what the entry made.
+   entity, rather than by each plugin, so no plugin can accept the key and drop it. A plugin whose
+   entity is registered by something *under* it — a population like ``boxes``, whose instances are
+   the entities — forwards it to them, since the engine sees the entry and not what the entry made.
    Absence also freezes the entity — compensated gravity, zeroed velocity — since taking a free body
    out of the contact set otherwise puts it in the very free fall the parking trick was rejected for.
    The gravity half is armed once per world, before compile, because MuJoCo decides there whether
