@@ -12,14 +12,17 @@ import pathlib
 import re
 
 PACKAGE = pathlib.Path(__file__).resolve().parents[1]
-ROS_MODULE = re.compile(r"^(rclpy|tf2_ros|[a-z0-9_]+_(?:msgs|srvs|interfaces))$")
+ROS_MODULE = re.compile(
+    r"^(rclpy|tf2_ros|ament_index_python|launch|launch_ros|[a-z0-9_]+_(?:msgs|srvs|interfaces))$"
+)
 IMPORT = re.compile(r"^\s*(?:from|import)\s+([a-z0-9_]+)", re.M)
 DECLARED = re.compile(r"<(?:exec_depend|depend)>([^<]+)</")
 
 
 def _imported() -> set[str]:
     names: set[str] = set()
-    for source in (PACKAGE / "roqsim_ros_bridge").rglob("*.py"):
+    sources = [*(PACKAGE / "roqsim_ros_bridge").rglob("*.py"), *(PACKAGE / "launch").glob("*.py")]
+    for source in sources:
         for match in IMPORT.finditer(source.read_text(encoding="utf-8")):
             if ROS_MODULE.match(match.group(1)):
                 names.add(match.group(1))
