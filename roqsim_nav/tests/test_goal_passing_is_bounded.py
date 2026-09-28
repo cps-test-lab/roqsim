@@ -1,9 +1,9 @@
 """Passing goals within one tick is bounded for the waypoint follower, as it is for pure pursuit.
 
 A looping route whose every goal is already within ``arrival_radius`` -- one waypoint looped onto
-itself, or coincident goals -- reads as reached again and again in the same tick. A follower that
-recursed once per goal blew the Python stack from inside ``pre_step``; it now holds, with a warning,
-after ``_MAX_GOALS_PER_TICK`` goals.
+itself, or coincident goals -- reads as reached again and again in the same tick. Unbounded, that
+would blow the Python stack from inside ``pre_step``; the follower holds, with a warning, after
+``_MAX_GOALS_PER_TICK`` goals.
 """
 
 from __future__ import annotations
