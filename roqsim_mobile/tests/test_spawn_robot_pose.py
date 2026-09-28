@@ -31,7 +31,7 @@ def _quat(yaw):
 def _cfg(config):
     return load_config_from_dict(
         {"sim": {"world": "empty_room"}, "plugins": [{SPAWN_ROBOT: config, "name": "robot"}]},
-        overrides={"components": {"robot.oakd_camera": {"enabled": False}}},
+        overrides={"components": {"robot.oakd.oakd_camera": {"enabled": False}}},
     )
 
 

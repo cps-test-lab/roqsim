@@ -93,7 +93,8 @@ lands at a defined point in the tick rather than whenever the OS scheduled the r
 **Lockstep is architecture.rst section 10** -- the designed synchronous mode, of which this plugin
 is the first real user. It registers a **consumer gate** (``ctx.register_gate``), pending until the
 expected input arrives via ``ctx.post``, exactly as that section specifies. The engine does not
-wait on gates, so the wait itself is implemented here, in ``post_step``, against that gate --
+wait on gates (``register_gate``/``gates`` exist and are reset each ``reset()``), so the wait itself
+is implemented here, in ``post_step``, against that gate --
 with the timeout and the deadlock diagnostic section 10 requires, naming the gate that never fired.
 It is not a second concurrency scheme: the command queue is still the substrate, and this only adds
 the wait. **Blocking inside ``post_step`` is listed as an anti-pattern "except deliberately in sync
