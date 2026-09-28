@@ -2,7 +2,8 @@
 
 The sim-control web plugin is generic and lives in rso_web; nothing scene-specific is needed on the
 sim side because ``roqsim_ros_bridge`` already exposes the ``simulation_interfaces`` services
-(``set_simulation_state`` / ``reset_simulation`` / ``get_simulation_state``) it calls over rosbridge.
+(``set_simulation_state`` / ``step_simulation`` / ``reset_simulation`` /
+``get_simulation_state``) it calls over rosbridge.
 
 This package's job is to ship the reusable **web.yaml fragment** that enables that plugin, so any
 roqsim scene can include it without hand-authoring. Merge :func:`sim_control_fragment_path` into a
