@@ -2423,8 +2423,8 @@ Manipulation: a prop or a tool that deforms
 
 A soft block, a sheet, a cable or a compliant pad is written as MuJoCo's own ``<flexcomp>``, in the
 model's MJCF, and spawned like any other: ``spawn_model`` places it as a prop, ``spawn_arm``'s
-``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto`` picks the integrator the flex
-needs (:mod:`roqsim.flex`). What the spawn adds around it:
+``end_effector:`` mounts it at the site the arm model declares for a tool. ``sim.integrator: auto``
+picks the integrator the flex needs (:mod:`roqsim.flex`). What the spawn adds around it:
 
 * **Who owns the pose.** A model whose root body holds nothing but free flexes is its vertices:
   ``motion: physics`` adds no free joint, since every vertex already has its own, and a reset puts
