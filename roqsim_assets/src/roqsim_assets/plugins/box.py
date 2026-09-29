@@ -31,9 +31,9 @@ Config::
 box, and halving it in your head is exactly the kind of silent factor-of-two a scene should not ask
 of its author.
 
-By default (``motion: physics``) the box has a free joint, which buys two things: physics can move it, and
-``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any entity
-without a free ``base_joint``).
+By default (``motion: physics``) the box has a free joint, which buys two things: physics can move
+it, and ``simulation_interfaces``' ``SetEntityState`` can **teleport** it (that service rejects any
+entity without a free ``base_joint``).
 
 Teleporting is how an obstacle *appears* mid-trial. roqsim never recompiles the model at runtime, so
 there is no spawning: a box that must show up on cue is compiled in at build time, kept out of the
