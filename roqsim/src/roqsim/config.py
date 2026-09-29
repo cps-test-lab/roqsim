@@ -84,7 +84,6 @@ from typing import Any
 import yaml
 
 from .document import check_version
-from .models import ModelError
 from .plugin import Plugin, PluginError
 from .registry import resolve_plugin
 from .world import resolve_world_yaml_ref
@@ -1501,7 +1500,7 @@ def _refuse_declared_beside_mounted_device(
     refused here, and stating that site explicitly is the way through; the message says so.
     """
     from .manifest import load_manifest
-    from .models import resolve_model
+    from .models import ModelError, resolve_model
 
     written = {id(s) for s in declared}
     for owner in _subtrees(tree):
@@ -1766,7 +1765,7 @@ def expand_document(
 
     Unresolvable refs are **returned, not raised**. See the comment on the tolerance below.
 
-    An :data:`INPUT_ERRORS` error raised while expanding an entry is re-raised as a
+    An :func:`input_errors` error raised while expanding an entry is re-raised as a
     :class:`PluginError` prefixed with *where* (the world file, ``None`` for a document with none)
     and the entry's address (:func:`_located`), as is every unresolved ref's message. Any other
     exception is a bug and propagates unchanged.
@@ -1805,7 +1804,7 @@ def expand_document(
                 subs = cls.expand(spec, world, base_dir)
                 for sub in subs:
                     _check_expansion_chain(inner, sub, base_dir)
-            except INPUT_ERRORS as exc:
+            except input_errors() as exc:
                 raise PluginError(_located(str(exc), where, spec.address)) from exc
             # All of them are visible before any is expanded: a mounted device's manifest must see
             # the override its carrier's manifest nests under it, which is a later entry of `subs`.
@@ -1830,9 +1829,13 @@ def expand_document(
     return effective, unresolved
 
 
-#: What loading a world raises for bad input: a missing or unreadable file, a document that does
-#: not parse, a model that does not resolve, a refusal. Anything else is a bug in the loader.
-INPUT_ERRORS = (OSError, ValueError, yaml.YAMLError, PluginError, ModelError)
+def input_errors() -> tuple[type[Exception], ...]:
+    """What loading a world raises for bad input: a missing or unreadable file, a document that
+    does not parse, a model that does not resolve, a refusal. Anything else is a bug in the loader.
+    """
+    from .models import ModelError
+
+    return (OSError, ValueError, yaml.YAMLError, PluginError, ModelError)
 
 
 def _at(where: str | None) -> str:
@@ -1892,7 +1895,7 @@ def _expansion_model(spec: PluginSpec, base_dir: Path) -> str | None:
     model = spec.config.get("model")
     if not model or not spec.config.get("default_plugins", True):
         return None
-    from .models import resolve_model
+    from .models import ModelError, resolve_model
 
     try:
         return str(resolve_model(str(model), base_dir=base_dir).path)
