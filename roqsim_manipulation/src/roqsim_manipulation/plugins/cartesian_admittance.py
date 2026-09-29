@@ -126,13 +126,17 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Annotated
 
 import mujoco
 import numpy as np
 
-from roqsim.context import Endpoint, SimContext
+from roqsim import endpoint
+from roqsim.context import SimContext
 from roqsim.controllers import ACTIVE, INACTIVE, Controller, registry_for
+from roqsim.endpoint import Unit
 from roqsim.plugin import Plugin
+from roqsim.types import Angle, Force3, Length, Point3, Pose, Quaternion, Torque3, Wrench
 
 #: The three ros2_control-shaped identities this implementation backs, and which terms each makes
 #: live. ``needs_ft`` is what decides whether a missing wrench sensor is an error.
@@ -269,15 +273,19 @@ class _GoalStream:
 class TrackingError:
     """How far the controlled site is from the pose it tracks, in the world frame.
 
-    ``linear`` is ``goal - pose`` in metres and ``angular`` the rotation from the tool's orientation
-    to the goal's as a rotation vector in radians; ``distance`` and ``angle`` are their magnitudes.
-    ``feedforward`` is the goal velocity being commanded this instant, zeros when none is.
+    Attributes:
+        linear: goal - pose
+        angular: rotation from the tool's orientation to the goal's, as a rotation vector
+        distance: magnitude of linear
+        angle: magnitude of angular
+        feedforward: the goal velocity commanded this instant [vx, vy, vz, wx, wy, wz]; zeros
+            when none is
     """
 
-    linear: tuple[float, float, float]
-    angular: tuple[float, float, float]
-    distance: float
-    angle: float
+    linear: Annotated[tuple[float, float, float], Unit("m")]
+    angular: Annotated[tuple[float, float, float], Unit("rad")]
+    distance: Length
+    angle: Angle
     feedforward: tuple[float, ...]
 
 
@@ -313,6 +321,8 @@ class CartesianAdmittancePlugin(Plugin):
         self.ft_key = self.config.get("ft", "ft")
         self.law = self.config.get("law", "admittance")
         self.rate_hz = float(self.config.get("rate_hz", 100.0))
+        #: Publish rate of ``current_pose`` and ``tracking_error``.
+        self.pose_rate_hz = float(self.config.get("pose_rate_hz", 50.0))
         self.w_d = np.array(self.config.get("target_wrench", [0, 0, -10, 0, 0, 0]), dtype=float)
         self.M = np.array(self.config.get("mass", [1, 1, 1, 0.6, 0.6, 0.6]), dtype=float)
         self.D = np.array(self.config.get("damping", [80, 80, 80, 160, 160, 160]), dtype=float)
@@ -442,7 +452,7 @@ class CartesianAdmittancePlugin(Plugin):
         self._qposadr = np.array(qposadr, dtype=int)
         self._kin = mujoco.MjData(m)
 
-        ns = entity.meta.get("namespace", "") if entity else ""
+        ns = self.endpoint_namespace(ctx)
 
         # Listed and switched like any other controller. It claims the SAME command interfaces as
         # the trajectory controller, which is what makes handing the arm from one to the other a
@@ -479,79 +489,59 @@ class CartesianAdmittancePlugin(Plugin):
             ),
         )
 
-        # Named as FZI's cartesian_controllers name them: a node that drives this controller drives
-        # the real one unchanged. The setpoints are topics rather than services because they are a
-        # stream -- a reference a task republishes as it moves, not a command with an outcome.
-        ctx.interface.add(
-            Endpoint(
-                name="target_frame",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_goal(payload[0], payload[1]),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("target_frame")
-                        or f"{self.controller_name}/target_frame",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="target_wrench",
-                direction="in",
-                owner=self.arm,
-                namespace=ns,
-                write=lambda payload: self.set_target_wrench(
-                    np.concatenate([payload[0], payload[1]])
-                ),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.WrenchStamped",
-                        "topic": self.topic_override("target_wrench")
-                        or f"{self.controller_name}/target_wrench",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="current_pose",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_pose_quat,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "geometry_msgs.msg.PoseStamped",
-                        "topic": self.topic_override("current_pose")
-                        or f"{self.controller_name}/current_pose",
-                        "frame_id": "world",
-                    }
-                },
-            )
-        )
-        ctx.interface.add(
-            Endpoint(
-                name="tracking_error",
-                direction="out",
-                owner=self.arm,
-                namespace=ns,
-                read=self.read_tracking_error,
-                rate_hz=self.config.get("pose_rate_hz", 50.0),
-                backend={
-                    "ros2": {
-                        "type": "std_msgs.msg.Float64",
-                        "field": "distance",
-                        "topic": self.topic_override("tracking_error")
-                        or f"{self.controller_name}/tracking_error",
-                    }
-                },
-            )
-        )
+    def endpoint_namespace(self, ctx: SimContext, owner: str | None = None) -> str:
+        """The arm's namespace: this controller has no ``namespace`` of its own."""
+        entity = ctx.entities.get(owner or self.arm)
+        return entity.meta.get("namespace", "") if entity else ""
+
+    # -- endpoints -------------------------------------------------------------------------------
+    # Named as FZI's cartesian_controllers name them, under the controller's name: a node that
+    # drives this controller drives the real one unchanged. The setpoints are streams because only
+    # the latest matters -- a reference a task republishes as it moves, not a command with an
+    # outcome.
+
+    @endpoint.stream(Pose, ros2=lambda self: {"topic": f"{self.controller_name}/target_frame"})
+    def target_frame(self, position: Point3, orientation: Quaternion) -> None:
+        """The pose to track, in the world frame.
+
+        Args:
+            position: the controlled site's goal
+            orientation: its goal orientation (w, x, y, z)
+        """
+        self.set_goal(position, orientation)
+
+    @endpoint.stream(Wrench, ros2=lambda self: {"topic": f"{self.controller_name}/target_wrench"})
+    def target_wrench(self, force: Force3, torque: Torque3) -> None:
+        """The wrench the tool is to apply, overriding the configured ``target_wrench``.
+
+        Args:
+            force: force (x, y, z)
+            torque: torque (x, y, z)
+        """
+        self.set_target_wrench(np.concatenate([force, torque]))
+
+    @endpoint.out(
+        rate="pose_rate_hz",
+        ros2=lambda self: {"topic": f"{self.controller_name}/current_pose", "frame_id": "world"},
+    )
+    def current_pose(self) -> Pose:
+        """The controlled site's pose, in the world frame."""
+        pos, mat = self.read_pose()
+        quat = np.zeros(4)
+        mujoco.mju_mat2Quat(quat, mat.reshape(9))
+        return Pose(pos, quat)
+
+    # ROS carries the distance alone, the number a monitor watches.
+    @endpoint.out(
+        rate="pose_rate_hz",
+        ros2=lambda self: {
+            "field": "distance",
+            "topic": f"{self.controller_name}/tracking_error",
+        },
+    )
+    def tracking_error(self) -> TrackingError:
+        """How far the controlled site is from the pose it tracks."""
+        return self.read_tracking_error()
 
     # -- handle API ------------------------------------------------------------------------------
 
@@ -585,13 +575,6 @@ class CartesianAdmittancePlugin(Plugin):
             np.array(d.site_xpos[self._site_id], dtype=float),
             np.array(d.site_xmat[self._site_id], dtype=float).reshape(3, 3),
         )
-
-    def read_pose_quat(self) -> tuple[list[float], list[float]]:
-        """Endpoint ``read``: the controlled pose as transport-neutral ``(position, quaternion)``."""
-        pos, mat = self.read_pose()
-        quat = np.zeros(4)
-        mujoco.mju_mat2Quat(quat, mat.reshape(9))
-        return (pos.tolist(), quat.tolist())
 
     def read_tracking_error(self) -> TrackingError:
         """``goal - pose`` for the controlled site, and the goal velocity being fed forward.
