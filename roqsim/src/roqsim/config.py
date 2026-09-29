@@ -319,9 +319,18 @@ def _check_labels_unique(specs: list[PluginSpec], owner: str | None) -> None:
         clash = seen.get(spec.label)
         if clash is not None:
             where = f"'{owner}'" if owner else "this document"
+            # Top-level entries are the ones `extends:` inherits, and re-declaring one to swap it
+            # is the usual way to land here -- so say how to replace it, not only how to rename.
+            replace = (
+                f" To replace an inherited '{spec.label}' with this one, write "
+                f"'disable: [{spec.label}]' beside 'extends:'."
+                if owner is None
+                else ""
+            )
             raise PluginError(
                 f"{where} has two components labelled '{spec.label}' ({clash.ref} and {spec.ref}). "
-                f"A label addresses one component, so give at least one of them a 'name:' of its own."
+                f"A label addresses one component, so give at least one of them a 'name:' of its "
+                f"own.{replace}"
             )
         seen[spec.label] = spec
 
@@ -994,6 +1003,11 @@ def _resolve_targets(
                 out.append((spec, ()))
             continue
         segment = rest[i]
+        # A disabled entry a live sibling replaces is not addressable (see `_replaced_by_live`):
+        # `robot` names the robot that runs, and a value meant for it does not also land on the one
+        # it replaced.
+        live = {c.label for c in siblings if c.enabled}
+        siblings = [c for c in siblings if c.enabled or c.label not in live]
         children = siblings if segment == _WILDCARD else [c for c in siblings if c.label == segment]
         if not children:
             # A segment straight after a wildcard has to name a component -- see the docstring.
@@ -1803,7 +1817,8 @@ def _replaced_by_live(declared: list[PluginSpec]) -> set[int]:
     shape ``extends`` + ``disable: [robot]`` + a new ``robot`` leaves. Siblings are read from the
     declared tree rather than from addresses, which are exactly what the two share. A disabled entry
     with no live twin is not replaced: it expands as it always did, so an override reaching below
-    it still has a target.
+    it still has a target. An override naming the shared address reaches the live entry alone
+    (:func:`_resolve_targets`).
     """
     out: set[int] = set()
 

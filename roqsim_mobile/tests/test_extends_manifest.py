@@ -37,6 +37,13 @@ def _live(cfg):
     return {s.address: s.ref for s in cfg.plugins if s.enabled}
 
 
+def _effective(cfg, skip=()):
+    """What will run, in build order, with every config: the whole of it, so no difference hides."""
+    return [
+        (s.address, s.ref, s.config) for s in cfg.plugins if s.enabled and s.address not in skip
+    ]
+
+
 def _by_address(cfg, address):
     [spec] = [s for s in cfg.plugins if s.enabled and s.address == address]
     return spec
@@ -74,8 +81,8 @@ def test_redeclared_robot_keeps_its_manifest_components(tmp_path):
         """,
     )
     cfg = load_config(child)
+    assert _effective(cfg) == _effective(_direct(tmp_path))
     live = _live(cfg)
-    assert live == _live(_direct(tmp_path))
     assert live["robot.diff_drive"] == "diff_drive"
     assert live["robot.lds01"] == "spawn_sensor"
     assert live["robot.lds01.lidar"] == "lidar"
@@ -101,7 +108,7 @@ def test_redeclared_robot_of_the_same_model_keeps_its_components(tmp_path):
             name: robot
         """,
     )
-    assert _live(load_config(child)) == _live(_direct(tmp_path))
+    assert _effective(load_config(child)) == _effective(_direct(tmp_path))
 
 
 def test_dead_robot_does_not_fill_the_live_robots_overrides(tmp_path):
@@ -145,8 +152,8 @@ def test_extends_without_disable_keeps_the_inherited_robots_components(tmp_path)
             name: greeter
         """,
     )
-    live = _live(load_config(child))
-    assert {k: v for k, v in live.items() if k != "greeter"} == _live(_direct(tmp_path))
+    cfg = load_config(child)
+    assert _effective(cfg, skip={"greeter"}) == _effective(_direct(tmp_path))
 
 
 def test_overriding_the_inherited_robot_by_name_is_refused(tmp_path):
@@ -162,7 +169,8 @@ def test_overriding_the_inherited_robot_by_name_is_refused(tmp_path):
             name: robot
         """,
     )
-    with pytest.raises(PluginError, match="two components labelled 'robot'"):
+    # The message names the fix, not only the clash.
+    with pytest.raises(PluginError, match=r"write 'disable: \[robot\]' beside 'extends:'"):
         load_config(child)
 
 
@@ -173,7 +181,7 @@ def test_overriding_the_inherited_robot_by_set_keeps_its_components(tmp_path):
         tmp_path / "base.yaml",
         overrides={"components": {"robot": {"model": "turtlebot3_waffle"}}},
     )
-    assert _live(cfg) == _live(_direct(tmp_path))
+    assert _effective(cfg) == _effective(_direct(tmp_path))
 
 
 def test_default_plugins_false_still_suppresses_injection(tmp_path):
@@ -217,7 +225,8 @@ def test_a_default_the_live_robot_disables_stays_off(tmp_path):
 
 
 def test_the_replaced_robot_stays_in_the_record_and_out_of_reach(tmp_path):
-    """The replaced entry is kept, turned off, with only what its document declared for it."""
+    """The replaced entry is kept, turned off, with only what its document declared for it; an
+    override of the shared address reaches the live robot alone."""
     _base(tmp_path, drive="{max_linear_vel: 0.5}")
     _write(
         tmp_path,
@@ -239,8 +248,8 @@ def test_the_replaced_robot_stays_in_the_record_and_out_of_reach(tmp_path):
         ("robot", "husky_a200"),
         ("robot.diff_drive", None),
     ]
-    # No husky wheel geometry: the replaced robot's manifest was never merged into anything.
-    assert "wheel_radius" not in dead[1].config
+    # Neither husky wheel geometry nor the override: the replaced robot keeps what it declared.
+    assert dead[1].config == {"max_linear_vel": 0.5}
     assert _by_address(cfg, "robot.diff_drive").config["max_linear_vel"] == 0.2
 
 
@@ -288,3 +297,25 @@ def test_a_disabled_robot_with_no_replacement_still_expands(tmp_path):
     [lidar] = [s for s in cfg.plugins if s.address == "robot.lds01.lidar"]
     assert not lidar.enabled
     assert lidar.config["rays"] == 90
+
+
+def test_the_documented_robot_swap_builds(tmp_path):
+    """docs/interfaces.rst's example: a bundled world reused with another robot, which runs."""
+    child = _write(
+        tmp_path,
+        "swap.yaml",
+        """
+        extends: roqsim_mobile:husky_demo
+        disable: [robot]
+        components:
+          - spawn_robot: {model: turtlebot3_waffle, pose: {position: {x: 1.0, y: 0.0}}}
+            name: robot
+        """,
+    )
+    cfg = load_config(child)
+    robot = [s for s in _effective(cfg) if s[0] == "robot" or s[0].startswith("robot.")]
+    direct = _direct(
+        tmp_path, "spawn_robot: {model: turtlebot3_waffle, pose: {position: {x: 1.0, y: 0.0}}}"
+    )
+    assert robot == _effective(direct)
+    instantiate_plugins(cfg)
