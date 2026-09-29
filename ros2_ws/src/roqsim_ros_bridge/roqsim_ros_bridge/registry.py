@@ -321,7 +321,7 @@ def fill_detection3d_array(msg, payload, stamp: Time, hints: dict) -> None:
 
 @converter("sensor_msgs.msg.Imu")
 def fill_imu(msg, payload, stamp: Time, hints: dict) -> None:
-    """A strap-down IMU reading (``roqsim_sensors.plugins.imu.ImuReading``).
+    """A strap-down IMU reading (anything with the attributes of ``roqsim.types.Imu``).
 
     Two details are REP 145 conventions rather than choices made here. The acceleration is proper
     acceleration -- gravity included -- which is what the producer reads out of MuJoCo and what every
