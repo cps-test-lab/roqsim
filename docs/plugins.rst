@@ -1531,10 +1531,6 @@ own transport thread (``px4_sitl``'s socket reader posts what it received; that 
        ``ground_truth_pose`` (``pose``), the ``live_config`` mixin (``override`` command, one ``out``
        per fault)
      - families: ``live_config``
-   * - ``roqsim_mobile``
-     - ``ackermann_drive`` (``cmd_vel``, ``ackermann_cmd`` streams; ``odom``, ``joint_states``),
-       ``omni_drive`` (``cmd_vel``; ``odom``, ``joint_states``), ``spawn_robot`` (``frames``)
-     - owner: ``spawn_robot`` (the robot entity)
    * - ``roqsim_manipulation``
      - ``arm_controller`` (``joint_states``, ``controller_state``; ``follow_joint_trajectory``
        action and ``joint_command`` as FIFO commands; ``joint_velocity``, ``gripper_cmd``),
