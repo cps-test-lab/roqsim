@@ -41,16 +41,19 @@ def test_a_world_that_does_not_resolve_is_a_report_not_a_tool_failure():
 
 
 def test_it_runs_the_command_out_of_process(monkeypatch):
-    """A plugin that prints must not reach the stdio stream this server speaks on."""
+    """A plugin that prints or reads must not reach the stdio stream this server speaks on."""
     seen = {}
 
     def fake_run(argv, **kwargs):
         seen["argv"] = argv
+        seen["kwargs"] = kwargs
         return subprocess.CompletedProcess(argv, 0, json.dumps({"ok": True}), "")
 
     monkeypatch.setattr(check_mod.subprocess, "run", fake_run)
     assert check_mod.check_world("roqsim_scenes:depot") == {"ok": True}
     assert seen["argv"][1:] == ["-m", "roqsim.check", "roqsim_scenes:depot", "--json"]
+    assert seen["kwargs"]["stdin"] is subprocess.DEVNULL
+    assert seen["kwargs"]["capture_output"] is True
 
 
 def test_a_check_that_could_not_run_raises_with_the_commands_own_line(monkeypatch):

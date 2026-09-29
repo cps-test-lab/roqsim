@@ -24,7 +24,8 @@ server's process, unlike the catalog tools beside it, which only read registries
 the model and runs every plugin's ``build``, ``configure`` and ``on_reset``: anything one of them
 prints lands on this server's stdout, which on the stdio transport IS the protocol stream, and a
 MuJoCo compile that aborts would take the long-lived server down with it. The subprocess keeps both
-out, and the command stays the one implementation.
+out, and the command stays the one implementation. Its stdin is closed for the same reason: the
+server's own stdin is the client's half of that stream.
 """
 
 from __future__ import annotations
@@ -61,6 +62,7 @@ def check_world(world: str) -> dict:
         raise ValueError("world: give a world YAML path or a '<package>:<world>' ref")
     proc = subprocess.run(  # noqa: S603 - argv, no shell
         [sys.executable, "-m", "roqsim.check", world, "--json"],
+        stdin=subprocess.DEVNULL,
         capture_output=True,
         text=True,
         check=False,
