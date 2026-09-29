@@ -31,8 +31,10 @@ from . import (
     TeleportOutcome,
     WorldAccess,
     find_endpoint,
+    no_entity,
     no_navigator,
     no_report,
+    pose_reading,
     published_field,
     report_value,
 )
@@ -222,6 +224,17 @@ class InProcessAccess(WorldAccess):
             return None
         bid = self._body_id(ctx, name)
         return Pose(pos=np.array(ctx.data.xpos[bid]), quat=np.array(ctx.data.xquat[bid]))
+
+    def ground_truth_pose(self, name: str) -> Pose | None:
+        from roqsim.entity_pose import OWNER, endpoint_name
+
+        ctx = self._ctx()
+        if ctx is None:
+            return None
+        ep = ctx.interface.find(OWNER, endpoint_name(name))
+        if ep is None:
+            raise no_entity(_rows(ctx), name)
+        return pose_reading(name, ep.read())
 
     def _body_id(self, ctx, name: str) -> int:
         if ctx.model is not self._bids_model:

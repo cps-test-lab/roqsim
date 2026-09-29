@@ -30,12 +30,14 @@ from scenario_execution.model.types import VariableReference  # noqa: E402
 from scenario_execution.utils.logging import Logger  # noqa: E402
 
 from scenario_execution_roqsim.actions.entity_call import EntityCall  # noqa: E402
+from scenario_execution_roqsim.actions.entity_in_region import EntityInRegion  # noqa: E402
 from scenario_execution_roqsim.actions.entity_monitor import EntityMonitor  # noqa: E402
 from scenario_execution_roqsim.actions.entity_moved import EntityMoved  # noqa: E402
 from scenario_execution_roqsim.actions.entity_navigate import (  # noqa: E402
     EntityNavigate,
     EntityNavigateStart,
 )
+from scenario_execution_roqsim.actions.entity_near import EntityNear  # noqa: E402
 from scenario_execution_roqsim.actions.entity_rotated import EntityRotated  # noqa: E402
 from scenario_execution_roqsim.displacement import MODES  # noqa: E402
 from scenario_execution_roqsim.get_osc_library import get_osc_library  # noqa: E402
@@ -66,6 +68,8 @@ def _entry_points(group):
             EntryPointStub("entity_monitor", EntityMonitor, "scenario_execution_roqsim"),
             EntryPointStub("entity_rotated", EntityRotated, "scenario_execution_roqsim"),
             EntryPointStub("entity_call", EntityCall, "scenario_execution_roqsim"),
+            EntryPointStub("entity_near", EntityNear, "scenario_execution_roqsim"),
+            EntryPointStub("entity_in_region", EntityInRegion, "scenario_execution_roqsim"),
             EntryPointStub("entity_navigate", EntityNavigate, "scenario_execution_roqsim"),
             EntryPointStub(
                 "entity_navigate_start", EntityNavigateStart, "scenario_execution_roqsim"
@@ -160,6 +164,9 @@ def test_a_missing_required_argument_arrives_as_none_and_the_action_rejects_it()
         "dwell: float = 0.0",
         "require: entity_quantifier = entity_quantifier!all",
         "require_verified: bool = true",
+        "target: string = ''",
+        "mode: distance_mode = distance_mode!planar",
+        "outside: bool = false",
     ],
 )
 def test_the_defaults_are_the_documented_ones(declaration):
@@ -277,3 +284,55 @@ def test_entity_monitor_hands_over_the_variable_to_write_not_its_value():
         )
         assert isinstance(args["target_variable"], VariableReference)
     assert not nodes[0].resolve_variable_reference_arguments_in_execute
+
+
+# -- entity_near, entity_in_region -------------------------------------------------------------------
+#: The patterns the package README documents for them, together.
+WHERE = """
+import osc.helpers
+import osc.roqsim
+scenario test:
+    event door_open
+    do parallel:
+        serial:
+            entity_near(entity: 'robot', target: 'shelf', distance: 0.6) with:
+                timeout(60s)
+            entity_near(entity: 'robot', position: position_3d(x: 4.0m, y: 2.0m), distance: 0.3)
+            entity_near(entity: 'gripper', target: 'parcel', distance: 0.05,
+                        mode: distance_mode!spatial)
+            emit end
+        serial:
+            entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+                                                       position_3d(x: 3m, y: 1m)])
+            emit fail
+        with:
+            until @door_open
+        serial:
+            entity_in_region(entity: 'person', outside: true,
+                             region: [position_3d(x: 0m, y: 0m), position_3d(x: 4m, y: 0m),
+                                      position_3d(x: 0m, y: 3m)])
+            emit door_open
+"""
+
+
+def _args(node):
+    return node._model.get_resolved_value(
+        node.get_blackboard_client(), skip_keys=node.execute_skip_args
+    )
+
+
+def test_the_where_conditions_parse_and_hand_over_positions_in_metres():
+    tree = _build(WHERE)
+    near = _nodes(tree, EntityNear)
+    assert len(near) == 3
+    assert _args(near[0])["target"] == "shelf"
+    assert _args(near[0])["mode"][0] == "planar"
+    assert _args(near[1])["target"] == ""
+    assert _args(near[1])["position"] == {"x": 4.0, "y": 2.0, "z": 0.0}
+    assert _args(near[2])["mode"][0] == "spatial"
+    regions = _nodes(tree, EntityInRegion)
+    assert [len(_args(n)["region"]) for n in regions] == [2, 3]
+    assert _args(regions[0])["region"][1] == {"x": 3.0, "y": 1.0, "z": 0.0}
+    assert [_args(n)["outside"] for n in regions] == [False, True]
+    for node in near + regions:
+        node.execute(**_args(node))

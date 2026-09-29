@@ -22,6 +22,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import (
+    POSE_PATH,
     AccessError,
     CommandCall,
     CommandOutcome,
@@ -36,14 +37,15 @@ from . import (
     TeleportOutcome,
     WorldAccess,
     find_endpoint,
+    no_entity,
     no_navigator,
     no_report,
+    pose_reading,
     published_field,
     report_value,
 )
 
-#: Where the core serves an entity's pose, and entity placement and presence.
-_POSE = "sim/entities/{name}/pose"
+#: Where the core serves entity placement and presence.
 _SET_STATE = "sim/entities/set_state"
 _SET_PRESENCE = "sim/entities/set_presence"
 #: The exception a producer raises for a name the world does not carry (roqsim.entity_control).
@@ -205,6 +207,7 @@ class IpcAccess(WorldAccess):
         self._listing: _Request | None = None
         self._waiting_for = "no simulator answered yet"
         self._poses: dict[str, _Request] = {}
+        self._truth: dict[str, _Request] = {}
 
     # -- the world ------------------------------------------------------------------------------
     def ready(self) -> bool:
@@ -244,7 +247,7 @@ class IpcAccess(WorldAccess):
         return {row["path"] for row in self._require_rows()}
 
     def entity_pose(self, name: str) -> Pose | None:
-        path = _POSE.format(name=name)
+        path = POSE_PATH.format(name=name)
         if path not in self._paths():
             entities = sorted(
                 row["path"].split("/")[2]
@@ -271,6 +274,20 @@ class IpcAccess(WorldAccess):
         pose = request.value
         return Pose(pos=np.asarray(pose["position"]), quat=np.asarray(pose["orientation"]))
 
+    def ground_truth_pose(self, name: str) -> Pose | None:
+        path = POSE_PATH.format(name=name)
+        if path not in self._paths():
+            raise no_entity(self._rows, name)
+        request = self._truth.get(name)
+        if request is None:
+            request = self._truth[name] = _Request(self, "read", path=path)
+        if not request.poll():
+            return None
+        del self._truth[name]
+        if request.error is not None:
+            raise AccessError(str(request.error))
+        return pose_reading(name, request.value)
+
     # -- commands -------------------------------------------------------------------------------
     def call_endpoint(self, entity: str, endpoint: str, value=None) -> CommandCall:
         row = find_endpoint(self._require_rows(), entity, endpoint, kind="in")
@@ -282,7 +299,7 @@ class IpcAccess(WorldAccess):
         try:
             row = find_endpoint(rows, entity, report, kind="out")
         except AccessError:
-            is_entity = _POSE.format(name=entity) in self._paths()
+            is_entity = POSE_PATH.format(name=entity) in self._paths()
             raise no_report(rows, entity, report, is_entity=is_entity) from None
         return _IpcReport(self, row, entity, report, field)
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "scenario_execution_roqsim"
 version = "0.1.0"
-description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion, read what its plugins report and send any command they declare, in-process or over the simulator's control socket."
+description = "OpenSCENARIO 2 actions for roqsim: observe an entity's motion and where it is, read what its plugins report and send any command they declare, in-process or over the simulator's control socket."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -45,6 +45,8 @@ roqsim = "scenario_execution_roqsim.get_osc_library:get_osc_library"
 [project.entry-points."scenario_execution.actions"]
 entity_moved = "scenario_execution_roqsim.actions.entity_moved:EntityMoved"
 entity_monitor = "scenario_execution_roqsim.actions.entity_monitor:EntityMonitor"
+entity_near = "scenario_execution_roqsim.actions.entity_near:EntityNear"
+entity_in_region = "scenario_execution_roqsim.actions.entity_in_region:EntityInRegion"
 entity_rotated = "scenario_execution_roqsim.actions.entity_rotated:EntityRotated"
 entity_navigate = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigate"
 entity_navigate_start = "scenario_execution_roqsim.actions.entity_navigate:EntityNavigateStart"

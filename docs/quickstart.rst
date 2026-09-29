@@ -1026,6 +1026,8 @@ What a scenario can ask the simulation
    entity_rotated(entities: ['crate'], angle: 0.5)
    entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
    entity_call(entity: 'grip_fault', command: 'override', value: 'true')   # 'false' restores it
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
 
 ``entity_moved`` / ``entity_rotated`` succeed once the named entities have been displaced (or turned)
 from where they were **when the action started** — net displacement, not path length, unlike
@@ -1082,6 +1084,41 @@ default, so declare one the condition does not hold for. A condition that must h
 time is composed in the language itself; scenario-execution's language documentation describes that
 pattern. An entity, endpoint or field that does not exist, and a field that is not a single number,
 flag or string, are refused with the same text on both transports.
+
+Where an entity is -- near something, inside an area -- is geometry, which an expression cannot
+compute, so two actions state it; each succeeds on the first tick its condition holds:
+
+.. code-block:: text
+
+   entity_near(entity: 'robot', target: 'shelf', distance: 0.6)
+   entity_near(entity: 'robot', position: position_3d(x: 4m, y: 2m), distance: 0.3)
+   entity_near(entity: 'gripper', target: 'parcel', distance: 0.05, mode: distance_mode!spatial)
+   entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m), position_3d(x: 3m, y: 1m)])
+   entity_in_region(entity: 'person', outside: true, region: [p1, p2, p3, p4])   # a polygon
+
+The distance is between reference points -- the origins of the entities' bodies, from the core's
+``sim/entities/<name>/pose`` -- and measured in the floor plane unless ``distance_mode!spatial`` asks
+for 3D, since "the robot reached the shelf" is a statement about the floor plan. A region is an area
+of the floor plan: two points are a box's opposite corners, three or more a polygon's vertices; z is
+ignored and the boundary counts as inside. Neither action fails on its own: ``timeout()`` bounds one
+that must hold in time, and "must never enter" is a branch that fails the trial, bounded by ``until``
+for as long as the rule applies:
+
+.. code-block:: text
+
+   do parallel:
+       serial:
+           entity_navigate(entity: 'robot', goal_poses: [...])
+           emit end
+       serial:
+           entity_in_region(entity: 'robot', region: [position_3d(x: 2m, y: 0m),
+                                                      position_3d(x: 3m, y: 1m)])
+           emit fail
+       with:
+           until @door_open
+
+An entity deleted at run time is nowhere, so the condition waits for it; an unknown entity or target
+is refused, naming the closest names, with the same text on both transports.
 
 Each works in a stepped run *and* against a simulator in another process, unedited: the transport is
 chosen from what the runner offered. In-process they read ``MujocoSim.context`` (entity poses from

@@ -22,6 +22,7 @@ It works out cleanly because both transports speak the same vocabulary -- the wo
 need                         in-process                          over the control socket
 ===========================  ==================================  ====================================
 pose of entity ``X``         ``ctx.entities`` -> ``data.xpos``    ``sim/entities/X/pose``
+ground-truth pose of ``X``   ``sim/entities/X/pose``, read        the same endpoint, over the socket
 call command ``C`` of ``X``  ``ctx.interface``, its ``write``     ``call``, which waits for it
 did it land                  its confirming endpoint, read       the same, in the reply
                              after the step that applied it
@@ -63,6 +64,14 @@ class AccessError(RuntimeError):
     Always an AUTHORING error -- a name that does not exist, a world without the plugin the scenario
     fires -- so an action turns it into ``ActionError``. A runtime verdict (the fault did not land) is
     not one of these; that is a result, and results are returned, not raised.
+    """
+
+
+class EntityAbsent(AccessError):
+    """The entity exists and is absent (deleted at run time): it has no pose now, and may again.
+
+    A fact about the trial rather than about the scenario, so a caller that can wait for the entity
+    to come back catches this one; any other caller lets it reach the scenario as an AccessError.
     """
 
 
@@ -406,6 +415,51 @@ def no_navigator(name: str, offered: list[str]) -> AccessError:
     )
 
 
+#: Where the core serves an entity's ground-truth pose (:mod:`roqsim.entity_pose`).
+POSE_PATH = "sim/entities/{name}/pose"
+
+
+def posed_entities(rows: list[dict]) -> list[str]:
+    """The entities the core serves a pose for, by their endpoint rows."""
+    prefix, suffix = POSE_PATH.split("{name}")
+    return sorted(
+        row["path"][len(prefix) : -len(suffix)]
+        for row in rows
+        if row["path"].startswith(prefix) and row["path"].endswith(suffix)
+    )
+
+
+def no_entity(rows: list[dict], name: str) -> AccessError:
+    """Why *name* has no pose: the closest entity names, or the ones there are."""
+    import difflib
+
+    known = posed_entities(rows)
+    close = difflib.get_close_matches(name, known, n=3, cutoff=0.6)
+    hint = (
+        f"Did you mean {', '.join(repr(c) for c in close)}?"
+        if close
+        else f"Known entities: {', '.join(known) or '(none)'}."
+    )
+    return AccessError(
+        f"the simulator has no entity called {name!r} with a body, so it has no pose. The name is "
+        f"the world's `name:` for that entity, not a body name and not a TF frame. {hint}"
+    )
+
+
+def pose_reading(name: str, payload) -> Pose:
+    """A core pose endpoint's value as a :class:`Pose`; ``None`` is an absent entity."""
+    if payload is None:
+        raise EntityAbsent(
+            f"entity {name!r} is absent (deleted at run time): nothing can see or touch it, so it "
+            "has no pose until it is spawned again."
+        )
+    get = payload.get if isinstance(payload, dict) else lambda k: getattr(payload, k)
+    return Pose(
+        pos=np.asarray(get("position"), dtype=float),
+        quat=np.asarray(get("orientation"), dtype=float),
+    )
+
+
 class WorldAccess(ABC):
     """The seam. See the module docstring."""
 
@@ -427,6 +481,16 @@ class WorldAccess(ABC):
 
         Raises :class:`AccessError` when the name can never resolve, which is a different thing from
         not knowing yet and must not be confused with it.
+        """
+
+    @abstractmethod
+    def ground_truth_pose(self, name: str) -> Pose | None:
+        """Entity *name*'s pose as the core's ``sim/entities/<name>/pose`` endpoint reads it.
+
+        The same endpoint on both transports, so an entity welded to the world (a shelf) has a
+        pose here too, and a name the core serves no pose for is refused with the same text
+        (:func:`no_entity`). ``None`` while a reply is in flight; :class:`EntityAbsent` while the
+        entity is absent.
         """
 
     @abstractmethod

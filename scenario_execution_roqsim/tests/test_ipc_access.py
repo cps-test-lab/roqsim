@@ -10,6 +10,7 @@ backend. Every refusal a scenario can meet is run through both and must read the
 
 from __future__ import annotations
 
+import math
 import threading
 import time
 
@@ -212,6 +213,8 @@ REFUSALS = {
     "an unknown field": lambda a: a.entity_report("parcel", "level", "litre"),
     "a report with no single field": lambda a: a.entity_report("parcel", "level"),
     "a field that is not a single value": lambda a: a.entity_report("parcel", "tank", "gauges"),
+    "a pose of an unknown entity": lambda a: a.ground_truth_pose("parcle"),
+    "a pose of a name no entity has": lambda a: a.ground_truth_pose("ghost"),
 }
 
 
@@ -220,6 +223,14 @@ def test_every_refusal_reads_the_same_on_both_routes(routes):
     for what, make in REFUSALS.items():
         here, there = _refusal(local, make), _refusal(socket, make)
         assert here == there, f"{what}:\n  in-process: {here}\n  socket:     {there}"
+
+
+def test_an_unknown_entity_is_refused_with_the_closest_names(routes):
+    _local, socket = routes
+    assert "Did you mean 'parcel'?" in _refusal(socket, REFUSALS["a pose of an unknown entity"])
+    assert "Known entities: cart, parcel, prop." in _refusal(
+        socket, REFUSALS["a pose of a name no entity has"]
+    )
 
 
 def test_a_bare_value_for_several_parameters_names_them(routes):
@@ -378,3 +389,263 @@ def test_a_wait_on_a_monitored_variable_ends_a_run_over_the_socket(routes, tmp_p
         # Each action closes its connection to the simulator.
         run.behaviour_tree.shutdown()
     assert run.process_results(), run.results
+
+
+# -- entity_near, entity_in_region: one verdict, whichever route ----------------------------------
+# `cart` stands at (4, 4, 0.1) and the welded `prop` at (3, 3, 0.1) on both routes.
+
+BOX_AT_CART = [{"x": 3.5, "y": 3.5}, {"x": 4.5, "y": 4.5}]
+BOX_ELSEWHERE = [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 1.0}]
+TRIANGLE_AT_CART = [{"x": 3.0, "y": 3.0}, {"x": 5.0, "y": 3.0}, {"x": 4.0, "y": 5.0}]
+# An L whose notch is where the cart stands.
+L_AROUND_CART = [
+    {"x": 3.0, "y": 3.0},
+    {"x": 5.0, "y": 3.0},
+    {"x": 5.0, "y": 3.5},
+    {"x": 3.5, "y": 3.5},
+    {"x": 3.5, "y": 5.0},
+    {"x": 3.0, "y": 5.0},
+]
+ABOVE_CART = {"x": 4.0, "y": 4.0, "z": 1.1}
+
+WHERE = {
+    "near an entity": ("near", dict(entity="cart", target="prop", distance=1.5), "SUCCESS"),
+    "not near enough an entity": (
+        "near",
+        dict(entity="cart", target="prop", distance=1.3),
+        "RUNNING",
+    ),
+    "near a position": (
+        "near",
+        dict(entity="cart", position={"x": 4.0, "y": 4.5}, distance=0.6),
+        "SUCCESS",
+    ),
+    "planar ignores height": (
+        "near",
+        dict(entity="cart", position=ABOVE_CART, distance=0.5),
+        "SUCCESS",
+    ),
+    "spatial counts it": (
+        "near",
+        dict(entity="cart", position=ABOVE_CART, distance=0.5, mode="spatial"),
+        "RUNNING",
+    ),
+    "inside a box": ("region", dict(entity="cart", region=BOX_AT_CART), "SUCCESS"),
+    "not outside a box it is in": (
+        "region",
+        dict(entity="cart", region=BOX_AT_CART, outside=True),
+        "RUNNING",
+    ),
+    "outside a box": ("region", dict(entity="cart", region=BOX_ELSEWHERE, outside=True), "SUCCESS"),
+    "inside a polygon": ("region", dict(entity="cart", region=TRIANGLE_AT_CART), "SUCCESS"),
+    "in a polygon's notch": ("region", dict(entity="cart", region=L_AROUND_CART), "RUNNING"),
+}
+
+
+def _where(kind, **args):
+    from scenario_execution_roqsim.actions.entity_in_region import EntityInRegion
+    from scenario_execution_roqsim.actions.entity_near import EntityNear
+
+    if kind == "near":
+        full = {"target": "", "position": None, "mode": "planar"} | args
+        return EntityNear(), full
+    return EntityInRegion(), {"outside": False} | args
+
+
+def _judge(routes, route, tmp_path, monkeypatch, kind, args, measured_ticks=10):
+    """``(status, message)`` of a where-condition on *route*, after it has measured ten times; the
+    message without the transport's name, so the two routes can be compared."""
+    (_local, engine), _socket = routes
+    action, full = _where(kind, **args)
+    if route == "in-process":
+        action.setup(simulation=_Sim(engine.ctx), clock=_HostClock())
+    else:
+        monkeypatch.setenv("ROQSIM_CONTROL", "ipc://" + str(tmp_path / "c.sock"))
+        action.setup(clock=_HostClock())
+    action.execute(**full)
+    deadline = time.monotonic() + 10
+    try:
+        while True:
+            assert time.monotonic() < deadline, action.feedback_message
+            status = action.update()
+            if status.name != "RUNNING":
+                break
+            if not action.feedback_message.startswith("waiting for"):
+                measured_ticks -= 1
+                if measured_ticks == 0:
+                    break
+            if route == "in-process":
+                engine.step()
+            else:
+                time.sleep(0.005)
+    finally:
+        action.shutdown()
+    return status.name, action.feedback_message.replace(f" ({action.transport})", "")
+
+
+@pytest.mark.parametrize("case", list(WHERE))
+def test_a_where_condition_reads_the_same_on_both_routes(routes, tmp_path, monkeypatch, case):
+    pytest.importorskip("scenario_execution")
+    kind, args, expected = WHERE[case]
+    here = _judge(routes, "in-process", tmp_path, monkeypatch, kind, args)
+    there = _judge(routes, "control socket", tmp_path, monkeypatch, kind, args)
+    assert here == there
+    assert here[0] == expected, here[1]
+
+
+def test_near_measures_between_reference_points(routes, tmp_path, monkeypatch):
+    pytest.importorskip("scenario_execution")
+    status, message = _judge(
+        routes,
+        "control socket",
+        tmp_path,
+        monkeypatch,
+        "near",
+        dict(entity="cart", target="prop", distance=1.5),
+    )
+    assert status == "SUCCESS"
+    assert message == "'cart' 1.41 m planar from 'prop' (near: <= 1.5 m)"
+
+
+def test_an_unknown_target_is_refused_alike_on_both_routes(routes, tmp_path, monkeypatch):
+    pytest.importorskip("scenario_execution")
+    from scenario_execution.actions.base_action import ActionError
+
+    texts = []
+    for route in ("in-process", "control socket"):
+        with pytest.raises(ActionError) as err:
+            _judge(
+                routes,
+                route,
+                tmp_path,
+                monkeypatch,
+                "near",
+                dict(entity="cart", target="prp", distance=1.0),
+            )
+        texts.append(str(err.value).replace(f" ({route})", ""))
+    assert texts[0] == texts[1]
+    assert "no entity called 'prp'" in texts[0] and "Did you mean 'prop'?" in texts[0]
+
+
+def test_an_absent_entity_is_waited_for_alike_on_both_routes(routes, tmp_path, monkeypatch):
+    """Deleted at run time, an entity is nowhere: the condition does not hold, and the run goes on."""
+    pytest.importorskip("scenario_execution")
+    (local, engine), socket = routes
+    assert _settle_local(local.set_entity_presence("parcel", False), engine).ok
+    assert _settle_socket(socket.set_entity_presence("parcel", False)).ok
+    args = dict(entity="parcel", region=BOX_ELSEWHERE, outside=True)
+    here = _judge(routes, "in-process", tmp_path, monkeypatch, "region", args, measured_ticks=3)
+    there = _judge(
+        routes, "control socket", tmp_path, monkeypatch, "region", args, measured_ticks=3
+    )
+    assert here == there
+    assert here == (
+        "RUNNING",
+        "entity 'parcel' is absent (deleted at run time): nothing can see or touch it, so it has no "
+        "pose until it is spawned again.",
+    )
+
+
+#: The cart drives past the welded prop into a box. The keep-out rule on that box holds only until
+#: the cart has come within 1 m of the prop, which it does before it can reach the box.
+WHERE_SCENARIO = """
+import osc.helpers
+import osc.roqsim
+
+scenario cart_arrives:
+    timeout(60s)
+    event approached
+    do parallel:
+        entity_navigate(entity: 'cart', goal_poses: [pose_3d(position: position_3d(x: 3.3m, y: 3.3m))])
+        serial:
+            entity_near(entity: 'cart', target: 'prop', distance: 1.0)
+            emit approached
+            entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),
+                                                      position_3d(x: 3.6m, y: 3.6m)])
+            entity_near(entity: 'cart', position: position_3d(x: 3.3m, y: 3.3m, z: 5.0m),
+                        distance: 0.3)
+            emit end
+        serial:
+            entity_in_region(entity: 'cart', region: [position_3d(x: 3.0m, y: 3.0m),
+                                                      position_3d(x: 3.6m, y: 3.6m)])
+            emit fail
+        UNTIL
+        serial:
+            entity_in_region(entity: 'cart', region: [position_3d(x: 5m, y: 5m),
+                                                      position_3d(x: 6m, y: 5m),
+                                                      position_3d(x: 6m, y: 6m)])
+            emit fail
+"""
+
+UNTIL = "with:\n            until @approached"
+
+
+def _where_scenario(tmp_path, until: bool):
+    from scenario_execution.scenario_execution_base import ScenarioExecution
+
+    path = tmp_path / "cart_arrives.osc"
+    path.write_text(WHERE_SCENARIO.replace("UNTIL", UNTIL if until else ""))
+    run = ScenarioExecution(
+        debug=False,
+        log_model=False,
+        live_tree=False,
+        scenario_file=str(path),
+        output_dir=None,
+        register_signal=False,
+    )
+    assert run.parse(), run.results
+    return run
+
+
+def _run_stepped(run, engine):
+    from scenario_execution.simulation import SimulationClock
+
+    clock = SimulationClock(engine.dt)
+    run.setup(run.tree, simulation=_Sim(engine.ctx), clock=clock)
+    try:
+        for _ in range(20000):
+            if run.shutdown_requested:
+                break
+            engine.step()
+            clock.advance()
+            run.behaviour_tree.tick()
+    finally:
+        run.behaviour_tree.shutdown()
+    assert run.shutdown_requested, "the scenario never ended"
+    return run.process_results()
+
+
+def _run_over_the_socket(run, tmp_path, monkeypatch):
+    monkeypatch.setenv("ROQSIM_CONTROL", "ipc://" + str(tmp_path / "c.sock"))
+    run.setup(run.tree, clock=_HostClock())
+    deadline = time.monotonic() + 30
+    try:
+        while not run.shutdown_requested:
+            assert time.monotonic() < deadline, "the scenario never ended"
+            run.behaviour_tree.tick()
+            time.sleep(0.005)
+    finally:
+        run.behaviour_tree.shutdown()
+    return run.process_results()
+
+
+def test_a_scenario_of_where_conditions_runs_stepped(routes, tmp_path):
+    pytest.importorskip("scenario_execution")
+    (_local, engine), _socket = routes
+    run = _where_scenario(tmp_path, until=True)
+    assert _run_stepped(run, engine), run.results
+    x, y, _z = engine.ctx.data.mocap_pos[0]
+    assert math.hypot(x - 3.3, y - 3.3) <= 0.3
+
+
+def test_the_same_scenario_runs_over_the_socket(routes, tmp_path, monkeypatch):
+    pytest.importorskip("scenario_execution")
+    run = _where_scenario(tmp_path, until=True)
+    assert _run_over_the_socket(run, tmp_path, monkeypatch), run.results
+
+
+def test_without_its_until_the_keep_out_rule_fails_the_run(routes, tmp_path):
+    pytest.importorskip("scenario_execution")
+    (_local, engine), _socket = routes
+    run = _where_scenario(tmp_path, until=False)
+    assert not _run_stepped(run, engine)
