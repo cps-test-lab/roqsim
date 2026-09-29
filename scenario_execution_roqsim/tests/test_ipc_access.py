@@ -222,6 +222,12 @@ def test_every_refusal_reads_the_same_on_both_routes(routes):
         assert here == there, f"{what}:\n  in-process: {here}\n  socket:     {there}"
 
 
+def test_a_bare_value_for_several_parameters_names_them(routes):
+    _local, socket = routes
+    text = _refusal(socket, REFUSALS["a bare value for two parameters"])
+    assert "pass a mapping of litres, rate" in text
+
+
 def test_a_command_is_confirmed_over_the_socket(routes):
     _local, socket = routes
     time.sleep(0.5)  # the crate settles onto the ramp, so the override has a contact to verify

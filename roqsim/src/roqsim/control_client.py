@@ -154,7 +154,8 @@ class Client:
         """Write a command and wait for its outcome, or put a value in a stream.
 
         *value* is the parameters by name, a mapping, for an endpoint that declares them
-        (``describe`` lists them); an endpoint built by hand takes its payload as it is.
+        (``describe`` lists them), or a bare value for one that declares exactly one; an endpoint
+        built by hand takes its payload as it is.
 
         A command replies ``{"applied": True, "result": <what it returned>}``, plus
         ``verified``/``confirmation`` where the endpoint names one that confirms it. A stream

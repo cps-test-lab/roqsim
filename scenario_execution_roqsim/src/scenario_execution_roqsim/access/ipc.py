@@ -35,7 +35,6 @@ from . import (
     TeleportCall,
     TeleportOutcome,
     WorldAccess,
-    command_payload,
     find_endpoint,
     no_navigator,
     no_report,
@@ -80,28 +79,10 @@ def _refusal(err) -> tuple[bool, str]:
 
 
 class _IpcCommand(CommandCall):
-    """A command sent with ``call``. A bare value is sent once the command's parameters are known
-    (a ``describe`` first), so it reaches a typed command as :func:`command_payload` shapes it."""
-
     def __init__(self, access: IpcAccess, path: str, value):
-        self._access, self._path, self._value = access, path, value
-        self._describe = None
-        self._request = None
-        if value is None or isinstance(value, dict):
-            self._request = _Request(access, "call", value, path=path)
-        else:
-            self._describe = _Request(access, "describe", path=path)
+        self._request = _Request(access, "call", value, path=path)
 
     def poll(self) -> CommandOutcome | None:
-        if self._request is None:
-            if not self._describe.poll():
-                return None
-            if self._describe.error is not None:
-                return CommandOutcome(ok=False, detail=str(self._describe.error))
-            params = self._describe.value.get("params")
-            names = None if params is None else [p["name"] for p in params]
-            payload = command_payload(names, self._value)
-            self._request = _Request(self._access, "call", payload, path=self._path)
         request = self._request
         if not request.poll():
             return None

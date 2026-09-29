@@ -1352,11 +1352,18 @@ returns the type. Payloads are dataclasses, never positional tuples.
 a unit spelled as a config ``Field``'s. Document a parameter in the docstring's ``Args:`` section and
 a dataclass field in its ``Attributes:`` section; a doc string inside ``Annotated`` is refused, as is
 an ``Args:`` entry naming no parameter. A parameter without a default is required. A bridge passes
-parameters by name, as a mapping; ``write`` refuses a missing, unknown or mistyped one before
-anything is queued, naming each (:class:`~roqsim.endpoint.ParameterError`). ``roqsim plugins
-describe <name>`` publishes all of it, and how each installed transport carries the endpoint,
-without building a world. Annotations must resolve at run time: import a type used in one at module
-level, not under ``TYPE_CHECKING``.
+parameters by name, as a mapping. A bare value (not a mapping) is shorthand for an endpoint with
+exactly one parameter: it binds to that one. An endpoint with no parameters refuses it, and one with
+several refuses it naming them, never guessing::
+
+   override.write(True)            # def override(self, data: bool) -> data=True
+   override.write({"data": True})  # the same, spelled out
+
+A mapping always names parameters, so a single ``dict`` parameter is still passed wrapped.
+``write`` refuses a missing, unknown or mistyped parameter before anything is queued, naming each
+(:class:`~roqsim.endpoint.ParameterError`). ``roqsim plugins describe <name>`` publishes all of
+it, and how each installed transport carries the endpoint, without building a world. Annotations
+must resolve at run time: import a type used in one at module level, not under ``TYPE_CHECKING``.
 
 **Options** name attributes or config keys rather than wrapping them in lambdas:
 

@@ -259,19 +259,6 @@ def parse_value(text: str):
         return text
 
 
-def command_payload(params: list[str] | None, value):
-    """What a command is sent for a scenario's *value*.
-
-    A command declared with typed parameters takes a mapping of them. For one that declares exactly
-    one, a bare value is that parameter, so ``value: 'true'`` switches ``override(data: bool)`` the
-    way a ROS ``SetBool`` does. Anything else is sent unchanged, and the producer refuses a misfit
-    with its own text. *params* are the parameter names, ``None`` for an untyped command.
-    """
-    if value is None or isinstance(value, dict) or params is None or len(params) != 1:
-        return value
-    return {params[0]: value}
-
-
 # -- resolving what a scenario names ----------------------------------------------------------------
 # Both transports resolve against the same rows -- one per endpoint: its path, owner, name and kind
 # -- so an unknown name is refused with the same text whichever one a scenario runs over.

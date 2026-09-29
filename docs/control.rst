@@ -131,15 +131,21 @@ decorator (``backend={"ipc": None}`` on a hand-built one). Three kinds:
 ``out``
    ``read`` returns its current value; ``sub`` delivers it as it is published, at its rate.
 ``command``
-   ``call`` writes it -- the parameters by name, as a JSON object, for an endpoint that declares
-   them (``describe`` lists them with their types and units; a missing, unknown or mistyped one is
-   refused before anything is queued, naming the nearest known name) -- and waits for the outcome:
-   what the plugin's method returned, or the plugin's own exception text when it refused. A command that names an ``out`` endpoint that confirms it
-   (``Endpoint.confirm``) replies with that endpoint's value as recorded in the step that applied
-   the command. **While the simulation is paused no step runs**, so such a reply is ``"verified":
-   false`` with a note saying so -- it neither steps the simulation nor reports the verdict from
-   before the change. A command that gets no outcome within the timeout (5 s unless the request
-   names one) is an error, never a success.
+   ``call`` writes it and waits for the outcome: what the plugin's method returned, or the
+   plugin's own exception text when it refused. The value is the parameters by name, as a JSON
+   object (``describe`` lists them with their types and units; a missing, unknown or mistyped one
+   is refused before anything is queued, naming the nearest known name). For an endpoint with
+   exactly one parameter a bare value is that parameter, so these two are the same::
+
+      $ roqsim call grip_fault/override true
+      $ roqsim call grip_fault/override '{"data": true}'
+
+   An endpoint with several parameters refuses a bare value, naming them. A command that names an
+   ``out`` endpoint that confirms it (``Endpoint.confirm``) replies with that endpoint's value as
+   recorded in the step that applied the command. **While the simulation is paused no step
+   runs**, so such a reply is ``"verified": false`` with a note saying so -- it neither steps the
+   simulation nor reports the verdict from before the change. A command that gets no outcome
+   within the timeout (5 s unless the request names one) is an error, never a success.
 ``stream``
    ``call`` checks the parameters the same way, puts them in the stream's slot and returns at
    once; the newest value is applied at the next step, or while paused at once.
