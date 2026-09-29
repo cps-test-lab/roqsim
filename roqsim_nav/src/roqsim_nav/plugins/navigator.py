@@ -151,7 +151,7 @@ _PROBE_FIELDS = {
     "width": Field(float, default=0.6, unit="m", doc="corridor swept: the body plus its clearance"),
     "rays": Field(int, default=5, doc="rays sampling that width"),
     "height": Field(
-        float, default=0.0, unit="m", doc="scan height; 0 -> just above obstacle_height's floor"
+        float, default=None, unit="m", doc="scan height; default: obstacle_height's floor + 5 cm"
     ),
     "clear_time": Field(float, default=0.5, unit="s", doc="the way stays open this long to go on"),
     "yield_time": Field(
@@ -161,7 +161,7 @@ _PROBE_FIELDS = {
         float, default=5.0, unit="s", doc="a remembered blockage steers the planner this long"
     ),
     "blockage_radius": Field(
-        float, default=0.0, unit="m", doc="disc a blockage marks; 0 -> half the corridor width"
+        float, default=None, unit="m", doc="disc a blockage marks; default: half the corridor width"
     ),
     "ignore": Field(list, default=[], doc="entities this mover never stops for"),
 }
