@@ -63,6 +63,7 @@ def spawn(
     prefix: str = PREFIX,
     namespace: str = NAMESPACE,
     disabled: tuple[str, ...] = (),
+    components: list | None = None,
 ) -> Engine:
     """*model* spawned at the room's centre as *owner*, set up, reset and stepped once so every scanner
     has cast.
@@ -71,7 +72,8 @@ def spawn(
     each one's range noise and quantisation are switched off on the running scanner only (all three
     keys are live-writable), because the checks compare a published range with a wall's exact
     distance, while its config keeps the datasheet noise the manifest states. *disabled* are
-    component addresses switched off (a camera that would need a GL context).
+    component addresses switched off (a camera that would need a GL context). *components* are the
+    robot's own, for a model that has no manifest to bring them (a test fixture loaded by path).
     """
     world = {
         "sim": {"timestep": 0.002},
@@ -80,6 +82,7 @@ def spawn(
             {
                 "spawn_robot": {"model": model, "prefix": prefix, "namespace": namespace},
                 "name": owner,
+                **({"components": components} if components else {}),
             },
         ],
     }
@@ -131,11 +134,16 @@ def scan_endpoint(engine: Engine):
     return scan
 
 
+def topic_of(ep) -> str:
+    """The topic a bridge publishes *ep* on: the world's rename, else its ros2 hint's, else its name."""
+    return ep.topic or ep.backend["ros2"].get("topic") or ep.name
+
+
 def static_tf(engine: Engine, owner: str, namespace: str = NAMESPACE) -> list[dict]:
     """The static transforms *owner* publishes on its ``frames`` endpoint, in the robot's namespace."""
     (frames,) = [e for e in engine.ctx.interface.all() if e.name == "frames" and e.owner == owner]
     assert frames.namespace == namespace
-    return frames.backend["ros2"]["static_tf"]
+    return [vars(t) for t in frames.read().transforms]
 
 
 # -- rotations and poses -----------------------------------------------------------------------
@@ -383,5 +391,5 @@ def assert_tf_chain(engine: Engine, owner: str, namespace: str, mounts) -> None:
         scan = endpoint(engine, "scan", address)
         hints = scan.backend["ros2"]
         assert scan.namespace == namespace
-        assert (hints["frame_id"], hints["topic"]) == (frame, topic)
+        assert (hints["frame_id"], topic_of(scan)) == (frame, topic)
         assert "static_tf" not in hints, "the mount owns the chain; the scan publishes none"

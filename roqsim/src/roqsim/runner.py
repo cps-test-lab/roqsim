@@ -644,7 +644,8 @@ def run(
     loud, because a mute simulation is a different experiment rather than a quieter one.
 
     ``control`` is a control URI (:mod:`roqsim.ipc`): the run serves every endpoint there, with
-    pause/resume/step/reset as ``sim/run_control/*``, and prints ``control: <uri>`` once it does.
+    pause/resume/step/reset as ``sim/run_control/*`` and entity placement and presence as
+    ``sim/entities/set_state`` / ``set_presence``, and prints ``control: <uri>`` once it does.
     ``no_transport`` does not remove it -- the control socket is how this process is reached, not a
     middleware the experiment publishes on.
     """

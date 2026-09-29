@@ -44,7 +44,9 @@ def test_bound_names_are_the_resolved_ros_names():
         ({"ignore": []}, "parcel"),
         ({"ignore": [], "topics": {"contact": "bump"}}, "spare"),
     ):
-        ContactMonitorPlugin(config, entity=entity).configure(ctx)
+        monitor = ContactMonitorPlugin(config, entity=entity)
+        monitor.configure(ctx)
+        monitor.register_endpoints(ctx)
     absolute = Endpoint(
         name="seconds",
         direction="out",

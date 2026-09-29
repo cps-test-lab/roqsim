@@ -120,7 +120,7 @@ def test_a_re_expressed_mount_puts_the_camera_where_the_retired_one_did(tmp_path
 def test_the_mount_publishes_the_vendor_chain():
     engine = _compiled("oakd_pro", [0.0, 0.0, 1.0], [0.0, 0.0, 0.0])
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    tfs = {(t["parent"], t["child"]): t for t in frames.backend["ros2"]["static_tf"]}
+    tfs = {(t["parent"], t["child"]): t for t in [vars(t) for t in frames.read().transforms]}
     assert set(tfs) == {
         ("world", "oakd_link"),
         ("oakd_link", "oakd_rgb_camera_frame"),

@@ -92,7 +92,7 @@ def test_every_core_type_round_trips_through_every_message_it_travels_as(value):
     ("cls", "msg"), [(bool, "Bool"), (float, "Float64"), (int, "Int64"), (str, "String")]
 )
 def test_scalars_travel_as_std_msgs(cls, msg):
-    (wire,) = typemap.lookup(cls).wires
+    wire = typemap.lookup(cls).wires[0]
     assert wire.msg == f"std_msgs.msg.{msg}"
     m = resolve_type(wire.msg)()
     wire.fill(m, cls(1), STAMP, {})
@@ -170,6 +170,10 @@ class Producer(Plugin):
 
     @endpoint.out(ros2={"field": "data", "qos": "sensor_data"})
     def level_value(self) -> Level:
+        return Level(2.5)
+
+    @endpoint.out(ros2={"field": "data", "type": "std_msgs.msg.Float32"})
+    def level_single(self) -> Level:
         return Level(2.5)
 
     @endpoint.stream(ros2={"type": "ackermann_msgs.msg.AckermannDrive", "qos": {"depth": 1}})
@@ -268,6 +272,30 @@ def test_a_field_hint_publishes_that_field_as_its_own_type(eps):
     msg = resolve_type("std_msgs.msg.Float64")()
     binding.fill(msg, eps["level_value"].read(), STAMP, binding.hints)
     assert msg.data == 2.5
+
+
+def test_a_float_travels_as_a_float32_where_the_hint_names_it(eps):
+    binding = typemap.resolve(eps["level_single"])
+    assert binding.hints["type"] == "std_msgs.msg.Float32"
+    msg = resolve_type("std_msgs.msg.Float32")()
+    binding.fill(msg, eps["level_single"].read(), STAMP, binding.hints)
+    assert msg.data == 2.5
+
+
+def test_the_core_reports_travel_as_the_standard_messages_a_stack_reads():
+    from roqsim.plugins.contact_location import ContactLocation
+    from roqsim.plugins.energy_monitor import EnergyReport
+
+    (battery,) = typemap.lookup(EnergyReport).wires
+    msg = resolve_type(battery.msg)()
+    battery.fill(msg, EnergyReport(charge_fraction=0.5, voltage=12.0, current_a=2.0), STAMP, {})
+    assert (battery.msg, msg.percentage, msg.current) == ("sensor_msgs.msg.BatteryState", 0.5, -2.0)
+
+    (point,) = typemap.lookup(ContactLocation).wires
+    msg = resolve_type(point.msg)()
+    point.fill(msg, ContactLocation(True, "point", 1.0, 2.0, 3.0, 0.0, 1, 0.5), STAMP, {})
+    assert point.msg == "geometry_msgs.msg.PointStamped"
+    assert (msg.header.frame_id, msg.point.x, msg.point.z) == ("world", 1.0, 3.0)
 
 
 def test_a_command_without_parameters_is_a_trigger_service(eps):
@@ -378,9 +406,7 @@ def test_a_worlds_qos_overrides_the_default_and_a_real_bridge_publishes_with_it(
         assert (
             joints.qos_profile.reliability == ReliabilityPolicy.RELIABLE
         )  # the default, as before
-        described = {
-            e["name"]: e for e in bridge.endpoint_map(bridge._describe_output)["endpoints"]
-        }
-        assert described["odom"]["qos"] == QOS_PRESETS["sensor_data"]
+        (odom_ep,) = [e for e in engine.ctx.interface.all() if e.owner == "tb" and e.name == "odom"]
+        assert bridge.bound_name(odom_ep)["qos"] == QOS_PRESETS["sensor_data"]
     finally:
         engine.shutdown()

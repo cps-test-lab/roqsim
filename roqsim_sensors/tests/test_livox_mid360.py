@@ -16,6 +16,7 @@ from roqsim.context import SimContext
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 from roqsim.pose import pose_mapping
+from roqsim.types import PointCloud
 
 
 class _OneWallScene(Plugin):
@@ -67,7 +68,7 @@ def test_cloud_endpoint_declares_pointcloud2_and_frame():
     engine = Engine(_world(site="lidar", frame_id="livox_frame"))
     engine.setup()
     hints = _endpoint(engine).backend["ros2"]
-    assert hints["type"] == "sensor_msgs.msg.PointCloud2"
+    assert _endpoint(engine).result.cls is PointCloud  # a sensor_msgs/PointCloud2 over ROS
     assert hints["frame_id"] == "livox_frame"
     # The child is that frame_id, applied by the bridge. The parent is the world: this scene has no
     # base_link, and the transform is measured from the world -- see test_lidar's mount-TF tests.
@@ -351,7 +352,7 @@ def test_the_mount_publishes_livox_frame_at_the_scan_site_and_the_driver_convent
     assert cloud["frame_id"] == "livox_frame" and cloud["topic"] == "livox/lidar"
     assert "static_tf" not in cloud  # the mount publishes the frames: chain instead
     frames = next(e for e in engine.ctx.interface.all() if e.name == "frames")
-    (tf,) = frames.backend["ros2"]["static_tf"]
+    (tf,) = [vars(t) for t in frames.read().transforms]
     assert (tf["parent"], tf["child"]) == ("world", "livox_frame")
     np.testing.assert_allclose(tf["translation"], [0.0, 0.0, 1.0], atol=1e-9)
     m, d = engine.ctx.model, engine.ctx.data

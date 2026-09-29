@@ -16,7 +16,7 @@ from roqsim_ros_bridge.registry import get_converter, to_time_msg
 
 @dataclass
 class _Reading:
-    """Stand-in for roqsim_sensors.plugins.imu.ImuReading (the bridge never imports the producer)."""
+    """Stand-in for an IMU reading (the bridge never imports the producer)."""
 
     orientation: list = field(default_factory=lambda: [1.0, 0.0, 0.0, 0.0])
     angular_velocity: list = field(default_factory=lambda: [0.0, 0.0, 0.0])

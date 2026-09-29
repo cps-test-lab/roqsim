@@ -328,21 +328,25 @@ knows it is finished -- the goal was reached, the episode failed -- therefore pu
 observable state (an endpoint, a blackboard value, an entity that moves) for the scenario to
 condition on, and holds the robot idle until the scenario ends the run.
 
-For an endpoint, that condition is ``osc.roqsim``'s ``entity_reports``: the plugin registers its
-outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s ``tripped``, a trial
-plugin's own ``resolved``), and the scenario waits on it, then ends the run, with a ``timeout`` as the
-bound on the trial:
+For an endpoint, ``osc.roqsim``'s ``entity_monitor`` keeps a scenario variable equal to it: the
+plugin registers its outcome as an ``out`` endpoint on the entity it concerns (``force_limit``'s
+``tripped``, a trial plugin's own ``resolved``), the monitor writes it into the variable every tick,
+and the scenario waits on the variable, then ends the run, with a ``timeout`` as the bound on the
+trial:
 
 .. code-block:: text
 
    scenario trial:
        timeout(120s)
-       do serial:
-           entity_reports(entity: 'ur5e', report: 'force_limit.tripped', expected_value: 'True')
-           emit end
+       var tripped: bool = false
+       do parallel:
+           entity_monitor(entity: 'ur5e', value: 'force_limit.tripped', target_variable: tripped)
+           serial:
+               wait tripped == true
+               emit end
 
 The report is addressed as the world names it -- the entity and the endpoint -- and read from the
-endpoint itself in a stepped run and through the bridge's endpoint map over ROS (§13), so one
+endpoint itself in a stepped run and over the control socket (§13), so one
 scenario ends the same way on either transport.
 
 The standalone driver, ``roqsim sim``, has no scenario, so a trial run by hand says it is finished
@@ -402,11 +406,18 @@ Four laws:
 
 **A modelled drive carries its own weight.** A ``position`` or ``impedance`` joint names hardware whose own loop supplies whatever torque the mass below it demands — a UR5e commanded to a pose holds it — so the bodies it holds up get ``body_gravcomp``. The gain then says how hard the joint resists a *disturbance*, which is what a gain means on real hardware, rather than doubling as a load rating. Without it the servo trades position error for holding torque and the arm settles below where it was sent: measured on the ur5e at its shipped 2000 N·m/rad, 9 mm at the flange, and metres of arc at a compliance gain. Nothing reports that — the pose is wrong, the model compiles, the run succeeds — which is why it is the default rather than an option.
 
-**Which bodies, and why not all of them.** A body is compensated when the chain from the world down to it passes such a joint — everything whose weight a drive is holding up. That deliberately excludes the load path to the ground: a mobile base hangs off nothing, and its wheels are driven by ``velocity``, so neither is compensated and the robot still presses on the floor. Compensate those and it stands on nothing — upright, so nothing says so. The arm bolted to that base *is* compensated, which is what makes ``spawn_arm`` and ``spawn_robot`` give the same Panda arm the same physics. ``velocity`` is excluded for that reason alone: it is how a wheel is driven, and no bundled arm ships it.
+**Which bodies, and why not all of them.** A body is compensated when the chain from the world down to it passes such a joint — everything whose weight a drive is holding up. That deliberately excludes the load path to the ground: a mobile base hangs off nothing, and its wheels are driven by ``velocity``, so neither is compensated. The arm bolted to that base *is* compensated, which is what makes ``spawn_arm`` and ``spawn_robot`` give the same Panda arm the same physics. ``velocity`` is excluded for that reason alone: it is how a wheel is driven, and no bundled arm ships it.
 
-``effort`` is the other exception: a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the controller's job — frequently the very thing an experiment is comparing. A drive that really has no gravity term (a hobby servo, a backdrivable joint) is a real machine too; ``spawn_arm``'s ``gravity_compensation:`` states either case explicitly, and ``true`` there means the whole mechanism, for a controller handed its own gravity term.
+**The compensation is a joint torque, so the weight stays on the ground.** MuJoCo's ``body_gravcomp`` is an *external* force, ``-m·g`` at each body's centre of mass, projected onto every degree of freedom above the body — a mobile base's free joint included. There it is a skyhook: the floor carries the base alone, and wheel loads, traction and tipping come out wrong (on ``frankie`` the floor would carry 637 of its 802 N). A real drive holding a link pushes on its mount instead, so the weight reaches the ground through the base. Two mechanisms make roqsim's compensation that:
 
-**A compensated joint still reports its torque.** ``body_gravcomp`` supplies the holding term outside the actuator, so ``qfrc_actuator`` alone would show a motor doing nothing while the arm hangs off it. ``arm_controller``'s effort report adds ``qfrc_gravcomp`` back, which is what the joint physically carries and what a real drive's torque sensor reads — it matches an uncompensated arm's reading in the same pose. **In a world at zero gravity every one of these coincides**, and a reader should not conclude the mode did nothing.
+* **The drive supplies the term.** ``apply_gravity_compensation`` sets ``actuatorgravcomp`` on every hinge or slide a holding actuator drives. MuJoCo then adds that joint's rows of ``qfrc_gravcomp`` to ``qfrc_actuator`` — after the actuator's own ``forcerange`` has clamped ``actuator_force`` — and clamps the sum by the joint's ``actuatorfrcrange``, so a joint without one gets its drive's (``forcerange`` times gear). A drive too weak for its load sags or stalls, as the hardware does. Either range is therefore the drive's whole capability, holding torque included, and a model states the rated value rather than one net of gravity (§6.2).
+* **The reaction goes into the mount.** ``roqsim.actuators.GravityReaction`` finds every compensated mechanism that hangs from a moving, uncompensated body (the *root*) and, between ``mj_step1`` and ``mj_step2``, subtracts the mechanism's weight at its centre of mass, applied to the root, from ``qfrc_gravcomp`` and ``qfrc_passive``. That removes exactly the rows above the root and leaves every row inside the mechanism as MuJoCo computed it. It touches no global (``mjcb_passive`` is one slot per process) and not ``qfrc_applied``. ``mj_step2`` integrates RK4 as Euler, so a world that needs the reaction refuses ``sim.integrator: rk4``. An entity made absent is compensated whole by presence, root included; the reaction then leaves it alone, so it stays frozen.
+
+On a fixed base nothing lies above the mechanism: the engine steps with one ``mj_step`` as before, and moving the term from ``qfrc_passive`` to ``qfrc_actuator`` changes the motion by rounding only, unless a drive's force limit is below its load.
+
+``effort`` is the other exception: a torque-commanded joint applies the torque it is handed, and supplying the gravity term is the controller's job — frequently the very thing an experiment is comparing. A drive that really has no gravity term (a hobby servo, a backdrivable joint) is a real machine too; ``spawn_arm``'s ``gravity_compensation:`` states either case explicitly, and ``true`` there means the whole mechanism, for a controller handed its own gravity term. ``spawn_robot`` takes ``gravity_compensation: false`` for the same machine; it has no whole-mechanism form, which would compensate the base and lift the robot off its wheels.
+
+**A compensated joint still reports its torque.** ``qfrc_actuator`` carries the holding term of a joint whose drive supplies it; where MuJoCo applies it passively instead — a finger held through a tendon, a model that declares ``gravcomp`` itself — ``roqsim.actuators.joint_effort`` adds ``qfrc_gravcomp`` back. ``arm_controller``'s effort report is that sum, which is what the joint physically carries and what a real drive's torque sensor reads — it matches an uncompensated arm's reading in the same pose. **In a world at zero gravity every one of these coincides**, and a reader should not conclude the mode did nothing.
 
 **Where each half is applied, and why they differ.** The actuator rewrite runs on the child ``MjSpec`` right after ``apply_assets`` and **before** an end effector is grafted on: ``actuators:`` names the actuators *this model* declares, and the graft puts a gripper's tendon actuator into the same spec, so a shared ``control:`` resolved after it would fall on a tendon — which has no joint stiffness — and refuse a block whose gains were only ever about the arm. The gravity-compensation half runs **after** the graft, for the opposite reason: ``body_gravcomp`` is per body and does not cascade, so an arm compensated before its tool was attached would sag by exactly the tool's weight. Compensating the tool is also the right physics — a real controller is told its payload and holds that too. Both run before ``spec.attach``, so the whole thing is pre-compile and the file on disk is never touched; a world that declares nothing compiles a byte-identical model.
 
@@ -555,12 +566,14 @@ The incoming codebase is monolithic MuJoCo scripts. Rework them into plugins as 
 ~~~~~~~~~~~
 
 -  **New robot / arm:** a scene plugin whose ``build`` attaches the robot MJCF into ``spec`` (``spec.attach`` / add body), registers an ``Entity(kind="robot")`` and a ``RobotHandle`` in ``configure``.
+
+   **Its drives hold its weight, bounded by their force limits.** Spawned through ``spawn_arm`` or ``spawn_robot``, every body a ``position`` or ``impedance`` drive holds up is gravity-compensated with no config, and the term is a torque that drive supplies (§4, *Actuator overrides*): the floor carries a mobile robot's whole weight, and a joint's total torque, gravity included, is clamped by its ``actuatorfrcrange``, else by its actuator's ``forcerange`` times gear. That makes them the drive's **total** limit: state the real motor or cylinder rating (URDF ``<limit effort=>``, a datasheet's rated torque or force), never a value net of the load's weight. A range trimmed to leave room for a weight the drive was not carrying -- ``-2000 23000`` for a 25 kN cylinder under a 2 kN carriage -- now takes that weight off twice, and a one-sided ``0 25000`` is the honest statement of a single-acting cylinder. The rating has to cover the mechanism's own weight at full reach **plus** its rated payload; a placeholder too small for that makes the joint sag under its own links, and an unset one makes the drive infinitely strong. ``gravity_compensation: false`` on the spawn is for drives that supply no gravity term at all (a hobby servo, a backdrivable joint), not a fix for a sagging joint.
 -  **New sensor:** a ``post_step`` plugin that reads ``data`` (or renders via ``ctx.render``), optionally adds its own noise (§9), and hands the reading off (blackboard/bridge). Register a producer gate (§10) if it should participate in sync mode.
 -  **New controller:** a ``pre_step`` plugin that consumes a target (from blackboard / ``ctx.post``) and writes ``data.ctrl``. Expose a ``RobotHandle`` so a bridge can command it. It must honour ``ctx.manual_control`` (§7): when set, the human owns ``data.ctrl`` for the run — return from ``pre_step`` without writing it, so the viewer's control sliders drive the actuators. Writing ``ctrl`` once in ``on_reset`` stays right, and a controller should do it in every mode: a reset zeroes ``data.ctrl``, so until the controller writes the commands that hold its pose, the state the engine's closing ``mj_forward`` derives -- and anything a sensor reads or tares before the first step -- is the robot pulled toward zero. In manual mode the same write opens the sliders at the home pose; the rule is about the per-tick write. This is what the runner's ``--manual-control`` switches, world-wide, for every controller at once — hence a run-level flag rather than per-plugin config.
 -  **Environment/floorplan loader:** a ``build`` plugin that adds a mesh + collision geoms to ``spec``.
 -  **External transport (ROS/other):** a transport plugin — ``configure`` spins the client thread, callbacks ``ctx.post(...)``, ``post_step`` publishes from ``data``, ``shutdown`` stops the client.
 -  **Moving part (conveyor):** ``build`` adds an invisible belt body on a slide joint; ``pre_step`` forces its velocity and wraps position; a contact pair tunes belt↔object friction.
--  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on ``ctx.post`` from the service, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
+-  **Injected fault (model_override):** a plugin that in ``configure`` resolves a *named* selection of geoms/bodies/actuators, saves their current values and publishes a handle plus a ``std_srvs/SetBool`` service endpoint; ``set_active`` writes the target rows and ``on_reset`` writes them back. No ``pre_step`` at all -- the change rides on the service's ``override`` command, which runs on the physics thread, and ``post_step`` runs only on the step after a change, to check the fault actually landed (§9.2).
 -  **Articulated + commandable prop (door):** the ``door`` plugin (``roqsim_assets``) is both — ``build`` hangs a leaf on a hinge joint with a force-limited position actuator; ``pre_step`` drives it toward a target *openness* and, if the leaf stalls against an obstacle, backs off (a gentle automatic door); ``configure`` registers ``Entity(kind="door")``, a ``DoorHandle``, and — when ``controllable`` — ``std_msgs/Float64`` ``cmd``/``state`` endpoints plus a ``control_msgs/GripperCommand`` action (reusing the generic 1-DOF handler via its ``state_key`` hint). The natural home for a door in a floorplan world is the opening the generator already cut (``floorplan_to_world.py --doors-map``).
 
 .. _63-decomposition-guidance:
@@ -652,7 +665,7 @@ Instead, each sensor owns its noise as plain config:
 -  **Wheel odometry** (``roqsim_mobile``): ``diff_drive``'s ``odom_noise`` puts a multiplicative bias (``linear_scale``, ``angular_scale``) and zero-mean white noise (``linear_stddev``, ``angular_stddev``) on the velocities read off the wheels, before they are integrated, so the reported pose drifts the way real odometry does while the base itself moves exactly as the physics says. One draw per physics step from ``rng_for``, under the same seed and episode rules as the lidar; omitted, nothing is drawn.
 -  Ground-truth physics stays clean **for sensor noise**: only the reported value is perturbed. A fault that is *physical* -- a grasp that slips, a wheel that loses traction -- is the opposite case, and is §9.2 rather than this.
 
-**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``set_sensor_override(instance: 'robot.lidar')``), over the same ``std_srvs/SetBool`` endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
+**Switching it mid-run.** The values above are the sensor's *nominal* config. A sensor may also carry a ``fault:`` block -- the values it takes on while degraded -- which a scenario applies and restores by the sensor's address (``entity_call(entity: 'robot.lidar', command: 'override')``), over the same endpoint shape ``model_override`` uses. It is not a plugin: a component belongs to the entry it is nested under and a sensor registers no entity, so a separate fault entry could only have named its target in a config key -- the ownership-as-a-value pattern §4 rules out (*Model plugin manifests*: ownership is the full address). Severity stays configured (so ``components.robot.lidar.fault.dropout_percent`` is an ordinary experiment factor) and only one bit crosses the wire; the world never owns *when*. Only keys the sensor reads per frame may be written, declared per sensor as an allowlist and refused by name otherwise -- ``rays`` changes a ``LaserScan``'s length, which is the §9.2 ``geom_size`` failure in sensor form: a write that lands, does nothing, and reads back as though it had. Implementation: ``roqsim_sensors/live_config.py``.
 
 When a future sensor needs a different noise shape, add it to that sensor's config, not to a shared framework. Reference: ``roqsim_sensors/src/roqsim_sensors/plugins/lidar_common.py`` — the shared base every ray-casting range sensor derives from (the 2D ``lidar``, ``livox_mid360``, and ``seyond_robin_w1g``), which owns the rate gate, the detection limits and the noise so the devices cannot drift apart on them: the far limit and the presence mask are applied there once, for every device.
 
@@ -858,7 +871,8 @@ robot packages import nothing transport-specific: a hand-built endpoint names it
 **Entity poses are the core's.** Every entity whose body is in the model has an ``out`` endpoint
 ``sim/entities/<name>/pose`` (owner ``sim``, :mod:`roqsim.entity_pose`): the body's world position
 and ``(w, x, y, z)`` quaternion from ``xpos``/``xquat`` and its velocity from ``cvel``, computed only
-when read, ``None`` while the entity is deleted. It carries no backend hint, so no bridge publishes
+when read, ``None`` while the entity is deleted, and ``movable``, false for a body welded to the
+world (no joint on its chain to the world and not mocap), whose pose never changes. It carries no backend hint, so no bridge publishes
 it unasked, and it is registered even after a bridge bound, for a consumer that looks it up by name.
 
 **Marshalling is the framework's.** A decorated method runs on the physics thread and never posts
@@ -949,8 +963,10 @@ against a scene that never moved.
 roqsim behind the ``roqsim[ipc]`` extra (pyzmq), and ``roqsim sim`` adds it by default
 (``--control``, ``ROQSIM_CONTROL``; ``none`` disables) together with the ``run_control`` plugin,
 which serves the driver's :class:`~roqsim.control.RunControl` as ``sim/run_control/{pause, resume,
-step, reset, state}``. It wires every endpoint under a path built from the address of the plugin
-that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
+step, reset, state}``, and ``entity_control``, which serves :mod:`roqsim.entity_control` as
+``sim/entities/{set_state, set_presence}`` -- the same functions a stepped run's scenario actions
+call, so a refusal reads the same over either. It wires every endpoint under a path built from the
+address of the plugin that registered it (``Endpoint.producer``, stamped by the registry while that plugin configures):
 ``robot.lidar`` + ``scan`` is ``robot/lidar/scan``; two endpoints on one path are refused at bind
 naming both. It serves on demand and publishes on no schedule: a ROUTER answers ``describe`` /
 ``read`` / ``call`` on a background thread -- a ``read`` is the endpoint's ``read`` run on the
@@ -990,19 +1006,6 @@ namespace — how a robot manifest gives a second scanner the vendor's ``scan2``
 namespace. Only the topic is overridden — TF frames stay namespaced. For example, a robot model can hardwire ``/joint_states``
 and ``/camera/color/image_raw`` in its manifest so a sim world is a drop-in for the matching real
 robot + its operator UI (at the cost of being single-arm; see the manifest note).
-
-**The endpoint map.** A consumer outside the world addresses an endpoint as ``(owner, name)`` --
-``ctx.interface.find`` in-process -- while over ROS it travels on whatever topic the bridge made of
-it after namespaces, ``topics:`` renames, ``strip_namespace`` and a ``gt`` prefix. So the bridge says
-what it made: once bound, it latches (transient-local) a JSON ``std_msgs/String`` at
-``roqsim/endpoints`` in its node namespace (``roqsim.bridge.ENDPOINT_MAP``), listing every output it
-publishes by owner and name with the topic its publisher is on, the message type and the published
-``field`` and its effective QoS (:meth:`~roqsim.bridge.BridgeBase.endpoint_map`), plus its
-``owner`` filter. The topic is
-read off the bound publisher rather than re-derived, so the map is exact in every configuration, and
-a reader in another container subscribes to it as it would to ``get_entity_state``. This is what
-``entity_reports`` reads over ROS; only the published field travels, so the other fields of a
-report are readable in a stepped run only.
 
 **Zero-copy / FPS.** Message objects are preallocated once per endpoint and refilled each tick
 (``reuse_messages``, safe for inter-process subscribers); numeric arrays are handed to the message as

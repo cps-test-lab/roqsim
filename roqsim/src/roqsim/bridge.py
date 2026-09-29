@@ -4,8 +4,8 @@ A concrete bridge (ROS 2, zenoh, zmq, ...) subclasses :class:`BridgeBase`, sets 
 key, and implements the small set of backend hooks below. Everything else -- discovering endpoints,
 rate-gating (on the world's physics grid, see :meth:`BridgeBase._rate_gate`), skipping endpoints that
 opted out of publishing to nobody (``Endpoint.lazy``), the per-tick publish loop, marshalling
-inbound data onto the physics thread, and the map of what the bridge publishes
-(:meth:`BridgeBase.endpoint_map`) -- lives here and is shared across backends.
+inbound data onto the physics thread, and what each endpoint is called on the transport
+(:meth:`BridgeBase.bound_name`) -- lives here and is shared across backends.
 
 The bridge reads :class:`roqsim.context.Endpoint`s registered by the robot's plugins; it never
 imports the robot package or hardcodes topic/stream names. Backend particulars (message type, topic,
@@ -29,14 +29,7 @@ from .plugin import Plugin
 from .rates import SNAP_NOTABLE, SNAP_QUIET, GridRate, snap_rate
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from .context import Endpoint, SimContext
-
-#: Where a bridge advertises what it publishes (:meth:`BridgeBase.endpoint_map`), relative to the
-#: bridge's own scope -- for a ROS bridge, its node namespace. A reader in the same scope finds it
-#: by this name without knowing anything else about the deployment.
-ENDPOINT_MAP = "roqsim/endpoints"
 
 
 class _RateGate:
@@ -164,27 +157,6 @@ class BridgeBase(Plugin):
         overrides this to fill in what its payload type maps to.
         """
         return hints_for(ep, self.BACKEND)
-
-    def endpoint_map(self, describe: Callable[[_Output], dict]) -> dict:
-        """What this bridge publishes, keyed as the world names it: ``(owner, endpoint name)``.
-
-        A scenario addresses a plugin's report by the entity that owns it and the endpoint's name;
-        the transport carries it under whatever the backend made of that -- for ROS a topic after the
-        endpoint's namespace, a ``topics:`` rename, a stripped namespace and a ground-truth prefix.
-        Only the bridge knows the result exactly, because it is what resolved it, so the bridge says
-        it rather than a reader re-deriving it. ``describe`` is the backend's half: where and how one
-        bound output travels (a ROS bridge: its topic, message type and published field).
-
-        ``owners`` is the owner filter (``None`` = every owner), so a reader can tell "that entity
-        publishes no such report" from "this bridge does not serve that entity".
-        """
-        return {
-            "owners": None if self._owners is None else sorted(self._owners),
-            "endpoints": [
-                {"owner": out.endpoint.owner, "name": out.endpoint.name, **describe(out)}
-                for out in self._outputs
-            ],
-        }
 
     def bound_name(self, ep: Endpoint) -> dict | None:
         """What this bridge made of *ep*: its hints, or what the backend resolved them to (a ROS

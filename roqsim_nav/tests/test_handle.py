@@ -177,7 +177,7 @@ def test_progress_shrinks_as_it_drives(sim):
 
 
 def test_an_empty_route_is_refused(sim):
-    with pytest.raises(ValueError, match="at least one goal"):
+    with pytest.raises(ValueError, match="at least one pose"):
         _handle(sim).send_goals([])
 
 

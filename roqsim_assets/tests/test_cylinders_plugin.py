@@ -225,8 +225,8 @@ def test_an_instance_may_override_the_entry():
 def test_an_absent_instance_leaves_the_contact_set():
     """Not bookkeeping: an absent instance must actually stop being perceivable."""
     _model, plugin, ctx = _build(instances=[_cyl(name="spare")], present=False)
-    # By body NAME, not through `resolve_body_id`: that refuses an absent entity on purpose,
-    # which is itself the behaviour under test seen from the other side.
+    # By body NAME: the entity's pose endpoint reads nothing for an absent entity, which is itself
+    # the behaviour under test seen from the other side.
     body = ctx.entities.get("spare").body
     bid = mujoco.mj_name2id(ctx.model, mujoco.mjtObj.mjOBJ_BODY, body)
     geoms = [g for g in range(ctx.model.ngeom) if ctx.model.geom_bodyid[g] == bid]

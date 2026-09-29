@@ -34,20 +34,3 @@ topics the Create 3 simulator stack reads (:doc:`create3_stack`).
 
 roqsim publishes no ``<model>_base_link_gt`` TF frame. A consumer that needs the truth reads the
 recording.
-
-Ground-truth topic namespace (``ros2_bridge`` ``gt:``)
-------------------------------------------------------
-
-When this simulator runs beside a real system as its ground truth, the :doc:`ros2_bridge
-<interfaces>` can divert *output* topics under a prefix. This lets a consumer tell a simulated
-stream from real perception::
-
-    components:
-      - ros2_bridge:
-          gt:
-            prefix: /gt              # published outputs move to /gt/...
-            exempt: [odom, scan]     # ...except these, which mirror a real topic and stay canonical
-
-The rule is this: put a prefix on a stream that has no real-sensor equivalent, and exempt a stream
-that mirrors a real topic, so that it keeps its canonical name. With no ``gt`` block, every topic is
-canonical.

@@ -20,12 +20,9 @@ Two things are ROS-intrinsic rather than robot endpoints and stay built in: ``/c
 the sim's time source; every other node runs with ``use_sim_time:=true``) and the dynamic ``tf``
 (odom->base_link), which is derived from an ``odom`` endpoint whose hint sets ``emit_tf``.
 
-It also says what it publishes: a latched (transient-local) ``std_msgs/String`` at
-``roqsim/endpoints`` in the node's namespace carries, as JSON, every output it bound keyed by
-``(owner, name)`` with its fully resolved topic, message type and published field. That is what lets a
-scenario address a plugin's report by the names the world gives it (``entity_reports`` in
-``osc.roqsim``) and still land on the right topic after namespaces, ``topics:`` renames,
-``strip_namespace`` and a ``gt`` prefix -- see ``_advertise_endpoint_map``.
+What it made of each endpoint -- the topic, service or action after namespaces, ``topics:`` renames
+and ``strip_namespace`` -- is :meth:`Ros2Bridge.bound_name`, which the control socket's ``describe``
+reports beside the endpoint.
 
 Concurrency (see roqsim docs/architecture.rst §7): an ``rclpy`` MultiThreadedExecutor spins on a
 worker thread; inbound subscriptions decode a message to what the endpoint's write takes (its named
@@ -78,7 +75,6 @@ it; a list of ``{topic, owners}`` states the groups outright. See ``_joint_state
 
 from __future__ import annotations
 
-import json
 import math
 import threading
 from dataclasses import dataclass
@@ -92,11 +88,10 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
 from rosgraph_msgs.msg import Clock as ClockMsg
-from std_msgs.msg import String
 from tf2_msgs.msg import TFMessage
 from tf2_ros import StaticTransformBroadcaster, TransformBroadcaster
 
-from roqsim.bridge import ENDPOINT_MAP, BridgeBase, _RateGate
+from roqsim.bridge import BridgeBase, _RateGate
 from roqsim_ros_bridge import registry as reg
 from roqsim_ros_bridge import typemap
 from roqsim_ros_bridge.actions import get_action_handler
@@ -301,14 +296,6 @@ class Ros2Bridge(BridgeBase):
         self._strip: set[str] = (
             set() if strip is None else ({strip} if isinstance(strip, str) else set(strip))
         )
-        # Ground-truth topic namespace. When this sim acts as the `/gt` ground-truth system (see
-        # docs/ground_truth.rst), published *output* topics get `gt.prefix` (e.g. /gt) so consumers can
-        # tell true poses from real perception -- EXCEPT topics in `gt.exempt`, which stay canonical.
-        # The rule: prefix = a pure-GT stream with no real equivalent (the object's true /gt/tf); exempt
-        # = a stream that mirrors a real topic (robot telemetry, or perception's own message name).
-        gt = config.get("gt") or {}
-        self._gt_prefix = str(gt.get("prefix", "")).rstrip("/")
-        self._gt_exempt: set[str] = set(gt.get("exempt") or [])
         super().__init__(config, name=name, entity=entity, label=label)
         self._context: Context | None = None
         self._node: Node | None = None
@@ -340,11 +327,22 @@ class Ros2Bridge(BridgeBase):
         # (topic, type, endpoint, role) of every topic endpoint, for the peer-type check in _tick.
         self._peer_checks: list[tuple[str, str, Any, str]] = []
         self._peer_gate = _RateGate(1.0)
-        self._endpoint_map_pub = None
         # id(endpoint) -> its typemap.Binding, for every endpoint this bridge binds.
         self._bindings: dict[int, typemap.Binding] = {}
         # id(endpoint) -> the handle of each `static: true` transform endpoint, read until sent.
         self._static_outputs: dict[int, _Pub] = {}
+
+    def validate_config(self, config: dict) -> list[str]:
+        errors = super().validate_config(config)
+        if "gt" in config:
+            # Refused rather than ignored: a world that sets it expects its outputs under a prefix,
+            # and a consumer listening there would wait on topics that are published elsewhere.
+            errors.append(
+                "'gt' is not a key of ros2_bridge: outputs are not moved under a ground-truth "
+                "prefix. Give an output its own topic with its producer's 'topics:' map (an absolute "
+                "name such as '/gt/tf' is used verbatim)."
+            )
+        return errors
 
     def _binding(self, ep) -> typemap.Binding | None:
         """How *ep* travels on ROS (:func:`roqsim_ros_bridge.typemap.resolve`), resolved once."""
@@ -378,27 +376,6 @@ class Ros2Bridge(BridgeBase):
         self._snap_clock_gate(ctx)
         self._warn_on_clock_aliasing(ctx)
         self._setup_merged_joint_states(ctx)
-        self._advertise_endpoint_map()
-
-    def _advertise_endpoint_map(self) -> None:
-        """Publish :meth:`~roqsim.bridge.BridgeBase.endpoint_map` once, latched, at ``ENDPOINT_MAP``.
-
-        Relative, so it lands in this node's namespace -- where a scenario node in the same
-        deployment finds it without configuration, as it finds ``get_entity_state``. Latched
-        (transient-local), because every reader subscribes after the bridge came up: a scenario that
-        asks for a report minutes into a run must still receive the map sent at start-up. It is sent
-        once because it cannot change; the endpoint set is closed when the bridge binds.
-
-        Each topic is the one the bound PUBLISHER reports (``topic_name``), not a re-derivation of
-        it, so the map is exact by construction: the node namespace, the endpoint's own namespace, an
-        absolute ``topics:`` override, ``strip_namespace``, the ``gt`` prefix and any ROS remapping
-        are all already in it.
-        """
-        qos = QoSProfile(depth=1, durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self._endpoint_map_pub = self._node.create_publisher(String, ENDPOINT_MAP, qos)
-        self._endpoint_map_pub.publish(
-            String(data=json.dumps(self.endpoint_map(self._describe_output), sort_keys=True))
-        )
 
     def bound_name(self, ep) -> dict | None:
         """The topic, service or action *ep* is on, resolved against this node (namespace and
@@ -409,17 +386,6 @@ class Ros2Bridge(BridgeBase):
         return {
             key: self._node.resolve_topic_name(value) if key in _NAMED else value
             for key, value in named.items()
-        }
-
-    def _describe_output(self, out) -> dict:
-        """Where and how one bound output travels: its resolved topic, type and published field."""
-        hints = out.handle.hints
-        publisher = out.handle.publisher
-        return {
-            "topic": self._tf_topic(static=True) if publisher is None else publisher.topic_name,
-            "type": hints["type"],
-            "field": hints.get("field"),
-            "qos": hints["qos"],
         }
 
     def _snap_clock_gate(self, ctx) -> None:
@@ -456,7 +422,7 @@ class Ros2Bridge(BridgeBase):
 
     def _ep_topic(self, ep) -> str:
         """The topic an endpoint publishes on by itself -- what a merged group must not duplicate."""
-        return self._gt_topic(_resolve_topic(self._eff_ns(ep), self._binding(ep).hints["topic"]))
+        return _resolve_topic(self._eff_ns(ep), self._binding(ep).hints["topic"])
 
     def _joint_state_groups(self, sources: list, logger=None) -> list[tuple[str, list]]:
         """Which joint-state endpoints belong on ONE merged topic, and what that topic is.
@@ -486,14 +452,14 @@ class Ros2Bridge(BridgeBase):
         if decl is False:
             return []
         if decl is True:
-            return [(self._gt_topic("joint_states"), sources)]
+            return [("joint_states", sources)]
         if isinstance(decl, list):
             groups = []
             for entry in decl:
                 owners = set(entry["owners"])
                 members = [ep for ep in sources if ep.owner in owners]
                 if members:
-                    groups.append((self._gt_topic(entry.get("topic", "joint_states")), members))
+                    groups.append((entry.get("topic", "joint_states"), members))
             return groups
         if decl != "auto":
             raise ValueError(
@@ -518,12 +484,7 @@ class Ros2Bridge(BridgeBase):
             # below it (``dual/left``, ``dual/right`` -> ``dual``). Nothing in common puts it at the
             # root, where an unnamespaced robot's stack looks for it anyway.
             groups.append(
-                (
-                    self._gt_topic(
-                        _join_ns(_common_ns(self._eff_ns(ep) for ep in members), "joint_states")
-                    ),
-                    members,
-                )
+                (_join_ns(_common_ns(self._eff_ns(ep) for ep in members), "joint_states"), members)
             )
         return groups
 
@@ -657,14 +618,6 @@ class Ros2Bridge(BridgeBase):
             return _NamespacedTfPublisher(self._node, self._tf_topic(static=static), static=static)
         return (StaticTransformBroadcaster if static else TransformBroadcaster)(self._node)
 
-    def _gt_topic(self, topic: str) -> str:
-        """Apply the ground-truth namespace to an output topic: prefix with ``gt.prefix`` unless the
-        topic is exempt (canonical). No-op when no ``gt.prefix`` is configured. The result is absolute
-        so it is unaffected by the node namespace."""
-        if not self._gt_prefix or topic in self._gt_exempt:
-            return topic
-        return self._gt_prefix + (topic if topic.startswith("/") else "/" + topic)
-
     def _make_output(self, ep, hints: dict) -> _Pub:
         # The resolved hints, whatever the caller passed: the type's defaults, topic and QoS.
         binding = self._binding(ep)
@@ -676,7 +629,7 @@ class Ros2Bridge(BridgeBase):
         # The endpoint's own namespace scopes its topic (relative, so any global node namespace
         # still applies on top): ep.namespace="ur10e" -> /ur10e/joint_states. An absolute hardwired
         # topic (leading "/") is used verbatim, bypassing the namespace (see _resolve_topic).
-        topic = self._gt_topic(_resolve_topic(self._eff_ns(ep), hints["topic"]))
+        topic = _resolve_topic(self._eff_ns(ep), hints["topic"])
         publisher = self._node.create_publisher(msg_type, topic, qos_of(hints["qos"]))
         self._peer_checks.append((topic, _ros_type_name(hints["type"]), ep, "out"))
         self._names[id(ep)] = {"topic": topic, "type": hints["type"], "qos": hints["qos"]}

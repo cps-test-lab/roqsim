@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "roqsim_mobile"
 version = "0.1.0"
-description = "Wheeled-base plugins and models for roqsim (floorplan, diff-drive, omni-drive)."
+description = "Wheeled-base plugins and models for roqsim (floorplan, diff-drive, omni-drive, ackermann and tricycle drives)."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.10"
@@ -47,6 +47,9 @@ omni_drive = "roqsim_mobile.plugins.omni_drive:OmniDrivePlugin"
 ackermann_drive = "roqsim_mobile.plugins.ackermann_drive:AckermannDrivePlugin"
 # The ground-truth pose streams the Create 3 simulator stack reads (the TurtleBot 4 and its dock).
 create3_pose_publisher = "roqsim_mobile.plugins.create3_pose_publisher:Create3PosePublisherPlugin"
+# One steered wheel and a fixed axle: a three-wheel forklift, a tugger, a pallet truck. Not a car
+# (one steered wheel, not a linked pair, and often at the REAR), and not a differential base either.
+tricycle_drive = "roqsim_mobile.plugins.tricycle_drive:TricycleDrivePlugin"
 
 # Bundled robot models (e.g. turtlebot4), discoverable across packages via roqsim.models.
 [project.entry-points."roqsim.models"]
