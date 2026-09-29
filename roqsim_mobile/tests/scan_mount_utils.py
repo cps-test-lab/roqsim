@@ -1,7 +1,8 @@
 """Checks for a 2D scanner a robot manifest mounts as a device model, in a room of known walls.
 
-A robot manifest mounts a scanner with a nested ``spawn_sensor`` at the vendor's parent frame and joint
-origin, directly on ``base_link`` or from a flattened vendor link its ``frames:`` declares. What such a
+A robot manifest mounts a scanner with a nested ``spawn_sensor`` hanging from a frame its ``frames:``
+declares at the vendor's parent link and joint origin, directly on ``base_link`` or on a flattened
+vendor link. What such a
 mount has to get right is the same on every robot: the scan frame sits at the vendor origin, a ray
 reads the true distance to a wall, no ray starts inside robot geometry, the device skips its own
 housing and nothing else, and the published TF chain is the vendor's. These helpers spawn, cast and
@@ -26,7 +27,11 @@ from mobile_scene_utils import named
 from roqsim import raycast
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.frames import parse_frames
+from roqsim.manifest import manifest_frames
+from roqsim.models import resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import rpy_to_quat
 
 #: Inner half-width of the square room :func:`spawn` builds around the spawn origin (m). Small enough
 #: that the shortest-range scanner mounted here (the LDS-01, 3.5 m) still reaches every corner.
@@ -326,17 +331,23 @@ def uncovered_bearings(
 def assert_mounts(engine: Engine, owner: str, mounts) -> None:
     """*owner*'s manifest mounts exactly *mounts*: device, parent frame, origin, scan frame and topic.
 
-    *mounts* is ``{label: (model, frame_id, pos, rpy, topic)}``; the parent frame is ``base_link``.
+    *mounts* is ``{label: (model, frame_id, pos, rpy, topic)}``: each device hangs, with no pose of
+    its own, from an unpublished frame of *owner* on ``base_link`` at ``pos``/``rpy``.
     """
     found = mount_plugins(engine, owner)
     assert set(found) == set(mounts), f"mounted {sorted(found)}, the vendor ships {sorted(mounts)}"
+    robot = next(p for p in engine.plugins if p.address == owner)
+    path = resolve_model(robot.config["model"]).path
+    frames = {f.name: f for f in parse_frames(manifest_frames(path), owner)}
     for label, (model, frame, pos, rpy, topic) in mounts.items():
         cfg = found[label].config
         assert cfg["model"] == model, f"{label}: {cfg['model']}"
-        assert cfg["parent_frame"] == "base_link", f"{label}: {cfg['parent_frame']}"
+        assert "pose" not in cfg, f"{label}: {cfg['pose']}"
+        at = frames[cfg["parent_frame"]]
+        assert at.parent == "base_link" and not at.tf, f"{label}: {at}"
         assert cfg["frame_id"] == frame, f"{label}: {cfg['frame_id']}"
-        assert [float(v) for v in cfg["pos"]] == list(pos), f"{label}: {cfg['pos']}"
-        assert [float(v) for v in cfg["rpy"]] == list(rpy), f"{label}: {cfg['rpy']}"
+        assert list(at.pos) == list(pos), f"{label}: {at.pos}"
+        assert list(at.quat) == rpy_to_quat(*rpy), f"{label}: {at.quat}"
         assert lidar(engine, f"{owner}.{label}").config["topics"] == {"scan": topic}
     topics = [spec[4] for spec in mounts.values()]
     assert len(set(topics)) == len(topics), "two scanners on one topic publish over each other"

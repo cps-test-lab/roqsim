@@ -6,8 +6,8 @@ model) **and** an *articulated, live-controllable* prop like the ``conveyor`` (a
 by a position actuator, whose target is set over ROS). It fills the gap the floorplan generator
 leaves -- a door opening is otherwise just a 2 m hole with a lintel, no leaf.
 
-Geometry. The door is placed by its **opening centre** (``pos``, like every other prop) and the wall
-direction (``rpy`` yaw). ``hinge_side`` picks which vertical edge of the opening is *fixed* (the
+Geometry. The door is placed by its **opening centre** (``pose.position``, like every other prop)
+and the wall direction (the pose's yaw). ``hinge_side`` picks which vertical edge of the opening is *fixed* (the
 hinge); the leaf spans from there across the opening. A ``hinge`` joint about +Z lets it swing;
 ``swing`` (+1/-1) chooses which side of the wall it opens toward. ``open`` is the initial openness
 fraction (0 = closed, 1 = fully open at ``max_angle``) -- i.e. *how open* the door starts.
@@ -34,8 +34,9 @@ Config::
 
     door:
       prefix: door_1_        # MJCF name prefix (distinct per door)
-      pos: [x, y, 0]         # opening CENTRE, [x, y] or [x, y, z] world placement
-      rpy: [0, 0, yaw]       # orientation; yaw aligns the closed leaf along its wall
+      pose:                  # opening CENTRE, a geometry_msgs/Pose in the world (roqsim.pose);
+        position: {x: 0.0, y: 0.0}   #   omitted components are 0
+        orientation: {yaw: 0.0}      #   yaw aligns the closed leaf along its wall
       width: 0.9             # opening / leaf width (m)
       height: 2.0            # leaf height (m)
       thickness: 0.04        # leaf thickness (m); box leaf only
@@ -94,7 +95,7 @@ import mujoco
 from roqsim.context import Endpoint, Entity, SimContext
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import config_pose, config_pose_errors
 
 logger = logging.getLogger("roqsim_assets.door")
 
@@ -138,13 +139,7 @@ class DoorPlugin(Plugin):
         super().__init__(config, name=name, entity=entity, label=label)
         self.door_name = self.address
         self.prefix = self.config.get("prefix", "")
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        if len(pos) in (2, 3):
-            self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        else:
-            self.pos = [0.0, 0.0, 0.0]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(*(float(v) for v in rpy)) if len(rpy) == 3 else [1.0, 0.0, 0.0, 0.0]
+        self.pos, self.quat = config_pose(self.config)
 
         # Geometry. Bad values are tolerated here (kept as the default) so validate_config reports
         # them with a friendly message rather than crashing construction.
@@ -274,10 +269,7 @@ class DoorPlugin(Plugin):
             errors.append("'hinge_side' must be 'left' or 'right'")
         if "swing" in config and float(config.get("swing", 1)) == 0:
             errors.append("'swing' must be non-zero (+1 or -1)")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, "door")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:

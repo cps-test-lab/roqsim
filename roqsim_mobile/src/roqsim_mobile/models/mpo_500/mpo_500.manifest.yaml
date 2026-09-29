@@ -2,6 +2,17 @@
 #
 # `spawn_robot: {model: mpo_500}` pulls these in automatically, so a world does not re-declare the
 # robot's intrinsic kinematics/sensors.
+
+# Where the devices below go: each vendor joint's parent link and origin. Places, not links of the
+# description, so not published (`tf: false`); a device names one as its `parent_frame`.
+frames:
+  # position: Neobotix MPO-500 Positions of Sensors, LS1 (POSITION);
+  # orientation: mpo_500_body.urdf.xacro:38, lidar_1_joint origin
+  - {name: scan_front, parent: base_link, pose: {position: {x: 0.454, z: 0.375}}, tf: false}
+  # position: Neobotix MPO-500 Positions of Sensors, LS2 (POSITION);
+  # orientation: mpo_500_body.urdf.xacro:65, lidar_2_joint origin
+  - {name: scan_rear, parent: base_link, pose: {position: {x: -0.454, z: 0.375}, orientation: {yaw: 3.14}}, tf: false}
+
 components:
   # HOLONOMIC via omni wheels: all four drive, none steers. So this uses omni_drive's existing
   # mecanum path -- no swerve inverse kinematics (unlike mpo_700) and no slip_factor, because it does
@@ -53,9 +64,7 @@ components:
   # stays the description's.
   - spawn_sensor:
       model: sick_microscan3
-      parent_frame: base_link
-      pos: [0.454, 0.0, 0.375]       # Neobotix MPO-500 Positions of Sensors, LS1; see POSITION
-      rpy: [0.0, 0.0, 0.0]           # mpo_500_body.urdf.xacro:38, lidar_1_joint origin rpy
+      parent_frame: scan_front
       frame_id: lidar_1_link         # mpo_500_gazebo.urdf.xacro:27, the link the scan is stamped in
     name: scan_front
     components:
@@ -63,9 +72,7 @@ components:
           topics: {scan: scan}       # mpo_500_gazebo.urdf.xacro:36; relative, so the namespace scopes it
   - spawn_sensor:
       model: sick_microscan3
-      parent_frame: base_link
-      pos: [-0.454, 0.0, 0.375]      # Neobotix MPO-500 Positions of Sensors, LS2; see POSITION
-      rpy: [0.0, 0.0, 3.14]          # mpo_500_body.urdf.xacro:65, lidar_2_joint origin rpy
+      parent_frame: scan_rear
       frame_id: lidar_2_link         # mpo_500_gazebo.urdf.xacro:41
     name: scan_rear
     components:

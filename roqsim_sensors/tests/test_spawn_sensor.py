@@ -11,6 +11,7 @@ from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 from roqsim.context import SimContext
+from roqsim.pose import pose_mapping
 
 
 def _world(**spawn_config):
@@ -296,7 +297,7 @@ def test_fov_near_without_show_fov_is_inert():
 def test_mount_pose_places_the_camera_in_the_world():
     import mujoco
 
-    engine = Engine(_world(pos=[1.0, 2.0, 1.5], rpy=[np.pi, 0.0, 0.0]))
+    engine = Engine(_world(pose=pose_mapping([1.0, 2.0, 1.5], [np.pi, 0.0, 0.0])))
     engine.setup()
     engine.reset()
     cam_id = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_CAMERA, "d435_color")
@@ -372,8 +373,7 @@ def _occlusion_engine(tmp_path, wall=True, **spawn):
                     "model": "realsense_d435",
                     # camera_link yawed +90 deg, so the lens looks along +y (toward the wall); the
                     # offset puts the colour lens on the y axis at x = 0, as the old test had it.
-                    "pos": [-0.0175, -0.0043, 1.0],
-                    "rpy": [0.0, 0.0, 1.5707963268],
+                    "pose": pose_mapping([-0.0175, -0.0043, 1.0], [0.0, 0.0, 1.5707963268]),
                     "show_fov": True,
                     "fov_near": 0.2,
                     "fov_range": 3.0,
@@ -587,7 +587,7 @@ def test_two_mounts_of_one_model_carry_two_different_lenses():
             {"spawn_sensor": {"model": "realsense_d435", "prefix": "one_", "intrinsics": _CAM1},
              "name": "one",
              "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
-            {"spawn_sensor": {"model": "realsense_d435", "prefix": "two_", "pos": [1, 0, 0],
+            {"spawn_sensor": {"model": "realsense_d435", "prefix": "two_", "pose": pose_mapping([1, 0, 0]),
                               "intrinsics": _CAM4},
              "name": "two",
              "components": [{"realsense_d435": {"width": 1920, "height": 1080}}]},
@@ -628,7 +628,7 @@ def test_the_principal_point_moves_the_pixels_and_not_only_the_numbers():
         # profile is the room, whose shading carries no feature to correlate, and the lag it
         # reports means nothing.
         engine = Engine(_lens_world(lens, width=width, height=height, scene=True,
-                                    pos=[-0.0043, 0.0175, 0.5], rpy=[0, 0, 0]))
+                                    pose=pose_mapping([-0.0043, 0.0175, 0.5])))
         engine.setup()
         engine.reset()
         engine.step()
@@ -710,7 +710,7 @@ def test_a_static_mount_cannot_be_placed_and_says_so():
     """
     from roqsim.placement import place_body
 
-    engine = Engine(_world(pos=[1.0, 2.0, 1.5]))
+    engine = Engine(_world(pose=pose_mapping([1.0, 2.0, 1.5])))
     engine.setup()
     engine.reset()
 
@@ -726,7 +726,7 @@ def test_a_driven_mount_takes_a_pose_and_keeps_it():
     """
     from roqsim.placement import place_body
 
-    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="driven"))
+    engine = Engine(_world(pose=pose_mapping([1.0, 2.0, 1.5]), motion="driven"))
     engine.setup()
     engine.reset()
 
@@ -746,7 +746,7 @@ def test_a_free_mount_is_placed_through_the_joint_named_in_its_meta():
     """
     from roqsim.placement import base_joint_of, place_body
 
-    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine = Engine(_world(pose=pose_mapping([1.0, 2.0, 1.5]), motion="physics"))
     engine.setup()
     engine.reset()
 
@@ -762,7 +762,7 @@ def test_a_free_mount_falls_which_is_what_asking_for_physics_means():
     An overhead camera on a free joint is a dropped camera. The contrast is what makes the
     default and the recommendation legible.
     """
-    engine = Engine(_world(pos=[1.0, 2.0, 1.5], motion="physics"))
+    engine = Engine(_world(pose=pose_mapping([1.0, 2.0, 1.5]), motion="physics"))
     engine.setup()
     engine.reset()
     bid = mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_BODY, "mount")
@@ -802,7 +802,7 @@ def test_a_mount_welded_to_a_wrist_rides_it():
     A camera that compiles at the right pose and then stays behind when the arm moves is worse
     than no camera: every frame is of somewhere the robot is not, and nothing says so.
     """
-    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.05]))
+    engine = Engine(_arm_world(pose=pose_mapping([0.0, 0.0, 0.05])))
     engine.setup()
     engine.reset()
 
@@ -823,7 +823,7 @@ def test_the_pose_is_read_relative_to_the_body_it_rides():
     Relative to the world they would be a pose the arm immediately invalidates; relative to the
     flange they are the mount offset, which is what a datasheet or a CAD drawing states.
     """
-    engine = Engine(_arm_world(pos=[0.0, 0.0, 0.3]))
+    engine = Engine(_arm_world(pose=pose_mapping([0.0, 0.0, 0.3])))
     engine.setup()
     engine.reset()
 

@@ -31,8 +31,10 @@ ROBOT = """
 
 MANIFEST = """
 frames:
-  - {name: cover_link, parent: body_link, pos: [0.02, 0, 0.05]}
-  - {name: laser, parent: cover_link, pos: [0, 0, 0.01], rpy: [3.141592653589793, 0, 0]}
+  - {name: cover_link, parent: body_link, pose: {position: {x: 0.02, z: 0.05}}}
+  - name: laser
+    parent: cover_link
+    pose: {position: {z: 0.01}, orientation: {roll: 3.141592653589793}}
 """
 
 
@@ -87,7 +89,8 @@ def test_frames_are_published_as_one_static_chain_in_the_robots_namespace(tmp_pa
 
 def test_config_frames_extend_the_manifests(tmp_path):
     engine = _engine(
-        _robot(tmp_path), frames=[{"name": "mast_link", "parent": "laser", "pos": [0, 0, 0.3]}]
+        _robot(tmp_path),
+        frames=[{"name": "mast_link", "parent": "laser", "pose": {"position": {"z": 0.3}}}],
     )
     links = _frames(engine).backend["ros2"]["static_tf"]
     assert [(link["parent"], link["child"]) for link in links][-1] == ("laser", "mast_link")
@@ -96,7 +99,7 @@ def test_config_frames_extend_the_manifests(tmp_path):
 
 
 def test_a_chain_from_the_root_publishes_no_extra_link(tmp_path):
-    manifest = "frames:\n  - {name: mast_link, parent: base_link, pos: [0, 0, 0.3]}\n"
+    manifest = "frames:\n  - {name: mast_link, parent: base_link, pose: {position: {z: 0.3}}}\n"
     links = _frames(_engine(_robot(tmp_path, manifest=manifest))).backend["ros2"]["static_tf"]
     assert [(link["parent"], link["child"]) for link in links] == [("base_link", "mast_link")]
 
@@ -129,3 +132,18 @@ def test_a_robot_without_frames_publishes_no_frames_endpoint(tmp_path):
 def test_a_bad_frame_is_refused_by_name(tmp_path, frames, match):
     with pytest.raises(Exception, match=match):
         _engine(_robot(tmp_path), frames=frames)
+
+
+def test_an_unpublished_frame_is_a_site_and_what_hangs_below_it_is_published_across_it(tmp_path):
+    manifest = MANIFEST + (
+        "  - {name: place, parent: cover_link, pose: {position: {x: 0.1}}, tf: false}\n"
+        "  - {name: tip, parent: place, pose: {position: {z: 0.2}}}\n"
+    )
+    engine = _engine(_robot(tmp_path, manifest=manifest))
+    assert mujoco.mj_name2id(engine.ctx.model, mujoco.mjtObj.mjOBJ_SITE, "r_place") >= 0
+    links = _frames(engine).backend["ros2"]["static_tf"]
+    pairs = [(link["parent"], link["child"]) for link in links]
+    assert not any("place" in pair for pair in pairs)
+    tip = links[pairs.index(("cover_link", "tip"))]
+    assert np.allclose(tip["translation"], [0.1, 0, 0.2])
+    assert engine.ctx.entities.get("robot").meta["frame_anchors"] == {"place": "cover_link"}

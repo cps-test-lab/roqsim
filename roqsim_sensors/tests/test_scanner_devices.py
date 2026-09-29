@@ -37,7 +37,7 @@ from roqsim.engine import Engine
 from roqsim.frames import parse_frames, substitute
 from roqsim.manifest import manifest_frame_id
 from roqsim.plugin import Plugin, PluginError
-from roqsim.pose import rpy_to_quat
+from roqsim.pose import pose_mapping, rpy_to_quat
 
 DEVICES = [
     "hokuyo_ust",
@@ -136,8 +136,7 @@ def _engine(device: str, **spawn) -> Engine:
                     key: value
                     for key, value in {
                         "model": device,
-                        "pos": MOUNT_POS,
-                        "rpy": MOUNT_RPY,
+                        "pose": pose_mapping(MOUNT_POS, MOUNT_RPY),
                         "frame_id": FRAME_ID,
                         **spawn,
                     }.items()
@@ -394,7 +393,7 @@ def test_scan_site_is_the_manifest_frame_at_the_declared_scan_plane_offset(devic
         mujoco.mju_rotVecQuat(step, np.asarray(link.pos, dtype=float), quat)
         pos = pos + step
         composed = np.zeros(4)
-        mujoco.mju_mulQuat(composed, quat, np.asarray(rpy_to_quat(*link.rpy), dtype=float))
+        mujoco.mju_mulQuat(composed, quat, np.asarray(link.quat, dtype=float))
         quat = composed
 
     offset = np.asarray(SCAN_PLANE_OFFSET.get(device, (0.0, 0.0, 0.0)), dtype=float)

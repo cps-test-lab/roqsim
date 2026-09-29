@@ -147,6 +147,13 @@ def _retired_mjcf(tmp_path, model) -> str:
     return str(path)
 
 
+def _pose(pos, rpy) -> dict:
+    return {
+        "position": dict(zip("xyz", map(float, pos), strict=True)),
+        "orientation": dict(zip(("roll", "pitch", "yaw"), map(float, rpy), strict=True)),
+    }
+
+
 def _compiled(model, pos, rpy, prefix="cam_"):
     cfg = load_config_from_dict(
         {
@@ -156,8 +163,7 @@ def _compiled(model, pos, rpy, prefix="cam_"):
                     "spawn_sensor": {
                         "model": model,
                         "prefix": prefix,
-                        "pos": list(pos),
-                        "rpy": list(rpy),
+                        "pose": _pose(pos, rpy),
                         "default_plugins": False,
                     },
                     "name": "cam",
@@ -233,32 +239,33 @@ def test_rewritten_mounts_keep_each_camera_where_it_was(tmp_path):
     """Block- and flow-style mounts of each retired model, rewritten, load where they were."""
     retired = {"realsense_d415": "d415", "realsense_d435": "d435", "realsense_d455": "d455"}
     mounts = [(model, pos, rpy) for model in sorted(VENDOR) for pos, rpy in POSES[1:3]]
+    vendor_mount = _vendor_mount()
     lines = ["components:"]
     for i, (model, pos, rpy) in enumerate(mounts):
         if i % 2:
             lines += [
-                f"  - spawn_sensor: {{model: {retired[model]}, pos: {pos}, rpy: {rpy}}}",
+                f"  - spawn_sensor: {{model: {retired[model]}, "
+                f"pose: {vendor_mount.fmt_pose(pos, rpy)}}}",
                 f"    name: m{i}",
             ]
         else:
             lines += [
                 "  - spawn_sensor:",
                 f"      model: {retired[model]}",
-                f"      pos: {pos}  # kept",
-                f"      rpy: {rpy}",
+                f"      pose: {vendor_mount.fmt_pose(pos, rpy)}  # kept",
                 f"    name: m{i}",
             ]
     world = tmp_path / "world.yaml"
     world.write_text("\n".join(lines) + "\n")
     deltas = {retired[m]: (m, _delta(m)) for m in VENDOR}
-    assert _vendor_mount().rewrite_mounts(world, deltas) == len(mounts)
-    assert "pos: [" in world.read_text() and "  # kept" in world.read_text()
+    assert vendor_mount.rewrite_mounts(world, deltas) == len(mounts)
+    assert "pose: {position: {" in world.read_text() and "  # kept" in world.read_text()
     rewritten = yaml.safe_load(world.read_text())["components"]
     for (model, pos, rpy), entry in zip(mounts, rewritten, strict=True):
         spec = entry["spawn_sensor"]
         assert spec["model"] == model
         _assert_where_the_retired_mount_put_it(
-            tmp_path, model, (pos, rpy), (spec["pos"], spec["rpy"])
+            tmp_path, model, (pos, rpy), vendor_mount.pose_values(spec["pose"])
         )
 
 
@@ -283,7 +290,7 @@ def test_the_demo_world_keeps_each_realsense_where_the_retired_mount_put_it(tmp_
         spec = mounts[model]
         # The world writes a pose to ten decimals.
         _assert_where_the_retired_mount_put_it(
-            tmp_path, model, retired, (spec["pos"], spec["rpy"]), atol=1e-8
+            tmp_path, model, retired, _vendor_mount().pose_values(spec["pose"]), atol=1e-8
         )
 
 
@@ -469,7 +476,7 @@ def test_a_depth_return_reprojects_onto_the_surface_through_tf(model):
                     "name": "wall",
                 },
                 {
-                    "spawn_sensor": {"model": model, "pos": [0.0, 0.0, 1.0]},
+                    "spawn_sensor": {"model": model, "pose": {"position": {"z": 1.0}}},
                     "name": "cam",
                     "components": [{model: {"points": True}}],
                 },
@@ -512,7 +519,7 @@ def test_a_retired_name_is_refused_naming_the_new_one(old, new):
     assert str(exc.value) == (
         f"spawn_sensor: model {old!r} — renamed to {new!r} when its mount frame became the one its "
         f"vendor macro places (it was a display convention pointing the lens along +y). Update the "
-        f"name, and re-express this mount's pos/rpy as the vendor macro's origin; see "
+        f"name, and re-express this mount's pose as the vendor macro's origin; see "
         f"roqsim_sensors/README.md."
     )
     with pytest.raises(ModelError, match=f"renamed to '{new}'"):

@@ -4,10 +4,12 @@
 
 # Fixed links of raspimouse_description @ ed2c8b7 (expanded with `lidar:=lds`) that this MJCF flattens;
 # spawn_robot makes each a site and publishes it as static TF. The mount's mesh is robot geometry and
-# stays in raspimouse.xml.
+# stays in raspimouse.xml. `lds01` is where the LDS-01 below goes, a place rather than a link, so it
+# is not published.
 frames:
   # urdf/raspimouse.urdf.xacro:85-88: the multi-lidar mount on base_link.
-  - {name: lds_multi_mount_link, parent: base_link, pos: [0.0, 0.0, 0.0855], rpy: [0.0, 0.0, 0.0]}
+  - {name: lds_multi_mount_link, parent: base_link, pose: {position: {z: 0.0855}}}
+  - {name: lds01, parent: lds_multi_mount_link, pose: {position: {z: 0.0345}, orientation: {yaw: 3.14}}, tf: false}
 
 components:
   # A TRUE two-wheel differential drive: the wheels roll, they do not scrub, so unlike husky_a200 /
@@ -34,8 +36,6 @@ components:
   # namespace.
   - spawn_sensor:
       model: lds01
-      parent_frame: lds_multi_mount_link
-      pos: [0.0, 0.0, 0.0345]
-      rpy: [0.0, 0.0, 3.14]
+      parent_frame: lds01
       frame_id: laser
     name: lds01
