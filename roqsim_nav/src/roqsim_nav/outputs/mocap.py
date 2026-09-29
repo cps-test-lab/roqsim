@@ -51,7 +51,7 @@ class MocapOutput(NavOutput):
         pos = data.mocap_pos[self._mocapid]
         speed = float(math.hypot(pref_vel[0], pref_vel[1]))
         # Keep z: the prop owns its own height (its spawn pose put it there), and re-deriving it
-        # here would silently disagree with a `pos: [x, y, z]` a world wrote.
+        # here would silently disagree with the `pose` z a world wrote.
         data.mocap_pos[self._mocapid] = [
             pos[0] + float(pref_vel[0]) * dt,
             pos[1] + float(pref_vel[1]) * dt,

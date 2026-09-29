@@ -42,7 +42,7 @@ Declaring it::
         "mass": Field(float, required=True, minimum=0.0, unit="kg", doc="added to the body's own"),
         "body": Field(str, default="", doc="body to load (default: the entity's root body)"),
         "mode": Field(str, default="soft", choices=("soft", "rigid")),
-        "pos": Field(list, length=3, unit="m", doc="offset in the body frame"),
+        "rgba": Field(list, length=4, doc="colour of the load's marker"),
     }
 
 What it checks: a required key is present, a value has the declared type (with ``int`` accepted for

@@ -11,8 +11,12 @@ Config::
     sensor_coverage_probe:
       sensors: auto            # 'auto' = every MuJoCo camera in the world, less a device's depth
                                #   camera beside its colour one (camera_common.DEPTH_CAMERA_SUFFIX);
-                               #   or an explicit list of {type, pos, rpy, config} placements (for
-                               #   lidars, or hypotheticals)
+                               #   or an explicit list of {type, pose, config, label} placements
+                               #   (for lidars, or hypotheticals), e.g.
+                               #   - {type: livox_mid360,
+                               #      pose: {position: {x: 3, y: 1, z: 2.4},
+                               #             orientation: {roll: 3.14159}}}
+                               #   `pose` is a world pose with z stated; `pos`/`rpy` are refused.
       camera_far: 10.0         # detection range assumed for 'auto' cameras (metres; not physics)
       target: {k: 1, frac: 0.95}
       sample:
@@ -78,6 +82,14 @@ class SensorCoverageProbePlugin(Plugin):
         sensors = config.get("sensors", "auto")
         if sensors != "auto" and not isinstance(sensors, list):
             errors.append("'sensors' must be 'auto' or a list of placements")
+        elif isinstance(sensors, list):
+            for i, placement in enumerate(sensors):
+                try:
+                    placed_from_proposal(placement, index=i)
+                except KeyError as exc:
+                    errors.append(f"'sensors': {exc.args[0] if exc.args else exc}")
+                except ValueError as exc:
+                    errors.append(f"'sensors': {exc}")
         if not (
             config.get("sample", {}).get("volume", True)
             or config.get("sample", {}).get("objects", True)

@@ -30,10 +30,10 @@ Concepts
   redundant coverage.
 * **Sample targets.** ``volume`` is a 3D grid of free interior points (room coverage); ``objects`` are
   points on object surfaces, labelled by geom name (are these objects seen?).
-* **Orientation matters.** With ``rpy = 0`` a sensor points along **+x** (world), up = +z. To look
-  **down**, a camera needs ``rpy: [0, 1.5708, 0]``; an upright Livox (vertical band −7°..+52°) must be
-  **inverted** (``rpy: [3.14159, 0, 0]``) or it sees almost nothing below it. Near-zero coverage is
-  usually an orientation mistake.
+* **Orientation matters.** At the identity orientation a sensor points along **+x** (world), up = +z.
+  To look **down**, a camera needs ``orientation: {pitch: 1.5708}``; an upright Livox (vertical band
+  −7°..+52°) must be **inverted** (``orientation: {roll: 3.14159}``) or it sees almost nothing below
+  it. Near-zero coverage is usually an orientation mistake.
 * **Camera range is an assumption.** A camera has no physical far range; the ``far`` you give it is a
   *detection range* and too generous a value inflates coverage (depth cameras default it to their
   ``clip_far``).
@@ -51,7 +51,8 @@ camera (``camera_common.DEPTH_CAMERA_SUFFIX``); give an explicit list for lidars
    components:
      - sensor_coverage_probe:
          sensors:                   # or `auto`: every MuJoCo camera in the world
-           - {type: livox_mid360, pos: [3, 1, 2.4], rpy: [3.14159, 0, 0]}   # {type, pos, rpy, config}
+           - type: livox_mid360     # {type, pose, config?, label?}
+             pose: {position: {x: 3, y: 1, z: 2.4}, orientation: {roll: 3.14159}}
          target: {k: 1, frac: 0.95} # judged into report.json's target_met
          sample: {volume: true, objects: true, resolution: 0.25, heights: [0.3, 1.0, 1.7]}
          out: coverage              # writes report.json + render(s) here
@@ -87,7 +88,10 @@ The CLI (placement search)
 is that of the world a run with those overrides builds; they apply to a world YAML or ref, and are
 refused for an MJCF ``--world``.
 
-``placements.json`` is a list of ``{type, pos, rpy, config?}`` using catalog types. The
+``placements.json`` is a list of ``{type, pose, config?, label?}`` using catalog types, or
+``{"placements": [...]}``, which is what ``greedy`` writes. A placement is a ``pose`` only: a world
+pose as ``SpawnEntity`` states one (:doc:`plugins`), with ``position.z`` given, since a mounted sensor
+has no resting height; ``pos``/``rpy`` are refused with the ``pose`` they mean. The
 ``estimate`` report carries ``achieved`` (coverage fractions), ``uncovered_regions`` (where to add a
 sensor), ``per_sensor_contribution`` (redundant sensors have ``unique_points: 0``), and ``per_object``.
 To refine a layout, evaluate, read the gaps, adjust ``placements.json`` and evaluate again.
@@ -177,5 +181,5 @@ Worth stating because the symptom does not look like occlusion. The D435 mount's
 rays still escape — so a mounted camera reports a *plausible but low* number rather than an obvious
 zero, and a narrow long-range sensor (the Zivid, near 1.3 m) reports exactly **0** coverage in a room
 it sees perfectly well. A study that lets a mount occlude its own camera therefore under-reports every
-``spawn_sensor``-mounted sensor. A *hypothetical* placement (``pos``/``rpy``, not
+``spawn_sensor``-mounted sensor. A *hypothetical* placement (a ``pose``, not
 spawned) is unaffected: it has no body, because nothing of it exists to get in the way.

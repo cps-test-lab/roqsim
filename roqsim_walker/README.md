@@ -35,8 +35,10 @@ components:
       outfit: B                # clothing variant: a letter, or {pants: C, jacket: A}
       skin: true               # false -> capsule visuals (fast; no mesh load)
       speed: 1.2               # m/s; past ~1.7 the run clip blends in
-      pos: [0.0, 0.0]          # spawn, used when `waypoints` is empty (goal-driven only)
-      waypoints:               # patrol route; the walker starts at waypoints[0]
+      pose:                    # where a goal-driven walker stands at the start (no `waypoints`):
+        position: {x: 0.0, y: 0.0}  #   a world pose with no z (a walker stands on the floor)
+        orientation: {yaw: 0.0}     #   and a heading only; `pos` is refused
+      waypoints:               # patrol route; the walker starts at waypoints[0], so no `pose`
         - [-2.0, -2.0]
         - [ 2.0, -2.0, [2, 4]] # optional dwell: seconds, or [lo, hi] random pause
         - [ 2.0,  2.0]
