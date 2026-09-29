@@ -169,6 +169,39 @@ def fmt_list(values) -> str:
     return "[" + ", ".join(fmt_num(v) for v in values) + "]"
 
 
+def fmt_pose(pos, rpy) -> str:
+    """A flow ``pose:`` mapping (``geometry_msgs/Pose``, Euler orientation) for *pos* and *rpy*."""
+    position = ", ".join(f"{a}: {fmt_num(v)}" for a, v in zip("xyz", pos, strict=True))
+    angles = zip(("roll", "pitch", "yaw"), rpy, strict=True)
+    orientation = ", ".join(f"{a}: {fmt_num(v)}" for a, v in angles)
+    return f"{{position: {{{position}}}, orientation: {{{orientation}}}}}"
+
+
+def frame_pose(pos=None, rpy=None) -> str:
+    """``, pose: {...}`` for a ``frames:`` entry, zero components left out; ``""`` for the identity."""
+    parts = []
+    position = [f"{a}: {fmt_num(v)}" for a, v in zip("xyz", pos or (), strict=False) if v != 0]
+    if position:
+        parts.append("position: {" + ", ".join(position) + "}")
+    angles = zip(("roll", "pitch", "yaw"), rpy or (), strict=False)
+    orientation = [f"{a}: {fmt_num(v)}" for a, v in angles if v != 0]
+    if orientation:
+        parts.append("orientation: {" + ", ".join(orientation) + "}")
+    return f", pose: {{{', '.join(parts)}}}" if parts else ""
+
+
+def pose_values(pose) -> tuple[list[float], list[float]]:
+    """``(pos, rpy)`` of a ``pose:`` mapping, omitted components 0 (a mount's pose is relative)."""
+    pose = pose or {}
+    position = pose.get("position") or {}
+    pos = [float(position.get(a, 0.0)) for a in "xyz"]
+    orientation = pose.get("orientation") or {}
+    if set(orientation) & {"x", "y", "z", "w"}:
+        quat = [float(orientation.get(k, 1.0 if k == "w" else 0.0)) for k in "wxyz"]
+        return pos, list(matrix_rpy(quat_matrix(quat)))
+    return pos, [float(orientation.get(a, 0.0)) for a in ("roll", "pitch", "yaw")]
+
+
 def splice(manifest: Path, block: str, begin: str, end: str) -> None:
     """Replace the lines from *begin* to *end* in *manifest* with *block*, which carries both.
 
@@ -225,13 +258,15 @@ def _flow_mount(line: str, deltas: dict) -> str | None:
     if name not in deltas:
         return None
     new_model, delta = deltas[name]
-    new_pos, new_rpy = rewrite_pose(cfg.get("pos", [0, 0, 0]), cfg.get("rpy", [0, 0, 0]), delta)
-    out = re.sub(rf"(model:\s*['\"]?(?:\w+:)?){name}\b", rf"\g<1>{new_model}", body, count=1)
-    for key, value in (("pos", new_pos), ("rpy", new_rpy)):
-        if re.search(rf"\b{key}:\s*\[", out):
-            out = re.sub(rf"\b{key}:\s*\[[^\]]*\]", f"{key}: {fmt_list(value)}", out, count=1)
-        else:
-            out = out[:-1].rstrip() + f", {key}: {fmt_list(value)}}}"
+    new_pos, new_rpy = rewrite_pose(*pose_values(cfg.get("pose")), delta)
+    fields = []
+    for key, value in cfg.items():
+        if key == "model":
+            fields.append(f"model: {str(value).replace(name, new_model)}")
+        elif key != "pose":
+            fields.append(f"{key}: {yaml.safe_dump(value, default_flow_style=True).strip()}")
+    fields.append(f"pose: {fmt_pose(new_pos, new_rpy)}")
+    out = "{" + ", ".join(fields) + "}"
     if yaml.safe_load(out).get("model") is None:
         raise RuntimeError(f"rewriting {line.strip()!r} lost its model")
     return line[: fm.start(1)] + out + line[fm.end(1) :]
@@ -244,11 +279,11 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
     ``T_old`` is written as ``T_old * (R, t)`` (:func:`rewrite_pose`).
 
     Line-based, so comments and layout survive. A block-style mount is named by its ``model:`` line;
-    its sibling ``pos:``/``rpy:`` lines (same indentation, flow lists) are rewritten in place, and a
-    missing one is added after ``pos:``. A one-line flow mount (``spawn_sensor: {model: ..., pos:
-    [...]}``) is rewritten within its line. Anything else naming a retired model -- a pose written as
-    a block list, a mount split over lines some other way -- is refused, since a pose left
-    unconverted would load at the wrong place silently.
+    its sibling ``pose:`` line (same indentation, a flow mapping) is rewritten in place, or added
+    after the ``model:`` line when there is none. A one-line flow mount (``spawn_sensor: {model: ...,
+    pose: {...}}``) is rewritten within its line. Anything else naming a retired model -- a pose
+    written as a block mapping, a mount split over lines some other way -- is refused, since a pose
+    left unconverted would load at the wrong place silently.
     """
     import yaml
 
@@ -273,38 +308,29 @@ def rewrite_mounts(path: Path, deltas: dict) -> int:
             continue
         indent = m.group("indent")
         start, end = _block(lines, i, len(indent))
-        keys = {}
+        found = None
         for j in range(start, end):
             km = re.match(
-                rf"^{re.escape(indent)}(pos|rpy):\s*(\[.*\])\s*(#.*)?$", lines[j].rstrip("\n")
+                rf"^{re.escape(indent)}pose:\s*(\{{.*\}})\s*(#.*)?$", lines[j].rstrip("\n")
             )
             if km:
-                keys[km.group(1)] = (j, yaml.safe_load(km.group(2)), km.group(3) or "")
-            elif re.match(rf"^{re.escape(indent)}(pos|rpy):", lines[j]):
-                raise RuntimeError(f"{path}:{j + 1}: pos/rpy must be a flow list to be rewritten")
-        pos = keys.get("pos", (None, [0.0, 0.0, 0.0], ""))[1]
-        rpy = keys.get("rpy", (None, [0.0, 0.0, 0.0], ""))[1]
-        new_pos, new_rpy = rewrite_pose(pos, rpy, deltas[name][1])
+                found = (j, yaml.safe_load(km.group(1)), km.group(2) or "")
+            elif re.match(rf"^{re.escape(indent)}pose:", lines[j]):
+                raise RuntimeError(f"{path}:{j + 1}: pose must be a flow mapping to be rewritten")
+        new_pos, new_rpy = rewrite_pose(*pose_values(found[1] if found else None), deltas[name][1])
         new_model = deltas[name][0]
         lines[i] = lines[i].replace(m.group("name"), m.group("name").replace(name, new_model), 1)
-        pos_line, rpy_line = (
-            f"{indent}{key}: {fmt_list(value)}"
-            + (f"  {keys[key][2]}" if key in keys and keys[key][2] else "")
+        pose_line = (
+            f"{indent}pose: {fmt_pose(new_pos, new_rpy)}"
+            + (f"  {found[2]}" if found and found[2] else "")
             + "\n"
-            for key, value in (("pos", new_pos), ("rpy", new_rpy))
         )
-        if "pos" in keys:
-            lines[keys["pos"][0]] = pos_line
-        if "rpy" in keys:
-            lines[keys["rpy"][0]] = rpy_line
-        insert = []
-        if "pos" not in keys:
-            insert.append(pos_line)
-        if "rpy" not in keys:
-            insert.append(rpy_line)
-        at = (keys["pos"][0] + 1) if "pos" in keys else i + 1
-        lines[at:at] = insert
+        if found:
+            lines[found[0]] = pose_line
+            i += 1
+        else:
+            lines.insert(i + 1, pose_line)
+            i += 2
         changed += 1
-        i += 1 + len(insert)
     path.write_text("".join(lines))
     return changed

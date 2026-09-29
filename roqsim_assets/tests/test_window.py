@@ -61,7 +61,9 @@ def test_width_and_height_are_parametric(tmp_path):
 
 def test_sits_on_the_floor_at_the_opening_centre(tmp_path):
     # Placed by the opening CENTRE like a door, base on the floor: the sill's underside is at z=0.
-    engine = _built(tmp_path, {"pos": [3.0, -1.5], "width": 1.0, "frame": 0.05})
+    engine = _built(
+        tmp_path, {"pose": {"position": {"x": 3.0, "y": -1.5}}, "width": 1.0, "frame": 0.05}
+    )
     sill = _pos(engine, "sill")
     assert np.allclose(sill[:2], [3.0, -1.5])
     assert np.isclose(sill[2] - _size(engine, "sill")[2], 0.0)
@@ -69,7 +71,7 @@ def test_sits_on_the_floor_at_the_opening_centre(tmp_path):
 
 def test_yaw_turns_the_pane_onto_its_wall(tmp_path):
     # At yaw 90 deg the width runs along world Y instead of X.
-    engine = _built(tmp_path, {"width": 1.2, "rpy": [0.0, 0.0, np.pi / 2]})
+    engine = _built(tmp_path, {"width": 1.2, "pose": {"orientation": {"yaw": np.pi / 2}}})
     span = _pos(engine, "stile_p") - _pos(engine, "stile_n")
     assert abs(span[1]) > 1.0 and abs(span[0]) < 1e-6
 

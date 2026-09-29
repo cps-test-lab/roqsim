@@ -31,8 +31,10 @@ ROBOT = """
 
 MANIFEST = """
 frames:
-  - {name: cover_link, parent: body_link, pos: [0.02, 0, 0.05]}
-  - {name: laser, parent: cover_link, pos: [0, 0, 0.01], rpy: [3.141592653589793, 0, 0]}
+  - {name: cover_link, parent: body_link, pose: {position: {x: 0.02, z: 0.05}}}
+  - name: laser
+    parent: cover_link
+    pose: {position: {z: 0.01}, orientation: {roll: 3.141592653589793}}
 """
 
 
@@ -87,7 +89,8 @@ def test_frames_are_published_as_one_static_chain_in_the_robots_namespace(tmp_pa
 
 def test_config_frames_extend_the_manifests(tmp_path):
     engine = _engine(
-        _robot(tmp_path), frames=[{"name": "mast_link", "parent": "laser", "pos": [0, 0, 0.3]}]
+        _robot(tmp_path),
+        frames=[{"name": "mast_link", "parent": "laser", "pose": {"position": {"z": 0.3}}}],
     )
     links = _frames(engine).backend["ros2"]["static_tf"]
     assert [(link["parent"], link["child"]) for link in links][-1] == ("laser", "mast_link")
@@ -96,7 +99,7 @@ def test_config_frames_extend_the_manifests(tmp_path):
 
 
 def test_a_chain_from_the_root_publishes_no_extra_link(tmp_path):
-    manifest = "frames:\n  - {name: mast_link, parent: base_link, pos: [0, 0, 0.3]}\n"
+    manifest = "frames:\n  - {name: mast_link, parent: base_link, pose: {position: {z: 0.3}}}\n"
     links = _frames(_engine(_robot(tmp_path, manifest=manifest))).backend["ros2"]["static_tf"]
     assert [(link["parent"], link["child"]) for link in links] == [("base_link", "mast_link")]
 

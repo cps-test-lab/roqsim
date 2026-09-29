@@ -63,6 +63,7 @@ from vendor_mount import (  # noqa: E402
     fmt_list,
     fmt_num,
     fmt_vec,
+    frame_pose,
     matrix_quat,
     matrix_rpy,
     quat_matrix,
@@ -320,7 +321,7 @@ def mjcf(device: Device, v: Vendor) -> str:
 
 
 def frames_block(device: Device, v: Vendor) -> str:
-    opt = fmt_list(v.optical_rpy)
+    opt = frame_pose(rpy=v.optical_rpy)
     lines = [
         BEGIN,
         f"# (urdf/{device.xacro}, nominal extrinsics). The macro's `name` param is the device name.",
@@ -328,22 +329,22 @@ def frames_block(device: Device, v: Vendor) -> str:
         'frame_id: "{device_name}_color_optical_frame"',
         "frames:",
         '  - {name: "{device_name}_bottom_screw_frame", parent: mount}',
-        f'  - {{name: "{{device_name}}_link", parent: "{{device_name}}_bottom_screw_frame", '
-        f"pos: {fmt_list(v.screw_to_link)}}}",
-        f'  - {{name: "{{device_name}}_color_frame", parent: "{{device_name}}_link", '
-        f"pos: {fmt_list(v.color)}}}",
-        f'  - {{name: "{{frame_id}}", parent: "{{device_name}}_color_frame", rpy: {opt}}}',
-        f'  - {{name: "{{device_name}}_depth_frame", parent: "{{device_name}}_link", '
-        f"pos: {fmt_list(v.depth)}}}",
-        f'  - {{name: "{{device_name}}_depth_optical_frame", parent: "{{device_name}}_depth_frame", '
-        f"rpy: {opt}}}",
+        f'  - {{name: "{{device_name}}_link", parent: "{{device_name}}_bottom_screw_frame"'
+        f"{frame_pose(v.screw_to_link)}}}",
+        f'  - {{name: "{{device_name}}_color_frame", parent: "{{device_name}}_link"'
+        f"{frame_pose(v.color)}}}",
+        f'  - {{name: "{{frame_id}}", parent: "{{device_name}}_color_frame"{opt}}}',
+        f'  - {{name: "{{device_name}}_depth_frame", parent: "{{device_name}}_link"'
+        f"{frame_pose(v.depth)}}}",
+        f'  - {{name: "{{device_name}}_depth_optical_frame", parent: "{{device_name}}_depth_frame"'
+        f"{opt}}}",
     ]
     if v.imu is not None:
         lines += [
-            f'  - {{name: "{{device_name}}_gyro_frame", parent: "{{device_name}}_link", '
-            f"pos: {fmt_list(v.imu)}}}",
-            f'  - {{name: "{{device_name}}_gyro_optical_frame", parent: "{{device_name}}_gyro_frame", '
-            f"rpy: {opt}}}",
+            f'  - {{name: "{{device_name}}_gyro_frame", parent: "{{device_name}}_link"'
+            f"{frame_pose(v.imu)}}}",
+            f'  - {{name: "{{device_name}}_gyro_optical_frame", parent: "{{device_name}}_gyro_frame"'
+            f"{opt}}}",
             '  - {name: "{device_name}_imu_optical_frame", parent: "{device_name}_gyro_optical_frame"}',
         ]
     lines.append(END)

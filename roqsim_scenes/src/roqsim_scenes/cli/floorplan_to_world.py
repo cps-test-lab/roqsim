@@ -277,8 +277,10 @@ def door_placements(
         label = entry.get("name", f"door_{did}")
         door = {
             "prefix": entry.get("prefix", f"door_{did}_"),
-            "pos": [round(cx, 3), round(cy, 3), 0.0],
-            "rpy": [0.0, 0.0, round(yaw, 5)],
+            "pose": {
+                "position": {"x": round(cx, 3), "y": round(cy, 3)},
+                "orientation": {"yaw": round(yaw, 5)},
+            },
             "width": round(width, 3),
             "height": round(height, 3),
             "model": entry.get("model", "door"),

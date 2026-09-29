@@ -268,7 +268,7 @@ def test_an_arm_home_that_buries_the_arm_in_the_table_is_named(tmp_path, capsys)
         components:
           - spawn_model: {model: table.xml, motion: static}
             name: table
-          - spawn_arm: {model: ur5e, pos: [0, 0, 0.4], home: [0, 0.9, 0, 0, 0, 0]}
+          - spawn_arm: {model: ur5e, pose: {position: {z: 0.4}}, home: [0, 0.9, 0, 0, 0, 0]}
             name: arm
         """,
     )

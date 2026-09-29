@@ -13,8 +13,9 @@ Config::
       namespace: ur10e      # optional transport scope; the arm's endpoints inherit it (default: "")
       prefix: "ur10e_"      # MJCF name prefix (use distinct prefixes for >1 arm)
       base_body: base       # arm root body (ur10e -> 'base', panda -> 'link0')
-      pos: [-0.41, 0.0, 0.76]
-      rpy: [0.0, 0.0, 3.14159]   # mount orientation as roll/pitch/yaw (rad)
+      pose:                 # the mount, in the world or the `mount:` body's frame: a
+        position: {x: -0.41, z: 0.76}     #   geometry_msgs/Pose, omitted components 0
+        orientation: {yaw: 3.14159}       #   (roll/pitch/yaw in rad, or a quaternion)
       home: [...]           # joint home pose (defaults per model); applied on reset
       actuators:            # OPTIONAL: what law this arm's joints run under, and their gains.
         control: impedance  #   position | velocity | effort | impedance; the model's own if unset
@@ -26,12 +27,12 @@ Config::
                             #   true under position/velocity/impedance (real drives hold a pose),
                             #   false under effort (supplying the term is the controller's job).
       pedestal: false       # add a static support box under the base (floor -> mount height); only
-                            # has an effect when pos[2] > 0. Leave it off when the arm mounts on a
+                            # has an effect when pose.position.z > 0. Leave it off when the arm mounts on a
                             # table/desk that is already there (the usual case).
       pedestal_half_width: 0.1   # pedestal: half-width (m) of that box's square footprint
       rail:                 # OPTIONAL: carry the arm on a linear axis (gantry / ceiling track)
-        axis: [1, 0, 0]     #   travel direction, in the MOUNT frame (after `rpy`)
-        range: [-1.5, 1.5]  #   travel limits (m) about `pos`
+        axis: [1, 0, 0]     #   travel direction, in the MOUNT frame (after the pose's orientation)
+        range: [-1.5, 1.5]  #   travel limits (m) about the pose's position
         home: 0.0           #   carriage position at spawn/reset (m)
         joint: rail_joint   #   MJCF joint name, under the arm's prefix (default: 'rail_joint')
         kp: 20000           #   position-servo gain of the carriage drive
@@ -43,8 +44,8 @@ Config::
         model: robotiq_2f85 #   a gripper model (robotiq_2f85, schunk_pg70)
         site: attachment_site  # arm site to weld it to (default: attachment_site)
         prefix: ""          #   MJCF name prefix for the gripper's own names
-        pos: [0, 0, 0.011]  #   offset in the SITE's frame (e.g. the UR->Robotiq adapter's 11 mm)
-        rpy: [0, 0, 0]      #   extra rotation in the site's frame (rad)
+        pose: {position: {z: 0.011}}  # offset in the SITE's frame (e.g. the UR->Robotiq adapter's
+                            #   11 mm), a geometry_msgs/Pose like the arm's own
         replaces: [ee_plate]  # bodies of the ARM model this tool supersedes, deleted before the
                             #   attach (the ur10e ships a conveyor pushing plate 60 mm past its
                             #   flange, which a gripper would be welded straight into)
@@ -110,7 +111,7 @@ the controller needed no change to gain interchangeable hands. The gripper's own
 (``gripper_joint``/``gripper_open``/``gripper_close``), merged by :meth:`SpawnArmPlugin.expand`.
 
 The attach uses MuJoCo's site attachment, so the *site's* orientation defines the tool frame and
-``pos``/``rpy`` are offsets within it -- matching how a real tool adapter is specified.
+``pose`` is an offset within it -- matching how a real tool adapter is specified.
 
 **A tool that deforms.** The end effector's MJCF may carry a ``<flexcomp>`` -- a soft pad, a
 compliant finger -- pinned to one of its bodies (``<pin>``), or written under its ``<worldbody>``,
@@ -145,8 +146,9 @@ from roqsim.flex import entity_flex_ids, flex_label, lift_top_level_flexes
 from roqsim.manifest import expand_manifest, load_manifest
 from roqsim.models import ModelError, apply_assets, resolve_model
 from roqsim.plugin import Plugin
+from roqsim.pose import config_pose, config_pose_errors
 
-from ._arm import prefixed_joints, rpy_to_quat
+from ._arm import prefixed_joints
 
 # Per-model defaults so a world only needs `{model: ...}`. Keyed by model file stem.
 _DEFAULT_BASE_BODY = {
@@ -253,10 +255,7 @@ class SpawnArmPlugin(Plugin):
         self.prefix = self.config.get("prefix", "")
         stem = str(self.config.get("model", "")).rsplit("/", 1)[-1].removesuffix(".xml")
         self.base_body = self.config.get("base_body", _DEFAULT_BASE_BODY.get(stem, "base"))
-        pos = self.config.get("pos", [0.0, 0.0, 0.0])
-        self.pos = [float(pos[0]), float(pos[1]), float(pos[2] if len(pos) > 2 else 0.0)]
-        rpy = self.config.get("rpy", [0.0, 0.0, 0.0])
-        self.quat = rpy_to_quat(float(rpy[0]), float(rpy[1]), float(rpy[2]))
+        self.pos, self.quat = config_pose(self.config)
         self.home = list(self.config.get("home", _DEFAULT_HOME.get(stem, [])))
         if not self.home:
             # Fall back to the model's OWN `home` keyframe. `_DEFAULT_HOME` above is a name list in a
@@ -291,10 +290,7 @@ class SpawnArmPlugin(Plugin):
         #: :meth:`configure`. Empty until then, so a plugin built for validation alone has one.
         self.actuator_table: list = []
         self.ee_prefix = ee.get("prefix", "")
-        ee_pos = ee.get("pos", [0.0, 0.0, 0.0])
-        self.ee_pos = [float(v) for v in (*ee_pos, 0.0, 0.0)][:3]
-        ee_rpy = ee.get("rpy", [0.0, 0.0, 0.0])
-        self.ee_quat = rpy_to_quat(float(ee_rpy[0]), float(ee_rpy[1]), float(ee_rpy[2]))
+        self.ee_pos, self.ee_quat = config_pose(ee)
         self.ee_replaces = list(ee.get("replaces", []))
 
     def validate_config(self, config: dict) -> list[str]:
@@ -311,10 +307,7 @@ class SpawnArmPlugin(Plugin):
             config["gravity_compensation"], bool
         ):
             errors.append("'gravity_compensation' must be true or false")
-        if "rpy" in config and len(config["rpy"]) != 3:
-            errors.append("'rpy' must be [roll, pitch, yaw] in radians")
-        if len(config.get("pos", [0, 0, 0])) not in (2, 3):
-            errors.append("'pos' must be [x, y] or [x, y, z]")
+        errors += config_pose_errors(config, f"spawn_arm '{self.address}'")
 
         rail = config.get("rail")
         if rail is not None:
@@ -367,8 +360,7 @@ class SpawnArmPlugin(Plugin):
                     resolve_model(ee["model"], base_dir=self.base_dir)
                 except ModelError as exc:
                     errors.append(f"end_effector: {exc}")
-                if "rpy" in ee and len(ee["rpy"]) != 3:
-                    errors.append("end_effector 'rpy' must be [roll, pitch, yaw] in radians")
+                errors += config_pose_errors(ee, f"spawn_arm '{self.address}' end_effector")
         return errors
 
     def build(self, spec: mujoco.MjSpec, ctx: SimContext) -> None:
@@ -409,7 +401,7 @@ class SpawnArmPlugin(Plugin):
         frame.quat = self.quat
         if self.rail:
             # The carriage replaces the mount frame as the arm's parent, so the arm attaches at the
-            # carriage origin and `pos`/`rpy` keep meaning "where the axis sits, how it is oriented".
+            # carriage origin and `pose` keeps meaning "where the axis sits, how it is oriented".
             frame = self._add_carriage(spec, frame)
         spec.attach(child, prefix=self.prefix, frame=frame)
 
@@ -535,7 +527,7 @@ class SpawnArmPlugin(Plugin):
                 f"{self.ee_site!r} to mount an end effector on. Menagerie arms call the tool flange "
                 f"'attachment_site'; set `end_effector.site` to the right name for this model."
             )
-        # Attaching AT A SITE makes the site's orientation the tool frame, so `pos`/`rpy` below are
+        # Attaching AT A SITE makes the site's orientation the tool frame, so `pose` below is
         # offsets within it -- the same way a real tool adapter is specified (the UR->Robotiq adapter
         # is 11 mm along the flange normal).
         frame = child.attach(ee, prefix=self.ee_prefix, site=site)
