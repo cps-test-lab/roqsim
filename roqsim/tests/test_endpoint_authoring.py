@@ -14,7 +14,7 @@ from roqsim import endpoint
 from roqsim import types as T
 from roqsim.config import load_config_from_dict
 from roqsim.context import SimContext
-from roqsim.endpoint import QOS_PRESETS, Shape, Unit, qos_profile, value_type
+from roqsim.endpoint import QOS_PRESETS, Shape, Unit, qos_profile, topic_of, value_type
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
 from roqsim.plugins.dummy import DummyPlugin
@@ -150,6 +150,22 @@ def test_an_option_naming_nothing_is_refused():
     )
     with pytest.raises(TypeError, match="names 'odom_rate', which is neither an attribute"):
         engine.setup()
+
+
+def test_an_attribute_hiding_the_endpoint_method_is_refused():
+    class Shadowed(Plugin):
+        def __init__(self, config=None, **kw):
+            super().__init__(config, **kw)
+            self.speed = 0.3  # the same name as the endpoint method below
+
+        @endpoint.out
+        def speed(self) -> float:
+            return self.speed
+
+    ctx = SimContext(config={})
+    plugin = Shadowed({}, entity="belt")
+    with pytest.raises(TypeError, match="an instance attribute of that name hides the endpoint"):
+        plugin.register_endpoints(ctx)
 
 
 # -- explicit registration --------------------------------------------------------------------------
@@ -305,6 +321,83 @@ def test_a_worlds_qos_and_topics_land_on_the_endpoint():
         assert eps["odom"].qos == QOS_PRESETS["sensor_data"]
         assert eps["cmd_vel"].qos is None
         assert eps["cmd_vel"].topic == "/teleop/cmd_vel" and eps["odom"].topic is None
+
+
+class Camera(Plugin):
+    """Derived topics and a per-instance ``lazy``."""
+
+    def __init__(self, config=None, **kw):
+        super().__init__(config, **kw)
+        self.lazy = bool(self.config.get("lazy", False))
+
+    @endpoint.out(lazy=True, ros2={"topic": "camera/image_raw"})
+    def image(self) -> T.Image:
+        """The frame."""
+
+    @endpoint.out(
+        lazy="lazy",
+        ros2={"type": "sensor_msgs.msg.CompressedImage", "topic": "{image}/compressed"},
+    )
+    def image_compressed(self) -> T.Image:
+        """The frame, compressed."""
+
+    @endpoint.out(lazy=lambda self: not self.lazy, ros2={"topic": "{image}/../camera_info"})
+    def camera_info(self) -> T.CameraInfo:
+        """The intrinsics."""
+
+    @endpoint.command(ros2={"name": "{image}/../reset"})
+    def reset(self) -> None:
+        """Start over."""
+
+    @endpoint.out(ros2=None)
+    def internal(self) -> float:
+        """Not on ROS."""
+
+
+def _camera(config=None) -> dict:
+    ctx = SimContext(config={})
+    return {e.name: e for e in Camera(config or {}, entity="cam").register_endpoints(ctx)}
+
+
+def test_a_topic_derived_from_a_sibling_follows_the_worlds_rename_of_it():
+    eps = _camera()
+    assert topic_of(eps["image_compressed"], "ros2") == "camera/image_raw/compressed"
+    assert topic_of(eps["camera_info"], "ros2") == "camera/camera_info"
+    assert topic_of(eps["reset"], "ros2") == "camera/reset"  # a service's name
+    eps = _camera({"topics": {"image": "/drv/color/image_raw"}})
+    assert topic_of(eps["image"], "ros2") == "/drv/color/image_raw"
+    assert topic_of(eps["image_compressed"], "ros2") == "/drv/color/image_raw/compressed"
+    assert topic_of(eps["camera_info"], "ros2") == "/drv/color/camera_info"
+    eps = _camera({"topics": {"image": "rgb", "image_compressed": "/jpeg"}})
+    assert topic_of(eps["camera_info"], "ros2") == "camera_info"
+    assert topic_of(eps["image_compressed"], "ros2") == "/jpeg"  # its own rename wins
+    assert topic_of(eps["internal"], "ros2") is None
+
+
+def test_a_topic_naming_no_sibling_is_refused():
+    class Typo(Plugin):
+        @endpoint.out(ros2={"topic": "{imgae}/compressed"})
+        def image_compressed(self) -> T.Image:
+            """The frame."""
+
+    with pytest.raises(ValueError, match="names 'imgae', which this plugin does not register"):
+        Typo({}, entity="cam").register_endpoints(SimContext(config={}))
+
+
+def test_lazy_is_a_value_a_key_or_a_callable_and_describe_says_which():
+    eps = _camera()
+    assert (eps["image"].lazy, eps["image_compressed"].lazy, eps["camera_info"].lazy) == (
+        True,
+        False,
+        True,
+    )
+    eps = _camera({"lazy": True})
+    assert (eps["image_compressed"].lazy, eps["camera_info"].lazy) == (True, False)
+    rows = {s.name: s.describe(Camera) for s in endpoint.declared(Camera)}
+    assert rows["image"]["lazy"] is True
+    assert rows["image_compressed"]["lazy"] == {"from": "lazy"}
+    assert rows["camera_info"]["lazy"] == "computed"
+    assert "lazy" not in rows["internal"]
 
 
 def test_a_qos_for_an_endpoint_the_plugin_does_not_have_is_refused():

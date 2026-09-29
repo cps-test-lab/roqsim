@@ -5,4 +5,9 @@
 # out, set `spawn_arm` config `default_plugins: false`. Each entry's `arm` is filled in from the
 # spawn_arm `name`.
 components:
-  - arm_controller: {}   # gripper_ctrl and the home target keep the plugin/model defaults
+  # The Franka Hand's `split` tendon is the gripper; finger_joint1 is its position, per finger.
+  - arm_controller:
+      gripper_joint: finger_joint1
+      gripper_open: 0.04            # Franka Hand: 0.04 m per finger apart, 0 together
+      gripper_close: 0.0
+      # gripper_ctrl keeps the plugin default: 255, the top of the tendon's ctrlrange, is open.
