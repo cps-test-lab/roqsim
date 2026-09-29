@@ -10,6 +10,8 @@ The YAML has two top-level sections::
       solver: newton         # optional; newton | cg | pgs. Else MuJoCo's default (newton)
       density: 1.225         # optional; kg/m^3. MuJoCo's default is 0, i.e. a vacuum
       viscosity: 1.8e-5      # optional; Pa*s
+      contact_override:      # optional; MuJoCo's global o_solref / o_solimp / o_friction
+        solref: [0.02, 1.0]  # a short vector keeps MuJoCo's values for the rest
       view:                  # optional initial viewer setup (windowed only; see viewer)
         lookat: [0, 0.4, 0.9]
         distance: 3.2
@@ -34,6 +36,13 @@ refuses to compile under anything implicit, else ``implicitfast``. The resolved 
 logged and recorded in the run's provenance. A stated integrator a flex cannot run under, ``solver:
 pgs`` or ``noslip_iterations`` above 0 alongside such a flex, and a flex attached to a mocap body
 are refused before compile, naming the key to change -- the rules are :mod:`roqsim.flex`'s.
+
+``contact_override`` is validated in shape here, at load: only ``solref`` / ``solimp`` /
+``friction``, each a vector no longer than MuJoCo's. Its ``solref`` is judged later, before compile,
+once the integrator is resolved: a time constant below MuJoCo's floor for that integrator
+(:func:`roqsim.solref.solref_floor` -- two steps, or under ``discrete`` about one, depending on the
+damping ratio and ``solimp``) is refused naming the floor, since MuJoCo would silently use the floor
+instead.
 
 Each entry is a mapping with exactly one plugin-ref key (whose value is the plugin's ``config`` map)
 plus an optional reserved ``name:`` sibling that names the instance (any plugin may carry one), which
