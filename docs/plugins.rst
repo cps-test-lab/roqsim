@@ -558,73 +558,20 @@ steers, because opting out of yielding is not opting out of existing: a mover th
 is one they drive into. A robot under test, having no navigator at all, joins as a non-yielding agent
 whose state is overwritten from ground truth, so the others go round it and it is never pushed.
 
-**Every key, and its default.** ``python -m pydoc roqsim_nav.plugins.navigator`` prints the
-annotated original beside the code it configures, which is the copy that cannot go stale.
+**Every key, and its default.** ``roqsim plugins describe navigator`` publishes the navigator's
+schema: each key with its type, unit and default, and for the ``avoidance``, ``planner``,
+``recovery`` and ``action_names`` blocks the keys each accepts. A key it does not name is refused at
+load, at the top level and inside a block alike, with the nearest key it knows. The ``drive``
+output's keys (``kinematics``, ``heading_gain``, ``max_angular_vel``, ``turn_in_place``,
+``min_speed``, ``face``) and the ``mocap`` output's (``yaw_rate``) are in the same schema;
+``kinematics`` is refused under ``output: mocap``.
 
-.. list-table::
-   :header-rows: 1
-   :widths: 24 14 62
-
-   * - key
-     - default
-     - what it does
-   * - ``speed``
-     - *required*
-     - m/s the route is followed at.
-   * - ``goals``
-     - ``[]``
-     - The route, world metres: ``[x, y]`` or ``[x, y, yaw]``. Empty means "wait to be told".
-   * - ``output``
-     - ``auto``
-     - ``drive`` | ``mocap`` | ``walker`` | ``module:Class``. ``auto`` probes in a fixed order.
-   * - ``route_mode``
-     - ``plan``
-     - ``plan`` runs A\* between the points; ``exact`` makes the polyline *be* the path.
-   * - ``tracker``
-     - ``waypoint``
-     - ``waypoint`` steers at the goal; ``pure_pursuit`` steers at a carrot along the route, which
-       bounds cross-track error by ``lookahead`` rather than by ``arrival_radius``.
-   * - ``autostart``
-     - ``true``
-     - ``false`` plans at load and holds at the first point until something starts it.
-   * - ``loop``
-     - ``false``
-     - Cycle the route forever rather than stopping at the last point.
-   * - ``arrival_radius``
-     - ``0.25``
-     - m within which a goal counts as reached.
-   * - ``avoidance``
-     - ``{stop: true}``
-     - The block above: ``stop``, ``steer``, ``reroute``, ``params``, and the probe's tuning
-       (``lookahead``, ``width``, ``rays``, ``height``, ``clear_time``, ``yield_time``,
-       ``forget_after``, ``blockage_radius``, ``ignore``).
-   * - ``recovery``
-     - ``{enabled: true, stuck_time: 1.5, backup_time: 0.5, max_recovery: 4}``
-     - For a mover that is wedged rather than merely blocked: it backs away from what stopped it and
-       re-plans. Refused with ``route_mode: exact``, which by definition cannot leave its path.
-   * - ``obstacle_height``
-     - ``[0.1, 1.8]``
-     - The z band a geom must span to be a wall **for this mover**, and the band its probe scans in.
-   * - ``resolution``
-     - ``0.05``
-     - m per planner grid cell. Movers agreeing on this and on ``obstacle_height`` share one raster.
-   * - ``planner``
-     - ``{inflation_radius: <measured>, waypoint_radius: 0.3}``
-     - Inflation defaults to the mover's own measured footprint, so it plans a path it fits through.
-   * - ``update_hz``
-     - ``20`` (``60`` for ``walker``)
-     - The nav pipeline's rate. Physics steps far faster; the output declares what it needs.
-   * - ``namespace``, ``goal_endpoint``, ``actions``
-     - the owner's, ``true``, all
-     - The goal interface: which actions this mover answers, and under what scope. nav2's
-       ``navigate_to_pose`` and ``navigate_through_poses`` send a route; ``start_route``
-       (``roqsim_nav_interfaces/StartRoute``) runs the configured one and is a ROS action only
-       when ``goals`` is set. Each returns the route's sequence number, which ``route_status``
-       reports once applied; ``cancel_route`` stops the mover. Those two are not on ROS.
-
-Keys for one ``output`` are refused under another rather than ignored -- ``kinematics``,
-``heading_gain``, ``max_angular_vel``, ``turn_in_place``, ``min_speed`` and ``face`` belong to
-``drive``; ``yaw_rate`` to ``mocap`` and ``walker``.
+**The goal interface.** ``goal_endpoint``, ``actions`` and ``action_names`` say which actions a
+mover answers and under what name, in the owner's ``namespace``. nav2's ``navigate_to_pose`` and
+``navigate_through_poses`` send a route; ``start_route`` (``roqsim_nav_interfaces/StartRoute``) runs
+the configured one and is a ROS action only when ``goals`` is set. Each returns the route's sequence
+number, which ``route_status`` reports once applied; ``cancel_route`` stops the mover. Those two are
+not on ROS.
 
 **It closes its loop on ground truth**, not on ``read_odom`` -- which would be the wrong frame (odom,
 zeroed each reset, against a world-frame grid) and the wrong instrument (an opponent's trajectory
