@@ -267,8 +267,7 @@ class ConveyorPlugin(Plugin):
     # The package's true world pose as a TF transform, so a viewer binds it to the scene body by name
     # (the child is the exported body name). This is ground truth: the package's pose is not a joint,
     # so nothing else publishes it. It belongs to the package, with no namespace, and the topic is
-    # *relative* (`tf`) so the bridge's ground-truth namespace can map it to `/gt/tf` -- see the `gt`
-    # config on the ros2_bridge plugin. Without that config it resolves to the plain `/tf`.
+    # the relative `tf`, which resolves to the plain `/tf`.
     @endpoint.out(
         rate=30.0,
         when="has_package",
