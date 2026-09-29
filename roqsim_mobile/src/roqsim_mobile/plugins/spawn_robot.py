@@ -18,6 +18,7 @@ Config::
         d: 40               #   N*m*s/rad -- see roqsim.actuators for the gain of each control
         each:               #   per-actuator, on top of the shared keys above
           front_left_wheel_motor: {d: 25}
+      gravity_compensation: true  # false: no drive supplies a gravity term (see below)
       present: true         # false: compiled in, but absent until it is spawned
       frames:               # OPTIONAL: fixed links beyond the manifest's own (see below)
         - {name: cover_link, parent: body_link, pose: {position: {z: 0.05}}}
@@ -58,6 +59,17 @@ Euler spelling).
 The rotation is a full quaternion, because the service's is: a robot can be spawned tilted. Nothing
 here refuses that -- the base has a free joint and MuJoCo holds whatever orientation it is given --
 so a rotation that is not a heading is taken at its word.
+
+**Gravity compensation.** A ``position`` or ``impedance`` drive holds up what hangs below it -- a
+mobile manipulator's arm, a lift mast, a steered wheel's carrier -- so those bodies get their gravity
+term as a torque the drive supplies, clamped by the joint's ``actuatorfrcrange`` (else the drive's
+``forcerange`` times gear), and the reaction goes into the base: the wheels carry the whole robot
+and a drive too weak for its load sags (:func:`roqsim.actuators.apply_gravity_compensation`). A
+model's ``forcerange`` therefore has to cover the holding torque plus any payload, as the vendor's
+rated torque does. ``gravity_compensation: false`` leaves every body uncompensated, for drives that
+genuinely supply no gravity term (a hobby servo, a backdrivable joint); each servo then trades
+position error for holding torque. There is no whole-mechanism form, unlike ``spawn_arm``'s
+``true``: it would compensate the base and lift the robot off its wheels.
 
 ``present: false`` compiles the robot in and starts it **absent** -- nothing sees or touches it, and
 the control plane does not list it -- until ``SpawnEntity`` brings it in at the pose that call
@@ -154,6 +166,9 @@ class SpawnRobotPlugin(Plugin):
         "pose": Field(dict, doc="spawn pose, as SpawnEntity's initial_pose (roqsim.pose)"),
         "base_joint": Field(str, default="base_free", doc="free joint used to place the base"),
         "actuators": Field(dict, doc="control law and gains override (roqsim.actuators)"),
+        "gravity_compensation": Field(
+            bool, default=True, doc="false: no drive supplies a gravity term (roqsim.actuators)"
+        ),
         "present": Field(bool, default=True, doc="false: compiled in, absent until spawned"),
         "frames": Field(list, doc="fixed links beyond the manifest's own (roqsim.frames)"),
         "default_plugins": Field(bool, default=True, doc="inject the model manifest's components"),
@@ -243,7 +258,8 @@ class SpawnRobotPlugin(Plugin):
         # to 0.4 deg without this) and it is the same defect an arm on a bench has, so it is
         # closed the same way rather than left as the one place a drive carries its own weight
         # and is not modelled doing it.
-        apply_gravity_compensation(child, self.actuator_table)
+        if self.config.get("gravity_compensation", True):
+            apply_gravity_compensation(child, self.actuator_table)
         self.rest_z = _keyframe_base_z(child, self.config.get("base_joint", "base_free"))
         _strip_keyframes(child)
         # Added to the MODEL before attach, so each site takes the robot's prefix like every other

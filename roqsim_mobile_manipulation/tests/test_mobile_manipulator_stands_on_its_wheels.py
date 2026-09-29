@@ -3,9 +3,9 @@
 
 """A mobile manipulator's arm is held up by its motors, and its motors stand on the base.
 
-So the floor carries the whole robot, arm included, while the arm holds its pose. Compensated as
-MuJoCo's external ``body_gravcomp`` alone, the arm's weight was cancelled at the free joint as well:
-the wheels carried the base only, and the arm's reach no longer moved load between them.
+So the floor carries the whole robot, arm included, while the arm holds its pose. MuJoCo's external
+``body_gravcomp`` alone would cancel the arm's weight at the free joint as well: the wheels would
+carry the base only, and the arm's reach would not move load between them.
 """
 
 from __future__ import annotations
@@ -16,16 +16,24 @@ import pytest
 
 from roqsim.config import load_config_from_dict
 from roqsim.engine import Engine
+from roqsim.plugin import PluginError
 
 ROBOTS = ["frankie", "tiago_pro"]
 
 
+def _engine(model: str, sim: dict | None = None, **spawn) -> Engine:
+    cfg = load_config_from_dict(
+        {
+            "sim": sim or {},
+            "components": [{"spawn_robot": {"model": model, **spawn}, "name": "robot"}],
+        }
+    )
+    return Engine(cfg)
+
+
 def _held(model: str) -> Engine:
     """The robot at rest on the floor, every position servo commanded to the pose it stands in."""
-    cfg = load_config_from_dict(
-        {"sim": {}, "components": [{"spawn_robot": {"model": model}, "name": "robot"}]}
-    )
-    engine = Engine(cfg)
+    engine = _engine(model)
     engine.ctx.seed = 0  # a test driving an Engine is the driver, and the seed is driver-owned
     engine.setup()
     engine.reset()
@@ -90,3 +98,34 @@ def test_the_arm_holds_the_pose_it_is_commanded(model):
 
     worst = max(drift, key=drift.get)
     assert drift[worst] < 1e-3, f"{worst} drifted {drift[worst]:.4f} from the pose it was commanded"
+
+
+def test_gravity_compensation_false_leaves_every_body_to_its_servo():
+    """The world-level opt-out for a robot whose drives supply no gravity term."""
+    engine = _engine("frankie", gravity_compensation=False)
+    engine.ctx.seed = 0
+    engine.setup()
+    m = engine.ctx.model
+    assert not np.any(m.body_gravcomp[1:]), "a body is still compensated"  # 0 is presence's marker
+    assert not np.any(m.jnt_actgravcomp), "a drive still supplies a gravity term"
+    engine.shutdown()
+
+
+def test_rk4_is_refused_naming_the_robot_and_the_fix():
+    engine = _engine("frankie", sim={"integrator": "rk4"})
+    engine.ctx.seed = 0
+    with pytest.raises(PluginError) as refused:
+        engine.setup()
+    message = str(refused.value)
+    assert "sim.integrator: rk4" in message
+    assert "rooted at ['base_link']" in message, f"the robot is not named: {message}"
+    assert "implicitfast" in message and "gravity_compensation: false" in message
+
+
+def test_rk4_steps_a_robot_that_opted_out():
+    engine = _engine("frankie", sim={"integrator": "rk4"}, gravity_compensation=False)
+    engine.ctx.seed = 0
+    engine.setup()
+    engine.reset()
+    engine.step()
+    engine.shutdown()

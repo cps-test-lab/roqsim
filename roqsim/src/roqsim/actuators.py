@@ -738,6 +738,13 @@ class GravityReaction:
 
     def __init__(self, model, mechanisms: list[tuple[int, np.ndarray]]):
         self._mechanisms = mechanisms
+        #: The top body of each robot carrying such a mechanism, for a refusal to name the robot by.
+        self.robots = sorted(
+            {
+                mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_BODY, int(model.body_rootid[root]))
+                for root, _members in mechanisms
+            }
+        )
         above: set[int] = set()
         for root, _members in mechanisms:
             body = root
@@ -779,12 +786,16 @@ class GravityReaction:
                 mechanisms.append((root, np.array(members, dtype=int)))
         if not mechanisms:
             return None
+        reaction = cls(model, mechanisms)
         if model.opt.enableflags & mujoco.mjtEnableBit.mjENBL_SLEEP:
             raise PluginError(
-                "gravity compensation on a moving base: MuJoCo's sleeping leaves qfrc_gravcomp stale "
-                "on sleeping trees, which the per-step reaction reads -- disable sleep in this world"
+                f'the world MJCF enables sleep (<option><flag sleep="enable"/>), but drives on '
+                f"the moving robot(s) rooted at {reaction.robots} hold a mechanism up, whose weight "
+                "is handed back to the base every step from qfrc_gravcomp, which MuJoCo leaves stale "
+                "on a sleeping tree -- remove the flag, or set gravity_compensation: false on that "
+                "robot's spawn"
             )
-        return cls(model, mechanisms)
+        return reaction
 
     def apply(self, model, data) -> None:
         """Remove the mechanisms' weight from the DOFs above them. Physics thread, after

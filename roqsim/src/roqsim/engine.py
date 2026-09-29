@@ -337,11 +337,11 @@ class Engine:
             # mj_step2 integrates RK4 as Euler, so stepping in two halves would run a different
             # integrator than the one the world names -- and nothing would say so.
             raise PluginError(
-                "sim.integrator: rk4 cannot step a world where a drive holds a mechanism up on a "
-                "moving base (a mobile manipulator, a lift mast): the reaction that keeps its weight "
-                "on the ground is applied between mj_step1 and mj_step2, which integrates as Euler. "
-                "Use implicitfast (the default), implicit or euler, or state gravity_compensation: "
-                "false on that entity."
+                f"sim.integrator: rk4 cannot step this world: drives on the moving robot(s) rooted "
+                f"at {self._gravity_reaction.robots} hold a mechanism up, and the reaction that "
+                "keeps its weight on the ground runs between mj_step1 and mj_step2, which integrate "
+                "RK4 as Euler -- set sim.integrator: auto (implicitfast), implicit or euler, or "
+                "gravity_compensation: false on that robot's spawn if its drives really hold nothing"
             )
 
         # A failed setup is never handed to a driver, so it shuts down what configure opened itself:
