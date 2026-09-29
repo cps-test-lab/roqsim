@@ -51,6 +51,7 @@ def test_every_tool_is_registered():
         "pause",
         "resume",
         "step",
+        "check_world",
     }
 
 
