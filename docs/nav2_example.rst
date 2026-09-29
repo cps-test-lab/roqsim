@@ -2,7 +2,8 @@ nav2 example
 ============
 
 ``roqsim_nav2_example`` brings up a minimal `nav2 <https://docs.nav2.org>`_ stack on top of the
-roqsim TurtleBot 4 and includes a headless goal-reaching integration test.
+roqsim TurtleBot 4 -- and on a car-like base, the PiRacer (below) -- and includes headless
+goal-reaching integration tests.
 
 What it starts
 --------------
@@ -71,17 +72,69 @@ The Depot world (``roqsim_scenes:depot``) ships **open** (roofless) via the gene
 which is nav-neutral (the roof is above the 2D scan plane) but clears overhead sensor line-of-sight
 and top-down views. Set ``ceiling.keep: true`` for the roofed warehouse.
 
-The goal-reaching test
-----------------------
+Car-like robots: the PiRacer
+----------------------------
 
-``test/test_nav2_goal.py`` launches the whole stack headless, sends one goal via
+``nav2_params.yaml`` rotates the robot to a path's heading before it drives, which a car-like base
+cannot do: ``ackermann_drive`` and ``tricycle_drive`` answer ``cmd_vel`` with ``v = 0`` by not moving,
+so under those params the robot sits still. ``nav2_carlike.launch.py`` runs the stack for them, on
+the PiRacer (``robot:=piracer``, the default):
+
+.. code-block:: bash
+
+   ros2 launch roqsim_nav2_example nav2_carlike.launch.py gui:=true
+
+* ``params/nav2_params_carlike.yaml`` -- the same for every car-like robot: Smac Hybrid-A* over
+  Reeds-Shepp motions (a plan may reverse), Regulated Pure Pursuit with ``allow_reversing`` and no
+  rotate-to-heading, a behaviour tree that replans only when the path is blocked and never spins
+  (``navigate_w_replanning_only_if_path_becomes_invalid.xml``), and no spin behaviour;
+* ``params/carlike_<robot>.yaml`` -- loaded after it, so its values win: the footprint polygon about
+  ``base_link``, the ``minimum_turning_radius``, speeds, lookahead, inflation, tolerances and which
+  costmap layers there are (the PiRacer has no scanner, so its costmaps are the map alone);
+* ``worlds/<robot>_nav2.yaml`` -- the robot in the built-in empty room, with the ROS bridge and
+  ``sim_interfaces``. The drive comes from the robot's manifest, so the world declares none.
+
+The velocity command's message type is the drive's ``stamped_cmd_vel`` (``geometry_msgs/Twist``
+unless it is set) and Nav2's ``enable_stamped_cmd_vel`` (unstamped on Jazzy unless it is set);
+``nav2_params_carlike.yaml`` sets neither, so both sides use ``Twist``. A stack that publishes
+``TwistStamped`` sets both, because a subscription takes one type and a mismatch leaves the robot
+with no command at all.
+
+``base_link`` must be the point the robot turns about, the centre of its fixed axle.
+``minimum_turning_radius`` is a planning value, not the physical minimum: the physical minimum is
+the geometry's (``wheelbase / tan(max_steer_angle)`` for a car), and the planning value is chosen
+above it, so the controller has lock left to correct a tracking error with and Hybrid-A* stays out of
+tight many-cusp manoeuvres pure pursuit cannot follow. Each per-robot file states both numbers.
+
+To bring up another car-like robot, copy ``worlds/piracer_nav2.yaml`` and
+``params/carlike_piracer.yaml`` to ``<name>_nav2.yaml`` and ``carlike_<name>.yaml``, change what
+their comments name, list them in ``setup.py``, and pass ``robot:=<name>``; add an entry to
+``ROBOTS`` in ``test/test_nav2_carlike_goals.py`` to test it. A ``tricycle_drive`` base uses the same
+setup: its physical minimum turning radius is ``|steer_offset| / tan(max_steer_angle)``, its
+``minimum_turning_radius`` is chosen above that, and its ``base_link`` is the centre of the fixed
+axle, which ``tricycle_drive`` requires anyway. :doc:`plugins`, "Choosing a drive for a new robot",
+says which drive plugin to start from.
+
+The goal-reaching tests
+-----------------------
+
+``test/test_nav2_carlike_goals.py`` drives each robot in its ``ROBOTS`` (the PiRacer) to two goals --
+ahead and to the left facing left, then straight back from there -- and judges each on ground
+truth, not on the odometry Nav2 steers by: the robot entity's world pose from ``sim_interfaces``'
+``get_entity_state`` (:doc:`interfaces`), read when Nav2 reports the goal done. It also asserts the
+steering swung over on the turn and the odometry ran backwards on the second goal. Each launch gets a ROS domain of its
+own (``ROS_DOMAIN_ID`` if set, otherwise one derived from the test's process id) on localhost only,
+because a second simulator's ``/clock`` on the same domain breaks every sim-time wait in Nav2.
+``CARLIKE_NAV_LOG=<dir>`` keeps each launch's output.
+
+``test/test_nav2_goal.py`` launches the TurtleBot stack headless, sends one goal via
 ``nav2_simple_commander.BasicNavigator``, and asserts the robot reaches within a loose radius under a
-generous timeout. It runs as part of ``make test`` **when ROS is sourced**:
+generous timeout. Both run as part of ``make test`` **when ROS is sourced**:
 
 .. code-block:: bash
 
    source /opt/ros/jazzy/setup.bash
-   make test          # unit tests + this nav2 integration test
+   make test          # unit tests + these nav2 integration tests
 
-The test starts the launch tree with the venv interpreter (so the bridge subprocess can import
+Each test starts the launch tree with the venv interpreter (so the bridge subprocess can import
 ``roqsim``) and skips cleanly when ROS/nav2 is unavailable.

@@ -49,8 +49,10 @@ import pytest
 from roqsim.config import load_config_from_dict
 from roqsim.context import Blackboard, Entity, EntityRegistry, InterfaceRegistry, SimContext
 from roqsim.controllers import ACTIVE, FORCE_AUTO, SERVICE_KEY, ControllerRegistry
+from roqsim.endpoint import bind
 from roqsim.engine import Engine
 from roqsim.plugin import Plugin
+from roqsim.types import JointState
 
 #: Physics steps a trial runs for, split around the setter calls.
 STEPS = 200
@@ -90,7 +92,11 @@ def _arm(*components: dict) -> dict:
 def _sensor(model: str, *components: dict) -> dict:
     return _world(
         {
-            "spawn_sensor": {"model": model, "prefix": f"{model}_", "pos": [0.0, 0.0, 0.5]},
+            "spawn_sensor": {
+                "model": model,
+                "prefix": f"{model}_",
+                "pose": {"position": {"z": 0.5}},
+            },
             "name": model,
             "components": list(components),
         },
@@ -140,6 +146,42 @@ def _flex_world(tmp_path: Path) -> dict:
     )
 
 
+#: A three-wheel truck: a driven axle through base_link and a steered wheel 0.6 m behind it. No
+#: tricycle model is bundled, so the case brings its own.
+_TRICYCLE = """<mujoco><worldbody><body name="base_link" pos="0 0 .1">
+<freejoint name="base_free"/>
+<geom type="box" pos="-.3 0 .15" size=".4 .2 .05" mass="20"/>
+<body name="left_link" pos="0 .25 0"><joint name="left" axis="0 1 0"/>
+  <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body>
+<body name="right_link" pos="0 -.25 0"><joint name="right" axis="0 1 0"/>
+  <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body>
+<body name="steer_link" pos="-.6 0 0"><joint name="steer" axis="0 0 1" range="-75 75"/>
+  <geom type="box" size=".02 .02 .02" mass=".5"/>
+  <body name="steer_wheel_link"><joint name="steer_wheel" axis="0 1 0"/>
+    <geom type="cylinder" size=".1 .03" quat=".7071 .7071 0 0" mass="1"/></body></body>
+</body></worldbody>
+<actuator><position name="steer_motor" joint="steer" kp="500" kv="20"/>
+<velocity name="left_motor" joint="left" kv="10"/>
+<velocity name="right_motor" joint="right" kv="10"/></actuator></mujoco>"""
+
+
+def _tricycle_world(tmp_path: Path) -> dict:
+    path = tmp_path / "tricycle.xml"
+    path.write_text(_TRICYCLE, encoding="utf-8")
+    drive = {
+        "steer_offset": -0.6,
+        "wheel_radius": 0.1,
+        "track": 0.5,
+        "max_steer_angle": 1.2,
+        "steer_actuator": "steer_motor",
+        "steer_joint": "steer",
+        "drive_actuators": ["left_motor", "right_motor"],
+        "drive_joints": ["left", "right"],
+        "passive_joints": ["steer_wheel"],
+    }
+    return _world(_robot(str(path), {"tricycle_drive": drive}))
+
+
 def _trajectory_world(tmp_path: Path) -> dict:
     path = tmp_path / "square.csv"
     path.write_text("0,0\n50,0\n50,50\n0,50\n0,0\n", encoding="utf-8")
@@ -174,7 +216,10 @@ def _joint_command(engine: Engine, endpoint) -> tuple:
         and e.name == "joint_states"
         and e.namespace == endpoint.namespace
     ]
-    names, positions = states[0].read()[:2]
+    state = states[0].read()
+    names, positions = (
+        (state.names, state.positions) if isinstance(state, JointState) else state[:2]
+    )
     return list(names), [float(p) + 0.1 for p in positions]
 
 
@@ -186,7 +231,7 @@ def _motor_command(engine: Engine, endpoint) -> list[float]:
 #: What to write into an ``in`` endpoint, by endpoint name: a value, or ``f(engine, endpoint)``.
 PAYLOADS: dict[str, Any] = {
     "cmd_vel": (0.2, 0.0, 0.3),
-    "ackermann_cmd": (0.3, 0.2),
+    "ackermann_cmd": ({"steering_angle": 0.3, "speed": 0.2},),
     "follow_joint_trajectory": _joint_command,
     "joint_command": _joint_command,
     "joint_velocity": _joint_command,
@@ -196,6 +241,7 @@ PAYLOADS: dict[str, Any] = {
     "navigate_to_pose": [(0.8, 0.3, 0.0)],
     "navigate_through_poses": [(0.5, 0.0, 0.0), (0.8, 0.4, 0.0)],
     "start_route": None,
+    "cancel_route": None,
     "cmd_pos": ([0.0, 0.0, 0.5], [1.0, 0.0, 0.0, 0.0]),
     "motor_cmd": _motor_command,
     "speed": 0.2,
@@ -216,7 +262,21 @@ def _write_every_in_endpoint(engine: Engine) -> None:
         payload = PAYLOADS[endpoint.name]
         if callable(payload):
             payload = payload(engine, endpoint)
+        if endpoint.params is not None:
+            payload = _named(endpoint, payload)
         engine.ctx.post(lambda _ctx, e=endpoint, p=payload: e.write(p))
+
+
+def _named(endpoint, payload) -> dict:
+    """*payload*, positional as in :data:`PAYLOADS`, as the named parameters a typed endpoint takes.
+
+    Checked here: a typed write refuses a misfit into a future or a log line, which a trial would
+    not notice, and the endpoint would go unused.
+    """
+    values = () if payload is None else payload if isinstance(payload, tuple) else (payload,)
+    named = dict(zip((p.name for p in endpoint.params), values, strict=False))
+    bind(endpoint.params, named, f"{endpoint.owner}/{endpoint.name}")
+    return named
 
 
 def _switch_every_controller(engine: Engine) -> None:
@@ -321,6 +381,7 @@ CASES: dict[str, Case] = {
         {"floorplan": {"lines": [{"id": 0, "x0_m": 2.0, "y0_m": -2.0, "x1_m": 2.0, "y1_m": 2.0}]}}
     ),
     "ackermann_drive": Case(lambda _: _world(_robot("piracer"))),
+    "tricycle_drive": Case(_tricycle_world),
     # navigation and people
     "navigator": Case(lambda _: _mobile({"navigator": {"speed": 0.3, "goals": [[1.0, 0.0]]}})),
     "walker": _static(
@@ -350,10 +411,10 @@ CASES: dict[str, Case] = {
     "spawn_sensor": Case(lambda _: _sensor("lds01")),
     "livox_mid360": Case(lambda _: _sensor("mid360")),
     "seyond_robin_w1g": Case(lambda _: _mounted("robin_w1g", {"seyond_robin_w1g": {}})),
-    "oakd_camera": Case(lambda _: _sensor("oakd")),
-    "realsense_d415": Case(lambda _: _sensor("d415")),
-    "realsense_d435": Case(lambda _: _sensor("d435")),
-    "realsense_d455": Case(lambda _: _sensor("d455")),
+    "oakd_camera": Case(lambda _: _sensor("oakd_pro")),
+    "realsense_d415": Case(lambda _: _sensor("realsense_d415")),
+    "realsense_d435": Case(lambda _: _sensor("realsense_d435")),
+    "realsense_d455": Case(lambda _: _sensor("realsense_d455")),
     "zivid": Case(lambda _: _mounted("zivid", {"zivid": {}})),
     "fiducial_marker": _static(
         {
@@ -361,7 +422,7 @@ CASES: dict[str, Case] = {
                 "family": "apriltag_36h11",
                 "id": 0,
                 "size": 0.12,
-                "pose": [0.0, 0.0, 0.5],
+                "pose": {"position": {"z": 0.5}},
             }
         }
     ),
@@ -392,10 +453,10 @@ CASES: dict[str, Case] = {
     ),
     "sensor_coverage_probe": Case(
         lambda tmp: (
-            _sensor("d435")
+            _sensor("realsense_d435")
             | {
                 "components": [
-                    *_sensor("d435")["components"],
+                    *_sensor("realsense_d435")["components"],
                     {
                         "sensor_coverage_probe": {
                             "sample": {
@@ -463,7 +524,9 @@ CASES: dict[str, Case] = {
     "workbench": _static({"workbench": {}, "name": "bench"}),
     "palm_tree": _static({"palm_tree": {}, "name": "palm"}),
     "duct": _static({"duct": {"prefix": "d_", "start": [1.0, 1.0], "end": [3.0, 1.0], "z": 3.2}}),
-    "strip_light": _static({"strip_light": {"prefix": "s_", "pos": [2.0, 3.0, 3.5]}}),
+    "strip_light": _static(
+        {"strip_light": {"prefix": "s_", "pose": {"position": {"x": 2.0, "y": 3.0, "z": 3.5}}}}
+    ),
     "ceiling_panels": _static(
         {"ceiling_panels": {"prefix": "p_", "area": [0.0, 0.0, 2.0, 2.0], "z": 3.5}}
     ),
@@ -529,6 +592,12 @@ SKIPPED: dict[str, str] = {
         "transport_only, holding no simulation state"
         for name in ("ros2_bridge", "sim_interfaces")
     },
+    "ipc_bridge": "a transport that binds a control socket and starts threads; it declares itself "
+    "transport_only, holding no simulation state",
+    "run_control": "the driver's pause/step/reset served as endpoints: its state is the driver's "
+    "RunControl, and a reset is one of its commands (test_ipc_bridge drives it)",
+    "entity_control": "entity placement and presence served as commands; it holds no state of its "
+    "own (test_entity_control drives it)",
 }
 
 # -- what a plugin's state is ------------------------------------------------------------------------

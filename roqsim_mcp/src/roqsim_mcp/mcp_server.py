@@ -14,13 +14,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-"""A real MCP server for roqsim's introspection -- for use without any surrounding harness.
+"""A real MCP server for roqsim's introspection and a running simulation -- for use without any
+surrounding harness.
 
 The JSON CLIs (``python -m roqsim.introspection list``, ``roqsim catalog models``) answer
 "what does this container have -- plugins, models, worlds" from a shell, but not from an MCP
 client. This registers the exact same functions as MCP tools -- no new logic, just a
 second, equally thin adapter, the same one-line pattern any MCP plugin uses to register
 theirs.
+
+The same holds for a simulation that is running: ``roqsim.control_client``'s plain-JSON calls
+list, describe, read and call its endpoints and pause, resume and step it, over the control socket
+``roqsim sim`` serves. Each finds the simulator the way ``roqsim ls`` does (``ROQSIM_CONTROL``, the
+run directory, or the only one running) unless given ``control``; an error is a ``{"error": ...}``
+answer, and an array of more than a few dozen numbers is summarised rather than listed.
 
 Runnable via ``roqsim mcp serve``, the ``roqsim-mcp`` console script, or
 ``python -m roqsim_mcp`` (stdio transport), so anyone with a shell in the image -- and
@@ -31,12 +38,35 @@ directly.
 from fastmcp import FastMCP
 
 from roqsim.catalog import get_model_details, list_models, list_worlds
+from roqsim.control_client import (
+    call_endpoint,
+    describe_endpoint,
+    list_endpoints,
+    pause,
+    read_endpoint,
+    resume,
+    step,
+)
 from roqsim.introspection import get_plugin_details, list_plugins
 
-#: Everything a caller needs to ask before writing a world: what plugins exist, what can be spawned,
-#: and what worlds are already there. Adding one is one line here, because each is already a plain
-#: function returning plain dicts -- the reason this server has no logic of its own.
-_TOOLS = [list_plugins, get_plugin_details, list_models, get_model_details, list_worlds]
+#: Everything a caller needs to ask before writing a world -- what plugins exist, what can be
+#: spawned, what worlds are already there -- and what it asks of one that runs. Adding one is one
+#: line here, because each is already a plain function returning plain dicts -- the reason this
+#: server has no logic of its own.
+_TOOLS = [
+    list_plugins,
+    get_plugin_details,
+    list_models,
+    get_model_details,
+    list_worlds,
+    list_endpoints,
+    describe_endpoint,
+    read_endpoint,
+    call_endpoint,
+    pause,
+    resume,
+    step,
+]
 
 
 def create_server() -> FastMCP:

@@ -201,8 +201,8 @@ def test_door_placements_defaults_to_a_passive_wooden_door():
     assert entry["name"] == "door_1"  # a sibling of the ref, not one of the door's config keys
     assert "name" not in d
     assert d["model"] == "door"
-    assert d["pos"] == [2.0, 0.0, 0.0]  # opening centre on the wall
-    assert d["rpy"][2] == pytest.approx(0.0)  # yaw along the +x wall
+    assert d["pose"]["position"] == {"x": 2.0, "y": 0.0}  # opening centre on the wall
+    assert d["pose"]["orientation"]["yaw"] == pytest.approx(0.0)  # yaw along the +x wall
     assert d["width"] == 0.9 and d["hinge_side"] == "left"
     assert d["controllable"] is False  # automatic is opt-in
 
