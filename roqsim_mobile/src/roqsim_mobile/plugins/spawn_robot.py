@@ -65,8 +65,8 @@ mobile manipulator's arm, a lift mast, a steered wheel's carrier -- so those bod
 term as a torque the drive supplies, clamped by the joint's ``actuatorfrcrange`` (else the drive's
 ``forcerange`` times gear), and the reaction goes into the base: the wheels carry the whole robot
 and a drive too weak for its load sags (:func:`roqsim.actuators.apply_gravity_compensation`). A
-model's ``forcerange`` therefore has to cover the holding torque plus any payload, as the vendor's
-rated torque does. ``gravity_compensation: false`` leaves every body uncompensated, for drives that
+model's ``forcerange`` is therefore the drive's total rating, holding torque included: state the
+vendor's rated torque or force, never one net of the weight it holds. ``gravity_compensation: false`` leaves every body uncompensated, for drives that
 genuinely supply no gravity term (a hobby servo, a backdrivable joint); each servo then trades
 position error for holding torque. There is no whole-mechanism form, unlike ``spawn_arm``'s
 ``true``: it would compensate the base and lift the robot off its wheels.
